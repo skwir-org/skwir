@@ -48,11 +48,11 @@
           sqlite
         ];
 
-        darwinBuildInputs = with pkgs; lib.optionals stdenv.isDarwin [
+        darwinBuildInputs = with pkgs; lib.optionals stdenv.hostPlatform.isDarwin [
           libiconv
         ];
 
-        buildInputs = (lib.optionals stdenv.isLinux linuxBuildInputs) ++ darwinBuildInputs;
+        buildInputs = (lib.optionals stdenv.hostPlatform.isLinux linuxBuildInputs) ++ darwinBuildInputs;
 
         nativeBuildInputs = with pkgs; [
           rustToolchain
@@ -60,7 +60,7 @@
           cmake
           clang
           llvmPackages.libclang   # bindgen
-        ] ++ lib.optionals stdenv.isLinux [ mold ];
+        ] ++ lib.optionals stdenv.hostPlatform.isLinux [ mold ];
 
         devTools = with pkgs; [
           just
@@ -76,7 +76,7 @@
           ripgrep
           jq
           vulkan-tools     # vulkaninfo for the toolkit spike
-        ] ++ lib.optionals stdenv.isLinux [
+        ] ++ lib.optionals stdenv.hostPlatform.isLinux [
           samply
           heaptrack
           wayland-utils
@@ -92,11 +92,11 @@
           RUST_BACKTRACE = "1";
 
           # wgpu/winit dlopen these at runtime; make them findable from `cargo run`.
-          LD_LIBRARY_PATH = lib.optionalString stdenv.isLinux (lib.makeLibraryPath linuxRuntimeLibs);
+          LD_LIBRARY_PATH = lib.optionalString stdenv.hostPlatform.isLinux (lib.makeLibraryPath linuxRuntimeLibs);
 
           shellHook = ''
             # Fast linking on Linux via mold, without touching the repo's .cargo/config.
-            ${lib.optionalString stdenv.isLinux ''
+            ${lib.optionalString stdenv.hostPlatform.isLinux ''
               export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="clang"
               export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-arg=-fuse-ld=mold"
             ''}
