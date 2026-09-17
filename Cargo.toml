@@ -6,6 +6,7 @@ members = [
     "crates/ui",
     "crates/plugins/*",
     "crates/bench",
+    "crates/bibli",
 ]
 # Toolkit spikes live in their own workspace so their heavy dependency
 # trees never touch the main build.
@@ -21,6 +22,18 @@ repository = "https://github.com/venator/bibli"
 [workspace.dependencies]
 bibli-core = { path = "crates/core" }
 bibli-platform = { path = "crates/platform" }
+bibli-ui = { path = "crates/ui" }
+bibli-plugin-places = { path = "crates/plugins/places" }
+bibli-plugin-open-with = { path = "crates/plugins/open-with" }
+bibli-plugin-ops-basic = { path = "crates/plugins/ops-basic" }
+
+# UI toolkit (ADR-001). Pinned exactly: the API moves between releases.
+gpui = "=0.2.2"
+flume = "0.12"
+nucleo-matcher = "0.3"
+open = "5"
+xdg-mime = "0.4"
+freedesktop-icons = "0.4"
 
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }

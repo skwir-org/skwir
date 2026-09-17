@@ -10,7 +10,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crossbeam_channel::Receiver;
+use crossbeam_channel::{Receiver, Sender};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
@@ -101,6 +101,9 @@ pub enum ListingEvent {
     Error(String),
 }
 
+/// Called after events are queued so a sleeping UI can wake and pump.
+pub type Waker = Arc<dyn Fn() + Send + Sync>;
+
 /// What a provider gets when a location is opened.
 #[derive(Clone)]
 pub struct OpenContext {
@@ -108,6 +111,40 @@ pub struct OpenContext {
     pub cancel: CancelToken,
     /// Preferred batch size for `Added` events.
     pub batch_size: usize,
+    /// Wake hook; providers should send through [`OpenContext::channel`] which calls it.
+    pub waker: Option<Waker>,
+}
+
+impl OpenContext {
+    /// An event channel whose sender wakes the UI after each send.
+    pub fn channel(&self) -> (EventSink, Receiver<ListingEvent>) {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        (
+            EventSink {
+                tx,
+                waker: self.waker.clone(),
+            },
+            rx,
+        )
+    }
+}
+
+/// Sender half of a listing channel. Never blocks; wakes the UI.
+#[derive(Clone)]
+pub struct EventSink {
+    tx: Sender<ListingEvent>,
+    waker: Option<Waker>,
+}
+
+impl EventSink {
+    /// Queue an event. Returns false if the receiver is gone.
+    pub fn send(&self, event: ListingEvent) -> bool {
+        let ok = self.tx.send(event).is_ok();
+        if let Some(w) = &self.waker {
+            w();
+        }
+        ok
+    }
 }
 
 /// An opened location. Dropping it (or `close`) stops all work for it.

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crossbeam_channel::{Receiver, Sender, unbounded};
+use crossbeam_channel::Receiver;
 use parking_lot::Mutex;
 use rustix::fd::OwnedFd;
 use rustix::fs::{Dir, FileType, Mode, OFlags};
@@ -14,7 +14,7 @@ use rustix::fs::{Dir, FileType, Mode, OFlags};
 use crate::cancel::CancelToken;
 use crate::entry::{Entry, EntryId, EntryKind};
 use crate::location::{
-    ListingEvent, Location, LocationProvider, OpenContext, OpenLocation, PATH_SCHEME,
+    EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation, PATH_SCHEME,
 };
 use crate::scheduler::Priority;
 
@@ -48,7 +48,7 @@ struct Shared {
     dirfd: OwnedFd,
     dev: u64,
     names: Mutex<HashMap<EntryId, OsString>>,
-    tx: Sender<ListingEvent>,
+    tx: EventSink,
     ctx: OpenContext,
 }
 
@@ -86,7 +86,7 @@ impl PathLocation {
     ) -> anyhow::Result<Arc<dyn OpenLocation>> {
         let dirfd = open_dirfd(&dir)?;
         let st = rustix::fs::fstat(&dirfd)?;
-        let (tx, rx) = unbounded();
+        let (tx, rx) = ctx.channel();
         let shared = Arc::new(Shared {
             dir,
             dirfd,
@@ -146,7 +146,7 @@ impl Shared {
         let dir = match Dir::read_from(&self.dirfd) {
             Ok(d) => d,
             Err(e) => {
-                let _ = self.tx.send(ListingEvent::Error(e.to_string()));
+                self.tx.send(ListingEvent::Error(e.to_string()));
                 return;
             }
         };
@@ -159,7 +159,7 @@ impl Shared {
             let ent = match ent {
                 Ok(e) => e,
                 Err(e) => {
-                    let _ = self.tx.send(ListingEvent::Error(e.to_string()));
+                    self.tx.send(ListingEvent::Error(e.to_string()));
                     return;
                 }
             };
@@ -176,19 +176,14 @@ impl Shared {
             self.names.lock().insert(id, name.clone());
             seen.push(id);
             batch.push(Entry::new(id, name, kind_of(ent.file_type())));
-            if batch.len() >= self.ctx.batch_size
-                && self
-                    .tx
-                    .send(ListingEvent::Added(std::mem::replace(
-                        &mut batch,
-                        Vec::with_capacity(self.ctx.batch_size),
-                    )))
-                    .is_err()
-            {
-                return;
+            if batch.len() >= self.ctx.batch_size {
+                let full = std::mem::replace(&mut batch, Vec::with_capacity(self.ctx.batch_size));
+                if !self.tx.send(ListingEvent::Added(full)) {
+                    return;
+                }
             }
         }
-        if !batch.is_empty() && self.tx.send(ListingEvent::Added(batch)).is_err() {
+        if !batch.is_empty() && !self.tx.send(ListingEvent::Added(batch)) {
             return;
         }
         if let Some(prev) = previous {
@@ -200,10 +195,10 @@ impl Shared {
                     names.remove(id);
                 }
                 drop(names);
-                let _ = self.tx.send(ListingEvent::Removed(gone));
+                self.tx.send(ListingEvent::Removed(gone));
             }
         }
-        let _ = self.tx.send(ListingEvent::Complete);
+        self.tx.send(ListingEvent::Complete);
     }
 
     fn hydrate(&self, ids: &[EntryId]) {
@@ -223,7 +218,7 @@ impl Shared {
             }
         }
         if !updated.is_empty() {
-            let _ = self.tx.send(ListingEvent::Updated(updated));
+            self.tx.send(ListingEvent::Updated(updated));
         }
         if !gone.is_empty() {
             let mut names = self.names.lock();
@@ -231,7 +226,7 @@ impl Shared {
                 names.remove(id);
             }
             drop(names);
-            let _ = self.tx.send(ListingEvent::Removed(gone));
+            self.tx.send(ListingEvent::Removed(gone));
         }
     }
 
@@ -273,10 +268,10 @@ impl Shared {
             }
         }
         if !removed.is_empty() {
-            let _ = self.tx.send(ListingEvent::Removed(removed));
+            self.tx.send(ListingEvent::Removed(removed));
         }
         if !added.is_empty() {
-            let _ = self.tx.send(ListingEvent::Added(added));
+            self.tx.send(ListingEvent::Added(added));
         }
     }
 }

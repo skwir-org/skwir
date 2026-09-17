@@ -1,0 +1,18 @@
+[package]
+name = "bibli"
+description = "bibli: the file manager binary, wiring core, plugins, and the UI shell"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "bibli"
+path = "src/main.rs"
+
+[dependencies]
+bibli-core.workspace = true
+anyhow.workspace = true
+
+[lints]
+workspace = true

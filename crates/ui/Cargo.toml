@@ -1,12 +1,20 @@
 [package]
 name = "bibli-ui"
-description = "bibli: ui crate (Phase 1)"
+description = "bibli UI shell on GPUI (ADR-001)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+bibli-core.workspace = true
+gpui.workspace = true
+flume.workspace = true
+nucleo-matcher.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true

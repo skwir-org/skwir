@@ -15,7 +15,7 @@ use crate::cancel::CancelToken;
 use crate::command::{CommandRegistry, Invocation, Outcome};
 use crate::entry::EntryId;
 use crate::fs::PathProvider;
-use crate::location::{Location, LocationProvider, OpenContext, OpenLocation};
+use crate::location::{Location, LocationProvider, OpenContext, OpenLocation, Waker};
 use crate::op::{self, EntryRef, Executor, OpRegistry, Plan, PlanData};
 use crate::plugin::PluginHost;
 use crate::registry::Registry;
@@ -69,6 +69,7 @@ pub struct App {
     pub cache: Cache,
     pub workspace: RwLock<Workspace>,
     providers: RwLock<HashMap<Arc<str>, (Arc<str>, Arc<dyn LocationProvider>)>>,
+    waker: RwLock<Option<Waker>>,
     batch_size: usize,
     /// Cancelled on drop: stops every background task started by this app.
     lifetime: CancelToken,
@@ -92,6 +93,7 @@ impl App {
             cache: Cache::new(config.cache_root),
             workspace: RwLock::new(Workspace::default()),
             providers: RwLock::new(HashMap::new()),
+            waker: RwLock::new(None),
             batch_size: config.batch_size,
             lifetime: CancelToken::new(),
         });
@@ -104,6 +106,20 @@ impl App {
     /// A token that fires when the app is dropped.
     pub fn lifetime(&self) -> &CancelToken {
         &self.lifetime
+    }
+
+    /// Install the UI wake hook: called (from any thread) whenever listing or
+    /// executor events are queued, so the UI can `pump` instead of polling.
+    pub fn set_waker(&self, waker: Option<Waker>) {
+        self.executor.set_waker(waker.clone());
+        *self.waker.write() = waker;
+    }
+
+    /// Invoke the wake hook, if any.
+    pub fn wake(&self) {
+        if let Some(w) = self.waker.read().as_ref() {
+            w();
+        }
     }
 
     // ------------------------------------------------------------ providers
@@ -147,6 +163,7 @@ impl App {
                 scheduler: self.scheduler.clone(),
                 cancel: self.lifetime.child(),
                 batch_size: self.batch_size,
+                waker: self.waker.read().clone(),
             },
         )
     }

@@ -1,0 +1,13 @@
+[package]
+name = "bibli-plugin-ops-basic"
+description = "bibli plugin: ops-basic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bibli-core.workspace = true
+
+[lints]
+workspace = true

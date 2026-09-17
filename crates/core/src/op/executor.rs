@@ -80,6 +80,7 @@ pub struct Executor {
     journal: Mutex<Journal>,
     tx: Sender<ExecEvent>,
     rx: Receiver<ExecEvent>,
+    waker: Mutex<Option<crate::location::Waker>>,
 }
 
 impl Executor {
@@ -90,7 +91,20 @@ impl Executor {
             journal: Mutex::new(Journal::default()),
             tx,
             rx,
+            waker: Mutex::new(None),
         })
+    }
+
+    /// Wake the UI after each event.
+    pub fn set_waker(&self, waker: Option<crate::location::Waker>) {
+        *self.waker.lock() = waker;
+    }
+
+    fn emit(&self, ev: ExecEvent) {
+        let _ = self.tx.send(ev);
+        if let Some(w) = self.waker.lock().as_ref() {
+            w();
+        }
     }
 
     /// Progress and completion events.
@@ -222,7 +236,7 @@ impl Executor {
     /// The core loop: check, skip if done, apply, collect inverses in reverse order.
     fn apply_plan(&self, plan: &Plan, cancel: &CancelToken) -> (ExecResult, Option<Plan>) {
         let total = plan.steps.len();
-        let _ = self.tx.send(ExecEvent::Started {
+        self.emit(ExecEvent::Started {
             plan: plan.id,
             title: plan.title.clone(),
             total,
@@ -256,7 +270,7 @@ impl Executor {
                     Err(e) => err = Some(format!("{e:#}")),
                 },
             }
-            let _ = self.tx.send(ExecEvent::Step(Progress {
+            self.emit(ExecEvent::Step(Progress {
                 plan: plan.id,
                 step: i,
                 total,
@@ -275,7 +289,7 @@ impl Executor {
         } else {
             Some(Plan::with_steps(format!("undo {}", plan.title), inverses))
         };
-        let _ = self.tx.send(ExecEvent::Finished {
+        self.emit(ExecEvent::Finished {
             plan: plan.id,
             applied,
             skipped,
