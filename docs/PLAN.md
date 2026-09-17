@@ -15,6 +15,8 @@ Principles (non-negotiable, every phase is checked against them):
 Durations are relative sizes for one developer working with an AI assistant, not commitments.
 Each phase has a **Done when** gate. Do not start the next phase before the gate passes.
 
+Status: Phase 0 done (2026-09-18, ADR-000, ADR-001: GPUI). Next: Phase 1.
+
 ---
 
 ## Phase 0 — Foundations and toolkit spike (~2 weeks)

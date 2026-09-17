@@ -9,7 +9,7 @@ build:
 
 # Run all tests.
 test:
-    cargo nextest run --workspace
+    cargo nextest run --workspace --no-tests=pass
 
 # Lint: rustfmt check + clippy with warnings as errors.
 lint:
