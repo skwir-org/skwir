@@ -11,3 +11,5 @@
 *.swp
 # Bench data (generated on demand, never committed)
 /bench-data/
+/spikes/target/
+/spikes/results/*.log

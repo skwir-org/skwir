@@ -1,0 +1,20 @@
+{
+  "toolkit": "floem",
+  "gpu": "nvidia",
+  "rows": 100000,
+  "first_frame_ms": 89.60172299999999,
+  "frames": 413,
+  "frame_p50_us": 16649,
+  "frame_p95_us": 18981,
+  "frame_p99_us": 30761,
+  "frame_max_us": 51069,
+  "frames_over_8_3ms": 413,
+  "frames_over_16_7ms": 188,
+  "frame_cpu_p50_us": 2305,
+  "frame_cpu_p95_us": 7750,
+  "frame_cpu_max_us": 47644,
+  "process_cpu_ms": 1613,
+  "rss_mb": 279.671875,
+  "thumbnails_decoded": 564,
+  "thumbnails_skipped": 0
+}

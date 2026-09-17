@@ -32,3 +32,9 @@ identically through `spike-common`. The result decides ADR-001.
     just spike floem nvidia
 
 Reports land in `spikes/results/<toolkit>-<gpu>.json`.
+
+## Results (2026-09-18)
+
+See `docs/adr/001-ui-toolkit.md` for the table and the decision. Raw reports
+are committed in `results/`. Note that both displays are 60 Hz, so
+`frame_p50_us` is the vsync period; compare `frame_cpu_*` and the tails.

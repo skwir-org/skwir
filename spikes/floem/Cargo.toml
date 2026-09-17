@@ -1,0 +1,13 @@
+[package]
+name = "spike-floem"
+version = "0.0.1"
+edition = "2024"
+
+[[bin]]
+name = "spike-floem"
+path = "src/main.rs"
+
+[dependencies]
+floem = "0.2.0"
+floem_renderer = "0.2.0"
+spike-common.workspace = true

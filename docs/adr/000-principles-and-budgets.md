@@ -50,7 +50,7 @@ UI (enforced by the toolkit spikes in Phase 0, then by the `ui` crate from Phase
 |---------------------------------------------------------|-------------------|
 | Cold start to first frame                               | < 100 ms          |
 | 100k-entry directory: first rows painted after listing starts | < 16 ms     |
-| Scrolling a 100k-entry list                              | at display refresh, p95 frame < 8.3 ms (120 Hz) |
+| Scrolling a 100k-entry list                              | at display refresh; main-thread CPU p95 per frame < 8.3 ms (120 Hz proxy) |
 | Idle RSS, default plugins, no AI                        | < 100 MB          |
 | Idle RSS with AI plugins compiled in but disabled       | equal to the above |
 

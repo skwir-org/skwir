@@ -1,0 +1,20 @@
+{
+  "toolkit": "gpui",
+  "gpu": "intel",
+  "rows": 100000,
+  "first_frame_ms": 67.826308,
+  "frames": 420,
+  "frame_p50_us": 16657,
+  "frame_p95_us": 17809,
+  "frame_p99_us": 18785,
+  "frame_max_us": 32589,
+  "frames_over_8_3ms": 419,
+  "frames_over_16_7ms": 187,
+  "frame_cpu_p50_us": 3085,
+  "frame_cpu_p95_us": 3855,
+  "frame_cpu_max_us": 23251,
+  "process_cpu_ms": 1581,
+  "rss_mb": 109.41796875,
+  "thumbnails_decoded": 564,
+  "thumbnails_skipped": 0
+}

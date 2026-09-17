@@ -1,0 +1,20 @@
+{
+  "toolkit": "floem",
+  "gpu": "intel",
+  "rows": 100000,
+  "first_frame_ms": 57.137687,
+  "frames": 415,
+  "frame_p50_us": 16706,
+  "frame_p95_us": 18629,
+  "frame_p99_us": 30125,
+  "frame_max_us": 33209,
+  "frames_over_8_3ms": 414,
+  "frames_over_16_7ms": 208,
+  "frame_cpu_p50_us": 2592,
+  "frame_cpu_p95_us": 6081,
+  "frame_cpu_max_us": 25265,
+  "process_cpu_ms": 1497,
+  "rss_mb": 137.5078125,
+  "thumbnails_decoded": 564,
+  "thumbnails_skipped": 0
+}

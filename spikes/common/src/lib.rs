@@ -254,6 +254,12 @@ pub struct Report {
     pub frame_max_us: u64,
     pub frames_over_8_3ms: usize,
     pub frames_over_16_7ms: usize,
+    /// Main-thread CPU time per frame (layout + paint + submit), independent of vsync.
+    pub frame_cpu_p50_us: u64,
+    pub frame_cpu_p95_us: u64,
+    pub frame_cpu_max_us: u64,
+    /// Whole-process CPU time over the run, all threads (includes thumbnail decoding).
+    pub process_cpu_ms: u64,
     pub rss_mb: f64,
     pub thumbnails_decoded: u64,
     pub thumbnails_skipped: u64,
@@ -264,31 +270,63 @@ pub struct Metrics {
     first_frame: Option<Instant>,
     last_frame: Option<Instant>,
     frame_times: Vec<Duration>,
+    last_cpu: Option<Duration>,
+    frame_cpu: Vec<Duration>,
+}
+
+fn clock(id: rustix::time::ClockId) -> Duration {
+    let t = rustix::time::clock_gettime(id);
+    Duration::new(t.tv_sec as u64, t.tv_nsec as u32)
+}
+
+fn thread_cpu() -> Duration {
+    clock(rustix::time::ClockId::ThreadCPUTime)
+}
+
+fn process_cpu() -> Duration {
+    clock(rustix::time::ClockId::ProcessCPUTime)
 }
 
 impl Metrics {
     /// Call at the very top of `main`, before the toolkit initializes.
     pub fn start() -> Self {
-        Metrics { start: Instant::now(), first_frame: None, last_frame: None, frame_times: Vec::with_capacity(4096) }
+        Metrics {
+            start: Instant::now(),
+            first_frame: None,
+            last_frame: None,
+            frame_times: Vec::with_capacity(4096),
+            last_cpu: None,
+            frame_cpu: Vec::with_capacity(4096),
+        }
     }
 
     /// Call once per rendered frame. Returns seconds since the first frame.
     pub fn frame(&mut self) -> f64 {
         let now = Instant::now();
+        let cpu = thread_cpu();
         if self.first_frame.is_none() {
             self.first_frame = Some(now);
             eprintln!("first frame at {:.1} ms", self.start.elapsed().as_secs_f64() * 1000.0);
         } else if let Some(last) = self.last_frame {
             self.frame_times.push(now - last);
+            if let Some(lc) = self.last_cpu {
+                self.frame_cpu.push(cpu.saturating_sub(lc));
+            }
         }
         self.last_frame = Some(now);
+        self.last_cpu = Some(cpu);
         (now - self.first_frame.unwrap()).as_secs_f64()
     }
 
     pub fn report(&self, toolkit: &str, rows: usize, thumbs: &Thumbs) -> Report {
         let mut ft = self.frame_times.clone();
         ft.sort();
-        let pct = |p: f64| ft.get(((ft.len() as f64 * p) as usize).min(ft.len().saturating_sub(1))).map_or(0, |d| d.as_micros() as u64);
+        let mut fc = self.frame_cpu.clone();
+        fc.sort();
+        let pct_of = |v: &[Duration], p: f64| {
+            v.get(((v.len() as f64 * p) as usize).min(v.len().saturating_sub(1))).map_or(0, |d| d.as_micros() as u64)
+        };
+        let pct = |p: f64| pct_of(&ft, p);
         Report {
             toolkit: toolkit.into(),
             gpu: std::env::var("SPIKE_GPU").unwrap_or_else(|_| "unknown".into()),
@@ -301,6 +339,10 @@ impl Metrics {
             frame_max_us: ft.last().map_or(0, |d| d.as_micros() as u64),
             frames_over_8_3ms: ft.iter().filter(|d| d.as_micros() > 8_300).count(),
             frames_over_16_7ms: ft.iter().filter(|d| d.as_micros() > 16_700).count(),
+            frame_cpu_p50_us: pct_of(&fc, 0.50),
+            frame_cpu_p95_us: pct_of(&fc, 0.95),
+            frame_cpu_max_us: fc.last().map_or(0, |d| d.as_micros() as u64),
+            process_cpu_ms: process_cpu().as_millis() as u64,
             rss_mb: rss_mb(),
             thumbnails_decoded: thumbs.decoded_count(),
             thumbnails_skipped: thumbs.skipped_count(),

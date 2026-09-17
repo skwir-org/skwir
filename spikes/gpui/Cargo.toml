@@ -1,0 +1,15 @@
+[package]
+name = "spike-gpui"
+version = "0.0.1"
+edition = "2024"
+
+[[bin]]
+name = "spike-gpui"
+path = "src/main.rs"
+
+[dependencies]
+spike-common.workspace = true
+gpui = "0.2.2"
+# Must match gpui's own `image` and `smallvec` so we can build `RenderImage` directly.
+image.workspace = true
+smallvec = "1"

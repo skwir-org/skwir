@@ -1,0 +1,20 @@
+{
+  "toolkit": "gpui",
+  "gpu": "nvidia",
+  "rows": 100000,
+  "first_frame_ms": 95.535352,
+  "frames": 422,
+  "frame_p50_us": 16652,
+  "frame_p95_us": 17659,
+  "frame_p99_us": 18990,
+  "frame_max_us": 20620,
+  "frames_over_8_3ms": 420,
+  "frames_over_16_7ms": 191,
+  "frame_cpu_p50_us": 3521,
+  "frame_cpu_p95_us": 4151,
+  "frame_cpu_max_us": 12569,
+  "process_cpu_ms": 1845,
+  "rss_mb": 135.27734375,
+  "thumbnails_decoded": 564,
+  "thumbnails_skipped": 0
+}
