@@ -1,0 +1,28 @@
+# Performance budgets for `bibli-bench check`, in microseconds, compared
+# against the minimum over runs. Values are ~3x the reference machine
+# (Intel i7 ADL, btrfs zstd, NVMe, warm cache) to absorb CI runner noise.
+# Tighten them when the reference measurement improves; never loosen without an ADR.
+
+[flat100k]
+first_batch_us = 1_000
+list_getdents_us = 90_000
+list_std_us = 90_000
+stat_statx_us = 300_000
+stat_parallel_us = 40_000
+walk_parallel_us = 90_000
+
+[deep1m]
+first_batch_us = 500
+list_getdents_us = 300
+list_std_us = 300
+stat_statx_us = 600
+stat_parallel_us = 1_000
+walk_parallel_us = 200_000
+
+[images10k]
+first_batch_us = 1_500
+list_getdents_us = 10_000
+list_std_us = 12_000
+stat_statx_us = 45_000
+stat_parallel_us = 6_000
+walk_parallel_us = 10_000

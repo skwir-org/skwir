@@ -1,0 +1,12 @@
+[package]
+name = "bibli-core"
+description = "bibli: core crate (Phase 1)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
