@@ -1,0 +1,10 @@
+[package]
+name = "spike-common"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+image.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rayon.workspace = true
