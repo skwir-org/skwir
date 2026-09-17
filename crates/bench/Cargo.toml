@@ -11,6 +11,7 @@ name = "bibli-bench"
 path = "src/main.rs"
 
 [dependencies]
+bibli-core.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true

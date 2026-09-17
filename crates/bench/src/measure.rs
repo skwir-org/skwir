@@ -37,6 +37,12 @@ pub struct Report {
     pub stat_parallel: Stat,
     /// Recursive walk counting files, rayon-parallel (only meaningful for deep trees).
     pub walk_parallel: Stat,
+    /// Through `bibli-core`'s path provider: time for `open` to return.
+    pub stream_open: Stat,
+    /// Through the provider: time until the first `Added` batch is received.
+    pub stream_first_batch: Stat,
+    /// Through the provider: time until `Complete`.
+    pub stream_complete: Stat,
 }
 
 /// Budgets file: `[profile] metric_us = max`.
@@ -159,6 +165,32 @@ fn walk_parallel(path: &Path) -> u64 {
     count
 }
 
+/// Open `path` through the core provider; return (open, first batch, complete) durations.
+fn stream(app: &bibli_core::App, path: &Path) -> (Duration, Duration, Duration) {
+    use bibli_core::location::{ListingEvent, Location};
+    let t = Instant::now();
+    let open = app.open_location(&Location::from_path(path)).expect("open");
+    let opened = t.elapsed();
+    let rx = open.events();
+    let mut first = None;
+    let complete;
+    loop {
+        match rx.recv().expect("event") {
+            ListingEvent::Added(_) => {
+                first.get_or_insert_with(|| t.elapsed());
+            }
+            ListingEvent::Complete => {
+                complete = t.elapsed();
+                break;
+            }
+            ListingEvent::Error(e) => panic!("listing error: {e}"),
+            _ => {}
+        }
+    }
+    open.close();
+    (opened, first.unwrap_or(complete), complete)
+}
+
 /// Measure `profile` under `root`.
 pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
     let dir = root.join(profile.name());
@@ -169,6 +201,26 @@ pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
         _ => dir.clone(),
     };
     let n = names(&single);
+    let app = bibli_core::App::new(bibli_core::app::AppConfig::ephemeral(
+        std::env::temp_dir().join("bibli-bench"),
+    ))
+    .expect("app");
+    let mut opens = Vec::new();
+    let mut firsts = Vec::new();
+    let mut completes = Vec::new();
+    for _ in 0..runs {
+        let (o, f, c) = stream(&app, &single);
+        opens.push(o);
+        firsts.push(f);
+        completes.push(c);
+    }
+    let stat_of = |mut v: Vec<Duration>| {
+        v.sort();
+        Stat {
+            min_us: v[0].as_micros() as u64,
+            median_us: v[v.len() / 2].as_micros() as u64,
+        }
+    };
     Report {
         files: profile.file_count(),
         runs,
@@ -178,6 +230,9 @@ pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
         stat_statx: timed(runs, || statx_all(&single, &n)),
         stat_parallel: timed(runs, || stat_parallel(&single, &n)),
         walk_parallel: timed(runs, || walk_parallel(&dir)),
+        stream_open: stat_of(opens),
+        stream_first_batch: stat_of(firsts),
+        stream_complete: stat_of(completes),
     }
 }
 
@@ -187,13 +242,16 @@ pub fn check(profile: Profile, report: &Report, budgets: &Budgets) -> bool {
         eprintln!("bench: {}: no budgets, skipped", profile.name());
         return true;
     };
-    let measured: [(&str, &Stat); 6] = [
+    let measured: [(&str, &Stat); 9] = [
         ("first_batch_us", &report.first_batch),
         ("list_getdents_us", &report.list_getdents),
         ("list_std_us", &report.list_std),
         ("stat_statx_us", &report.stat_statx),
         ("stat_parallel_us", &report.stat_parallel),
         ("walk_parallel_us", &report.walk_parallel),
+        ("stream_open_us", &report.stream_open),
+        ("stream_first_batch_us", &report.stream_first_batch),
+        ("stream_complete_us", &report.stream_complete),
     ];
     let mut ok = true;
     for (key, stat) in measured {

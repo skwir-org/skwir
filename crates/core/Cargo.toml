@@ -1,12 +1,36 @@
 [package]
 name = "bibli-core"
-description = "bibli: core crate (Phase 1)"
+description = "bibli core: entries, locations, commands, operations, plans, registries"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+rustix = { workspace = true, features = ["fs", "time", "thread", "event"] }
+crossbeam-channel.workspace = true
+parking_lot.workspace = true
+notify.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+inotify.workspace = true
+schemars.workspace = true
+thiserror.workspace = true
+dirs.workspace = true
+blake3.workspace = true
+trash.workspace = true
+tracing.workspace = true
+indexmap.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile.workspace = true
+dirs.workspace = true
+blake3.workspace = true
 
 [lints]
 workspace = true

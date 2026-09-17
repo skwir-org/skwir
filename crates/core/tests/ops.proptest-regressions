@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc b5e6db36c52e1df1c330f167c9bd7753ddbe3190b78c6e5af7a3f70e2e3c44e6 # shrinks to t = Tree { dirs: 1, files: 3 }, steps = [Copy { file: 0, dir: 0 }]
+cc 612c713f3aefcf4a549c22dc48b271e7787b40babb1390fe3d89702bde36fa91 # shrinks to t = Tree { dirs: 0, files: 1 }, steps = [Rename { file: 0, to: "r_aaa" }, Rename { file: 0, to: "r_aab" }]
+cc 94be5b914ce94eadfab84e30144df618e1dbfc885d1c561449827aba08519b59 # shrinks to t = Tree { dirs: 1, files: 1 }, steps = [Copy { file: 0, dir: 0 }, Move { file: 0, dir: 0 }]
+cc 6a9d0634d85fb4d8c89b36ec285f98a759852be4bbf9002ff44d23d88d6654f5 # shrinks to t = Tree { dirs: 1, files: 1 }, steps = [Rename { file: 0, to: "r_aaa" }, Move { file: 0, dir: 0 }]

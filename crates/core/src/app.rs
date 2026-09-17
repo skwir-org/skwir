@@ -1,0 +1,654 @@
+//! The app object: owns the registries, the scheduler, the executor, the
+//! workspace, and hosts the built-in commands. Toolkit-agnostic; the UI
+//! calls `pump` to apply pending events and `dispatch` for everything else.
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use parking_lot::RwLock;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use crate::cache::Cache;
+use crate::cancel::CancelToken;
+use crate::command::{CommandRegistry, Invocation, Outcome};
+use crate::entry::EntryId;
+use crate::fs::PathProvider;
+use crate::location::{Location, LocationProvider, OpenContext, OpenLocation};
+use crate::op::{self, EntryRef, Executor, OpRegistry, Plan, PlanData};
+use crate::plugin::PluginHost;
+use crate::registry::Registry;
+use crate::scheduler::{Priority, Scheduler};
+use crate::settings::Settings;
+use crate::workspace::{PaneId, Workspace};
+
+/// Construction options.
+pub struct AppConfig {
+    pub cache_root: PathBuf,
+    /// `None` keeps settings in memory (tests).
+    pub settings_path: Option<PathBuf>,
+    /// Scheduler threads; 0 picks a default.
+    pub workers: usize,
+    /// Entries per `Added` event.
+    pub batch_size: usize,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        AppConfig {
+            cache_root: Cache::default_root(),
+            settings_path: Some(Settings::default_path()),
+            workers: 0,
+            batch_size: 1024,
+        }
+    }
+}
+
+impl AppConfig {
+    /// Everything in memory or under a temp dir: for tests and benches.
+    pub fn ephemeral(root: impl Into<PathBuf>) -> Self {
+        AppConfig {
+            cache_root: root.into().join("cache"),
+            settings_path: None,
+            workers: 0,
+            batch_size: 1024,
+        }
+    }
+}
+
+/// The app.
+pub struct App {
+    pub scheduler: Scheduler,
+    pub commands: CommandRegistry,
+    pub ops: OpRegistry,
+    pub registry: Registry,
+    pub plugins: PluginHost,
+    pub executor: Arc<Executor>,
+    pub settings: Settings,
+    pub cache: Cache,
+    pub workspace: RwLock<Workspace>,
+    providers: RwLock<HashMap<Arc<str>, (Arc<str>, Arc<dyn LocationProvider>)>>,
+    batch_size: usize,
+    /// Cancelled on drop: stops every background task started by this app.
+    lifetime: CancelToken,
+}
+
+impl App {
+    pub fn new(config: AppConfig) -> anyhow::Result<Arc<Self>> {
+        let scheduler = Scheduler::new(config.workers);
+        let settings = match config.settings_path {
+            Some(p) => Settings::load(p)?,
+            None => Settings::in_memory(),
+        };
+        let app = Arc::new(App {
+            executor: Executor::new(scheduler.clone()),
+            scheduler,
+            commands: CommandRegistry::default(),
+            ops: OpRegistry::default(),
+            registry: Registry::default(),
+            plugins: PluginHost::default(),
+            settings,
+            cache: Cache::new(config.cache_root),
+            workspace: RwLock::new(Workspace::default()),
+            providers: RwLock::new(HashMap::new()),
+            batch_size: config.batch_size,
+            lifetime: CancelToken::new(),
+        });
+        app.register_provider("core", Arc::new(PathProvider));
+        op::register_builtin(&app.ops);
+        builtin::register(&app);
+        Ok(app)
+    }
+
+    /// A token that fires when the app is dropped.
+    pub fn lifetime(&self) -> &CancelToken {
+        &self.lifetime
+    }
+
+    // ------------------------------------------------------------ providers
+
+    pub fn register_provider(&self, owner: &str, provider: Arc<dyn LocationProvider>) {
+        self.providers
+            .write()
+            .insert(provider.scheme().into(), (owner.into(), provider));
+    }
+
+    pub fn provider(&self, scheme: &str) -> Option<Arc<dyn LocationProvider>> {
+        self.providers
+            .read()
+            .get(scheme)
+            .map(|(_, p)| Arc::clone(p))
+    }
+
+    /// Withdraw everything a plugin contributed.
+    pub fn unregister_owner(&self, owner: &str) {
+        self.commands.unregister_owner(owner);
+        self.ops.unregister_owner(owner);
+        self.registry.remove_owner(owner);
+        self.providers.write().retain(|_, (o, _)| &**o != owner);
+        for spec in self.settings.schema() {
+            if spec.key.starts_with(&format!("{owner}.")) {
+                self.settings.undeclare(&spec.key);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ locations
+
+    /// Open a location without attaching it to a pane.
+    pub fn open_location(&self, location: &Location) -> anyhow::Result<Arc<dyn OpenLocation>> {
+        let provider = self
+            .provider(&location.scheme)
+            .ok_or_else(|| anyhow::anyhow!("no provider for scheme `{}`", location.scheme))?;
+        provider.open(
+            location,
+            OpenContext {
+                scheduler: self.scheduler.clone(),
+                cancel: self.lifetime.child(),
+                batch_size: self.batch_size,
+            },
+        )
+    }
+
+    /// Open a location in a pane, replacing what it showed. Returns immediately;
+    /// entries arrive through `pump`.
+    pub fn navigate(&self, pane: PaneId, location: &Location) -> anyhow::Result<()> {
+        let open = self.open_location(location)?;
+        let mut ws = self.workspace.write();
+        let p = ws
+            .pane_mut(pane)
+            .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+        if let Some(old) = p.open.take() {
+            old.close();
+        }
+        p.listing = crate::location::Listing::default();
+        p.selection.clear();
+        p.history.truncate(p.history_pos + 1);
+        p.history.push(location.clone());
+        p.history_pos = p.history.len() - 1;
+        p.open = Some(open);
+        Ok(())
+    }
+
+    /// Apply pending listing events on every pane. Returns the number applied.
+    /// The UI calls this once per frame or on wake-up.
+    pub fn pump(&self) -> usize {
+        self.workspace.write().pump()
+    }
+
+    /// Block until the active pane's listing is complete (tests and CLI only).
+    pub fn pump_until_complete(&self, pane: PaneId, timeout: std::time::Duration) -> bool {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            self.pump();
+            let ws = self.workspace.read();
+            let Some(p) = ws.pane(pane) else { return false };
+            if p.listing.is_complete() || p.listing.error().is_some() {
+                return p.listing.is_complete();
+            }
+            drop(ws);
+            if std::time::Instant::now() > deadline {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    // ------------------------------------------------------------ commands
+
+    pub fn dispatch(&self, inv: &Invocation) -> anyhow::Result<Outcome> {
+        self.commands.dispatch(inv, self)
+    }
+
+    /// Execute a plan in the background.
+    pub fn apply(&self, plan: Plan) {
+        self.executor.execute(plan, self.lifetime.child());
+    }
+
+    /// Entry references for the current selection of a pane, in selection order.
+    pub fn selected_refs(&self, pane: PaneId) -> Vec<EntryRef> {
+        let ws = self.workspace.read();
+        let Some(p) = ws.pane(pane) else {
+            return Vec::new();
+        };
+        let Some(open) = &p.open else {
+            return Vec::new();
+        };
+        p.selection
+            .iter()
+            .filter_map(|id| open.path_of(id).map(|path| EntryRef::new(id, path)))
+            .collect()
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        self.lifetime.cancel();
+    }
+}
+
+// ================================================================ built-in commands
+
+/// Arguments shared by commands that act on a pane.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct PaneArg {
+    /// The pane to act on; the active pane when omitted.
+    #[serde(default)]
+    pub pane: Option<PaneId>,
+}
+
+fn pane_of(app: &App, arg: Option<PaneId>) -> PaneId {
+    arg.unwrap_or_else(|| app.workspace.read().active_id())
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct NavigateArgs {
+    /// A path or `scheme:rest`.
+    pub location: String,
+    #[serde(default)]
+    pub pane: Option<PaneId>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SelectMode {
+    #[default]
+    Replace,
+    Add,
+    Toggle,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SelectArgs {
+    #[serde(default)]
+    pub ids: Vec<EntryId>,
+    /// Select by name instead of (or in addition to) ids.
+    #[serde(default)]
+    pub names: Vec<String>,
+    #[serde(default)]
+    pub mode: SelectMode,
+    #[serde(default)]
+    pub pane: Option<PaneId>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RenameArgs {
+    pub new_name: String,
+    #[serde(default)]
+    pub pane: Option<PaneId>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DestArgs {
+    /// Destination directory.
+    pub dest: String,
+    #[serde(default)]
+    pub pane: Option<PaneId>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MkdirArgs {
+    pub name: String,
+    #[serde(default)]
+    pub pane: Option<PaneId>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct HydrateArgs {
+    pub ids: Vec<EntryId>,
+    #[serde(default)]
+    pub pane: Option<PaneId>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ApplyPlanArgs {
+    pub plan: PlanData,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PlanDiffArgs {
+    pub plan: PlanData,
+}
+
+mod builtin {
+    use super::*;
+
+    fn dir_of(app: &App, pane: PaneId) -> anyhow::Result<PathBuf> {
+        let ws = app.workspace.read();
+        let p = ws
+            .pane(pane)
+            .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+        p.location()
+            .and_then(Location::path)
+            .ok_or_else(|| anyhow::anyhow!("pane is not showing a directory"))
+    }
+
+    fn selection_plan(
+        app: &App,
+        pane: PaneId,
+        title: &str,
+        f: impl Fn(EntryRef) -> Box<dyn op::Operation>,
+    ) -> anyhow::Result<Outcome> {
+        let refs = app.selected_refs(pane);
+        if refs.is_empty() {
+            anyhow::bail!("nothing selected");
+        }
+        Ok(Outcome::Plan(Plan::with_steps(
+            title,
+            refs.into_iter().map(f).collect(),
+        )))
+    }
+
+    pub fn register(app: &App) {
+        let c = &app.commands;
+
+        c.register::<NavigateArgs, _>(
+            "core",
+            "navigate",
+            "Go to location",
+            "Open a path or location in a pane",
+            |a, app| {
+                let pane = pane_of(app, a.pane);
+                app.navigate(pane, &Location::parse(&a.location))?;
+                Ok(Outcome::Done)
+            },
+        );
+
+        c.register::<PaneArg, _>(
+            "core",
+            "refresh",
+            "Refresh",
+            "Re-list the pane's location",
+            |a, app| {
+                let pane = pane_of(app, a.pane);
+                let ws = app.workspace.read();
+                if let Some(open) = ws.pane(pane).and_then(|p| p.open.as_ref()) {
+                    open.refresh();
+                }
+                Ok(Outcome::Done)
+            },
+        );
+
+        c.register::<PaneArg, _>(
+            "core",
+            "back",
+            "Back",
+            "Go to the previous location",
+            |a, app| {
+                let pane = pane_of(app, a.pane);
+                let target = {
+                    let ws = app.workspace.read();
+                    let p = ws
+                        .pane(pane)
+                        .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                    (p.history_pos > 0)
+                        .then(|| (p.history_pos - 1, p.history[p.history_pos - 1].clone()))
+                };
+                if let Some((pos, loc)) = target {
+                    let open = app.open_location(&loc)?;
+                    let mut ws = app.workspace.write();
+                    let p = ws
+                        .pane_mut(pane)
+                        .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                    if let Some(old) = p.open.take() {
+                        old.close();
+                    }
+                    p.listing = crate::location::Listing::default();
+                    p.selection.clear();
+                    p.history_pos = pos;
+                    p.open = Some(open);
+                }
+                Ok(Outcome::Done)
+            },
+        );
+
+        c.register::<PaneArg, _>(
+            "core",
+            "up",
+            "Parent directory",
+            "Go to the parent of the current directory",
+            |a, app| {
+                let pane = pane_of(app, a.pane);
+                let dir = dir_of(app, pane)?;
+                if let Some(parent) = dir.parent() {
+                    app.navigate(pane, &Location::from_path(parent))?;
+                }
+                Ok(Outcome::Done)
+            },
+        );
+
+        c.register::<SelectArgs, _>(
+            "core",
+            "select",
+            "Select",
+            "Select entries by id or name",
+            |a, app| {
+                let pane = pane_of(app, a.pane);
+                let mut ws = app.workspace.write();
+                let p = ws
+                    .pane_mut(pane)
+                    .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                let mut ids = a.ids;
+                for n in &a.names {
+                    match p.listing.find_by_name(std::ffi::OsStr::new(n)) {
+                        Some(e) => ids.push(e.id),
+                        None => anyhow::bail!("no entry named `{n}`"),
+                    }
+                }
+                match a.mode {
+                    SelectMode::Replace => p.selection.set(ids),
+                    SelectMode::Add => ids.into_iter().for_each(|id| p.selection.add(id)),
+                    SelectMode::Toggle => ids.into_iter().for_each(|id| p.selection.toggle(id)),
+                }
+                Ok(Outcome::Done)
+            },
+        );
+
+        c.register::<PaneArg, _>(
+            "core",
+            "select_all",
+            "Select all",
+            "Select every entry",
+            |a, app| {
+                let pane = pane_of(app, a.pane);
+                let mut ws = app.workspace.write();
+                let p = ws
+                    .pane_mut(pane)
+                    .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                let ids: Vec<EntryId> = p.listing.ids().collect();
+                p.selection.set(ids);
+                Ok(Outcome::Done)
+            },
+        );
+
+        c.register::<PaneArg, _>(
+            "core",
+            "select_none",
+            "Clear selection",
+            "Deselect everything",
+            |a, app| {
+                let pane = pane_of(app, a.pane);
+                if let Some(p) = app.workspace.write().pane_mut(pane) {
+                    p.selection.clear();
+                }
+                Ok(Outcome::Done)
+            },
+        );
+
+        c.register::<HydrateArgs, _>(
+            "core",
+            "hydrate",
+            "Load metadata",
+            "Request metadata for entries (views call this for visible rows)",
+            |a, app| {
+                let pane = pane_of(app, a.pane);
+                let ws = app.workspace.read();
+                if let Some(open) = ws.pane(pane).and_then(|p| p.open.as_ref()) {
+                    open.hydrate(&a.ids, Priority::Visible);
+                }
+                Ok(Outcome::Done)
+            },
+        );
+
+        c.register::<RenameArgs, _>(
+            "core",
+            "rename",
+            "Rename",
+            "Rename the selected entry (plan)",
+            |a, app| {
+                let pane = pane_of(app, a.pane);
+                let refs = app.selected_refs(pane);
+                let [r] = refs.as_slice() else {
+                    anyhow::bail!("rename needs exactly one selected entry")
+                };
+                Ok(Outcome::Plan(Plan::with_steps(
+                    format!("rename to {}", a.new_name),
+                    vec![Box::new(op::Rename {
+                        entry: r.clone(),
+                        new_name: a.new_name,
+                    })],
+                )))
+            },
+        );
+
+        c.register::<DestArgs, _>(
+            "core",
+            "move",
+            "Move",
+            "Move the selection to a directory (plan)",
+            |a, app| {
+                let pane = pane_of(app, a.pane);
+                let dest = Location::parse(&a.dest)
+                    .path()
+                    .ok_or_else(|| anyhow::anyhow!("destination must be a path"))?;
+                selection_plan(app, pane, &format!("move to {}", dest.display()), |e| {
+                    Box::new(op::Move {
+                        entry: e,
+                        dest_dir: dest.clone(),
+                    })
+                })
+            },
+        );
+
+        c.register::<DestArgs, _>(
+            "core",
+            "copy",
+            "Copy",
+            "Copy the selection to a directory (plan)",
+            |a, app| {
+                let pane = pane_of(app, a.pane);
+                let dest = Location::parse(&a.dest)
+                    .path()
+                    .ok_or_else(|| anyhow::anyhow!("destination must be a path"))?;
+                selection_plan(app, pane, &format!("copy to {}", dest.display()), |e| {
+                    Box::new(op::Copy {
+                        entry: e,
+                        dest_dir: dest.clone(),
+                        new_name: None,
+                    })
+                })
+            },
+        );
+
+        c.register::<PaneArg, _>(
+            "core",
+            "trash",
+            "Move to trash",
+            "Trash the selection (plan)",
+            |a, app| {
+                let pane = pane_of(app, a.pane);
+                selection_plan(app, pane, "move to trash", |e| {
+                    Box::new(op::Trash { entry: e })
+                })
+            },
+        );
+
+        c.register::<PaneArg, _>(
+            "core",
+            "delete",
+            "Delete permanently",
+            "Delete the selection without trash (plan, irreversible)",
+            |a, app| {
+                let pane = pane_of(app, a.pane);
+                selection_plan(app, pane, "delete permanently", |e| {
+                    Box::new(op::Delete { entry: e })
+                })
+            },
+        );
+
+        c.register::<MkdirArgs, _>(
+            "core",
+            "mkdir",
+            "New folder",
+            "Create a folder in the current directory (plan)",
+            |a, app| {
+                let pane = pane_of(app, a.pane);
+                let dir = dir_of(app, pane)?;
+                Ok(Outcome::Plan(Plan::with_steps(
+                    format!("new folder {}", a.name),
+                    vec![Box::new(op::Mkdir {
+                        path: dir.join(a.name),
+                    })],
+                )))
+            },
+        );
+
+        c.register::<PlanDiffArgs, _>(
+            "core",
+            "plan_diff",
+            "Preview plan",
+            "Dry-run a plan and return what each step would do",
+            |a, app| {
+                let plan = Plan::from_data(&a.plan, &app.ops)?;
+                Ok(Outcome::Value(serde_json::to_value(plan.diff())?))
+            },
+        );
+
+        c.register::<ApplyPlanArgs, _>(
+            "core",
+            "apply_plan",
+            "Apply plan",
+            "Execute a plan in the background; progress arrives as executor events",
+            |a, app| {
+                let plan = Plan::from_data(&a.plan, &app.ops)?;
+                app.apply(plan);
+                Ok(Outcome::Done)
+            },
+        );
+
+        c.register::<PaneArg, _>(
+            "core",
+            "undo",
+            "Undo",
+            "Undo the most recent plan",
+            |_, app| {
+                if !app.executor.undo(app.lifetime().child()) {
+                    anyhow::bail!("nothing to undo");
+                }
+                Ok(Outcome::Done)
+            },
+        );
+
+        c.register::<PaneArg, _>(
+            "core",
+            "redo",
+            "Redo",
+            "Redo the most recently undone plan",
+            |_, app| {
+                if !app.executor.redo(app.lifetime().child()) {
+                    anyhow::bail!("nothing to redo");
+                }
+                Ok(Outcome::Done)
+            },
+        );
+
+        c.register::<PaneArg, _>(
+            "core",
+            "commands",
+            "List commands",
+            "Return every registered command with its argument schema",
+            |_, app| Ok(Outcome::Value(serde_json::to_value(app.commands.list())?)),
+        );
+    }
+}
