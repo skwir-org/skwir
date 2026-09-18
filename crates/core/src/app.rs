@@ -68,6 +68,7 @@ pub struct App {
     pub settings: Settings,
     pub cache: Cache,
     pub workspace: RwLock<Workspace>,
+    pub thumbnails: Arc<crate::thumbs::Thumbnails>,
     providers: RwLock<HashMap<Arc<str>, (Arc<str>, Arc<dyn LocationProvider>)>>,
     waker: RwLock<Option<Waker>>,
     batch_size: usize,
@@ -84,6 +85,7 @@ impl App {
         };
         let app = Arc::new(App {
             executor: Executor::new(scheduler.clone()),
+            thumbnails: crate::thumbs::Thumbnails::new(scheduler.clone()),
             scheduler,
             commands: CommandRegistry::default(),
             ops: OpRegistry::default(),
@@ -112,6 +114,7 @@ impl App {
     /// executor events are queued, so the UI can `pump` instead of polling.
     pub fn set_waker(&self, waker: Option<Waker>) {
         self.executor.set_waker(waker.clone());
+        self.thumbnails.set_waker(waker.clone());
         *self.waker.write() = waker;
     }
 
@@ -141,6 +144,7 @@ impl App {
     pub fn unregister_owner(&self, owner: &str) {
         self.commands.unregister_owner(owner);
         self.ops.unregister_owner(owner);
+        self.thumbnails.unregister_owner(owner);
         self.registry.remove_owner(owner);
         self.providers.write().retain(|_, (o, _)| &**o != owner);
         for spec in self.settings.schema() {
@@ -192,6 +196,11 @@ impl App {
     /// The UI calls this once per frame or on wake-up.
     pub fn pump(&self) -> usize {
         self.workspace.write().pump()
+    }
+
+    /// Like `pump`, and says which panes changed.
+    pub fn pump_report(&self) -> crate::workspace::PumpReport {
+        self.workspace.write().pump_report()
     }
 
     /// Block until the active pane's listing is complete (tests and CLI only).
@@ -274,6 +283,21 @@ pub enum SelectMode {
     Replace,
     Add,
     Toggle,
+    /// Replace the selection with the range from the anchor to the given id,
+    /// in the pane's current sort order (shift-click).
+    RangeTo,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SortArgs {
+    #[serde(default)]
+    pub key: Option<crate::location::SortKey>,
+    #[serde(default)]
+    pub ascending: Option<bool>,
+    #[serde(default)]
+    pub show_hidden: Option<bool>,
+    #[serde(default)]
+    pub pane: Option<PaneId>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -457,6 +481,23 @@ mod builtin {
                     SelectMode::Replace => p.selection.set(ids),
                     SelectMode::Add => ids.into_iter().for_each(|id| p.selection.add(id)),
                     SelectMode::Toggle => ids.into_iter().for_each(|id| p.selection.toggle(id)),
+                    SelectMode::RangeTo => {
+                        let Some(&target) = ids.last() else {
+                            anyhow::bail!("range_to needs a target id")
+                        };
+                        let order = p.listing.sorted(p.sort);
+                        let anchor = p.selection.anchor.or(p.selection.cursor).unwrap_or(target);
+                        let pos = |id: EntryId| order.iter().position(|x| *x == id);
+                        match (pos(anchor), pos(target)) {
+                            (Some(a), Some(b)) => {
+                                let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+                                p.selection.set(order[lo..=hi].iter().copied());
+                                p.selection.anchor = Some(anchor);
+                                p.selection.cursor = Some(target);
+                            }
+                            _ => p.selection.set([target]),
+                        }
+                    }
                 }
                 Ok(Outcome::Done)
             },

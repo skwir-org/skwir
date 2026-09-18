@@ -62,6 +62,22 @@ pub struct CommandSpec {
     pub owner: Arc<str>,
 }
 
+impl CommandSpec {
+    /// Names of the required arguments, from the schema.
+    pub fn required_args(&self) -> Vec<String> {
+        self.args_schema
+            .as_object()
+            .and_then(|o| o.get("required"))
+            .and_then(|r| r.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
 type Handler = Arc<dyn Fn(serde_json::Value, &App) -> anyhow::Result<Outcome> + Send + Sync>;
 
 /// Errors from dispatch.

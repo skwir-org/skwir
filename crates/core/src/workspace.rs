@@ -5,7 +5,7 @@ use std::sync::Arc;
 use indexmap::IndexSet;
 
 use crate::entry::EntryId;
-use crate::location::{Listing, Location, OpenLocation};
+use crate::location::{Listing, Location, OpenLocation, SortSpec};
 
 /// Identifier of a pane within the workspace.
 #[derive(
@@ -93,6 +93,8 @@ pub struct Pane {
     pub open: Option<Arc<dyn OpenLocation>>,
     pub listing: Listing,
     pub selection: Selection,
+    /// Sort and hidden-file settings; views render `listing.sorted(sort)`.
+    pub sort: SortSpec,
     pub history: Vec<Location>,
     /// Index into `history` of the current location.
     pub history_pos: usize,
@@ -105,6 +107,7 @@ impl Pane {
             open: None,
             listing: Listing::default(),
             selection: Selection::default(),
+            sort: SortSpec::default(),
             history: Vec::new(),
             history_pos: 0,
         }
@@ -205,6 +208,26 @@ impl Workspace {
 
     /// Pump every pane. Returns the total number of events applied.
     pub fn pump(&mut self) -> usize {
-        self.panes.iter_mut().map(Pane::pump).sum()
+        self.pump_report().applied
     }
+
+    /// Pump every pane and say which ones changed.
+    pub fn pump_report(&mut self) -> PumpReport {
+        let mut r = PumpReport::default();
+        for p in &mut self.panes {
+            let n = p.pump();
+            if n > 0 {
+                r.applied += n;
+                r.panes_changed.push(p.id);
+            }
+        }
+        r
+    }
+}
+
+/// What a pump did.
+#[derive(Clone, Debug, Default)]
+pub struct PumpReport {
+    pub applied: usize,
+    pub panes_changed: Vec<PaneId>,
 }

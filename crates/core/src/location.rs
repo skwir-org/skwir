@@ -173,13 +173,55 @@ pub trait LocationProvider: Send + Sync {
     fn open(&self, location: &Location, ctx: OpenContext) -> anyhow::Result<Arc<dyn OpenLocation>>;
 }
 
+/// What to sort a listing by. Directories always come first.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SortKey {
+    #[default]
+    Name,
+    Size,
+    Modified,
+}
+
+/// A pane's sort and filter settings; the sorted order is cached in the listing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SortSpec {
+    pub key: SortKey,
+    pub ascending: bool,
+    /// Include dot-prefixed entries.
+    pub show_hidden: bool,
+}
+
+impl Default for SortSpec {
+    fn default() -> Self {
+        SortSpec {
+            key: SortKey::Name,
+            ascending: true,
+            show_hidden: false,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct SortCache {
+    version: u64,
+    spec: SortSpec,
+    ids: Arc<[EntryId]>,
+}
+
 /// An in-memory view of a listing, kept up to date by applying events.
-/// Insertion order is preserved so streaming order is stable; views sort on top.
+/// Insertion order is preserved so streaming order is stable; `sorted`
+/// gives a cached order for a [`SortSpec`].
 #[derive(Debug, Default)]
 pub struct Listing {
     entries: IndexMap<EntryId, Entry>,
     complete: bool,
     error: Option<String>,
+    /// Incremented on every change, so views know when to recompute.
+    version: u64,
+    sort_cache: parking_lot::Mutex<Option<SortCache>>,
 }
 
 impl Listing {
@@ -198,6 +240,70 @@ impl Listing {
             ListingEvent::Complete => self.complete = true,
             ListingEvent::Error(e) => self.error = Some(e),
         }
+        self.version += 1;
+    }
+
+    /// Changes so far; equal versions mean identical contents.
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// The ids in `spec` order, directories first. Cached until the listing
+    /// or the spec changes, so calling this every frame is cheap.
+    pub fn sorted(&self, spec: SortSpec) -> Arc<[EntryId]> {
+        let mut cache = self.sort_cache.lock();
+        if let Some(c) = cache.as_ref()
+            && c.version == self.version
+            && c.spec == spec
+        {
+            return Arc::clone(&c.ids);
+        }
+        let ids = self.compute_sorted(spec);
+        *cache = Some(SortCache {
+            version: self.version,
+            spec,
+            ids: Arc::clone(&ids),
+        });
+        ids
+    }
+
+    fn compute_sorted(&self, spec: SortSpec) -> Arc<[EntryId]> {
+        use crate::entry::{Value, keys};
+        use std::os::unix::ffi::OsStrExt;
+        let mut keyed: Vec<(bool, u64, Vec<u8>, EntryId)> = self
+            .entries
+            .values()
+            .filter(|e| spec.show_hidden || !e.name.as_bytes().starts_with(b"."))
+            .map(|e| {
+                let num = match spec.key {
+                    SortKey::Name => 0,
+                    SortKey::Size => e
+                        .metadata
+                        .value(keys::SIZE)
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0),
+                    SortKey::Modified => e
+                        .metadata
+                        .value(keys::MODIFIED)
+                        .and_then(Value::as_time)
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map_or(0, |d| d.as_secs()),
+                };
+                (
+                    !e.is_dir(),
+                    num,
+                    e.name.as_bytes().to_ascii_lowercase(),
+                    e.id,
+                )
+            })
+            .collect();
+        keyed.sort_unstable_by(|a, b| {
+            a.0.cmp(&b.0).then_with(|| {
+                let o = a.1.cmp(&b.1).then_with(|| a.2.cmp(&b.2));
+                if spec.ascending { o } else { o.reverse() }
+            })
+        });
+        keyed.into_iter().map(|(_, _, _, id)| id).collect()
     }
 
     /// Drain everything currently available without blocking.

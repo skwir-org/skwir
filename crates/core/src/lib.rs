@@ -11,6 +11,7 @@
 //! - [`plugin`]: the plugin lifecycle with runtime toggles.
 //! - [`scheduler`]: the priority work queue with cancellation.
 //! - [`cache`] and [`settings`]: the throwaway cache and namespaced settings.
+//! - [`thumbs`]: the thumbnail service: providers, LRU of decoded images, viewport priority.
 //! - [`workspace`]: panes, selection, focus.
 //! - [`app`]: the object that ties them together and hosts the built-in commands.
 //!
@@ -29,10 +30,13 @@ pub mod plugin;
 pub mod registry;
 pub mod scheduler;
 pub mod settings;
+pub mod thumbs;
 pub mod workspace;
 
 pub use app::App;
 pub use cancel::CancelToken;
 pub use entry::{Entry, EntryId, EntryKind, Metadata, Provenance, Value};
-pub use location::{Listing, ListingEvent, Location, LocationProvider, OpenLocation};
+pub use location::{
+    Listing, ListingEvent, Location, LocationProvider, OpenLocation, SortKey, SortSpec,
+};
 pub use op::{Operation, Plan};
