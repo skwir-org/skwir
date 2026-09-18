@@ -20,7 +20,7 @@ def stream(data):
     return f"<< /Length {len(data)} >>\nstream\n".encode() + data + b"\nendstream"
 
 
-def reader(path, kind="text", crop=False):
+def reader(path, kind="text", crop=False, angle=90, named=False):
     objects = [b"", b"", b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
     page_ids = []
     image = None
@@ -43,22 +43,25 @@ def reader(path, kind="text", crop=False):
             text = b"q 600 0 0 800 0 0 cm /Im0 Do Q\n"
         objects.append(stream(text))
         content = len(objects)
-        rotation = " /Rotate 90" if number == 1 and kind == "text" else ""
-        if crop and number == 2:
+        rotation = f" /Rotate {angle}" if number == 1 and kind == "text" else ""
+        if crop and number >= 1:
             rotation += " /CropBox [20 30 580 770]"
         resources = f"/Font << /F1 3 0 R >>" + (f" /XObject << /Im0 {image} 0 R >>" if image else "")
         objects.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800]{rotation} /Resources << {resources} >> /Contents {content} 0 R >>".encode())
         page_ids.append(len(objects))
     objects.append(b"<< /Type /Annot /Subtype /Link /Rect [60 635 240 655] /Border [0 0 0] /A << /S /URI /URI (https://example.org/) >> >>")
     web = len(objects)
-    objects.append(f"<< /Type /Annot /Subtype /Link /Rect [60 595 240 615] /Border [0 0 0] /Dest [{page_ids[1]} 0 R /Fit] >>".encode())
+    destination = "(chapter2)" if named else f"[{page_ids[1]} 0 R /Fit]"
+    objects.append(f"<< /Type /Annot /Subtype /Link /Rect [60 595 240 615] /Border [0 0 0] /Dest {destination} >>".encode())
     local = len(objects)
-    objects[page_ids[0] - 1] = objects[page_ids[0] - 1][:-2] + f" /Annots [{web} 0 R {local} 0 R] >>".encode()
+    for page in page_ids:
+        objects[page - 1] = objects[page - 1][:-2] + f" /Annots [{web} 0 R {local} 0 R] >>".encode()
     outline = len(objects) + 1
     objects.append(f"<< /Type /Outlines /First {outline + 1} 0 R /Last {outline + 2} 0 R /Count 2 >>".encode())
     objects.append(f"<< /Title (Introduction) /Parent {outline} 0 R /Next {outline + 2} 0 R /Dest [{page_ids[0]} 0 R /Fit] >>".encode())
-    objects.append(f"<< /Title (Second chapter) /Parent {outline} 0 R /Prev {outline + 1} 0 R /Dest [{page_ids[1]} 0 R /Fit] >>".encode())
-    objects[0] = f"<< /Type /Catalog /Pages 2 0 R /Outlines {outline} 0 R >>".encode()
+    objects.append(f"<< /Title (Second chapter) /Parent {outline} 0 R /Prev {outline + 1} 0 R /Dest {destination} >>".encode())
+    names = f" /Dests << /chapter2 [{page_ids[1]} 0 R /Fit] >>" if named else ""
+    objects[0] = f"<< /Type /Catalog /Pages 2 0 R /Outlines {outline} 0 R{names} >>".encode()
     objects[1] = ("<< /Type /Pages /Count 3 /Kids [" + " ".join(f"{p} 0 R" for p in page_ids) + "] >>").encode()
     write_pdf(path, objects)
 

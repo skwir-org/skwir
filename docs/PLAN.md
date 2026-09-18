@@ -62,6 +62,59 @@ UI memory budget remains an open gate; measurements include the child process
 and are recorded separately from filesystem microbenchmarks. After 50 page
 turns, bibli plus PDFium measured about 201 MiB PSS versus 177 MiB with Poppler;
 both stabilized across turns. Fresh idle was 115–117 MiB, still above target.
+Settings follow-up: a schema-driven modal dialog opens from the toolbar,
+command palette, or Ctrl+comma. Scalar preferences of enabled plugins have
+boolean/choice controls, text/numeric inputs, per-field defaults, Save and Cancel.
+Saved-query collections remain managed by query commands. The `settings.apply`
+command validates whole batches and atomically persists only edited keys on a
+worker before publishing values; failures retain the draft. Document and thumbnail
+providers refresh through an explicit plugin settings hook, so engine changes
+apply without restarting bibli. This adds one defaulted method to the Phase 4
+plugin trait. The dialog uses the existing shell rather than a separate native
+window and does not yet expose plugin enable/disable controls. Lint and 126
+default tests pass, including failed-save recovery, batch validation, queued
+save/disable handling and provider refresh. Real UI checks used isolated config
+and synthetic documents: backend switching with an open PDF, persistence across
+restart, defaults, draft cancellation, numeric errors, text with spaces, and
+keyboard scrolling through the dialog. The 10k-image grid and 100k-entry list
+were also scrolled. All filesystem/thumbnail microbenchmark budgets pass. After
+opening and closing Settings in a fresh release window on four synthetic files,
+PSS was 106.9 MiB and idle CPU sampled 0.8% of one core over five seconds. The
+historical 100 MB UI memory gate remains open.
+
+Poppler reader follow-up (ADR-005): a separate `bibli-poppler-worker` keeps
+Poppler/GLib/Cairo outside the UI process and implements the same document
+protocol as PDFium. Both engines share the session manager, reader controls,
+selection/copy, search, links and outlines, including converted Office PDFs.
+Auto prefers PDFium then the Poppler reader, with the legacy CLI image path
+only when neither reader is available. Explicit engine selection requires the
+selected worker. The default Nix shell supplies Poppler build/runtime libraries;
+PDFium remains an optional runtime. Native parity checks cover all rotations
+with cropping, text/search/link geometry, named destinations, empty pages,
+missing outlines, limits and corrupt PDFs. CI runs the Poppler fixture suite.
+Validation: lint, 126 default tests and five installed-renderer tests pass,
+including nine Office formats with both readers. Real UI checks covered copy,
+search/rotation, outlines, links and grid/list scrolling. Microbenchmarks pass
+on an isolated rerun (an initial image listing sample missed by 135 µs; budgets
+are unchanged). After 50 page turns, combined bibli/worker PSS stabilized near
+185 MiB for Poppler and 191 MiB for PDFium; closing either preview reaped its
+worker. Equivalent-feature timing ranges, CPU/PSS and measurement limitations
+are recorded in `docs/pdf-comparison.md`. The existing UI memory gate stays open.
+
+Toolbar follow-up: the application groups view, pane and analysis controls with
+bundled symbolic SVGs; navigation sits beside each pane's address. PDFium and
+Poppler share one top reader toolbar with page entry, zoom presets, Fit page/width,
+search popover, contents drawer, copy and external opening. Intrinsic measurement
+in prepaint selects compact rows and overflow controls without render-time width
+feedback. Shared buttons dispatch commands, preserve focus when disabled and use
+GPUI's keyboard click handling. Pane address controls have separate element IDs.
+UI verification uses isolated settings and synthetic PDFs, covering compact/full
+rows, page validation, rotated pages, search, outlines, menu keyboard activation,
+split-pane Back/Up and grid/list paging. Lint, all 126 default tests and every
+microbenchmark budget pass. A fresh 654×1214 release window on four synthetic
+files measured 104.7 MiB PSS, 0.6% idle CPU over five seconds and a 147 ms first
+frame. This is a single sample at a different window size, not a before/after
+comparison; the historical 100 MB UI memory gate remains open.
 
 ---
 

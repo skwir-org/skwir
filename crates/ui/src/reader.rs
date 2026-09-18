@@ -3,7 +3,7 @@
 
 use crate::{
     input::{InputEvent, TextInput},
-    preview::{PreviewContent, preview_button},
+    preview::PreviewContent,
     shell::Shell,
     theme::Theme,
 };
@@ -34,6 +34,8 @@ pub struct ReaderState {
     pub selection: Option<(usize, usize)>,
     pub outlines: bool,
     find: Option<FindInput>,
+    pub page_input: Option<FindInput>,
+    pub menu: Option<crate::toolbar::Popup>,
     hits: Vec<SearchHit>,
     active_hit: Option<usize>,
     search_cancel: Option<CancelToken>,
@@ -54,6 +56,8 @@ impl Default for ReaderState {
             selection: None,
             outlines: false,
             find: None,
+            page_input: None,
+            menu: None,
             hits: Vec::new(),
             active_hit: None,
             search_cancel: None,
@@ -118,6 +122,97 @@ fn nearest(page: &PageContent, x: f32, y: f32) -> Option<usize> {
 }
 
 impl Shell {
+    pub fn reader_menu(
+        &mut self,
+        args: &serde_json::Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let kind = if args.get("kind").and_then(serde_json::Value::as_str) == Some("zoom") {
+            "zoom"
+        } else {
+            "reader"
+        };
+        let previous = self.preview.reader.menu.take();
+        let was_open = previous.as_ref().is_some_and(|p| p.kind == kind);
+        if let Some(popup) = previous {
+            popup.restore(window);
+        }
+        if !was_open && args.get("close").and_then(serde_json::Value::as_bool) != Some(true) {
+            self.preview.reader.menu = Some(crate::toolbar::Popup::new(kind, window, cx));
+        }
+        cx.notify();
+    }
+
+    pub fn reader_page_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !matches!(
+            self.preview.content,
+            Some(PreviewContent::Image {
+                detail: Some(bibli_core::preview::PreviewInfo::Document { .. }),
+                ..
+            })
+        ) {
+            return;
+        }
+        let input = cx.new(|cx| TextInput::new("Page", cx));
+        input.update(cx, |input, cx| {
+            input.set_text(self.preview.page.to_string(), cx);
+            input.select_all_now(cx);
+            input.focus(window);
+        });
+        let subscription =
+            cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
+                let command = match event {
+                    InputEvent::Submit => "ui.reader_page_submit",
+                    InputEvent::Cancel => "ui.reader_page_cancel",
+                    InputEvent::Changed => {
+                        cx.notify();
+                        return;
+                    }
+                };
+                this.run(command, serde_json::json!({}), window, cx);
+            });
+        self.preview.reader.page_input = Some(FindInput {
+            input,
+            _subscription: subscription,
+        });
+        cx.notify();
+    }
+
+    pub fn reader_page_submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let number = self
+            .preview
+            .reader
+            .page_input
+            .as_ref()
+            .and_then(|p| p.input.read(cx).text().trim().parse::<u32>().ok());
+        if let Some(number) = number.filter(|n| *n > 0 && *n <= document_pages(self)) {
+            self.reader_page_cancel(window, cx);
+            self.run(
+                "ui.reader_page",
+                serde_json::json!({"page":number}),
+                window,
+                cx,
+            );
+        } else {
+            self.set_status(
+                format!("Enter a page number from 1 to {}", document_pages(self)),
+                true,
+                cx,
+            );
+        }
+    }
+
+    pub fn reader_page_cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.preview.reader.page_input = None;
+        if let Some(focus) = &self.preview.reader.focus {
+            window.focus(focus);
+        } else {
+            window.focus(&self.ui().focus);
+        }
+        cx.notify();
+    }
+
     pub fn reader_pointer(
         &mut self,
         phase: &str,
@@ -211,8 +306,17 @@ impl Shell {
             None => {}
         }
     }
-    pub fn reader_outline(&mut self, cx: &mut Context<Self>) {
+    pub fn reader_outline(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.preview.reader.outlines = !self.preview.reader.outlines;
+        if !self.preview.reader.outlines {
+            window.focus(
+                self.preview
+                    .reader
+                    .focus
+                    .as_ref()
+                    .unwrap_or(&self.ui().focus),
+            );
+        }
         cx.notify();
     }
     pub fn reader_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -357,6 +461,7 @@ pub fn page_element(
         selection,
         highlights,
         zoom,
+        fit_width: shell.preview.fit_width,
         color: cx.global::<Theme>().accent,
         on_pointer: Rc::new(move |phase, x, y, window, cx| {
             if let Some(entity) = entity.upgrade() {
@@ -384,127 +489,483 @@ pub fn page_element(
         .into_any_element()
 }
 
-pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
+fn document_pages(shell: &Shell) -> u32 {
+    shell
+        .preview
+        .reader
+        .session
+        .as_ref()
+        .map(|s| s.info().pages)
+        .or({
+            if let Some(PreviewContent::Image {
+                detail: Some(bibli_core::preview::PreviewInfo::Document { pages, .. }),
+                ..
+            }) = &shell.preview.content
+            {
+                Some(*pages)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(1)
+}
+
+fn reader_row(shell: &Shell, mode: usize, cx: &mut Context<Shell>) -> AnyElement {
+    use crate::toolbar::{self, Button};
+    let theme = cx.global::<Theme>().clone();
     let reader = &shell.preview.reader;
-    let button = |id, label, command, args, cx: &mut Context<Shell>| {
-        preview_button(id, label, command, args, theme, cx)
-    };
-    let mut body = div()
-        .flex()
-        .flex_col()
-        .text_xs()
-        .border_b_1()
-        .border_color(theme.border)
+    let native = reader.session.is_some();
+    let current = shell.preview.page;
+    let pages = document_pages(shell);
+    let mut bar = toolbar::row(&theme).id(("reader-tools", mode));
+    if mode == 0 {
+        bar = bar
+            .child(
+                Button::new(
+                    "reader-outline",
+                    "contents",
+                    "Document contents",
+                    "ui.reader_outline",
+                )
+                .active(reader.outlines)
+                .enabled(native)
+                .render(shell, cx),
+            )
+            .child(toolbar::separator(&theme));
+    }
+    bar = bar.child(
+        Button::new(
+            "preview-prev",
+            "left",
+            "Previous page · Alt+Page Up",
+            "ui.preview_page",
+        )
+        .args(serde_json::json!({"delta":-1}))
+        .enabled(current > 1)
+        .render(shell, cx),
+    );
+    if let Some(editor) = &reader.page_input {
+        bar = bar.child(
+            div()
+                .w(px(44.))
+                .flex_none()
+                .h(px(28.))
+                .px_1()
+                .border_1()
+                .border_color(theme.accent)
+                .rounded_md()
+                .bg(theme.bg)
+                .child(editor.input.clone()),
+        );
+    } else {
+        bar = bar.child(
+            Button::new(
+                "reader-page-number",
+                "",
+                "Go to page",
+                "ui.reader_page_edit",
+            )
+            .label(current.to_string())
+            .render(shell, cx)
+            .bg(theme.bg)
+            .border_color(theme.border),
+        );
+    }
+    bar = bar
         .child(
+            div()
+                .flex_none()
+                .text_xs()
+                .text_color(theme.text_muted)
+                .whitespace_nowrap()
+                .child(format!("/ {pages}")),
+        )
+        .child(
+            Button::new(
+                "preview-next",
+                "right",
+                "Next page · Alt+Page Down",
+                "ui.preview_page",
+            )
+            .args(serde_json::json!({"delta":1}))
+            .enabled(current < pages)
+            .render(shell, cx),
+        );
+    if mode == 0 {
+        bar = bar
+            .child(toolbar::separator(&theme))
+            .child(
+                Button::new("preview-zoom-out", "minus", "Zoom out", "ui.preview_zoom")
+                    .args(serde_json::json!({"dir":"out"}))
+                    .render(shell, cx),
+            )
+            .child(
+                Button::new(
+                    "reader-zoom-menu",
+                    "chevron",
+                    "Zoom and fit options",
+                    "ui.reader_menu",
+                )
+                .args(serde_json::json!({"kind":"zoom"}))
+                .label(shell.preview.zoom.map_or_else(
+                    || {
+                        if shell.preview.fit_width {
+                            "Width".into()
+                        } else {
+                            "Fit".into()
+                        }
+                    },
+                    |z| format!("{:.0}%", z * 100.),
+                ))
+                .render(shell, cx),
+            )
+            .child(
+                Button::new("preview-zoom-in", "plus", "Zoom in", "ui.preview_zoom")
+                    .args(serde_json::json!({"dir":"in"}))
+                    .render(shell, cx),
+            );
+    }
+    bar = bar.child(
+        Button::new("preview-fit", "fit", "Fit whole page", "ui.preview_zoom")
+            .args(serde_json::json!({"dir":"reset"}))
+            .active(shell.preview.zoom.is_none() && !shell.preview.fit_width)
+            .render(shell, cx),
+    );
+    if mode == 0 {
+        bar = bar
+            .child(
+                Button::new(
+                    "preview-width",
+                    "width",
+                    "Fit page width",
+                    "ui.preview_zoom",
+                )
+                .args(serde_json::json!({"dir":"width"}))
+                .active(shell.preview.fit_width)
+                .render(shell, cx),
+            )
+            .child(toolbar::separator(&theme));
+    }
+    if mode < 2 {
+        bar = bar.child(
+            Button::new(
+                "reader-find",
+                "search",
+                "Find in document · Ctrl+F",
+                "ui.reader_find",
+            )
+            .enabled(native)
+            .active(reader.find.is_some())
+            .render(shell, cx),
+        );
+    }
+    if mode == 0 {
+        bar = bar
+            .child(
+                Button::new(
+                    "reader-copy",
+                    "copy",
+                    "Copy selected text · Ctrl+C",
+                    "ui.reader_copy",
+                )
+                .enabled(reader.selection.is_some())
+                .render(shell, cx),
+            )
+            .child(
+                Button::new(
+                    "reader-external",
+                    "open",
+                    "Open in default application",
+                    "ui.reader_open_external",
+                )
+                .render(shell, cx),
+            );
+    } else {
+        bar = bar.child(
+            Button::new(
+                "reader-more",
+                "more",
+                "More document controls",
+                "ui.reader_menu",
+            )
+            .active(reader.menu.is_some())
+            .render(shell, cx),
+        );
+    }
+    bar.into_any_element()
+}
+
+pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
+    use crate::toolbar::{self, Button};
+    let reader = &shell.preview.reader;
+    let mut root = div()
+        .relative()
+        .flex_none()
+        .child(crate::elements::adaptive::AdaptiveRow {
+            variants: (0..3).map(|mode| reader_row(shell, mode, cx)).collect(),
+            height: 42.,
+        });
+    if let Some(popup) = &reader.menu {
+        let mut panel = toolbar::popup_panel(popup, "ui.reader_menu", theme, cx);
+        if popup.kind == "reader" {
+            for (id, icon, title, command, enabled) in [
+                (
+                    "menu-contents",
+                    "contents",
+                    "Contents",
+                    "ui.reader_outline",
+                    reader.session.is_some(),
+                ),
+                (
+                    "menu-find",
+                    "search",
+                    "Find in document",
+                    "ui.reader_find",
+                    reader.session.is_some(),
+                ),
+                (
+                    "menu-copy",
+                    "copy",
+                    "Copy selected text",
+                    "ui.reader_copy",
+                    reader.selection.is_some(),
+                ),
+                (
+                    "menu-open",
+                    "open",
+                    "Open externally",
+                    "ui.reader_open_external",
+                    true,
+                ),
+            ] {
+                panel = panel.child(
+                    Button::new(id, icon, title, command)
+                        .label(title)
+                        .enabled(enabled)
+                        .render(shell, cx)
+                        .justify_start(),
+                );
+            }
+            panel = panel.child(div().h(px(1.)).my_1().bg(theme.border));
+        }
+        for (id, icon, label, value) in [
+            ("menu-fit", "fit", "Fit page", "reset"),
+            ("menu-width", "width", "Fit width", "width"),
+        ] {
+            panel = panel.child(
+                Button::new(id, icon, label, "ui.preview_zoom")
+                    .label(label)
+                    .args(serde_json::json!({"dir":value}))
+                    .render(shell, cx)
+                    .justify_start(),
+            );
+        }
+        let mut zooms = div().flex().flex_wrap().gap_1();
+        for (id, label, value) in [
+            ("zoom50", "50%", "0.5"),
+            ("zoom75", "75%", "0.75"),
+            ("zoom100", "100%", "1"),
+            ("zoom150", "150%", "1.5"),
+            ("zoom200", "200%", "2"),
+            ("zoom400", "400%", "4"),
+        ] {
+            zooms = zooms.child(
+                Button::new(id, "", label, "ui.preview_zoom")
+                    .label(label)
+                    .args(serde_json::json!({"dir":value}))
+                    .render(shell, cx),
+            );
+        }
+        panel = panel.child(zooms).child(
             div()
                 .flex()
                 .gap_1()
-                .p_1()
-                .child(button(
-                    "reader-outline",
-                    "Contents",
-                    "ui.reader_outline",
-                    serde_json::json!({}),
-                    cx,
-                ))
-                .child(button(
-                    "reader-find",
-                    "Find",
-                    "ui.reader_find",
-                    serde_json::json!({}),
-                    cx,
-                ))
-                .child(button(
-                    "reader-copy",
-                    "Copy",
-                    "ui.reader_copy",
-                    serde_json::json!({}),
-                    cx,
-                )),
+                .child(
+                    Button::new("menu-zoom-out", "minus", "Zoom out", "ui.preview_zoom")
+                        .args(serde_json::json!({"dir":"out"}))
+                        .render(shell, cx),
+                )
+                .child(
+                    Button::new("menu-zoom-in", "plus", "Zoom in", "ui.preview_zoom")
+                        .args(serde_json::json!({"dir":"in"}))
+                        .render(shell, cx),
+                ),
         );
-    if reader.outlines
-        && let Some(session) = &reader.session
-    {
-        let entries = &session.info().outlines;
-        let mut list = div()
-            .id("reader-outline-list")
-            .max_h(px(180.))
-            .overflow_y_scroll()
-            .p_1();
-        if entries.is_empty() {
-            list = list.child("No document outline");
-        }
-        for (index, entry) in entries.iter().enumerate() {
-            let page = entry.page;
-            list = list.child(
+        root = root.child(toolbar::anchored_popup(panel));
+    } else if let Some(find) = &reader.find {
+        let count = if reader.searching {
+            "Searching…".to_owned()
+        } else {
+            format!(
+                "{} / {}{}",
+                reader.active_hit.map_or(0, |i| i + 1),
+                reader.hits.len(),
+                if reader.hits.len() == bibli_core::document::MAX_HITS {
+                    "+"
+                } else {
+                    ""
+                }
+            )
+        };
+        let panel = div()
+            .tab_group()
+            .key_context("DocumentFind")
+            .w(px(280.))
+            .p_2()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .rounded_lg()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.bg)
+            .shadow_lg()
+            .occlude()
+            .child(
                 div()
-                    .id(("outline-entry", index))
-                    .pl(px(entry.depth.min(12) as f32 * 10.))
-                    .truncate()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(theme.border))
-                    .child(entry.title.clone())
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        if let Some(page) = page {
-                            shell.run(
-                                "ui.reader_page",
-                                serde_json::json!({"page":page}),
-                                window,
-                                cx,
-                            );
-                        }
-                    })),
-            );
-        }
-        body = body.child(list);
-    }
-    if let Some(find) = &reader.find {
-        body = body
-            .child(div().px_2().py_1().child(find.input.clone()))
+                    .px_2()
+                    .py_1()
+                    .border_1()
+                    .border_color(theme.accent)
+                    .rounded_md()
+                    .child(find.input.clone()),
+            )
             .child(
                 div()
                     .flex()
-                    .gap_1()
                     .items_center()
-                    .px_1()
-                    .child(if reader.searching {
-                        "Searching…".to_owned()
-                    } else {
-                        format!(
-                            "{} / {}{}",
-                            reader.active_hit.map_or(0, |i| i + 1),
-                            reader.hits.len(),
-                            if reader.hits.len() == bibli_core::document::MAX_HITS {
-                                " (limit)"
-                            } else {
-                                ""
-                            }
+                    .gap_1()
+                    .text_xs()
+                    .child(div().flex_1().text_color(theme.text_muted).child(count))
+                    .child(
+                        Button::new(
+                            "reader-prev-match",
+                            "left",
+                            "Previous match · Shift+F3",
+                            "ui.reader_match",
                         )
-                    })
-                    .child(button(
-                        "reader-prev-match",
-                        "‹",
-                        "ui.reader_match",
-                        serde_json::json!({"delta":-1}),
-                        cx,
-                    ))
-                    .child(button(
-                        "reader-next-match",
-                        "›",
-                        "ui.reader_match",
-                        serde_json::json!({"delta":1}),
-                        cx,
-                    ))
-                    .child(button(
-                        "reader-close-find",
-                        "×",
-                        "ui.reader_find_close",
-                        serde_json::json!({}),
-                        cx,
-                    )),
+                        .args(serde_json::json!({"delta":-1}))
+                        .enabled(!reader.hits.is_empty())
+                        .render(shell, cx),
+                    )
+                    .child(
+                        Button::new(
+                            "reader-next-match",
+                            "right",
+                            "Next match · F3",
+                            "ui.reader_match",
+                        )
+                        .args(serde_json::json!({"delta":1}))
+                        .enabled(!reader.hits.is_empty())
+                        .render(shell, cx),
+                    )
+                    .child(
+                        Button::new(
+                            "reader-close-find",
+                            "close",
+                            "Close find · Escape",
+                            "ui.reader_find_close",
+                        )
+                        .render(shell, cx),
+                    ),
             );
+        root = root.child(toolbar::anchored_popup(panel));
     }
-    body.into_any_element()
+    root.into_any_element()
+}
+
+pub fn outline_drawer(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
+    use crate::toolbar::Button;
+    let reader = &shell.preview.reader;
+    if !reader.outlines {
+        return None;
+    }
+    let entries = &reader.session.as_ref()?.info().outlines;
+    let mut list = div()
+        .id("reader-outline-list")
+        .tab_group()
+        .flex_1()
+        .min_h_0()
+        .overflow_y_scroll()
+        .p_2();
+    if entries.is_empty() {
+        list = list.child("No document outline");
+    }
+    for (index, entry) in entries.iter().enumerate() {
+        let page = entry.page;
+        list = list.child(
+            div()
+                .id(("outline-entry", index))
+                .pl(px(entry.depth.min(12) as f32 * 10. + 8.))
+                .py_1()
+                .rounded_md()
+                .truncate()
+                .when(page.is_some(), |d| {
+                    d.cursor_pointer()
+                        .tab_index(0)
+                        .key_context("ToolbarButton")
+                        .hover(|s| s.bg(theme.selection_bg))
+                        .focus(|s| s.bg(theme.selection_bg))
+                })
+                .child(entry.title.clone())
+                .on_click(cx.listener(move |shell, _, window, cx| {
+                    if let Some(page) = page {
+                        shell.run(
+                            "ui.reader_page",
+                            serde_json::json!({"page":page}),
+                            window,
+                            cx,
+                        );
+                        shell.run("ui.reader_outline", serde_json::json!({}), window, cx);
+                    }
+                }))
+                .on_action(cx.listener(|_, action: &crate::keymap::RunCommand, _, cx| {
+                    // Activation comes from GPUI's key-up click, as in toolbar::Button.
+                    if action.name != "ui.toolbar_activate" {
+                        cx.propagate();
+                    }
+                })),
+        );
+    }
+    Some(
+        gpui::deferred(
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .left_0()
+                .w(px(220.))
+                .max_w_full()
+                .flex()
+                .flex_col()
+                .bg(theme.bg)
+                .border_r_1()
+                .border_color(theme.border)
+                .shadow_md()
+                .occlude()
+                .text_xs()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .px_2()
+                        .py_1()
+                        .child(div().flex_1().child("Contents"))
+                        .child(
+                            Button::new(
+                                "outline-close",
+                                "close",
+                                "Close contents",
+                                "ui.reader_outline",
+                            )
+                            .render(shell, cx),
+                        ),
+                )
+                .child(list),
+        )
+        .with_priority(1)
+        .into_any_element(),
+    )
 }
 
 #[cfg(test)]

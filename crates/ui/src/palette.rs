@@ -45,6 +45,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.focus_address", "{}", "Focus address bar"),
     ("ui.focus_pane", "{}", "Focus file list"),
     ("ui.palette", "{}", "Command palette"),
+    ("ui.settings", "{}", "Settings…"),
     ("ui.rename_prompt", "{}", "Rename…"),
     ("ui.mkdir_prompt", "{}", "New folder…"),
     ("ui.confirm_delete", "{}", "Delete permanently…"),
@@ -65,6 +66,18 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
         "Preview: previous page",
     ),
     ("ui.preview_page", r#"{"delta":1}"#, "Preview: next page"),
+    ("ui.reader_page_edit", "{}", "Document: go to page…"),
+    ("ui.reader_open_external", "{}", "Document: open externally"),
+    (
+        "ui.preview_zoom",
+        r#"{"dir":"width"}"#,
+        "Document: fit width",
+    ),
+    (
+        "ui.preview_zoom",
+        r#"{"dir":"1"}"#,
+        "Preview: actual size (100%)",
+    ),
     ("ui.reader_find", "{}", "Document: find text"),
     ("ui.reader_outline", "{}", "Document: contents"),
     ("ui.reader_copy", "{}", "Document: copy selected text"),
@@ -118,6 +131,8 @@ impl Shell {
             .commands
             .list()
             .into_iter()
+            // Structured preference batches are edited by the Settings dialog.
+            .filter(|c| &*c.name != "settings.apply")
             .map(|c| PaletteItem {
                 keys: key_of(&c.name),
                 name: c.name.to_string(),

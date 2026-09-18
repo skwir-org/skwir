@@ -15,6 +15,9 @@ pub struct FsAssets;
 
 impl AssetSource for FsAssets {
     fn load(&self, path: &str) -> anyhow::Result<Option<Cow<'static, [u8]>>> {
+        if let Some(bytes) = crate::toolbar::asset(path) {
+            return Ok(Some(Cow::Borrowed(bytes)));
+        }
         if !Path::new(path).is_absolute() {
             return Ok(None);
         }

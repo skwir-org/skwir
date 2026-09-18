@@ -2,6 +2,7 @@
 
 Status: accepted, 2026-09-18. Supersedes ADR-003's PDF engine choice and its
 single-request lifetime for the optional reader; Poppler remains supported.
+ADR-005 subsequently upgrades Poppler to the same reader protocol and features.
 
 ## Context
 

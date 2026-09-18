@@ -20,6 +20,7 @@ pub struct DocumentElement {
     pub selection: Vec<Rect>,
     pub color: Hsla,
     pub zoom: Option<f32>,
+    pub fit_width: bool,
     pub on_pointer: Pointer,
 }
 impl IntoElement for DocumentElement {
@@ -67,6 +68,10 @@ impl Element for DocumentElement {
         if let Some(zoom) = self.zoom {
             style.size.width = px(self.page.width * zoom).into();
             style.size.height = px(self.page.height * zoom).into();
+            style.flex_shrink = 0.;
+        } else if self.fit_width {
+            style.size.width = relative(1.).into();
+            style.aspect_ratio = Some(self.page.width / self.page.height.max(1.));
             style.flex_shrink = 0.;
         } else {
             style.size.width = relative(1.).into();

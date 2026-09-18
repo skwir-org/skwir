@@ -4,3 +4,5 @@
 pub mod document;
 pub mod treemap;
 pub mod uniform_grid;
+
+pub mod adaptive;

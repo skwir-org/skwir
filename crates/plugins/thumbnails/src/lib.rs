@@ -31,13 +31,23 @@ impl Plugin for ThumbnailsPlugin {
         "Thumbnails from the desktop cache, an image decoder, and installed thumbnailers"
     }
 
+    fn on_settings_changed(&self, app: &App, _keys: &[String]) {
+        app.thumbnails.unregister_owner(self.id());
+        self.register(app);
+    }
+
     fn register(&self, app: &App) {
         app.settings.declare(SettingSpec {
+            constraints: bibli_core::settings::SettingConstraints::default(),
             key: "thumbnails.write_cache".into(),
             description: "Store generated thumbnails in the freedesktop cache so other applications reuse them".into(),
             default: toml::Value::Boolean(true),
         });
         app.settings.declare(SettingSpec {
+            constraints: bibli_core::settings::SettingConstraints {
+                choices: Vec::new(),
+                integer_range: Some((4, 4096)),
+            },
             key: "thumbnails.budget_mb".into(),
             description: "Megabytes of decoded thumbnails kept in memory".into(),
             default: toml::Value::Integer(64),

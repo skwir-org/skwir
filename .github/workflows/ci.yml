@@ -15,6 +15,8 @@ jobs:
         run: nix develop --command just lint
       - name: Test
         run: nix develop --command just test
+      - name: Native Poppler reader
+        run: nix develop --command just poppler-check
       - name: Performance budgets
         # Hosted runners are slower and noisier than the reference machine;
         # budgets carry a 3x margin over local measurements for that reason.

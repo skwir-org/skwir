@@ -13,6 +13,11 @@ impl Plugin for PreviewPlugin {
     fn title(&self) -> &'static str {
         "Preview: documents"
     }
+    fn on_settings_changed(&self, app: &App, _keys: &[String]) {
+        app.previews.unregister_owner(self.id());
+        self.register(app);
+    }
+
     fn register(&self, app: &App) {
         for (name, description, default) in [
             (
@@ -27,6 +32,14 @@ impl Plugin for PreviewPlugin {
             ),
         ] {
             app.settings.declare(bibli_core::settings::SettingSpec {
+                constraints: bibli_core::settings::SettingConstraints {
+                    choices: if name == "backend" {
+                        ["auto", "pdfium", "poppler"].map(str::to_owned).to_vec()
+                    } else {
+                        Vec::new()
+                    },
+                    integer_range: None,
+                },
                 key: format!("{}.{}", self.id(), name),
                 description: description.into(),
                 default: toml::Value::String(default.into()),

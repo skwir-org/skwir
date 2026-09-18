@@ -138,6 +138,7 @@ impl Plugin for ShellPlugin {
     }
     fn register(&self, app: &App) {
         app.settings.declare(SettingSpec {
+            constraints: bibli_core::settings::SettingConstraints::default(),
             key: PROGRAM_KEY.into(),
             description: "Shell used by shell.run ($SHELL by default)".into(),
             default: toml::Value::String(default_program()),

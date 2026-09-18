@@ -132,6 +132,7 @@ impl App {
         app.register_provider("core", Arc::new(PathProvider));
         op::register_builtin(&app.ops);
         builtin::register(&app);
+        crate::settings::register(&app);
         Ok(app)
     }
 

@@ -20,6 +20,9 @@ pub trait Plugin: Send + Sync {
     }
     /// Contribute to the app. Called on enable.
     fn register(&self, app: &App);
+    /// Apply changed preferences on a worker. Read-through settings need no hook.
+    /// Refresh only affected contributions, preserving unrelated plugin state.
+    fn on_settings_changed(&self, _app: &App, _keys: &[String]) {}
     /// Release resources the registries do not know about. Called on disable.
     fn on_disable(&self, _app: &App) {}
 }
@@ -37,6 +40,9 @@ pub struct PluginInfo {
 #[derive(Default)]
 pub struct PluginHost {
     plugins: RwLock<Vec<(Arc<dyn Plugin>, bool)>>,
+    /// Serializes lifecycle callbacks without holding registry/state locks.
+    /// Callbacks must not recursively enable/disable plugins.
+    lifecycle: parking_lot::Mutex<()>,
 }
 
 impl PluginHost {
@@ -46,6 +52,7 @@ impl PluginHost {
 
     /// Add a plugin. It is enabled unless `plugins.<id>.enabled = false` in settings.
     pub fn add(&self, plugin: Arc<dyn Plugin>, app: &App) {
+        let _lifecycle = self.lifecycle.lock();
         let enabled = app
             .settings
             .get::<bool>(&Self::setting_key(plugin.id()))
@@ -58,6 +65,7 @@ impl PluginHost {
 
     /// Toggle at runtime. Persists the choice in settings.
     pub fn set_enabled(&self, id: &str, enabled: bool, app: &App) -> bool {
+        let _lifecycle = self.lifecycle.lock();
         let plugin = {
             let mut plugins = self.plugins.write();
             let Some(slot) = plugins.iter_mut().find(|(p, _)| p.id() == id) else {
@@ -78,6 +86,32 @@ impl PluginHost {
         app.settings
             .set(&Self::setting_key(id), toml::Value::Boolean(enabled));
         true
+    }
+
+    /// Worker-only: serialize refreshes against enable/disable so a late
+    /// settings callback cannot restore a disabled plugin's contributions.
+    pub fn settings_changed(&self, keys: &[String], app: &App) {
+        let _lifecycle = self.lifecycle.lock();
+        let plugins: Vec<_> = self
+            .plugins
+            .read()
+            .iter()
+            .filter(|(plugin, enabled)| {
+                *enabled
+                    && keys
+                        .iter()
+                        .any(|key| key.starts_with(&format!("{}.", plugin.id())))
+            })
+            .map(|(plugin, _)| Arc::clone(plugin))
+            .collect();
+        for plugin in plugins {
+            let owned: Vec<_> = keys
+                .iter()
+                .filter(|key| key.starts_with(&format!("{}.", plugin.id())))
+                .cloned()
+                .collect();
+            plugin.on_settings_changed(app, &owned);
+        }
     }
 
     pub fn is_enabled(&self, id: &str) -> bool {

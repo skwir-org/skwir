@@ -112,9 +112,10 @@ pub struct PreviewState {
     cancel: Option<CancelToken>,
     generation: u64,
     key: Option<PreviewKey>,
-    page: u32,
+    pub(crate) page: u32,
     seconds: Option<f64>,
-    zoom: Option<f32>,
+    pub(crate) zoom: Option<f32>,
+    pub(crate) fit_width: bool,
     tx: flume::Sender<PreviewResult>,
     rx: flume::Receiver<PreviewResult>,
     text_scroll: UniformListScrollHandle,
@@ -138,6 +139,7 @@ impl Default for PreviewState {
             page: 1,
             seconds: None,
             zoom: None,
+            fit_width: false,
             tx,
             rx,
             text_scroll: UniformListScrollHandle::new(),
@@ -603,6 +605,7 @@ impl Shell {
         self.preview.page = 1;
         self.preview.seconds = None;
         self.preview.zoom = None;
+        self.preview.fit_width = false;
         self.preview
             .text_scroll
             .scroll_to_item_strict(0, ScrollStrategy::Top);
@@ -643,6 +646,7 @@ impl Shell {
         };
         let next = next.clamp(1, pages);
         if next != self.preview.page {
+            self.preview.reader.page_input = None;
             self.preview.reader.cancel_search();
             self.cancel_pending_preview();
             self.preview.page = next;
@@ -668,11 +672,38 @@ impl Shell {
         cx.notify();
     }
 
+    pub fn reader_open_external(&mut self, _cx: &mut Context<Self>) {
+        let Some(key) = &self.preview.key else {
+            return;
+        };
+        let entry = EntryRef::new(key.id, &key.path);
+        let app = self.app.clone();
+        self.app.scheduler.spawn(
+            Priority::Visible,
+            "document-open",
+            self.app.lifetime().child(),
+            move || {
+                if let Err(error) = entry
+                    .resolve()
+                    .map_err(anyhow::Error::from)
+                    .and_then(|p| bibli_platform::open::open_path(&p))
+                {
+                    app.notify(bibli_core::app::NotifyLevel::Error, error.to_string());
+                }
+            },
+        );
+    }
+
     pub fn preview_zoom(&mut self, direction: &str, cx: &mut Context<Self>) {
+        self.preview.fit_width = direction == "width";
         self.preview.zoom = match direction {
             "in" => Some(self.preview.zoom.map_or(1.0, |z| (z * 1.25).min(4.0))),
             "out" => Some(self.preview.zoom.map_or(0.75, |z| (z / 1.25).max(0.25))),
-            _ => None,
+            value => value
+                .parse::<f32>()
+                .ok()
+                .filter(|v| v.is_finite())
+                .map(|v| v.clamp(0.25, 4.0)),
         };
         cx.notify();
     }
@@ -790,6 +821,15 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
                             .h(px(*height as f32 * zoom)),
                     )
                     .into_any_element()
+            } else if p.fit_width {
+                div()
+                    .id("preview-image-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .overflow_scroll()
+                    .child(img(Arc::clone(image)).w_full())
+                    .into_any_element()
             } else {
                 div()
                     .flex_1()
@@ -814,26 +854,7 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
                 .p_2()
                 .text_xs();
             match detail {
-                Some(PreviewInfo::Document { page, pages }) => {
-                    controls = controls
-                        .child(preview_button(
-                            "preview-prev",
-                            "‹",
-                            "ui.preview_page",
-                            serde_json::json!({"delta": -1}),
-                            theme,
-                            cx,
-                        ))
-                        .child(format!("Page {page} / {pages}"))
-                        .child(preview_button(
-                            "preview-next",
-                            "›",
-                            "ui.preview_page",
-                            serde_json::json!({"delta": 1}),
-                            theme,
-                            cx,
-                        ));
-                }
+                Some(PreviewInfo::Document { .. }) => {}
                 Some(PreviewInfo::Video { seconds, duration }) => {
                     let label = duration.map_or_else(
                         || format!("{seconds:.1}s"),
@@ -896,14 +917,41 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
                 .when(document.is_some() && interactive, |d| {
                     d.key_context(keymap::READER)
                 })
-                .children(
-                    document
-                        .as_ref()
-                        .filter(|_| interactive)
-                        .map(|_| crate::reader::toolbar(shell, theme, cx)),
+                .when(
+                    matches!(detail, Some(PreviewInfo::Document { .. })) && interactive,
+                    |d| {
+                        d.child(
+                            div()
+                                .relative()
+                                .child(crate::reader::toolbar(shell, theme, cx))
+                                .when(p.phase != PreviewPhase::Idle, |d| {
+                                    d.child(
+                                        div()
+                                            .absolute()
+                                            .bottom_0()
+                                            .w_full()
+                                            .h(px(2.))
+                                            .bg(theme.accent),
+                                    )
+                                }),
+                        )
+                    },
                 )
-                .child(picture)
-                .child(controls)
+                .child(
+                    div()
+                        .relative()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_h_0()
+                        .child(picture)
+                        .when(document.is_some() && interactive, |d| {
+                            d.children(crate::reader::outline_drawer(shell, theme, cx))
+                        }),
+                )
+                .when(!matches!(detail, Some(PreviewInfo::Document { .. })), |d| {
+                    d.child(controls)
+                })
                 .into_any_element()
         }
         Some(PreviewContent::Text { lines, truncated }) => {

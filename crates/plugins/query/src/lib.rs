@@ -130,6 +130,7 @@ impl Plugin for QueryPlugin {
     fn register(&self, app: &App) {
         app.register_provider(ID, Arc::new(QueryProvider));
         app.settings.declare(SettingSpec {
+            constraints: bibli_core::settings::SettingConstraints::default(),
             key: SAVED_KEY.into(),
             description: "Saved queries shown in the sidebar: [{ name, expr }]".into(),
             default: toml::Value::Array(Vec::new()),

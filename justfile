@@ -11,6 +11,11 @@ build:
 test:
     cargo nextest run --workspace --no-tests=pass
 
+# Exercise real Poppler with synthetic text, geometry and navigation fixtures.
+poppler-check:
+    cargo build -p bibli-poppler-worker
+    python3 tools/pdf/check.py --engine poppler --worker target/debug/bibli-poppler-worker
+
 # Lint: rustfmt check + clippy with warnings as errors.
 lint:
     cargo fmt --all -- --check
@@ -42,12 +47,12 @@ spike toolkit gpu="intel" rows="100000":
 
 # Run the app (release) on a directory, default: the current one.
 run dir=".":
-    cargo build --release -p bibli -p bibli-pdf-worker
+    cargo build --release -p bibli -p bibli-pdf-worker -p bibli-poppler-worker
     ./target/release/bibli {{dir}}
 
 # Profile the app with samply (opens the Firefox Profiler UI when done).
 flame dir=".":
-    cargo build --release -p bibli -p bibli-pdf-worker
+    cargo build --release -p bibli -p bibli-pdf-worker -p bibli-poppler-worker
     samply record ./target/release/bibli {{dir}}
 
 # Profile a bench profile's listing with a flamegraph SVG.

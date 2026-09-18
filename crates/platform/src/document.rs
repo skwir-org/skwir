@@ -1,4 +1,4 @@
-//! On-demand `PDFium` sessions. A manager thread owns every child and temporary
+//! On-demand native PDF sessions. A manager thread owns every child and temporary
 //! file, so closing a preview never waits or removes files on the UI thread.
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -26,35 +26,43 @@ enum Response {
     Matches(Vec<SearchHit>),
 }
 
-pub struct PdfiumSession {
+pub struct WorkerSession {
     info: DocumentInfo,
     jobs: mpsc::Sender<Job>,
 }
 
-pub(crate) fn worker_path() -> Option<PathBuf> {
-    std::env::var_os("BIBLI_PDF_WORKER")
-        .map(PathBuf::from)
-        .or_else(|| {
-            let sibling = std::env::current_exe()
-                .ok()?
-                .parent()?
-                .join("bibli-pdf-worker");
-            sibling.is_file().then_some(sibling)
-        })
-        .or_else(|| crate::process::find("bibli-pdf-worker"))
+#[derive(Clone, Copy)]
+pub(crate) enum Engine {
+    Pdfium,
+    Poppler,
 }
 
-impl PdfiumSession {
+pub(crate) fn worker_path(engine: Engine) -> Option<PathBuf> {
+    let (variable, executable) = match engine {
+        Engine::Pdfium => ("BIBLI_PDF_WORKER", "bibli-pdf-worker"),
+        Engine::Poppler => ("BIBLI_POPPLER_WORKER", "bibli-poppler-worker"),
+    };
+    std::env::var_os(variable)
+        .map(PathBuf::from)
+        .or_else(|| {
+            let sibling = std::env::current_exe().ok()?.parent()?.join(executable);
+            sibling.is_file().then_some(sibling)
+        })
+        .or_else(|| crate::process::find(executable))
+}
+
+impl WorkerSession {
     /// Called on a scheduler worker. None means the optional worker/library is
     /// absent; malformed or encrypted documents produce an ordinary error.
-    pub fn open(
+    pub(crate) fn open(
+        engine: Engine,
         pdf: PathBuf,
         source: PathBuf,
         scratch: tempfile::TempDir,
         library: Option<PathBuf>,
         lifetime: CancelToken,
     ) -> anyhow::Result<Option<Arc<dyn DocumentSession>>> {
-        let Some(executable) = worker_path() else {
+        let Some(executable) = worker_path(engine) else {
             return Ok(None);
         };
         Self::open_with_worker(executable, pdf, source, scratch, library, lifetime)
@@ -224,7 +232,7 @@ impl PdfiumSession {
     }
 }
 
-impl DocumentSession for PdfiumSession {
+impl DocumentSession for WorkerSession {
     fn info(&self) -> &DocumentInfo {
         &self.info
     }
@@ -292,7 +300,7 @@ impl Worker {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
         }
-        let mut child = ChildGuard(command.spawn().context("start PDFium worker")?);
+        let mut child = ChildGuard(command.spawn().context("start document worker")?);
         let input = child.0.stdin.take().context("worker stdin")?;
         let output = child.0.stdout.take().context("worker stdout")?;
         let (tx, replies) = mpsc::sync_channel(1);
@@ -354,7 +362,7 @@ impl Worker {
                 Ok(result) => return result,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    anyhow::bail!("PDFium worker exited unexpectedly")
+                    anyhow::bail!("document worker exited unexpectedly")
                 }
             }
         }
@@ -397,7 +405,7 @@ mod tests {
             let scratch = tempfile::tempdir().unwrap();
             let scratch_path = scratch.path().to_owned();
             let lifetime = CancelToken::new();
-            let session = PdfiumSession::open_with_worker(
+            let session = WorkerSession::open_with_worker(
                 executable,
                 source.clone(),
                 source.clone(),

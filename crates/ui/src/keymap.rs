@@ -55,6 +55,19 @@ const DEFAULTS: &[(&str, &str, Option<&str>)] = &[
 
 /// Bindings the shell always needs, independent of plugins.
 const BUILTIN: &[(&str, &str, Option<&str>)] = &[
+    ("tab", "ui.toolbar_next", None),
+    ("shift-tab", "ui.toolbar_prev", None),
+    ("enter", "ui.toolbar_activate", Some("ToolbarButton")),
+    ("space", "ui.toolbar_activate", Some("ToolbarButton")),
+    ("escape", "ui.toolbar_close", Some("ToolbarPopup")),
+    ("escape", "ui.reader_find_close", Some("DocumentFind")),
+    ("ctrl-,", "ui.settings", None),
+    ("escape", "ui.settings_close", Some("Settings")),
+    ("ctrl-s", "ui.settings_save", Some("Settings")),
+    ("enter", "ui.settings_save", Some("Settings")),
+    ("tab", "ui.settings_next", Some("Settings")),
+    ("shift-tab", "ui.settings_prev", Some("Settings")),
+    ("space", "ui.settings_cycle", Some("SettingChoice")),
     ("ctrl-c", "ui.reader_copy", Some("reader")),
     ("ctrl-a", "ui.reader_select_all", Some("reader")),
     ("ctrl-f", "ui.reader_find", Some("reader")),

@@ -71,6 +71,8 @@ pub struct Shell {
     pub prompt: Option<PromptState>,
     pub confirm: Option<ConfirmState>,
     pub menu: Option<MenuState>,
+    pub toolbar_menu: Option<crate::toolbar::Popup>,
+    pub settings: Option<crate::settings::SettingsState>,
     /// Plans proposed by background work, oldest first; the front is shown.
     pub reviews: VecDeque<Plan>,
     pub review_focus: Option<FocusHandle>,
@@ -135,6 +137,8 @@ impl Shell {
             prompt: None,
             confirm: None,
             menu: None,
+            toolbar_menu: None,
+            settings: None,
             reviews: VecDeque::new(),
             review_focus: None,
             usage: UsageState::default(),
@@ -368,7 +372,13 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        tracing::debug!(name, %args, "run");
+        if self.settings.is_some() && !name.starts_with("ui.settings") {
+            return;
+        }
+        // Settings may contain private paths; never trace their values.
+        if !name.starts_with("ui.settings") && !name.starts_with("settings.") {
+            tracing::debug!(name, %args, "run");
+        }
         if let Some(ui) = name.strip_prefix("ui.") {
             self.run_ui(ui, &args, window, cx);
             cx.notify();
@@ -463,6 +473,11 @@ impl Shell {
                 });
             }
             "focus_pane" => window.focus(&self.ui().focus),
+            "settings" => self.open_settings(window, cx),
+            "toolbar_next" => window.focus_next(),
+            "toolbar_prev" => window.focus_prev(),
+            "toolbar_menu" => self.toggle_toolbar_menu(args, window, cx),
+            name if name.starts_with("settings_") => self.settings_command(name, args, window, cx),
             "palette" => self.open_palette(window, cx),
             "palette_up" => self.palette_move(-1, cx),
             "palette_down" => self.palette_move(1, cx),
@@ -584,6 +599,7 @@ impl Shell {
                 self.sort_by(key, cx);
             }
             "view" => {
+                self.close_usage(cx);
                 let id = arg("id").unwrap_or_else(|| view::LIST.into());
                 self.set_view(&id, cx);
             }
@@ -627,9 +643,14 @@ impl Shell {
                     .unwrap_or(1),
                 cx,
             ),
+            "reader_menu" => self.reader_menu(args, window, cx),
+            "reader_page_edit" => self.reader_page_edit(window, cx),
+            "reader_page_submit" => self.reader_page_submit(window, cx),
+            "reader_page_cancel" => self.reader_page_cancel(window, cx),
+            "reader_open_external" => self.reader_open_external(cx),
             "reader_copy" => self.reader_copy(cx),
             "reader_select_all" => self.reader_select_all(cx),
-            "reader_outline" => self.reader_outline(cx),
+            "reader_outline" => self.reader_outline(window, cx),
             "reader_find" => self.reader_find(window, cx),
             "reader_find_close" => self.reader_find_close(window, cx),
             "reader_search" => self.reader_search(cx),
@@ -891,7 +912,9 @@ impl Render for Shell {
         }
         let panel = preview::render_panel(self, cx);
         let status_bar = status::render(self, cx);
+        self.sync_settings(cx);
         let overlays = [
+            crate::settings::render(self, window, cx),
             menu::render(self, cx),
             prompts::render_prompt(self, cx),
             prompts::render_confirm(self, cx),

@@ -52,7 +52,9 @@
           libiconv
         ];
 
-        buildInputs = (lib.optionals stdenv.hostPlatform.isLinux linuxBuildInputs) ++ darwinBuildInputs;
+        # Only the optional Poppler worker links these; bibli itself does not.
+        buildInputs = [ pkgs.poppler_gi pkgs.cairo pkgs.glib ]
+          ++ (lib.optionals stdenv.hostPlatform.isLinux linuxBuildInputs) ++ darwinBuildInputs;
 
         nativeBuildInputs = with pkgs; [
           rustToolchain
@@ -64,6 +66,7 @@
 
         devTools = with pkgs; [
           just
+          python3         # synthetic native-reader checks and comparisons
           cargo-nextest
           cargo-watch
           bacon

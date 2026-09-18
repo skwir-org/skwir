@@ -51,21 +51,40 @@ Useful keys: `ctrl-shift-p` command palette, `ctrl-l` address bar, `ctrl-f`
 search, `ctrl-j` jump, `ctrl-1/2/3` list, grid, columns, `F3` preview, space
 peek, `ctrl-shift-d` split, `ctrl-shift-u` disk usage, `ctrl-shift-l`
 timeline, `ctrl-shift-b` add to shelf, `ctrl-f2` bulk rename, `ctrl-e` edit
-as text, `ctrl-z` undo. Every command and its key is in the palette.
+as text, `ctrl-z` undo, `ctrl-,` settings. Every command and its key is in the palette.
+
+Open **Settings** in the toolbar (or press `ctrl-,`) to edit preferences for
+currently enabled plugins. Tab/Shift+Tab move between fields; Space cycles a
+focused switch or choice. **Default** resets a field in the draft, **Save**
+(`ctrl-s`) persists and applies changes, and **Cancel** (`Esc`) discards unsaved
+edits. PDF engine, thumbnail and shell preferences apply without a restart.
+Plugin enable/disable flags and saved-query collections are not edited here.
 
 ## Document and video previews
 
 F3 opens the preview panel; Space opens peek. PDF pages and Office documents
-have previous/next controls (`alt-pageup` / `alt-pagedown`), plus zoom and Fit.
+have a single top toolbar: previous/next (`alt-pageup` / `alt-pagedown`),
+an editable page number, zoom presets, Fit page/width, document search,
+contents, copy and open externally. Narrow panels move secondary controls
+into the overflow menu. Search opens below the toolbar; contents opens in
+a collapsible drawer. Native reader features work with either PDF engine.
 Video previews show a still frame with five-second seek controls; in peek,
 `ctrl-left` / `ctrl-right` seek while plain arrows select another file.
 All controls are also available in the command palette.
 
+The application toolbar groups views, pane controls and analysis tools, with
+Search and Settings on the right. Each pane has its own Back/Up buttons beside
+the address. Icons have tooltips; Tab/Shift+Tab navigate toolbar buttons and
+Enter/Space activate them (Tab in split panes still switches panes).
+
 Install optional tools on `PATH` to enable these formats:
 
-- PDF reader: `bibli-pdf-worker` plus the PDFium shared library. `just build`
-  and `just run` build the worker. Use `nix develop .#pdf` for the optional
-  runtime, or set `BIBLI_PDFIUM_LIBRARY` to your installed library.
+- PDFium reader: `bibli-pdf-worker` plus the PDFium shared library. Use
+  `nix develop .#pdf` for the optional runtime, or set `BIBLI_PDFIUM_LIBRARY`
+  to your installed library.
+- Poppler reader: `bibli-poppler-worker` plus `poppler-glib`, GLib and Cairo.
+  The default Nix shell provides these libraries. `just build` and `just run`
+  build both workers; building only `bibli` does not require Poppler headers.
 - PDF image preview fallback: Poppler utilities (`pdfinfo`, `pdftoppm`).
 - Video stills: `ffmpeg` and `ffprobe`.
 - DOC/DOCX, XLS/XLSX, PPT/PPTX, ODT/ODS/ODP (and related formats): LibreOffice,
@@ -74,7 +93,7 @@ Install optional tools on `PATH` to enable these formats:
 
 The `preview-media` and `preview-documents` plugins can be disabled independently
 using `plugins.<id>.enabled` in settings. Missing tools are reported in the
-panel. With PDFium, drag to select text, use Copy or `ctrl-c`, Find or
+panel. With either reader engine, drag to select text, use Copy or `ctrl-c`, Find or
 `ctrl-f`, and Contents to navigate the outline. Click the page first to focus
 reader shortcuts: `ctrl-a` selects page text, Page Up/Down turn pages, and
 F3/Shift-F3 step through search matches. Search runs on Enter. Internal links
@@ -82,8 +101,11 @@ navigate within the document; HTTP(S) links open in the default browser.
 Page and zoom state last while that file remains selected.
 
 The default backend is `auto`: prefer PDFium when available, otherwise use
-Poppler. To force either engine, set this in `bibli/settings.toml` under your
-platform's config directory, then restart bibli (or disable/re-enable the plugin):
+the Poppler reader. If neither worker is installed, `auto` retains the basic
+Poppler utilities image preview. Explicit engine choices require their reader
+worker and report an error if unavailable. In **Settings → Preview: documents → backend**, choose `pdfium` or
+`poppler` and Save to switch immediately. You can also set this in
+`bibli/settings.toml` under your platform's config directory, then restart bibli:
 
 ```toml
 [preview-documents]
@@ -92,11 +114,14 @@ backend = "pdfium" # "auto" or "poppler"
 ```
 
 An explicit library setting takes precedence over `BIBLI_PDFIUM_LIBRARY`.
-Distributors should install the worker beside bibli, or on `PATH`;
-`BIBLI_PDF_WORKER` can select another executable for development.
-PDFium is loaded only in the worker while a document is open. It uses the
+Distributors should install workers beside bibli, or on `PATH`;
+`BIBLI_PDF_WORKER` and `BIBLI_POPPLER_WORKER` select alternate executables
+for development. Native PDF libraries are loaded only in workers while a
+document is open. PDFium uses the
 upstream BSD-style/Apache-2.0 terms plus third-party notices; the Rust binding
-is MIT/Apache-2.0. See [ADR-004](docs/adr/004-pdfium-reader.md).
+is MIT/Apache-2.0. See [ADR-004](docs/adr/004-pdfium-reader.md). The Poppler worker links GPL
+Poppler; its distribution must respect that license. See
+[ADR-005](docs/adr/005-poppler-reader.md).
 
 Text selection is currently limited to one page; scanned images need an
 existing text layer for search/selection. Password entry, editing, annotations,
@@ -106,9 +131,10 @@ remain future work.
 To exercise installed renderers with generated fixtures:
 
 ```
-cargo build --release -p bibli-pdf-worker
-BIBLI_PDF_WORKER="$PWD/target/release/bibli-pdf-worker" cargo nextest run --release -p bibli-platform --run-ignored only -E 'test(preview::tests::real_)'
+cargo build --release -p bibli-pdf-worker -p bibli-poppler-worker
+BIBLI_PDF_WORKER="$PWD/target/release/bibli-pdf-worker" BIBLI_POPPLER_WORKER="$PWD/target/release/bibli-poppler-worker" cargo nextest run --release -p bibli-platform --run-ignored only -E 'test(preview::tests::real_)'
 python3 tools/pdf/check.py --library "$BIBLI_PDFIUM_LIBRARY"
+python3 tools/pdf/check.py --engine poppler --worker target/release/bibli-poppler-worker
 python3 tools/pdf/compare.py --library "$BIBLI_PDFIUM_LIBRARY"
 ```
 

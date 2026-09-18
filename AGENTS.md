@@ -58,6 +58,15 @@ current source before assuming a planned crate, command, or API exists.
   Size-dependent layout lives in an element's `prepaint`, where the bounds are
   real (`crates/ui/src/elements/`). The only permitted later reads of prepaint
   values are for keyboard paging.
+- **Toolbars.** Reuse command-backed buttons and bundled symbolic SVGs in
+  `crates/ui/src/toolbar.rs`. Responsive rows select variants by intrinsic
+  measurement in `elements/adaptive.rs` prepaint; do not maintain pixel
+  breakpoints beside changing labels. Tooltips, focus styles and keyboard
+  activation belong to the shared button. Pane actions capture their target
+  during rendering and need pane-specific element IDs. Popovers restore focus
+  when dismissed; retain a focused button's handle when it becomes disabled.
+  GPUI already emits Enter/Space clicks on key-up: do not dispatch again on
+  key-down.
 - **Commands are the one surface.** Every user action is a command
   (`bibli_core::command`), so the keymap, palette, CLI, MCP server, and agents
   all share it. The UI handles `ui.*` names itself and dispatches the rest.
@@ -117,6 +126,7 @@ crates/platform    per-OS adapters: MIME, icons, thumbnails, places, open, termi
 crates/ui          the gpui shell: views, panels, prompts, keymap, elements
 crates/bibli       the binary: wires plugins and starts the UI
 crates/pdf-worker  optional native PDF reader process (runtime-loaded PDFium)
+crates/poppler-worker optional native PDF reader process (linked poppler-glib)
 crates/plugins/*   one crate per plugin (see docs/PLAN.md Phase 2 and 4)
 crates/bench       synthetic trees and the performance regression check
 vendor/gpui        patched gpui 0.2.2 (see vendor/gpui/README.bibli.md)
@@ -161,16 +171,34 @@ docs/              PLAN.md, adr/
   row during rendering. For virtual locations, use `OpenLocation::path_of` or
   `App::selected_refs`; a query/shelf location is not a filesystem directory.
 
+## Settings
+
+- Declare preferences in `SettingSpec`; the settings dialog derives controls
+  from their types and constraints. Choices and numeric limits belong to the
+  owning plugin, not UI key-specific branches. Collections such as saved queries
+  remain application data managed by their existing commands.
+- UI drafts stay local until `settings.apply`. Submit only edited keys; validate
+  the whole batch, save atomically on a worker, then publish live values. A failed
+  write must retain both the previous configuration and the editable draft.
+- Plugins that capture preferences at registration implement
+  `on_settings_changed`; refresh only their affected providers. Read-through
+  preferences need no hook. Lifecycle callbacks are serialized and must not
+  recursively enable/disable plugins; registry and settings locks are released
+  before invoking them. Never invoke lifecycle callbacks from a UI render.
+- Never trace settings values; paths and shell preferences can be private.
+  Exercise saves against an isolated config directory, never the user's file.
+
 ## Document reader invariants
 
-- Native PDFium is loaded only by `bibli-pdf-worker`, never in the UI process.
+- Native PDF libraries load only in `bibli-pdf-worker` / `bibli-poppler-worker`,
+  never in the UI process. Both engines use the same protocol/session manager.
   Session creation/render/search are blocking worker entry points. The manager
   thread owns child cleanup and temporary files; dropping a UI session must
   only cancel/send, never wait for a process or delete files.
 - A session follows both the selected preview and its provider registration.
   Page/search requests have separate cancellation and generation checks.
   Cancel background search before a visible page request. Disabling a provider
-  must cancel even an idle session; test this without requiring native PDFium.
+  must cancel even an idle session; test this without requiring native libraries.
 - Document pages transfer one owned pixel buffer into GPUI; swizzle it in
   place. Full-page copies on scheduler threads can retain large allocations
   across allocator arenas even after the preview is closed.
@@ -179,10 +207,13 @@ docs/              PLAN.md, adr/
   a preview, as the thumbnail LRU does on eviction.
 - PDF pixel, text, link and search rectangles share normalized coordinates.
   Fit/zoom transforms belong in `elements/document.rs` prepaint. Verify rotated
-  pages with `tools/pdf/check.py`; use only its synthetic fixture generator.
+  pages with `tools/pdf/check.py` for both engines; use only its synthetic
+  fixture generator. Poppler text layout has a top-left origin, whereas its
+  search/link rectangles have a bottom-left origin; normalize at the worker.
 - `auto` may fall back when the worker/library is absent. Report document
   errors directly; do not conceal malformed files by silently trying engines.
-  Poppler remains selectable for comparison. Measurements must distinguish
+  Poppler provides the same reader features. CLI image fallback is for `auto`
+  only when neither reader worker is available. Measurements must distinguish
   renderer time from full UI latency and include child PSS, not only bibli PSS.
 
 ## Paths and generated queries

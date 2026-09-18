@@ -1,0 +1,18 @@
+[package]
+name = "bibli-poppler-worker"
+description = "On-demand Poppler document worker for bibli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bibli-core.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+poppler-rs = "=0.25.0"
+glib = "0.21"
+cairo-rs = "0.21"
+
+[lints]
+workspace = true
