@@ -319,19 +319,26 @@ Goal: agents that organize, rename, clean, tag, and summarize, always ending in 
    Cached by content hash. Uses installed tools where present. Benefits plain search immediately.
 2. `cleaners` — deterministic: exact duplicates (hash), near-duplicate images (perceptual hash),
    empty dirs, stale downloads. No model. Each produces a plan.
-3. `models` — `ModelProvider` trait: chat with tool calling, embeddings, image understanding,
+3. `fulltext` — keyword search index on Tantivy (ADR-003), embedded, no service. One index per
+   subtree, built on demand and only when asked, refreshed incrementally by mtime and content hash,
+   stored in the throwaway cache, pausable and deletable. It feeds the query language's `content:`
+   term when an index covers the query root; otherwise the existing scan runs, so the index is only
+   an accelerator. Text comes from the `extract` provider. Existing system indexes (Tracker, Baloo,
+   Recoll, Spotlight, Windows Search) and a running Meilisearch are optional providers for the same
+   term, used when present, never required.
+4. `models` — `ModelProvider` trait: chat with tool calling, embeddings, image understanding,
    transcription. Implementations: local runtime (lazy-loaded), auto-detected Ollama, remote APIs
    behind explicit opt-in with a persistent "leaves your machine" indicator. Idle cost when disabled: zero.
-4. `models-small` — embeddings, CLIP-style image tagging/search, OCR, document classifier.
+5. `models-small` — embeddings, CLIP-style image tagging/search, OCR, document classifier.
    Run on CPU or iGPU. These do the volume; the LLM orchestrates.
-5. `semantic` — scoped, on-demand, incremental subtree index in the throwaway cache; visible and
+6. `semantic` — scoped, on-demand, incremental subtree index in the throwaway cache; visible and
    pausable. Natural language becomes a `LocationProvider` in the same address bar.
-6. `agent` — the LLM plugin. Tools = the command registry. Output = a `Plan`. Never executes.
+7. `agent` — the LLM plugin. Tools = the command registry. Output = a `Plan`. Never executes.
    Prompts treat file names and contents as untrusted input. Flows: organize this folder,
    rename these consistently, what is safe to delete here, tag the selection, summarize in preview.
-7. Metadata from models carries `Model(name, confidence)` provenance and renders as suggestions
+8. Metadata from models carries `Model(name, confidence)` provenance and renders as suggestions
    until confirmed, at which point it is promoted to User provenance and written to xattrs.
-8. MCP client, so the agent can use external tools the user configures.
+9. MCP client, so the agent can use external tools the user configures.
 
 **Done when:** "organize this folder" on a messy Downloads produces a correct, undoable plan using
 only local models, and disabling every AI plugin returns idle RSS to the Phase 2 baseline.
