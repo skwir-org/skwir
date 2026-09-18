@@ -1,15 +1,16 @@
-//! The grid (gallery) view: thumbnail cells in virtualized rows.
+//! The grid (gallery) view: thumbnail cells in a `UniformGrid`, whose
+//! column count is decided in prepaint from the element's real width.
 
 use std::ops::Range;
 
 use bibli_core::EntryId;
 use bibli_core::thumbs::ThumbSize;
 use gpui::{
-    AnyElement, Context, MouseButton, MouseDownEvent, ScrollStrategy, UniformListScrollHandle,
-    Window, div, img, prelude::*, px, uniform_list,
+    AnyElement, Context, MouseButton, MouseDownEvent, Window, div, img, prelude::*, px, size,
 };
 
 use crate::dnd;
+use crate::elements::uniform_grid::{UniformGridScrollHandle, uniform_grid};
 use crate::icons;
 use crate::shell::Shell;
 use crate::theme::Theme;
@@ -21,36 +22,16 @@ pub const ZOOMS: [u32; 4] = [96, 128, 192, 256];
 
 #[derive(Default)]
 pub struct GridView {
-    scroll: UniformListScrollHandle,
-    cols: usize,
-    rows_visible: usize,
+    scroll: UniformGridScrollHandle,
 }
 
 impl GridView {
-    fn cell_w(zoom: u32) -> f32 {
+    pub fn cell_w(zoom: u32) -> f32 {
         zoom as f32 + 24.0
     }
 
-    fn cell_h(zoom: u32) -> f32 {
+    pub fn cell_h(zoom: u32) -> f32 {
         zoom as f32 + 44.0
-    }
-
-    fn compute_cols(&mut self, shell: &Shell) -> usize {
-        let width = shell.ui().list.content_width.get() - 8.0;
-        let cols = (width / Self::cell_w(shell.zoom)).floor().max(1.0) as usize;
-        if cols != self.cols {
-            // Row indices change meaning: keep the same first visible item at
-            // the top so a reflow does not read as a scroll jump.
-            // `logical_scroll_top_index` is test-only in gpui 0.2.2; this is its body.
-            let top_row = self.scroll.0.borrow().base_handle.logical_scroll_top().0;
-            let first_item = top_row * self.cols.max(1);
-            self.cols = cols;
-            if first_item > 0 {
-                self.scroll
-                    .scroll_to_item_strict(first_item / cols, ScrollStrategy::Top);
-            }
-        }
-        cols
     }
 }
 
@@ -190,55 +171,43 @@ impl PaneView for GridView {
     }
 
     fn render(&mut self, shell: &mut Shell, _: &mut Window, cx: &mut Context<Shell>) -> AnyElement {
-        let cols = self.compute_cols(shell);
         let count = shell.ui().list.sorted.len();
-        let rows = count.div_ceil(cols);
         let zoom = shell.zoom;
         let pane = shell.pane;
-        let list = uniform_list(
-            "grid-rows",
-            rows,
-            cx.processor(move |this: &mut Shell, range: Range<usize>, window, cx| {
+        let render = cx.processor(
+            move |this: &mut Shell, (range, cols): (Range<usize>, usize), window, cx| {
                 this.with_pane(pane, |this| {
                     let theme = cx.global::<Theme>().clone();
-                    this.ui_mut().list.visible_rows = range.len().max(1) * cols;
-                    this.ui_mut().grid_rows_visible = range.len().max(1);
-                    let mut out = Vec::with_capacity(range.len());
-                    for r in range {
-                        let start = r * cols;
-                        let end = ((r + 1) * cols).min(this.ui_mut().list.sorted.len());
-                        let ids: Vec<(usize, EntryId)> = (start..end)
-                            .map(|ix| (ix, this.ui_mut().list.sorted[ix]))
-                            .collect();
-                        let mut row = div()
-                            .h(px(GridView::cell_h(zoom)))
-                            .w_full()
-                            .flex()
-                            .flex_row()
-                            .px_1();
-                        for (ix, id) in ids {
-                            row = row.child(cell(this, &theme, ix, id, window, cx));
-                        }
-                        out.push(row);
-                    }
-                    out
+                    this.ui_mut().list.visible_rows = range.len().div_ceil(cols.max(1)).max(1);
+                    let ids: Vec<(usize, EntryId)> = range
+                        .filter_map(|ix| this.ui().list.sorted.get(ix).map(|id| (ix, *id)))
+                        .collect();
+                    ids.into_iter()
+                        .map(|(ix, id)| cell(this, &theme, ix, id, window, cx))
+                        .collect::<Vec<_>>()
                 })
-            }),
+            },
+        );
+        let grid = uniform_grid(
+            ("grid", pane.0 as usize),
+            count,
+            size(px(GridView::cell_w(zoom)), px(GridView::cell_h(zoom))),
+            move |range, cols, window, cx| render((range, cols), window, cx),
         )
         .track_scroll(self.scroll.clone())
-        .size_full();
-        self.rows_visible = shell.ui().grid_rows_visible;
-        div().size_full().child(list).into_any_element()
+        .size_full()
+        .px_1();
+        div().size_full().child(grid).into_any_element()
     }
 
     fn scroll_to(&mut self, ix: usize) {
-        let cols = self.cols.max(1);
-        self.scroll.scroll_to_item(ix / cols, ScrollStrategy::Top);
+        self.scroll.scroll_to_item(ix);
     }
 
     fn nav_delta(&self, nav: Nav, _: &Shell) -> Option<isize> {
-        let cols = self.cols.max(1) as isize;
-        let page = (self.rows_visible.saturating_sub(1).max(1) as isize) * cols;
+        // Geometry from the last prepaint, never from a measured width.
+        let cols = self.scroll.cols() as isize;
+        let page = (self.scroll.rows_visible().saturating_sub(1).max(1) as isize) * cols;
         match nav {
             Nav::Up => Some(-cols),
             Nav::Down => Some(cols),
@@ -251,6 +220,6 @@ impl PaneView for GridView {
     }
 
     fn reset(&mut self) {
-        self.scroll.scroll_to_item_strict(0, ScrollStrategy::Top);
+        self.scroll.scroll_to_item_strict(0);
     }
 }

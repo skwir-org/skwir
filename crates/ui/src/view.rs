@@ -1,5 +1,11 @@
 //! Pane views: list, grid, columns. One trait, registered as `ViewSpec`s.
 //!
+//! Rule: never derive layout from a measured size in `render`; size-dependent
+//! layout lives in an element's `prepaint`, where the bounds are real (see
+//! `elements::uniform_grid` and `elements::treemap`). The only size a view may
+//! read outside prepaint is what its own element recorded in its last
+//! prepaint (column count, visible rows), and only for keyboard navigation.
+//!
 //! This trait is the future `ui-api` surface for out-of-crate views; it is
 //! kept in-crate until a third-party view exists (see the plan).
 

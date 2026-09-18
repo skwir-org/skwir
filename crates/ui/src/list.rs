@@ -1,10 +1,8 @@
 //! Pane state shared by every view: the cached sorted order, hydration
 //! bookkeeping, selection and cursor interaction, type-ahead, and the pane
-//! container (focus, key context, external drops, size measurement).
+//! container (focus, key context, external drops).
 
-use std::cell::Cell;
 use std::collections::HashSet;
-use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use bibli_core::command::Invocation;
@@ -12,7 +10,7 @@ use bibli_core::workspace::PaneId;
 use bibli_core::{EntryId, SortKey, SortSpec};
 use gpui::{
     AnyElement, Context, ExternalPaths, KeyContext, KeyDownEvent, MouseButton, MouseDownEvent,
-    Window, canvas, div, prelude::*,
+    Window, div, prelude::*,
 };
 
 use crate::keymap;
@@ -29,9 +27,6 @@ pub struct ListState {
     pub pending_hydrate: HashSet<EntryId>,
     pending_at: u64,
     pub visible_rows: usize,
-    /// Size of the file area, measured during layout.
-    pub content_width: Rc<Cell<f32>>,
-    pub content_height: Rc<Cell<f32>>,
     typeahead: String,
     typeahead_at: Option<Instant>,
 }
@@ -44,8 +39,6 @@ impl Default for ListState {
             pending_hydrate: HashSet::new(),
             pending_at: 0,
             visible_rows: 20,
-            content_width: Rc::new(Cell::new(800.0)),
-            content_height: Rc::new(Cell::new(600.0)),
             typeahead: String::new(),
             typeahead_at: None,
         }
@@ -351,13 +344,11 @@ impl Shell {
     }
 
     /// Wrap a view's element in the pane container: focus, key context,
-    /// type-ahead, empty-area context menu, external drops, size measurement.
+    /// type-ahead, empty-area context menu, external drops.
     pub fn pane_container(&mut self, content: AnyElement, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.global::<Theme>().clone();
         let key_context = self.pane_key_context();
         let pane = self.pane;
-        let width = Rc::clone(&self.ui().list.content_width);
-        let height = Rc::clone(&self.ui().list.content_height);
         div()
             .id(("pane", pane.0 as usize))
             .relative()
@@ -386,29 +377,6 @@ impl Shell {
                 this.activate_pane(pane, cx);
                 this.drop_external(paths.paths(), window, cx);
             }))
-            .child(
-                canvas(
-                    move |bounds, window, _| {
-                        let w = f32::from(bounds.size.width);
-                        let h = f32::from(bounds.size.height);
-                        let mut changed = false;
-                        if (width.get() - w).abs() > 0.5 {
-                            width.set(w);
-                            changed = true;
-                        }
-                        if (height.get() - h).abs() > 0.5 {
-                            height.set(h);
-                            changed = true;
-                        }
-                        if changed {
-                            window.refresh();
-                        }
-                    },
-                    |_, (), _, _| {},
-                )
-                .absolute()
-                .inset_0(),
-            )
             .child(content)
             .into_any_element()
     }

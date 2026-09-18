@@ -206,46 +206,6 @@ impl Shell {
 
     // ------------------------------------------------------------ layout
 
-    /// Layout constants the views' sizes are predicted from. Keep in sync
-    /// with the fixed sizes in `address`, `sidebar`, `status`, `timeline`,
-    /// and `preview`.
-    const TOOLBAR_H: f32 = 36.0 + 1.0;
-    const ADDRESS_H: f32 = 34.0 + 1.0;
-    const STATUS_H: f32 = 26.0 + 1.0;
-    const SIDEBAR_W: f32 = 200.0 + 1.0;
-    const TIMELINE_H: f32 = 26.0 + 64.0 + 1.0;
-    const PREVIEW_HANDLE_W: f32 = 6.0 + 1.0;
-
-    /// Predict each pane's content size from the window and the panels that
-    /// are open, before anything is laid out. Width-dependent views (the
-    /// grid) then lay out right on the first frame after a split, a panel
-    /// toggle, or a resize; the measuring canvas only corrects sub-pixel
-    /// differences afterwards.
-    fn predict_pane_sizes(&mut self, window: &Window) {
-        let vp = window.viewport_size();
-        let (vw, vh) = (f32::from(vp.width), f32::from(vp.height));
-        let panel = if self.preview.open {
-            self.preview.width + Self::PREVIEW_HANDLE_W
-        } else {
-            0.0
-        };
-        let n = self.panes.len().max(1) as f32;
-        let border = if self.is_split() { 1.0 } else { 0.0 };
-        let width = ((vw - Self::SIDEBAR_W - panel) / n - border).max(0.0);
-        let active = self.pane;
-        let timeline_open = self.timeline.open;
-        for p in &mut self.panes {
-            let strip = if timeline_open && p.id == active {
-                Self::TIMELINE_H
-            } else {
-                0.0
-            };
-            let height = (vh - Self::TOOLBAR_H - Self::ADDRESS_H - Self::STATUS_H - strip).max(0.0);
-            p.list.content_width.set(width);
-            p.list.content_height.set(height);
-        }
-    }
-
     // ------------------------------------------------------------ panes
 
     pub fn ui(&self) -> &PaneUi {
@@ -852,7 +812,6 @@ impl Render for Shell {
             );
         }
         self.sync(cx);
-        self.predict_pane_sizes(window);
         let theme = cx.global::<Theme>().clone();
         let toolbar = address::render_toolbar(self, cx);
         let side = sidebar::render(self, cx);

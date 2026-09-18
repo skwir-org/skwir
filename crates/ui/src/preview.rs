@@ -457,10 +457,7 @@ impl Shell {
     ) {
         let total = f32::from(window.viewport_size().width);
         let x = f32::from(ev.event.position.x);
-        let new_width = (total - x).clamp(200.0, 900.0);
-        let w = &self.ui().list.content_width;
-        w.set(w.get() + (self.preview.width - new_width));
-        self.preview.width = new_width;
+        self.preview.width = (total - x).clamp(200.0, 900.0);
         cx.notify();
     }
 

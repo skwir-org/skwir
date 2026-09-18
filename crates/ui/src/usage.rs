@@ -1,15 +1,15 @@
-//! Disk usage: a squarified treemap of the usage plugin's scan, replacing
-//! the view while open.
+//! Disk usage: a squarified treemap (see `elements::treemap`) of the usage
+//! plugin's scan, replacing the view while open.
 
 use std::path::PathBuf;
 
-use gpui::{AnyElement, Context, Hsla, MouseButton, Window, div, pattern_slash, prelude::*, px};
+use gpui::{AnyElement, Context, Hsla, Window, div, prelude::*, px};
 use serde::Deserialize;
 
+use crate::elements::treemap::{TreemapItem, treemap};
 use crate::format;
 use crate::shell::Shell;
 use crate::theme::Theme;
-use crate::treemap::{Rect, squarify};
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Node {
@@ -45,19 +45,10 @@ pub struct Status {
 pub struct UsageState {
     pub active: bool,
     pub status: Option<Status>,
-    pub hover: Option<String>,
+    /// Key of the hovered block (index into `blocks`).
+    pub hover_key: Option<usize>,
+    pub blocks: Vec<BlockInfo>,
     root: Option<PathBuf>,
-}
-
-/// A laid-out block: depth 0 rectangles hold depth 1 children.
-struct Block {
-    rect: Rect,
-    label: String,
-    tip: String,
-    color: Hsla,
-    is_dir: bool,
-    is_other: bool,
-    path: Option<PathBuf>,
 }
 
 impl Shell {
@@ -74,7 +65,7 @@ impl Shell {
         self.usage.active = true;
         self.usage.root = Some(dir.clone());
         self.usage.status = None;
-        self.usage.hover = None;
+        self.usage.hover_key = None;
         let pane = self.pane;
         if self
             .app
@@ -95,7 +86,7 @@ impl Shell {
     pub fn close_usage(&mut self, cx: &mut Context<Self>) {
         if self.usage.active {
             self.usage.active = false;
-            self.usage.hover = None;
+            self.usage.hover_key = None;
             cx.notify();
         }
     }
@@ -134,148 +125,79 @@ fn color_for(theme: &Theme, depth: usize, is_dir: bool, index: usize) -> Hsla {
     c
 }
 
-fn blocks(theme: &Theme, node: &Node, area: Rect) -> Vec<(Block, Vec<Block>)> {
+/// What the shell remembers per block for the hover line and clicks.
+#[derive(Clone, Debug)]
+pub struct BlockInfo {
+    pub tip: String,
+    pub path: Option<PathBuf>,
+}
+
+/// Build the treemap items for `node`'s children (one level of nesting),
+/// registering each block's info in `infos` under its key.
+fn items_for(
+    theme: &Theme,
+    node: &Node,
+    depth: usize,
+    infos: &mut Vec<BlockInfo>,
+) -> Vec<TreemapItem> {
     // Weight by allocated bytes; children with (almost) nothing on disk
     // still get a sliver (0.5% of the parent) so empty trees stay visible.
     let floor = (node.alloc as f64 / 200.0).max(1.0);
-    let mut items: Vec<(f64, Option<&Node>)> = node
-        .children
-        .iter()
-        .map(|c| ((c.alloc as f64).max(floor), Some(c)))
-        .collect();
-    if node.other_alloc > 0 {
-        items.push((node.other_alloc as f64, None));
-    }
-    let weights: Vec<f64> = items.iter().map(|(w, _)| *w).collect();
-    let rects = squarify(&weights, area);
-    items
-        .iter()
-        .zip(rects)
-        .enumerate()
-        .filter(|(_, ((w, _), _))| *w > 0.0)
-        .map(|(i, ((_, child), rect))| match child {
-            Some(c) => {
-                let tip = format!(
-                    "{} · {} ({} on disk){}",
-                    c.path.display(),
-                    format::size(c.size),
-                    format::size(c.alloc),
-                    if c.is_dir {
-                        format!(" · {} files, {} dirs", c.files, c.dirs)
-                    } else {
-                        String::new()
-                    }
-                );
-                let inner = if c.is_dir && !c.children.is_empty() && rect.w > 40.0 && rect.h > 40.0
-                {
-                    let pad = 3.0;
-                    let label_h = if rect.h > 40.0 { 16.0 } else { 0.0 };
-                    let inner_area = Rect::new(
-                        rect.x + pad,
-                        rect.y + pad + label_h,
-                        (rect.w - 2.0 * pad).max(0.0),
-                        (rect.h - 2.0 * pad - label_h).max(0.0),
-                    );
-                    blocks(theme, c, inner_area)
-                        .into_iter()
-                        .map(|(b, _)| Block {
-                            color: color_for(theme, 1, b.is_dir, i + 3),
-                            ..b
-                        })
-                        .collect()
+    let mut out = Vec::with_capacity(node.children.len() + 1);
+    for (i, c) in node.children.iter().enumerate() {
+        let key = infos.len();
+        infos.push(BlockInfo {
+            tip: format!(
+                "{} · {} ({} on disk){}",
+                c.path.display(),
+                format::size(c.size),
+                format::size(c.alloc),
+                if c.is_dir {
+                    format!(" · {} files, {} dirs", c.files, c.dirs)
                 } else {
-                    Vec::new()
-                };
-                (
-                    Block {
-                        rect,
-                        label: c.name.clone(),
-                        tip,
-                        color: color_for(theme, 0, c.is_dir, i),
-                        is_dir: c.is_dir,
-                        is_other: false,
-                        path: c.is_dir.then(|| c.path.clone()),
-                    },
-                    inner,
-                )
-            }
-            None => (
-                Block {
-                    rect,
-                    label: "other".into(),
-                    tip: format!(
-                        "smaller items in {} · {} on disk",
-                        node.path.display(),
-                        format::size(node.other_alloc)
-                    ),
-                    color: theme.text_muted,
-                    is_dir: false,
-                    is_other: true,
-                    path: None,
-                },
-                Vec::new(),
+                    String::new()
+                }
             ),
-        })
-        .collect()
-}
-
-fn block_el(
-    b: &Block,
-    depth: usize,
-    theme: &Theme,
-    ix: usize,
-    cx: &mut Context<Shell>,
-) -> AnyElement {
-    let tip = b.tip.clone();
-    let path = b.path.clone();
-    let fits_label = b.rect.w > 48.0 && b.rect.h > 16.0;
-    let mut el = div()
-        .id(("usage", depth * 100_000 + ix))
-        .absolute()
-        .left(px(b.rect.x as f32))
-        .top(px(b.rect.y as f32))
-        .w(px(b.rect.w.max(0.0) as f32))
-        .h(px(b.rect.h.max(0.0) as f32))
-        .border_1()
-        .border_color(theme.bg)
-        .overflow_hidden()
-        .text_xs()
-        .text_color(gpui::white())
-        .px_1()
-        .on_hover(cx.listener(move |this, hovered, _, cx| {
-            this.usage.hover = if *hovered { Some(tip.clone()) } else { None };
-            cx.notify();
-        }));
-    if b.is_other {
-        el = el.bg(pattern_slash(b.color.opacity(0.5), 2.0, 8.0));
-    } else {
-        el = el.bg(b.color);
+            path: c.is_dir.then(|| c.path.clone()),
+        });
+        let children = if depth == 0 && c.is_dir && !c.children.is_empty() {
+            items_for(theme, c, depth + 1, infos)
+        } else {
+            Vec::new()
+        };
+        out.push(TreemapItem {
+            key,
+            weight: (c.alloc as f64).max(floor),
+            label: c.name.clone().into(),
+            color: color_for(theme, depth, c.is_dir, i),
+            hatched: false,
+            children,
+        });
     }
-    if let Some(p) = path {
-        el = el.cursor_pointer().on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _, window, cx| {
-                this.close_usage(cx);
-                this.run(
-                    "navigate",
-                    serde_json::json!({ "location": p.to_string_lossy() }),
-                    window,
-                    cx,
-                );
-            }),
-        );
+    if node.other_alloc > 0 {
+        let key = infos.len();
+        infos.push(BlockInfo {
+            tip: format!(
+                "smaller items in {} · {} on disk",
+                node.path.display(),
+                format::size(node.other_alloc)
+            ),
+            path: None,
+        });
+        out.push(TreemapItem {
+            key,
+            weight: node.other_alloc as f64,
+            label: "other".into(),
+            color: theme.text_muted,
+            hatched: true,
+            children: Vec::new(),
+        });
     }
-    if fits_label {
-        el = el.child(div().truncate().child(b.label.clone()));
-    }
-    let _ = b.is_dir;
-    el.into_any_element()
+    out
 }
 
 pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
-    let width = shell.ui().list.content_width.get().max(10.0);
-    let height = (shell.ui().list.content_height.get() - 44.0).max(10.0);
     let status = shell.usage.status.clone();
     let mut header = div()
         .h(px(44.))
@@ -289,10 +211,10 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
     match &status {
         Some(s) => {
             header = header.child(div().flex().gap_3().child(format!(
-                    "{}{}",
-                    s.root.as_ref().map(|r| r.display().to_string()).unwrap_or_default(),
-                    if s.scanning { "  · scanning…" } else { "" }
-                )));
+                "{}{}",
+                s.root.as_ref().map(|r| r.display().to_string()).unwrap_or_default(),
+                if s.scanning { "  · scanning…" } else { "" }
+            )));
             header = header.child(div().text_color(theme.text_muted).child(format!(
                 "{} · {} on disk · {} files · {} dirs · {:.1} s{}",
                 format::size(s.size),
@@ -307,28 +229,53 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
             header = header.child("scanning…");
         }
     }
-    let hover = shell.usage.hover.clone();
-    let mut area = div()
-        .relative()
-        .flex_1()
-        .min_h_0()
-        .w_full()
-        .overflow_hidden();
-    if let Some(tree) = status.as_ref().and_then(|s| s.tree.as_ref()) {
-        let bounds = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
-        for (i, (outer, inner)) in blocks(&theme, tree, bounds).into_iter().enumerate() {
-            area = area.child(block_el(&outer, 0, &theme, i, cx));
-            for (j, b) in inner.iter().enumerate() {
-                area = area.child(block_el(b, 1, &theme, i * 1000 + j, cx));
-            }
-        }
-    }
+    let mut infos = Vec::new();
+    let items = status
+        .as_ref()
+        .and_then(|s| s.tree.as_ref())
+        .map(|t| items_for(&theme, t, 0, &mut infos))
+        .unwrap_or_default();
+    shell.usage.blocks = infos;
+    let hovered = shell.usage.hover_key;
+    let hover_line = hovered.and_then(|k| shell.usage.blocks.get(k)).map_or_else(
+        || "hover a block for details · click a folder to open it · Escape closes".to_owned(),
+        |b| b.tip.clone(),
+    );
+    let entity = cx.entity();
+    let entity2 = entity.clone();
+    let map = treemap(
+        "usage-treemap",
+        items,
+        theme.bg,
+        gpui::white(),
+        hovered,
+        move |key, _window, cx| {
+            entity.update(cx, |shell, cx| {
+                shell.usage.hover_key = key;
+                cx.notify();
+            });
+        },
+        move |key, window, cx| {
+            entity2.update(cx, |shell, cx| {
+                if let Some(p) = shell.usage.blocks.get(key).and_then(|b| b.path.clone()) {
+                    shell.close_usage(cx);
+                    shell.run(
+                        "navigate",
+                        serde_json::json!({ "location": p.to_string_lossy() }),
+                        window,
+                        cx,
+                    );
+                }
+            });
+        },
+    );
     div()
         .size_full()
         .flex()
         .flex_col()
+        .text_color(gpui::white())
         .child(header)
-        .child(area)
+        .child(div().flex_1().min_h_0().w_full().child(map))
         .child(
             div()
                 .h(px(22.))
@@ -338,9 +285,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
                 .border_t_1()
                 .border_color(theme.border)
                 .truncate()
-                .child(hover.unwrap_or_else(|| {
-                    "hover a block for details · click a folder to open it · Escape closes".into()
-                })),
+                .child(hover_line),
         )
         .into_any_element()
 }
