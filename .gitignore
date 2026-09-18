@@ -13,3 +13,5 @@
 /bench-data/
 /spikes/target/
 /spikes/results/*.log
+/flamegraph-*.svg
+/perf.data*

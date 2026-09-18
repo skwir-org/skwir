@@ -44,6 +44,15 @@ spike toolkit gpu="intel" rows="100000":
 run dir=".":
     cargo run --release -p bibli -- {{dir}}
 
+# Profile the app with samply (opens the Firefox Profiler UI when done).
+flame dir=".":
+    cargo build --release -p bibli
+    samply record ./target/release/bibli {{dir}}
+
+# Profile a bench profile's listing with a flamegraph SVG.
+flame-bench profile="flat100k":
+    cargo flamegraph --release -p bibli-bench -o flamegraph-{{profile}}.svg -- list {{profile}}
+
 # Watch and re-check on change.
 watch:
     bacon clippy
