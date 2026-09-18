@@ -622,7 +622,8 @@ impl Shell {
                 cx,
             ),
             "preview_zoom" => self.preview_zoom(arg("dir").as_deref().unwrap_or("reset"), cx),
-            "toggle_preview" => self.toggle_preview(cx),
+            "toggle_preview" => self.toggle_preview(window, cx),
+            "preview_close" => self.preview_close(window, cx),
             "reader_pointer" => self.reader_pointer(
                 args.get("phase")
                     .and_then(serde_json::Value::as_str)
@@ -643,11 +644,11 @@ impl Shell {
                     .unwrap_or(1),
                 cx,
             ),
-            "reader_menu" => self.reader_menu(args, window, cx),
+            "reader_menu" | "preview_menu" => self.preview_menu(args, window, cx),
             "reader_page_edit" => self.reader_page_edit(window, cx),
             "reader_page_submit" => self.reader_page_submit(window, cx),
             "reader_page_cancel" => self.reader_page_cancel(window, cx),
-            "reader_open_external" => self.reader_open_external(cx),
+            "reader_open_external" | "preview_open_external" => self.preview_open_external(cx),
             "reader_copy" => self.reader_copy(cx),
             "reader_select_all" => self.reader_select_all(cx),
             "reader_outline" => self.reader_outline(window, cx),

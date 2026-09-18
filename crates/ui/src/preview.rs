@@ -16,8 +16,8 @@ use bibli_core::scheduler::Priority;
 use bibli_core::{CancelToken, EntryId};
 use gpui::{
     AnyElement, Context, CursorStyle, DragMoveEvent, FocusHandle, Hsla, MouseButton, ObjectFit,
-    Render, RenderImage, ScrollStrategy, UniformListScrollHandle, Window, deferred, div, img,
-    prelude::*, px, rgb,
+    Render, RenderImage, ScrollStrategy, UniformListScrollHandle, Window, div, img, prelude::*, px,
+    rgb,
 };
 use smallvec::SmallVec;
 use syntect::highlighting::ThemeSet;
@@ -103,6 +103,7 @@ enum PreviewPhase {
 
 pub struct PreviewState {
     pub reader: crate::reader::ReaderState,
+    pub menu: Option<crate::toolbar::Popup>,
     pub open: bool,
     pub peek: bool,
     pub width: f32,
@@ -113,7 +114,7 @@ pub struct PreviewState {
     generation: u64,
     key: Option<PreviewKey>,
     pub(crate) page: u32,
-    seconds: Option<f64>,
+    pub(crate) seconds: Option<f64>,
     pub(crate) zoom: Option<f32>,
     pub(crate) fit_width: bool,
     tx: flume::Sender<PreviewResult>,
@@ -127,6 +128,7 @@ impl Default for PreviewState {
         let (tx, rx) = flume::unbounded();
         PreviewState {
             reader: crate::reader::ReaderState::default(),
+            menu: None,
             open: false,
             peek: false,
             width: 320.0,
@@ -313,6 +315,28 @@ fn read_head(path: &Path) -> std::io::Result<Vec<u8>> {
 }
 
 impl Shell {
+    pub fn preview_menu(
+        &mut self,
+        args: &serde_json::Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let kind = if args.get("kind").and_then(serde_json::Value::as_str) == Some("zoom") {
+            "zoom"
+        } else {
+            "preview"
+        };
+        let previous = self.preview.menu.take();
+        let was_open = previous.as_ref().is_some_and(|p| p.kind == kind);
+        if let Some(popup) = previous {
+            popup.restore(window);
+        }
+        if !was_open && args.get("close").and_then(serde_json::Value::as_bool) != Some(true) {
+            self.preview.menu = Some(crate::toolbar::Popup::new(kind, window, cx));
+        }
+        cx.notify();
+    }
+
     /// Called on UI wake. Only a changed request schedules worker work.
     pub fn sync_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !(self.preview.open || self.preview.peek) {
@@ -595,6 +619,13 @@ impl Shell {
 
     fn cancel_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_pending_preview();
+        if let Some(menu) = self.preview.menu.take()
+            && menu.focus.contains_focused(window, cx)
+        {
+            // The old preview's trigger is about to disappear. Keep an
+            // existing address/pane focus, or return popup focus to the pane.
+            window.focus(&self.ui().focus);
+        }
         self.preview.key = None;
         self.preview.info = Info::default();
         while self.preview.rx.try_recv().is_ok() {}
@@ -672,7 +703,7 @@ impl Shell {
         cx.notify();
     }
 
-    pub fn reader_open_external(&mut self, _cx: &mut Context<Self>) {
+    pub fn preview_open_external(&mut self, _cx: &mut Context<Self>) {
         let Some(key) = &self.preview.key else {
             return;
         };
@@ -680,7 +711,7 @@ impl Shell {
         let app = self.app.clone();
         self.app.scheduler.spawn(
             Priority::Visible,
-            "document-open",
+            "preview-open",
             self.app.lifetime().child(),
             move || {
                 if let Err(error) = entry
@@ -708,9 +739,12 @@ impl Shell {
         cx.notify();
     }
 
-    pub fn toggle_preview(&mut self, cx: &mut Context<Self>) {
+    pub fn toggle_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.preview.open = !self.preview.open;
-        // Pane sizes are predicted at the start of the next render.
+        if !self.preview.open && !self.preview.peek {
+            self.preview.menu = None;
+            window.focus(&self.ui().focus);
+        }
         cx.notify();
     }
 
@@ -719,6 +753,7 @@ impl Shell {
             self.set_status("nothing to peek at", false, cx);
             return;
         }
+        self.preview.menu = None;
         let focus = cx.focus_handle();
         window.focus(&focus);
         self.preview.peek_focus = Some(focus);
@@ -727,10 +762,22 @@ impl Shell {
     }
 
     pub fn close_peek(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.preview.menu = None;
         self.preview.peek = false;
         self.preview.peek_focus = None;
         window.focus(&self.ui().focus);
         cx.notify();
+    }
+
+    pub fn preview_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.preview.peek {
+            self.close_peek(window, cx);
+        } else {
+            self.preview.open = false;
+            self.preview.menu = None;
+            window.focus(&self.ui().focus);
+            cx.notify();
+        }
     }
 
     pub fn toggle_peek(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -759,29 +806,46 @@ impl Shell {
     }
 }
 
-pub(crate) fn preview_button(
-    id: &'static str,
-    label: &'static str,
-    command: &'static str,
-    args: serde_json::Value,
-    theme: &Theme,
-    cx: &mut Context<Shell>,
-) -> AnyElement {
-    div()
-        .id(id)
-        .px_2()
-        .py_0p5()
-        .rounded_md()
-        .cursor_pointer()
-        .hover(|s| s.bg(theme.border))
-        .child(label)
-        .on_click(
-            cx.listener(move |this, _, window, cx| this.run(command, args.clone(), window, cx)),
-        )
+fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>) -> AnyElement {
+    let document = matches!(
+        &shell.preview.content,
+        Some(PreviewContent::Image {
+            detail: Some(PreviewInfo::Document { .. }),
+            ..
+        })
+    );
+    let mut frame = div()
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .when(document && interactive, |d| d.key_context(keymap::READER));
+    if interactive && !shell.preview.info.name.is_empty() {
+        let controls = if document {
+            crate::reader::toolbar(shell, theme, cx)
+        } else {
+            crate::preview_toolbar::render(shell, theme, cx)
+        };
+        frame = frame.child(div().relative().flex_none().child(controls).when(
+            shell.preview.phase != PreviewPhase::Idle,
+            |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .bottom_0()
+                        .w_full()
+                        .h(px(2.))
+                        .bg(theme.accent),
+                )
+            },
+        ));
+    }
+    frame
+        .child(content(shell, theme, interactive, cx))
         .into_any_element()
 }
 
-fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>) -> AnyElement {
+fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>) -> AnyElement {
     let p = &shell.preview;
     match &p.content {
         None if p.phase != PreviewPhase::Idle => div()
@@ -797,8 +861,8 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
             image,
             width,
             height,
-            detail,
             document,
+            ..
         }) => {
             let picture = if let Some(document) = document.as_ref().filter(|_| interactive) {
                 crate::reader::page_element(
@@ -828,7 +892,20 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
                     .min_h_0()
                     .w_full()
                     .overflow_scroll()
-                    .child(img(Arc::clone(image)).w_full())
+                    .child(
+                        // GPUI's img resolves an auto height to the source's
+                        // pixel height when width is relative. Let the parent
+                        // aspect ratio size the image instead.
+                        div()
+                            .relative()
+                            .w_full()
+                            .map(|mut d| {
+                                d.style().aspect_ratio =
+                                    Some(*width as f32 / (*height).max(1) as f32);
+                                d
+                            })
+                            .child(img(Arc::clone(image)).absolute().size_full()),
+                    )
                     .into_any_element()
             } else {
                 div()
@@ -846,69 +923,6 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
                     )
                     .into_any_element()
             };
-            let mut controls = div()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap_2()
-                .p_2()
-                .text_xs();
-            match detail {
-                Some(PreviewInfo::Document { .. }) => {}
-                Some(PreviewInfo::Video { seconds, duration }) => {
-                    let label = duration.map_or_else(
-                        || format!("{seconds:.1}s"),
-                        |d| format!("{seconds:.1}s / {d:.1}s"),
-                    );
-                    controls = controls
-                        .child(preview_button(
-                            "preview-back",
-                            "−5s",
-                            "ui.preview_seek",
-                            serde_json::json!({"delta": -5}),
-                            theme,
-                            cx,
-                        ))
-                        .child(label)
-                        .child(preview_button(
-                            "preview-forward",
-                            "+5s",
-                            "ui.preview_seek",
-                            serde_json::json!({"delta": 5}),
-                            theme,
-                            cx,
-                        ));
-                }
-                None => {
-                    controls = controls.child(format!("{width} × {height}"));
-                }
-            }
-            controls = controls
-                .child(preview_button(
-                    "preview-zoom-out",
-                    "−",
-                    "ui.preview_zoom",
-                    serde_json::json!({"dir":"out"}),
-                    theme,
-                    cx,
-                ))
-                .child(preview_button(
-                    "preview-fit",
-                    "Fit",
-                    "ui.preview_zoom",
-                    serde_json::json!({"dir":"reset"}),
-                    theme,
-                    cx,
-                ))
-                .child(preview_button(
-                    "preview-zoom-in",
-                    "+",
-                    "ui.preview_zoom",
-                    serde_json::json!({"dir":"in"}),
-                    theme,
-                    cx,
-                ))
-                .when(p.phase != PreviewPhase::Idle, |d| d.child("Loading…"));
             div()
                 .flex_1()
                 .min_h_0()
@@ -917,26 +931,6 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
                 .when(document.is_some() && interactive, |d| {
                     d.key_context(keymap::READER)
                 })
-                .when(
-                    matches!(detail, Some(PreviewInfo::Document { .. })) && interactive,
-                    |d| {
-                        d.child(
-                            div()
-                                .relative()
-                                .child(crate::reader::toolbar(shell, theme, cx))
-                                .when(p.phase != PreviewPhase::Idle, |d| {
-                                    d.child(
-                                        div()
-                                            .absolute()
-                                            .bottom_0()
-                                            .w_full()
-                                            .h(px(2.))
-                                            .bg(theme.accent),
-                                    )
-                                }),
-                        )
-                    },
-                )
                 .child(
                     div()
                         .relative()
@@ -949,9 +943,6 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
                             d.children(crate::reader::outline_drawer(shell, theme, cx))
                         }),
                 )
-                .when(!matches!(detail, Some(PreviewInfo::Document { .. })), |d| {
-                    d.child(controls)
-                })
                 .into_any_element()
         }
         Some(PreviewContent::Text { lines, truncated }) => {
@@ -1040,7 +1031,8 @@ fn generic(info: &Info, theme: &Theme) -> AnyElement {
     card.into_any_element()
 }
 
-fn header(info: &Info, theme: &Theme) -> AnyElement {
+fn header(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>) -> AnyElement {
+    let info = &shell.preview.info;
     div()
         .px_2()
         .py_1()
@@ -1048,7 +1040,24 @@ fn header(info: &Info, theme: &Theme) -> AnyElement {
         .border_color(theme.border)
         .flex()
         .flex_col()
-        .child(div().truncate().child(info.name.clone()))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(div().min_w_0().flex_1().truncate().child(info.name.clone()))
+                .when(interactive, |d| {
+                    d.child(
+                        crate::toolbar::Button::new(
+                            "preview-close",
+                            "close",
+                            "Close preview",
+                            "ui.preview_close",
+                        )
+                        .render(shell, cx),
+                    )
+                }),
+        )
         .child(
             div()
                 .text_xs()
@@ -1082,6 +1091,7 @@ pub fn render_panel(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement
         .on_drag(ResizeHandle, |_, _, _, cx| cx.new(|_| NoPreview));
     Some(
         div()
+            .id("preview-panel")
             .relative()
             .w(px(shell.preview.width))
             .h_full()
@@ -1091,7 +1101,7 @@ pub fn render_panel(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement
             .border_l_1()
             .border_color(theme.border)
             .bg(theme.surface)
-            .child(header(&shell.preview.info, &theme))
+            .child(header(shell, &theme, !shell.preview.peek, cx))
             .child(body(shell, &theme, !shell.preview.peek, cx))
             .child(handle)
             .into_any_element(),
@@ -1106,48 +1116,46 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
     let theme = cx.global::<Theme>().clone();
     let focus = shell.preview.peek_focus.clone()?;
     Some(
-        deferred(
-            div()
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(gpui::black().opacity(0.4))
-                .occlude()
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, window, cx| this.close_peek(window, cx)),
-                )
-                .child(
-                    div()
-                        .track_focus(&focus)
-                        .key_context(keymap::PEEK)
-                        .w(gpui::relative(0.8))
-                        .h(gpui::relative(0.8))
-                        .flex()
-                        .flex_col()
-                        .rounded_lg()
-                        .border_1()
-                        .border_color(theme.border)
-                        .bg(theme.surface)
-                        .shadow_lg()
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .child(header(&shell.preview.info, &theme))
-                        .child(body(shell, &theme, true, cx))
-                        .child(
-                            div()
-                                .px_2()
-                                .py_1()
-                                .text_xs()
-                                .text_color(theme.text_muted)
-                                .border_t_1()
-                                .border_color(theme.border)
-                                .child("Space or Escape to close · arrows to move"),
-                        ),
-                ),
-        )
-        .with_priority(5)
-        .into_any_element(),
+        div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::black().opacity(0.4))
+            .occlude()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| this.close_peek(window, cx)),
+            )
+            .child(
+                div()
+                    .id("preview-peek")
+                    .track_focus(&focus)
+                    .key_context(keymap::PEEK)
+                    .w(gpui::relative(0.8))
+                    .h(gpui::relative(0.8))
+                    .flex()
+                    .flex_col()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(theme.border)
+                    .bg(theme.surface)
+                    .shadow_lg()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(header(shell, &theme, true, cx))
+                    .child(body(shell, &theme, true, cx))
+                    .child(
+                        div()
+                            .px_2()
+                            .py_1()
+                            .text_xs()
+                            .text_color(theme.text_muted)
+                            .border_t_1()
+                            .border_color(theme.border)
+                            .child("Space or Escape to close · arrows to move"),
+                    ),
+            )
+            .into_any_element(),
     )
 }

@@ -2,8 +2,8 @@
 use crate::{keymap::RunCommand, shell::Shell, theme::Theme};
 use bibli_core::workspace::PaneId;
 use gpui::{
-    AnyElement, AnyView, App, Context, Div, FocusHandle, Render, SharedString, Stateful, Window,
-    div, prelude::*, px, svg,
+    AnyView, App, Context, Div, FocusHandle, Render, SharedString, Stateful, Window, div,
+    prelude::*, px, svg,
 };
 
 pub fn asset(path: &str) -> Option<&'static [u8]> {
@@ -52,6 +52,7 @@ pub struct Button {
     command: &'static str,
     args: serde_json::Value,
     label: Option<SharedString>,
+    anchor: Option<crate::elements::popover::PopoverAnchor>,
     pub active: bool,
     pub enabled: bool,
 }
@@ -69,6 +70,7 @@ impl Button {
             command,
             args: serde_json::json!({}),
             label: None,
+            anchor: None,
             active: false,
             enabled: true,
         }
@@ -89,6 +91,16 @@ impl Button {
         self.enabled = enabled;
         self
     }
+    pub fn anchor_if(
+        mut self,
+        anchor: &crate::elements::popover::PopoverAnchor,
+        active: bool,
+    ) -> Self {
+        if active {
+            self.anchor = Some(anchor.clone());
+        }
+        self
+    }
     pub fn render(self, shell: &Shell, cx: &mut Context<Shell>) -> Stateful<Div> {
         let theme = cx.global::<Theme>().clone();
         let font = shell.font.clone();
@@ -99,6 +111,7 @@ impl Button {
         let title = self.title;
         div()
             .id(self.id)
+            .relative()
             .h(px(30.))
             .min_w(px(30.))
             .flex_none()
@@ -143,6 +156,7 @@ impl Button {
                 )
             })
             .children(self.label)
+            .children(self.anchor.map(|anchor| anchor.marker()))
             .on_click(cx.listener(move |this, _, window, cx| {
                 if enabled {
                     invoke(this, pane, command, args.clone(), window, cx);
@@ -170,11 +184,14 @@ fn invoke(
         return;
     }
     shell.activate_pane(pane, cx);
-    if command != "ui.toolbar_menu" && command != "ui.reader_menu" {
+    if !matches!(
+        command,
+        "ui.toolbar_menu" | "ui.reader_menu" | "ui.preview_menu"
+    ) {
         if let Some(popup) = shell.toolbar_menu.take() {
             popup.restore(window);
         }
-        if let Some(popup) = shell.preview.reader.menu.take() {
+        if let Some(popup) = shell.preview.menu.take() {
             popup.restore(window);
         }
     }
@@ -265,22 +282,4 @@ pub fn popup_panel(
         .on_mouse_down_out(cx.listener(move |this, _, window, cx| {
             this.run(close, serde_json::json!({"close":true}), window, cx);
         }))
-}
-
-pub fn anchored_popup(panel: impl IntoElement) -> AnyElement {
-    div()
-        .absolute()
-        .top(px(42.))
-        .right_0()
-        .size(px(0.))
-        .child(
-            gpui::deferred(
-                gpui::anchored()
-                    .anchor(gpui::Corner::TopRight)
-                    .snap_to_window_with_margin(px(8.))
-                    .child(panel),
-            )
-            .with_priority(5),
-        )
-        .into_any_element()
 }

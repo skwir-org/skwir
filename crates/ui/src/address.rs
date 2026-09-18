@@ -48,7 +48,12 @@ fn tools(shell: &Shell) -> [Button; 2] {
     ]
 }
 
-fn app_row(shell: &Shell, mode: usize, cx: &mut Context<Shell>) -> AnyElement {
+fn app_row(
+    shell: &Shell,
+    mode: usize,
+    anchor: &crate::elements::popover::PopoverAnchor,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let mut bar = toolbar::row(&theme).id(("app-tools", mode));
     let mut views = div()
@@ -154,20 +159,26 @@ fn app_row(shell: &Shell, mode: usize, cx: &mut Context<Shell>) -> AnyElement {
     if mode == 2 {
         bar = bar.child(
             Button::new("tools-more", "more", "More tools", "ui.toolbar_menu")
+                .anchor_if(anchor, true)
                 .active(shell.toolbar_menu.is_some())
                 .render(shell, cx),
         );
     }
     bar.child(
-        Button::new("settings", "settings", "Settings · Ctrl+,", "ui.settings").render(shell, cx),
+        Button::new("settings", "settings", "Settings · Ctrl+,", "ui.settings")
+            .anchor_if(anchor, mode != 2)
+            .render(shell, cx),
     )
     .into_any_element()
 }
 
 pub fn render_toolbar(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
+    let anchor = crate::elements::popover::PopoverAnchor::default();
     let mut root = div().relative().flex_none().child(AdaptiveRow {
-        variants: (0..3).map(|mode| app_row(shell, mode, cx)).collect(),
+        variants: (0..3)
+            .map(|mode| app_row(shell, mode, &anchor, cx))
+            .collect(),
         height: 42.,
     });
     if let Some(popup) = &shell.toolbar_menu {
@@ -186,7 +197,7 @@ pub fn render_toolbar(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
             .active(shell.sort_spec().show_hidden)
             .render(shell, cx),
         );
-        root = root.child(toolbar::anchored_popup(panel));
+        root = root.child(anchor.popup(panel));
     }
     root.into_any_element()
 }

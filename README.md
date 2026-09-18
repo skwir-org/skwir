@@ -60,7 +60,7 @@ focused switch or choice. **Default** resets a field in the draft, **Save**
 edits. PDF engine, thumbnail and shell preferences apply without a restart.
 Plugin enable/disable flags and saved-query collections are not edited here.
 
-## Document and video previews
+## File previews
 
 F3 opens the preview panel; Space opens peek. PDF pages and Office documents
 have a single top toolbar: previous/next (`alt-pageup` / `alt-pagedown`),
@@ -68,8 +68,14 @@ an editable page number, zoom presets, Fit page/width, document search,
 contents, copy and open externally. Narrow panels move secondary controls
 into the overflow menu. Search opens below the toolbar; contents opens in
 a collapsible drawer. Native reader features work with either PDF engine.
-Video previews show a still frame with five-second seek controls; in peek,
+Search and zoom popovers open beneath their toolbar button and stay within
+the window; compact toolbars anchor hidden controls to More.
+Images and video frames use the same top toolbar, zoom presets, Fit image/width
+and overflow menus. Video previews include five-second seek controls; in peek,
 `ctrl-left` / `ctrl-right` seek while plain arrows select another file.
+Text, folders and unsupported files share the preview header and Open externally
+action. Every preview has a Close button; closing peek returns to the side panel
+if it was open. Loading feedback stays beneath the toolbar.
 All controls are also available in the command palette.
 
 The application toolbar groups views, pane controls and analysis tools, with
@@ -88,8 +94,9 @@ Install optional tools on `PATH` to enable these formats:
 - PDF image preview fallback: Poppler utilities (`pdfinfo`, `pdftoppm`).
 - Video stills: `ffmpeg` and `ffprobe`.
 - DOC/DOCX, XLS/XLSX, PPT/PPTX, ODT/ODS/ODP (and related formats): LibreOffice,
-  either PDF engine, and `bubblewrap` (`bwrap`) on Linux. Documents convert in
-  isolation to cached PDF pages; spreadsheets show their print layout.
+  either PDF engine, and `bubblewrap` (`bwrap`) on Linux. Both Nix development
+  shells include Bubblewrap on Linux. Documents convert in isolation to cached
+  PDF pages; spreadsheets show their print layout.
 
 The `preview-media` and `preview-documents` plugins can be disabled independently
 using `plugins.<id>.enabled` in settings. Missing tools are reported in the

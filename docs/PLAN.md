@@ -116,6 +116,33 @@ files measured 104.7 MiB PSS, 0.6% idle CPU over five seconds and a 147 ms first
 frame. This is a single sample at a different window size, not a before/after
 comparison; the historical 100 MB UI memory gate remains open.
 
+Preview toolbar follow-up: images and video stills now share the PDF reader's
+icon buttons, zoom presets, Fit image/width and adaptive overflow menus. Text,
+folder, error and unsupported-file previews share the header, Close and Open
+externally actions. Both side panels and peek use one preview frame; closing
+peek preserves an open side panel, and changing files clears preview menus.
+PDF-specific tools remain in the reader while zoom and popup state are shared.
+Image Fit width now uses the source aspect ratio for layout, avoiding GPUI's
+intrinsic pixel-height letterboxing. Synthetic UI checks exercised image fit,
+video seeking in narrow panels, text, error states, peek, external opening and
+PDF search. Lint, all 126 default tests and every microbenchmark budget pass
+(five optional native tests skipped). Release checks also exercised the
+10k-image grid and 100k-entry list. With the latter loaded, PSS was 160.2 MiB
+and idle CPU sampled 0.8% of one core over five seconds; this is not a fresh
+startup measurement. The historical UI memory gate remains open.
+
+Popover follow-up: Search, Zoom/Fit and overflow panels anchor below the visible
+trigger, measured during the current prepaint, and clamp to window edges.
+Responsive rows use More when the original control is hidden. Peek now stays
+in the normal overlay tree so its popovers do not nest deferred draws, which
+GPUI rejects; modal dialogs remain above them. Synthetic UI checks exercised
+image zoom menus and PDF Search in peek and narrow/resized side panels.
+Lint, 126 tests and microbenchmarks pass. One test run timed out waiting for
+PDF-worker cleanup; the unchanged test passed in isolation (157 ms) and in
+the full rerun (184 ms). Release checks covered peek menus and grid/list
+paging; after these checks the loaded 100k-entry list used 173.9 MiB PSS with
+0.8% idle CPU over five seconds. The existing UI memory gate remains open.
+
 ---
 
 ## Phase 0 — Foundations and toolkit spike (~2 weeks)

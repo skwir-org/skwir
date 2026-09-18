@@ -80,6 +80,7 @@
           jq
           vulkan-tools     # vulkaninfo for the toolkit spike
         ] ++ lib.optionals stdenv.hostPlatform.isLinux [
+          bubblewrap      # isolated Office document previews
           samply
           heaptrack
           wayland-utils

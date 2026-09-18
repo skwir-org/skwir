@@ -27,6 +27,7 @@ pub mod list;
 pub mod menu;
 pub mod palette;
 pub mod preview;
+mod preview_toolbar;
 pub mod prompts;
 pub mod reader;
 pub mod renamebulk;

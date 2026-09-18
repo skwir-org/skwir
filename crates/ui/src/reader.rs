@@ -35,7 +35,6 @@ pub struct ReaderState {
     pub outlines: bool,
     find: Option<FindInput>,
     pub page_input: Option<FindInput>,
-    pub menu: Option<crate::toolbar::Popup>,
     hits: Vec<SearchHit>,
     active_hit: Option<usize>,
     search_cancel: Option<CancelToken>,
@@ -57,7 +56,6 @@ impl Default for ReaderState {
             outlines: false,
             find: None,
             page_input: None,
-            menu: None,
             hits: Vec::new(),
             active_hit: None,
             search_cancel: None,
@@ -122,28 +120,6 @@ fn nearest(page: &PageContent, x: f32, y: f32) -> Option<usize> {
 }
 
 impl Shell {
-    pub fn reader_menu(
-        &mut self,
-        args: &serde_json::Value,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let kind = if args.get("kind").and_then(serde_json::Value::as_str) == Some("zoom") {
-            "zoom"
-        } else {
-            "reader"
-        };
-        let previous = self.preview.reader.menu.take();
-        let was_open = previous.as_ref().is_some_and(|p| p.kind == kind);
-        if let Some(popup) = previous {
-            popup.restore(window);
-        }
-        if !was_open && args.get("close").and_then(serde_json::Value::as_bool) != Some(true) {
-            self.preview.reader.menu = Some(crate::toolbar::Popup::new(kind, window, cx));
-        }
-        cx.notify();
-    }
-
     pub fn reader_page_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !matches!(
             self.preview.content,
@@ -510,7 +486,12 @@ fn document_pages(shell: &Shell) -> u32 {
         .unwrap_or(1)
 }
 
-fn reader_row(shell: &Shell, mode: usize, cx: &mut Context<Shell>) -> AnyElement {
+fn reader_row(
+    shell: &Shell,
+    mode: usize,
+    anchor: &crate::elements::popover::PopoverAnchor,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
     use crate::toolbar::{self, Button};
     let theme = cx.global::<Theme>().clone();
     let reader = &shell.preview.reader;
@@ -604,19 +585,11 @@ fn reader_row(shell: &Shell, mode: usize, cx: &mut Context<Shell>) -> AnyElement
                     "reader-zoom-menu",
                     "chevron",
                     "Zoom and fit options",
-                    "ui.reader_menu",
+                    "ui.preview_menu",
                 )
                 .args(serde_json::json!({"kind":"zoom"}))
-                .label(shell.preview.zoom.map_or_else(
-                    || {
-                        if shell.preview.fit_width {
-                            "Width".into()
-                        } else {
-                            "Fit".into()
-                        }
-                    },
-                    |z| format!("{:.0}%", z * 100.),
-                ))
+                .label(crate::preview_toolbar::zoom_label(shell))
+                .anchor_if(anchor, shell.preview.menu.is_some())
                 .render(shell, cx),
             )
             .child(
@@ -656,6 +629,7 @@ fn reader_row(shell: &Shell, mode: usize, cx: &mut Context<Shell>) -> AnyElement
             )
             .enabled(native)
             .active(reader.find.is_some())
+            .anchor_if(anchor, shell.preview.menu.is_none())
             .render(shell, cx),
         );
     }
@@ -676,7 +650,7 @@ fn reader_row(shell: &Shell, mode: usize, cx: &mut Context<Shell>) -> AnyElement
                     "reader-external",
                     "open",
                     "Open in default application",
-                    "ui.reader_open_external",
+                    "ui.preview_open_external",
                 )
                 .render(shell, cx),
             );
@@ -686,9 +660,10 @@ fn reader_row(shell: &Shell, mode: usize, cx: &mut Context<Shell>) -> AnyElement
                 "reader-more",
                 "more",
                 "More document controls",
-                "ui.reader_menu",
+                "ui.preview_menu",
             )
-            .active(reader.menu.is_some())
+            .active(shell.preview.menu.is_some())
+            .anchor_if(anchor, shell.preview.menu.is_some() || mode == 2)
             .render(shell, cx),
         );
     }
@@ -698,16 +673,19 @@ fn reader_row(shell: &Shell, mode: usize, cx: &mut Context<Shell>) -> AnyElement
 pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
     use crate::toolbar::{self, Button};
     let reader = &shell.preview.reader;
+    let anchor = crate::elements::popover::PopoverAnchor::default();
     let mut root = div()
         .relative()
         .flex_none()
         .child(crate::elements::adaptive::AdaptiveRow {
-            variants: (0..3).map(|mode| reader_row(shell, mode, cx)).collect(),
+            variants: (0..3)
+                .map(|mode| reader_row(shell, mode, &anchor, cx))
+                .collect(),
             height: 42.,
         });
-    if let Some(popup) = &reader.menu {
-        let mut panel = toolbar::popup_panel(popup, "ui.reader_menu", theme, cx);
-        if popup.kind == "reader" {
+    if let Some(popup) = &shell.preview.menu {
+        let mut panel = toolbar::popup_panel(popup, "ui.preview_menu", theme, cx);
+        if popup.kind == "preview" {
             for (id, icon, title, command, enabled) in [
                 (
                     "menu-contents",
@@ -734,7 +712,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
                     "menu-open",
                     "open",
                     "Open externally",
-                    "ui.reader_open_external",
+                    "ui.preview_open_external",
                     true,
                 ),
             ] {
@@ -748,50 +726,8 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
             }
             panel = panel.child(div().h(px(1.)).my_1().bg(theme.border));
         }
-        for (id, icon, label, value) in [
-            ("menu-fit", "fit", "Fit page", "reset"),
-            ("menu-width", "width", "Fit width", "width"),
-        ] {
-            panel = panel.child(
-                Button::new(id, icon, label, "ui.preview_zoom")
-                    .label(label)
-                    .args(serde_json::json!({"dir":value}))
-                    .render(shell, cx)
-                    .justify_start(),
-            );
-        }
-        let mut zooms = div().flex().flex_wrap().gap_1();
-        for (id, label, value) in [
-            ("zoom50", "50%", "0.5"),
-            ("zoom75", "75%", "0.75"),
-            ("zoom100", "100%", "1"),
-            ("zoom150", "150%", "1.5"),
-            ("zoom200", "200%", "2"),
-            ("zoom400", "400%", "4"),
-        ] {
-            zooms = zooms.child(
-                Button::new(id, "", label, "ui.preview_zoom")
-                    .label(label)
-                    .args(serde_json::json!({"dir":value}))
-                    .render(shell, cx),
-            );
-        }
-        panel = panel.child(zooms).child(
-            div()
-                .flex()
-                .gap_1()
-                .child(
-                    Button::new("menu-zoom-out", "minus", "Zoom out", "ui.preview_zoom")
-                        .args(serde_json::json!({"dir":"out"}))
-                        .render(shell, cx),
-                )
-                .child(
-                    Button::new("menu-zoom-in", "plus", "Zoom in", "ui.preview_zoom")
-                        .args(serde_json::json!({"dir":"in"}))
-                        .render(shell, cx),
-                ),
-        );
-        root = root.child(toolbar::anchored_popup(panel));
+        panel = panel.child(crate::preview_toolbar::zoom_menu(shell, "Fit page", cx));
+        root = root.child(anchor.popup(panel));
     } else if let Some(find) = &reader.find {
         let count = if reader.searching {
             "Searching…".to_owned()
@@ -869,7 +805,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
                         .render(shell, cx),
                     ),
             );
-        root = root.child(toolbar::anchored_popup(panel));
+        root = root.child(anchor.popup(panel));
     }
     root.into_any_element()
 }

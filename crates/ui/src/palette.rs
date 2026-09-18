@@ -67,11 +67,12 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ),
     ("ui.preview_page", r#"{"delta":1}"#, "Preview: next page"),
     ("ui.reader_page_edit", "{}", "Document: go to page…"),
-    ("ui.reader_open_external", "{}", "Document: open externally"),
+    ("ui.preview_open_external", "{}", "Preview: open externally"),
+    ("ui.preview_close", "{}", "Preview: close"),
     (
         "ui.preview_zoom",
         r#"{"dir":"width"}"#,
-        "Document: fit width",
+        "Preview: fit width",
     ),
     (
         "ui.preview_zoom",
