@@ -1,6 +1,6 @@
 [package]
 name = "bibli-plugin-shell"
-description = "bibli plugin: shell (Phase 4)"
+description = "bibli plugin: shell integration (copy paths, run a command on the selection)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,6 +8,15 @@ rust-version.workspace = true
 
 [dependencies]
 bibli-core.workspace = true
+bibli-platform.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "bibli-plugin-jump"
-description = "bibli plugin: jump (Phase 4)"
+description = "bibli plugin: frecency jump from zoxide and recently-used.xbel, and a recent: location"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,6 +8,20 @@ rust-version.workspace = true
 
 [dependencies]
 bibli-core.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+parking_lot.workspace = true
+crossbeam-channel.workspace = true
+tracing.workspace = true
+dirs.workspace = true
+nucleo-matcher.workspace = true
+roxmltree.workspace = true
+humantime.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true
