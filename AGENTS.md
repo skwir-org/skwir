@@ -9,6 +9,21 @@ Start here: `docs/PLAN.md` (phases, gates, current status and recorded
 deviations), `docs/adr/` (decisions that closed a door; ADR-000 is the
 principles and budgets), then the crate you are working in.
 
+`docs/PLAN.md` includes future designs as well as implemented work. Check the
+current source before assuming a planned crate, command, or API exists.
+`CLAUDE.md` includes this file; keep shared contributor guidance here.
+
+## Privacy and fixtures
+
+- Never add personally identifying information to the repository, including
+  tests, documentation, screenshots, captured logs, and commit messages.
+  Paths and filenames from a bug report are private input, not test fixtures.
+- Reproduce bugs with synthetic names that preserve the relevant properties
+  (apostrophes, whitespace, Unicode, nesting, etc.). Use temporary directories
+  or generic example paths; never hard-code a real user's home directory.
+- Review the staged diff and new artifacts for personal data before committing.
+  Do not copy raw session output into repository files without sanitizing it.
+
 ## Principles (ADR-000; binding)
 
 1. **Always responsive.** No blocking work on the UI thread, ever. Listings
@@ -60,6 +75,13 @@ principles and budgets), then the crate you are working in.
   `plugin_id.*` namespace and keep state in their own struct.
 - **No plugin hook runs per frame or per row.** Providers (metadata,
   thumbnails, locations) work in batches and streams on the scheduler.
+- **Locks and re-entry.** Snapshot the inputs needed under a lock, then drop
+  the guard before dispatching another command, navigating, invoking a plugin,
+  or doing I/O. These calls can acquire the same workspace or registry locks.
+- **Pane ownership.** Resolve the target `PaneId` when work starts and carry it
+  through commands and results. Do not redirect a delayed action to whichever
+  pane happens to be active when it finishes. Layout callbacks that use shell
+  state must restore the intended pane with `Shell::with_pane`.
 - **Provenance.** Metadata fields record where they came from
   (`Provenance::{Filesystem, User, Plugin, Model}`); model output is a
   suggestion until promoted to `User`.
@@ -78,9 +100,10 @@ principles and budgets), then the crate you are working in.
   by the hundreds digit (0xx open, 1xx edit, 2xx create, 3xx destructive,
   4xx misc); the UI draws separators between groups. `ui.*` commands are
   handled by the shell; a plugin may bind to them.
-- **Unsafe.** `unsafe_code` is denied by lint; the one allowance (setting an
-  env var before threads exist, `crates/bibli/src/gpu.rs`) carries an
-  `#[allow]` with the justification. Do likewise or don't.
+- **Unsafe.** The workspace sets `unsafe_code = "warn"`; `just lint` promotes
+  warnings to errors. Any exception needs a narrowly scoped `#[allow]` with a
+  justification, as in `crates/bibli/src/gpu.rs` (setting an environment
+  variable before threads exist). Do not weaken the workspace lint.
 - **Decisions.** Anything that closes a door gets an ADR in `docs/adr/`.
   Every phase updates the status paragraph in `docs/PLAN.md`, including
   deviations from the plan, honestly.
@@ -100,6 +123,58 @@ spikes/            the Phase 0 toolkit spikes, kept runnable
 docs/              PLAN.md, adr/
 ```
 
+## Implementation entry points
+
+- `crates/bibli/src/main.rs` wires plugins; `crates/ui/src/shell.rs` routes
+  commands and maintains pane UI state. Built-in list/grid/columns views are
+  in `crates/ui/src/views/`, not separate plugin crates.
+- New plugins need the workspace dependency alias, the binary dependency and
+  registration, and an entry in `crates/bibli/tests/plugins_toggle.rs`.
+  Extend that test's snapshot when adding a provider scheme or a new kind of
+  contribution; its provider-scheme list is explicit.
+- `Plugin::register(&App)` runs again on re-enable. `App::unregister_owner`
+  withdraws registered contributions; `Plugin::on_disable` must cancel work
+  and release resources held outside registries. Test disable and re-enable,
+  including in-flight work when the plugin starts background tasks.
+- Integration tests involving several plugins belong in `crates/bibli/tests/`
+  (see `timeline_query.rs`), keeping plugin crates independent of each other.
+
+## Background work and streamed state
+
+- `CommandRegistry::dispatch` executes on the caller's thread; dispatching a
+  command does not move it to a worker. Likewise, `LocationProvider::open` and
+  `OpenLocation::hydrate` are synchronous entry points: enqueue expensive work
+  and return promptly. `pump_until_complete` and executor blocking methods are
+  for headless tests/tools, never UI callbacks.
+- Send listing events through `OpenContext::channel` / `EventSink`, which wake
+  the UI after enqueueing. Other background results must call `App::wake` or a
+  captured `waker_handle` after publishing. `Complete` ends the initial listing;
+  updates and removals may still arrive afterward.
+- The scheduler skips cancelled jobs before they start; running jobs must
+  check their token themselves. Use child tokens for work tied to the app or
+  an open location, and cancel superseded requests. Only accept results for the
+  current request (e.g. the generation check in `crates/ui/src/preview.rs`);
+  cancellation alone does not prevent stale results.
+- Entries arrive before metadata. Treat missing fields as unknown, request
+  hydration in batches, and react to `Updated` events instead of stat-ing each
+  row during rendering. For virtual locations, use `OpenLocation::path_of` or
+  `App::selected_refs`; a query/shelf location is not a filesystem directory.
+
+## Paths and generated queries
+
+- Keep paths as `Path` / `PathBuf` and process arguments separate for as long
+  as possible. Shell quoting, query quoting, and URI encoding are different
+  grammars; a display string is not an escaped representation of any of them.
+- When another plugin needs a search, dispatch `query.search` with separate
+  `expr`, `root`, and `pane` arguments (see `timeline.select`). The query plugin
+  owns literal escaping in `lang::quote`; do not interpolate raw paths into
+  `in:` expressions or add a dependency on the query plugin to reuse helpers.
+  Handle a disabled command/provider as a normal error.
+- Query date ranges include the whole end date. A half-open histogram bucket
+  `[start, end)` needs `modified>=start modified<end`. Calendar boundaries in
+  the query parser and timeline plugin are UTC; UI labels use the system time
+  zone. Test boundary instants explicitly when changing date behavior.
+
 ## Build, test, lint
 
 The dev environment is the Nix flake (`flake.nix`, loaded by direnv). Inside it:
@@ -113,6 +188,9 @@ just run [dir]      run the release binary
 just flame [dir]    profile with samply
 ```
 
+Without an active dev shell, use `nix develop --command just <recipe>`, as CI
+does. `spikes/` is a separate workspace and is not covered by the root checks.
+
 CI runs lint, test, and bench-check; all three must pass before a commit is
 considered done. Clippy runs pedantic with the allowances listed in the root
 `Cargo.toml`; do not add allowances in code without a reason in a comment.
@@ -120,6 +198,21 @@ considered done. Clippy runs pedantic with the allowances listed in the root
 Tests that need a real filesystem feature (trash, xattrs) use a temp dir under
 `~/.cache/bibli-tests/`, never `/tmp` (tmpfs) and never real user files.
 `bench-data/` is generated by `bibli-bench gen` and is git-ignored.
+
+- Use `AppConfig::ephemeral` for headless tests so settings and cache writes
+  stay isolated. Await listing completion or events with a deadline rather
+  than relying on fixed sleeps; `crates/core/tests/common/mod.rs` has examples.
+- Test the user-facing command path for cross-plugin bugs, not just the helper
+  that formats a string. Include synthetic special-character paths and assert
+  the returned entries, not merely that parsing succeeds.
+- For operation property tests, verify undo restores the original tree and
+  redo restores the applied state, including partial failures. Applied steps
+  can cancel each other out (e.g. two swaps); a nonzero applied count does not
+  imply a different final tree. Investigate and preserve reproducible failure
+  cases; a passing randomized rerun does not resolve a previous failure.
+- `just bench-check` enforces the microsecond budgets in
+  `crates/bench/budgets.toml`. It does not validate UI startup, frame times, or
+  idle PSS; those require the real-app measurements below and ADR-002.
 
 ## Verifying UI changes
 
