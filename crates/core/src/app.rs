@@ -70,6 +70,9 @@ pub struct App {
     pub workspace: RwLock<Workspace>,
     pub thumbnails: Arc<crate::thumbs::Thumbnails>,
     pub metadata: Arc<crate::metadata::MetadataProviders>,
+    /// Plans proposed for review (by plugins whose work finishes later, or by
+    /// agents). The UI drains them with `take_proposals`.
+    proposals: parking_lot::Mutex<Vec<Plan>>,
     providers: RwLock<HashMap<Arc<str>, (Arc<str>, Arc<dyn LocationProvider>)>>,
     waker: RwLock<Option<Waker>>,
     batch_size: usize,
@@ -88,6 +91,7 @@ impl App {
             executor: Executor::new(scheduler.clone()),
             thumbnails: crate::thumbs::Thumbnails::new(scheduler.clone()),
             metadata: Arc::new(crate::metadata::MetadataProviders::default()),
+            proposals: parking_lot::Mutex::new(Vec::new()),
             scheduler,
             commands: CommandRegistry::default(),
             ops: OpRegistry::default(),
@@ -234,6 +238,22 @@ impl App {
     /// Execute a plan in the background.
     pub fn apply(&self, plan: Plan) {
         self.executor.execute(plan, self.lifetime.child());
+    }
+
+    /// Offer a plan for the user to review. Never applies anything; wakes the UI.
+    pub fn propose(&self, plan: Plan) {
+        self.proposals.lock().push(plan);
+        self.wake();
+    }
+
+    /// Plans proposed since the last call, oldest first.
+    pub fn take_proposals(&self) -> Vec<Plan> {
+        std::mem::take(&mut *self.proposals.lock())
+    }
+
+    /// Number of plans waiting for review.
+    pub fn pending_proposals(&self) -> usize {
+        self.proposals.lock().len()
     }
 
     /// Entry references for the current selection of a pane, in selection order.
