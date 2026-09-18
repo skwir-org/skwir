@@ -1,4 +1,4 @@
-diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' '--exclude=README.bibli.md' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/platform/linux/wayland/client.rs home/user/wip/bibli/vendor/gpui/src/platform/linux/wayland/client.rs
+diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' '--exclude=README.bibli.md' '--exclude=taffy.rs' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/platform/linux/wayland/client.rs home/user/wip/bibli/vendor/gpui/src/platform/linux/wayland/client.rs
 --- a/crates/gpui/src/platform/linux/wayland/client.rs	2006-07-24 03:21:28.000000000 +0200
 +++ b/crates/gpui/src/platform/linux/wayland/client.rs	2026-09-18 11:48:00.374199160 +0200
 @@ -199,6 +199,7 @@
@@ -236,7 +236,7 @@ diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclud
                  data_source.destroy();
              }
              _ => {}
-diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' '--exclude=README.bibli.md' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/platform/linux/wayland/clipboard.rs home/user/wip/bibli/vendor/gpui/src/platform/linux/wayland/clipboard.rs
+diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' '--exclude=README.bibli.md' '--exclude=taffy.rs' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/platform/linux/wayland/clipboard.rs home/user/wip/bibli/vendor/gpui/src/platform/linux/wayland/clipboard.rs
 --- a/crates/gpui/src/platform/linux/wayland/clipboard.rs	2006-07-24 03:21:28.000000000 +0200
 +++ b/crates/gpui/src/platform/linux/wayland/clipboard.rs	2026-09-18 11:33:22.553727414 +0200
 @@ -185,6 +185,11 @@
@@ -251,7 +251,7 @@ diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclud
      pub fn send_primary(&self, _mime_type: String, fd: OwnedFd) {
          if let Some(text) = self
              .primary_contents
-diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' '--exclude=README.bibli.md' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/platform/linux/wayland/window.rs home/user/wip/bibli/vendor/gpui/src/platform/linux/wayland/window.rs
+diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' '--exclude=README.bibli.md' '--exclude=taffy.rs' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/platform/linux/wayland/window.rs home/user/wip/bibli/vendor/gpui/src/platform/linux/wayland/window.rs
 --- a/crates/gpui/src/platform/linux/wayland/window.rs	2006-07-24 03:21:28.000000000 +0200
 +++ b/crates/gpui/src/platform/linux/wayland/window.rs	2026-09-18 11:46:46.313970573 +0200
 @@ -1049,6 +1049,18 @@
@@ -273,7 +273,7 @@ diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclud
      fn start_window_resize(&self, edge: crate::ResizeEdge) {
          let state = self.borrow();
          state.toplevel.resize(
-diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' '--exclude=README.bibli.md' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/platform.rs home/user/wip/bibli/vendor/gpui/src/platform.rs
+diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' '--exclude=README.bibli.md' '--exclude=taffy.rs' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/platform.rs home/user/wip/bibli/vendor/gpui/src/platform.rs
 --- a/crates/gpui/src/platform.rs	2006-07-24 03:21:28.000000000 +0200
 +++ b/crates/gpui/src/platform.rs	2026-09-18 11:48:17.243761687 +0200
 @@ -457,6 +457,23 @@
@@ -316,7 +316,7 @@ diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclud
      fn start_window_resize(&self, _edge: ResizeEdge) {}
      fn window_decorations(&self) -> Decorations {
          Decorations::Server
-diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' '--exclude=README.bibli.md' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/window.rs home/user/wip/bibli/vendor/gpui/src/window.rs
+diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' '--exclude=README.bibli.md' '--exclude=taffy.rs' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/window.rs home/user/wip/bibli/vendor/gpui/src/window.rs
 --- a/crates/gpui/src/window.rs	2006-07-24 03:21:28.000000000 +0200
 +++ b/crates/gpui/src/window.rs	2026-09-18 11:46:46.313290768 +0200
 @@ -1754,6 +1754,20 @@

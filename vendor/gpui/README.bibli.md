@@ -21,10 +21,15 @@ layout (`crates/gpui/...`) so they apply there with `git apply -p1`.
   into the originating window so its in-window drag ends. A drop back onto
   the same application arrives as an `ExternalPaths` drop like any other.
 
+- `0002-taffy-f32-literals.patch`: two float literals in `taffy.rs` given an
+  explicit `f32` suffix. Rust 1.98 warns that the implicit fallback becomes a
+  hard error (`float_literal_f32_fallback`, rust-lang/rust#154024).
+
 ## Regenerating a patch
 
     G=$(ls -d ~/.cargo/registry/src/*/gpui-0.2.2)
     (cd / && diff -ruN --exclude=.cargo_vcs_info.json --exclude=Cargo.toml.orig \
         --exclude=.cargo-ok "${G#/}" $PWD/vendor/gpui) > vendor/patches/NNNN-name.patch
 
-then rewrite the path prefixes as above.
+then rewrite the path prefixes as above. `0001` excludes `taffy.rs`, which is
+`0002` on its own.
