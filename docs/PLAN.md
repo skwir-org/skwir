@@ -27,7 +27,7 @@ cached across opens (walk is fast, content search dominates); the query language
 and the timeline's calendar math are duplicated (candidate for a shared crate); earlier
 deviations (AccessKit, views in-crate) still stand. Preview follow-up (2026-09-18,
 ADR-003): two additional toggleable plugins provide PDF/Office pages and seekable
-video stills through installed tools. Poppler replaces the deferred PDFium path;
+video stills through installed tools. Initially Poppler replaced the deferred PDFium path;
 Office conversion uses isolated LibreOffice on Linux. Real-tool smoke tests cover
 PDF paging, video seeking, and nine Office/OpenDocument formats with synthetic
 fixtures. Spreadsheet cell navigation and continuous video playback remain
@@ -42,6 +42,26 @@ Warm first-frame samples were 132–151 ms; sampled idle CPU was about 1% of one
 PDF latency follow-up: page turns retain the displayed page; fast lossless PNG
 encoding and metadata reuse reduce a synthetic scanned page's backend latency
 from 1777 ms to 99 ms (24 ms cached), with identical pixels (ADR-003).
+PDF reader follow-up (ADR-004): optional PDFium sessions add per-page text
+selection/copy, whole-document search, internal/web links and outlines, including
+converted Office files. The native library is loaded only in a cancellable child
+process; Poppler remains selectable and is the missing-dependency fallback.
+Both engines share the Office conversion cache. State lasts for the selected
+preview; password entry, OCR, editing and cross-page selection are deferred.
+Synthetic renderer and full-adapter comparisons are in `docs/pdf-comparison.md`.
+Resource verification also found preview textures surviving in GPUI's atlas;
+page replacement and close now explicitly evict them. PDFium page buffers
+transfer into GPUI without full-page copies. The unrelated operation
+property test now accepts cancelling pairs of swaps while still verifying
+undo/redo, with its failure seed retained. A shell-test output race is also
+fixed by publishing its fixture record atomically. Lint and 119 default tests
+pass; the native smoke checks cover PDFium, Poppler, video and nine converted
+Office formats. UI checks exercised selection/copy, search, outlines, internal
+links, rotation, and grid/list scrolling with synthetic inputs. The historical
+UI memory budget remains an open gate; measurements include the child process
+and are recorded separately from filesystem microbenchmarks. After 50 page
+turns, bibli plus PDFium measured about 201 MiB PSS versus 177 MiB with Poppler;
+both stabilized across turns. Fresh idle was 115–117 MiB, still above target.
 
 ---
 

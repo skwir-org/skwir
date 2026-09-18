@@ -116,6 +116,7 @@ crates/core        bibli-core: entries, locations, commands, ops/plans, registri
 crates/platform    per-OS adapters: MIME, icons, thumbnails, places, open, terminal
 crates/ui          the gpui shell: views, panels, prompts, keymap, elements
 crates/bibli       the binary: wires plugins and starts the UI
+crates/pdf-worker  optional native PDF reader process (runtime-loaded PDFium)
 crates/plugins/*   one crate per plugin (see docs/PLAN.md Phase 2 and 4)
 crates/bench       synthetic trees and the performance regression check
 vendor/gpui        patched gpui 0.2.2 (see vendor/gpui/README.bibli.md)
@@ -159,6 +160,30 @@ docs/              PLAN.md, adr/
   hydration in batches, and react to `Updated` events instead of stat-ing each
   row during rendering. For virtual locations, use `OpenLocation::path_of` or
   `App::selected_refs`; a query/shelf location is not a filesystem directory.
+
+## Document reader invariants
+
+- Native PDFium is loaded only by `bibli-pdf-worker`, never in the UI process.
+  Session creation/render/search are blocking worker entry points. The manager
+  thread owns child cleanup and temporary files; dropping a UI session must
+  only cancel/send, never wait for a process or delete files.
+- A session follows both the selected preview and its provider registration.
+  Page/search requests have separate cancellation and generation checks.
+  Cancel background search before a visible page request. Disabling a provider
+  must cancel even an idle session; test this without requiring native PDFium.
+- Document pages transfer one owned pixel buffer into GPUI; swizzle it in
+  place. Full-page copies on scheduler threads can retain large allocations
+  across allocator arenas even after the preview is closed.
+- `RenderImage` reference counts do not release uploaded GPUI atlas entries.
+  Explicitly call `cx.drop_image(image, Some(window))` when replacing/closing
+  a preview, as the thumbnail LRU does on eviction.
+- PDF pixel, text, link and search rectangles share normalized coordinates.
+  Fit/zoom transforms belong in `elements/document.rs` prepaint. Verify rotated
+  pages with `tools/pdf/check.py`; use only its synthetic fixture generator.
+- `auto` may fall back when the worker/library is absent. Report document
+  errors directly; do not conceal malformed files by silently trying engines.
+  Poppler remains selectable for comparison. Measurements must distinguish
+  renderer time from full UI latency and include child PSS, not only bibli PSS.
 
 ## Paths and generated queries
 

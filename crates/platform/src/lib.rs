@@ -11,6 +11,7 @@
 //! - [`places`]: home, XDG user dirs, GTK bookmarks, mounted volumes.
 //! - [`open`]: open with the default application, open a terminal.
 
+pub mod document;
 pub mod icons;
 pub mod mime;
 pub mod open;

@@ -20,6 +20,7 @@ pub const ADDRESS: &str = "AddressBar";
 pub const PALETTE: &str = "Palette";
 pub const CONFIRM: &str = "Confirm";
 pub const PEEK: &str = "Peek";
+pub const READER: &str = "DocumentReader";
 pub const REVIEW: &str = "Review";
 pub const JUMP: &str = "Jump";
 pub const BULK: &str = "BulkRename";
@@ -54,6 +55,9 @@ const DEFAULTS: &[(&str, &str, Option<&str>)] = &[
 
 /// Bindings the shell always needs, independent of plugins.
 const BUILTIN: &[(&str, &str, Option<&str>)] = &[
+    ("ctrl-c", "ui.reader_copy", Some("reader")),
+    ("ctrl-a", "ui.reader_select_all", Some("reader")),
+    ("ctrl-f", "ui.reader_find", Some("reader")),
     ("up", "ui.cursor_up", Some("pane")),
     ("down", "ui.cursor_down", Some("pane")),
     ("shift-up", "ui.cursor_extend_up", Some("pane")),
@@ -99,6 +103,25 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
 
 /// Builtin bindings that carry arguments (`keys, command, args json, when`).
 const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
+    (
+        "pageup",
+        "ui.preview_page",
+        r#"{"delta":-1}"#,
+        Some("reader"),
+    ),
+    (
+        "pagedown",
+        "ui.preview_page",
+        r#"{"delta":1}"#,
+        Some("reader"),
+    ),
+    ("f3", "ui.reader_match", r#"{"delta":1}"#, Some("reader")),
+    (
+        "shift-f3",
+        "ui.reader_match",
+        r#"{"delta":-1}"#,
+        Some("reader"),
+    ),
     ("alt-pageup", "ui.preview_page", r#"{"delta":-1}"#, None),
     ("alt-pagedown", "ui.preview_page", r#"{"delta":1}"#, None),
     (
@@ -138,6 +161,7 @@ pub fn context_of(when: Option<&str>) -> String {
             "palette" => PALETTE.to_owned(),
             "confirm" => CONFIRM.to_owned(),
             "peek" => PEEK.to_owned(),
+            "reader" => READER.to_owned(),
             "review" => REVIEW.to_owned(),
             "jump" => JUMP.to_owned(),
             "bulk" => BULK.to_owned(),

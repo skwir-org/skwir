@@ -63,22 +63,58 @@ All controls are also available in the command palette.
 
 Install optional tools on `PATH` to enable these formats:
 
-- PDF: Poppler utilities (`pdfinfo`, `pdftoppm`).
+- PDF reader: `bibli-pdf-worker` plus the PDFium shared library. `just build`
+  and `just run` build the worker. Use `nix develop .#pdf` for the optional
+  runtime, or set `BIBLI_PDFIUM_LIBRARY` to your installed library.
+- PDF image preview fallback: Poppler utilities (`pdfinfo`, `pdftoppm`).
 - Video stills: `ffmpeg` and `ffprobe`.
 - DOC/DOCX, XLS/XLSX, PPT/PPTX, ODT/ODS/ODP (and related formats): LibreOffice,
-  Poppler utilities, and `bubblewrap` (`bwrap`) on Linux. Documents convert in
+  either PDF engine, and `bubblewrap` (`bwrap`) on Linux. Documents convert in
   isolation to cached PDF pages; spreadsheets show their print layout.
 
 The `preview-media` and `preview-documents` plugins can be disabled independently
 using `plugins.<id>.enabled` in settings. Missing tools are reported in the
-panel. Full video playback, PDF text selection, and spreadsheet cell navigation
-are not implemented. See `docs/adr/003-preview-providers.md` for the design.
+panel. With PDFium, drag to select text, use Copy or `ctrl-c`, Find or
+`ctrl-f`, and Contents to navigate the outline. Click the page first to focus
+reader shortcuts: `ctrl-a` selects page text, Page Up/Down turn pages, and
+F3/Shift-F3 step through search matches. Search runs on Enter. Internal links
+navigate within the document; HTTP(S) links open in the default browser.
+Page and zoom state last while that file remains selected.
+
+The default backend is `auto`: prefer PDFium when available, otherwise use
+Poppler. To force either engine, set this in `bibli/settings.toml` under your
+platform's config directory, then restart bibli (or disable/re-enable the plugin):
+
+```toml
+[preview-documents]
+backend = "pdfium" # "auto" or "poppler"
+# pdfium_library = "/opt/pdfium/lib/libpdfium.so"
+```
+
+An explicit library setting takes precedence over `BIBLI_PDFIUM_LIBRARY`.
+Distributors should install the worker beside bibli, or on `PATH`;
+`BIBLI_PDF_WORKER` can select another executable for development.
+PDFium is loaded only in the worker while a document is open. It uses the
+upstream BSD-style/Apache-2.0 terms plus third-party notices; the Rust binding
+is MIT/Apache-2.0. See [ADR-004](docs/adr/004-pdfium-reader.md).
+
+Text selection is currently limited to one page; scanned images need an
+existing text layer for search/selection. Password entry, editing, annotations,
+continuous page scrolling, full video playback, and spreadsheet cell navigation
+remain future work.
 
 To exercise installed renderers with generated fixtures:
 
 ```
-cargo nextest run -p bibli-platform --run-ignored only -E 'test(preview::tests::real_)'
+cargo build --release -p bibli-pdf-worker
+BIBLI_PDF_WORKER="$PWD/target/release/bibli-pdf-worker" cargo nextest run --release -p bibli-platform --run-ignored only -E 'test(preview::tests::real_)'
+python3 tools/pdf/check.py --library "$BIBLI_PDFIUM_LIBRARY"
+python3 tools/pdf/compare.py --library "$BIBLI_PDFIUM_LIBRARY"
 ```
+
+The comparison reports rendering time, CPU, and worker PSS for synthetic text,
+vector, and scanned documents. Its scope and recorded results are in
+[the PDF comparison](docs/pdf-comparison.md).
 
 ## Design in one paragraph
 

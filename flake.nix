@@ -105,5 +105,10 @@
         };
 
         formatter = pkgs.nixpkgs-fmt;
+        # Optional native reader runtime; the default shell keeps its dependency
+        # footprint. PDFium is dynamically loaded only by bibli-pdf-worker.
+        devShells.pdf = self.devShells.${system}.default.overrideAttrs (_: {
+          BIBLI_PDFIUM_LIBRARY = "${pkgs.pdfium}/lib/libpdfium${stdenv.hostPlatform.extensions.sharedLibrary}";
+        });
       });
 }

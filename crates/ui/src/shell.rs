@@ -607,6 +607,46 @@ impl Shell {
             ),
             "preview_zoom" => self.preview_zoom(arg("dir").as_deref().unwrap_or("reset"), cx),
             "toggle_preview" => self.toggle_preview(cx),
+            "reader_pointer" => self.reader_pointer(
+                args.get("phase")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("up"),
+                args.get("x")
+                    .and_then(serde_json::Value::as_f64)
+                    .unwrap_or(0.) as f32,
+                args.get("y")
+                    .and_then(serde_json::Value::as_f64)
+                    .unwrap_or(0.) as f32,
+                window,
+                cx,
+            ),
+            "reader_page" => self.preview_go_page(
+                args.get("page")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|n| u32::try_from(n).ok())
+                    .unwrap_or(1),
+                cx,
+            ),
+            "reader_copy" => self.reader_copy(cx),
+            "reader_select_all" => self.reader_select_all(cx),
+            "reader_outline" => self.reader_outline(cx),
+            "reader_find" => self.reader_find(window, cx),
+            "reader_find_close" => self.reader_find_close(window, cx),
+            "reader_search" => self.reader_search(cx),
+            "reader_match" => self.reader_match(
+                args.get("delta")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(1)
+                    .clamp(-1, 1) as i32,
+                cx,
+            ),
+            "reader_link" => self.reader_link(
+                args.get("index")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|n| usize::try_from(n).ok())
+                    .unwrap_or(usize::MAX),
+                cx,
+            ),
             "peek" => self.toggle_peek(window, cx),
             "peek_close" => self.close_peek(window, cx),
             "peek_prev" => self.cursor_move(-1, false, window, cx),
@@ -690,7 +730,7 @@ impl Shell {
     }
 
     /// Apply core events and refresh derived state. Called first in `render`.
-    fn sync(&mut self, cx: &mut Context<Self>) {
+    fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let t0 = Instant::now();
         let report = self.app.pump_report();
         self.app.thumbnails.tick();
@@ -746,7 +786,8 @@ impl Shell {
                 "sync"
             );
         }
-        self.sync_preview(cx);
+        self.sync_preview(window, cx);
+        self.sync_reader(cx);
         self.sync_usage(cx);
         self.sync_timeline(cx);
         self.sync_shelf(cx);
@@ -826,7 +867,7 @@ impl Render for Shell {
                 self.started.elapsed().as_secs_f64() * 1000.0
             );
         }
-        self.sync(cx);
+        self.sync(window, cx);
         let theme = cx.global::<Theme>().clone();
         let toolbar = address::render_toolbar(self, cx);
         let side = sidebar::render(self, cx);

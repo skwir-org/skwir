@@ -239,9 +239,8 @@ mod tests {
         std::fs::write(
             &fake,
             format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$@\" > {}\npwd >> {}\n",
-                record.display(),
-                record.display()
+                "#!/bin/sh\nrecord={}\n{{ printf '%s\\n' \"$@\"; pwd; }} > \"$record.tmp\"\nmv \"$record.tmp\" \"$record\"\n",
+                quote(&record.to_string_lossy())
             ),
         )
         .unwrap();
@@ -278,9 +277,9 @@ mod tests {
         ))
         .unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while !record.exists()
-            || std::fs::read_to_string(&record).map_or(true, |s| s.lines().count() < 6)
-        {
+        // Publish the complete record atomically; existence means both argv
+        // and the working directory have been written by the child.
+        while !record.exists() {
             assert!(std::time::Instant::now() < deadline, "terminal never ran");
             std::thread::sleep(Duration::from_millis(10));
         }

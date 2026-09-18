@@ -7,6 +7,7 @@ members = [
     "crates/plugins/*",
     "crates/bench",
     "crates/bibli",
+    "crates/pdf-worker",
 ]
 # Toolkit spikes live in their own workspace so their heavy dependency
 # trees never touch the main build.

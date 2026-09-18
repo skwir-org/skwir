@@ -37,6 +37,13 @@ pub trait PreviewProvider: Send + Sync {
     fn id(&self) -> &'static str;
     fn accepts(&self, request: &PreviewRequest) -> bool;
     fn render(&self, request: &PreviewRequest, cancel: &CancelToken) -> anyhow::Result<Preview>;
+    fn open_document(
+        &self,
+        _request: &PreviewRequest,
+        _lifetime: &CancelToken,
+    ) -> anyhow::Result<Option<Arc<dyn crate::document::DocumentSession>>> {
+        Ok(None)
+    }
 }
 
 #[derive(Clone)]
@@ -53,6 +60,26 @@ pub struct Previews {
 }
 
 impl Previews {
+    /// Open an optional reader session on a worker. Its lifetime follows both
+    /// the preview and the provider registration, independent of page requests.
+    pub fn open_document(
+        &self,
+        request: &PreviewRequest,
+        lifetime: &CancelToken,
+    ) -> anyhow::Result<Option<Arc<dyn crate::document::DocumentSession>>> {
+        let providers = self.providers.read().clone();
+        for p in providers {
+            let lifetime = lifetime.linked(&p.lifetime);
+            anyhow::ensure!(!lifetime.is_cancelled(), "preview cancelled");
+            if p.provider.accepts(request) {
+                let session = p.provider.open_document(request, &lifetime)?;
+                anyhow::ensure!(!lifetime.is_cancelled(), "preview cancelled");
+                return Ok(session);
+            }
+        }
+        Ok(None)
+    }
+
     pub fn register(&self, owner: &str, provider: Arc<dyn PreviewProvider>) {
         self.providers.write().push(Registered {
             owner: owner.into(),
@@ -121,6 +148,14 @@ mod tests {
         fn accepts(&self, _: &PreviewRequest) -> bool {
             true
         }
+        fn open_document(
+            &self,
+            request: &PreviewRequest,
+            lifetime: &CancelToken,
+        ) -> anyhow::Result<Option<Arc<dyn crate::document::DocumentSession>>> {
+            self.render(request, lifetime)?;
+            Ok(None)
+        }
         fn render(&self, _: &PreviewRequest, cancel: &CancelToken) -> anyhow::Result<Preview> {
             self.0.send(()).unwrap();
             let deadline = std::time::Instant::now() + Duration::from_secs(2);
@@ -152,11 +187,17 @@ mod tests {
             seconds: None,
             max_side: 128,
         };
-        for _ in 0..2 {
+        for attempt in 0..4 {
             previews.register("test", provider.clone());
             let service = Arc::clone(&previews);
             let req = request.clone();
-            let worker = std::thread::spawn(move || service.render(&req, &CancelToken::new()));
+            let worker = std::thread::spawn(move || {
+                if attempt < 2 {
+                    service.render(&req, &CancelToken::new()).map(|_| ())
+                } else {
+                    service.open_document(&req, &CancelToken::new()).map(|_| ())
+                }
+            });
             rx.recv_timeout(Duration::from_secs(2)).unwrap();
             previews.unregister_owner("test");
             assert!(

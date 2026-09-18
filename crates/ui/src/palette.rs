@@ -65,6 +65,20 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
         "Preview: previous page",
     ),
     ("ui.preview_page", r#"{"delta":1}"#, "Preview: next page"),
+    ("ui.reader_find", "{}", "Document: find text"),
+    ("ui.reader_outline", "{}", "Document: contents"),
+    ("ui.reader_copy", "{}", "Document: copy selected text"),
+    ("ui.reader_select_all", "{}", "Document: select page text"),
+    (
+        "ui.reader_match",
+        r#"{"delta":1}"#,
+        "Document: next search match",
+    ),
+    (
+        "ui.reader_match",
+        r#"{"delta":-1}"#,
+        "Document: previous search match",
+    ),
     (
         "ui.preview_seek",
         r#"{"delta":-5}"#,

@@ -1,0 +1,203 @@
+//! Document pixels and hit testing share the transform calculated in prepaint.
+//! No measured bounds escape into render; normalized text/link boxes remain
+//! aligned when the panel is resized or the image is zoomed.
+
+use std::{rc::Rc, sync::Arc};
+
+use bibli_core::document::{PageContent, Rect};
+use gpui::{
+    App, Bounds, ContentMask, Corners, DispatchPhase, Element, ElementId, GlobalElementId, Hitbox,
+    HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, RenderImage, Style, Window, fill, point, px, relative,
+    size,
+};
+
+type Pointer = Rc<dyn Fn(&str, f32, f32, &mut Window, &mut App)>;
+pub struct DocumentElement {
+    pub image: Arc<RenderImage>,
+    pub page: Arc<PageContent>,
+    pub highlights: Vec<Rect>,
+    pub selection: Vec<Rect>,
+    pub color: Hsla,
+    pub zoom: Option<f32>,
+    pub on_pointer: Pointer,
+}
+impl IntoElement for DocumentElement {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+pub struct Prepaint {
+    image: Bounds<Pixels>,
+    hitbox: Hitbox,
+}
+
+pub fn fitted_rect(
+    width: f32,
+    height: f32,
+    page_width: f32,
+    page_height: f32,
+) -> (f32, f32, f32, f32) {
+    let scale = (width / page_width.max(1.))
+        .min(height / page_height.max(1.))
+        .max(0.);
+    let (w, h) = (page_width * scale, page_height * scale);
+    ((width - w) / 2., (height - h) / 2., w, h)
+}
+
+impl Element for DocumentElement {
+    type RequestLayoutState = ();
+    type PrepaintState = Prepaint;
+    fn id(&self) -> Option<ElementId> {
+        Some("document-page".into())
+    }
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        let mut style = Style::default();
+        if let Some(zoom) = self.zoom {
+            style.size.width = px(self.page.width * zoom).into();
+            style.size.height = px(self.page.height * zoom).into();
+            style.flex_shrink = 0.;
+        } else {
+            style.size.width = relative(1.).into();
+            style.size.height = relative(1.).into();
+        }
+        (window.request_layout(style, [], cx), ())
+    }
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        _: &mut App,
+    ) -> Prepaint {
+        let (x, y, w, h) = fitted_rect(
+            bounds.size.width.into(),
+            bounds.size.height.into(),
+            self.page.width,
+            self.page.height,
+        );
+        let image = Bounds::new(bounds.origin + point(px(x), px(y)), size(px(w), px(h)));
+        let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+        Prepaint { image, hitbox }
+    }
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        prepaint: &mut Prepaint,
+        window: &mut Window,
+        _: &mut App,
+    ) {
+        let image_bounds = prepaint.image;
+        let mouse = window.mouse_position();
+        let x =
+            f32::from(mouse.x - image_bounds.origin.x) / f32::from(image_bounds.size.width).max(1.);
+        let y = f32::from(mouse.y - image_bounds.origin.y)
+            / f32::from(image_bounds.size.height).max(1.);
+        let cursor = if self
+            .page
+            .links
+            .iter()
+            .any(|link| link.bounds.contains(x, y))
+        {
+            gpui::CursorStyle::PointingHand
+        } else {
+            gpui::CursorStyle::IBeam
+        };
+        window.set_cursor_style(cursor, &prepaint.hitbox);
+        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+            let _ = window.paint_image(
+                image_bounds,
+                Corners::default(),
+                self.image.clone(),
+                0,
+                false,
+            );
+            for (rects, color) in [
+                (
+                    &self.highlights,
+                    gpui::Hsla::from(gpui::rgb(0xffce33)).opacity(0.4),
+                ),
+                (&self.selection, self.color.opacity(0.35)),
+            ] {
+                for rect in rects {
+                    let bounds = Bounds::new(
+                        image_bounds.origin
+                            + point(
+                                image_bounds.size.width * rect.x,
+                                image_bounds.size.height * rect.y,
+                            ),
+                        size(
+                            image_bounds.size.width * rect.width,
+                            image_bounds.size.height * rect.height,
+                        ),
+                    );
+                    window.paint_quad(fill(bounds, color));
+                }
+            }
+        });
+        let coordinates = move |p: gpui::Point<Pixels>| {
+            let x =
+                f32::from(p.x - image_bounds.origin.x) / f32::from(image_bounds.size.width).max(1.);
+            let y = f32::from(p.y - image_bounds.origin.y)
+                / f32::from(image_bounds.size.height).max(1.);
+            (x, y)
+        };
+        let callback = self.on_pointer.clone();
+        let hitbox = prepaint.hitbox.clone();
+        window.on_mouse_event(
+            move |ev: &MouseDownEvent, phase: DispatchPhase, window, cx| {
+                if phase.bubble()
+                    && ev.button == MouseButton::Left
+                    && hitbox.is_hovered(window)
+                    && image_bounds.contains(&ev.position)
+                {
+                    let (x, y) = coordinates(ev.position);
+                    callback("down", x, y, window, cx);
+                    cx.stop_propagation();
+                }
+            },
+        );
+        let callback = self.on_pointer.clone();
+        window.on_mouse_event(
+            move |ev: &MouseMoveEvent, phase: DispatchPhase, window, cx| {
+                if phase.bubble() && ev.pressed_button == Some(MouseButton::Left) {
+                    let (x, y) = coordinates(ev.position);
+                    callback("move", x, y, window, cx);
+                }
+            },
+        );
+        let callback = self.on_pointer.clone();
+        window.on_mouse_event(move |ev: &MouseUpEvent, phase: DispatchPhase, window, cx| {
+            if phase.bubble() && ev.button == MouseButton::Left {
+                let (x, y) = coordinates(ev.position);
+                callback("up", x, y, window, cx);
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn fit_keeps_selection_and_pixels_in_the_same_letterboxed_area() {
+        assert_eq!(fitted_rect(400., 600., 200., 200.), (0., 100., 400., 400.));
+        assert_eq!(fitted_rect(800., 200., 400., 200.), (200., 0., 400., 200.));
+    }
+}

@@ -39,6 +39,7 @@ pub enum PreviewContent {
         width: u32,
         height: u32,
         detail: Option<PreviewInfo>,
+        document: Option<Arc<bibli_core::document::PageContent>>,
     },
     Text {
         lines: Vec<Vec<(Hsla, String)>>,
@@ -55,6 +56,7 @@ struct PreviewResult {
     generation: u64,
     content: PreviewContent,
     complete: bool,
+    session: Option<Arc<dyn bibli_core::document::DocumentSession>>,
 }
 
 /// Facts shown in the header, read from the entry's metadata.
@@ -100,6 +102,7 @@ enum PreviewPhase {
 }
 
 pub struct PreviewState {
+    pub reader: crate::reader::ReaderState,
     pub open: bool,
     pub peek: bool,
     pub width: f32,
@@ -122,6 +125,7 @@ impl Default for PreviewState {
     fn default() -> Self {
         let (tx, rx) = flume::unbounded();
         PreviewState {
+            reader: crate::reader::ReaderState::default(),
             open: false,
             peek: false,
             width: 320.0,
@@ -199,6 +203,7 @@ fn decode_image(path: &Path, cancel: &CancelToken) -> anyhow::Result<PreviewCont
         width,
         height,
         detail: None,
+        document: None,
     })
 }
 
@@ -307,16 +312,16 @@ fn read_head(path: &Path) -> std::io::Result<Vec<u8>> {
 
 impl Shell {
     /// Called on UI wake. Only a changed request schedules worker work.
-    pub fn sync_preview(&mut self, cx: &mut Context<Self>) {
+    pub fn sync_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !(self.preview.open || self.preview.peek) {
             if self.preview.key.is_some() {
-                self.cancel_preview();
+                self.cancel_preview(window, cx);
             }
             while self.preview.rx.try_recv().is_ok() {}
             return;
         }
         let Some(id) = self.cursor_id() else {
-            self.cancel_preview();
+            self.cancel_preview(window, cx);
             return;
         };
         let current = {
@@ -345,13 +350,13 @@ impl Shell {
             })
         };
         let Some((key, entry)) = current else {
-            self.cancel_preview();
+            self.cancel_preview(window, cx);
             return;
         };
         // Invalidate before draining results: an old result must never land on
         // a newly selected file, a changed file, or a different pane.
         if self.preview.key.as_ref() != Some(&key) {
-            self.cancel_preview();
+            self.cancel_preview(window, cx);
             self.preview.key = Some(key.clone());
             self.preview.phase = PreviewPhase::Queued;
             let mime = if entry.is_dir() {
@@ -373,6 +378,18 @@ impl Shell {
         }
         while let Ok(result) = self.preview.rx.try_recv() {
             if result.generation == self.preview.generation {
+                if result.complete {
+                    self.preview.reader.tried = true;
+                    if let Some(session) = result.session {
+                        self.preview.reader.session = Some(session);
+                        self.preview
+                            .reader
+                            .focus
+                            .get_or_insert_with(|| cx.focus_handle());
+                    }
+                    self.preview.reader.selection = None;
+                    self.preview.reader.down = None;
+                }
                 if let PreviewContent::Image {
                     detail: Some(detail),
                     ..
@@ -383,7 +400,19 @@ impl Shell {
                         PreviewInfo::Video { seconds, .. } => self.preview.seconds = Some(*seconds),
                     }
                 }
-                self.preview.content = Some(result.content);
+                if let PreviewContent::Error(error) = &result.content
+                    && let Some(PreviewContent::Image {
+                        detail: Some(PreviewInfo::Document { page, .. }),
+                        ..
+                    }) = &self.preview.content
+                {
+                    // Keep the last usable page and its controls on a failed turn.
+                    self.preview.page = *page;
+                    self.preview.phase = PreviewPhase::Idle;
+                    self.set_status(error.clone(), true, cx);
+                    continue;
+                }
+                self.replace_preview_content(Some(result.content), window, cx);
                 self.preview.phase = if result.complete {
                     PreviewPhase::Idle
                 } else {
@@ -410,6 +439,9 @@ impl Shell {
         let previews = Arc::clone(&self.app.previews);
         let wake = self.app.waker_handle();
         let is_dir = entry.is_dir();
+        let session = self.preview.reader.session.clone();
+        let open_document = !is_dir && !self.preview.reader.tried;
+        let lifetime = self.preview.reader.lifetime.clone();
         // A desktop thumbnail represents the file, not the requested page or
         // timestamp. Only use it before this file has any preview content.
         let show_thumbnail = !is_dir && self.preview.content.is_none();
@@ -434,15 +466,72 @@ impl Shell {
                         let _ = tx.send(PreviewResult {
                             generation,
                             complete: false,
+                            session: None,
                             content: PreviewContent::Image {
                                 image: render,
                                 width: image.width,
                                 height: image.height,
                                 detail: None,
+                                document: None,
                             },
                         });
                         wake();
                     }
+                }
+                let reader = if let Some(session) = session {
+                    Ok(Some(session))
+                } else if open_document {
+                    previews.open_document(&request, &lifetime)
+                } else {
+                    Ok(None)
+                };
+                match reader {
+                    Ok(Some(session)) => {
+                        let content = session
+                            .render(request.page, request.max_side, &cancel)
+                            .and_then(|page| {
+                                let image = crate::thumbs::owned_render_image(
+                                    page.width,
+                                    page.height,
+                                    page.rgba,
+                                )
+                                .ok_or_else(|| anyhow::anyhow!("invalid document bitmap"))?;
+                                Ok(PreviewContent::Image {
+                                    image,
+                                    width: page.width,
+                                    height: page.height,
+                                    detail: Some(PreviewInfo::Document {
+                                        page: page.content.page,
+                                        pages: session.info().pages,
+                                    }),
+                                    document: Some(page.content),
+                                })
+                            })
+                            .unwrap_or_else(|e| PreviewContent::Error(format!("{e:#}")));
+                        if !cancel.is_cancelled() {
+                            let _ = tx.send(PreviewResult {
+                                generation,
+                                content,
+                                complete: true,
+                                session: Some(session),
+                            });
+                            wake();
+                        }
+                        return;
+                    }
+                    Err(error) => {
+                        if !cancel.is_cancelled() {
+                            let _ = tx.send(PreviewResult {
+                                generation,
+                                content: PreviewContent::Error(format!("{error:#}")),
+                                complete: true,
+                                session: None,
+                            });
+                            wake();
+                        }
+                        return;
+                    }
+                    Ok(None) => {}
                 }
                 let result = if is_dir {
                     Ok(None)
@@ -456,6 +545,7 @@ impl Shell {
                             width: preview.image.width,
                             height: preview.image.height,
                             detail: Some(preview.info),
+                            document: None,
                         },
                         None => PreviewContent::Error("Invalid preview image".into()),
                     },
@@ -473,6 +563,7 @@ impl Shell {
                         generation,
                         content,
                         complete: true,
+                        session: None,
                     });
                     wake();
                 }
@@ -486,12 +577,27 @@ impl Shell {
         self.preview.generation = self.preview.generation.wrapping_add(1);
     }
 
-    fn cancel_preview(&mut self) {
+    fn replace_preview_content(
+        &mut self,
+        content: Option<PreviewContent>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // RenderImage's Arc does not own its uploaded atlas entry. Evict it
+        // explicitly, just like the thumbnail LRU, on replacement and close.
+        if let Some(PreviewContent::Image { image, .. }) = self.preview.content.take() {
+            cx.drop_image(image, Some(window));
+        }
+        self.preview.content = content;
+    }
+
+    fn cancel_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_pending_preview();
         self.preview.key = None;
         self.preview.info = Info::default();
         while self.preview.rx.try_recv().is_ok() {}
-        self.preview.content = None;
+        self.replace_preview_content(None, window, cx);
+        self.preview.reader = crate::reader::ReaderState::default();
         self.preview.phase = PreviewPhase::Idle;
 
         self.preview.page = 1;
@@ -515,7 +621,29 @@ impl Shell {
             .page
             .saturating_add_signed(delta)
             .clamp(1, *pages);
+        self.preview_go_page(next, cx);
+    }
+
+    pub fn preview_go_page(&mut self, next: u32, cx: &mut Context<Self>) {
+        let pages = self
+            .preview
+            .reader
+            .session
+            .as_ref()
+            .map(|s| s.info().pages)
+            .or(match &self.preview.content {
+                Some(PreviewContent::Image {
+                    detail: Some(PreviewInfo::Document { pages, .. }),
+                    ..
+                }) => Some(*pages),
+                _ => None,
+            });
+        let Some(pages) = pages else {
+            return;
+        };
+        let next = next.clamp(1, pages);
         if next != self.preview.page {
+            self.preview.reader.cancel_search();
             self.cancel_pending_preview();
             self.preview.page = next;
             self.preview.phase = PreviewPhase::Queued;
@@ -600,7 +728,7 @@ impl Shell {
     }
 }
 
-fn preview_button(
+pub(crate) fn preview_button(
     id: &'static str,
     label: &'static str,
     command: &'static str,
@@ -622,7 +750,7 @@ fn preview_button(
         .into_any_element()
 }
 
-fn body(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
+fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>) -> AnyElement {
     let p = &shell.preview;
     match &p.content {
         None if p.phase != PreviewPhase::Idle => div()
@@ -639,8 +767,17 @@ fn body(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
             width,
             height,
             detail,
+            document,
         }) => {
-            let picture = if let Some(zoom) = p.zoom {
+            let picture = if let Some(document) = document.as_ref().filter(|_| interactive) {
+                crate::reader::page_element(
+                    shell,
+                    Arc::clone(image),
+                    Arc::clone(document),
+                    p.zoom,
+                    cx,
+                )
+            } else if let Some(zoom) = p.zoom {
                 div()
                     .id("preview-image-scroll")
                     .flex_1()
@@ -756,6 +893,15 @@ fn body(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
                 .min_h_0()
                 .flex()
                 .flex_col()
+                .when(document.is_some() && interactive, |d| {
+                    d.key_context(keymap::READER)
+                })
+                .children(
+                    document
+                        .as_ref()
+                        .filter(|_| interactive)
+                        .map(|_| crate::reader::toolbar(shell, theme, cx)),
+                )
                 .child(picture)
                 .child(controls)
                 .into_any_element()
@@ -898,7 +1044,7 @@ pub fn render_panel(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement
             .border_color(theme.border)
             .bg(theme.surface)
             .child(header(&shell.preview.info, &theme))
-            .child(body(shell, &theme, cx))
+            .child(body(shell, &theme, !shell.preview.peek, cx))
             .child(handle)
             .into_any_element(),
     )
@@ -940,7 +1086,7 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
                         .shadow_lg()
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .child(header(&shell.preview.info, &theme))
-                        .child(body(shell, &theme, cx))
+                        .child(body(shell, &theme, true, cx))
                         .child(
                             div()
                                 .px_2()

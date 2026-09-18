@@ -93,15 +93,18 @@ impl ThumbCache {
 
 /// Convert the core's RGBA8 image into GPUI's BGRA8 `RenderImage`.
 pub fn to_render_image(img: &Image) -> Option<Arc<RenderImage>> {
-    let mut buf = img.rgba.to_vec();
+    owned_render_image(img.width, img.height, img.rgba.to_vec())
+}
+
+/// Document pages have one consumer: swizzle the transferred buffer in place.
+pub fn owned_render_image(width: u32, height: u32, mut buf: Vec<u8>) -> Option<Arc<RenderImage>> {
     for p in buf.chunks_exact_mut(4) {
         p.swap(0, 2);
     }
-    let buffer = image::RgbaImage::from_raw(img.width, img.height, buf)?;
-    Some(Arc::new(RenderImage::new(SmallVec::from_elem(
+    let buffer = image::RgbaImage::from_raw(width, height, buf)?;
+    Some(Arc::new(RenderImage::new(SmallVec::from_buf([
         image::Frame::new(buffer),
-        1,
-    ))))
+    ]))))
 }
 
 impl Shell {
@@ -172,6 +175,20 @@ mod tests {
             rgba: Arc::from(vec![0u8; (px * px * 4) as usize]),
         })
         .unwrap()
+    }
+
+    #[test]
+    fn owned_pixels_are_swizzled_without_copying_the_allocation() {
+        let pixels = vec![10, 20, 30, 255];
+        let address = pixels.as_ptr();
+        let image = owned_render_image(1, 1, pixels).unwrap();
+        let bytes = image.as_bytes(0).unwrap();
+        assert_eq!(bytes, &[30, 20, 10, 255]);
+        assert_eq!(
+            bytes.as_ptr(),
+            address,
+            "page transfer must keep the owned buffer"
+        );
     }
 
     #[test]

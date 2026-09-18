@@ -2,6 +2,16 @@
 
 use std::path::Path;
 
+/// Follow a user-activated web link; document actions never launch local files
+/// or executable URI schemes through this surface.
+pub fn open_web_uri(uri: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        uri.starts_with("https://") || uri.starts_with("http://"),
+        "unsupported document link"
+    );
+    open::that_detached(uri).map_err(Into::into)
+}
+
 /// Open `path` with the system default application, detached.
 pub fn open_path(path: &Path) -> anyhow::Result<()> {
     open::that_detached(path).map_err(|e| anyhow::anyhow!("open {}: {e}", path.display()))

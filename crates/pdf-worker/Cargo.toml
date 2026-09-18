@@ -1,0 +1,16 @@
+[package]
+name = "bibli-pdf-worker"
+description = "On-demand PDFium document worker for bibli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bibli-core.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+pdfium-render = { version = "=0.8.35", default-features = false, features = ["pdfium_6721"] }
+
+[lints]
+workspace = true

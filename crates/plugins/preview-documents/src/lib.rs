@@ -14,9 +14,38 @@ impl Plugin for PreviewPlugin {
         "Preview: documents"
     }
     fn register(&self, app: &App) {
+        for (name, description, default) in [
+            (
+                "backend",
+                "Document engine: auto (PDFium with Poppler fallback), pdfium, or poppler",
+                "auto",
+            ),
+            (
+                "pdfium_library",
+                "Optional path to the PDFium shared library",
+                "",
+            ),
+        ] {
+            app.settings.declare(bibli_core::settings::SettingSpec {
+                key: format!("{}.{}", self.id(), name),
+                description: description.into(),
+                default: toml::Value::String(default.into()),
+            });
+        }
+        let backend = app
+            .settings
+            .get::<String>("preview-documents.backend")
+            .unwrap_or_else(|| "auto".into());
+        let library = app
+            .settings
+            .get::<String>("preview-documents.pdfium_library")
+            .filter(|s| !s.is_empty())
+            .map(Into::into);
         app.previews.register(
             self.id(),
-            Arc::new(DocumentPreviews::new(app.cache.namespace(self.id()))),
+            Arc::new(
+                DocumentPreviews::new(app.cache.namespace(self.id())).with_reader(backend, library),
+            ),
         );
     }
 }

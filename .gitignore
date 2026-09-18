@@ -15,3 +15,6 @@
 /spikes/results/*.log
 /flamegraph-*.svg
 /perf.data*
+
+# Python verification tools
+__pycache__/

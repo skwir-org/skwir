@@ -258,13 +258,61 @@ pub struct DocumentPreviews {
     // One active document's metadata, guarded by the same lock as rendering.
     // Reuse it across page turns, and discard it on source/tool changes.
     gate: Mutex<Option<(Vec<u8>, u32)>>,
+    backend: String,
+    library: Option<PathBuf>,
 }
 impl DocumentPreviews {
     pub fn new(cache: CacheSlot) -> Self {
         Self {
             cache,
             gate: Mutex::new(None),
+            backend: "auto".into(),
+            library: None,
         }
+    }
+
+    pub fn with_reader(mut self, backend: String, library: Option<PathBuf>) -> Self {
+        self.backend = backend;
+        self.library = library;
+        self
+    }
+
+    fn office_pdf(
+        &self,
+        req: &PreviewRequest,
+        source: &Path,
+        office: &Path,
+        scratch: &Path,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<PathBuf> {
+        let base = fingerprint(req, source)?;
+        let conversion_key = key(&base, ("pdf", Some(tool_stamp(office)?)))?;
+        let pdf = scratch.join("document.pdf");
+        if let Some(bytes) = self
+            .cache
+            .get(&conversion_key)
+            .filter(|b| b.starts_with(b"%PDF-"))
+        {
+            std::fs::write(&pdf, bytes)?;
+        } else {
+            convert_office(office, source, scratch, "pdf", cancel)?;
+            let bytes = read_artifact(&pdf).context(
+                "LibreOffice did not produce a PDF (the file may be encrypted or unsupported)",
+            )?;
+            anyhow::ensure!(
+                bytes.starts_with(b"%PDF-"),
+                "conversion did not produce a PDF"
+            );
+            check(cancel)?;
+            anyhow::ensure!(
+                fingerprint(req, source)? == base,
+                "file changed during conversion"
+            );
+            if self.cache.put(&conversion_key, &bytes).is_ok() {
+                let _ = self.cache.trim_to_bytes(128 * 1024 * 1024);
+            }
+        }
+        Ok(pdf)
     }
 }
 
@@ -279,6 +327,53 @@ fn extension(path: &Path) -> String {
 }
 
 impl PreviewProvider for DocumentPreviews {
+    fn open_document(
+        &self,
+        req: &PreviewRequest,
+        lifetime: &CancelToken,
+    ) -> anyhow::Result<Option<std::sync::Arc<dyn bibli_core::document::DocumentSession>>> {
+        anyhow::ensure!(
+            matches!(self.backend.as_str(), "auto" | "pdfium" | "poppler"),
+            "unknown PDF backend; choose auto, pdfium, or poppler"
+        );
+        if self.backend == "poppler"
+            || (self.backend == "auto" && crate::document::worker_path().is_none())
+        {
+            return Ok(None);
+        }
+        let _gate = acquire(&self.gate, lifetime)?;
+        let source = req.entry.resolve()?;
+        let base = fingerprint(req, &source)?;
+        let scratch = tempfile::tempdir()?;
+        let pdf = if is_pdf(req) {
+            source.clone()
+        } else {
+            self.office_pdf(
+                req,
+                &source,
+                &process::required("libreoffice")?,
+                scratch.path(),
+                lifetime,
+            )?
+        };
+        anyhow::ensure!(
+            fingerprint(req, &source)? == base,
+            "file changed during document open"
+        );
+        let session = crate::document::PdfiumSession::open(
+            pdf,
+            source,
+            scratch,
+            self.library.clone(),
+            lifetime.clone(),
+        )?;
+        anyhow::ensure!(
+            session.is_some() || self.backend == "auto",
+            "Install bibli-pdf-worker and PDFium, or select the poppler backend"
+        );
+        Ok(session)
+    }
+
     fn id(&self) -> &'static str {
         "preview-documents"
     }
@@ -342,34 +437,7 @@ impl PreviewProvider for DocumentPreviews {
         }
         let tmp = tempfile::tempdir()?;
         let pdf = if let Some(office) = office {
-            let conversion_key = self::key(&base, ("pdf", &office_stamp))?;
-            let pdf = tmp.path().join("document.pdf");
-            if let Some(bytes) = self
-                .cache
-                .get(&conversion_key)
-                .filter(|b| b.starts_with(b"%PDF-"))
-            {
-                std::fs::write(&pdf, bytes)?;
-            } else {
-                convert_office(&office, &path, tmp.path(), "pdf", cancel)?;
-                let bytes = read_artifact(&pdf).context(
-                    "LibreOffice did not produce a PDF (the file may be encrypted or unsupported)",
-                )?;
-                anyhow::ensure!(
-                    bytes.starts_with(b"%PDF-"),
-                    "conversion did not produce a PDF"
-                );
-                check(cancel)?;
-                anyhow::ensure!(
-                    fingerprint(req, &path)? == base,
-                    "file changed during conversion"
-                );
-                if self.cache.put(&conversion_key, &bytes).is_ok() {
-                    // Conversion can succeed even if page rendering later fails.
-                    let _ = self.cache.trim_to_bytes(128 * 1024 * 1024);
-                }
-            }
-            pdf
+            self.office_pdf(req, &path, &office, tmp.path(), cancel)?
         } else {
             path.clone()
         };
@@ -716,6 +784,48 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires PDFium worker/library and Poppler; run in release mode for timings"]
+    fn real_pdfium_and_poppler_backend_comparison() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("Synthetic scanned reader.pdf");
+        scanned_pdf(&path);
+        let backend = DocumentPreviews::new(Cache::new(tmp.path()).namespace("preview"))
+            .with_reader("pdfium".into(), None);
+        let mut req = request(&path);
+        req.max_side = MAX_SIDE;
+        let cancel = CancelToken::new();
+        let start = Instant::now();
+        let session = backend.open_document(&req, &cancel).unwrap().unwrap();
+        let open_ms = start.elapsed().as_secs_f64() * 1000.;
+        assert_eq!(session.info().pages, 2);
+        let mut native = Vec::new();
+        for page in [1, 2, 1] {
+            let start = Instant::now();
+            let result = session.render(page, MAX_SIDE, &cancel).unwrap();
+            native.push(start.elapsed().as_secs_f64() * 1000.);
+            assert_eq!(result.content.page, page);
+            assert_eq!(result.height, MAX_SIDE);
+        }
+        assert!(session.search("absent", &cancel).unwrap().is_empty());
+        drop(session);
+        let mut poppler = Vec::new();
+        for page in [1, 2, 1] {
+            req.page = page;
+            let start = Instant::now();
+            let result = backend.render(&req, &cancel).unwrap();
+            poppler.push(start.elapsed().as_secs_f64() * 1000.);
+            assert_eq!(result.image.height, MAX_SIDE);
+        }
+        eprintln!(
+            "2048px scanned backend: PDFium open {open_ms:.2} ms; first/next/revisit {native:.2?} ms; Poppler first/next/cache {poppler:.2?} ms"
+        );
+        // The source is tracked independently of native handles retained by the worker.
+        let session = backend.open_document(&req, &cancel).unwrap().unwrap();
+        std::fs::write(&path, b"changed PDF").unwrap();
+        assert!(session.render(1, MAX_SIDE, &cancel).is_err());
+    }
+
+    #[test]
     #[ignore = "requires installed Poppler tools; run explicitly for preview changes"]
     fn real_pdf_pages_cache_and_file_changes() {
         let tmp = tempfile::tempdir().unwrap();
@@ -848,6 +958,19 @@ mod tests {
                     matches!(preview.info, PreviewInfo::Document { page: 1, pages } if pages >= 1)
                 );
                 assert!(preview.image.width > 0 && preview.image.height > 0);
+                // The optional reader consumes the same isolated conversion.
+                if std::env::var_os("BIBLI_PDFIUM_LIBRARY").is_some() {
+                    let session = backend
+                        .open_document(&req, &token)
+                        .unwrap()
+                        .expect("PDFium worker available");
+                    let page = session.render(1, 256, &token).unwrap();
+                    assert!(!page.content.chars.is_empty(), "{output}: selectable text");
+                    assert!(
+                        !session.search("Synthetic", &token).unwrap().is_empty(),
+                        "{output}: searchable text"
+                    );
+                }
             }
         }
     }

@@ -123,7 +123,8 @@ proptest! {
         let applied = r.applied;
         let after = snapshot(&root);
         if applied > 0 {
-            prop_assert_ne!(&before, &after, "applied steps must change the tree");
+            // Applied operations may cancel each other (for example two swaps).
+            // Verify undo/redo against snapshots even when before == after.
             let u = app.executor.undo_blocking(app.lifetime()).expect("journal has the plan");
             prop_assert!(u.error.is_none(), "undo failed: {:?}", u.error);
             prop_assert_eq!(snapshot(&root), before, "undo must restore the tree");

@@ -42,11 +42,12 @@ spike toolkit gpu="intel" rows="100000":
 
 # Run the app (release) on a directory, default: the current one.
 run dir=".":
-    cargo run --release -p bibli -- {{dir}}
+    cargo build --release -p bibli -p bibli-pdf-worker
+    ./target/release/bibli {{dir}}
 
 # Profile the app with samply (opens the Firefox Profiler UI when done).
 flame dir=".":
-    cargo build --release -p bibli
+    cargo build --release -p bibli -p bibli-pdf-worker
     samply record ./target/release/bibli {{dir}}
 
 # Profile a bench profile's listing with a flamegraph SVG.

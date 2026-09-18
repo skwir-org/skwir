@@ -23,6 +23,7 @@ pub mod app;
 pub mod cache;
 pub mod cancel;
 pub mod command;
+pub mod document;
 pub mod entry;
 pub mod fs;
 pub mod location;

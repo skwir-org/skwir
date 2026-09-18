@@ -33,7 +33,7 @@ pub fn required(program: &str) -> anyhow::Result<PathBuf> {
     find(program).with_context(|| format!("Install {program} to preview this file"))
 }
 
-struct ChildGuard(Child);
+pub(crate) struct ChildGuard(pub(crate) Child);
 impl Drop for ChildGuard {
     fn drop(&mut self) {
         #[cfg(unix)]
