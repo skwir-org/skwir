@@ -39,10 +39,15 @@ impl GridView {
         let width = shell.list.content_width.get() - 8.0;
         let cols = (width / Self::cell_w(shell.zoom)).floor().max(1.0) as usize;
         if cols != self.cols {
-            // Row indices change meaning; keep the cursor in view.
+            // Row indices change meaning: keep the same first visible item at
+            // the top so a reflow does not read as a scroll jump.
+            // `logical_scroll_top_index` is test-only in gpui 0.2.2; this is its body.
+            let top_row = self.scroll.0.borrow().base_handle.logical_scroll_top().0;
+            let first_item = top_row * self.cols.max(1);
             self.cols = cols;
-            if let Some(ix) = shell.cursor_index() {
-                self.scroll.scroll_to_item(ix / cols, ScrollStrategy::Top);
+            if first_item > 0 {
+                self.scroll
+                    .scroll_to_item_strict(first_item / cols, ScrollStrategy::Top);
             }
         }
         cols
@@ -194,9 +199,6 @@ impl PaneView for GridView {
             cx.processor(move |this: &mut Shell, range: Range<usize>, window, cx| {
                 let theme = cx.global::<Theme>().clone();
                 this.list.visible_rows = range.len().max(1) * cols;
-                if let Some(v) = this.views.get_mut(crate::view::GRID) {
-                    let _ = v;
-                }
                 this.grid_rows_visible = range.len().max(1);
                 let mut out = Vec::with_capacity(range.len());
                 for r in range {

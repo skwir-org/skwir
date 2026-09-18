@@ -361,6 +361,11 @@ impl Shell {
                     move |bounds, window, _| {
                         let w = f32::from(bounds.size.width);
                         if (width.get() - w).abs() > 0.5 {
+                            tracing::trace!(
+                                predicted = width.get(),
+                                measured = w,
+                                "content width corrected"
+                            );
                             width.set(w);
                             window.refresh();
                         }

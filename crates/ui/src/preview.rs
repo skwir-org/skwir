@@ -418,6 +418,17 @@ impl Shell {
 
     pub fn toggle_preview(&mut self, cx: &mut Context<Self>) {
         self.preview.open = !self.preview.open;
+        // Tell the views their width now: the canvas that measures it only
+        // runs after layout, which would leave one frame at the old column
+        // count (visible as a lag in the grid). The measurement still
+        // corrects any sub-pixel difference afterwards.
+        let delta = if self.preview.open {
+            -self.preview.width
+        } else {
+            self.preview.width
+        };
+        let w = &self.list.content_width;
+        w.set(w.get() + delta);
         cx.notify();
     }
 
@@ -456,7 +467,10 @@ impl Shell {
     ) {
         let total = f32::from(window.viewport_size().width);
         let x = f32::from(ev.event.position.x);
-        self.preview.width = (total - x).clamp(200.0, 900.0);
+        let new_width = (total - x).clamp(200.0, 900.0);
+        let w = &self.list.content_width;
+        w.set(w.get() + (self.preview.width - new_width));
+        self.preview.width = new_width;
         cx.notify();
     }
 
