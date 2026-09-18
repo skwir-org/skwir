@@ -92,3 +92,8 @@ codegen-units = 4
 
 [profile.bench]
 inherits = "release"
+
+# Vendored gpui 0.2.2 with bibli's patches (see vendor/gpui/README.bibli.md).
+# Remove this table and the vendor directory once the patches are upstream.
+[patch.crates-io]
+gpui = { path = "vendor/gpui" }

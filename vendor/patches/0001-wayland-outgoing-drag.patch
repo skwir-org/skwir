@@ -1,0 +1,194 @@
+diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/platform/linux/wayland/client.rs home/user/wip/bibli/vendor/gpui/src/platform/linux/wayland/client.rs
+--- a/crates/gpui/src/platform/linux/wayland/client.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/crates/gpui/src/platform/linux/wayland/client.rs	2026-09-18 11:33:22.554185990 +0200
+@@ -199,6 +199,7 @@
+     wl_keyboard: Option<wl_keyboard::WlKeyboard>,
+     cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
+     data_device: Option<wl_data_device::WlDataDevice>,
++    outgoing_drag: Option<OutgoingDrag>,
+     primary_selection: Option<zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1>,
+     text_input: Option<zwp_text_input_v3::ZwpTextInputV3>,
+     pre_edit_text: Option<String>,
+@@ -245,6 +246,14 @@
+     position: Point<Pixels>,
+ }
+ 
++/// A drag we started: its data source, the `text/uri-list` payload the
++/// compositor asks for on `Send`, and the window it began in.
++struct OutgoingDrag {
++    source: wl_data_source::WlDataSource,
++    payload: Vec<u8>,
++    window: WaylandWindowStatePtr,
++}
++
+ pub struct ClickState {
+     last_mouse_button: Option<MouseButton>,
+     last_click: Instant,
+@@ -274,6 +283,53 @@
+ pub struct WaylandClientStatePtr(Weak<RefCell<WaylandClientState>>);
+ 
+ impl WaylandClientStatePtr {
++    /// Start a compositor drag of `paths` out of `surface`. Needs an implicit
++    /// pointer grab (a button held): the serial is the last mouse press.
++    pub fn start_external_drag(
++        &self,
++        surface: &wl_surface::WlSurface,
++        paths: Vec<std::path::PathBuf>,
++    ) -> bool {
++        let client = self.get_client();
++        let mut state = client.borrow_mut();
++        let (Some(data_device_manager), Some(data_device)) = (
++            state.globals.data_device_manager.clone(),
++            state.data_device.clone(),
++        ) else {
++            return false;
++        };
++        if state.button_pressed.is_none() {
++            return false;
++        }
++        let Some(window) = get_window(&mut state, &surface.id()) else {
++            return false;
++        };
++        let mut payload = String::new();
++        for path in &paths {
++            if let Ok(url) = Url::from_file_path(path) {
++                payload.push_str(url.as_str());
++                payload.push_str("\r\n");
++            }
++        }
++        if payload.is_empty() {
++            return false;
++        }
++        if let Some(old) = state.outgoing_drag.take() {
++            old.source.destroy();
++        }
++        let serial = state.serial_tracker.get(SerialKind::MousePress);
++        let source = data_device_manager.create_data_source(&state.globals.qh, ());
++        source.offer(FILE_LIST_MIME_TYPE.to_string());
++        source.set_actions(DndAction::Copy | DndAction::Move);
++        data_device.start_drag(Some(&source), surface, None, serial);
++        state.outgoing_drag = Some(OutgoingDrag {
++            source,
++            payload: payload.into_bytes(),
++            window,
++        });
++        true
++    }
++
+     pub fn get_client(&self) -> Rc<RefCell<WaylandClientState>> {
+         self.0
+             .upgrade()
+@@ -559,6 +615,7 @@
+             wl_keyboard: None,
+             cursor_shape_device: None,
+             data_device,
++            outgoing_drag: None,
+             primary_selection,
+             text_input: None,
+             pre_edit_text: None,
+@@ -2060,11 +2117,35 @@
+         let client = this.get_client();
+         let mut state = client.borrow_mut();
+ 
++        let is_outgoing_drag = state
++            .outgoing_drag
++            .as_ref()
++            .is_some_and(|drag| drag.source.id() == data_source.id());
++
+         match event {
+             wl_data_source::Event::Send { mime_type, fd } => {
+-                state.clipboard.send(mime_type, fd);
++                if is_outgoing_drag {
++                    let bytes = state.outgoing_drag.as_ref().unwrap().payload.clone();
++                    state.clipboard.send_bytes(fd, bytes);
++                } else {
++                    state.clipboard.send(mime_type, fd);
++                }
+             }
+-            wl_data_source::Event::Cancelled => {
++            wl_data_source::Event::Cancelled | wl_data_source::Event::DndFinished => {
++                if is_outgoing_drag {
++                    // The compositor owned the pointer for the whole session, so
++                    // the window never saw the button release: end its drag.
++                    let drag = state.outgoing_drag.take().unwrap();
++                    state.button_pressed = None;
++                    let input = PlatformInput::MouseUp(MouseUpEvent {
++                        button: MouseButton::Left,
++                        position: state.mouse_location.unwrap_or_default(),
++                        modifiers: state.modifiers,
++                        click_count: 1,
++                    });
++                    drop(state);
++                    drag.window.handle_input(input);
++                }
+                 data_source.destroy();
+             }
+             _ => {}
+diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/platform/linux/wayland/clipboard.rs home/user/wip/bibli/vendor/gpui/src/platform/linux/wayland/clipboard.rs
+--- a/crates/gpui/src/platform/linux/wayland/clipboard.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/crates/gpui/src/platform/linux/wayland/clipboard.rs	2026-09-18 11:33:22.553727414 +0200
+@@ -185,6 +185,11 @@
+         }
+     }
+ 
++    /// Write arbitrary bytes to a data-source `Send` fd (used by outgoing drags).
++    pub fn send_bytes(&self, fd: OwnedFd, bytes: Vec<u8>) {
++        self.send_internal(fd, bytes);
++    }
++
+     pub fn send_primary(&self, _mime_type: String, fd: OwnedFd) {
+         if let Some(text) = self
+             .primary_contents
+diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/platform/linux/wayland/window.rs home/user/wip/bibli/vendor/gpui/src/platform/linux/wayland/window.rs
+--- a/crates/gpui/src/platform/linux/wayland/window.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/crates/gpui/src/platform/linux/wayland/window.rs	2026-09-18 11:33:22.553333633 +0200
+@@ -1049,6 +1049,14 @@
+         state.toplevel._move(&state.globals.seat, serial);
+     }
+ 
++    fn start_external_drag(&self, paths: Vec<std::path::PathBuf>) -> bool {
++        let state = self.borrow();
++        let surface = state.surface.clone();
++        let client = state.client.clone();
++        drop(state);
++        client.start_external_drag(&surface, paths)
++    }
++
+     fn start_window_resize(&self, edge: crate::ResizeEdge) {
+         let state = self.borrow();
+         state.toplevel.resize(
+diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/platform.rs home/user/wip/bibli/vendor/gpui/src/platform.rs
+--- a/crates/gpui/src/platform.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/crates/gpui/src/platform.rs	2026-09-18 11:33:22.551380559 +0200
+@@ -534,6 +534,11 @@
+     fn request_decorations(&self, _decorations: WindowDecorations) {}
+     fn show_window_menu(&self, _position: Point<Pixels>) {}
+     fn start_window_move(&self) {}
++    /// Start a native drag of `paths` that other applications can receive.
++    /// Returns false when unsupported, in which case the in-window drag continues.
++    fn start_external_drag(&self, _paths: Vec<std::path::PathBuf>) -> bool {
++        false
++    }
+     fn start_window_resize(&self, _edge: ResizeEdge) {}
+     fn window_decorations(&self) -> Decorations {
+         Decorations::Server
+diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/window.rs home/user/wip/bibli/vendor/gpui/src/window.rs
+--- a/crates/gpui/src/window.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/crates/gpui/src/window.rs	2026-09-18 11:33:22.552271669 +0200
+@@ -1754,6 +1754,16 @@
+         self.platform_window.start_window_move()
+     }
+ 
++    /// Hands the current drag to the compositor as a file drag that other
++    /// applications can accept (Wayland). Call it when a drag starts, while the
++    /// mouse button is held. The in-window drag is ended with a synthetic
++    /// mouse-up when the session finishes; a drop back onto this application
++    /// arrives as an [`ExternalPaths`] drop. Returns false when unsupported, in
++    /// which case nothing changes.
++    pub fn start_external_drag(&self, paths: Vec<std::path::PathBuf>) -> bool {
++        self.platform_window.start_external_drag(paths)
++    }
++
+     /// When using client side decorations, set this to the width of the invisible decorations (Wayland and X11)
+     pub fn set_client_inset(&mut self, inset: Pixels) {
+         self.client_inset = Some(inset);

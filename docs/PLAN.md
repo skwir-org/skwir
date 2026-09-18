@@ -22,9 +22,9 @@ frame 123-128 ms (budget 150 ms per ADR-002), idle PSS 99 MB on a small director
 100 MB) and 124 MB after scrolling a 10k gallery with the thumbnail caches filled.
 Deviations recorded: views live in `bibli-ui` behind a `PaneView` trait rather than as
 separate crates (a gpui-dependent `ui-api` crate is deferred until a third-party view
-exists); PDF preview falls back to the generic card; drag and drop is implemented but was
-not exercised by automation; dragging out to other applications is unsupported by gpui
-0.2.2; AccessKit remains blocked (ADR-001).
+exists); PDF preview falls back to the generic card; drag and drop was verified with a virtual pointer in
+both directions; dragging out to other applications works on Wayland through a vendored gpui
+patch (`vendor/patches/0001-wayland-outgoing-drag.patch`, to be upstreamed); AccessKit remains blocked (ADR-001).
 
 ---
 
