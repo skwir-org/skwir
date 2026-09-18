@@ -28,15 +28,43 @@ pub use executor::{ExecEvent, ExecResult, Executor, JournalEntry, Progress};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case", tag = "change")]
 pub enum Change {
-    Rename { from: PathBuf, to: PathBuf },
-    Move { from: PathBuf, to: PathBuf },
-    Copy { from: PathBuf, to: PathBuf },
-    Swap { a: PathBuf, b: PathBuf },
-    Trash { path: PathBuf },
-    Restore { path: PathBuf },
-    Delete { path: PathBuf },
-    Create { path: PathBuf, directory: bool },
-    Remove { path: PathBuf },
+    Rename {
+        from: PathBuf,
+        to: PathBuf,
+    },
+    Move {
+        from: PathBuf,
+        to: PathBuf,
+    },
+    Copy {
+        from: PathBuf,
+        to: PathBuf,
+    },
+    Swap {
+        a: PathBuf,
+        b: PathBuf,
+    },
+    Trash {
+        path: PathBuf,
+    },
+    Restore {
+        path: PathBuf,
+    },
+    Delete {
+        path: PathBuf,
+    },
+    Create {
+        path: PathBuf,
+        directory: bool,
+    },
+    Remove {
+        path: PathBuf,
+    },
+    /// A metadata-only change (tags, attributes), naming the field.
+    Metadata {
+        path: PathBuf,
+        field: String,
+    },
 }
 
 impl fmt::Display for Change {
@@ -60,6 +88,7 @@ impl fmt::Display for Change {
                 directory: false,
             } => write!(f, "create {}", path.display()),
             Change::Remove { path } => write!(f, "rmdir {}", path.display()),
+            Change::Metadata { path, field } => write!(f, "set {field} on {}", path.display()),
         }
     }
 }

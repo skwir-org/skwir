@@ -13,9 +13,8 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use bibli_core::app::App;
+use bibli_core::app::{App, NotifyLevel};
 use bibli_core::command::{Invocation, Outcome};
 use bibli_core::entry::EntryId;
 use bibli_core::op::{EntryRef, Mkdir, Move, Operation, Plan, Rename, Trash};
@@ -23,7 +22,6 @@ use bibli_core::plugin::Plugin;
 use bibli_core::registry::{KeyBinding, MenuItem};
 use bibli_core::scheduler::Priority;
 use bibli_core::workspace::PaneId;
-use parking_lot::Mutex;
 
 const ID: &str = "edit-as-buffer";
 
@@ -306,21 +304,10 @@ struct PaneArgs {
     pane: Option<PaneId>,
 }
 
-/// Plans produced by finished editor sessions, waiting to be proposed.
-/// (The core hands plugins `&App`, which a worker thread cannot keep, so
-/// the result is parked here and moved to `App::propose` by
-/// `edit_as_buffer.pending`.)
+/// The edit-as-buffer plugin. Finished editor sessions propose their plan
+/// through a weak app handle, or report errors as notifications.
 #[derive(Default)]
-struct Pending {
-    plans: Vec<Plan>,
-    errors: Vec<String>,
-}
-
-/// The edit-as-buffer plugin.
-#[derive(Default)]
-pub struct EditAsBufferPlugin {
-    pending: Arc<Mutex<Pending>>,
-}
+pub struct EditAsBufferPlugin;
 
 fn editor() -> String {
     ["VISUAL", "EDITOR"]
@@ -332,11 +319,7 @@ fn editor() -> String {
 
 static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
-fn start_session(
-    pending: &Arc<Mutex<Pending>>,
-    pane: Option<PaneId>,
-    app: &App,
-) -> anyhow::Result<Outcome> {
+fn start_session(pane: Option<PaneId>, app: &App) -> anyhow::Result<Outcome> {
     let pane = pane.unwrap_or_else(|| app.workspace.read().active_id());
     let (dir, original) = {
         let ws = app.workspace.read();
@@ -381,7 +364,7 @@ fn start_session(
         &dir,
         &[editor(), file.to_string_lossy().into_owned()],
     )?;
-    let pending = Arc::clone(pending);
+    let weak = app.weak();
     app.scheduler.spawn(
         Priority::Background,
         "edit-as-buffer.wait",
@@ -396,14 +379,13 @@ fn start_session(
                 Err(e) => Err(format!("editor failed: {e}")),
             };
             let _ = std::fs::remove_file(&file);
-            let mut p = pending.lock();
+            let Some(app) = weak.upgrade() else { return };
             match result {
-                Ok(plan) if plan.is_empty() => tracing::info!("edit-as-buffer: no changes"),
-                Ok(plan) => p.plans.push(plan),
-                Err(e) => {
-                    tracing::warn!("edit-as-buffer: {e}");
-                    p.errors.push(e);
+                Ok(plan) if plan.is_empty() => {
+                    app.notify(NotifyLevel::Info, "edit as text: no changes");
                 }
+                Ok(plan) => app.propose(plan),
+                Err(e) => app.notify(NotifyLevel::Error, format!("edit as text: {e}")),
             }
         },
     );
@@ -424,30 +406,12 @@ impl Plugin for EditAsBufferPlugin {
     }
 
     fn register(&self, app: &App) {
-        let pending = Arc::clone(&self.pending);
         app.commands.register::<PaneArgs, _>(
             ID,
             "edit_as_buffer",
             "Edit as text…",
-            "Open the listing in $EDITOR; saving proposes a plan",
-            move |a, app| start_session(&pending, a.pane, app),
-        );
-        let pending = Arc::clone(&self.pending);
-        app.commands.register::<PaneArgs, _>(
-            ID,
-            "edit_as_buffer.pending",
-            "Collect edit results",
-            "Move finished editor sessions into the proposal inbox; returns errors if any",
-            move |_, app| {
-                let (plans, errors) = {
-                    let mut p = pending.lock();
-                    (std::mem::take(&mut p.plans), std::mem::take(&mut p.errors))
-                };
-                for plan in plans {
-                    app.propose(plan);
-                }
-                Ok(Outcome::Value(serde_json::json!({ "errors": errors })))
-            },
+            "Open the listing in $EDITOR; saving proposes a plan for review",
+            |a, app| start_session(a.pane, app),
         );
         app.registry.keymap.add(
             ID,
@@ -468,15 +432,12 @@ impl Plugin for EditAsBufferPlugin {
             },
         );
     }
-
-    fn on_disable(&self, _app: &App) {
-        *self.pending.lock() = Pending::default();
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use std::time::Duration;
 
     /// Environment writes are unsafe in edition 2024; nextest runs each test
@@ -626,8 +587,7 @@ mod tests {
             tmp.path().join("app"),
         ))
         .unwrap();
-        app.plugins
-            .add(Arc::new(EditAsBufferPlugin::default()), &app);
+        app.plugins.add(Arc::new(EditAsBufferPlugin), &app);
         let pane = app.workspace.read().active_id();
         app.navigate(pane, &bibli_core::Location::from_path(&dir))
             .unwrap();
@@ -635,8 +595,6 @@ mod tests {
         app.dispatch(&Invocation::new("edit_as_buffer")).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         let plan = loop {
-            app.dispatch(&Invocation::new("edit_as_buffer.pending"))
-                .unwrap();
             if let Some(p) = app.take_proposals().pop() {
                 break p;
             }

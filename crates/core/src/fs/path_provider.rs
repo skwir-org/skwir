@@ -272,6 +272,9 @@ impl Shared {
             self.tx.send(ListingEvent::Removed(removed));
         }
         if !added.is_empty() {
+            // Changed entries arrive stat-ed; give providers their turn so
+            // fields such as tags survive the update.
+            self.ctx.metadata.fill(&self.dir, &mut added);
             self.tx.send(ListingEvent::Added(added));
         }
     }

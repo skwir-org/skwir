@@ -138,8 +138,9 @@ impl Operation for SetTags {
     fn describe(&self) -> Change {
         // No dedicated variant exists; "rename" to the same path with the tags
         // would mislead, so describe as a create-less change on the path.
-        Change::Restore {
+        Change::Metadata {
             path: self.entry.path.clone(),
+            field: "tags".into(),
         }
     }
     fn check(&self) -> StepStatus {

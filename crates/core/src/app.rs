@@ -23,6 +23,22 @@ use crate::scheduler::{Priority, Scheduler};
 use crate::settings::Settings;
 use crate::workspace::{PaneId, Workspace};
 
+/// Severity of a [`Notification`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NotifyLevel {
+    Info,
+    Warning,
+    Error,
+}
+
+/// A message from background work for the UI.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct Notification {
+    pub level: NotifyLevel,
+    pub text: String,
+}
+
 /// Construction options.
 pub struct AppConfig {
     pub cache_root: PathBuf,
@@ -73,6 +89,10 @@ pub struct App {
     /// Plans proposed for review (by plugins whose work finishes later, or by
     /// agents). The UI drains them with `take_proposals`.
     proposals: parking_lot::Mutex<Vec<Plan>>,
+    /// Messages from background work for the UI to show.
+    notifications: parking_lot::Mutex<Vec<Notification>>,
+    /// Self reference so background work can keep a `Weak<App>`.
+    weak: std::sync::Weak<App>,
     providers: RwLock<HashMap<Arc<str>, (Arc<str>, Arc<dyn LocationProvider>)>>,
     waker: RwLock<Option<Waker>>,
     batch_size: usize,
@@ -87,7 +107,9 @@ impl App {
             Some(p) => Settings::load(p)?,
             None => Settings::in_memory(),
         };
-        let app = Arc::new(App {
+        let app = Arc::new_cyclic(|weak| App {
+            weak: weak.clone(),
+            notifications: parking_lot::Mutex::new(Vec::new()),
             executor: Executor::new(scheduler.clone()),
             thumbnails: crate::thumbs::Thumbnails::new(scheduler.clone()),
             metadata: Arc::new(crate::metadata::MetadataProviders::default()),
@@ -260,6 +282,27 @@ impl App {
     /// Number of plans waiting for review.
     pub fn pending_proposals(&self) -> usize {
         self.proposals.lock().len()
+    }
+
+    /// A weak handle for background work that outlives a command handler's
+    /// `&App` (upgrade before use; `None` once the app is gone).
+    pub fn weak(&self) -> std::sync::Weak<App> {
+        self.weak.clone()
+    }
+
+    /// Queue a message for the UI (errors from background work, results
+    /// worth a status line) and wake it.
+    pub fn notify(&self, level: NotifyLevel, text: impl Into<String>) {
+        self.notifications.lock().push(Notification {
+            level,
+            text: text.into(),
+        });
+        self.wake();
+    }
+
+    /// Messages queued since the last call, oldest first.
+    pub fn take_notifications(&self) -> Vec<Notification> {
+        std::mem::take(&mut *self.notifications.lock())
     }
 
     /// Entry references for the current selection of a pane, in selection order.

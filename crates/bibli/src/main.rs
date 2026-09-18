@@ -37,6 +37,37 @@ fn main() -> anyhow::Result<()> {
         std::sync::Arc::new(bibli_plugin_thumbnails::ThumbnailsPlugin),
         &app,
     );
+    // Phase 4 power features, each a plugin with a runtime toggle.
+    app.plugins
+        .add(std::sync::Arc::new(bibli_plugin_query::QueryPlugin), &app);
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_shelf::ShelfPlugin::default()),
+        &app,
+    );
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_rename_bulk::RenameBulkPlugin),
+        &app,
+    );
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_edit_as_buffer::EditAsBufferPlugin),
+        &app,
+    );
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_jump::JumpPlugin::default()),
+        &app,
+    );
+    app.plugins
+        .add(std::sync::Arc::new(bibli_plugin_tags::TagsPlugin), &app);
+    app.plugins
+        .add(std::sync::Arc::new(bibli_plugin_shell::ShellPlugin), &app);
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_usage::UsagePlugin::default()),
+        &app,
+    );
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_timeline::TimelinePlugin::default()),
+        &app,
+    );
 
     let path = std::env::args_os().nth(1).map_or_else(
         || std::env::current_dir().unwrap_or_else(|_| "/".into()),
