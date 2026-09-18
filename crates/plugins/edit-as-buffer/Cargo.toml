@@ -1,6 +1,6 @@
 [package]
 name = "bibli-plugin-edit-as-buffer"
-description = "bibli plugin: edit-as-buffer (Phase 4)"
+description = "bibli plugin: edit a directory listing as text in your editor; the diff becomes a plan"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,6 +8,17 @@ rust-version.workspace = true
 
 [dependencies]
 bibli-core.workspace = true
+bibli-platform.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+thiserror.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true
