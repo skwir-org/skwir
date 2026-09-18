@@ -24,7 +24,7 @@ fn check(cancel: &CancelToken) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn acquire<'a>(gate: &'a Mutex<()>, cancel: &CancelToken) -> anyhow::Result<MutexGuard<'a, ()>> {
+fn acquire<'a, T>(gate: &'a Mutex<T>, cancel: &CancelToken) -> anyhow::Result<MutexGuard<'a, T>> {
     let started = Instant::now();
     loop {
         check(cancel)?;
@@ -47,22 +47,42 @@ fn read_artifact(path: &Path) -> anyhow::Result<Vec<u8>> {
     Ok(std::fs::read(path)?)
 }
 
-fn image_from_png(bytes: &[u8], max_side: u32) -> anyhow::Result<Image> {
+fn decode_preview(bytes: &[u8], max_side: u32) -> anyhow::Result<Image> {
     let reader = || image::ImageReader::new(Cursor::new(bytes)).with_guessed_format();
     let (w, h) = reader()?.into_dimensions()?;
     anyhow::ensure!(
         w > 0 && h > 0 && w <= MAX_SIDE && h <= MAX_SIDE,
         "preview dimensions exceed limit"
     );
-    let image = reader()?
-        .decode()?
-        .thumbnail(max_side.clamp(64, MAX_SIDE), max_side.clamp(64, MAX_SIDE))
-        .to_rgba8();
+    let image = reader()?.decode()?;
+    let side = max_side.clamp(64, MAX_SIDE);
+    // Renderers already size their output. Avoid resampling every pixel again,
+    // including on cache hits, when it already fits the requested bounds.
+    let image = if w > side || h > side {
+        image.thumbnail(side, side)
+    } else {
+        image
+    }
+    .to_rgba8();
     Ok(Image {
         width: image.width(),
         height: image.height(),
         rgba: image.into_raw().into(),
     })
+}
+
+fn encode_preview(image: &Image) -> anyhow::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut bytes, image.width, image.height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        // Poppler's PNG compression dominates page latency on scanned PDFs.
+        // Keep the same lossless pixels, using our fast encoder for disk cache.
+        encoder.set_compression(png::Compression::Fast);
+        encoder.write_header()?.write_image_data(&image.rgba)?;
+    }
+    Ok(bytes)
 }
 
 /// Include backend executable metadata so upgrading a tool invalidates its output.
@@ -103,20 +123,19 @@ fn cached(cache: &CacheSlot, key: &[u8], max_side: u32) -> Option<Preview> {
     let n = u32::from_le_bytes(bytes.get(..4)?.try_into().ok()?) as usize;
     let end = 4usize.checked_add(n)?;
     let info = serde_json::from_slice(bytes.get(4..end)?).ok()?;
-    let image = image_from_png(bytes.get(end..)?, max_side).ok()?;
+    let image = decode_preview(bytes.get(end..)?, max_side).ok()?;
     Some(Preview { image, info })
 }
 
 fn finish(
     cache: &CacheSlot,
     key: &[u8],
+    image: Image,
     png: &[u8],
     info: PreviewInfo,
-    request: &PreviewRequest,
     cancel: &CancelToken,
 ) -> anyhow::Result<Preview> {
     check(cancel)?;
-    let image = image_from_png(png, request.max_side)?;
     let header = serde_json::to_vec(&info)?;
     let mut bytes = (u32::try_from(header.len())?).to_le_bytes().to_vec();
     bytes.extend(header);
@@ -222,12 +241,13 @@ impl PreviewProvider for MediaPreviews {
             fingerprint(req, &path)? == base,
             "file changed during preview"
         );
+        let png = read_artifact(&output)?;
         finish(
             &self.cache,
             &key,
-            &read_artifact(&output)?,
+            decode_preview(&png, req.max_side)?,
+            &png,
             PreviewInfo::Video { seconds, duration },
-            req,
             cancel,
         )
     }
@@ -235,13 +255,15 @@ impl PreviewProvider for MediaPreviews {
 
 pub struct DocumentPreviews {
     cache: CacheSlot,
-    gate: Mutex<()>,
+    // One active document's metadata, guarded by the same lock as rendering.
+    // Reuse it across page turns, and discard it on source/tool changes.
+    gate: Mutex<Option<(Vec<u8>, u32)>>,
 }
 impl DocumentPreviews {
     pub fn new(cache: CacheSlot) -> Self {
         Self {
             cache,
-            gate: Mutex::new(()),
+            gate: Mutex::new(None),
         }
     }
 }
@@ -287,7 +309,8 @@ impl PreviewProvider for DocumentPreviews {
             )
     }
     fn render(&self, req: &PreviewRequest, cancel: &CancelToken) -> anyhow::Result<Preview> {
-        let _guard = acquire(&self.gate, cancel)?;
+        let started = Instant::now();
+        let mut document = acquire(&self.gate, cancel)?;
         let path = req.entry.resolve()?;
         let base = fingerprint(req, &path)?;
         let renderer = process::required("pdftoppm")?;
@@ -309,11 +332,17 @@ impl PreviewProvider for DocumentPreviews {
             ),
         )?;
         if let Some(preview) = cached(&self.cache, &key, req.max_side) {
+            tracing::debug!(
+                page = req.page,
+                cache_hit = true,
+                ms = started.elapsed().as_millis(),
+                "document preview"
+            );
             return Ok(preview);
         }
         let tmp = tempfile::tempdir()?;
         let pdf = if let Some(office) = office {
-            let conversion_key = self::key(&base, ("pdf", office_stamp))?;
+            let conversion_key = self::key(&base, ("pdf", &office_stamp))?;
             let pdf = tmp.path().join("document.pdf");
             if let Some(bytes) = self
                 .cache
@@ -344,21 +373,30 @@ impl PreviewProvider for DocumentPreviews {
         } else {
             path.clone()
         };
-        let info = process::run(
-            Command::new(pdfinfo).env("LC_ALL", "C").arg(&pdf),
-            cancel,
-            RENDER_TIMEOUT,
-        )?;
-        let pages = String::from_utf8_lossy(&info)
-            .lines()
-            .find_map(|line| {
-                line.strip_prefix("Pages:")
-                    .and_then(|n| n.trim().parse::<u32>().ok())
-            })
-            .filter(|n| *n > 0)
-            .context("PDF has no readable pages")?;
+        let metadata_key = self::key(&base, ("pages", tool_stamp(&pdfinfo)?, &office_stamp))?;
+        let pages = match document.as_ref() {
+            Some((key, pages)) if key == &metadata_key => *pages,
+            _ => {
+                let info = process::run(
+                    Command::new(pdfinfo).env("LC_ALL", "C").arg(&pdf),
+                    cancel,
+                    RENDER_TIMEOUT,
+                )?;
+                let pages = String::from_utf8_lossy(&info)
+                    .lines()
+                    .find_map(|line| {
+                        line.strip_prefix("Pages:")
+                            .and_then(|n| n.trim().parse::<u32>().ok())
+                    })
+                    .filter(|n| *n > 0)
+                    .context("PDF has no readable pages")?;
+                *document = Some((metadata_key, pages));
+                pages
+            }
+        };
         let page = req.page.clamp(1, pages);
         let prefix = tmp.path().join("page");
+        let rendering = Instant::now();
         process::run(
             Command::new(renderer)
                 .args([
@@ -369,25 +407,39 @@ impl PreviewProvider for DocumentPreviews {
                     "-singlefile",
                     "-scale-to",
                     &req.max_side.clamp(64, MAX_SIDE).to_string(),
-                    "-png",
                 ])
                 .arg(&pdf)
                 .arg(&prefix),
             cancel,
             RENDER_TIMEOUT,
         )?;
+        let render_ms = rendering.elapsed().as_millis();
         anyhow::ensure!(
             fingerprint(req, &path)? == base,
             "file changed during preview"
         );
-        finish(
+        check(cancel)?;
+        // PPM avoids Poppler's expensive PNG compression. Decode once, then
+        // encode losslessly with the fast cache encoder (also used on revisits).
+        let image = decode_preview(&read_artifact(&prefix.with_extension("ppm"))?, req.max_side)?;
+        check(cancel)?;
+        let png = encode_preview(&image)?;
+        let preview = finish(
             &self.cache,
             &key,
-            &read_artifact(&prefix.with_extension("png"))?,
+            image,
+            &png,
             PreviewInfo::Document { page, pages },
-            req,
             cancel,
-        )
+        )?;
+        tracing::debug!(
+            page,
+            cache_hit = false,
+            render_ms,
+            ms = started.elapsed().as_millis(),
+            "document preview"
+        );
+        Ok(preview)
     }
 }
 
@@ -527,11 +579,23 @@ mod tests {
                 stream.len()
             ));
         }
+        write_pdf(
+            path,
+            &objects
+                .into_iter()
+                .map(String::into_bytes)
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    fn write_pdf(path: &Path, objects: &[Vec<u8>]) {
         let mut bytes = b"%PDF-1.4\n".to_vec();
         let mut offsets = vec![0];
         for (i, object) in objects.iter().enumerate() {
             offsets.push(bytes.len());
-            writeln!(bytes, "{} 0 obj\n{object}\nendobj", i + 1).unwrap();
+            writeln!(bytes, "{} 0 obj", i + 1).unwrap();
+            bytes.extend(object);
+            bytes.extend(b"\nendobj\n");
         }
         let xref = bytes.len();
         writeln!(bytes, "xref\n0 {}\n0000000000 65535 f ", offsets.len()).unwrap();
@@ -547,6 +611,46 @@ mod tests {
         std::fs::write(path, bytes).unwrap();
     }
 
+    /// Paper noise and dark text-like strokes expose expensive PNG compression
+    /// that the tiny, solid-color page fixture cannot exercise.
+    fn scanned_pdf(path: &Path) {
+        let (width, height) = (1600, 2200);
+        let mut state = 1u32;
+        let mut pixels = Vec::with_capacity(width * height);
+        for y in 0..height {
+            for x in 0..width {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let ink = (100..1500).contains(&x)
+                    && (100..2100).contains(&y)
+                    && y % 32 < 5
+                    && x % 19 < 13;
+                pixels.push((if ink { 35 } else { 230 }) + ((state >> 24) % 25) as u8);
+            }
+        }
+        let mut raster = format!(
+            "<< /Type /XObject /Subtype /Image /Width {width} /Height {height} /ColorSpace /DeviceGray /BitsPerComponent 8 /Length {} >>\nstream\n",
+            pixels.len()
+        ).into_bytes();
+        raster.extend(pixels);
+        raster.extend(b"\nendstream");
+        let content = b"q 600 0 0 825 0 0 cm /Im0 Do Q\n";
+        let mut stream = format!("<< /Length {} >>\nstream\n", content.len()).into_bytes();
+        stream.extend(content);
+        stream.extend(b"endstream");
+        let page = b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 825] /Resources << /XObject << /Im0 5 0 R >> >> /Contents 6 0 R >>";
+        write_pdf(
+            path,
+            &[
+                b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+                b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>".to_vec(),
+                page.to_vec(),
+                page.to_vec(),
+                raster,
+                stream,
+            ],
+        );
+    }
+
     #[test]
     fn malformed_cache_and_oversized_images_are_rejected() {
         let tmp = tempfile::tempdir().unwrap();
@@ -557,7 +661,58 @@ mod tests {
         image::RgbaImage::new(MAX_SIDE + 1, 1)
             .write_to(&mut png, image::ImageFormat::Png)
             .unwrap();
-        assert!(image_from_png(png.get_ref(), 256).is_err());
+        assert!(decode_preview(png.get_ref(), 256).is_err());
+    }
+
+    #[test]
+    #[ignore = "requires Poppler; run in release mode with --nocapture for timings"]
+    fn real_scanned_pdf_fast_path_preserves_pixels() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("Synthetic scanned pages.pdf");
+        scanned_pdf(&path);
+        let cancel = CancelToken::new();
+        let prefix = tmp.path().join("legacy");
+        let started = Instant::now();
+        process::run(
+            Command::new(process::required("pdftoppm").unwrap())
+                .args([
+                    "-f",
+                    "2",
+                    "-l",
+                    "2",
+                    "-singlefile",
+                    "-scale-to",
+                    "2048",
+                    "-png",
+                ])
+                .arg(&path)
+                .arg(&prefix),
+            &cancel,
+            RENDER_TIMEOUT,
+        )
+        .unwrap();
+        let old = decode_preview(
+            &read_artifact(&prefix.with_extension("png")).unwrap(),
+            MAX_SIDE,
+        )
+        .unwrap();
+        let legacy_ms = started.elapsed().as_millis();
+        let backend = DocumentPreviews::new(Cache::new(tmp.path()).namespace("preview"));
+        let mut req = request(&path);
+        req.page = 2;
+        req.max_side = MAX_SIDE;
+        let started = Instant::now();
+        let page = backend.render(&req, &cancel).unwrap();
+        let cold_ms = started.elapsed().as_millis();
+        assert_eq!(old.rgba, page.image.rgba, "fast encoding must be lossless");
+        assert_eq!(page.info, PreviewInfo::Document { page: 2, pages: 2 });
+        let started = Instant::now();
+        let cached = backend.render(&req, &cancel).unwrap();
+        let cached_ms = started.elapsed().as_millis();
+        assert_eq!(page.image.rgba, cached.image.rgba);
+        eprintln!(
+            "scanned PDF at 2048 px: Poppler PNG {legacy_ms} ms; fast path {cold_ms} ms; disk cache {cached_ms} ms"
+        );
     }
 
     #[test]
@@ -583,6 +738,19 @@ mod tests {
         );
         req.page = u32::MAX;
         assert_eq!(backend.render(&req, &token).unwrap().info, second.info);
+        // Changing the document must invalidate the remembered page count too.
+        write_pdf(
+            &path,
+            &[
+                b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+                b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] >>".to_vec(),
+            ],
+        );
+        assert_eq!(
+            backend.render(&req, &token).unwrap().info,
+            PreviewInfo::Document { page: 1, pages: 1 }
+        );
         std::fs::write(&path, b"broken PDF").unwrap();
         assert!(
             backend.render(&req, &token).is_err(),

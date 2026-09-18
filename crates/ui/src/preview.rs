@@ -410,11 +410,14 @@ impl Shell {
         let previews = Arc::clone(&self.app.previews);
         let wake = self.app.waker_handle();
         let is_dir = entry.is_dir();
+        // A desktop thumbnail represents the file, not the requested page or
+        // timestamp. Only use it before this file has any preview content.
+        let show_thumbnail = !is_dir && self.preview.content.is_none();
         self.app
             .scheduler
             .spawn(Priority::Visible, "preview", cancel.clone(), move || {
                 // Reuse only an already cached desktop thumbnail as initial feedback.
-                if !is_dir {
+                if show_thumbnail {
                     use bibli_core::thumbs::{ThumbRequest, ThumbSize, ThumbnailProvider};
                     let cached =
                         bibli_platform::thumb_providers::FreedesktopCache { write_back: false };

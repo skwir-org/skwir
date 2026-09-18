@@ -68,3 +68,31 @@ ignored smoke tests in `crates/platform/src/preview.rs` exercise real tools with
 synthetic PDFs, video, and generated DOC/DOCX/ODT, XLS/XLSX/ODS, PPT/PPTX/ODP
 files. They are optional because the regular dev shell does not require these
 external rendering programs.
+
+## PDF latency follow-up
+
+Poppler's PNG compression dominated cold-page latency on a synthetic scanned
+document. Request uncompressed PPM pixels from `pdftoppm`, then encode the disk
+cache with our fast, lossless PNG encoder. Decode only once and skip resampling
+when the renderer's output already fits. Retain just the active document's
+page count, keyed by source and tool metadata, across page turns.
+Fast compression can produce larger cache files; the namespace remains bounded
+to 128 MiB, and raw PPM intermediates live only in the request's scratch directory.
+
+Use a desktop thumbnail only before the selected file has preview content.
+Page turns and video seeking retain the current image until the requested one
+is ready; a file-level cover must never replace an already displayed page.
+
+Three release-mode samples at 2048 pixels on a synthetic noisy scan gave median
+times of 1777 ms for Poppler PNG output plus decoding, 99 ms for the new backend
+including metadata and cache storage, and 24 ms for a disk-cache hit. The test
+asserts identical decoded pixels; these are backend timings, not end-to-end UI
+latencies or guarantees for every PDF. Reproduce with:
+
+```
+cargo test --release -p bibli-platform real_scanned_pdf_fast_path_preserves_pixels -- --ignored --nocapture
+```
+
+Document preview debug logs include page, cache hit, render time, and total
+backend time, without file paths. Enable `RUST_LOG=bibli_platform::preview=debug`
+to investigate remaining document-specific delays.

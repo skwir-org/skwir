@@ -31,7 +31,7 @@ video stills through installed tools. Poppler replaces the deferred PDFium path;
 Office conversion uses isolated LibreOffice on Linux. Real-tool smoke tests cover
 PDF paging, video seeking, and nine Office/OpenDocument formats with synthetic
 fixtures. Spreadsheet cell navigation and continuous video playback remain
-future work. Lint, 113 default tests, three real-tool smoke tests, and all
+future work. Lint, 113 default tests, four real-tool smoke tests, and all
 microbench budgets pass. Manual checks exercised PDF paging, Office rendering,
 video seeking, and scrolling the 10k-image grid and 100k-entry list. The Phase 4
 PSS figure above predates this follow-up: with a 1334×1214 window and preview
@@ -39,6 +39,9 @@ closed on a three-file synthetic directory, this session measured 117 MiB PSS
 (previous revision under the same conditions: 145 MiB). Both exceed the historical
 100 MB idle budget; no increase was observed, but that UI gate remains open.
 Warm first-frame samples were 132–151 ms; sampled idle CPU was about 1% of one core.
+PDF latency follow-up: page turns retain the displayed page; fast lossless PNG
+encoding and metadata reuse reduce a synthetic scanned page's backend latency
+from 1777 ms to 99 ms (24 ms cached), with identical pixels (ADR-003).
 
 ---
 
