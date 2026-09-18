@@ -124,6 +124,12 @@ impl App {
         *self.waker.write() = waker;
     }
 
+    /// A callable wake hook for background work that outlives the borrow of
+    /// `App` (a no-op when no UI has installed one).
+    pub fn waker_handle(&self) -> Waker {
+        self.waker.read().clone().unwrap_or_else(|| Arc::new(|| {}))
+    }
+
     /// Invoke the wake hook, if any.
     pub fn wake(&self) {
         if let Some(w) = self.waker.read().as_ref() {
