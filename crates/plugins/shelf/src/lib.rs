@@ -172,17 +172,22 @@ fn selection_items(app: &App, pane: PaneId, ids: &[EntryId]) -> anyhow::Result<V
         .collect())
 }
 
-fn plan_into(items: &[ShelfItem], dest: &std::path::Path, copy: bool) -> anyhow::Result<Outcome> {
+fn plan_into(
+    items: &[ShelfItem],
+    dest: &std::path::Path,
+    copy: bool,
+    app: &App,
+) -> anyhow::Result<Outcome> {
     let steps: Vec<Box<dyn Operation>> = items
         .iter()
         .filter(|i| copy || i.path.parent() != Some(dest))
         .map(|i| -> Box<dyn Operation> {
             if copy {
-                Box::new(Copy {
-                    entry: i.entry_ref(),
-                    dest_dir: dest.to_path_buf(),
-                    new_name: None,
-                })
+                Box::new(Copy::from_settings(
+                    i.entry_ref(),
+                    dest.to_path_buf(),
+                    &app.settings,
+                ))
             } else {
                 Box::new(Move {
                     entry: i.entry_ref(),
@@ -399,7 +404,7 @@ impl Plugin for ShelfPlugin {
             "Move every shelved entry into the current directory (plan)",
             move |a, app| {
                 let dest = pane_dir(app, pane_of(app, a.pane))?;
-                plan_into(&st.lock().items, &dest, false)
+                plan_into(&st.lock().items, &dest, false, app)
             },
         );
         let st = Arc::clone(&self.state);
@@ -410,7 +415,7 @@ impl Plugin for ShelfPlugin {
             "Copy every shelved entry into the current directory (plan)",
             move |a, app| {
                 let dest = pane_dir(app, pane_of(app, a.pane))?;
-                plan_into(&st.lock().items, &dest, true)
+                plan_into(&st.lock().items, &dest, true, app)
             },
         );
         let st = Arc::clone(&self.state);

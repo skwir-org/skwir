@@ -8,6 +8,8 @@ use parking_lot::{Mutex, RwLock};
 use serde::de::DeserializeOwned;
 use std::io::Write;
 
+pub const PRESERVE_TAGS_ON_COPY: &str = "core.preserve_tags_on_copy";
+
 /// One setting's declaration.
 #[derive(Clone, Debug)]
 pub struct SettingSpec {
@@ -99,6 +101,12 @@ struct ApplyArgs {
 /// Register the nonblocking settings command. Validation is repeated on the
 /// worker in case a plugin was disabled after the command was queued.
 pub(crate) fn register(app: &crate::App) {
+    app.settings.declare(SettingSpec {
+        key: PRESERVE_TAGS_ON_COPY.into(),
+        description: "Preserve file and folder tags when copying. If tags cannot be preserved, the copy fails; disable to copy without tags.".into(),
+        default: toml::Value::Boolean(true),
+        constraints: SettingConstraints::default(),
+    });
     app.commands.register::<ApplyArgs, _>(
         "core",
         "settings.apply",

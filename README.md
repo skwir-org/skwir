@@ -60,6 +60,28 @@ focused switch or choice. **Default** resets a field in the draft, **Save**
 edits. PDF engine, thumbnail and shell preferences apply without a restart.
 Plugin enable/disable flags and saved-query collections are not edited here.
 
+## Tags and copying
+
+Tags live in the `user.xdg.tags` extended attribute on each file or folder.
+They require writable user extended attributes: ext4, Btrfs and XFS support
+them; support on network mounts depends on the server and mount options.
+See [Linux xattr documentation](https://man7.org/linux/man-pages/man7/xattr.7.html).
+FAT32 and exFAT do not provide extended attributes
+([filesystem comparison](https://learn.microsoft.com/en-us/windows/win32/fileio/filesystem-functionality-comparison)).
+
+**Settings → core → preserve tags on copy** is enabled by default
+(`core.preserve_tags_on_copy = true`). It applies to the copy command,
+clipboard paste, shelf copies and drag-and-drop, including nested folders.
+Disable it to copy without tags. The preference is captured in the copy plan,
+so pending plans and redo retain their original choice.
+
+If existing tags cannot be read or written, a preserving copy fails with an
+error instead of publishing a copy without tags. Untagged sources need no
+destination xattr support. Copies are staged before publication; symbolic
+links are copied as links, without following their targets. This option
+preserves tags only, not comments, ACLs or other extended attributes, and
+does not change move behavior.
+
 ## File previews
 
 F3 opens the preview panel; Space opens peek. PDF pages and Office documents

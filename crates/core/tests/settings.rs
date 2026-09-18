@@ -205,7 +205,17 @@ fn disabled_plugins_cannot_be_edited_or_resurrected_by_a_settings_hook() {
     app.plugins
         .settings_changed(&["sample.engine".into()], &app);
     assert_eq!(plugin.0.load(Ordering::SeqCst), 0);
-    assert!(app.settings.schema().is_empty());
+    assert!(
+        app.settings
+            .schema()
+            .iter()
+            .all(|spec| !spec.key.starts_with("sample."))
+    );
+    assert_eq!(
+        app.settings
+            .get::<bool>(bibli_core::settings::PRESERVE_TAGS_ON_COPY),
+        Some(true)
+    );
 }
 
 #[test]
@@ -246,6 +256,16 @@ fn queued_save_is_exclusive_and_revalidates_after_plugin_disable() {
     wake_rx.recv_timeout(Duration::from_secs(5)).unwrap();
     assert!(matches!(app.settings.save_status().1, SaveState::Failed(_)));
     assert_eq!(plugin.0.load(Ordering::SeqCst), 0);
-    assert!(app.settings.schema().is_empty());
+    assert!(
+        app.settings
+            .schema()
+            .iter()
+            .all(|spec| !spec.key.starts_with("sample."))
+    );
+    assert_eq!(
+        app.settings
+            .get::<bool>(bibli_core::settings::PRESERVE_TAGS_ON_COPY),
+        Some(true)
+    );
     assert_eq!(app.settings.get::<String>("sample.engine"), None);
 }

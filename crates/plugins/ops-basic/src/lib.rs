@@ -95,11 +95,7 @@ fn paste(clipboard: &Mutex<Clipboard>, pane: Option<PaneId>, app: &App) -> anyho
                     dest_dir: dest.clone(),
                 })
             } else {
-                Box::new(Copy {
-                    entry,
-                    dest_dir: dest.clone(),
-                    new_name: None,
-                })
+                Box::new(Copy::from_settings(entry, dest.clone(), &app.settings))
             }
         })
         .collect();

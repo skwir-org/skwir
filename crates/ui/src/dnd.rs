@@ -121,11 +121,11 @@ impl Shell {
             .filter(|p| p.parent() != Some(dest))
             .filter_map(|p| {
                 let id = fs::stat::id_of(p)?;
-                Some(Box::new(op::Copy {
-                    entry: EntryRef::new(id, p.clone()),
-                    dest_dir: dest.to_path_buf(),
-                    new_name: None,
-                }) as Box<dyn op::Operation>)
+                Some(Box::new(op::Copy::from_settings(
+                    EntryRef::new(id, p.clone()),
+                    dest.to_path_buf(),
+                    &self.app.settings,
+                )) as Box<dyn op::Operation>)
             })
             .collect();
         if steps.is_empty() {

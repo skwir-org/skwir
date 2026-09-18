@@ -21,7 +21,7 @@ const ID: &str = "tags";
 pub const FIELD: &str = "tags";
 /// Read-only companion field from `user.xdg.comment`.
 pub const COMMENT_FIELD: &str = "comment";
-const XATTR_TAGS: &str = "user.xdg.tags";
+use bibli_core::metadata::TAGS_XATTR as XATTR_TAGS;
 const XATTR_COMMENT: &str = "user.xdg.comment";
 
 /// Tags of a path, from its xattr. Missing, unsupported, or unreadable → empty.

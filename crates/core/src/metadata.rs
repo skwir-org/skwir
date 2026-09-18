@@ -9,6 +9,9 @@ use parking_lot::RwLock;
 
 use crate::entry::Entry;
 
+/// Shared on-disk tag format used by the tags provider and copy operations.
+pub const TAGS_XATTR: &str = "user.xdg.tags";
+
 /// Fills fields on freshly stat-ed entries.
 pub trait MetadataProvider: Send + Sync {
     fn id(&self) -> &'static str;

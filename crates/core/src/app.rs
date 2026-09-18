@@ -720,11 +720,7 @@ mod builtin {
                     .path()
                     .ok_or_else(|| anyhow::anyhow!("destination must be a path"))?;
                 selection_plan(app, pane, &format!("copy to {}", dest.display()), |e| {
-                    Box::new(op::Copy {
-                        entry: e,
-                        dest_dir: dest.clone(),
-                        new_name: None,
-                    })
+                    Box::new(op::Copy::from_settings(e, dest.clone(), &app.settings))
                 })
             },
         );

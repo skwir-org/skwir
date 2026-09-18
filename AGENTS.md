@@ -226,6 +226,12 @@ docs/              PLAN.md, adr/
 
 ## Paths and generated queries
 
+- Build copy operations with `Copy::from_settings` so every command, shelf,
+  clipboard and drop path captures the same tag-preservation preference in
+  the serialized plan. Never read live preferences during apply or redo.
+  Copy tags before restoring read-only permissions and publish the staged
+  copy only after metadata succeeds; failed copies must not look complete.
+
 - Keep paths as `Path` / `PathBuf` and process arguments separate for as long
   as possible. Shell quoting, query quoting, and URI encoding are different
   grammars; a display string is not an escaped representation of any of them.

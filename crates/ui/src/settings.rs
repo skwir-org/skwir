@@ -461,7 +461,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                     div()
                         .text_xs()
                         .text_color(theme.text_muted)
-                        .child("Preferences for enabled plugins. Save to apply changes."),
+                        .child("App and plugin preferences. Save to apply changes."),
                 ),
         )
         .child(rows)

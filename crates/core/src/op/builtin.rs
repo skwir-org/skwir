@@ -2,6 +2,7 @@
 //! mkdir, rmdir. Each is idempotent (`check` detects an effect already in
 //! place) and returns its inverse from `apply`.
 
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -185,9 +186,30 @@ pub struct Copy {
     /// Name at the destination; the source name when `None`.
     #[serde(default)]
     pub new_name: Option<String>,
+    /// Captured when the plan is created, so redo does not consult live settings.
+    #[serde(default = "preserve_tags_default")]
+    pub preserve_tags: bool,
+}
+
+fn preserve_tags_default() -> bool {
+    true
 }
 
 impl Copy {
+    pub fn from_settings(
+        entry: EntryRef,
+        dest_dir: PathBuf,
+        settings: &crate::settings::Settings,
+    ) -> Self {
+        Self {
+            entry,
+            dest_dir,
+            new_name: None,
+            preserve_tags: settings
+                .get(crate::settings::PRESERVE_TAGS_ON_COPY)
+                .unwrap_or(true),
+        }
+    }
     fn target(&self, src: &Path) -> PathBuf {
         match &self.new_name {
             Some(n) => self.dest_dir.join(n),
@@ -244,40 +266,70 @@ impl Operation for Copy {
     fn apply(&self) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let src = self.entry.resolve()?;
         let target = self.target(&src);
-        copy_recursive(&src, &target)?;
+        // Publish only after content and tags are complete. A failed tag write
+        // must not leave a partial destination that check() calls AlreadyDone.
+        let staging = tempfile::Builder::new()
+            .prefix(".bibli-copy-")
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir_in(&self.dest_dir)?;
+        let staged = staging.path().join("entry");
+        let result = copy_recursive_with_tags(&src, &staged, self.preserve_tags)
+            .and_then(|()| rename_noreplace(&staged, &target));
+        if let Err(error) = result {
+            // Completed subdirectories may already have read-only permissions.
+            // Only relax permissions inside our private, newly-created staging tree.
+            if let Err(cleanup) = remove_staged_copy(staging.path()) {
+                return Err(error).context(format!("copy staging cleanup failed: {cleanup}"));
+            }
+            return Err(error);
+        }
         let r = EntryRef::from_path(&target)
             .ok_or_else(|| anyhow::anyhow!("copy vanished: {}", target.display()))?;
         Ok(Some(Box::new(Delete { entry: r })))
     }
 }
 
-fn copy_file(src: &Path, dst: &Path) -> anyhow::Result<()> {
-    let sf = std::fs::File::open(src)?;
-    let df = std::fs::OpenOptions::new()
+fn remove_staged_copy(path: &Path) -> std::io::Result<()> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if metadata.is_dir() {
+        std::fs::set_permissions(
+            path,
+            std::fs::Permissions::from_mode(metadata.permissions().mode() | 0o700),
+        )?;
+        for entry in std::fs::read_dir(path)? {
+            remove_staged_copy(&entry?.path())?;
+        }
+        std::fs::remove_dir(path)
+    } else {
+        std::fs::remove_file(path)
+    }
+}
+
+fn copy_file(src: &Path, dst: &Path, preserve_tags: bool) -> anyhow::Result<()> {
+    let mut sf = std::fs::File::open(src)?;
+    let mut df = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(dst)?;
-    if rustix::fs::ioctl_ficlone(&df, &sf).is_ok() {
-        let m = sf.metadata()?;
-        df.set_permissions(m.permissions())?;
-        let _ = df.set_modified(m.modified()?);
-        return Ok(());
+    if rustix::fs::ioctl_ficlone(&df, &sf).is_err() {
+        std::io::copy(&mut sf, &mut df)
+            .with_context(|| format!("copy {} -> {}", src.display(), dst.display()))?;
     }
-    drop(df);
-    std::fs::copy(src, dst)
-        .with_context(|| format!("copy {} -> {}", src.display(), dst.display()))?;
-    if let Ok(m) = sf.metadata()
-        && let Ok(t) = m.modified()
-    {
-        let _ = std::fs::File::options()
-            .write(true)
-            .open(dst)
-            .and_then(|f| f.set_modified(t));
+    // Set attributes before restoring a read-only source's permissions.
+    if preserve_tags {
+        copy_tags(src, dst)?;
     }
+    let m = sf.metadata()?;
+    df.set_permissions(m.permissions())?;
+    let _ = df.set_modified(m.modified()?);
     Ok(())
 }
 
 fn copy_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    copy_recursive_with_tags(src, dst, false)
+}
+
+fn copy_recursive_with_tags(src: &Path, dst: &Path, preserve_tags: bool) -> anyhow::Result<()> {
     let m = std::fs::symlink_metadata(src)?;
     if m.is_symlink() {
         let target = std::fs::read_link(src)?;
@@ -286,11 +338,29 @@ fn copy_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
         std::fs::create_dir(dst)?;
         for e in std::fs::read_dir(src)? {
             let e = e?;
-            copy_recursive(&e.path(), &dst.join(e.file_name()))?;
+            copy_recursive_with_tags(&e.path(), &dst.join(e.file_name()), preserve_tags)?;
+        }
+        if preserve_tags {
+            copy_tags(src, dst)?;
         }
         std::fs::set_permissions(dst, m.permissions())?;
     } else {
-        copy_file(src, dst)?;
+        copy_file(src, dst, preserve_tags)?;
+    }
+    Ok(())
+}
+
+fn copy_tags(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    let tags = match xattr::get(src, crate::metadata::TAGS_XATTR) {
+        Ok(tags) => tags,
+        // A source filesystem without user attributes cannot have bibli tags.
+        Err(error) if error.kind() == std::io::ErrorKind::Unsupported => None,
+        Err(error) => return Err(error).context("read source tags while copying"),
+    };
+    if let Some(tags) = tags {
+        xattr::set(dst, crate::metadata::TAGS_XATTR, &tags).context(
+            "preserve tags while copying; check destination xattr support and permissions, or disable core.preserve_tags_on_copy in Settings",
+        )?;
     }
     Ok(())
 }

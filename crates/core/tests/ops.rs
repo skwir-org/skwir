@@ -85,6 +85,7 @@ fn make_plan(root: &Path, t: &Tree, steps: &[Step]) -> Plan {
                     entry: e,
                     dest_dir: root.join(format!("d{dir}")),
                     new_name: Some(format!("copy_of_f{file}")),
+                    preserve_tags: true,
                 }) as Box<dyn Operation>
             }),
             Step::Swap { a, b } if a != b => match (file_ref(root, *a), file_ref(root, *b)) {

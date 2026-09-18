@@ -563,9 +563,12 @@ dependencies = [
  "bibli-plugin-timeline",
  "bibli-plugin-usage",
  "bibli-ui",
+ "dirs 7.0.0",
+ "serde_json",
  "tempfile",
  "tracing",
  "tracing-subscriber",
+ "xattr 1.6.1",
 ]
 
 [[package]]
@@ -608,6 +611,7 @@ dependencies = [
  "toml 0.9.12+spec-1.1.0",
  "tracing",
  "trash",
+ "xattr 1.6.1",
 ]
 
 [[package]]

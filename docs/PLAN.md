@@ -143,6 +143,23 @@ the full rerun (184 ms). Release checks covered peek menus and grid/list
 paging; after these checks the loaded 100k-entry list used 173.9 MiB PSS with
 0.8% idle CPU over five seconds. The existing UI memory gate remains open.
 
+Tag-copy follow-up (ADR-006): the default-on `core.preserve_tags_on_copy`
+setting applies to direct copies, clipboard paste, shelf copies and external
+drops. Copy plans serialize their preference; recursive copies retain raw
+file/directory tags before restoring read-only permissions. A private staging
+tree is published only after metadata succeeds, with cleanup on failure.
+The tag provider and copier share the xattr key without a plugin dependency.
+Synthetic command tests cover both settings, nested tags, read-only files,
+symlinks, serialization, idempotence, undo/redo and failed-copy cleanup.
+Lint and 129 tests pass (five optional native tests skipped). A debug UI check
+verified the default-on toggle, saving both values and persistence after restart;
+grid/list paging was also exercised. Initial full-suite microbenchmarks missed the
+12 ms image-streaming budget: 13.0 ms with this change and 14.9 ms on the
+unchanged commit in a separate checkout. Isolated 15-run image measurements
+were below budget for both (3.4 ms and 2.5 ms minima respectively). The final
+full-suite run passed all budgets after a competing release build finished;
+budgets were not changed.
+
 ---
 
 ## Phase 0 — Foundations and toolkit spike (~2 weeks)
