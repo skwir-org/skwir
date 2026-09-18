@@ -72,17 +72,29 @@ fn open(args: OpenArgs, app: &App) -> anyhow::Result<Outcome> {
     Ok(Outcome::Done)
 }
 
+/// The directory a "here" action refers to: the single selected directory if
+/// there is exactly one, otherwise the pane's current directory.
+fn target_dir(pane: PaneId, app: &App) -> anyhow::Result<std::path::PathBuf> {
+    let ws = app.workspace.read();
+    let p = ws
+        .pane(pane)
+        .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+    if p.selection.len() == 1
+        && let Some(id) = p.selection.iter().next()
+        && let Some(e) = p.listing.get(id)
+        && e.is_dir()
+        && let Some(open) = &p.open
+        && let Some(path) = open.path_of(id)
+    {
+        return Ok(path);
+    }
+    p.location()
+        .and_then(Location::path)
+        .ok_or_else(|| anyhow::anyhow!("pane is not showing a directory"))
+}
+
 fn open_terminal(pane: Option<PaneId>, app: &App) -> anyhow::Result<Outcome> {
-    let pane = pane_of(app, pane);
-    let dir = {
-        let ws = app.workspace.read();
-        let p = ws
-            .pane(pane)
-            .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-        p.location()
-            .and_then(Location::path)
-            .ok_or_else(|| anyhow::anyhow!("pane is not showing a directory"))?
-    };
+    let dir = target_dir(pane_of(app, pane), app)?;
     bibli_platform::open::open_terminal(&dir)?;
     Ok(Outcome::Done)
 }
@@ -106,7 +118,7 @@ impl Plugin for OpenWithPlugin {
             ID,
             "open_terminal",
             "Open terminal here",
-            "Open a terminal in the current directory",
+            "Open a terminal in the selected folder, or in the current directory",
             |a, app| open_terminal(a.pane, app),
         );
         app.registry.menus.add(
@@ -138,6 +150,33 @@ mod tests {
     use bibli_core::app::AppConfig;
     use std::sync::Arc;
     use std::time::Duration;
+
+    #[test]
+    fn terminal_targets_the_selected_folder_else_the_pane() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("f"), b"").unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&root)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        assert_eq!(target_dir(pane, &app).unwrap(), root);
+        let select = |name: &str| {
+            let mut ws = app.workspace.write();
+            let p = ws.pane_mut(pane).unwrap();
+            let id = p.listing.find_by_name(name.as_ref()).unwrap().id;
+            p.selection.set([id]);
+        };
+        select("sub");
+        assert_eq!(target_dir(pane, &app).unwrap(), root.join("sub"));
+        select("f");
+        assert_eq!(
+            target_dir(pane, &app).unwrap(),
+            root,
+            "a selected file does not change the target"
+        );
+    }
 
     #[test]
     fn open_enters_a_single_directory() {
