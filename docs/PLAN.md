@@ -15,16 +15,17 @@ Principles (non-negotiable, every phase is checked against them):
 Durations are relative sizes for one developer working with an AI assistant, not commitments.
 Each phase has a **Done when** gate. Do not start the next phase before the gate passes.
 
-Status: Phases 0 to 3 built (2026-09-18). Phase 2's gate (one week of daily use) is still
-yours to run. Phase 3 gate on the reference machine: the 10k-image grid scrolls with
-thumbnails arriving visible-first (main thread ~18% while scrolling, idle ~1%), warm first
-frame 123-128 ms (budget 150 ms per ADR-002), idle PSS 99 MB on a small directory (budget
-100 MB) and 124 MB after scrolling a 10k gallery with the thumbnail caches filled.
-Deviations recorded: views live in `bibli-ui` behind a `PaneView` trait rather than as
-separate crates (a gpui-dependent `ui-api` crate is deferred until a third-party view
-exists); PDF preview falls back to the generic card; drag and drop was verified with a virtual pointer in
-both directions; dragging out to other applications works on Wayland through a vendored gpui
-patch (`vendor/patches/0001-wayland-outgoing-drag.patch`, to be upstreamed); AccessKit remains blocked (ADR-001).
+Status: Phases 0 to 4 built (2026-09-18). Phase 2's gate (one week of daily use) is still
+yours to run. Phase 4 gate: thirteen plugins, each proven by a test to disable at runtime with
+no trace in any registry and to re-enable; the trait surface did not change for the last
+three plugins written (jump, tags, shell). Idle PSS with all plugins is 99.9 MB (budget 100).
+Deviations recorded: the plan's `search` item is folded into `query`; `view-dual` is a UI
+feature (per-pane state in the shell) rather than a crate; the UI surfaces (review modal,
+prompts, treemap, timeline strip) live in `bibli-ui` per the Phase 3 decision; `edit-as-buffer`
+uses `$VISUAL`/`$EDITOR` in a terminal instead of an in-app editor; query results are not
+cached across opens (walk is fast, content search dominates); the query language's date parser
+and the timeline's calendar math are duplicated (candidate for a shared crate); earlier
+deviations (AccessKit, PDF preview, views in-crate) still stand.
 
 ---
 
