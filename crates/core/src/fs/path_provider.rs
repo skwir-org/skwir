@@ -218,6 +218,7 @@ impl Shared {
             }
         }
         if !updated.is_empty() {
+            self.ctx.metadata.fill(&self.dir, &mut updated);
             self.tx.send(ListingEvent::Updated(updated));
         }
         if !gone.is_empty() {

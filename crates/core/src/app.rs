@@ -69,6 +69,7 @@ pub struct App {
     pub cache: Cache,
     pub workspace: RwLock<Workspace>,
     pub thumbnails: Arc<crate::thumbs::Thumbnails>,
+    pub metadata: Arc<crate::metadata::MetadataProviders>,
     providers: RwLock<HashMap<Arc<str>, (Arc<str>, Arc<dyn LocationProvider>)>>,
     waker: RwLock<Option<Waker>>,
     batch_size: usize,
@@ -86,6 +87,7 @@ impl App {
         let app = Arc::new(App {
             executor: Executor::new(scheduler.clone()),
             thumbnails: crate::thumbs::Thumbnails::new(scheduler.clone()),
+            metadata: Arc::new(crate::metadata::MetadataProviders::default()),
             scheduler,
             commands: CommandRegistry::default(),
             ops: OpRegistry::default(),
@@ -145,6 +147,7 @@ impl App {
         self.commands.unregister_owner(owner);
         self.ops.unregister_owner(owner);
         self.thumbnails.unregister_owner(owner);
+        self.metadata.unregister_owner(owner);
         self.registry.remove_owner(owner);
         self.providers.write().retain(|_, (o, _)| &**o != owner);
         for spec in self.settings.schema() {
@@ -168,6 +171,7 @@ impl App {
                 cancel: self.lifetime.child(),
                 batch_size: self.batch_size,
                 waker: self.waker.read().clone(),
+                metadata: Arc::clone(&self.metadata),
             },
         )
     }

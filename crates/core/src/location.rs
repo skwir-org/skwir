@@ -113,6 +113,8 @@ pub struct OpenContext {
     pub batch_size: usize,
     /// Wake hook; providers should send through [`OpenContext::channel`] which calls it.
     pub waker: Option<Waker>,
+    /// Metadata providers to run after stat (see [`crate::metadata`]).
+    pub metadata: Arc<crate::metadata::MetadataProviders>,
 }
 
 impl OpenContext {
