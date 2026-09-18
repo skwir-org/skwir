@@ -76,7 +76,8 @@ and listing the 1M-file tree streams without ever blocking the caller.
 Goal: replace the file manager you use every day, even if ugly.
 
 - `crates/ui` on the chosen toolkit: window, layout with panes, theme tokens, command palette,
-  keymap, address bar (paths only for now), status/progress area. **AccessKit wired in from the start.**
+  keymap, address bar (paths only for now), status/progress area. **AccessKit wired in from the start**
+  (blocked: gpui 0.2.2 has no AccessKit support, see ADR-001; re-check at every gpui upgrade).
 - Plugins: `view-list`, `places` (XDG user dirs, GTK bookmarks, udisks2 volumes over D-Bus),
   `ops-basic` (the built-in operations exposed as commands with keybindings), `open-with` (xdg-mime),
   `undo` (journal UI).

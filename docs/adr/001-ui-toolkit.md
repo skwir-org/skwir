@@ -103,5 +103,11 @@ Mitigations adopted with it:
 ## Consequences
 
 - Phase 2 builds `bibli-ui` on gpui 0.2.2.
+- **Known gap: accessibility.** gpui 0.2.2 has no AccessKit integration
+  (verified: no `accesskit` dependency in the crate). The plan's "AccessKit
+  from day one" requirement cannot be met on this toolkit version. Tracked
+  as an open item to revisit at each gpui upgrade; if it is still absent
+  by Phase 5, evaluate contributing it upstream or a dedicated
+  AccessKit adapter in `bibli-ui`.
 - The spike workspace stays in the repo as a reproducible benchmark; both
   spikes remain runnable through `just spike <toolkit> <gpu>`.
