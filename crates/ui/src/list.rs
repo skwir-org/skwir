@@ -113,27 +113,33 @@ impl Shell {
             .map_or_else(SortSpec::default, |p| p.sort)
     }
 
-    /// Change the pane's sort. The core has no `sort` command yet (gap), so
-    /// the shell writes `pane.sort` directly.
-    pub fn set_sort(&mut self, f: impl FnOnce(&mut SortSpec), cx: &mut Context<Self>) {
-        if let Some(p) = self.app.workspace.write().pane_mut(self.pane) {
-            f(&mut p.sort);
-        }
-        cx.notify();
-    }
-
-    pub fn sort_by(&mut self, key: SortKey, cx: &mut Context<Self>) {
-        self.set_sort(
-            |s| {
-                if s.key == key {
-                    s.ascending = !s.ascending;
-                } else {
-                    s.key = key;
-                    s.ascending = true;
-                }
-            },
+    /// Toggle hidden files for this pane through the core command.
+    pub fn toggle_hidden(&mut self, cx: &mut Context<Self>) {
+        self.dispatch_core(
+            "toggle_hidden",
+            serde_json::json!({ "pane": self.pane }),
             cx,
         );
+    }
+
+    /// Sort this pane by `key` through the core command (same key again flips the direction).
+    pub fn sort_by(&mut self, key: SortKey, cx: &mut Context<Self>) {
+        self.dispatch_core(
+            "sort",
+            serde_json::json!({ "key": key, "pane": self.pane }),
+            cx,
+        );
+    }
+
+    fn dispatch_core(&mut self, name: &str, args: serde_json::Value, cx: &mut Context<Self>) {
+        let inv = bibli_core::command::Invocation {
+            name: name.into(),
+            args,
+        };
+        if let Err(e) = self.app.dispatch(&inv) {
+            tracing::warn!(command = name, "dispatch failed: {e:#}");
+        }
+        cx.notify();
     }
 
     /// Ask the core for metadata on `ids` (once per listing version).

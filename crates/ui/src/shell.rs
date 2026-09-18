@@ -572,7 +572,7 @@ impl Shell {
             }
             "accept" => self.confirm_accept(window, cx),
             "dismiss" => self.confirm_dismiss(window, cx),
-            "toggle_hidden" => self.set_sort(|s| s.show_hidden = !s.show_hidden, cx),
+            "toggle_hidden" => self.toggle_hidden(cx),
             "sort" => {
                 let key = match arg("key").as_deref() {
                     Some("size") => SortKey::Size,
