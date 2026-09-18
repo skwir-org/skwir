@@ -94,6 +94,11 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             cx.notify();
         }));
     for (i, item) in menu.items.iter().enumerate() {
+        // Separator between order groups (hundreds digit), per the convention
+        // on `bibli_core::registry::MenuItem`.
+        if i > 0 && menu.items[i - 1].order / 100 != item.order / 100 {
+            panel = panel.child(div().my_1().h(px(1.)).bg(theme.border));
+        }
         let inv = item.command.clone();
         panel = panel.child(
             div()

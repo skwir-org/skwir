@@ -135,17 +135,25 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
     ("ctrl-h", "ui.toggle_hidden", None),
 ];
 
-// "Open" and "Open Terminal Here" are contributed by the open-with plugin,
-// which owns those commands.
-const MENU: &[(&str, &str, Option<&str>)] = &[
-    ("Rename", "ui.rename_prompt", Some("single")),
-    ("Copy", "clipboard_copy", Some("selection")),
-    ("Cut", "clipboard_cut", Some("selection")),
-    ("Paste", "clipboard_paste", None),
-    ("Move to Trash", "trash", Some("selection")),
-    ("Delete Permanently", "ui.confirm_delete", Some("selection")),
-    ("New Folder", "ui.mkdir_prompt", None),
-    ("Refresh", "refresh", None),
+// Context menu items: (title, command, when, order). Order follows the
+// convention documented on `bibli_core::registry::MenuItem`: hundreds are
+// groups (0 open, 100 edit, 200 create, 300 destructive, 400 misc), the UI
+// draws a separator between groups. "Open" and "Open Terminal Here" are
+// contributed by the open-with plugin, which owns those commands.
+const MENU: &[(&str, &str, Option<&str>, i32)] = &[
+    ("Rename", "ui.rename_prompt", Some("single"), 100),
+    ("Cut", "clipboard_cut", Some("selection"), 110),
+    ("Copy", "clipboard_copy", Some("selection"), 120),
+    ("Paste", "clipboard_paste", None, 130),
+    ("New Folder", "ui.mkdir_prompt", None, 200),
+    ("Move to Trash", "trash", Some("selection"), 300),
+    (
+        "Delete Permanently",
+        "ui.confirm_delete",
+        Some("selection"),
+        310,
+    ),
+    ("Refresh", "refresh", None, 400),
 ];
 
 impl Plugin for OpsBasicPlugin {
@@ -208,7 +216,7 @@ impl Plugin for OpsBasicPlugin {
                 },
             );
         }
-        for (i, (title, command, when)) in MENU.iter().enumerate() {
+        for (title, command, when, order) in MENU {
             app.registry.menus.add(
                 ID,
                 MenuItem {
@@ -216,7 +224,7 @@ impl Plugin for OpsBasicPlugin {
                     title: (*title).into(),
                     command: Invocation::new(*command),
                     when: when.map(str::to_owned),
-                    order: i32::try_from(i).unwrap_or(i32::MAX).saturating_mul(10),
+                    order: *order,
                 },
             );
         }

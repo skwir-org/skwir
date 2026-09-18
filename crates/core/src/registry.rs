@@ -76,8 +76,13 @@ pub struct Place {
     pub group: String,
 }
 
-/// A menu contribution. `when` is an expression the UI evaluates
-/// (e.g. `selection.count == 1`); `None` means always.
+/// A menu contribution. `when` is a space-separated list of tokens that must
+/// all hold (`selection`, `single`, `dir`, `file`); `None` means always.
+///
+/// `order` sorts items and groups them: the hundreds digit is the group and
+/// the UI draws a separator between groups. Convention for `context`:
+/// 0xx open/navigate, 1xx edit (rename, cut, copy, paste), 2xx create,
+/// 3xx destructive (trash, delete), 4xx misc (refresh).
 #[derive(Clone, Debug, Serialize)]
 pub struct MenuItem {
     /// `context`, `main`, or a plugin-defined menu id.
