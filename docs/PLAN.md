@@ -15,7 +15,11 @@ Principles (non-negotiable, every phase is checked against them):
 Durations are relative sizes for one developer working with an AI assistant, not commitments.
 Each phase has a **Done when** gate. Do not start the next phase before the gate passes.
 
-Status: Phase 0 and Phase 1 done (2026-09-18). Next: Phase 2 (minimal daily driver on GPUI).
+Status: Phases 0, 1, and 2 built (2026-09-18). Phase 2's gate (one week of daily use) is
+in progress. Two UI budgets are currently missed and are carried into the Phase 3 perf pass:
+first frame 143 ms (100 ms of it inside gpui's `Application::run` before our code) against
+100 ms, and idle RSS 143 MB on a 5-entry directory (179 MB on 100k) against 100 MB, most of
+it toolkit and GPU driver baseline. Both need either a fix or an ADR revising the budget.
 
 ---
 

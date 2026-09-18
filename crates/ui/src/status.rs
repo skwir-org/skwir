@@ -1,0 +1,167 @@
+//! Status bar: item and selection counts, executor progress, messages, undo.
+
+use std::time::Duration;
+
+use bibli_core::op::ExecEvent;
+use gpui::{AnyElement, Context, div, prelude::*, px};
+
+use crate::format;
+use crate::shell::Shell;
+use crate::theme::Theme;
+
+#[derive(Clone, Debug)]
+pub struct Message {
+    pub text: String,
+    pub error: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProgressState {
+    pub title: String,
+    pub step: usize,
+    pub total: usize,
+    /// `Some(None)` finished fine, `Some(Some(err))` failed.
+    pub done: Option<Option<String>>,
+}
+
+#[derive(Default)]
+pub struct StatusState {
+    pub message: Option<Message>,
+    pub progress: Option<ProgressState>,
+    generation: u64,
+}
+
+impl Shell {
+    /// Show a message for five seconds.
+    pub fn set_status(&mut self, text: impl Into<String>, error: bool, cx: &mut Context<Self>) {
+        let text = text.into();
+        if error {
+            tracing::warn!(%text, "status");
+        }
+        self.status.message = Some(Message { text, error });
+        self.status.generation += 1;
+        let generation = self.status.generation;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_secs(5)).await;
+            this.update(cx, |shell, cx| {
+                if shell.status.generation == generation {
+                    shell.status.message = None;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Apply pending executor events to the progress state.
+    pub fn drain_executor(&mut self, cx: &mut Context<Self>) {
+        let rx = self.app.executor.events();
+        let mut any = false;
+        while let Ok(ev) = rx.try_recv() {
+            any = true;
+            match ev {
+                ExecEvent::Started { title, total, .. } => {
+                    self.status.progress = Some(ProgressState {
+                        title,
+                        step: 0,
+                        total,
+                        done: None,
+                    });
+                }
+                ExecEvent::Step(p) => {
+                    if let Some(s) = &mut self.status.progress {
+                        s.step = p.step + 1;
+                        s.total = p.total;
+                    }
+                }
+                ExecEvent::Finished { error, .. } => {
+                    if let Some(s) = &mut self.status.progress {
+                        s.done = Some(error);
+                    }
+                    self.status.generation += 1;
+                    let generation = self.status.generation;
+                    cx.spawn(async move |this, cx| {
+                        cx.background_executor().timer(Duration::from_secs(5)).await;
+                        this.update(cx, |shell, cx| {
+                            if shell.status.generation == generation {
+                                shell.status.progress = None;
+                                cx.notify();
+                            }
+                        })
+                        .ok();
+                    })
+                    .detach();
+                }
+            }
+        }
+        if any {
+            cx.notify();
+        }
+    }
+}
+
+pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
+    let theme = cx.global::<Theme>().clone();
+    let (count, complete, selected, error) = {
+        let ws = shell.app.workspace.read();
+        let pane = ws.pane(shell.pane);
+        pane.map_or((0, true, 0, None), |p| {
+            (
+                shell.list.sorted.len(),
+                p.listing.is_complete(),
+                p.selection.len(),
+                p.listing.error().map(str::to_owned),
+            )
+        })
+    };
+    let items = if complete {
+        format!("{} items", format::thousands(count))
+    } else {
+        format!("{} items…", format::thousands(count))
+    };
+    let mut bar = div()
+        .h(px(26.))
+        .w_full()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_4()
+        .px_2()
+        .text_xs()
+        .border_t_1()
+        .border_color(theme.border)
+        .bg(theme.surface)
+        .text_color(theme.text_muted)
+        .child(items);
+    if selected > 0 {
+        bar = bar.child(format!("{selected} selected"));
+    }
+    if let Some(p) = &shell.status.progress {
+        let text = match &p.done {
+            None => format!("{}: step {}/{}", p.title, p.step, p.total),
+            Some(None) => format!("{}: done", p.title),
+            Some(Some(e)) => format!("{}: {e}", p.title),
+        };
+        let color = if matches!(p.done, Some(Some(_))) {
+            theme.error
+        } else {
+            theme.text
+        };
+        bar = bar.child(div().text_color(color).child(text));
+    }
+    if let Some(e) = error {
+        bar = bar.child(div().text_color(theme.error).child(e));
+    }
+    if let Some(m) = &shell.status.message {
+        let color = if m.error { theme.error } else { theme.text };
+        bar = bar.child(div().text_color(color).truncate().child(m.text.clone()));
+    }
+    let undo = if shell.app.executor.can_undo() {
+        "undo available"
+    } else {
+        ""
+    };
+    bar.child(div().flex_1()).child(undo).into_any_element()
+}

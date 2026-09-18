@@ -84,10 +84,13 @@ pub struct Scheduler {
 }
 
 impl Scheduler {
-    /// Start `workers` threads. Zero means "available parallelism minus one, at least two".
+    /// Start `workers` threads. Zero means "available parallelism minus one,
+    /// clamped to 2..=8": the work is I/O-bound stat and decode, and more
+    /// threads mostly cost memory.
     pub fn new(workers: usize) -> Self {
         let workers = if workers == 0 {
-            std::thread::available_parallelism().map_or(2, |n| n.get().saturating_sub(1).max(2))
+            std::thread::available_parallelism()
+                .map_or(2, |n| n.get().saturating_sub(1).clamp(2, 8))
         } else {
             workers
         };

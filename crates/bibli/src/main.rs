@@ -1,5 +1,39 @@
 //! The bibli binary. Wires the core, the plugins, and the UI shell (Phase 2).
 
+use std::time::Instant;
+
+use bibli_core::app::AppConfig;
+use bibli_core::{App, Location};
+
 fn main() -> anyhow::Result<()> {
-    Ok(())
+    let started = Instant::now();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
+    let app = App::new(AppConfig::default())?;
+
+    // Plugins: each registers its commands, bindings, menus, and places, and
+    // can be toggled at runtime through `plugins.<id>.enabled` in settings.
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_ops_basic::OpsBasicPlugin::default()),
+        &app,
+    );
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_open_with::OpenWithPlugin),
+        &app,
+    );
+    app.plugins
+        .add(std::sync::Arc::new(bibli_plugin_places::PlacesPlugin), &app);
+
+    let path = std::env::args_os().nth(1).map_or_else(
+        || std::env::current_dir().unwrap_or_else(|_| "/".into()),
+        std::path::PathBuf::from,
+    );
+    let path = std::path::absolute(&path).unwrap_or(path);
+    tracing::info!(path = %path.display(), "starting");
+    bibli_ui::run_from(app, Some(Location::from_path(path)), started)
 }

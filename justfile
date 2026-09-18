@@ -40,6 +40,10 @@ spike-build:
 spike toolkit gpu="intel" rows="100000":
     ./spikes/run.sh {{toolkit}} {{gpu}} {{rows}}
 
+# Run the app (release) on a directory, default: the current one.
+run dir=".":
+    cargo run --release -p bibli -- {{dir}}
+
 # Watch and re-check on change.
 watch:
     bacon clippy
