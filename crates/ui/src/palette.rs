@@ -60,6 +60,15 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.zoom", r#"{"dir":"reset"}"#, "Zoom reset"),
     ("ui.toggle_preview", "{}", "Toggle preview panel"),
     ("ui.peek", "{}", "Peek"),
+    ("ui.search", "{}", "Search…"),
+    ("ui.jump", "{}", "Jump…"),
+    ("ui.rename_bulk_prompt", "{}", "Rename several…"),
+    ("ui.tags_prompt", "{}", "Tags…"),
+    ("ui.usage", "{}", "Disk usage"),
+    ("ui.timeline", "{}", "Timeline"),
+    ("ui.split", "{}", "Split pane"),
+    ("ui.focus_other_pane", "{}", "Focus other pane"),
+    ("ui.shelf_open", "{}", "Open shelf"),
     ("ui.quit", "{}", "Quit"),
 ];
 
@@ -123,7 +132,7 @@ impl Shell {
 
     pub fn close_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.palette = None;
-        window.focus(&self.pane_focus);
+        window.focus(&self.ui().focus);
         cx.notify();
     }
 

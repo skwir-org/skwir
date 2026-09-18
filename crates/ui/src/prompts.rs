@@ -1,4 +1,5 @@
-//! Single-line prompts (rename, new folder) and the delete confirmation modal.
+//! Single-line prompts (rename, new folder, search, tags) and the delete
+//! confirmation modal.
 
 use bibli_core::command::Invocation;
 use gpui::{
@@ -15,6 +16,8 @@ use crate::theme::Theme;
 pub enum PromptKind {
     Rename,
     Mkdir,
+    Search,
+    Tags,
 }
 
 pub struct PromptState {
@@ -43,6 +46,8 @@ impl Shell {
         let placeholder = match kind {
             PromptKind::Rename => "New name",
             PromptKind::Mkdir => "Folder name",
+            PromptKind::Search => "*.pdf modified<7d size>10M  (in: picks the root)",
+            PromptKind::Tags => "tag1, tag2 (empty clears)",
         };
         let input = cx.new(|cx| TextInput::new(placeholder, cx));
         input.update(cx, |i, cx| {
@@ -60,27 +65,15 @@ impl Shell {
                     let text = input.read(cx).text().trim().to_owned();
                     let kind = this.prompt.as_ref().map(|p| p.kind);
                     this.prompt = None;
-                    window.focus(&this.pane_focus);
-                    if let Some(kind) = kind
-                        && !text.is_empty()
-                    {
-                        match kind {
-                            PromptKind::Rename => this.run(
-                                "rename",
-                                serde_json::json!({ "new_name": text }),
-                                window,
-                                cx,
-                            ),
-                            PromptKind::Mkdir => {
-                                this.run("mkdir", serde_json::json!({ "name": text }), window, cx);
-                            }
-                        }
+                    window.focus(&this.ui().focus);
+                    if let Some(kind) = kind {
+                        this.prompt_submitted(kind, text, window, cx);
                     }
                     cx.notify();
                 }
                 InputEvent::Cancel => {
                     this.prompt = None;
-                    window.focus(&this.pane_focus);
+                    window.focus(&this.ui().focus);
                     cx.notify();
                 }
                 InputEvent::Changed => {}
@@ -94,6 +87,53 @@ impl Shell {
             _sub: sub,
         });
         cx.notify();
+    }
+
+    fn prompt_submitted(
+        &mut self,
+        kind: PromptKind,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match kind {
+            PromptKind::Rename if !text.is_empty() => {
+                self.run(
+                    "rename",
+                    serde_json::json!({ "new_name": text }),
+                    window,
+                    cx,
+                );
+            }
+            PromptKind::Mkdir if !text.is_empty() => {
+                self.run("mkdir", serde_json::json!({ "name": text }), window, cx);
+            }
+            PromptKind::Search if !text.is_empty() => {
+                self.last_search.clone_from(&text);
+                let pane = self.pane;
+                self.run(
+                    "query.search",
+                    serde_json::json!({ "expr": text, "pane": pane }),
+                    window,
+                    cx,
+                );
+            }
+            PromptKind::Tags => {
+                let tags: Vec<String> = text
+                    .split(',')
+                    .map(|t| t.trim().to_owned())
+                    .filter(|t| !t.is_empty())
+                    .collect();
+                let pane = self.pane;
+                self.run(
+                    "tags.set",
+                    serde_json::json!({ "tags": tags, "pane": pane }),
+                    window,
+                    cx,
+                );
+            }
+            _ => {}
+        }
     }
 
     pub fn open_confirm(
@@ -115,7 +155,7 @@ impl Shell {
 
     pub fn confirm_accept(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(c) = self.confirm.take() {
-            window.focus(&self.pane_focus);
+            window.focus(&self.ui().focus);
             self.run(&c.command.name, c.command.args.clone(), window, cx);
             cx.notify();
         }
@@ -123,14 +163,13 @@ impl Shell {
 
     pub fn confirm_dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.confirm.take().is_some() {
-            window.focus(&self.pane_focus);
+            window.focus(&self.ui().focus);
             cx.notify();
         }
     }
 }
 
-fn backdrop(theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
-    let _ = theme;
+fn backdrop(cx: &mut Context<Shell>) -> gpui::Div {
     div()
         .absolute()
         .inset_0()
@@ -144,7 +183,7 @@ fn backdrop(theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
             cx.listener(|this, _, window, cx| {
                 this.prompt = None;
                 this.confirm_dismiss(window, cx);
-                window.focus(&this.pane_focus);
+                window.focus(&this.ui().focus);
                 cx.notify();
             }),
         )
@@ -152,7 +191,7 @@ fn backdrop(theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
 
 fn panel(theme: &Theme) -> gpui::Div {
     div()
-        .w(px(480.))
+        .w(px(560.))
         .p_3()
         .flex()
         .flex_col()
@@ -170,7 +209,7 @@ pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElemen
     let theme = cx.global::<Theme>().clone();
     Some(
         deferred(
-            backdrop(&theme, cx).child(
+            backdrop(cx).child(
                 panel(&theme)
                     .child(div().text_color(theme.text_muted).child(p.title.clone()))
                     .child(
@@ -203,7 +242,7 @@ pub fn render_confirm(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyEleme
     let theme = cx.global::<Theme>().clone();
     Some(
         deferred(
-            backdrop(&theme, cx).child(
+            backdrop(cx).child(
                 panel(&theme)
                     .track_focus(&c.focus)
                     .key_context(keymap::CONFIRM)

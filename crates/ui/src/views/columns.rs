@@ -96,6 +96,7 @@ impl ColumnsView {
 fn ancestor_column(
     view: &ColumnsView,
     k: usize,
+    pane: bibli_core::workspace::PaneId,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
@@ -162,6 +163,7 @@ fn ancestor_column(
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _, window, cx| {
+                            this.activate_pane(pane, cx);
                             if let Some(t) = &dir_target {
                                 this.run(
                                     "navigate",
@@ -230,22 +232,25 @@ impl PaneView for ColumnsView {
 
         let mut columns = div().size_full().flex().flex_row().overflow_hidden();
         for k in 0..self.ancestors.len() {
-            columns = columns.child(ancestor_column(self, k, &theme, cx));
+            columns = columns.child(ancestor_column(self, k, shell.pane, &theme, cx));
         }
-        let count = shell.list.sorted.len();
+        let count = shell.ui().list.sorted.len();
+        let pane = shell.pane;
         let last = uniform_list(
             "column-last",
             count,
             cx.processor(move |this: &mut Shell, range: Range<usize>, _window, cx| {
-                let theme = cx.global::<Theme>().clone();
-                this.list.visible_rows = range.len().max(1);
-                let rows = this.rows(range, 18);
-                let need: Vec<EntryId> =
-                    rows.iter().filter(|r| !r.hydrated).map(|r| r.id).collect();
-                this.request_hydrate(need);
-                rows.iter()
-                    .map(|r| row(this, &theme, r, true, cx))
-                    .collect::<Vec<_>>()
+                this.with_pane(pane, |this| {
+                    let theme = cx.global::<Theme>().clone();
+                    this.ui_mut().list.visible_rows = range.len().max(1);
+                    let rows = this.rows(range, 18);
+                    let need: Vec<EntryId> =
+                        rows.iter().filter(|r| !r.hydrated).map(|r| r.id).collect();
+                    this.request_hydrate(need);
+                    rows.iter()
+                        .map(|r| row(this, &theme, r, true, cx))
+                        .collect::<Vec<_>>()
+                })
             }),
         )
         .track_scroll(self.scroll.clone())
@@ -270,7 +275,7 @@ impl PaneView for ColumnsView {
     }
 
     fn nav_delta(&self, nav: Nav, shell: &Shell) -> Option<isize> {
-        let page = shell.list.visible_rows.saturating_sub(1).max(1) as isize;
+        let page = shell.ui().list.visible_rows.saturating_sub(1).max(1) as isize;
         match nav {
             Nav::Up => Some(-1),
             Nav::Down => Some(1),

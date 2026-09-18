@@ -1,4 +1,5 @@
-//! Status bar: item and selection counts, executor progress, messages, undo.
+//! Status bar: item and selection counts, executor progress, messages,
+//! undo, the shelf chip, pending proposals.
 
 use std::time::Duration;
 
@@ -34,6 +35,17 @@ pub struct StatusState {
 impl Shell {
     /// Show a message for five seconds.
     pub fn set_status(&mut self, text: impl Into<String>, error: bool, cx: &mut Context<Self>) {
+        self.set_status_for(text, error, 5, cx);
+    }
+
+    /// Show a message for `secs` seconds.
+    pub fn set_status_for(
+        &mut self,
+        text: impl Into<String>,
+        error: bool,
+        secs: u64,
+        cx: &mut Context<Self>,
+    ) {
         let text = text.into();
         if error {
             tracing::warn!(%text, "status");
@@ -42,7 +54,9 @@ impl Shell {
         self.status.generation += 1;
         let generation = self.status.generation;
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(Duration::from_secs(5)).await;
+            cx.background_executor()
+                .timer(Duration::from_secs(secs))
+                .await;
             this.update(cx, |shell, cx| {
                 if shell.status.generation == generation {
                     shell.status.message = None;
@@ -104,22 +118,24 @@ impl Shell {
 
 pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
-    let (count, complete, selected, error) = {
+    let (count, complete, selected, error, is_query) = {
         let ws = shell.app.workspace.read();
         let pane = ws.pane(shell.pane);
-        pane.map_or((0, true, 0, None), |p| {
+        pane.map_or((0, true, 0, None, false), |p| {
             (
-                shell.list.sorted.len(),
+                shell.ui().list.sorted.len(),
                 p.listing.is_complete(),
                 p.selection.len(),
                 p.listing.error().map(str::to_owned),
+                p.location().is_some_and(|l| &*l.scheme == "query"),
             )
         })
     };
-    let items = if complete {
-        format!("{} items", format::thousands(count))
-    } else {
-        format!("{} items…", format::thousands(count))
+    let items = match (is_query, complete) {
+        (true, false) => format!("searching… {} results", format::thousands(count)),
+        (true, true) => format!("{} results", format::thousands(count)),
+        (false, false) => format!("{} items…", format::thousands(count)),
+        (false, true) => format!("{} items", format::thousands(count)),
     };
     let mut bar = div()
         .h(px(26.))
@@ -158,10 +174,35 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
         let color = if m.error { theme.error } else { theme.text };
         bar = bar.child(div().text_color(color).truncate().child(m.text.clone()));
     }
+    bar = bar.child(div().flex_1());
+    if !shell.reviews.is_empty() {
+        bar = bar.child(
+            div()
+                .text_color(theme.accent)
+                .child(format!("{} proposal(s) to review", shell.reviews.len())),
+        );
+    }
+    if shell.shelf_count > 0 || shell.app.commands.get("shelf.list").is_some() {
+        bar = bar.child(
+            div()
+                .id("shelf-chip")
+                .px_2()
+                .rounded_md()
+                .cursor_pointer()
+                .when(shell.shelf_count > 0, |d| {
+                    d.bg(theme.selection_bg).text_color(theme.selection_text)
+                })
+                .hover(|s| s.bg(theme.border))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.run("ui.shelf_open", serde_json::json!({}), window, cx);
+                }))
+                .child(format!("Shelf: {}", shell.shelf_count)),
+        );
+    }
     let undo = if shell.app.executor.can_undo() {
         "undo available"
     } else {
         ""
     };
-    bar.child(div().flex_1()).child(undo).into_any_element()
+    bar.child(undo).into_any_element()
 }

@@ -40,6 +40,19 @@ pub struct RowData {
     pub is_cursor: bool,
     pub icon: Option<std::sync::Arc<std::path::Path>>,
     pub hydrated: bool,
+    pub tags: Vec<String>,
+}
+
+/// Tags from the entry's `tags` metadata field (a list of text values).
+pub fn tags_of(e: &bibli_core::Entry) -> Vec<String> {
+    match e.metadata.value("tags") {
+        Some(bibli_core::Value::List(items)) => items
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect(),
+        Some(bibli_core::Value::Text(t)) => vec![t.to_string()],
+        _ => Vec::new(),
+    }
 }
 
 impl Shell {
@@ -52,7 +65,7 @@ impl Shell {
         };
         let cursor = pane.selection.cursor;
         for ix in range {
-            let Some(&id) = self.list.sorted.get(ix) else {
+            let Some(&id) = self.ui().list.sorted.get(ix) else {
                 break;
             };
             let Some(e) = pane.listing.get(id) else {
@@ -93,6 +106,7 @@ impl Shell {
                 is_cursor: cursor == Some(id),
                 icon: self.icons.for_entry(e, icon_px),
                 hydrated: e.metadata.is_hydrated(),
+                tags: tags_of(e),
             });
         }
         out
@@ -108,6 +122,7 @@ pub fn row(
     cx: &mut Context<Shell>,
 ) -> Stateful<Div> {
     let ix = r.ix;
+    let pane = shell.pane;
     let muted = if r.selected {
         theme.selection_text
     } else {
@@ -148,17 +163,39 @@ pub fn row(
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
-                this.on_entry_mouse_down(ix, ev, window, cx);
+                this.on_entry_mouse_down(pane, ix, ev, window, cx);
             }),
         )
         .on_mouse_down(
             MouseButton::Right,
             cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
-                this.on_entry_mouse_down(ix, ev, window, cx);
+                this.on_entry_mouse_down(pane, ix, ev, window, cx);
             }),
         )
         .child(icon)
-        .child(div().flex_1().min_w_0().truncate().child(r.name.clone()));
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(div().min_w_0().truncate().child(r.name.clone()))
+                .children(r.tags.iter().take(4).map(|t| {
+                    div()
+                        .flex_none()
+                        .px_1()
+                        .rounded_sm()
+                        .text_xs()
+                        .bg(theme.accent.opacity(0.18))
+                        .text_color(if r.selected {
+                            theme.selection_text
+                        } else {
+                            theme.text
+                        })
+                        .child(t.clone())
+                })),
+        );
     if !compact {
         el = el
             .child(
@@ -264,20 +301,23 @@ impl PaneView for ListView {
 
     fn render(&mut self, shell: &mut Shell, _: &mut Window, cx: &mut Context<Shell>) -> AnyElement {
         let theme = cx.global::<Theme>().clone();
-        let count = shell.list.sorted.len();
+        let count = shell.ui().list.sorted.len();
+        let pane = shell.pane;
         let list = uniform_list(
             "rows",
             count,
             cx.processor(move |this: &mut Shell, range: Range<usize>, _window, cx| {
-                let theme = cx.global::<Theme>().clone();
-                this.list.visible_rows = range.len().max(1);
-                let rows = this.rows(range, ICON_PX as u16);
-                let need: Vec<EntryId> =
-                    rows.iter().filter(|r| !r.hydrated).map(|r| r.id).collect();
-                this.request_hydrate(need);
-                rows.iter()
-                    .map(|r| row(this, &theme, r, false, cx))
-                    .collect::<Vec<_>>()
+                this.with_pane(pane, |this| {
+                    let theme = cx.global::<Theme>().clone();
+                    this.ui_mut().list.visible_rows = range.len().max(1);
+                    let rows = this.rows(range, ICON_PX as u16);
+                    let need: Vec<EntryId> =
+                        rows.iter().filter(|r| !r.hydrated).map(|r| r.id).collect();
+                    this.request_hydrate(need);
+                    rows.iter()
+                        .map(|r| row(this, &theme, r, false, cx))
+                        .collect::<Vec<_>>()
+                })
             }),
         )
         .track_scroll(self.scroll.clone())
@@ -296,7 +336,7 @@ impl PaneView for ListView {
     }
 
     fn nav_delta(&self, nav: Nav, shell: &Shell) -> Option<isize> {
-        let page = shell.list.visible_rows.saturating_sub(1).max(1) as isize;
+        let page = shell.ui().list.visible_rows.saturating_sub(1).max(1) as isize;
         match nav {
             Nav::Up => Some(-1),
             Nav::Down => Some(1),

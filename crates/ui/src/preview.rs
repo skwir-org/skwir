@@ -427,7 +427,7 @@ impl Shell {
         } else {
             self.preview.width
         };
-        let w = &self.list.content_width;
+        let w = &self.ui().list.content_width;
         w.set(w.get() + delta);
         cx.notify();
     }
@@ -447,7 +447,7 @@ impl Shell {
     pub fn close_peek(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.preview.peek = false;
         self.preview.peek_focus = None;
-        window.focus(&self.pane_focus);
+        window.focus(&self.ui().focus);
         cx.notify();
     }
 
@@ -468,7 +468,7 @@ impl Shell {
         let total = f32::from(window.viewport_size().width);
         let x = f32::from(ev.event.position.x);
         let new_width = (total - x).clamp(200.0, 900.0);
-        let w = &self.list.content_width;
+        let w = &self.ui().list.content_width;
         w.set(w.get() + (self.preview.width - new_width));
         self.preview.width = new_width;
         cx.notify();

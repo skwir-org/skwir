@@ -20,17 +20,23 @@ mod dragicon;
 pub mod format;
 pub mod icons;
 pub mod input;
+pub mod jump;
 pub mod keymap;
 pub mod list;
 pub mod menu;
 pub mod palette;
 pub mod preview;
 pub mod prompts;
+pub mod renamebulk;
+pub mod review;
 pub mod shell;
 pub mod sidebar;
 pub mod status;
 pub mod theme;
 pub mod thumbs;
+pub mod timeline;
+pub mod treemap;
+pub mod usage;
 pub mod view;
 pub mod views;
 
@@ -193,7 +199,7 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
             tracing::debug!(ms = started.elapsed().as_millis() as u64, "window opened");
             window
                 .update(cx, |shell, window, cx| {
-                    window.focus(&shell.pane_focus);
+                    window.focus(&shell.ui().focus);
                     cx.activate(true);
                 })
                 .ok();

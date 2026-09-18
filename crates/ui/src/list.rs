@@ -1,6 +1,6 @@
 //! Pane state shared by every view: the cached sorted order, hydration
 //! bookkeeping, selection and cursor interaction, type-ahead, and the pane
-//! container (focus, key context, external drops, width measurement).
+//! container (focus, key context, external drops, size measurement).
 
 use std::cell::Cell;
 use std::collections::HashSet;
@@ -8,6 +8,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use bibli_core::command::Invocation;
+use bibli_core::workspace::PaneId;
 use bibli_core::{EntryId, SortKey, SortSpec};
 use gpui::{
     AnyElement, Context, ExternalPaths, KeyContext, KeyDownEvent, MouseButton, MouseDownEvent,
@@ -28,8 +29,9 @@ pub struct ListState {
     pub pending_hydrate: HashSet<EntryId>,
     pending_at: u64,
     pub visible_rows: usize,
-    /// Width of the file area, measured during layout.
+    /// Size of the file area, measured during layout.
     pub content_width: Rc<Cell<f32>>,
+    pub content_height: Rc<Cell<f32>>,
     typeahead: String,
     typeahead_at: Option<Instant>,
 }
@@ -43,6 +45,7 @@ impl Default for ListState {
             pending_at: 0,
             visible_rows: 20,
             content_width: Rc::new(Cell::new(800.0)),
+            content_height: Rc::new(Cell::new(600.0)),
             typeahead: String::new(),
             typeahead_at: None,
         }
@@ -63,6 +66,10 @@ impl ListState {
             self.pending_at = version;
         }
         true
+    }
+
+    pub fn version(&self) -> Option<u64> {
+        self.sorted_at.map(|(v, _)| v)
     }
 
     pub fn reset(&mut self) {
@@ -106,40 +113,43 @@ impl Shell {
             .map_or_else(SortSpec::default, |p| p.sort)
     }
 
-    /// Toggle hidden files through the core command.
-    pub fn toggle_hidden(&mut self, cx: &mut Context<Self>) {
-        self.dispatch_core("toggle_hidden", serde_json::json!({}), cx);
-    }
-
-    /// Sort by `key` through the core command (same key again flips the direction).
-    pub fn sort_by(&mut self, key: SortKey, cx: &mut Context<Self>) {
-        self.dispatch_core("sort", serde_json::json!({ "key": key }), cx);
-    }
-
-    fn dispatch_core(&mut self, name: &str, args: serde_json::Value, cx: &mut Context<Self>) {
-        let inv = bibli_core::command::Invocation {
-            name: name.into(),
-            args,
-        };
-        if let Err(e) = self.app.dispatch(&inv) {
-            tracing::warn!(command = name, "dispatch failed: {e:#}");
+    /// Change the pane's sort. The core has no `sort` command yet (gap), so
+    /// the shell writes `pane.sort` directly.
+    pub fn set_sort(&mut self, f: impl FnOnce(&mut SortSpec), cx: &mut Context<Self>) {
+        if let Some(p) = self.app.workspace.write().pane_mut(self.pane) {
+            f(&mut p.sort);
         }
         cx.notify();
     }
 
+    pub fn sort_by(&mut self, key: SortKey, cx: &mut Context<Self>) {
+        self.set_sort(
+            |s| {
+                if s.key == key {
+                    s.ascending = !s.ascending;
+                } else {
+                    s.key = key;
+                    s.ascending = true;
+                }
+            },
+            cx,
+        );
+    }
+
     /// Ask the core for metadata on `ids` (once per listing version).
     pub fn request_hydrate(&mut self, ids: Vec<EntryId>) {
-        let need: Vec<EntryId> = ids
-            .into_iter()
-            .filter(|id| self.list.pending_hydrate.insert(*id))
-            .collect();
+        let pane = self.pane;
+        let need: Vec<EntryId> = {
+            let pending = &mut self.ui_mut().list.pending_hydrate;
+            ids.into_iter().filter(|id| pending.insert(*id)).collect()
+        };
         if need.is_empty() {
             return;
         }
         tracing::debug!(n = need.len(), "hydrate request");
         if let Err(e) = self.app.dispatch(&Invocation::with_args(
             "hydrate",
-            &serde_json::json!({ "ids": need }),
+            &serde_json::json!({ "ids": need, "pane": pane }),
         )) {
             tracing::warn!("hydrate: {e:#}");
         }
@@ -151,6 +161,12 @@ impl Shell {
         for f in self.selection_ctx().flags() {
             kc.add(f);
         }
+        if self.is_split() {
+            kc.add("split");
+        }
+        if self.usage.active {
+            kc.add("usage");
+        }
         kc
     }
 
@@ -161,9 +177,10 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let pane = self.pane;
         self.run(
             "select",
-            serde_json::json!({ "ids": ids, "mode": mode }),
+            serde_json::json!({ "ids": ids, "mode": mode, "pane": pane }),
             window,
             cx,
         );
@@ -173,7 +190,7 @@ impl Shell {
         let ws = self.app.workspace.read();
         ws.pane(self.pane)
             .and_then(|p| p.selection.cursor)
-            .and_then(|c| self.list.index_of(c))
+            .and_then(|c| self.ui().list.index_of(c))
     }
 
     pub fn cursor_id(&self) -> Option<EntryId> {
@@ -192,11 +209,12 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.list.sorted.is_empty() {
+        let len = self.ui().list.sorted.len();
+        if len == 0 {
             return;
         }
-        let target = target.clamp(0, self.list.sorted.len() as isize - 1) as usize;
-        let id = self.list.sorted[target];
+        let target = target.clamp(0, len as isize - 1) as usize;
+        let id = self.ui().list.sorted[target];
         let mode = if extend { "range_to" } else { "replace" };
         self.select_ids(vec![id], mode, window, cx);
         self.with_view(|v, _| v.scroll_to(target));
@@ -240,16 +258,23 @@ impl Shell {
         }
     }
 
+    /// Mouse down on row/cell `ix` of `pane` (which becomes active).
     pub fn on_entry_mouse_down(
         &mut self,
+        pane: PaneId,
         ix: usize,
         ev: &MouseDownEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        window.focus(&self.pane_focus);
-        let Some(&id) = self.list.sorted.get(ix) else {
+        self.activate_pane(pane, cx);
+        window.focus(&self.ui().focus);
+        let Some(&id) = self.ui().list.sorted.get(ix) else {
             return;
+        };
+        let selected = {
+            let ws = self.app.workspace.read();
+            ws.pane(self.pane).is_some_and(|p| p.selection.contains(id))
         };
         match ev.button {
             MouseButton::Left => {
@@ -260,23 +285,13 @@ impl Shell {
                     self.select_ids(vec![id], "toggle", window, cx);
                 } else if ev.modifiers.shift {
                     self.select_ids(vec![id], "range_to", window, cx);
-                } else {
-                    let selected = {
-                        let ws = self.app.workspace.read();
-                        ws.pane(self.pane).is_some_and(|p| p.selection.contains(id))
-                    };
+                } else if !selected {
                     // Keep a multi-selection when pressing on one of its rows,
                     // so a drag can carry all of it.
-                    if !selected {
-                        self.select_ids(vec![id], "replace", window, cx);
-                    }
+                    self.select_ids(vec![id], "replace", window, cx);
                 }
             }
             MouseButton::Right => {
-                let selected = {
-                    let ws = self.app.workspace.read();
-                    ws.pane(self.pane).is_some_and(|p| p.selection.contains(id))
-                };
                 if !selected {
                     self.select_ids(vec![id], "replace", window, cx);
                 }
@@ -303,20 +318,21 @@ impl Shell {
             return;
         }
         let now = Instant::now();
-        if self
-            .list
-            .typeahead_at
-            .is_none_or(|t| now.duration_since(t) > Duration::from_secs(2))
         {
-            self.list.typeahead.clear();
+            let l = &mut self.ui_mut().list;
+            if l.typeahead_at
+                .is_none_or(|t| now.duration_since(t) > Duration::from_secs(2))
+            {
+                l.typeahead.clear();
+            }
+            l.typeahead_at = Some(now);
+            l.typeahead.push_str(&ch.to_lowercase());
         }
-        self.list.typeahead_at = Some(now);
-        self.list.typeahead.push_str(&ch.to_lowercase());
-        let needle = self.list.typeahead.clone();
+        let needle = self.ui().list.typeahead.clone();
         let found = {
             let ws = self.app.workspace.read();
             ws.pane(self.pane).and_then(|p| {
-                self.list.sorted.iter().position(|id| {
+                self.ui().list.sorted.iter().position(|id| {
                     p.listing
                         .get(*id)
                         .is_some_and(|e| e.name_str().to_lowercase().starts_with(&needle))
@@ -329,44 +345,56 @@ impl Shell {
     }
 
     /// Wrap a view's element in the pane container: focus, key context,
-    /// type-ahead, empty-area context menu, external drops, width measurement.
+    /// type-ahead, empty-area context menu, external drops, size measurement.
     pub fn pane_container(&mut self, content: AnyElement, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.global::<Theme>().clone();
         let key_context = self.pane_key_context();
-        let width = Rc::clone(&self.list.content_width);
+        let pane = self.pane;
+        let width = Rc::clone(&self.ui().list.content_width);
+        let height = Rc::clone(&self.ui().list.content_height);
         div()
-            .id("pane")
+            .id(("pane", pane.0 as usize))
             .relative()
             .flex_1()
-            .h_full()
-            .min_w_0()
+            .min_h_0()
+            .w_full()
             .flex()
             .flex_col()
-            .track_focus(&self.pane_focus)
+            .track_focus(&self.ui().focus)
             .key_context(key_context)
             .on_key_down(cx.listener(Shell::on_pane_key_down))
             .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| this.activate_pane(pane, cx)),
+            )
+            .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(|this, ev: &MouseDownEvent, window, cx| {
-                    window.focus(&this.pane_focus);
+                cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
+                    this.activate_pane(pane, cx);
+                    window.focus(&this.ui().focus);
                     this.open_context_menu(ev.position, cx);
                 }),
             )
             .drag_over::<ExternalPaths>(move |s, _, _, _| s.bg(theme.selection_bg.opacity(0.4)))
-            .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
+            .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
+                this.activate_pane(pane, cx);
                 this.drop_external(paths.paths(), window, cx);
             }))
             .child(
                 canvas(
                     move |bounds, window, _| {
                         let w = f32::from(bounds.size.width);
+                        let h = f32::from(bounds.size.height);
+                        let mut changed = false;
                         if (width.get() - w).abs() > 0.5 {
-                            tracing::trace!(
-                                predicted = width.get(),
-                                measured = w,
-                                "content width corrected"
-                            );
                             width.set(w);
+                            changed = true;
+                        }
+                        if (height.get() - h).abs() > 0.5 {
+                            height.set(h);
+                            changed = true;
+                        }
+                        if changed {
                             window.refresh();
                         }
                     },

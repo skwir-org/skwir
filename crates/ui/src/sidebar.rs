@@ -16,7 +16,7 @@ fn group_rank(g: &str) -> usize {
 
 pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
-    let current = shell.address_shown.clone();
+    let current = shell.ui().address_shown.clone();
     let mut places = shell.app.registry.places.all();
     places.sort_by_key(|p| group_rank(&p.group));
 

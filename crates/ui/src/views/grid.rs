@@ -36,7 +36,7 @@ impl GridView {
     }
 
     fn compute_cols(&mut self, shell: &Shell) -> usize {
-        let width = shell.list.content_width.get() - 8.0;
+        let width = shell.ui().list.content_width.get() - 8.0;
         let cols = (width / Self::cell_w(shell.zoom)).floor().max(1.0) as usize;
         if cols != self.cols {
             // Row indices change meaning: keep the same first visible item at
@@ -63,6 +63,7 @@ fn cell(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let zoom = shell.zoom;
+    let pane = shell.pane;
     let (name, is_dir, selected, is_cursor, icon, path, hydrated) = {
         let ws = shell.app.workspace.read();
         let Some(pane) = ws.pane(shell.pane) else {
@@ -147,13 +148,13 @@ fn cell(
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
-                this.on_entry_mouse_down(ix, ev, window, cx);
+                this.on_entry_mouse_down(pane, ix, ev, window, cx);
             }),
         )
         .on_mouse_down(
             MouseButton::Right,
             cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
-                this.on_entry_mouse_down(ix, ev, window, cx);
+                this.on_entry_mouse_down(pane, ix, ev, window, cx);
             }),
         )
         .child(
@@ -190,39 +191,43 @@ impl PaneView for GridView {
 
     fn render(&mut self, shell: &mut Shell, _: &mut Window, cx: &mut Context<Shell>) -> AnyElement {
         let cols = self.compute_cols(shell);
-        let count = shell.list.sorted.len();
+        let count = shell.ui().list.sorted.len();
         let rows = count.div_ceil(cols);
         let zoom = shell.zoom;
+        let pane = shell.pane;
         let list = uniform_list(
             "grid-rows",
             rows,
             cx.processor(move |this: &mut Shell, range: Range<usize>, window, cx| {
-                let theme = cx.global::<Theme>().clone();
-                this.list.visible_rows = range.len().max(1) * cols;
-                this.grid_rows_visible = range.len().max(1);
-                let mut out = Vec::with_capacity(range.len());
-                for r in range {
-                    let start = r * cols;
-                    let end = ((r + 1) * cols).min(this.list.sorted.len());
-                    let ids: Vec<(usize, EntryId)> =
-                        (start..end).map(|ix| (ix, this.list.sorted[ix])).collect();
-                    let mut row = div()
-                        .h(px(GridView::cell_h(zoom)))
-                        .w_full()
-                        .flex()
-                        .flex_row()
-                        .px_1();
-                    for (ix, id) in ids {
-                        row = row.child(cell(this, &theme, ix, id, window, cx));
+                this.with_pane(pane, |this| {
+                    let theme = cx.global::<Theme>().clone();
+                    this.ui_mut().list.visible_rows = range.len().max(1) * cols;
+                    this.ui_mut().grid_rows_visible = range.len().max(1);
+                    let mut out = Vec::with_capacity(range.len());
+                    for r in range {
+                        let start = r * cols;
+                        let end = ((r + 1) * cols).min(this.ui_mut().list.sorted.len());
+                        let ids: Vec<(usize, EntryId)> = (start..end)
+                            .map(|ix| (ix, this.ui_mut().list.sorted[ix]))
+                            .collect();
+                        let mut row = div()
+                            .h(px(GridView::cell_h(zoom)))
+                            .w_full()
+                            .flex()
+                            .flex_row()
+                            .px_1();
+                        for (ix, id) in ids {
+                            row = row.child(cell(this, &theme, ix, id, window, cx));
+                        }
+                        out.push(row);
                     }
-                    out.push(row);
-                }
-                out
+                    out
+                })
             }),
         )
         .track_scroll(self.scroll.clone())
         .size_full();
-        self.rows_visible = shell.grid_rows_visible;
+        self.rows_visible = shell.ui().grid_rows_visible;
         div().size_full().child(list).into_any_element()
     }
 

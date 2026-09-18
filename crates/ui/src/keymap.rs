@@ -20,6 +20,9 @@ pub const ADDRESS: &str = "AddressBar";
 pub const PALETTE: &str = "Palette";
 pub const CONFIRM: &str = "Confirm";
 pub const PEEK: &str = "Peek";
+pub const REVIEW: &str = "Review";
+pub const JUMP: &str = "Jump";
+pub const BULK: &str = "BulkRename";
 
 /// A binding as the palette shows it: keys and command name.
 #[derive(Clone, Debug)]
@@ -80,6 +83,18 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("up", "ui.peek_prev", Some("peek")),
     ("right", "ui.peek_next", Some("peek")),
     ("down", "ui.peek_next", Some("peek")),
+    ("ctrl-shift-d", "ui.split", None),
+    ("tab", "ui.focus_other_pane", Some("pane split")),
+    ("f5", "ui.copy_other", Some("pane split")),
+    ("f6", "ui.move_other", Some("pane split")),
+    ("escape", "ui.usage_close", Some("pane usage")),
+    ("enter", "ui.review_apply", Some("review")),
+    ("escape", "ui.review_cancel", Some("review")),
+    ("up", "ui.jump_up", Some("jump")),
+    ("down", "ui.jump_down", Some("jump")),
+    ("tab", "ui.rename_bulk_next", Some("bulk")),
+    ("shift-tab", "ui.rename_bulk_prev", Some("bulk")),
+    ("ctrl-k", "ui.rename_bulk_case", Some("bulk")),
 ];
 
 /// Builtin bindings that carry arguments (`keys, command, args json, when`).
@@ -109,6 +124,9 @@ pub fn context_of(when: Option<&str>) -> String {
             "palette" => PALETTE.to_owned(),
             "confirm" => CONFIRM.to_owned(),
             "peek" => PEEK.to_owned(),
+            "review" => REVIEW.to_owned(),
+            "jump" => JUMP.to_owned(),
+            "bulk" => BULK.to_owned(),
             other => other.to_owned(),
         })
         .collect();
