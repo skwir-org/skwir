@@ -135,9 +135,9 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
     ("ctrl-h", "ui.toggle_hidden", None),
 ];
 
+// "Open" and "Open Terminal Here" are contributed by the open-with plugin,
+// which owns those commands.
 const MENU: &[(&str, &str, Option<&str>)] = &[
-    ("Open", "open", Some("selection")),
-    ("Open Terminal Here", "open_terminal", None),
     ("Rename", "ui.rename_prompt", Some("single")),
     ("Copy", "clipboard_copy", Some("selection")),
     ("Cut", "clipboard_cut", Some("selection")),
