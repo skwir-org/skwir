@@ -591,6 +591,21 @@ impl Shell {
                 let dir = arg("dir").unwrap_or_else(|| "reset".into());
                 self.zoom_step(&dir, cx);
             }
+            "preview_page" => self.preview_page(
+                args.get("delta")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(1)
+                    .clamp(-1, 1) as i32,
+                cx,
+            ),
+            "preview_seek" => self.preview_seek(
+                args.get("delta")
+                    .and_then(serde_json::Value::as_f64)
+                    .filter(|v| v.is_finite())
+                    .unwrap_or(5.0),
+                cx,
+            ),
+            "preview_zoom" => self.preview_zoom(arg("dir").as_deref().unwrap_or("reset"), cx),
             "toggle_preview" => self.toggle_preview(cx),
             "peek" => self.toggle_peek(window, cx),
             "peek_close" => self.close_peek(window, cx),

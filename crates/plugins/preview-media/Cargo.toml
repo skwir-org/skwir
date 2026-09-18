@@ -1,0 +1,14 @@
+[package]
+name = "bibli-plugin-preview-media"
+description = "bibli plugin: media previews"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bibli-core.workspace = true
+bibli-platform.workspace = true
+
+[lints]
+workspace = true

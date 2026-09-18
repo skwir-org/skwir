@@ -552,6 +552,8 @@ dependencies = [
  "bibli-plugin-open-with",
  "bibli-plugin-ops-basic",
  "bibli-plugin-places",
+ "bibli-plugin-preview-documents",
+ "bibli-plugin-preview-media",
  "bibli-plugin-query",
  "bibli-plugin-rename-bulk",
  "bibli-plugin-shelf",
@@ -622,7 +624,9 @@ dependencies = [
  "open",
  "parking_lot",
  "png 0.17.16",
+ "rustix 1.1.5",
  "serde",
+ "serde_json",
  "tempfile",
  "tracing",
  "xdg-mime",
@@ -702,6 +706,22 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "bibli-plugin-preview-documents"
+version = "0.0.1"
+dependencies = [
+ "bibli-core",
+ "bibli-platform",
+]
+
+[[package]]
+name = "bibli-plugin-preview-media"
+version = "0.0.1"
+dependencies = [
+ "bibli-core",
+ "bibli-platform",
 ]
 
 [[package]]

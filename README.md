@@ -53,6 +53,33 @@ peek, `ctrl-shift-d` split, `ctrl-shift-u` disk usage, `ctrl-shift-l`
 timeline, `ctrl-shift-b` add to shelf, `ctrl-f2` bulk rename, `ctrl-e` edit
 as text, `ctrl-z` undo. Every command and its key is in the palette.
 
+## Document and video previews
+
+F3 opens the preview panel; Space opens peek. PDF pages and Office documents
+have previous/next controls (`alt-pageup` / `alt-pagedown`), plus zoom and Fit.
+Video previews show a still frame with five-second seek controls; in peek,
+`ctrl-left` / `ctrl-right` seek while plain arrows select another file.
+All controls are also available in the command palette.
+
+Install optional tools on `PATH` to enable these formats:
+
+- PDF: Poppler utilities (`pdfinfo`, `pdftoppm`).
+- Video stills: `ffmpeg` and `ffprobe`.
+- DOC/DOCX, XLS/XLSX, PPT/PPTX, ODT/ODS/ODP (and related formats): LibreOffice,
+  Poppler utilities, and `bubblewrap` (`bwrap`) on Linux. Documents convert in
+  isolation to cached PDF pages; spreadsheets show their print layout.
+
+The `preview-media` and `preview-documents` plugins can be disabled independently
+using `plugins.<id>.enabled` in settings. Missing tools are reported in the
+panel. Full video playback, PDF text selection, and spreadsheet cell navigation
+are not implemented. See `docs/adr/003-preview-providers.md` for the design.
+
+To exercise installed renderers with generated fixtures:
+
+```
+cargo nextest run -p bibli-platform --run-ignored only -E 'test(preview::tests::real_)'
+```
+
 ## Design in one paragraph
 
 A small core (`crates/core`) owns what two plugins must agree on: entries

@@ -15,5 +15,7 @@ pub mod icons;
 pub mod mime;
 pub mod open;
 pub mod places;
+pub mod preview;
+pub mod process;
 pub mod thumb_providers;
 pub mod thumbnails;

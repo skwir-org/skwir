@@ -18,6 +18,7 @@ struct Snapshot {
     panels: usize,
     providers: BTreeSet<&'static str>,
     metadata: Vec<&'static str>,
+    previews: Vec<&'static str>,
     thumbs: Vec<&'static str>,
     settings: BTreeSet<String>,
 }
@@ -40,6 +41,7 @@ fn snapshot(app: &App) -> Snapshot {
             .filter(|s| app.provider(s).is_some())
             .collect(),
         metadata: app.metadata.ids(),
+        previews: app.previews.ids(),
         thumbs: app.thumbnails.provider_ids(),
         settings: app.settings.schema().into_iter().map(|s| s.key).collect(),
     }
@@ -51,6 +53,8 @@ fn all_plugins() -> Vec<Arc<dyn Plugin>> {
         Arc::new(bibli_plugin_open_with::OpenWithPlugin),
         Arc::new(bibli_plugin_places::PlacesPlugin),
         Arc::new(bibli_plugin_thumbnails::ThumbnailsPlugin),
+        Arc::new(bibli_plugin_preview_media::PreviewPlugin),
+        Arc::new(bibli_plugin_preview_documents::PreviewPlugin),
         Arc::new(bibli_plugin_query::QueryPlugin),
         Arc::new(bibli_plugin_shelf::ShelfPlugin::default()),
         Arc::new(bibli_plugin_rename_bulk::RenameBulkPlugin),
@@ -114,5 +118,5 @@ fn all_plugins_coexist_and_every_command_has_a_schema() {
             c.name
         );
     }
-    assert_eq!(app.plugins.list().len(), 13);
+    assert_eq!(app.plugins.list().len(), 15);
 }

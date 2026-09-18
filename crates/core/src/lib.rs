@@ -29,6 +29,7 @@ pub mod location;
 pub mod metadata;
 pub mod op;
 pub mod plugin;
+pub mod preview;
 pub mod registry;
 pub mod scheduler;
 pub mod settings;

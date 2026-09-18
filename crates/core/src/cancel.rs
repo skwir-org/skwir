@@ -13,6 +13,7 @@ pub struct CancelToken {
 struct Inner {
     cancelled: AtomicBool,
     parent: Option<CancelToken>,
+    other_parent: Option<CancelToken>,
 }
 
 impl CancelToken {
@@ -28,6 +29,19 @@ impl CancelToken {
             inner: Arc::new(Inner {
                 cancelled: AtomicBool::new(false),
                 parent: Some(self.clone()),
+                other_parent: None,
+            }),
+        }
+    }
+
+    /// A child cancelled by either parent, without cancelling either parent.
+    /// Used for work tied to both a request and a plugin's enabled lifetime.
+    pub fn linked(&self, other: &Self) -> Self {
+        Self {
+            inner: Arc::new(Inner {
+                cancelled: AtomicBool::new(false),
+                parent: Some(self.clone()),
+                other_parent: Some(other.clone()),
             }),
         }
     }
@@ -45,5 +59,36 @@ impl CancelToken {
                 .parent
                 .as_ref()
                 .is_some_and(CancelToken::is_cancelled)
+            || self
+                .inner
+                .other_parent
+                .as_ref()
+                .is_some_and(CancelToken::is_cancelled)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linked_tokens_observe_either_parent_without_cancelling_siblings() {
+        for cancel_request in [false, true] {
+            let request = CancelToken::new();
+            let plugin = CancelToken::new();
+            let linked = request.linked(&plugin);
+            let child = linked.child();
+            if cancel_request {
+                request.cancel();
+            } else {
+                plugin.cancel();
+            }
+            assert!(child.is_cancelled());
+            assert_eq!(request.is_cancelled(), cancel_request);
+            assert_ne!(plugin.is_cancelled(), cancel_request);
+        }
+        let parent = CancelToken::new();
+        parent.linked(&CancelToken::new()).cancel();
+        assert!(!parent.is_cancelled());
     }
 }

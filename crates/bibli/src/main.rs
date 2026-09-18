@@ -69,6 +69,15 @@ fn main() -> anyhow::Result<()> {
         &app,
     );
 
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_preview_media::PreviewPlugin),
+        &app,
+    );
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_preview_documents::PreviewPlugin),
+        &app,
+    );
+
     let path = std::env::args_os().nth(1).map_or_else(
         || std::env::current_dir().unwrap_or_else(|_| "/".into()),
         std::path::PathBuf::from,

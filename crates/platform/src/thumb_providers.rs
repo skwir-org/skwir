@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::Context;
 use bibli_core::cancel::CancelToken;
@@ -398,45 +398,31 @@ impl Thumbnailers {
         req: &ThumbRequest,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Image>> {
-        let output = std::env::temp_dir().join(format!(
-            "bibli-thumb-{}-{}.png",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos())
-        ));
+        let scratch = tempfile::tempdir()?;
+        let output = scratch.path().join("thumbnail.png");
         let argv = substitute_exec(&entry.exec, &req.entry.path, &output, req.size.pixels());
         let Some((exe, exe_args)) = argv.split_first() else {
             anyhow::bail!("empty Exec in {}", entry.name)
         };
-        let mut child = std::process::Command::new(exe)
-            .args(exe_args)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .with_context(|| format!("spawn {exe}"))?;
-        let started = Instant::now();
-        let status = loop {
-            if let Some(s) = child.try_wait()? {
-                break Some(s);
-            }
-            if cancel.is_cancelled() || started.elapsed() > self.timeout {
-                let _ = child.kill();
-                let _ = child.wait();
-                break None;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        };
-        let result = match status {
-            Some(s) if s.success() => image::open(&output)
-                .map(|img| Some(fit(img, req.size.pixels())))
-                .with_context(|| format!("{}: decode its output", entry.name)),
-            Some(s) => Err(anyhow::anyhow!("{} exited with {s}", entry.name)),
-            None => Ok(None),
-        };
-        let _ = std::fs::remove_file(&output);
-        result
+        let result = crate::process::run(
+            std::process::Command::new(exe).args(exe_args),
+            cancel,
+            self.timeout,
+        );
+        if cancel.is_cancelled() {
+            return Ok(None);
+        }
+        result?;
+        let (w, h) = image::ImageReader::open(&output)?
+            .with_guessed_format()?
+            .into_dimensions()?;
+        anyhow::ensure!(
+            u64::from(w) * u64::from(h) <= MAX_PIXELS,
+            "thumbnailer output is too large"
+        );
+        image::open(&output)
+            .map(|img| Some(fit(img, req.size.pixels())))
+            .with_context(|| format!("{}: decode its output", entry.name))
     }
 }
 

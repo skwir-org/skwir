@@ -18,6 +18,9 @@ md5.workspace = true
 image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff", "ico", "qoi", "tga", "pnm"] }
 png.workspace = true
 parking_lot.workspace = true
+tempfile.workspace = true
+serde_json.workspace = true
+rustix = { workspace = true, features = ["process"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 xdg-mime.workspace = true

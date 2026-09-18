@@ -86,6 +86,7 @@ pub struct App {
     pub workspace: RwLock<Workspace>,
     pub thumbnails: Arc<crate::thumbs::Thumbnails>,
     pub metadata: Arc<crate::metadata::MetadataProviders>,
+    pub previews: Arc<crate::preview::Previews>,
     /// Plans proposed for review (by plugins whose work finishes later, or by
     /// agents). The UI drains them with `take_proposals`.
     proposals: parking_lot::Mutex<Vec<Plan>>,
@@ -113,6 +114,7 @@ impl App {
             executor: Executor::new(scheduler.clone()),
             thumbnails: crate::thumbs::Thumbnails::new(scheduler.clone()),
             metadata: Arc::new(crate::metadata::MetadataProviders::default()),
+            previews: Arc::new(crate::preview::Previews::default()),
             proposals: parking_lot::Mutex::new(Vec::new()),
             scheduler,
             commands: CommandRegistry::default(),
@@ -180,6 +182,7 @@ impl App {
         self.ops.unregister_owner(owner);
         self.thumbnails.unregister_owner(owner);
         self.metadata.unregister_owner(owner);
+        self.previews.unregister_owner(owner);
         self.registry.remove_owner(owner);
         self.providers.write().retain(|_, (o, _)| &**o != owner);
         for spec in self.settings.schema() {

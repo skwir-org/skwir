@@ -36,6 +36,8 @@ bibli-plugin-tags = { path = "crates/plugins/tags" }
 bibli-plugin-shell = { path = "crates/plugins/shell" }
 bibli-plugin-usage = { path = "crates/plugins/usage" }
 bibli-plugin-timeline = { path = "crates/plugins/timeline" }
+bibli-plugin-preview-media = { path = "crates/plugins/preview-media" }
+bibli-plugin-preview-documents = { path = "crates/plugins/preview-documents" }
 
 # UI toolkit (ADR-001). Pinned exactly: the API moves between releases.
 gpui = "=0.2.2"

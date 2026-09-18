@@ -1,9 +1,14 @@
 //! Preview panel and peek overlay for the cursor entry: images (decoded on
 //! a worker, cancelled when the cursor moves), text with syntax highlighting,
-//! directories (item count), video first frame via ffmpegthumbnailer/ffmpeg,
+//! directories, document pages and seekable video stills via preview plugins,
 //! and a generic card for everything else.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+use bibli_core::op::EntryRef;
+use bibli_core::preview::{PreviewInfo, PreviewRequest};
+use bibli_core::workspace::PaneId;
 use std::sync::{Arc, OnceLock};
 
 use bibli_core::entry::keys;
@@ -33,6 +38,7 @@ pub enum PreviewContent {
         image: Arc<RenderImage>,
         width: u32,
         height: u32,
+        detail: Option<PreviewInfo>,
     },
     Text {
         lines: Vec<Vec<(Hsla, String)>>,
@@ -48,6 +54,7 @@ pub enum PreviewContent {
 struct PreviewResult {
     generation: u64,
     content: PreviewContent,
+    complete: bool,
 }
 
 /// Facts shown in the header, read from the entry's metadata.
@@ -73,16 +80,38 @@ impl Render for NoPreview {
     }
 }
 
+/// Everything that can invalidate a preview without moving the cursor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PreviewKey {
+    pane: PaneId,
+    id: EntryId,
+    path: PathBuf,
+    modified: Option<SystemTime>,
+    size: Option<u64>,
+    providers: u64,
+    dark: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PreviewPhase {
+    Idle,
+    Queued,
+    Loading,
+}
+
 pub struct PreviewState {
     pub open: bool,
     pub peek: bool,
     pub width: f32,
-    pub for_id: Option<EntryId>,
     pub info: Info,
     pub content: Option<PreviewContent>,
-    pub loading: bool,
+    phase: PreviewPhase,
     cancel: Option<CancelToken>,
     generation: u64,
+    key: Option<PreviewKey>,
+    page: u32,
+    seconds: Option<f64>,
+    zoom: Option<f32>,
     tx: flume::Sender<PreviewResult>,
     rx: flume::Receiver<PreviewResult>,
     text_scroll: UniformListScrollHandle,
@@ -96,16 +125,27 @@ impl Default for PreviewState {
             open: false,
             peek: false,
             width: 320.0,
-            for_id: None,
             info: Info::default(),
             content: None,
-            loading: false,
+            phase: PreviewPhase::Idle,
             cancel: None,
             generation: 0,
+            key: None,
+            page: 1,
+            seconds: None,
+            zoom: None,
             tx,
             rx,
             text_scroll: UniformListScrollHandle::new(),
             peek_focus: None,
+        }
+    }
+}
+
+impl Drop for PreviewState {
+    fn drop(&mut self) {
+        if let Some(cancel) = &self.cancel {
+            cancel.cancel();
         }
     }
 }
@@ -134,6 +174,13 @@ fn to_render_image(img: image::RgbaImage) -> Arc<RenderImage> {
 }
 
 fn decode_image(path: &Path, cancel: &CancelToken) -> anyhow::Result<PreviewContent> {
+    let (w, h) = image::ImageReader::open(path)?
+        .with_guessed_format()?
+        .into_dimensions()?;
+    anyhow::ensure!(
+        u64::from(w) * u64::from(h) <= 64 * 1024 * 1024,
+        "image is too large to preview"
+    );
     let img = image::ImageReader::open(path)?
         .with_guessed_format()?
         .decode()?;
@@ -151,54 +198,8 @@ fn decode_image(path: &Path, cancel: &CancelToken) -> anyhow::Result<PreviewCont
         image: to_render_image(rgba),
         width,
         height,
+        detail: None,
     })
-}
-
-fn video_frame(
-    path: &Path,
-    generation: u64,
-    cancel: &CancelToken,
-) -> anyhow::Result<PreviewContent> {
-    let tmp = std::env::temp_dir().join(format!(
-        "bibli-preview-{}-{generation}.png",
-        std::process::id()
-    ));
-    let ok = if which("ffmpegthumbnailer") {
-        std::process::Command::new("ffmpegthumbnailer")
-            .args(["-i"])
-            .arg(path)
-            .args(["-o"])
-            .arg(&tmp)
-            .args(["-s", "1024", "-c", "png"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
-    } else if which("ffmpeg") {
-        std::process::Command::new("ffmpeg")
-            .args(["-y", "-loglevel", "error", "-i"])
-            .arg(path)
-            .args(["-frames:v", "1", "-vf", "scale=1024:-1"])
-            .arg(&tmp)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
-    } else {
-        false
-    };
-    let result = if ok && !cancel.is_cancelled() {
-        decode_image(&tmp, cancel)
-    } else {
-        Ok(PreviewContent::Generic)
-    };
-    let _ = std::fs::remove_file(&tmp);
-    result
-}
-
-fn which(bin: &str) -> bool {
-    std::env::var_os("PATH")
-        .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
 }
 
 fn highlight(path: &Path, bytes: &[u8], dark: bool) -> PreviewContent {
@@ -249,7 +250,6 @@ fn compute(
     is_dir: bool,
     mime: Option<&str>,
     dark: bool,
-    generation: u64,
     cancel: &CancelToken,
 ) -> PreviewContent {
     if is_dir {
@@ -263,9 +263,8 @@ fn compute(
         return decode_image(path, cancel)
             .unwrap_or_else(|e| PreviewContent::Error(format!("{e:#}")));
     }
-    if top == "video" {
-        return video_frame(path, generation, cancel)
-            .unwrap_or_else(|e| PreviewContent::Error(format!("{e:#}")));
+    if top == "video" || mime == Some("application/pdf") {
+        return PreviewContent::Generic;
     }
     let head = match read_head(path) {
         Ok(h) => h,
@@ -307,113 +306,244 @@ fn read_head(path: &Path) -> std::io::Result<Vec<u8>> {
 }
 
 impl Shell {
-    /// Keep the preview in step with the cursor entry. Called from `render`.
+    /// Called on UI wake. Only a changed request schedules worker work.
     pub fn sync_preview(&mut self, cx: &mut Context<Self>) {
-        // Results from workers.
-        let mut got = false;
-        while let Ok(r) = self.preview.rx.try_recv() {
-            if r.generation == self.preview.generation {
-                self.preview.content = Some(r.content);
-                self.preview.loading = false;
-                got = true;
-            }
-        }
-        if got {
-            cx.notify();
-        }
         if !(self.preview.open || self.preview.peek) {
-            if self.preview.for_id.is_some() {
+            if self.preview.key.is_some() {
                 self.cancel_preview();
             }
+            while self.preview.rx.try_recv().is_ok() {}
             return;
         }
-        let cursor = self.cursor_id();
-        if cursor == self.preview.for_id && self.preview.for_id.is_some() {
-            return;
-        }
-        self.cancel_preview();
-        self.preview.for_id = cursor;
-        let Some(id) = cursor else {
+        let Some(id) = self.cursor_id() else {
+            self.cancel_preview();
             return;
         };
-        let (info, path, hydrated) = {
+        let current = {
             let ws = self.app.workspace.read();
-            let Some(pane) = ws.pane(self.pane) else {
-                return;
-            };
-            let Some(e) = pane.listing.get(id) else {
-                return;
-            };
-            let mime = if e.is_dir() {
-                Some("inode/directory".to_owned())
-            } else {
-                bibli_platform::mime::by_name(&e.name).map(|m| m.as_str().to_owned())
-            };
-            let info = Info {
-                name: e.name_str().into_owned(),
-                mime,
-                size: if e.is_dir() {
-                    None
-                } else {
-                    e.metadata
-                        .value(keys::SIZE)
-                        .and_then(bibli_core::Value::as_u64)
-                        .map(format::size)
-                },
-                modified: e
-                    .metadata
-                    .value(keys::MODIFIED)
-                    .and_then(bibli_core::Value::as_time)
-                    .map(format::time),
-                is_dir: e.is_dir(),
-                icon: self.icons.for_entry(e, 64),
-            };
-            (
-                info,
-                pane.open.as_ref().and_then(|o| o.path_of(id)),
-                e.metadata.is_hydrated(),
-            )
+            ws.pane(self.pane).and_then(|pane| {
+                let e = pane.listing.get(id)?;
+                let path = pane.open.as_ref()?.path_of(id)?;
+                Some((
+                    PreviewKey {
+                        pane: self.pane,
+                        id,
+                        path,
+                        modified: e
+                            .metadata
+                            .value(keys::MODIFIED)
+                            .and_then(bibli_core::Value::as_time),
+                        size: e
+                            .metadata
+                            .value(keys::SIZE)
+                            .and_then(bibli_core::Value::as_u64),
+                        providers: self.app.previews.revision(),
+                        dark: cx.global::<Theme>().is_dark,
+                    },
+                    e.clone(),
+                ))
+            })
         };
-        if !hydrated {
-            self.request_hydrate(vec![id]);
+        let Some((key, entry)) = current else {
+            self.cancel_preview();
+            return;
+        };
+        // Invalidate before draining results: an old result must never land on
+        // a newly selected file, a changed file, or a different pane.
+        if self.preview.key.as_ref() != Some(&key) {
+            self.cancel_preview();
+            self.preview.key = Some(key.clone());
+            self.preview.phase = PreviewPhase::Queued;
+            let mime = if entry.is_dir() {
+                Some("inode/directory".into())
+            } else {
+                bibli_platform::mime::by_name(&entry.name).map(|m| m.to_string())
+            };
+            self.preview.info = Info {
+                name: entry.name_str().into_owned(),
+                mime,
+                size: key.size.map(format::size),
+                modified: key.modified.map(format::time),
+                is_dir: entry.is_dir(),
+                icon: self.icons.for_entry(&entry, 64),
+            };
+            if !entry.metadata.is_hydrated() {
+                self.request_hydrate(vec![id]);
+            }
         }
-        self.preview.info = info.clone();
-        let Some(path) = path else { return };
+        while let Ok(result) = self.preview.rx.try_recv() {
+            if result.generation == self.preview.generation {
+                if let PreviewContent::Image {
+                    detail: Some(detail),
+                    ..
+                } = &result.content
+                {
+                    match detail {
+                        PreviewInfo::Document { page, .. } => self.preview.page = *page,
+                        PreviewInfo::Video { seconds, .. } => self.preview.seconds = Some(*seconds),
+                    }
+                }
+                self.preview.content = Some(result.content);
+                self.preview.phase = if result.complete {
+                    PreviewPhase::Idle
+                } else {
+                    PreviewPhase::Loading
+                };
+            }
+        }
+        if self.preview.phase != PreviewPhase::Queued {
+            return;
+        }
+
         let cancel = self.app.lifetime().child();
         self.preview.cancel = Some(cancel.clone());
-        self.preview.generation += 1;
-        self.preview.loading = true;
+        self.preview.phase = PreviewPhase::Loading;
         let generation = self.preview.generation;
+        let request = PreviewRequest {
+            entry: EntryRef::new(id, &key.path),
+            mime: self.preview.info.mime.clone(),
+            page: self.preview.page,
+            seconds: self.preview.seconds,
+            max_side: IMAGE_MAX_SIDE,
+        };
         let tx = self.preview.tx.clone();
-        let app = Arc::clone(&self.app);
-        let dark = cx.global::<Theme>().is_dark;
-        let is_dir = info.is_dir;
-        let mime = info.mime.clone();
+        let previews = Arc::clone(&self.app.previews);
+        let wake = self.app.waker_handle();
+        let is_dir = entry.is_dir();
         self.app
             .scheduler
             .spawn(Priority::Visible, "preview", cancel.clone(), move || {
-                let content = compute(&path, is_dir, mime.as_deref(), dark, generation, &cancel);
+                // Reuse only an already cached desktop thumbnail as initial feedback.
+                if !is_dir {
+                    use bibli_core::thumbs::{ThumbRequest, ThumbSize, ThumbnailProvider};
+                    let cached =
+                        bibli_platform::thumb_providers::FreedesktopCache { write_back: false };
+                    let thumb = ThumbRequest {
+                        entry: request.entry.clone(),
+                        mime: request.mime.clone().map(Into::into),
+                        mtime: key.modified,
+                        size: ThumbSize::Large,
+                    };
+                    if let Ok(Some(image)) = cached.thumbnail(&thumb, &cancel)
+                        && let Some(render) = crate::thumbs::to_render_image(&image)
+                        && !cancel.is_cancelled()
+                    {
+                        let _ = tx.send(PreviewResult {
+                            generation,
+                            complete: false,
+                            content: PreviewContent::Image {
+                                image: render,
+                                width: image.width,
+                                height: image.height,
+                                detail: None,
+                            },
+                        });
+                        wake();
+                    }
+                }
+                let result = if is_dir {
+                    Ok(None)
+                } else {
+                    previews.render(&request, &cancel)
+                };
+                let content = match result {
+                    Ok(Some(preview)) => match crate::thumbs::to_render_image(&preview.image) {
+                        Some(image) => PreviewContent::Image {
+                            image,
+                            width: preview.image.width,
+                            height: preview.image.height,
+                            detail: Some(preview.info),
+                        },
+                        None => PreviewContent::Error("Invalid preview image".into()),
+                    },
+                    Ok(None) => compute(
+                        &key.path,
+                        is_dir,
+                        request.mime.as_deref(),
+                        key.dark,
+                        &cancel,
+                    ),
+                    Err(e) => PreviewContent::Error(format!("{e:#}")),
+                };
                 if !cancel.is_cancelled() {
                     let _ = tx.send(PreviewResult {
                         generation,
                         content,
+                        complete: true,
                     });
-                    app.wake();
+                    wake();
                 }
             });
-        cx.notify();
+    }
+
+    fn cancel_pending_preview(&mut self) {
+        if let Some(cancel) = self.preview.cancel.take() {
+            cancel.cancel();
+        }
+        self.preview.generation = self.preview.generation.wrapping_add(1);
     }
 
     fn cancel_preview(&mut self) {
-        if let Some(c) = self.preview.cancel.take() {
-            c.cancel();
-        }
-        self.preview.for_id = None;
+        self.cancel_pending_preview();
+        self.preview.key = None;
+        self.preview.info = Info::default();
+        while self.preview.rx.try_recv().is_ok() {}
         self.preview.content = None;
-        self.preview.loading = false;
+        self.preview.phase = PreviewPhase::Idle;
+
+        self.preview.page = 1;
+        self.preview.seconds = None;
+        self.preview.zoom = None;
         self.preview
             .text_scroll
             .scroll_to_item_strict(0, ScrollStrategy::Top);
+    }
+
+    pub fn preview_page(&mut self, delta: i32, cx: &mut Context<Self>) {
+        let Some(PreviewContent::Image {
+            detail: Some(PreviewInfo::Document { pages, .. }),
+            ..
+        }) = &self.preview.content
+        else {
+            return;
+        };
+        let next = self
+            .preview
+            .page
+            .saturating_add_signed(delta)
+            .clamp(1, *pages);
+        if next != self.preview.page {
+            self.cancel_pending_preview();
+            self.preview.page = next;
+            self.preview.phase = PreviewPhase::Queued;
+            cx.notify();
+        }
+    }
+
+    pub fn preview_seek(&mut self, delta: f64, cx: &mut Context<Self>) {
+        let Some(PreviewContent::Image {
+            detail: Some(PreviewInfo::Video { duration, .. }),
+            ..
+        }) = &self.preview.content
+        else {
+            return;
+        };
+        let next = (self.preview.seconds.unwrap_or(0.0) + delta)
+            .max(0.0)
+            .min(duration.map_or(f64::MAX, |d| (d - 0.1).max(0.0)));
+        self.cancel_pending_preview();
+        self.preview.seconds = Some(next);
+        self.preview.phase = PreviewPhase::Queued;
+        cx.notify();
+    }
+
+    pub fn preview_zoom(&mut self, direction: &str, cx: &mut Context<Self>) {
+        self.preview.zoom = match direction {
+            "in" => Some(self.preview.zoom.map_or(1.0, |z| (z * 1.25).min(4.0))),
+            "out" => Some(self.preview.zoom.map_or(0.75, |z| (z / 1.25).max(0.25))),
+            _ => None,
+        };
+        cx.notify();
     }
 
     pub fn toggle_preview(&mut self, cx: &mut Context<Self>) {
@@ -467,10 +597,32 @@ impl Shell {
     }
 }
 
-fn body(shell: &Shell, theme: &Theme, _cx: &mut Context<Shell>) -> AnyElement {
+fn preview_button(
+    id: &'static str,
+    label: &'static str,
+    command: &'static str,
+    args: serde_json::Value,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    div()
+        .id(id)
+        .px_2()
+        .py_0p5()
+        .rounded_md()
+        .cursor_pointer()
+        .hover(|s| s.bg(theme.border))
+        .child(label)
+        .on_click(
+            cx.listener(move |this, _, window, cx| this.run(command, args.clone(), window, cx)),
+        )
+        .into_any_element()
+}
+
+fn body(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
     let p = &shell.preview;
     match &p.content {
-        None if p.loading => div()
+        None if p.phase != PreviewPhase::Idle => div()
             .flex_1()
             .flex()
             .items_center()
@@ -483,27 +635,128 @@ fn body(shell: &Shell, theme: &Theme, _cx: &mut Context<Shell>) -> AnyElement {
             image,
             width,
             height,
-        }) => div()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .gap_2()
-            .child(
-                img(Arc::clone(image))
-                    .max_w_full()
-                    .max_h_full()
-                    .object_fit(ObjectFit::Contain),
-            )
-            .child(
+            detail,
+        }) => {
+            let picture = if let Some(zoom) = p.zoom {
                 div()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child(format!("{width} × {height}")),
-            )
-            .into_any_element(),
+                    .id("preview-image-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .overflow_scroll()
+                    .child(
+                        img(Arc::clone(image))
+                            .w(px(*width as f32 * zoom))
+                            .h(px(*height as f32 * zoom)),
+                    )
+                    .into_any_element()
+            } else {
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        img(Arc::clone(image))
+                            .max_w_full()
+                            .max_h_full()
+                            .object_fit(ObjectFit::Contain),
+                    )
+                    .into_any_element()
+            };
+            let mut controls = div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap_2()
+                .p_2()
+                .text_xs();
+            match detail {
+                Some(PreviewInfo::Document { page, pages }) => {
+                    controls = controls
+                        .child(preview_button(
+                            "preview-prev",
+                            "‹",
+                            "ui.preview_page",
+                            serde_json::json!({"delta": -1}),
+                            theme,
+                            cx,
+                        ))
+                        .child(format!("Page {page} / {pages}"))
+                        .child(preview_button(
+                            "preview-next",
+                            "›",
+                            "ui.preview_page",
+                            serde_json::json!({"delta": 1}),
+                            theme,
+                            cx,
+                        ));
+                }
+                Some(PreviewInfo::Video { seconds, duration }) => {
+                    let label = duration.map_or_else(
+                        || format!("{seconds:.1}s"),
+                        |d| format!("{seconds:.1}s / {d:.1}s"),
+                    );
+                    controls = controls
+                        .child(preview_button(
+                            "preview-back",
+                            "−5s",
+                            "ui.preview_seek",
+                            serde_json::json!({"delta": -5}),
+                            theme,
+                            cx,
+                        ))
+                        .child(label)
+                        .child(preview_button(
+                            "preview-forward",
+                            "+5s",
+                            "ui.preview_seek",
+                            serde_json::json!({"delta": 5}),
+                            theme,
+                            cx,
+                        ));
+                }
+                None => {
+                    controls = controls.child(format!("{width} × {height}"));
+                }
+            }
+            controls = controls
+                .child(preview_button(
+                    "preview-zoom-out",
+                    "−",
+                    "ui.preview_zoom",
+                    serde_json::json!({"dir":"out"}),
+                    theme,
+                    cx,
+                ))
+                .child(preview_button(
+                    "preview-fit",
+                    "Fit",
+                    "ui.preview_zoom",
+                    serde_json::json!({"dir":"reset"}),
+                    theme,
+                    cx,
+                ))
+                .child(preview_button(
+                    "preview-zoom-in",
+                    "+",
+                    "ui.preview_zoom",
+                    serde_json::json!({"dir":"in"}),
+                    theme,
+                    cx,
+                ))
+                .when(p.phase != PreviewPhase::Idle, |d| d.child("Loading…"));
+            div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(picture)
+                .child(controls)
+                .into_any_element()
+        }
         Some(PreviewContent::Text { lines, truncated }) => {
             let lines = lines.clone();
             let n = lines.len();

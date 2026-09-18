@@ -99,6 +99,20 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
 
 /// Builtin bindings that carry arguments (`keys, command, args json, when`).
 const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
+    ("alt-pageup", "ui.preview_page", r#"{"delta":-1}"#, None),
+    ("alt-pagedown", "ui.preview_page", r#"{"delta":1}"#, None),
+    (
+        "ctrl-left",
+        "ui.preview_seek",
+        r#"{"delta":-5}"#,
+        Some("peek"),
+    ),
+    (
+        "ctrl-right",
+        "ui.preview_seek",
+        r#"{"delta":5}"#,
+        Some("peek"),
+    ),
     ("ctrl-1", "ui.view", r#"{"id":"list"}"#, None),
     ("ctrl-2", "ui.view", r#"{"id":"grid"}"#, None),
     ("ctrl-3", "ui.view", r#"{"id":"columns"}"#, None),

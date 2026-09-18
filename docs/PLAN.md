@@ -25,7 +25,20 @@ prompts, treemap, timeline strip) live in `bibli-ui` per the Phase 3 decision; `
 uses `$VISUAL`/`$EDITOR` in a terminal instead of an in-app editor; query results are not
 cached across opens (walk is fast, content search dominates); the query language's date parser
 and the timeline's calendar math are duplicated (candidate for a shared crate); earlier
-deviations (AccessKit, PDF preview, views in-crate) still stand.
+deviations (AccessKit, views in-crate) still stand. Preview follow-up (2026-09-18,
+ADR-003): two additional toggleable plugins provide PDF/Office pages and seekable
+video stills through installed tools. Poppler replaces the deferred PDFium path;
+Office conversion uses isolated LibreOffice on Linux. Real-tool smoke tests cover
+PDF paging, video seeking, and nine Office/OpenDocument formats with synthetic
+fixtures. Spreadsheet cell navigation and continuous video playback remain
+future work. Lint, 113 default tests, three real-tool smoke tests, and all
+microbench budgets pass. Manual checks exercised PDF paging, Office rendering,
+video seeking, and scrolling the 10k-image grid and 100k-entry list. The Phase 4
+PSS figure above predates this follow-up: with a 1334×1214 window and preview
+closed on a three-file synthetic directory, this session measured 117 MiB PSS
+(previous revision under the same conditions: 145 MiB). Both exceed the historical
+100 MB idle budget; no increase was observed, but that UI gate remains open.
+Warm first-frame samples were 132–151 ms; sampled idle CPU was about 1% of one core.
 
 ---
 
