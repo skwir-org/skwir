@@ -1,0 +1,13 @@
+[package]
+name = "bibli-plugin-rename-bulk"
+description = "bibli plugin: rename-bulk (Phase 4)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bibli-core.workspace = true
+
+[lints]
+workspace = true

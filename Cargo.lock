@@ -620,6 +620,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bibli-plugin-edit-as-buffer"
+version = "0.0.1"
+dependencies = [
+ "bibli-core",
+]
+
+[[package]]
+name = "bibli-plugin-jump"
+version = "0.0.1"
+dependencies = [
+ "bibli-core",
+]
+
+[[package]]
 name = "bibli-plugin-open-with"
 version = "0.0.1"
 dependencies = [
@@ -661,6 +675,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "bibli-plugin-query"
+version = "0.0.1"
+dependencies = [
+ "bibli-core",
+]
+
+[[package]]
+name = "bibli-plugin-rename-bulk"
+version = "0.0.1"
+dependencies = [
+ "bibli-core",
+]
+
+[[package]]
+name = "bibli-plugin-shelf"
+version = "0.0.1"
+dependencies = [
+ "bibli-core",
+]
+
+[[package]]
+name = "bibli-plugin-shell"
+version = "0.0.1"
+dependencies = [
+ "bibli-core",
+]
+
+[[package]]
+name = "bibli-plugin-tags"
+version = "0.0.1"
+dependencies = [
+ "bibli-core",
+]
+
+[[package]]
 name = "bibli-plugin-thumbnails"
 version = "0.0.1"
 dependencies = [
@@ -670,6 +719,20 @@ dependencies = [
  "parking_lot",
  "tempfile",
  "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "bibli-plugin-timeline"
+version = "0.0.1"
+dependencies = [
+ "bibli-core",
+]
+
+[[package]]
+name = "bibli-plugin-usage"
+version = "0.0.1"
+dependencies = [
+ "bibli-core",
 ]
 
 [[package]]

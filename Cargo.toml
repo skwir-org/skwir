@@ -27,11 +27,29 @@ bibli-plugin-places = { path = "crates/plugins/places" }
 bibli-plugin-open-with = { path = "crates/plugins/open-with" }
 bibli-plugin-ops-basic = { path = "crates/plugins/ops-basic" }
 bibli-plugin-thumbnails = { path = "crates/plugins/thumbnails" }
+bibli-plugin-query = { path = "crates/plugins/query" }
+bibli-plugin-shelf = { path = "crates/plugins/shelf" }
+bibli-plugin-rename-bulk = { path = "crates/plugins/rename-bulk" }
+bibli-plugin-edit-as-buffer = { path = "crates/plugins/edit-as-buffer" }
+bibli-plugin-jump = { path = "crates/plugins/jump" }
+bibli-plugin-tags = { path = "crates/plugins/tags" }
+bibli-plugin-shell = { path = "crates/plugins/shell" }
+bibli-plugin-usage = { path = "crates/plugins/usage" }
+bibli-plugin-timeline = { path = "crates/plugins/timeline" }
 
 # UI toolkit (ADR-001). Pinned exactly: the API moves between releases.
 gpui = "=0.2.2"
 flume = "0.12"
 nucleo-matcher = "0.3"
+ignore = "0.4"
+grep-searcher = "0.1"
+grep-regex = "0.1"
+grep-matcher = "0.1"
+globset = "0.4"
+regex = "1"
+xattr = "1"
+roxmltree = "0.21"
+humantime = "2"
 open = "5"
 xdg-mime = "0.4"
 freedesktop-icons = "0.4"
