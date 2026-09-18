@@ -8,6 +8,15 @@ rust-version.workspace = true
 
 [dependencies]
 bibli-core.workspace = true
+bibli-platform.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+schemars.workspace = true
+parking_lot.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

@@ -12,10 +12,14 @@ anyhow.workspace = true
 serde.workspace = true
 tracing.workspace = true
 
+open.workspace = true
+dirs.workspace = true
+md5.workspace = true
+
 [target.'cfg(target_os = "linux")'.dependencies]
 xdg-mime.workspace = true
 freedesktop-icons.workspace = true
-dirs.workspace = true
+mime.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

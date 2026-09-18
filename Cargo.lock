@@ -590,6 +590,9 @@ dependencies = [
  "bibli-core",
  "dirs 7.0.0",
  "freedesktop-icons",
+ "md5",
+ "mime",
+ "open",
  "serde",
  "tempfile",
  "tracing",
@@ -600,21 +603,41 @@ dependencies = [
 name = "bibli-plugin-open-with"
 version = "0.0.1"
 dependencies = [
+ "anyhow",
  "bibli-core",
+ "bibli-platform",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
 name = "bibli-plugin-ops-basic"
 version = "0.0.1"
 dependencies = [
+ "anyhow",
  "bibli-core",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
 name = "bibli-plugin-places"
 version = "0.0.1"
 dependencies = [
+ "anyhow",
  "bibli-core",
+ "bibli-platform",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -3476,6 +3499,12 @@ dependencies = [
  "cfg-if",
  "digest 0.10.7",
 ]
+
+[[package]]
+name = "md5"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ebb8d8732c6a6df3d8f032a82911cfc747e00efb95cc46e8d0acd5b5b88570c"
 
 [[package]]
 name = "memchr"

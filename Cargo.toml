@@ -34,6 +34,8 @@ nucleo-matcher = "0.3"
 open = "5"
 xdg-mime = "0.4"
 freedesktop-icons = "0.4"
+mime = "0.3"
+md5 = "0.8"
 
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
