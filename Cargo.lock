@@ -623,7 +623,16 @@ dependencies = [
 name = "bibli-plugin-edit-as-buffer"
 version = "0.0.1"
 dependencies = [
+ "anyhow",
  "bibli-core",
+ "bibli-platform",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tracing",
 ]
 
 [[package]]
@@ -713,7 +722,15 @@ dependencies = [
 name = "bibli-plugin-rename-bulk"
 version = "0.0.1"
 dependencies = [
+ "anyhow",
  "bibli-core",
+ "jiff",
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -734,14 +751,28 @@ dependencies = [
 name = "bibli-plugin-shell"
 version = "0.0.1"
 dependencies = [
+ "anyhow",
  "bibli-core",
+ "bibli-platform",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
 ]
 
 [[package]]
 name = "bibli-plugin-tags"
 version = "0.0.1"
 dependencies = [
+ "anyhow",
  "bibli-core",
+ "dirs 7.0.0",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "xattr 1.6.1",
 ]
 
 [[package]]
@@ -7953,6 +7984,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "xattr"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
+dependencies = [
+ "libc",
+ "rustix 1.1.5",
+]
+
+[[package]]
 name = "xcb"
 version = "1.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8167,7 +8208,7 @@ dependencies = [
  "libc",
  "pin-project",
  "redox_syscall 0.2.16",
- "xattr",
+ "xattr 0.2.3",
 ]
 
 [[package]]
