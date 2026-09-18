@@ -15,6 +15,7 @@ bibli-core.workspace = true
 bibli-plugin-places.workspace = true
 bibli-plugin-open-with.workspace = true
 bibli-plugin-ops-basic.workspace = true
+bibli-plugin-thumbnails.workspace = true
 bibli-ui.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
@@ -22,3 +23,6 @@ tracing-subscriber.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -19,6 +19,7 @@ pub const PANE: &str = "Pane";
 pub const ADDRESS: &str = "AddressBar";
 pub const PALETTE: &str = "Palette";
 pub const CONFIRM: &str = "Confirm";
+pub const PEEK: &str = "Peek";
 
 /// A binding as the palette shows it: keys and command name.
 #[derive(Clone, Debug)]
@@ -64,6 +65,32 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("down", "ui.palette_down", Some("palette")),
     ("enter", "ui.accept", Some("confirm")),
     ("escape", "ui.dismiss", Some("confirm")),
+    ("left", "ui.cursor_left", Some("pane")),
+    ("right", "ui.cursor_right", Some("pane")),
+    ("shift-left", "ui.cursor_extend_left", Some("pane")),
+    ("shift-right", "ui.cursor_extend_right", Some("pane")),
+    ("space", "ui.peek", Some("pane")),
+    ("ctrl-shift-space", "ui.toggle_preview", None),
+    // Layouts where shift+space types a character (fr: U+202F) never
+    // produce `ctrl-shift-space`; F3 is the layout-independent fallback.
+    ("f3", "ui.toggle_preview", None),
+    ("space", "ui.peek_close", Some("peek")),
+    ("escape", "ui.peek_close", Some("peek")),
+    ("left", "ui.peek_prev", Some("peek")),
+    ("up", "ui.peek_prev", Some("peek")),
+    ("right", "ui.peek_next", Some("peek")),
+    ("down", "ui.peek_next", Some("peek")),
+];
+
+/// Builtin bindings that carry arguments (`keys, command, args json, when`).
+const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
+    ("ctrl-1", "ui.view", r#"{"id":"list"}"#, None),
+    ("ctrl-2", "ui.view", r#"{"id":"grid"}"#, None),
+    ("ctrl-3", "ui.view", r#"{"id":"columns"}"#, None),
+    ("ctrl-=", "ui.zoom", r#"{"dir":"in"}"#, None),
+    ("ctrl-shift-=", "ui.zoom", r#"{"dir":"in"}"#, None),
+    ("ctrl--", "ui.zoom", r#"{"dir":"out"}"#, None),
+    ("ctrl-0", "ui.zoom", r#"{"dir":"reset"}"#, None),
 ];
 
 /// Map a registry `when` string to a GPUI context predicate.
@@ -81,6 +108,7 @@ pub fn context_of(when: Option<&str>) -> String {
             "address" => ADDRESS.to_owned(),
             "palette" => PALETTE.to_owned(),
             "confirm" => CONFIRM.to_owned(),
+            "peek" => PEEK.to_owned(),
             other => other.to_owned(),
         })
         .collect();
@@ -125,6 +153,14 @@ pub fn install(app: &App, cx: &mut gpui::App) -> Vec<KeyHint> {
             (*keys).into(),
             (*command).into(),
             serde_json::json!({}),
+            context_of(*when),
+        ));
+    }
+    for (keys, command, args, when) in BUILTIN_ARGS {
+        specs.push((
+            (*keys).into(),
+            (*command).into(),
+            serde_json::from_str(args).expect("valid builtin args"),
             context_of(*when),
         ));
     }

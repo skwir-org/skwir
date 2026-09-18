@@ -15,11 +15,16 @@ Principles (non-negotiable, every phase is checked against them):
 Durations are relative sizes for one developer working with an AI assistant, not commitments.
 Each phase has a **Done when** gate. Do not start the next phase before the gate passes.
 
-Status: Phases 0, 1, and 2 built (2026-09-18). Phase 2's gate (one week of daily use) is
-in progress. Two UI budgets are currently missed and are carried into the Phase 3 perf pass:
-first frame 143 ms (100 ms of it inside gpui's `Application::run` before our code) against
-100 ms, and idle RSS 143 MB on a 5-entry directory (179 MB on 100k) against 100 MB, most of
-it toolkit and GPU driver baseline. Both need either a fix or an ADR revising the budget.
+Status: Phases 0 to 3 built (2026-09-18). Phase 2's gate (one week of daily use) is still
+yours to run. Phase 3 gate on the reference machine: the 10k-image grid scrolls with
+thumbnails arriving visible-first (main thread ~18% while scrolling, idle ~1%), warm first
+frame 123-128 ms (budget 150 ms per ADR-002), idle PSS 99 MB on a small directory (budget
+100 MB) and 124 MB after scrolling a 10k gallery with the thumbnail caches filled.
+Deviations recorded: views live in `bibli-ui` behind a `PaneView` trait rather than as
+separate crates (a gpui-dependent `ui-api` crate is deferred until a third-party view
+exists); PDF preview falls back to the generic card; drag and drop is implemented but was
+not exercised by automation; dragging out to other applications is unsupported by gpui
+0.2.2; AccessKit remains blocked (ADR-001).
 
 ---
 

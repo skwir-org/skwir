@@ -1,37 +1,35 @@
-//! The file list: a `uniform_list` over the active pane's listing, sorted
-//! directories-first, with lazy hydration of visible rows, selection, cursor
-//! movement, type-ahead, and the context menu trigger.
+//! Pane state shared by every view: the cached sorted order, hydration
+//! bookkeeping, selection and cursor interaction, type-ahead, and the pane
+//! container (focus, key context, external drops, width measurement).
 
+use std::cell::Cell;
 use std::collections::HashSet;
-use std::ops::Range;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use bibli_core::entry::keys;
-use bibli_core::{Entry, EntryId, Listing};
+use bibli_core::command::Invocation;
+use bibli_core::{EntryId, SortKey, SortSpec};
 use gpui::{
-    AnyElement, Context, Div, KeyContext, KeyDownEvent, MouseButton, MouseDownEvent,
-    ScrollStrategy, Stateful, UniformListScrollHandle, Window, div, prelude::*, px, uniform_list,
+    AnyElement, Context, ExternalPaths, KeyContext, KeyDownEvent, MouseButton, MouseDownEvent,
+    Window, canvas, div, prelude::*,
 };
 
-use crate::format;
 use crate::keymap;
 use crate::menu::SelectionCtx;
 use crate::shell::Shell;
 use crate::theme::Theme;
-
-pub const ROW_HEIGHT: f32 = 26.0;
+use crate::view::Nav;
 
 pub struct ListState {
-    /// Entry ids in display order.
-    pub sorted: Vec<EntryId>,
-    sorted_events: u64,
-    sorted_len: usize,
-    sorted_hidden: bool,
+    /// Entry ids in display order, from the core's cached sort.
+    pub sorted: std::sync::Arc<[EntryId]>,
+    sorted_at: Option<(u64, SortSpec)>,
     /// Hydration requested and not yet answered; cleared when the listing changes.
     pub pending_hydrate: HashSet<EntryId>,
-    pub scroll: UniformListScrollHandle,
-    pub show_hidden: bool,
+    pending_at: u64,
     pub visible_rows: usize,
+    /// Width of the file area, measured during layout.
+    pub content_width: Rc<Cell<f32>>,
     typeahead: String,
     typeahead_at: Option<Instant>,
 }
@@ -39,14 +37,12 @@ pub struct ListState {
 impl Default for ListState {
     fn default() -> Self {
         ListState {
-            sorted: Vec::new(),
-            sorted_events: u64::MAX,
-            sorted_len: usize::MAX,
-            sorted_hidden: false,
+            sorted: std::sync::Arc::from([]),
+            sorted_at: None,
             pending_hydrate: HashSet::new(),
-            scroll: UniformListScrollHandle::new(),
-            show_hidden: false,
+            pending_at: 0,
             visible_rows: 20,
+            content_width: Rc::new(Cell::new(800.0)),
             typeahead: String::new(),
             typeahead_at: None,
         }
@@ -54,42 +50,25 @@ impl Default for ListState {
 }
 
 impl ListState {
-    /// Recompute the sorted order when the listing or the hidden toggle changed.
-    pub fn sync(&mut self, listing: &Listing, events_seen: u64) {
-        if self.sorted_events == events_seen
-            && self.sorted_len == listing.len()
-            && self.sorted_hidden == self.show_hidden
-        {
-            return;
+    /// Adopt the core's sorted order when the listing version or the spec changed.
+    pub fn sync(&mut self, listing: &bibli_core::Listing, spec: SortSpec) -> bool {
+        let version = listing.version();
+        if self.sorted_at == Some((version, spec)) {
+            return false;
         }
-        let show_hidden = self.show_hidden;
-        let mut keyed: Vec<(bool, String, EntryId)> = listing
-            .iter()
-            .filter(|e| show_hidden || !e.name.to_string_lossy().starts_with('.'))
-            .map(|e| (!e.is_dir(), e.name_str().to_lowercase(), e.id))
-            .collect();
-        keyed.sort_unstable();
-        self.sorted = keyed.into_iter().map(|(_, _, id)| id).collect();
-        if self.sorted_events != events_seen {
+        self.sorted = listing.sorted(spec);
+        self.sorted_at = Some((version, spec));
+        if self.pending_at != version {
             self.pending_hydrate.clear();
+            self.pending_at = version;
         }
-        self.sorted_events = events_seen;
-        self.sorted_len = listing.len();
-        self.sorted_hidden = show_hidden;
+        true
     }
 
-    /// Forget everything: a new location was opened.
     pub fn reset(&mut self) {
-        self.sorted.clear();
-        self.sorted_events = u64::MAX;
-        self.sorted_len = usize::MAX;
+        self.sorted = std::sync::Arc::from([]);
+        self.sorted_at = None;
         self.pending_hydrate.clear();
-        self.scroll.scroll_to_item_strict(0, ScrollStrategy::Top);
-    }
-
-    /// Changes every time the order is recomputed (instrumentation).
-    pub fn sorted_version(&self) -> (u64, usize, bool) {
-        (self.sorted_events, self.sorted_len, self.sorted_hidden)
     }
 
     pub fn index_of(&self, id: EntryId) -> Option<usize> {
@@ -119,6 +98,53 @@ impl Shell {
         ctx
     }
 
+    pub fn sort_spec(&self) -> SortSpec {
+        self.app
+            .workspace
+            .read()
+            .pane(self.pane)
+            .map_or_else(SortSpec::default, |p| p.sort)
+    }
+
+    /// Toggle hidden files through the core command.
+    pub fn toggle_hidden(&mut self, cx: &mut Context<Self>) {
+        self.dispatch_core("toggle_hidden", serde_json::json!({}), cx);
+    }
+
+    /// Sort by `key` through the core command (same key again flips the direction).
+    pub fn sort_by(&mut self, key: SortKey, cx: &mut Context<Self>) {
+        self.dispatch_core("sort", serde_json::json!({ "key": key }), cx);
+    }
+
+    fn dispatch_core(&mut self, name: &str, args: serde_json::Value, cx: &mut Context<Self>) {
+        let inv = bibli_core::command::Invocation {
+            name: name.into(),
+            args,
+        };
+        if let Err(e) = self.app.dispatch(&inv) {
+            tracing::warn!(command = name, "dispatch failed: {e:#}");
+        }
+        cx.notify();
+    }
+
+    /// Ask the core for metadata on `ids` (once per listing version).
+    pub fn request_hydrate(&mut self, ids: Vec<EntryId>) {
+        let need: Vec<EntryId> = ids
+            .into_iter()
+            .filter(|id| self.list.pending_hydrate.insert(*id))
+            .collect();
+        if need.is_empty() {
+            return;
+        }
+        tracing::debug!(n = need.len(), "hydrate request");
+        if let Err(e) = self.app.dispatch(&Invocation::with_args(
+            "hydrate",
+            &serde_json::json!({ "ids": need }),
+        )) {
+            tracing::warn!("hydrate: {e:#}");
+        }
+    }
+
     fn pane_key_context(&self) -> KeyContext {
         let mut kc = KeyContext::default();
         kc.add(keymap::PANE);
@@ -128,7 +154,7 @@ impl Shell {
         kc
     }
 
-    fn select_ids(
+    pub fn select_ids(
         &mut self,
         ids: Vec<EntryId>,
         mode: &str,
@@ -143,35 +169,22 @@ impl Shell {
         );
     }
 
-    /// Ids from the selection anchor to `target`, anchor first, target last,
-    /// so the core keeps the anchor and moves the cursor to the target.
-    fn range_to(&self, target: usize) -> Vec<EntryId> {
-        let anchor = {
-            let ws = self.app.workspace.read();
-            ws.pane(self.pane)
-                .and_then(|p| p.selection.anchor)
-                .and_then(|a| self.list.index_of(a))
-        };
-        let anchor = anchor.unwrap_or(target);
-        if target >= anchor {
-            self.list.sorted[anchor..=target].to_vec()
-        } else {
-            self.list.sorted[target..=anchor]
-                .iter()
-                .rev()
-                .copied()
-                .collect()
-        }
-    }
-
-    fn cursor_index(&self) -> Option<usize> {
+    pub fn cursor_index(&self) -> Option<usize> {
         let ws = self.app.workspace.read();
         ws.pane(self.pane)
             .and_then(|p| p.selection.cursor)
             .and_then(|c| self.list.index_of(c))
     }
 
-    /// Move the cursor to `target` (clamped), extending the selection from the anchor if asked.
+    pub fn cursor_id(&self) -> Option<EntryId> {
+        self.app
+            .workspace
+            .read()
+            .pane(self.pane)
+            .and_then(|p| p.selection.cursor)
+    }
+
+    /// Move the cursor to `target` (clamped), extending from the anchor if asked.
     pub fn cursor_to(
         &mut self,
         target: isize,
@@ -183,13 +196,10 @@ impl Shell {
             return;
         }
         let target = target.clamp(0, self.list.sorted.len() as isize - 1) as usize;
-        let ids = if extend {
-            self.range_to(target)
-        } else {
-            vec![self.list.sorted[target]]
-        };
-        self.select_ids(ids, "replace", window, cx);
-        self.list.scroll.scroll_to_item(target, ScrollStrategy::Top);
+        let id = self.list.sorted[target];
+        let mode = if extend { "range_to" } else { "replace" };
+        self.select_ids(vec![id], mode, window, cx);
+        self.with_view(|v, _| v.scroll_to(target));
         cx.notify();
     }
 
@@ -205,7 +215,32 @@ impl Shell {
         self.cursor_to(target, extend, window, cx);
     }
 
-    pub fn on_row_mouse_down(
+    /// Keyboard navigation, interpreted by the active view.
+    pub fn navigate_by(
+        &mut self,
+        nav: Nav,
+        extend: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(mut view) = self.take_view() else {
+            return;
+        };
+        let handled = view.nav(nav, self, window, cx);
+        let delta = view.nav_delta(nav, self);
+        self.put_view(view);
+        if handled {
+            return;
+        }
+        match (nav, delta) {
+            (Nav::Home, _) => self.cursor_to(0, extend, window, cx),
+            (Nav::End, _) => self.cursor_to(isize::MAX, extend, window, cx),
+            (_, Some(d)) => self.cursor_move(d, extend, window, cx),
+            (_, None) => {}
+        }
+    }
+
+    pub fn on_entry_mouse_down(
         &mut self,
         ix: usize,
         ev: &MouseDownEvent,
@@ -224,10 +259,17 @@ impl Shell {
                 } else if ev.modifiers.control {
                     self.select_ids(vec![id], "toggle", window, cx);
                 } else if ev.modifiers.shift {
-                    let ids = self.range_to(ix);
-                    self.select_ids(ids, "replace", window, cx);
+                    self.select_ids(vec![id], "range_to", window, cx);
                 } else {
-                    self.select_ids(vec![id], "replace", window, cx);
+                    let selected = {
+                        let ws = self.app.workspace.read();
+                        ws.pane(self.pane).is_some_and(|p| p.selection.contains(id))
+                    };
+                    // Keep a multi-selection when pressing on one of its rows,
+                    // so a drag can carry all of it.
+                    if !selected {
+                        self.select_ids(vec![id], "replace", window, cx);
+                    }
                 }
             }
             MouseButton::Right => {
@@ -257,7 +299,7 @@ impl Shell {
         let Some(ch) = ks.key_char.as_deref() else {
             return;
         };
-        if ch.is_empty() || ch.chars().any(char::is_control) {
+        if ch.is_empty() || ch == " " || ch.chars().any(char::is_control) {
             return;
         }
         let now = Instant::now();
@@ -285,252 +327,50 @@ impl Shell {
             self.cursor_to(ix as isize, false, window, cx);
         }
     }
-}
 
-fn row(
-    theme: &Theme,
-    ix: usize,
-    e: &Entry,
-    selected: bool,
-    is_cursor: bool,
-    cx: &mut Context<Shell>,
-) -> Stateful<Div> {
-    let size = e
-        .metadata
-        .value(keys::SIZE)
-        .and_then(bibli_core::Value::as_u64)
-        .map_or_else(
-            || "—".to_owned(),
-            |s| {
-                if e.is_dir() {
-                    "—".to_owned()
-                } else {
-                    format::size(s)
-                }
-            },
-        );
-    let modified = e
-        .metadata
-        .value(keys::MODIFIED)
-        .and_then(bibli_core::Value::as_time)
-        .map_or_else(|| "—".to_owned(), format::time);
-    let marker = if e.is_dir() {
-        theme.accent
-    } else {
-        theme.text_muted
-    };
-    div()
-        .id(ix)
-        .h(px(ROW_HEIGHT))
-        .w_full()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_2()
-        .px_2()
-        .border_1()
-        .border_color(if is_cursor {
-            theme.accent
-        } else {
-            gpui::transparent_black()
-        })
-        .when(selected, |d| {
-            d.bg(theme.selection_bg).text_color(theme.selection_text)
-        })
-        .when(!selected, |d| d.hover(|s| s.bg(theme.surface)))
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
-                this.on_row_mouse_down(ix, ev, window, cx);
-            }),
-        )
-        .on_mouse_down(
-            MouseButton::Right,
-            cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
-                this.on_row_mouse_down(ix, ev, window, cx);
-            }),
-        )
-        .child(div().size(px(10.)).rounded_sm().bg(marker).flex_none())
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .child(e.name_str().into_owned()),
-        )
-        .child(
-            div()
-                .w(px(90.))
-                .flex_none()
-                .text_right()
-                .text_color(if selected {
-                    theme.selection_text
-                } else {
-                    theme.text_muted
-                })
-                .child(size),
-        )
-        .child(
-            div()
-                .w(px(130.))
-                .flex_none()
-                .text_color(if selected {
-                    theme.selection_text
-                } else {
-                    theme.text_muted
-                })
-                .child(modified),
-        )
-}
-
-fn header(theme: &Theme) -> Div {
-    div()
-        .h(px(24.))
-        .w_full()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_2()
-        .px_2()
-        .text_xs()
-        .text_color(theme.text_muted)
-        .border_b_1()
-        .border_color(theme.border)
-        .child(div().size(px(10.)).flex_none())
-        .child(div().flex_1().child("Name"))
-        .child(div().w(px(90.)).flex_none().text_right().child("Size"))
-        .child(div().w(px(130.)).flex_none().child("Modified"))
-}
-
-pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
-    let theme = cx.global::<Theme>().clone();
-    let count = shell.list.sorted.len();
-    let key_context = shell.pane_key_context();
-    let scroll = shell.list.scroll.clone();
-
-    let list = uniform_list(
-        "rows",
-        count,
-        cx.processor(move |this: &mut Shell, range: Range<usize>, _window, cx| {
-            let theme = cx.global::<Theme>().clone();
-            let mut rows = Vec::with_capacity(range.len());
-            let mut need: Vec<EntryId> = Vec::new();
-            this.list.visible_rows = range.len().max(1);
-            {
-                let ws = this.app.workspace.read();
-                let Some(pane) = ws.pane(this.pane) else {
-                    return rows;
-                };
-                let cursor = pane.selection.cursor;
-                for ix in range {
-                    let Some(&id) = this.list.sorted.get(ix) else {
-                        break;
-                    };
-                    let Some(e) = pane.listing.get(id) else {
-                        continue;
-                    };
-                    if !e.metadata.is_hydrated() && !this.list.pending_hydrate.contains(&id) {
-                        need.push(id);
-                    }
-                    rows.push(row(
-                        &theme,
-                        ix,
-                        e,
-                        pane.selection.contains(id),
-                        cursor == Some(id),
-                        cx,
-                    ));
-                }
-            }
-            if !need.is_empty() {
-                tracing::debug!(n = need.len(), "hydrate request");
-                this.list.pending_hydrate.extend(need.iter().copied());
-                if let Err(e) = this
-                    .app
-                    .dispatch(&bibli_core::command::Invocation::with_args(
-                        "hydrate",
-                        &serde_json::json!({ "ids": need }),
-                    ))
-                {
-                    tracing::warn!("hydrate: {e:#}");
-                }
-            }
-            rows
-        }),
-    )
-    .track_scroll(scroll)
-    .size_full();
-
-    div()
-        .id("pane")
-        .flex_1()
-        .h_full()
-        .min_w_0()
-        .flex()
-        .flex_col()
-        .track_focus(&shell.pane_focus)
-        .key_context(key_context)
-        .on_key_down(cx.listener(Shell::on_pane_key_down))
-        .on_mouse_down(
-            MouseButton::Right,
-            cx.listener(|this, ev: &MouseDownEvent, window, cx| {
-                // Empty area: menu for the directory itself.
-                window.focus(&this.pane_focus);
-                this.open_context_menu(ev.position, cx);
-            }),
-        )
-        .child(header(&theme))
-        .child(div().flex_1().min_h_0().w_full().child(list))
-        .into_any_element()
-}
-
-#[cfg(test)]
-mod tests {
-    use bibli_core::{Entry, EntryId, EntryKind, Listing, ListingEvent};
-
-    use super::ListState;
-
-    fn id(n: u64) -> EntryId {
-        EntryId { dev: 1, ino: n }
-    }
-
-    fn listing() -> Listing {
-        let mut l = Listing::default();
-        l.apply(ListingEvent::Added(vec![
-            Entry::new(id(1), "zeta.txt", EntryKind::File),
-            Entry::new(id(2), "Alpha", EntryKind::Directory),
-            Entry::new(id(3), ".hidden", EntryKind::File),
-            Entry::new(id(4), "beta.txt", EntryKind::File),
-            Entry::new(id(5), "gamma", EntryKind::Directory),
-        ]));
-        l
-    }
-
-    #[test]
-    fn sorts_dirs_first_then_case_insensitive_and_filters_hidden() {
-        let l = listing();
-        let mut s = ListState::default();
-        s.sync(&l, 1);
-        assert_eq!(s.sorted, [id(2), id(5), id(4), id(1)]);
-        let version = s.sorted_version();
-        s.sync(&l, 1);
-        assert_eq!(s.sorted_version(), version, "no resort without change");
-        s.show_hidden = true;
-        s.sync(&l, 1);
-        assert_eq!(s.sorted, [id(2), id(5), id(3), id(4), id(1)]);
-        assert_eq!(s.index_of(id(4)), Some(3));
-    }
-
-    #[test]
-    fn pending_hydration_clears_on_new_events_only() {
-        let l = listing();
-        let mut s = ListState::default();
-        s.sync(&l, 1);
-        s.pending_hydrate.insert(id(1));
-        s.show_hidden = true;
-        s.sync(&l, 1);
-        assert!(s.pending_hydrate.contains(&id(1)), "toggle keeps pending");
-        s.sync(&l, 2);
-        assert!(s.pending_hydrate.is_empty(), "events clear pending");
+    /// Wrap a view's element in the pane container: focus, key context,
+    /// type-ahead, empty-area context menu, external drops, width measurement.
+    pub fn pane_container(&mut self, content: AnyElement, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.global::<Theme>().clone();
+        let key_context = self.pane_key_context();
+        let width = Rc::clone(&self.list.content_width);
+        div()
+            .id("pane")
+            .relative()
+            .flex_1()
+            .h_full()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .track_focus(&self.pane_focus)
+            .key_context(key_context)
+            .on_key_down(cx.listener(Shell::on_pane_key_down))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, ev: &MouseDownEvent, window, cx| {
+                    window.focus(&this.pane_focus);
+                    this.open_context_menu(ev.position, cx);
+                }),
+            )
+            .drag_over::<ExternalPaths>(move |s, _, _, _| s.bg(theme.selection_bg.opacity(0.4)))
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
+                this.drop_external(paths.paths(), window, cx);
+            }))
+            .child(
+                canvas(
+                    move |bounds, window, _| {
+                        let w = f32::from(bounds.size.width);
+                        if (width.get() - w).abs() > 0.5 {
+                            width.set(w);
+                            window.refresh();
+                        }
+                    },
+                    |_, (), _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            )
+            .child(content)
+            .into_any_element()
     }
 }

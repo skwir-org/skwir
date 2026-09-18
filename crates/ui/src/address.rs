@@ -5,6 +5,34 @@ use gpui::{AnyElement, Context, Div, Stateful, Window, div, prelude::*, px};
 use crate::keymap;
 use crate::shell::Shell;
 use crate::theme::Theme;
+use crate::view;
+
+fn segment(
+    id: &'static str,
+    label: &'static str,
+    view_id: &'static str,
+    shell: &Shell,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> Stateful<Div> {
+    let active = shell.view_id == view_id;
+    div()
+        .id(id)
+        .h(px(24.))
+        .px_2()
+        .flex()
+        .items_center()
+        .text_xs()
+        .cursor_pointer()
+        .when(active, |d| {
+            d.bg(theme.selection_bg).text_color(theme.selection_text)
+        })
+        .when(!active, |d| d.hover(|s| s.bg(theme.border)))
+        .on_click(cx.listener(move |this, _, window, cx| {
+            this.run("ui.view", serde_json::json!({ "id": view_id }), window, cx);
+        }))
+        .child(label)
+}
 
 fn button(
     id: &'static str,
@@ -59,7 +87,42 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> AnyEle
                 .key_context(keymap::ADDRESS)
                 .child(shell.address.clone()),
         )
-        .when(shell.list.show_hidden, |d| {
+        .child(
+            div()
+                .flex()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.border)
+                .overflow_hidden()
+                .child(segment("seg-list", "List", view::LIST, shell, &theme, cx))
+                .child(segment("seg-grid", "Grid", view::GRID, shell, &theme, cx))
+                .child(segment(
+                    "seg-cols",
+                    "Columns",
+                    view::COLUMNS,
+                    shell,
+                    &theme,
+                    cx,
+                )),
+        )
+        .child(
+            div()
+                .id("preview-toggle")
+                .h(px(24.))
+                .px_2()
+                .flex()
+                .items_center()
+                .text_xs()
+                .rounded_md()
+                .cursor_pointer()
+                .when(shell.preview.open, |d| {
+                    d.bg(theme.selection_bg).text_color(theme.selection_text)
+                })
+                .hover(|s| s.bg(theme.border))
+                .on_click(cx.listener(|this, _, _, cx| this.toggle_preview(cx)))
+                .child("Preview"),
+        )
+        .when(shell.sort_spec().show_hidden, |d| {
             d.child(
                 div()
                     .text_xs()

@@ -18,6 +18,15 @@ tracing.workspace = true
 unicode-segmentation.workspace = true
 jiff.workspace = true
 schemars.workspace = true
+bibli-platform.workspace = true
+image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
+syntect.workspace = true
+smallvec = "1"
+
+[features]
+# Dev-only PNG/JPEG decoder registered as a thumbnail provider, for testing
+# the views before the platform providers exist. Off by default.
+dev-thumbs = []
 
 [lints]
 workspace = true

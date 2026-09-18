@@ -503,6 +503,49 @@ mod builtin {
             },
         );
 
+        c.register::<SortArgs, _>(
+            "core",
+            "sort",
+            "Sort",
+            "Set the sort key, direction, and hidden-file visibility of a pane",
+            |a, app| {
+                let pane = pane_of(app, a.pane);
+                let mut ws = app.workspace.write();
+                let p = ws
+                    .pane_mut(pane)
+                    .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                if let Some(k) = a.key {
+                    // The same key again flips the direction unless one was given.
+                    p.sort.ascending = a.ascending.unwrap_or(if p.sort.key == k {
+                        !p.sort.ascending
+                    } else {
+                        true
+                    });
+                    p.sort.key = k;
+                } else if let Some(asc) = a.ascending {
+                    p.sort.ascending = asc;
+                }
+                if let Some(h) = a.show_hidden {
+                    p.sort.show_hidden = h;
+                }
+                Ok(Outcome::Done)
+            },
+        );
+
+        c.register::<PaneArg, _>(
+            "core",
+            "toggle_hidden",
+            "Toggle hidden files",
+            "Show or hide dot-prefixed entries",
+            |a, app| {
+                let pane = pane_of(app, a.pane);
+                if let Some(p) = app.workspace.write().pane_mut(pane) {
+                    p.sort.show_hidden = !p.sort.show_hidden;
+                }
+                Ok(Outcome::Done)
+            },
+        );
+
         c.register::<PaneArg, _>(
             "core",
             "select_all",

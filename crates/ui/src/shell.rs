@@ -1,44 +1,57 @@
 //! The shell entity: owns the window's UI state, routes every command, and
 //! wakes only when the core signals new events.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
 use bibli_core::command::{Invocation, Outcome};
 use bibli_core::op::StepStatus;
 use bibli_core::workspace::PaneId;
-use bibli_core::{App, Location};
+use bibli_core::{App, Location, SortKey};
 use gpui::{
     Context, Entity, FocusHandle, IntoElement, SharedString, Subscription, Window, div, prelude::*,
 };
 
+use crate::icons::IconCache;
 use crate::input::{InputEvent, TextInput};
 use crate::keymap::{self, KeyHint, RunCommand};
 use crate::list::ListState;
 use crate::menu::MenuState;
 use crate::palette::PaletteState;
+use crate::preview::PreviewState;
 use crate::prompts::{ConfirmState, PromptKind, PromptState};
 use crate::status::StatusState;
 use crate::theme::Theme;
-use crate::{address, list, menu, palette, prompts, sidebar, status};
+use crate::thumbs::ThumbCache;
+use crate::view::{self, Nav, PaneView};
+use crate::views::grid::ZOOMS;
+use crate::{address, menu, palette, preview, prompts, sidebar, status};
 
 pub struct Shell {
     pub app: Arc<App>,
     pub pane: PaneId,
     pub font: SharedString,
+    pub mono_font: SharedString,
     pub key_hints: Vec<KeyHint>,
     pub pane_focus: FocusHandle,
     pub address: Entity<TextInput>,
     /// The location string the address bar currently mirrors.
     pub address_shown: String,
     pub list: ListState,
+    /// Instantiated views by id; the active one is taken out during render.
+    pub views: HashMap<&'static str, Box<dyn PaneView>>,
+    pub view_id: &'static str,
+    pub zoom: u32,
+    pub grid_rows_visible: usize,
+    pub thumbs: ThumbCache,
+    pub icons: IconCache,
+    pub preview: PreviewState,
     pub palette: Option<PaletteState>,
     pub prompt: Option<PromptState>,
     pub confirm: Option<ConfirmState>,
     pub menu: Option<MenuState>,
     pub status: StatusState,
-    /// Total listing events applied by `pump`; the list resorts when it changes.
-    pub events_seen: u64,
     started: Instant,
     first_frame_logged: bool,
     _subscriptions: Vec<Subscription>,
@@ -50,6 +63,7 @@ impl Shell {
         initial: Option<Location>,
         started: Instant,
         font: SharedString,
+        mono_font: SharedString,
         key_hints: Vec<KeyHint>,
         wake_rx: flume::Receiver<()>,
         window: &mut Window,
@@ -103,22 +117,37 @@ impl Shell {
         })
         .detach();
 
+        // Views from the registry (ours are registered in `run_from`).
+        let mut views: HashMap<&'static str, Box<dyn PaneView>> = HashMap::new();
+        for spec in app.registry.views.all() {
+            if let Some(v) = view::instantiate(&spec) {
+                views.insert(v.id(), v);
+            }
+        }
+
         let pane = app.workspace.read().active_id();
         let mut shell = Shell {
             app,
             pane,
             font,
+            mono_font,
             key_hints,
             pane_focus: cx.focus_handle(),
             address,
             address_shown: String::new(),
             list: ListState::default(),
+            views,
+            view_id: view::LIST,
+            zoom: 128,
+            grid_rows_visible: 4,
+            thumbs: ThumbCache::default(),
+            icons: IconCache::default(),
+            preview: PreviewState::default(),
             palette: None,
             prompt: None,
             confirm: None,
             menu: None,
             status: StatusState::default(),
-            events_seen: 0,
             started,
             first_frame_logged: false,
             _subscriptions: subs,
@@ -129,6 +158,55 @@ impl Shell {
             shell.set_status(format!("{e:#}"), true, cx);
         }
         shell
+    }
+
+    // ------------------------------------------------------------ views
+
+    pub fn take_view(&mut self) -> Option<Box<dyn PaneView>> {
+        self.views.remove(self.view_id)
+    }
+
+    pub fn put_view(&mut self, v: Box<dyn PaneView>) {
+        self.views.insert(v.id(), v);
+    }
+
+    pub fn with_view<R>(&mut self, f: impl FnOnce(&mut dyn PaneView, &mut Self) -> R) -> Option<R> {
+        let mut v = self.take_view()?;
+        let r = f(v.as_mut(), self);
+        self.put_view(v);
+        Some(r)
+    }
+
+    fn set_view(&mut self, id: &str, cx: &mut Context<Self>) {
+        match self.views.keys().find(|k| **k == id).copied() {
+            Some(k) => {
+                self.view_id = k;
+                let ix = self.cursor_index();
+                self.with_view(|v, _| {
+                    if let Some(ix) = ix {
+                        v.scroll_to(ix);
+                    }
+                });
+                cx.notify();
+            }
+            None => self.set_status(format!("unknown view `{id}`"), true, cx),
+        }
+    }
+
+    fn zoom_step(&mut self, dir: &str, cx: &mut Context<Self>) {
+        let pos = ZOOMS.iter().position(|z| *z == self.zoom).unwrap_or(1);
+        self.zoom = match dir {
+            "in" => ZOOMS[(pos + 1).min(ZOOMS.len() - 1)],
+            "out" => ZOOMS[pos.saturating_sub(1)],
+            _ => 128,
+        };
+        let ix = self.cursor_index();
+        self.with_view(|v, _| {
+            if let Some(ix) = ix {
+                v.scroll_to(ix);
+            }
+        });
+        cx.notify();
     }
 
     fn on_run_command(&mut self, a: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
@@ -145,7 +223,7 @@ impl Shell {
     ) {
         tracing::debug!(name, %args, "run");
         if let Some(ui) = name.strip_prefix("ui.") {
-            self.run_ui(ui, window, cx);
+            self.run_ui(ui, &args, window, cx);
             cx.notify();
             return;
         }
@@ -180,7 +258,14 @@ impl Shell {
         cx.notify();
     }
 
-    fn run_ui(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+    fn run_ui(
+        &mut self,
+        name: &str,
+        args: &serde_json::Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let arg = |k: &str| args.get(k).and_then(|v| v.as_str()).map(str::to_owned);
         match name {
             "open" => self.open_selection(window, cx),
             "focus_address" => {
@@ -239,24 +324,47 @@ impl Shell {
             }
             "accept" => self.confirm_accept(window, cx),
             "dismiss" => self.confirm_dismiss(window, cx),
-            "toggle_hidden" => self.list.show_hidden = !self.list.show_hidden,
-            "cursor_up" => self.cursor_move(-1, false, window, cx),
-            "cursor_down" => self.cursor_move(1, false, window, cx),
-            "cursor_extend_up" => self.cursor_move(-1, true, window, cx),
-            "cursor_extend_down" => self.cursor_move(1, true, window, cx),
-            "cursor_home" => self.cursor_to(0, false, window, cx),
-            "cursor_end" => self.cursor_to(isize::MAX, false, window, cx),
-            "cursor_extend_home" => self.cursor_to(0, true, window, cx),
-            "cursor_extend_end" => self.cursor_to(isize::MAX, true, window, cx),
-            "page_up" => {
-                let n = self.list.visible_rows.saturating_sub(1).max(1) as isize;
-                self.cursor_move(-n, false, window, cx);
+            "toggle_hidden" => self.toggle_hidden(cx),
+            "sort" => {
+                let key = match arg("key").as_deref() {
+                    Some("size") => SortKey::Size,
+                    Some("modified") => SortKey::Modified,
+                    _ => SortKey::Name,
+                };
+                self.sort_by(key, cx);
             }
-            "page_down" => {
-                let n = self.list.visible_rows.saturating_sub(1).max(1) as isize;
-                self.cursor_move(n, false, window, cx);
+            "view" => {
+                let id = arg("id").unwrap_or_else(|| view::LIST.into());
+                self.set_view(&id, cx);
             }
-            "quit" => cx.quit(),
+            "zoom" => {
+                let dir = arg("dir").unwrap_or_else(|| "reset".into());
+                self.zoom_step(&dir, cx);
+            }
+            "toggle_preview" => self.toggle_preview(cx),
+            "peek" => self.toggle_peek(window, cx),
+            "peek_close" => self.close_peek(window, cx),
+            "peek_prev" => self.cursor_move(-1, false, window, cx),
+            "peek_next" => self.cursor_move(1, false, window, cx),
+            "cursor_up" => self.navigate_by(Nav::Up, false, window, cx),
+            "cursor_down" => self.navigate_by(Nav::Down, false, window, cx),
+            "cursor_left" => self.navigate_by(Nav::Left, false, window, cx),
+            "cursor_right" => self.navigate_by(Nav::Right, false, window, cx),
+            "cursor_extend_up" => self.navigate_by(Nav::Up, true, window, cx),
+            "cursor_extend_down" => self.navigate_by(Nav::Down, true, window, cx),
+            "cursor_extend_left" => self.navigate_by(Nav::Left, true, window, cx),
+            "cursor_extend_right" => self.navigate_by(Nav::Right, true, window, cx),
+            "cursor_home" => self.navigate_by(Nav::Home, false, window, cx),
+            "cursor_end" => self.navigate_by(Nav::End, false, window, cx),
+            "cursor_extend_home" => self.navigate_by(Nav::Home, true, window, cx),
+            "cursor_extend_end" => self.navigate_by(Nav::End, true, window, cx),
+            "page_up" => self.navigate_by(Nav::PageUp, false, window, cx),
+            "page_down" => self.navigate_by(Nav::PageDown, false, window, cx),
+            "quit" => {
+                let (decoded, skipped, bytes) = self.app.thumbnails.stats();
+                tracing::info!(decoded, skipped, cached_bytes = bytes, "thumbnail stats");
+                cx.quit();
+            }
             other => self.set_status(format!("unknown ui command `ui.{other}`"), true, cx),
         }
     }
@@ -300,11 +408,10 @@ impl Shell {
     /// Apply core events and refresh derived state. Called first in `render`.
     fn sync(&mut self, cx: &mut Context<Self>) {
         let t0 = Instant::now();
-        let applied = self.app.pump();
-        self.events_seen += applied as u64;
+        let report = self.app.pump_report();
+        self.app.thumbnails.tick();
         self.drain_executor(cx);
-        let before = self.list.sorted_version();
-        let location = {
+        let (location, resorted) = {
             let ws = self.app.workspace.read();
             let Some(pane) = ws.pane(self.pane) else {
                 return;
@@ -313,23 +420,26 @@ impl Shell {
             if location != self.address_shown {
                 self.list.reset();
             }
-            self.list.sync(&pane.listing, self.events_seen);
-            location
+            let resorted = self.list.sync(&pane.listing, pane.sort);
+            (location, resorted)
         };
         if location != self.address_shown {
             self.address_shown.clone_from(&location);
             self.address.update(cx, |i, cx| i.set_text(location, cx));
+            for v in self.views.values_mut() {
+                v.reset();
+            }
         }
-        let resorted = self.list.sorted_version() != before;
-        if applied > 0 || resorted {
+        if report.applied > 0 || resorted {
             tracing::debug!(
-                applied,
+                applied = report.applied,
                 resorted,
                 rows = self.list.sorted.len(),
                 took_us = t0.elapsed().as_micros() as u64,
                 "sync"
             );
         }
+        self.sync_preview(cx);
     }
 }
 
@@ -346,16 +456,29 @@ impl Render for Shell {
         let theme = cx.global::<Theme>().clone();
         let address_bar = address::render(self, window, cx);
         let side = sidebar::render(self, cx);
-        let file_list = list::render(self, cx);
+        let view_el = match self.take_view() {
+            Some(mut v) => {
+                let el = v.render(self, window, cx);
+                self.put_view(v);
+                el
+            }
+            None => div()
+                .flex_1()
+                .child("no view registered")
+                .into_any_element(),
+        };
+        let file_area = self.pane_container(view_el, cx);
+        let panel = preview::render_panel(self, cx);
         let status_bar = status::render(self, cx);
         let overlays = [
             menu::render(self, cx),
             prompts::render_prompt(self, cx),
             prompts::render_confirm(self, cx),
             palette::render(self, cx),
+            preview::render_peek(self, cx),
         ];
 
-        div()
+        let root = div()
             .key_context(keymap::ROOT)
             .on_action(cx.listener(Self::on_run_command))
             .relative()
@@ -375,9 +498,11 @@ impl Render for Shell {
                     .min_h_0()
                     .w_full()
                     .child(side)
-                    .child(file_list),
+                    .child(file_area)
+                    .children(panel),
             )
             .child(status_bar)
-            .children(overlays.into_iter().flatten())
+            .children(overlays.into_iter().flatten());
+        self.resize_hook(root, cx)
     }
 }

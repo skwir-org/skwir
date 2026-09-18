@@ -550,6 +550,7 @@ dependencies = [
  "bibli-plugin-open-with",
  "bibli-plugin-ops-basic",
  "bibli-plugin-places",
+ "bibli-plugin-thumbnails",
  "bibli-ui",
  "tempfile",
  "tracing",

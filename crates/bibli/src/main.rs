@@ -1,5 +1,7 @@
 //! The bibli binary. Wires the core, the plugins, and the UI shell (Phase 2).
 
+mod gpu;
+
 use std::time::Instant;
 
 use bibli_core::app::AppConfig;
@@ -7,6 +9,9 @@ use bibli_core::{App, Location};
 
 fn main() -> anyhow::Result<()> {
     let started = Instant::now();
+    // Before any GPU work: keep the Vulkan loader from mapping drivers for
+    // hardware that is not here (ADR-002).
+    gpu::restrict_vulkan_drivers();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -28,6 +33,10 @@ fn main() -> anyhow::Result<()> {
     );
     app.plugins
         .add(std::sync::Arc::new(bibli_plugin_places::PlacesPlugin), &app);
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_thumbnails::ThumbnailsPlugin),
+        &app,
+    );
 
     let path = std::env::args_os().nth(1).map_or_else(
         || std::env::current_dir().unwrap_or_else(|_| "/".into()),

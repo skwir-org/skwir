@@ -15,6 +15,7 @@ use crate::theme::Theme;
 #[derive(Clone, Debug)]
 pub struct PaletteItem {
     pub name: String,
+    pub args: serde_json::Value,
     pub title: String,
     pub keys: Option<String>,
     /// Required argument names from the command's schema.
@@ -39,30 +40,28 @@ pub struct PaletteState {
 }
 
 /// The shell's own commands, shown alongside the core's.
-pub const UI_COMMANDS: &[(&str, &str)] = &[
-    ("ui.open", "Open"),
-    ("ui.focus_address", "Focus address bar"),
-    ("ui.focus_pane", "Focus file list"),
-    ("ui.palette", "Command palette"),
-    ("ui.rename_prompt", "Rename…"),
-    ("ui.mkdir_prompt", "New folder…"),
-    ("ui.confirm_delete", "Delete permanently…"),
-    ("ui.toggle_hidden", "Toggle hidden files"),
-    ("ui.quit", "Quit"),
+pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
+    ("ui.open", "{}", "Open"),
+    ("ui.focus_address", "{}", "Focus address bar"),
+    ("ui.focus_pane", "{}", "Focus file list"),
+    ("ui.palette", "{}", "Command palette"),
+    ("ui.rename_prompt", "{}", "Rename…"),
+    ("ui.mkdir_prompt", "{}", "New folder…"),
+    ("ui.confirm_delete", "{}", "Delete permanently…"),
+    ("ui.toggle_hidden", "{}", "Toggle hidden files"),
+    ("ui.view", r#"{"id":"list"}"#, "View: List"),
+    ("ui.view", r#"{"id":"grid"}"#, "View: Grid"),
+    ("ui.view", r#"{"id":"columns"}"#, "View: Columns"),
+    ("ui.sort", r#"{"key":"name"}"#, "Sort by name"),
+    ("ui.sort", r#"{"key":"size"}"#, "Sort by size"),
+    ("ui.sort", r#"{"key":"modified"}"#, "Sort by date modified"),
+    ("ui.zoom", r#"{"dir":"in"}"#, "Zoom in"),
+    ("ui.zoom", r#"{"dir":"out"}"#, "Zoom out"),
+    ("ui.zoom", r#"{"dir":"reset"}"#, "Zoom reset"),
+    ("ui.toggle_preview", "{}", "Toggle preview panel"),
+    ("ui.peek", "{}", "Peek"),
+    ("ui.quit", "{}", "Quit"),
 ];
-
-fn required_of(schema: &schemars::Schema) -> Vec<String> {
-    serde_json::to_value(schema)
-        .ok()
-        .and_then(|v| {
-            v.get("required").and_then(|r| r.as_array()).map(|a| {
-                a.iter()
-                    .filter_map(|x| x.as_str().map(str::to_owned))
-                    .collect()
-            })
-        })
-        .unwrap_or_default()
-}
 
 impl Shell {
     fn palette_items(&self) -> Vec<PaletteItem> {
@@ -80,13 +79,15 @@ impl Shell {
             .map(|c| PaletteItem {
                 keys: key_of(&c.name),
                 name: c.name.to_string(),
-                title: c.title,
-                required: required_of(&c.args_schema),
+                args: serde_json::json!({}),
+                title: c.title.clone(),
+                required: c.required_args(),
             })
             .collect();
-        for (name, title) in UI_COMMANDS {
+        for (name, args, title) in UI_COMMANDS {
             items.push(PaletteItem {
                 name: (*name).into(),
+                args: serde_json::from_str(args).expect("valid ui args"),
                 title: (*title).into(),
                 keys: key_of(name),
                 required: Vec::new(),
@@ -161,7 +162,7 @@ impl Shell {
         let item = p.items[ix].clone();
         if item.required.is_empty() {
             self.close_palette(window, cx);
-            self.run(&item.name, serde_json::json!({}), window, cx);
+            self.run(&item.name, item.args, window, cx);
         } else {
             p.args = Some(ArgPrompt {
                 name: item.name,
