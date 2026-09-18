@@ -16,6 +16,7 @@
 
 pub mod address;
 pub mod dnd;
+mod dragicon;
 pub mod format;
 pub mod icons;
 pub mod input;

@@ -1760,8 +1760,12 @@ impl Window {
     /// mouse-up when the session finishes; a drop back onto this application
     /// arrives as an [`ExternalPaths`] drop. Returns false when unsupported, in
     /// which case nothing changes.
-    pub fn start_external_drag(&self, paths: Vec<std::path::PathBuf>) -> bool {
-        self.platform_window.start_external_drag(paths)
+    pub fn start_external_drag(
+        &self,
+        paths: Vec<std::path::PathBuf>,
+        icon: Option<crate::ExternalDragIcon>,
+    ) -> bool {
+        self.platform_window.start_external_drag(paths, icon)
     }
 
     /// When using client side decorations, set this to the width of the invisible decorations (Wayland and X11)

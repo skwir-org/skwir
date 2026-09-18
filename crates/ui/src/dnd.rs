@@ -22,14 +22,20 @@ pub struct DragPayload {
     pub paths: Vec<PathBuf>,
 }
 
-/// The floating preview under the cursor.
+/// The floating preview under the cursor. Empty once the compositor owns
+/// the drag: it draws the icon itself, and this element would only freeze
+/// at the last in-window pointer position.
 pub struct DragPreview {
     payload: DragPayload,
     position: Point<Pixels>,
+    hidden: bool,
 }
 
 impl Render for DragPreview {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.hidden {
+            return div();
+        }
         let theme = cx.global::<Theme>().clone();
         let text = if self.payload.count == 1 {
             self.payload.label.clone()
@@ -175,15 +181,21 @@ pub fn draggable(el: Stateful<Div>, shell: &Shell) -> Stateful<Div> {
     if payload.count == 0 {
         return el;
     }
-    el.on_drag(payload, |p: &DragPayload, position, window, cx| {
+    let icon = shell.drag_icon();
+    el.on_drag(payload, move |p: &DragPayload, position, window, cx| {
         // Hand the drag to the compositor so other applications can accept it.
         // When that works, a drop back onto bibli arrives as ExternalPaths and
         // `drop_paths_into` recognizes it as our own selection.
-        if !window.start_external_drag(p.paths.clone()) {
+        let external = window.start_external_drag(p.paths.clone(), Some(icon.clone()));
+        if !external {
             tracing::debug!("external drag unsupported here; in-window drag only");
         }
         let payload = p.clone();
-        cx.new(|_| DragPreview { payload, position })
+        cx.new(|_| DragPreview {
+            payload,
+            position,
+            hidden: external,
+        })
     })
 }
 

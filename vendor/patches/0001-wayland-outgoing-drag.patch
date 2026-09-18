@@ -1,6 +1,6 @@
-diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/platform/linux/wayland/client.rs home/user/wip/bibli/vendor/gpui/src/platform/linux/wayland/client.rs
+diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' '--exclude=README.bibli.md' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/platform/linux/wayland/client.rs home/user/wip/bibli/vendor/gpui/src/platform/linux/wayland/client.rs
 --- a/crates/gpui/src/platform/linux/wayland/client.rs	2006-07-24 03:21:28.000000000 +0200
-+++ b/crates/gpui/src/platform/linux/wayland/client.rs	2026-09-18 11:33:22.554185990 +0200
++++ b/crates/gpui/src/platform/linux/wayland/client.rs	2026-09-18 11:48:00.374199160 +0200
 @@ -199,6 +199,7 @@
      wl_keyboard: Option<wl_keyboard::WlKeyboard>,
      cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
@@ -9,22 +9,104 @@ diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclud
      primary_selection: Option<zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1>,
      text_input: Option<zwp_text_input_v3::ZwpTextInputV3>,
      pre_edit_text: Option<String>,
-@@ -245,6 +246,14 @@
+@@ -245,6 +246,96 @@
      position: Point<Pixels>,
  }
  
 +/// A drag we started: its data source, the `text/uri-list` payload the
-+/// compositor asks for on `Send`, and the window it began in.
++/// compositor asks for on `Send`, the window it began in, and the icon
++/// surface (kept alive until the session ends).
 +struct OutgoingDrag {
 +    source: wl_data_source::WlDataSource,
 +    payload: Vec<u8>,
 +    window: WaylandWindowStatePtr,
++    icon: Option<DragIconSurface>,
++}
++
++struct DragIconSurface {
++    surface: wl_surface::WlSurface,
++    buffer: wl_buffer::WlBuffer,
++    pool: wl_shm_pool::WlShmPool,
++    _file: std::fs::File,
++}
++
++impl DragIconSurface {
++    fn destroy(self) {
++        self.buffer.destroy();
++        self.pool.destroy();
++        self.surface.destroy();
++    }
++}
++
++/// An anonymous file of `size` bytes for a wl_shm pool. Created under
++/// /dev/shm when present and unlinked at once, so it never outlives the fd.
++fn shm_file(size: usize) -> Option<std::fs::File> {
++    use std::sync::atomic::{AtomicU32, Ordering};
++    static COUNTER: AtomicU32 = AtomicU32::new(0);
++    let dir = if std::path::Path::new("/dev/shm").is_dir() {
++        std::path::PathBuf::from("/dev/shm")
++    } else {
++        std::env::temp_dir()
++    };
++    let path = dir.join(format!(
++        "gpui-drag-icon-{}-{}",
++        std::process::id(),
++        COUNTER.fetch_add(1, Ordering::Relaxed)
++    ));
++    let file = std::fs::File::options()
++        .read(true)
++        .write(true)
++        .create_new(true)
++        .open(&path)
++        .ok()?;
++    let _ = std::fs::remove_file(&path);
++    file.set_len(size as u64).ok()?;
++    Some(file)
++}
++
++/// Upload `icon` into a wl_shm buffer on a fresh surface. The buffer is
++/// ARGB8888 with premultiplied alpha, as wl_shm requires.
++fn make_drag_icon(globals: &Globals, icon: &crate::ExternalDragIcon) -> Option<DragIconSurface> {
++    use std::os::fd::AsFd;
++    use std::os::unix::fs::FileExt;
++    let (w, h) = (icon.width, icon.height);
++    if w == 0 || h == 0 || icon.rgba.len() != (w * h * 4) as usize {
++        return None;
++    }
++    let size = (w * h * 4) as usize;
++    let file = shm_file(size)?;
++    let mut data = Vec::with_capacity(size);
++    for px in icon.rgba.chunks_exact(4) {
++        let a = u32::from(px[3]);
++        let pm = |c: u8| ((u32::from(c) * a + 127) / 255) as u8;
++        data.extend_from_slice(&[pm(px[2]), pm(px[1]), pm(px[0]), px[3]]);
++    }
++    file.write_all_at(&data, 0).ok()?;
++    let pool = globals
++        .shm
++        .create_pool(file.as_fd(), size as i32, &globals.qh, ());
++    let buffer = pool.create_buffer(
++        0,
++        w as i32,
++        h as i32,
++        (w * 4) as i32,
++        wl_shm::Format::Argb8888,
++        &globals.qh,
++        (),
++    );
++    let surface = globals.compositor.create_surface(&globals.qh, ());
++    Some(DragIconSurface {
++        surface,
++        buffer,
++        pool,
++        _file: file,
++    })
 +}
 +
  pub struct ClickState {
      last_mouse_button: Option<MouseButton>,
      last_click: Instant,
-@@ -274,6 +283,53 @@
+@@ -274,6 +365,80 @@
  pub struct WaylandClientStatePtr(Weak<RefCell<WaylandClientState>>);
  
  impl WaylandClientStatePtr {
@@ -34,6 +116,7 @@ diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclud
 +        &self,
 +        surface: &wl_surface::WlSurface,
 +        paths: Vec<std::path::PathBuf>,
++        icon: Option<crate::ExternalDragIcon>,
 +    ) -> bool {
 +        let client = self.get_client();
 +        let mut state = client.borrow_mut();
@@ -61,16 +144,42 @@ diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclud
 +        }
 +        if let Some(old) = state.outgoing_drag.take() {
 +            old.source.destroy();
++            if let Some(icon) = old.icon {
++                icon.destroy();
++            }
 +        }
 +        let serial = state.serial_tracker.get(SerialKind::MousePress);
 +        let source = data_device_manager.create_data_source(&state.globals.qh, ());
 +        source.offer(FILE_LIST_MIME_TYPE.to_string());
 +        source.set_actions(DndAction::Copy | DndAction::Move);
-+        data_device.start_drag(Some(&source), surface, None, serial);
++        let icon_surface = icon
++            .as_ref()
++            .and_then(|icon| make_drag_icon(&state.globals, icon));
++        data_device.start_drag(
++            Some(&source),
++            surface,
++            icon_surface.as_ref().map(|i| &i.surface),
++            serial,
++        );
++        if let (Some(i), Some(icon)) = (&icon_surface, &icon) {
++            // The role is set by start_drag; now give the surface its pixels.
++            // The hotspot is expressed as the surface offset from the pointer.
++            let (hx, hy) = (-(icon.hotspot_x as i32), -(icon.hotspot_y as i32));
++            if i.surface.version() >= wl_surface::REQ_OFFSET_SINCE {
++                i.surface.attach(Some(&i.buffer), 0, 0);
++                i.surface.offset(hx, hy);
++            } else {
++                i.surface.attach(Some(&i.buffer), hx, hy);
++            }
++            i.surface
++                .damage_buffer(0, 0, icon.width as i32, icon.height as i32);
++            i.surface.commit();
++        }
 +        state.outgoing_drag = Some(OutgoingDrag {
 +            source,
 +            payload: payload.into_bytes(),
 +            window,
++            icon: icon_surface,
 +        });
 +        true
 +    }
@@ -78,7 +187,7 @@ diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclud
      pub fn get_client(&self) -> Rc<RefCell<WaylandClientState>> {
          self.0
              .upgrade()
-@@ -559,6 +615,7 @@
+@@ -559,6 +724,7 @@
              wl_keyboard: None,
              cursor_shape_device: None,
              data_device,
@@ -86,7 +195,7 @@ diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclud
              primary_selection,
              text_input: None,
              pre_edit_text: None,
-@@ -2060,11 +2117,35 @@
+@@ -2060,11 +2226,38 @@
          let client = this.get_client();
          let mut state = client.borrow_mut();
  
@@ -111,6 +220,9 @@ diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclud
 +                    // The compositor owned the pointer for the whole session, so
 +                    // the window never saw the button release: end its drag.
 +                    let drag = state.outgoing_drag.take().unwrap();
++                    if let Some(icon) = drag.icon {
++                        icon.destroy();
++                    }
 +                    state.button_pressed = None;
 +                    let input = PlatformInput::MouseUp(MouseUpEvent {
 +                        button: MouseButton::Left,
@@ -124,7 +236,7 @@ diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclud
                  data_source.destroy();
              }
              _ => {}
-diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/platform/linux/wayland/clipboard.rs home/user/wip/bibli/vendor/gpui/src/platform/linux/wayland/clipboard.rs
+diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' '--exclude=README.bibli.md' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/platform/linux/wayland/clipboard.rs home/user/wip/bibli/vendor/gpui/src/platform/linux/wayland/clipboard.rs
 --- a/crates/gpui/src/platform/linux/wayland/clipboard.rs	2006-07-24 03:21:28.000000000 +0200
 +++ b/crates/gpui/src/platform/linux/wayland/clipboard.rs	2026-09-18 11:33:22.553727414 +0200
 @@ -185,6 +185,11 @@
@@ -139,43 +251,75 @@ diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclud
      pub fn send_primary(&self, _mime_type: String, fd: OwnedFd) {
          if let Some(text) = self
              .primary_contents
-diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/platform/linux/wayland/window.rs home/user/wip/bibli/vendor/gpui/src/platform/linux/wayland/window.rs
+diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' '--exclude=README.bibli.md' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/platform/linux/wayland/window.rs home/user/wip/bibli/vendor/gpui/src/platform/linux/wayland/window.rs
 --- a/crates/gpui/src/platform/linux/wayland/window.rs	2006-07-24 03:21:28.000000000 +0200
-+++ b/crates/gpui/src/platform/linux/wayland/window.rs	2026-09-18 11:33:22.553333633 +0200
-@@ -1049,6 +1049,14 @@
++++ b/crates/gpui/src/platform/linux/wayland/window.rs	2026-09-18 11:46:46.313970573 +0200
+@@ -1049,6 +1049,18 @@
          state.toplevel._move(&state.globals.seat, serial);
      }
  
-+    fn start_external_drag(&self, paths: Vec<std::path::PathBuf>) -> bool {
++    fn start_external_drag(
++        &self,
++        paths: Vec<std::path::PathBuf>,
++        icon: Option<crate::ExternalDragIcon>,
++    ) -> bool {
 +        let state = self.borrow();
 +        let surface = state.surface.clone();
 +        let client = state.client.clone();
 +        drop(state);
-+        client.start_external_drag(&surface, paths)
++        client.start_external_drag(&surface, paths, icon)
 +    }
 +
      fn start_window_resize(&self, edge: crate::ResizeEdge) {
          let state = self.borrow();
          state.toplevel.resize(
-diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/platform.rs home/user/wip/bibli/vendor/gpui/src/platform.rs
+diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' '--exclude=README.bibli.md' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/platform.rs home/user/wip/bibli/vendor/gpui/src/platform.rs
 --- a/crates/gpui/src/platform.rs	2006-07-24 03:21:28.000000000 +0200
-+++ b/crates/gpui/src/platform.rs	2026-09-18 11:33:22.551380559 +0200
-@@ -534,6 +534,11 @@
++++ b/crates/gpui/src/platform.rs	2026-09-18 11:48:17.243761687 +0200
+@@ -457,6 +457,23 @@
+     pub(crate) force_render: bool,
+ }
+ 
++/// The image shown under the cursor during an external drag: RGBA8 with
++/// straight (non-premultiplied) alpha, `width * height * 4` bytes, and the
++/// pixel that sits under the pointer.
++#[derive(Clone, Debug)]
++pub struct ExternalDragIcon {
++    /// Width in pixels.
++    pub width: u32,
++    /// Height in pixels.
++    pub height: u32,
++    /// RGBA8 pixels, straight alpha, row-major, no padding.
++    pub rgba: Vec<u8>,
++    /// X of the pixel under the pointer.
++    pub hotspot_x: u32,
++    /// Y of the pixel under the pointer.
++    pub hotspot_y: u32,
++}
++
+ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
+     fn bounds(&self) -> Bounds<Pixels>;
+     fn is_maximized(&self) -> bool;
+@@ -534,6 +551,15 @@
      fn request_decorations(&self, _decorations: WindowDecorations) {}
      fn show_window_menu(&self, _position: Point<Pixels>) {}
      fn start_window_move(&self) {}
 +    /// Start a native drag of `paths` that other applications can receive.
 +    /// Returns false when unsupported, in which case the in-window drag continues.
-+    fn start_external_drag(&self, _paths: Vec<std::path::PathBuf>) -> bool {
++    fn start_external_drag(
++        &self,
++        _paths: Vec<std::path::PathBuf>,
++        _icon: Option<ExternalDragIcon>,
++    ) -> bool {
 +        false
 +    }
      fn start_window_resize(&self, _edge: ResizeEdge) {}
      fn window_decorations(&self) -> Decorations {
          Decorations::Server
-diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/window.rs home/user/wip/bibli/vendor/gpui/src/window.rs
+diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclude=.cargo-ok' '--exclude=README.bibli.md' home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/window.rs home/user/wip/bibli/vendor/gpui/src/window.rs
 --- a/crates/gpui/src/window.rs	2006-07-24 03:21:28.000000000 +0200
-+++ b/crates/gpui/src/window.rs	2026-09-18 11:33:22.552271669 +0200
-@@ -1754,6 +1754,16 @@
++++ b/crates/gpui/src/window.rs	2026-09-18 11:46:46.313290768 +0200
+@@ -1754,6 +1754,20 @@
          self.platform_window.start_window_move()
      }
  
@@ -185,8 +329,12 @@ diff -ruN '--exclude=.cargo_vcs_info.json' '--exclude=Cargo.toml.orig' '--exclud
 +    /// mouse-up when the session finishes; a drop back onto this application
 +    /// arrives as an [`ExternalPaths`] drop. Returns false when unsupported, in
 +    /// which case nothing changes.
-+    pub fn start_external_drag(&self, paths: Vec<std::path::PathBuf>) -> bool {
-+        self.platform_window.start_external_drag(paths)
++    pub fn start_external_drag(
++        &self,
++        paths: Vec<std::path::PathBuf>,
++        icon: Option<crate::ExternalDragIcon>,
++    ) -> bool {
++        self.platform_window.start_external_drag(paths, icon)
 +    }
 +
      /// When using client side decorations, set this to the width of the invisible decorations (Wayland and X11)

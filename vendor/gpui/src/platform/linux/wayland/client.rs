@@ -247,11 +247,93 @@ pub struct DragState {
 }
 
 /// A drag we started: its data source, the `text/uri-list` payload the
-/// compositor asks for on `Send`, and the window it began in.
+/// compositor asks for on `Send`, the window it began in, and the icon
+/// surface (kept alive until the session ends).
 struct OutgoingDrag {
     source: wl_data_source::WlDataSource,
     payload: Vec<u8>,
     window: WaylandWindowStatePtr,
+    icon: Option<DragIconSurface>,
+}
+
+struct DragIconSurface {
+    surface: wl_surface::WlSurface,
+    buffer: wl_buffer::WlBuffer,
+    pool: wl_shm_pool::WlShmPool,
+    _file: std::fs::File,
+}
+
+impl DragIconSurface {
+    fn destroy(self) {
+        self.buffer.destroy();
+        self.pool.destroy();
+        self.surface.destroy();
+    }
+}
+
+/// An anonymous file of `size` bytes for a wl_shm pool. Created under
+/// /dev/shm when present and unlinked at once, so it never outlives the fd.
+fn shm_file(size: usize) -> Option<std::fs::File> {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let dir = if std::path::Path::new("/dev/shm").is_dir() {
+        std::path::PathBuf::from("/dev/shm")
+    } else {
+        std::env::temp_dir()
+    };
+    let path = dir.join(format!(
+        "gpui-drag-icon-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    let file = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .ok()?;
+    let _ = std::fs::remove_file(&path);
+    file.set_len(size as u64).ok()?;
+    Some(file)
+}
+
+/// Upload `icon` into a wl_shm buffer on a fresh surface. The buffer is
+/// ARGB8888 with premultiplied alpha, as wl_shm requires.
+fn make_drag_icon(globals: &Globals, icon: &crate::ExternalDragIcon) -> Option<DragIconSurface> {
+    use std::os::fd::AsFd;
+    use std::os::unix::fs::FileExt;
+    let (w, h) = (icon.width, icon.height);
+    if w == 0 || h == 0 || icon.rgba.len() != (w * h * 4) as usize {
+        return None;
+    }
+    let size = (w * h * 4) as usize;
+    let file = shm_file(size)?;
+    let mut data = Vec::with_capacity(size);
+    for px in icon.rgba.chunks_exact(4) {
+        let a = u32::from(px[3]);
+        let pm = |c: u8| ((u32::from(c) * a + 127) / 255) as u8;
+        data.extend_from_slice(&[pm(px[2]), pm(px[1]), pm(px[0]), px[3]]);
+    }
+    file.write_all_at(&data, 0).ok()?;
+    let pool = globals
+        .shm
+        .create_pool(file.as_fd(), size as i32, &globals.qh, ());
+    let buffer = pool.create_buffer(
+        0,
+        w as i32,
+        h as i32,
+        (w * 4) as i32,
+        wl_shm::Format::Argb8888,
+        &globals.qh,
+        (),
+    );
+    let surface = globals.compositor.create_surface(&globals.qh, ());
+    Some(DragIconSurface {
+        surface,
+        buffer,
+        pool,
+        _file: file,
+    })
 }
 
 pub struct ClickState {
@@ -289,6 +371,7 @@ impl WaylandClientStatePtr {
         &self,
         surface: &wl_surface::WlSurface,
         paths: Vec<std::path::PathBuf>,
+        icon: Option<crate::ExternalDragIcon>,
     ) -> bool {
         let client = self.get_client();
         let mut state = client.borrow_mut();
@@ -316,16 +399,42 @@ impl WaylandClientStatePtr {
         }
         if let Some(old) = state.outgoing_drag.take() {
             old.source.destroy();
+            if let Some(icon) = old.icon {
+                icon.destroy();
+            }
         }
         let serial = state.serial_tracker.get(SerialKind::MousePress);
         let source = data_device_manager.create_data_source(&state.globals.qh, ());
         source.offer(FILE_LIST_MIME_TYPE.to_string());
         source.set_actions(DndAction::Copy | DndAction::Move);
-        data_device.start_drag(Some(&source), surface, None, serial);
+        let icon_surface = icon
+            .as_ref()
+            .and_then(|icon| make_drag_icon(&state.globals, icon));
+        data_device.start_drag(
+            Some(&source),
+            surface,
+            icon_surface.as_ref().map(|i| &i.surface),
+            serial,
+        );
+        if let (Some(i), Some(icon)) = (&icon_surface, &icon) {
+            // The role is set by start_drag; now give the surface its pixels.
+            // The hotspot is expressed as the surface offset from the pointer.
+            let (hx, hy) = (-(icon.hotspot_x as i32), -(icon.hotspot_y as i32));
+            if i.surface.version() >= wl_surface::REQ_OFFSET_SINCE {
+                i.surface.attach(Some(&i.buffer), 0, 0);
+                i.surface.offset(hx, hy);
+            } else {
+                i.surface.attach(Some(&i.buffer), hx, hy);
+            }
+            i.surface
+                .damage_buffer(0, 0, icon.width as i32, icon.height as i32);
+            i.surface.commit();
+        }
         state.outgoing_drag = Some(OutgoingDrag {
             source,
             payload: payload.into_bytes(),
             window,
+            icon: icon_surface,
         });
         true
     }
@@ -2136,6 +2245,9 @@ impl Dispatch<wl_data_source::WlDataSource, ()> for WaylandClientStatePtr {
                     // The compositor owned the pointer for the whole session, so
                     // the window never saw the button release: end its drag.
                     let drag = state.outgoing_drag.take().unwrap();
+                    if let Some(icon) = drag.icon {
+                        icon.destroy();
+                    }
                     state.button_pressed = None;
                     let input = PlatformInput::MouseUp(MouseUpEvent {
                         button: MouseButton::Left,

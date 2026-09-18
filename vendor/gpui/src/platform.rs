@@ -457,6 +457,23 @@ pub(crate) struct RequestFrameOptions {
     pub(crate) force_render: bool,
 }
 
+/// The image shown under the cursor during an external drag: RGBA8 with
+/// straight (non-premultiplied) alpha, `width * height * 4` bytes, and the
+/// pixel that sits under the pointer.
+#[derive(Clone, Debug)]
+pub struct ExternalDragIcon {
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+    /// RGBA8 pixels, straight alpha, row-major, no padding.
+    pub rgba: Vec<u8>,
+    /// X of the pixel under the pointer.
+    pub hotspot_x: u32,
+    /// Y of the pixel under the pointer.
+    pub hotspot_y: u32,
+}
+
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> Bounds<Pixels>;
     fn is_maximized(&self) -> bool;
@@ -536,7 +553,11 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn start_window_move(&self) {}
     /// Start a native drag of `paths` that other applications can receive.
     /// Returns false when unsupported, in which case the in-window drag continues.
-    fn start_external_drag(&self, _paths: Vec<std::path::PathBuf>) -> bool {
+    fn start_external_drag(
+        &self,
+        _paths: Vec<std::path::PathBuf>,
+        _icon: Option<ExternalDragIcon>,
+    ) -> bool {
         false
     }
     fn start_window_resize(&self, _edge: ResizeEdge) {}

@@ -10,13 +10,16 @@ Kept as diffs under `../patches/`, with paths rewritten to the Zed monorepo
 layout (`crates/gpui/...`) so they apply there with `git apply -p1`.
 
 - `0001-wayland-outgoing-drag.patch`: outgoing drag and drop on Wayland.
-  Adds `Window::start_external_drag(paths)` (a `PlatformWindow` method with
-  an unsupported default). The Wayland client creates a `wl_data_source`
-  offering `text/uri-list`, calls `wl_data_device::start_drag` with the last
-  mouse-press serial, answers `Send` with the URI list, and on `Cancelled`
-  or `DndFinished` synthesizes a mouse-up into the originating window so its
-  in-window drag ends. A drop back onto the same application arrives as an
-  `ExternalPaths` drop like any other. No drag icon surface yet.
+  Adds `Window::start_external_drag(paths, icon)` (a `PlatformWindow` method
+  with an unsupported default) and `ExternalDragIcon` (RGBA8 pixels plus a
+  hotspot). The Wayland client creates a `wl_data_source` offering
+  `text/uri-list`, uploads the icon into a `wl_shm` buffer on a fresh surface
+  (premultiplied ARGB8888, hotspot via `wl_surface.offset` or the attach
+  offset on older compositors), calls `wl_data_device::start_drag` with the
+  last mouse-press serial, answers `Send` with the URI list, and on
+  `Cancelled` or `DndFinished` destroys the icon and synthesizes a mouse-up
+  into the originating window so its in-window drag ends. A drop back onto
+  the same application arrives as an `ExternalPaths` drop like any other.
 
 ## Regenerating a patch
 

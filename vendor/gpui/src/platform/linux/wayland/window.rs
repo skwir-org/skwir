@@ -1049,12 +1049,16 @@ impl PlatformWindow for WaylandWindow {
         state.toplevel._move(&state.globals.seat, serial);
     }
 
-    fn start_external_drag(&self, paths: Vec<std::path::PathBuf>) -> bool {
+    fn start_external_drag(
+        &self,
+        paths: Vec<std::path::PathBuf>,
+        icon: Option<crate::ExternalDragIcon>,
+    ) -> bool {
         let state = self.borrow();
         let surface = state.surface.clone();
         let client = state.client.clone();
         drop(state);
-        client.start_external_drag(&surface, paths)
+        client.start_external_drag(&surface, paths, icon)
     }
 
     fn start_window_resize(&self, edge: crate::ResizeEdge) {
