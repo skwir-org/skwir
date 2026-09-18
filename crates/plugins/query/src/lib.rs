@@ -66,21 +66,12 @@ fn pane_of(app: &App, pane: Option<PaneId>) -> PaneId {
 pub fn location_for(expr: &str, root: Option<&std::path::Path>) -> Location {
     let has_root = expr.split_whitespace().any(|t| t.starts_with("in:"));
     let rest = match root {
-        Some(r) if !has_root => format!("{expr} in:{}", quote_path(r)),
+        Some(r) if !has_root => format!("{expr} in:{}", lang::quote(&r.to_string_lossy())),
         _ => expr.to_owned(),
     };
     Location {
         scheme: SCHEME.into(),
         rest,
-    }
-}
-
-fn quote_path(p: &std::path::Path) -> String {
-    let s = p.to_string_lossy();
-    if s.contains([' ', '(', ')', '"']) {
-        format!("\"{}\"", s.replace('"', "\\\""))
-    } else {
-        s.into_owned()
     }
 }
 
@@ -241,6 +232,28 @@ mod tests {
     use std::collections::BTreeSet;
     use std::path::Path;
     use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn generated_locations_preserve_literal_roots() {
+        for root in [
+            "/images/2026-08 Trip d'Example - Summit",
+            "/images/d'Example",
+            "/images/two words",
+            "/images/(trip)",
+            "/images/\"trip\"",
+            "/images/back\\slash",
+            "/images/back\\slash with space\\",
+            "/images/tab\there",
+            "/images/new\nline",
+            "/images/unicode\u{2003}space",
+        ] {
+            let location = location_for("type:file", Some(Path::new(root)));
+            let parsed = lang::parse(&location.rest).unwrap();
+            assert_eq!(parsed.root, Path::new(root));
+            // The canonical query printer must preserve the same root too.
+            assert_eq!(lang::parse(&parsed.to_string()).unwrap().root, parsed.root);
+        }
+    }
 
     /// A tree with varied names, sizes, mtimes, contents, and a hidden dir.
     fn tree(root: &Path) {

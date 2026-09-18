@@ -673,8 +673,12 @@ impl fmt::Display for Term {
     }
 }
 
-fn quote(s: &str) -> String {
-    if s.is_empty() || s.contains([' ', '(', ')', '"', '\'']) {
+/// Encode a literal using the tokenizer's quoting and escape rules. All query
+/// builders must use this so paths and values survive parsing unchanged.
+pub(crate) fn quote(s: &str) -> String {
+    if s.is_empty()
+        || s.contains(|c: char| c.is_whitespace() || matches!(c, '(' | ')' | '"' | '\''))
+    {
         format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
     } else {
         s.to_owned()

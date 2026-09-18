@@ -1,6 +1,6 @@
 //! bibli plugin: timeline. Files by modification time as a histogram the
 //! UI renders as a scrubbable bar chart; a bucket becomes a `query:`
-//! location (`modified:start..end in:dir`) when selected.
+//! location (`modified>=start modified<end in:dir`) when selected.
 //!
 //! Commands: `timeline.histogram { pane?, bucket?, subtree? }` returns the
 //! buckets for the pane's listing (hydrated entries only; the UI hydrates
@@ -386,17 +386,19 @@ impl Plugin for TimelinePlugin {
             "Navigate to a query for files modified in [start, end)",
             |a, app| {
                 let dir = pane_dir(app, a.pane)?;
+                // Date ranges include the whole end date in the query language;
+                // histogram buckets instead exclude their end boundary.
                 let expr = format!(
-                    "modified:{}..{} in:{}",
+                    "modified>={} modified<{}",
                     date_string(a.start),
-                    date_string(a.end),
-                    dir.display()
+                    date_string(a.end)
                 );
-                let ws = app.workspace.read();
-                let pane = a.pane.unwrap_or_else(|| ws.active_id());
-                drop(ws);
-                app.navigate(pane, &Location::parse(&format!("query:{expr}")))?;
-                Ok(Outcome::Done)
+                // Pass the root as data; the query command owns query-language
+                // quoting, including apostrophes and whitespace in paths.
+                app.dispatch(&Invocation::with_args(
+                    "query.search",
+                    &serde_json::json!({ "expr": expr, "root": dir, "pane": a.pane }),
+                ))
             },
         );
         app.registry.keymap.add(
