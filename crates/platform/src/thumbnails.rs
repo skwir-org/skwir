@@ -1,8 +1,11 @@
-//! Read-only lookup in the freedesktop thumbnail cache
-//! (`$XDG_CACHE_HOME/thumbnails/<size>/<md5 of file URI>.png`).
+//! The freedesktop thumbnail cache
+//! (`$XDG_CACHE_HOME/thumbnails/<size>/<md5 of file URI>.png`): lookup,
+//! load to pixels, and spec-compliant write-back.
 
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use bibli_core::thumbs::Image;
 
 /// Thumbnail size classes of the spec.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -40,6 +43,23 @@ impl ThumbSize {
             ThumbSize::Large => 256,
             ThumbSize::XLarge => 512,
             ThumbSize::XXLarge => 1024,
+        }
+    }
+
+    /// The cache directory for a core size.
+    pub fn from_core(s: bibli_core::thumbs::ThumbSize) -> Self {
+        match s {
+            bibli_core::thumbs::ThumbSize::Normal => ThumbSize::Normal,
+            bibli_core::thumbs::ThumbSize::Large => ThumbSize::Large,
+        }
+    }
+
+    /// The core size, for the two sizes the core requests.
+    pub fn to_core(self) -> Option<bibli_core::thumbs::ThumbSize> {
+        match self {
+            ThumbSize::Normal => Some(bibli_core::thumbs::ThumbSize::Normal),
+            ThumbSize::Large => Some(bibli_core::thumbs::ThumbSize::Large),
+            _ => None,
         }
     }
 }
@@ -104,6 +124,78 @@ pub fn lookup(path: &Path, size: ThumbSize) -> Option<PathBuf> {
     })
 }
 
+/// `lookup` then decode: the cached thumbnail as RGBA8 pixels.
+pub fn load(path: &Path, size: ThumbSize) -> Option<Image> {
+    let png = lookup(path, size)?;
+    let img = image::open(&png).ok()?.into_rgba8();
+    Some(Image {
+        width: img.width(),
+        height: img.height(),
+        rgba: img.into_raw().into(),
+    })
+}
+
+/// Write `image` into the cache for `path` per the spec: PNG with
+/// `Thumb::URI`, `Thumb::MTime`, `Thumb::Size` and `Software` text chunks,
+/// written to a temp file in the size directory and renamed into place,
+/// file mode 0600, directory 0700. Returns the thumbnail path.
+pub fn store(
+    path: &Path,
+    size: ThumbSize,
+    image: &Image,
+    mtime: SystemTime,
+) -> anyhow::Result<PathBuf> {
+    use anyhow::Context;
+    let meta =
+        std::fs::symlink_metadata(path).with_context(|| format!("stat {}", path.display()))?;
+    anyhow::ensure!(meta.is_file(), "{} is not a regular file", path.display());
+    anyhow::ensure!(path.is_absolute(), "{} is not absolute", path.display());
+    anyhow::ensure!(
+        image.width.max(image.height) <= size.pixels(),
+        "image {}x{} exceeds the {} size",
+        image.width,
+        image.height,
+        size.dir_name()
+    );
+    let root = cache_dir().context("no cache directory")?;
+    let dir = root.join(size.dir_name());
+    std::fs::create_dir_all(&dir)?;
+    set_mode(&dir, 0o700);
+    let key = key(path);
+    let secs = mtime.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let tmp = dir.join(format!(".bibli-{}-{key}.png", std::process::id()));
+    {
+        let file = std::fs::File::create(&tmp)?;
+        set_mode(&tmp, 0o600);
+        let w = std::io::BufWriter::new(file);
+        let mut enc = png::Encoder::new(w, image.width, image.height);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.add_text_chunk("Thumb::URI".into(), file_uri(path))?;
+        enc.add_text_chunk("Thumb::MTime".into(), secs.to_string())?;
+        enc.add_text_chunk("Thumb::Size".into(), meta.len().to_string())?;
+        enc.add_text_chunk("Software".into(), "bibli".into())?;
+        let mut writer = enc.write_header()?;
+        writer.write_image_data(&image.rgba)?;
+        writer.finish()?;
+    }
+    let dest = dir.join(format!("{key}.png"));
+    if let Err(e) = std::fs::rename(&tmp, &dest) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.into());
+    }
+    Ok(dest)
+}
+
+#[cfg(unix)]
+fn set_mode(p: &Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode));
+}
+
+#[cfg(not(unix))]
+fn set_mode(_p: &Path, _mode: u32) {}
+
 /// Read one `tEXt` chunk's value from a PNG without decoding the image.
 /// Only the chunk headers up to `IDAT` are visited.
 pub fn png_text_chunk(png: &Path, keyword: &str) -> Option<String> {
@@ -156,6 +248,59 @@ mod tests {
     fn uri_encoding_escapes_spaces_and_unicode() {
         let p = Path::new("/tmp/a b/é.png");
         assert_eq!(file_uri(p), "file:///tmp/a%20b/%C3%A9.png");
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn store_then_lookup_and_load_round_trip() {
+        let cache = tempfile::tempdir().unwrap();
+        // SAFETY: nextest runs each test in its own process; nothing else reads the env here.
+        unsafe { std::env::set_var("XDG_CACHE_HOME", cache.path()) };
+        let src_dir = tempfile::tempdir().unwrap();
+        let src = src_dir.path().join("photo.jpg");
+        std::fs::write(&src, b"not really a jpeg, only its mtime matters").unwrap();
+        let mtime = std::fs::metadata(&src).unwrap().modified().unwrap();
+        let img = Image {
+            width: 2,
+            height: 3,
+            rgba: vec![200u8; 2 * 3 * 4].into(),
+        };
+        let dest = store(&src, ThumbSize::Normal, &img, mtime).unwrap();
+        assert_eq!(
+            dest,
+            cache
+                .path()
+                .join("thumbnails/normal")
+                .join(format!("{}.png", key(&src)))
+        );
+        assert_eq!(
+            png_text_chunk(&dest, "Thumb::URI").as_deref(),
+            Some(file_uri(&src).as_str())
+        );
+        assert_eq!(png_text_chunk(&dest, "Software").as_deref(), Some("bibli"));
+        assert_eq!(
+            lookup(&src, ThumbSize::Normal).as_deref(),
+            Some(dest.as_path())
+        );
+        let back = load(&src, ThumbSize::Normal).unwrap();
+        assert_eq!((back.width, back.height), (2, 3));
+        assert_eq!(&back.rgba[..4], &[200, 200, 200, 200]);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&dest).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        // Touching the source makes the thumbnail stale.
+        std::fs::File::options()
+            .write(true)
+            .open(&src)
+            .unwrap()
+            .set_modified(mtime + std::time::Duration::from_secs(5))
+            .unwrap();
+        assert!(lookup(&src, ThumbSize::Normal).is_none());
     }
 
     #[test]

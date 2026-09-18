@@ -35,3 +35,6 @@ walk_parallel_us = 10_000
 stream_open_us = 500
 stream_first_batch_us = 2_500
 stream_complete_us = 12_000
+# Thumbnail pipeline over 200 images on 8 workers, wall-clock per image.
+thumbs_cold_per_image_us = 250
+thumbs_warm_per_image_us = 100

@@ -15,6 +15,9 @@ tracing.workspace = true
 open.workspace = true
 dirs.workspace = true
 md5.workspace = true
+image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff", "ico", "qoi", "tga", "pnm"] }
+png.workspace = true
+parking_lot.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 xdg-mime.workspace = true

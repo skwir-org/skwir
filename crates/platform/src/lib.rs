@@ -6,7 +6,8 @@
 //!
 //! - [`mime`]: type detection by name (no I/O) or by content.
 //! - [`icons`]: XDG icon theme lookup with caching.
-//! - [`thumbnails`]: read-only lookup in the freedesktop thumbnail cache.
+//! - [`thumbnails`]: the freedesktop thumbnail cache: lookup, load, store.
+//! - [`thumb_providers`]: thumbnail providers for the core service: cache, image decoder, external thumbnailers.
 //! - [`places`]: home, XDG user dirs, GTK bookmarks, mounted volumes.
 //! - [`open`]: open with the default application, open a terminal.
 
@@ -14,4 +15,5 @@ pub mod icons;
 pub mod mime;
 pub mod open;
 pub mod places;
+pub mod thumb_providers;
 pub mod thumbnails;

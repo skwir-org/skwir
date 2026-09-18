@@ -26,6 +26,7 @@ bibli-ui = { path = "crates/ui" }
 bibli-plugin-places = { path = "crates/plugins/places" }
 bibli-plugin-open-with = { path = "crates/plugins/open-with" }
 bibli-plugin-ops-basic = { path = "crates/plugins/ops-basic" }
+bibli-plugin-thumbnails = { path = "crates/plugins/thumbnails" }
 
 # UI toolkit (ADR-001). Pinned exactly: the API moves between releases.
 gpui = "=0.2.2"
@@ -45,6 +46,7 @@ toml = "0.9"
 rustix = { version = "1", features = ["fs"] }
 rayon = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
+png = "0.17"
 crossbeam-channel = "0.5"
 parking_lot = "0.12"
 notify = "8"
@@ -58,6 +60,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-segmentation = "1"
 jiff = "0.2"
+syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 indexmap = "2"
 proptest = "1"
 tempfile = "3"

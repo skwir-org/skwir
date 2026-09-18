@@ -43,6 +43,10 @@ pub struct Report {
     pub stream_first_batch: Stat,
     /// Through the provider: time until `Complete`.
     pub stream_complete: Stat,
+    /// Thumbnail pipeline, per image, with an empty freedesktop cache (decode + write-back).
+    pub thumbs_cold_per_image: Stat,
+    /// Thumbnail pipeline, per image, served from the freedesktop cache written by the cold run.
+    pub thumbs_warm_per_image: Stat,
 }
 
 /// Budgets file: `[profile] metric_us = max`.
@@ -191,6 +195,82 @@ fn stream(app: &bibli_core::App, path: &Path) -> (Duration, Duration, Duration) 
     (opened, first.unwrap_or(complete), complete)
 }
 
+/// Request thumbnails for `paths` through a fresh app with the thumbnails
+/// plugin; return the time until every one is `Ready`, divided by the count.
+fn thumbs_pass(paths: &[std::path::PathBuf], scratch: &Path) -> Duration {
+    use bibli_core::scheduler::Priority;
+    use bibli_core::thumbs::{ThumbRequest, ThumbSize, ThumbState};
+    let app = bibli_core::App::new(bibli_core::app::AppConfig::ephemeral(scratch)).expect("app");
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_thumbnails::ThumbnailsPlugin),
+        &app,
+    );
+    let reqs: Vec<ThumbRequest> = paths
+        .iter()
+        .map(|p| ThumbRequest {
+            entry: bibli_core::op::EntryRef::from_path(p).expect("stat"),
+            mime: Some("image/png".into()),
+            mtime: None,
+            size: ThumbSize::Normal,
+        })
+        .collect();
+    let t = Instant::now();
+    for r in &reqs {
+        app.thumbnails.get(r.clone(), Priority::Visible);
+    }
+    let mut pending: Vec<&ThumbRequest> = reqs.iter().collect();
+    while !pending.is_empty() {
+        pending.retain(
+            |r| match app.thumbnails.get((*r).clone(), Priority::Visible) {
+                ThumbState::Ready(_) => false,
+                ThumbState::Unavailable => {
+                    panic!("thumbnail unavailable: {}", r.entry.path.display())
+                }
+                ThumbState::Pending => true,
+            },
+        );
+        if !pending.is_empty() {
+            std::thread::sleep(Duration::from_micros(200));
+        }
+    }
+    t.elapsed() / u32::try_from(paths.len()).unwrap_or(1)
+}
+
+/// Cold and warm thumbnail timings over the first 200 images of `dir`,
+/// with `XDG_CACHE_HOME` pointed at a temp dir for the whole process.
+#[allow(unsafe_code)]
+fn thumbs(dir: &Path, runs: usize) -> (Stat, Stat) {
+    let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .expect("images dir")
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "png"))
+        .collect();
+    paths.sort();
+    paths.truncate(200);
+    let paths: Vec<_> = paths
+        .into_iter()
+        .map(|p| std::fs::canonicalize(p).expect("canonical"))
+        .collect();
+    let mut cold = Vec::new();
+    let mut warm = Vec::new();
+    for _ in 0..runs {
+        let cache = tempfile::tempdir().expect("tempdir");
+        // SAFETY: the bench is single-threaded at this point and owns its environment.
+        unsafe { std::env::set_var("XDG_CACHE_HOME", cache.path()) };
+        cold.push(thumbs_pass(&paths, cache.path()));
+        warm.push(thumbs_pass(&paths, cache.path()));
+    }
+    let stat_of = |mut v: Vec<Duration>| {
+        v.sort();
+        Stat {
+            min_us: v[0].as_micros() as u64,
+            median_us: v[v.len() / 2].as_micros() as u64,
+        }
+    };
+    (stat_of(cold), stat_of(warm))
+}
+
 /// Measure `profile` under `root`.
 pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
     let dir = root.join(profile.name());
@@ -221,6 +301,20 @@ pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
             median_us: v[v.len() / 2].as_micros() as u64,
         }
     };
+    let (thumbs_cold_per_image, thumbs_warm_per_image) = if profile == Profile::Images10k {
+        thumbs(&dir, runs)
+    } else {
+        (
+            Stat {
+                min_us: 0,
+                median_us: 0,
+            },
+            Stat {
+                min_us: 0,
+                median_us: 0,
+            },
+        )
+    };
     Report {
         files: profile.file_count(),
         runs,
@@ -233,6 +327,8 @@ pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
         stream_open: stat_of(opens),
         stream_first_batch: stat_of(firsts),
         stream_complete: stat_of(completes),
+        thumbs_cold_per_image,
+        thumbs_warm_per_image,
     }
 }
 
@@ -242,7 +338,7 @@ pub fn check(profile: Profile, report: &Report, budgets: &Budgets) -> bool {
         eprintln!("bench: {}: no budgets, skipped", profile.name());
         return true;
     };
-    let measured: [(&str, &Stat); 9] = [
+    let measured: [(&str, &Stat); 11] = [
         ("first_batch_us", &report.first_batch),
         ("list_getdents_us", &report.list_getdents),
         ("list_std_us", &report.list_std),
@@ -252,6 +348,8 @@ pub fn check(profile: Profile, report: &Report, budgets: &Budgets) -> bool {
         ("stream_open_us", &report.stream_open),
         ("stream_first_batch_us", &report.stream_first_batch),
         ("stream_complete_us", &report.stream_complete),
+        ("thumbs_cold_per_image_us", &report.thumbs_cold_per_image),
+        ("thumbs_warm_per_image_us", &report.thumbs_warm_per_image),
     ];
     let mut ok = true;
     for (key, stat) in measured {
