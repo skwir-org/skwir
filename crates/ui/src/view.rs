@@ -66,6 +66,7 @@ pub type ViewFactory = Arc<dyn Fn() -> Box<dyn PaneView> + Send + Sync>;
 pub fn spec(
     id: &'static str,
     title: &'static str,
+    order: i32,
     f: impl Fn() -> Box<dyn PaneView> + Send + Sync + 'static,
 ) -> ViewSpec {
     let factory: ViewFactory = Arc::new(f);
@@ -73,15 +74,81 @@ pub fn spec(
     ViewSpec {
         id: id.into(),
         title: title.into(),
+        icon: id.into(),
+        order,
+        revision: Arc::default(),
         factory,
     }
 }
 
 /// Instantiate a registered view, if its factory is one of ours.
 pub fn instantiate(spec: &ViewSpec) -> Option<Box<dyn PaneView>> {
-    spec.factory.downcast_ref::<ViewFactory>().map(|f| f())
+    if let Some(factory) = spec.factory.downcast_ref::<ViewFactory>() {
+        return Some(factory());
+    }
+    let renderer = spec
+        .factory
+        .downcast_ref::<bibli_core::registry::ViewRenderer>()?;
+    crate::views::named_renderer(renderer.0)
 }
 
 pub const LIST: &str = "list";
 pub const GRID: &str = "grid";
 pub const COLUMNS: &str = "columns";
+
+/// Reconcile by registration identity, including disable/re-enable between two frames.
+/// Returns removed/replaced ids so their associated pane state can be discarded.
+pub(crate) fn reconcile(
+    views: &mut std::collections::HashMap<&'static str, Box<dyn PaneView>>,
+    registrations: &mut std::collections::HashMap<String, Factory>,
+    specs: &[ViewSpec],
+) -> Vec<String> {
+    let mut replaced = Vec::new();
+    registrations.retain(|id, factory| {
+        let retained = specs
+            .iter()
+            .any(|s| &*s.id == id && Arc::ptr_eq(&s.factory, factory));
+        if !retained {
+            views.remove(id.as_str());
+            replaced.push(id.clone());
+        }
+        retained
+    });
+    for spec in specs {
+        if !registrations.contains_key(&*spec.id) {
+            if let Some(view) = instantiate(spec) {
+                views.insert(view.id(), view);
+            }
+            registrations.insert(spec.id.to_string(), spec.factory.clone());
+        }
+    }
+    replaced
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn plugin_views_follow_registration_lifetime() {
+        let mut views = HashMap::new();
+        let mut registrations = HashMap::new();
+        let usage = || ViewSpec::named("usage", "Usage", "usage", Arc::default());
+        let spec = usage();
+        reconcile(&mut views, &mut registrations, std::slice::from_ref(&spec));
+        assert!(views.contains_key("usage"));
+        assert!(reconcile(&mut views, &mut registrations, &[spec]).is_empty());
+        assert_eq!(
+            reconcile(&mut views, &mut registrations, &[usage()]),
+            ["usage"]
+        );
+        assert_eq!(reconcile(&mut views, &mut registrations, &[]), ["usage"]);
+        assert!(views.is_empty());
+        reconcile(&mut views, &mut registrations, &[usage()]);
+        assert!(views.contains_key("usage"));
+        let unknown = ViewSpec::named("unavailable-renderer", "Unknown", "grid", Arc::default());
+        reconcile(&mut views, &mut registrations, &[unknown]);
+        assert!(views.is_empty());
+    }
+}

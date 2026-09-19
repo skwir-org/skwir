@@ -16,7 +16,7 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
     assets!(
         "back", "up", "list", "grid", "columns", "preview", "split", "usage", "calendar", "search",
         "settings", "more", "contents", "left", "right", "plus", "minus", "fit", "width", "copy",
-        "open", "close", "chevron", "eye", "move"
+        "open", "close", "chevron", "eye", "move", "refresh"
     )
 }
 
@@ -46,8 +46,8 @@ fn tooltip(text: SharedString, font: SharedString, cx: &mut App) -> AnyView {
 }
 
 pub struct Button {
-    id: &'static str,
-    icon: &'static str,
+    id: SharedString,
+    icon: SharedString,
     title: SharedString,
     command: &'static str,
     args: serde_json::Value,
@@ -58,14 +58,14 @@ pub struct Button {
 }
 impl Button {
     pub fn new(
-        id: &'static str,
-        icon: &'static str,
+        id: impl Into<SharedString>,
+        icon: impl Into<SharedString>,
         title: impl Into<SharedString>,
         command: &'static str,
     ) -> Self {
         Self {
-            id,
-            icon,
+            id: id.into(),
+            icon: icon.into(),
             title: title.into(),
             command,
             args: serde_json::json!({}),

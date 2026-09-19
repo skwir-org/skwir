@@ -160,6 +160,43 @@ were below budget for both (3.4 ms and 2.5 ms minima respectively). The final
 full-suite run passed all budgets after a competing release build finished;
 budgets were not changed.
 
+Usage view follow-up (ADR-007): Usage is a plugin-controlled pane view, with
+registry-driven toolbar/palette entries and per-pane state. Folder navigation
+keeps the view, and selection uses the shared open/preview/context actions.
+The lazy worker caches bounded directory breakdowns, reuses unchanged branches,
+and watches scanned subtrees for changes. Coalesced notifications invalidate
+affected branches and ancestor totals; unavailable monitoring uses an explicit
+stale warning and periodic revalidation. Generations and cancellation prevent
+superseded requests publishing, and plugin disable releases worker resources.
+Ctrl+R forces recalculation without changing the existing split-pane F5 copy
+binding. Toolkit-dependent rendering stays bundled in `bibli-ui`; an external
+view SDK remains deferred. Lint and 139 tests pass (five optional native tests
+skipped), including cache reuse, deep mutations, watch expansion/root replacement,
+event bounds, eviction, alias replacement, symlink cycles, cancellation and view
+registration lifetime.
+Notification follow-up: events now refresh only intersecting panes, fallback
+deadlines belong to each active path, and lost coverage is re-established before
+reusing data. Progress checkpoints delay the visible updating indicator by
+200 ms; queued/running status remains available to command callers. Regression
+tests cover unrelated events, isolated alias fallback, independent deadlines and
+delayed/cancelled progress. A fresh debug UI check verified live totals after an
+edit and paging the image grid and large list. Settled Usage measured 133.5 MiB
+PSS and 2.0% CPU over five seconds in that debug run.
+Debug UI checks exercised folder double-click/keyboard navigation, independent
+split views, file selection/preview and automatic updates after file edits.
+Release checks covered the shared toolbar, Ctrl+R, and paging the 10k-image grid
+and 100k-entry list. In a 1189×1334 window, Usage on a small synthetic tree used
+116.0 MiB PSS and 1.2% idle CPU over five seconds; after grid/list paging the
+settled list used 175.1 MiB and 2.2% CPU. A busy-session first-frame sample was
+989 ms; these are observations, not a controlled before/after UI comparison,
+and the existing UI budget gates remain open. An initial full microbenchmark
+run passed all budgets. Later runs missed image streaming (21.6 ms against
+12 ms); the preserved pre-change binary also missed it (20.1 ms). Isolated
+15-run minima were 11.2 ms for this change and 13.6 ms for the older binary.
+A full-suite 15-run check passed every unchanged budget (image streaming
+10.4 ms). The final standard five-run `just bench-check` also passed every budget
+(image streaming 9.7 ms). Earlier runs were variable; no budgets were loosened.
+
 ---
 
 ## Phase 0 — Foundations and toolkit spike (~2 weeks)

@@ -8,7 +8,8 @@ rust-version.workspace = true
 
 [dependencies]
 bibli-core.workspace = true
-rayon.workspace = true
+notify.workspace = true
+crossbeam-channel.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true

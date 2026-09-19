@@ -25,7 +25,7 @@ pub struct TreemapItem {
 }
 
 type HoverFn = Rc<dyn Fn(Option<usize>, &mut Window, &mut App)>;
-type ClickFn = Rc<dyn Fn(usize, &mut Window, &mut App)>;
+type ClickFn = Rc<dyn Fn(usize, &MouseDownEvent, &mut Window, &mut App)>;
 
 pub struct Treemap {
     id: ElementId,
@@ -45,7 +45,7 @@ pub fn treemap(
     label_color: Hsla,
     hovered: Option<usize>,
     on_hover: impl Fn(Option<usize>, &mut Window, &mut App) + 'static,
-    on_click: impl Fn(usize, &mut Window, &mut App) + 'static,
+    on_click: impl Fn(usize, &MouseDownEvent, &mut Window, &mut App) + 'static,
 ) -> Treemap {
     Treemap {
         id: id.into(),
@@ -277,11 +277,11 @@ impl Element for Treemap {
         window.on_mouse_event(
             move |ev: &MouseDownEvent, phase: DispatchPhase, window, cx| {
                 if phase.bubble()
-                    && ev.button == MouseButton::Left
+                    && matches!(ev.button, MouseButton::Left | MouseButton::Right)
                     && hitbox.is_hovered(window)
                     && let Some(key) = hit_key(ev.position)
                 {
-                    on_click(key, window, cx);
+                    on_click(key, ev, window, cx);
                 }
             },
         );

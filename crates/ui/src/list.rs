@@ -163,7 +163,7 @@ impl Shell {
         if self.is_split() {
             kc.add("split");
         }
-        if self.usage.active {
+        if self.ui().view_id == "usage" {
             kc.add("usage");
         }
         kc

@@ -851,8 +851,9 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "bibli-core",
+ "crossbeam-channel",
+ "notify",
  "parking_lot",
- "rayon",
  "rustix 1.1.5",
  "schemars",
  "serde",

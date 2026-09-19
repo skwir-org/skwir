@@ -4,6 +4,7 @@
 
 use std::any::Any;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 use parking_lot::RwLock;
 use serde::Serialize;
@@ -55,7 +56,30 @@ pub type Factory = Arc<dyn Any + Send + Sync>;
 pub struct ViewSpec {
     pub id: Arc<str>,
     pub title: String,
+    /// Bundled symbolic toolbar icon; unknown icons use the generic view icon.
+    pub icon: String,
+    /// Display order in the view selector. Bundled base views precede plugin views.
+    pub order: i32,
     pub factory: Factory,
+    /// Producers increment this before waking the app, avoiding per-frame data queries.
+    pub revision: Arc<AtomicU64>,
+}
+
+/// A renderer supplied by the UI, selected without a toolkit dependency in the plugin.
+#[derive(Clone)]
+pub struct ViewRenderer(pub &'static str);
+
+impl ViewSpec {
+    pub fn named(id: &'static str, title: &str, icon: &str, revision: Arc<AtomicU64>) -> Self {
+        Self {
+            id: id.into(),
+            title: title.into(),
+            icon: icon.into(),
+            order: 100,
+            factory: Arc::new(ViewRenderer(id)),
+            revision,
+        }
+    }
 }
 
 /// A dockable panel (preview, shelf, properties, ...).

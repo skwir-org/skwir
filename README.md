@@ -60,6 +60,24 @@ focused switch or choice. **Default** resets a field in the draft, **Save**
 edits. PDF engine, thumbnail and shell preferences apply without a restart.
 Plugin enable/disable flags and saved-query collections are not edited here.
 
+## Usage view
+
+Choose **Usage** beside List, Grid and Columns, or press `ctrl-shift-u`.
+Click a block to select it; double-click or press Enter to open it. Folders,
+Back/Up and address navigation keep the Usage view, independently in each pane.
+Selection supports preview, context menus and normal file operations.
+
+Sizes are cached in memory and updated when files change. Unchanged cached
+folders need no new scan; **Ctrl+R** or the refresh button forces recalculation.
+The previous chart remains visible during updates. If live monitoring is
+unavailable, a warning appears and active folders are rechecked periodically.
+
+The chart shows the largest 64 children; the smaller-items block opens List on
+a double-click. Totals include hidden files, while `ctrl-h` controls their
+individual blocks. Cache entries may be evicted and are discarded on restart
+or when the Usage plugin is disabled. Enabling/disabling a view plugin adds or
+removes its views from the selector and palette.
+
 ## Tags and copying
 
 Tags live in the `user.xdg.tags` extended attribute on each file or folder.

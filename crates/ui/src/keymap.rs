@@ -30,6 +30,7 @@ pub const BULK: &str = "BulkRename";
 pub struct KeyHint {
     pub keys: String,
     pub command: String,
+    pub args: serde_json::Value,
 }
 
 /// Defaults used when no plugin contributed bindings (`keys, command, when`).
@@ -104,7 +105,6 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("tab", "ui.focus_other_pane", Some("pane split")),
     ("f5", "ui.copy_other", Some("pane split")),
     ("f6", "ui.move_other", Some("pane split")),
-    ("escape", "ui.usage_close", Some("pane usage")),
     ("enter", "ui.review_apply", Some("review")),
     ("escape", "ui.review_cancel", Some("review")),
     ("up", "ui.jump_up", Some("jump")),
@@ -244,6 +244,7 @@ pub fn install(app: &App, cx: &mut gpui::App) -> Vec<KeyHint> {
         hints.push(KeyHint {
             keys: keys.clone(),
             command: name.clone(),
+            args: args.clone(),
         });
         bindings.push(KeyBinding::new(
             &keys,

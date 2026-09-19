@@ -34,7 +34,6 @@ use crate::view::{self, Nav, PaneView};
 use crate::views::grid::ZOOMS;
 use crate::{
     address, jump, menu, palette, preview, prompts, renamebulk, review, sidebar, status, timeline,
-    usage,
 };
 
 /// UI state of one pane: focus, address bar, cached order, views.
@@ -47,8 +46,10 @@ pub struct PaneUi {
     pub list: ListState,
     /// Instantiated views by id; the active one is taken out during render.
     pub views: HashMap<&'static str, Box<dyn PaneView>>,
+    view_registrations: HashMap<String, bibli_core::registry::Factory>,
     pub view_id: &'static str,
     pub grid_rows_visible: usize,
+    pub usage: UsageState,
     _sub: Subscription,
 }
 
@@ -76,7 +77,6 @@ pub struct Shell {
     /// Plans proposed by background work, oldest first; the front is shown.
     pub reviews: VecDeque<Plan>,
     pub review_focus: Option<FocusHandle>,
-    pub usage: UsageState,
     pub timeline: TimelineState,
     pub status: StatusState,
     pub last_search: String,
@@ -141,7 +141,6 @@ impl Shell {
             settings: None,
             reviews: VecDeque::new(),
             review_focus: None,
-            usage: UsageState::default(),
             timeline: TimelineState::default(),
             status: StatusState::default(),
             last_search: String::new(),
@@ -201,9 +200,18 @@ impl Shell {
             address,
             address_shown: String::new(),
             list: ListState::default(),
+            view_registrations: self
+                .app
+                .registry
+                .views
+                .all()
+                .into_iter()
+                .map(|s| (s.id.to_string(), s.factory))
+                .collect(),
             views,
             view_id: view::LIST,
             grid_rows_visible: 4,
+            usage: UsageState::default(),
             _sub: sub,
         }
     }
@@ -260,6 +268,10 @@ impl Shell {
             // Close the other pane; keep the active one.
             let other = self.other_pane();
             if let Some(o) = other {
+                let _ = self.app.dispatch(&Invocation::with_args(
+                    "usage.release",
+                    &serde_json::json!({"pane":o}),
+                ));
                 self.app.workspace.write().close_pane(o);
                 self.panes.retain(|p| p.id != o);
             }
@@ -327,7 +339,45 @@ impl Shell {
         Some(r)
     }
 
+    /// The registry controls availability; panes retain only live renderers.
+    pub fn available_views(&self) -> Vec<bibli_core::registry::ViewSpec> {
+        let mut specs: Vec<_> = self
+            .app
+            .registry
+            .views
+            .all()
+            .into_iter()
+            .filter(|s| self.ui().views.contains_key(&*s.id))
+            .collect();
+        specs.sort_by_key(|s| s.order);
+        specs
+    }
+
+    pub fn view_shortcut(&self, id: &str) -> Option<String> {
+        self.key_hints
+            .iter()
+            .find(|h| {
+                h.command == "ui.view"
+                    && h.args.get("id").and_then(serde_json::Value::as_str) == Some(id)
+            })
+            .map(|h| h.keys.clone())
+    }
+
+    fn sync_views(&mut self) {
+        let specs = self.app.registry.views.all();
+        for pane in &mut self.panes {
+            let replaced = view::reconcile(&mut pane.views, &mut pane.view_registrations, &specs);
+            if replaced.iter().any(|id| id == "usage") {
+                pane.usage = UsageState::default();
+            }
+            if !pane.views.contains_key(pane.view_id) {
+                pane.view_id = view::LIST;
+            }
+        }
+    }
+
     fn set_view(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.sync_views();
         let known = self.ui().views.keys().find(|k| **k == id).copied();
         match known {
             Some(k) => {
@@ -387,6 +437,9 @@ impl Shell {
         if name == "open" && self.app.commands.get("open").is_none() {
             self.open_fallback(window, cx);
             return;
+        }
+        if name == "refresh" && self.ui().view_id == "usage" {
+            self.refresh_usage(cx);
         }
         let inv = Invocation {
             name: name.into(),
@@ -542,8 +595,9 @@ impl Shell {
             "rename_bulk_case" => self.bulk_cycle_case(cx),
             "review_apply" => self.review_apply(cx),
             "review_cancel" => self.review_cancel(cx),
-            "usage" => self.open_usage(window, cx),
-            "usage_close" => self.close_usage(cx),
+            "usage" => self.set_view("usage", cx),
+            "usage_close" => self.set_view(view::LIST, cx),
+            "usage_refresh" => self.refresh_usage(cx),
             "timeline" => self.toggle_timeline(cx),
             "timeline_bucket" => {
                 let b = arg("bucket").unwrap_or_else(|| "month".into());
@@ -599,7 +653,6 @@ impl Shell {
                 self.sort_by(key, cx);
             }
             "view" => {
-                self.close_usage(cx);
                 let id = arg("id").unwrap_or_else(|| view::LIST.into());
                 self.set_view(&id, cx);
             }
@@ -755,6 +808,7 @@ impl Shell {
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let t0 = Instant::now();
         let report = self.app.pump_report();
+        self.sync_views();
         self.app.thumbnails.tick();
         self.drain_executor(cx);
         for n in self.app.take_notifications() {
@@ -810,7 +864,9 @@ impl Shell {
         }
         self.sync_preview(window, cx);
         self.sync_reader(cx);
-        self.sync_usage(cx);
+        for id in self.panes.iter().map(|p| p.id).collect::<Vec<_>>() {
+            self.with_pane(id, |shell| shell.sync_usage(cx));
+        }
         self.sync_timeline(cx);
         self.sync_shelf(cx);
     }
@@ -841,9 +897,7 @@ impl Shell {
         let theme = cx.global::<Theme>().clone();
         let active = self.app.workspace.read().active_id() == id;
         let address_bar = address::render_address(self, window, cx);
-        let body = if self.usage.active && active {
-            usage::render(self, cx)
-        } else {
+        let body = {
             match self.take_view() {
                 Some(mut v) => {
                     let el = v.render(self, window, cx);

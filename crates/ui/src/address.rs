@@ -5,7 +5,6 @@ use crate::{
     shell::Shell,
     theme::Theme,
     toolbar::{self, Button},
-    view,
 };
 use gpui::{AnyElement, Context, Window, div, prelude::*, px};
 
@@ -25,27 +24,14 @@ impl Shell {
     }
 }
 
-fn tools(shell: &Shell) -> [Button; 2] {
-    [
-        Button::new(
-            "usage-toggle",
-            "usage",
-            "Disk usage · Ctrl+Shift+U",
-            if shell.usage.active {
-                "ui.usage_close"
-            } else {
-                "ui.usage"
-            },
-        )
-        .active(shell.usage.active),
-        Button::new(
-            "timeline-toggle",
-            "calendar",
-            "Timeline · Ctrl+Shift+L",
-            "ui.timeline",
-        )
-        .active(shell.timeline.open),
-    ]
+fn tools(shell: &Shell) -> [Button; 1] {
+    [Button::new(
+        "timeline-toggle",
+        "calendar",
+        "Timeline · Ctrl+Shift+L",
+        "ui.timeline",
+    )
+    .active(shell.timeline.open)]
 }
 
 fn app_row(
@@ -65,23 +51,33 @@ fn app_row(
         .border_1()
         .border_color(theme.border)
         .bg(theme.bg);
-    for (id, icon, title, label, view) in [
-        ("seg-list", "list", "List view · Ctrl+1", "List", view::LIST),
-        ("seg-grid", "grid", "Grid view · Ctrl+2", "Grid", view::GRID),
-        (
-            "seg-cols",
-            "columns",
-            "Columns view · Ctrl+3",
-            "Columns",
-            view::COLUMNS,
-        ),
-    ] {
-        let button = Button::new(id, icon, title, "ui.view")
-            .args(serde_json::json!({"id":view}))
-            .active(shell.ui().view_id == view && !shell.usage.active);
+    for spec in shell
+        .available_views()
+        .into_iter()
+        .filter(|s| mode != 2 || &*s.id == shell.ui().view_id)
+    {
+        let icon = if toolbar::asset(&format!("toolbar/{}.svg", spec.icon)).is_some() {
+            spec.icon
+        } else {
+            "grid".into()
+        };
+        let button = Button::new(
+            format!("view-{}", spec.id),
+            icon,
+            format!(
+                "{} view{}",
+                spec.title,
+                shell
+                    .view_shortcut(&spec.id)
+                    .map_or_else(String::new, |key| format!(" · {key}"))
+            ),
+            "ui.view",
+        )
+        .args(serde_json::json!({"id": spec.id}))
+        .active(shell.ui().view_id == &*spec.id);
         views = views.child(
             if mode == 0 {
-                button.label(label)
+                button.label(spec.title)
             } else {
                 button
             }
@@ -122,7 +118,7 @@ fn app_row(
     }
     if mode < 2 {
         bar = bar.child(toolbar::separator(&theme));
-        for (button, label) in tools(shell).into_iter().zip(["Usage", "Timeline"]) {
+        for (button, label) in tools(shell).into_iter().zip(["Timeline"]) {
             bar = bar.child(
                 if mode == 0 {
                     button.label(label)
@@ -183,7 +179,32 @@ pub fn render_toolbar(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
     });
     if let Some(popup) = &shell.toolbar_menu {
         let mut panel = toolbar::popup_panel(popup, "ui.toolbar_menu", &theme, cx);
-        for (button, label) in tools(shell).into_iter().zip(["Disk usage", "Timeline"]) {
+        for spec in shell.available_views() {
+            let icon = if toolbar::asset(&format!("toolbar/{}.svg", spec.icon)).is_some() {
+                spec.icon
+            } else {
+                "grid".into()
+            };
+            panel = panel.child(
+                Button::new(
+                    format!("menu-view-{}", spec.id),
+                    icon,
+                    format!(
+                        "{} view{}",
+                        spec.title,
+                        shell
+                            .view_shortcut(&spec.id)
+                            .map_or_else(String::new, |key| format!(" · {key}"))
+                    ),
+                    "ui.view",
+                )
+                .label(spec.title)
+                .args(serde_json::json!({"id":spec.id}))
+                .active(&*spec.id == shell.ui().view_id)
+                .render(shell, cx),
+            );
+        }
+        for (button, label) in tools(shell).into_iter().zip(["Timeline"]) {
             panel = panel.child(button.label(label).render(shell, cx));
         }
         panel = panel.child(

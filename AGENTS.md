@@ -147,6 +147,13 @@ docs/              PLAN.md, adr/
 - `crates/bibli/src/main.rs` wires plugins; `crates/ui/src/shell.rs` routes
   commands and maintains pane UI state. Built-in list/grid/columns views are
   in `crates/ui/src/views/`, not separate plugin crates.
+- Plugin views register owner-tagged `ViewSpec::named` descriptors; their GPUI
+  renderers implement `PaneView` in `bibli-ui` and are resolved in
+  `views::named_renderer`. Do not hard-code plugin views into the toolbar or
+  palette. Reconcile registration identity, including disable/re-enable between
+  frames, and fall back to List when the active view disappears. Publish data,
+  advance the descriptor revision, then wake the app; never query plugin data
+  on every frame. See ADR-007 for the Usage cache and watcher lifecycle.
 - New plugins need the workspace dependency alias, the binary dependency and
   registration, and an entry in `crates/bibli/tests/plugins_toggle.rs`.
   Extend that test's snapshot when adding a provider scheme or a new kind of
@@ -174,6 +181,10 @@ docs/              PLAN.md, adr/
   an open location, and cancel superseded requests. Only accept results for the
   current request (e.g. the generation check in `crates/ui/src/preview.rs`);
   cancellation alone does not prevent stale results.
+- Scope filesystem invalidation and fallback deadlines to affected subscriptions.
+  Cache eviction is not a content change; an unrelated event must not rescan every
+  pane. Keep queued/running state separate from delayed visible progress so quick
+  cache hits do not flash a busy indicator.
 - Entries arrive before metadata. Treat missing fields as unknown, request
   hydration in batches, and react to `Updated` events instead of stat-ing each
   row during rendering. For virtual locations, use `OpenLocation::path_of` or

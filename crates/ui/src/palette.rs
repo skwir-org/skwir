@@ -50,9 +50,6 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.mkdir_prompt", "{}", "New folder…"),
     ("ui.confirm_delete", "{}", "Delete permanently…"),
     ("ui.toggle_hidden", "{}", "Toggle hidden files"),
-    ("ui.view", r#"{"id":"list"}"#, "View: List"),
-    ("ui.view", r#"{"id":"grid"}"#, "View: Grid"),
-    ("ui.view", r#"{"id":"columns"}"#, "View: Columns"),
     ("ui.sort", r#"{"key":"name"}"#, "Sort by name"),
     ("ui.sort", r#"{"key":"size"}"#, "Sort by size"),
     ("ui.sort", r#"{"key":"modified"}"#, "Sort by date modified"),
@@ -111,7 +108,6 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.jump", "{}", "Jump…"),
     ("ui.rename_bulk_prompt", "{}", "Rename several…"),
     ("ui.tags_prompt", "{}", "Tags…"),
-    ("ui.usage", "{}", "Disk usage"),
     ("ui.timeline", "{}", "Timeline"),
     ("ui.split", "{}", "Split pane"),
     ("ui.focus_other_pane", "{}", "Focus other pane"),
@@ -142,6 +138,15 @@ impl Shell {
                 required: c.required_args(),
             })
             .collect();
+        for spec in self.available_views() {
+            items.push(PaletteItem {
+                name: "ui.view".into(),
+                args: serde_json::json!({"id": spec.id}),
+                title: format!("{} view", spec.title),
+                keys: self.view_shortcut(&spec.id),
+                required: Vec::new(),
+            });
+        }
         for (name, args, title) in UI_COMMANDS {
             items.push(PaletteItem {
                 name: (*name).into(),
