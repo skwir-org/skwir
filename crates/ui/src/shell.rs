@@ -50,6 +50,7 @@ pub struct PaneUi {
     pub view_id: &'static str,
     pub grid_rows_visible: usize,
     pub usage: UsageState,
+    pub loading: crate::loading::State,
     _sub: Subscription,
 }
 
@@ -212,6 +213,7 @@ impl Shell {
             view_id: view::LIST,
             grid_rows_visible: 4,
             usage: UsageState::default(),
+            loading: crate::loading::State::default(),
             _sub: sub,
         }
     }
@@ -870,6 +872,7 @@ impl Shell {
             }
         }
         self.pane = saved;
+        self.sync_loading(cx);
         if report.applied > 0 || resorted_any {
             tracing::debug!(
                 applied = report.applied,
@@ -929,6 +932,7 @@ impl Shell {
                     .into_any_element(),
             }
         };
+        let message = crate::loading::message(self, id);
         let file_area = self.pane_container(body, cx);
         let strip = if active {
             timeline::render(self, cx)
@@ -947,6 +951,18 @@ impl Shell {
                     .border_color(if active { theme.accent } else { theme.border })
             })
             .child(address_bar)
+            .when_some(message, |d, message| {
+                d.child(
+                    div()
+                        .flex_none()
+                        .px_3()
+                        .py_2()
+                        .text_sm()
+                        .text_color(theme.text_muted)
+                        .bg(theme.surface)
+                        .child(message),
+                )
+            })
             .child(file_area)
             .children(strip)
             .into_any_element()

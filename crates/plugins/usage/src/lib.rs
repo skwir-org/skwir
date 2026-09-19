@@ -140,6 +140,12 @@ fn target(app: &App, pane: Option<PaneId>) -> PaneId {
 
 impl UsagePlugin {
     fn start(&self, app: &App, pane: PaneId, path: PathBuf, force: bool) -> anyhow::Result<()> {
+        let location_lifetime = app
+            .workspace
+            .read()
+            .pane(pane)
+            .ok_or_else(|| anyhow::anyhow!("no such pane"))?
+            .location_lifetime();
         let mut runtime = self.runtime.lock();
         if runtime.is_none() {
             let (tx, rx) = crossbeam_channel::unbounded();
@@ -166,7 +172,7 @@ impl UsagePlugin {
             });
         }
         let r = runtime.as_mut().expect("runtime started");
-        let cancel = r.cancel.child();
+        let cancel = r.cancel.linked(&location_lifetime);
         if let Some(previous) = r.requests.insert(pane, cancel.clone()) {
             previous.cancel();
         }
@@ -249,6 +255,7 @@ impl Plugin for UsagePlugin {
                     .runtime
                     .lock()
                     .as_ref()
+                    .filter(|r| !r.requests.get(&pane).is_some_and(CancelToken::is_cancelled))
                     .and_then(|r| r.shared.statuses.lock().get(&pane).cloned())
                     .unwrap_or_default();
                 Ok(Outcome::Value(serde_json::to_value(status)?))
@@ -368,6 +375,45 @@ mod tests {
         app.plugins.add(plugin.clone(), &app);
         (tmp, app, plugin, root)
     }
+    #[test]
+    fn navigation_back_and_pane_close_cancel_only_their_location_requests() {
+        let (_tmp, app, plugin, root) = setup();
+        let next = root.join("Next folder");
+        std::fs::create_dir(&next).unwrap();
+        let pane = app.workspace.read().active_id();
+        let other = app.workspace.write().add_pane();
+        let scan_token = |pane| {
+            app.dispatch(&Invocation::with_args(
+                "usage.scan",
+                &serde_json::json!({"path":root,"pane":pane}),
+            ))
+            .unwrap();
+            plugin.runtime.lock().as_ref().unwrap().requests[&pane].clone()
+        };
+        app.navigate(pane, &Location::from_path(&root)).unwrap();
+        let first = scan_token(pane);
+        let sibling = scan_token(other);
+        app.dispatch(&Invocation::with_args(
+            "navigate",
+            &serde_json::json!({"location":next,"pane":pane}),
+        ))
+        .unwrap();
+        assert!(first.is_cancelled());
+        assert!(!sibling.is_cancelled());
+        assert!(!status(&app, pane).scanning);
+        let second = scan_token(pane);
+        app.dispatch(&Invocation::with_args(
+            "back",
+            &serde_json::json!({"pane":pane}),
+        ))
+        .unwrap();
+        assert!(second.is_cancelled());
+        let third = scan_token(pane);
+        assert!(app.workspace.write().close_pane(pane));
+        assert!(third.is_cancelled());
+        assert!(!sibling.is_cancelled());
+    }
+
     #[test]
     fn navigation_reuses_deep_breakdowns_and_isolates_panes() {
         let (_tmp, app, _, root) = setup();

@@ -142,3 +142,93 @@ fn wait(
         std::thread::sleep(Duration::from_millis(5));
     }
 }
+
+#[test]
+fn pending_opens_report_errors_asynchronously_and_can_be_replaced() {
+    use bibli_core::{App, app::AppConfig, cancel::CancelToken, command::Invocation};
+    let tmp = tempfile::tempdir().unwrap();
+    let config = AppConfig {
+        workers: 1,
+        ..AppConfig::ephemeral(tmp.path())
+    };
+    let app = App::new(config).unwrap();
+    let pane = active(&app);
+    let (entered, ready) = std::sync::mpsc::channel();
+    let (release, blocked) = std::sync::mpsc::channel();
+    app.scheduler.spawn(
+        Priority::Visible,
+        "test.gate",
+        CancelToken::new(),
+        move || {
+            entered.send(()).unwrap();
+            let _ = blocked.recv_timeout(Duration::from_secs(10));
+        },
+    );
+    ready.recv_timeout(Duration::from_secs(5)).unwrap();
+    let missing = tmp.path().join("Sleeping drive's missing folder");
+    app.dispatch(&Invocation::with_args(
+        "navigate",
+        &serde_json::json!({"location":missing}),
+    ))
+    .unwrap();
+    let first = app
+        .workspace
+        .read()
+        .pane(pane)
+        .unwrap()
+        .open
+        .clone()
+        .unwrap();
+    let lifetime = app.workspace.read().pane(pane).unwrap().location_lifetime();
+    assert!(
+        !app.workspace
+            .read()
+            .pane(pane)
+            .unwrap()
+            .listing
+            .is_complete()
+    );
+    assert!(
+        first.events().is_empty(),
+        "opening must wait on the worker, not the caller"
+    );
+    app.dispatch(&Invocation::with_args(
+        "navigate",
+        &serde_json::json!({"location":tmp.path()}),
+    ))
+    .unwrap();
+    assert!(lifetime.is_cancelled());
+    release.send(()).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    assert!(
+        first.events().is_empty(),
+        "cancelled open must not publish late events"
+    );
+    app.dispatch(&Invocation::new("back")).unwrap();
+    wait(&app, pane, |listing| listing.error().is_some());
+    assert_eq!(
+        app.workspace
+            .read()
+            .pane(pane)
+            .unwrap()
+            .location()
+            .unwrap()
+            .path(),
+        Some(missing.clone())
+    );
+    std::fs::create_dir(&missing).unwrap();
+    std::fs::write(missing.join("Awake.txt"), b"example").unwrap();
+    app.dispatch(&Invocation::new("refresh")).unwrap();
+    wait(&app, pane, |listing| {
+        listing.is_complete() && listing.find_by_name("Awake.txt".as_ref()).is_some()
+    });
+    assert!(
+        app.workspace
+            .read()
+            .pane(pane)
+            .unwrap()
+            .listing
+            .error()
+            .is_none()
+    );
+}

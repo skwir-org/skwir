@@ -44,11 +44,13 @@ Snapshots have `incomplete` totals and striped blocks; the UI labels them as
 counted so far, rather than implying that unknown folders are empty. Completed
 subtrees enter the cache; partial or unreadable breakdowns do not. Filesystem
 events queued during a scan reconcile changes between the two listing passes.
-For a cold watch root, an initial shallow snapshot precedes recursive watch
-registration, which itself walks the tree. This snapshot is never cached; the
-scanner rereads the current directory after registration to cover changes made
-during setup. This costs an additional shallow pass on first open but prevents
-watch setup from leaving the view blank. Subsequent progress snapshots are
+For a cold watch root, an initial shallow snapshot precedes root watch
+registration. This snapshot is never cached; the scanner rereads the current
+directory after registration to cover changes made during setup. Descendant
+watches are installed as the cancellable scanner visits each directory, before
+reading it, rather than asking the watcher backend to walk the whole subtree.
+This retains the additional shallow pass on first open, without an uninterruptible
+recursive registration phase. Subsequent progress snapshots are
 throttled to the existing 200 ms interval. Progressive rendering is only used
 until a location's first scan finishes. Later refreshes retain the finished
 chart and replace it atomically when fresh totals are ready; automatic refreshes
@@ -57,7 +59,9 @@ over the retained chart. Snapshot completion is separate from total completeness
 since read errors can leave a finished result incomplete. Hover identity and
 block colors survive size-based reordering.
 
-Recursive watches are established before scanning, without following symlinks.
+Recursive coverage uses individual non-recursive watches, without following
+symlinks. The scanner also registers newly discovered subdirectories before
+reading them; directory replacement removes obsolete watch registrations.
 Coalesced events invalidate affected subtrees and ancestor totals; only panes
 whose paths intersect those events refresh, retaining their previous display.
 Cache eviction alone is not a reason to refresh an unrelated pane. At most four
@@ -73,9 +77,15 @@ detect replacement of a symlink in an ancestor path. Interior symlinks remain
 leaves. Local event accumulation is bounded; overflowing it invalidates the
 whole cache.
 
-Requests carry a pane, generation and cancellation token. Cancelled or replaced
-requests cannot publish results. The command status distinguishes queued/running
-work (`scanning`) from visible progress (`updating`): scan checkpoints publish
+Requests carry a pane, generation and cancellation token linked to that pane's
+location lifetime. Navigation, Back and pane close cancel old work immediately,
+without waiting for the UI to notice a different path. Completed child caches
+remain usable; partial results never become completed cache entries. Cancellation
+is checked before and after each watch registration and throughout traversal;
+an already-issued operating-system I/O call must still return before that worker
+can stop. Cancelled or replaced requests cannot publish results. The command
+status distinguishes queued/running work (`scanning`) from visible progress
+(`updating`): scan checkpoints publish
 progress only after 200 ms, so cache hits and brief refreshes do not flash an
 updating indicator. Closing a view releases its subscription;
 disabling the plugin cancels the worker and drops all cached state and watches

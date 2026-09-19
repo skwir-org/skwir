@@ -107,8 +107,49 @@ impl Changes {
     }
 }
 
+/// Check before advancing the OS iterator, not only after it yielded an entry.
+fn entries<'a>(
+    path: &Path,
+    cancel: &'a CancelToken,
+) -> anyhow::Result<impl Iterator<Item = std::io::Result<std::fs::DirEntry>> + use<'a>> {
+    anyhow::ensure!(!cancel.is_cancelled(), "Scan cancelled");
+    let mut entries = std::fs::read_dir(path)?;
+    Ok(std::iter::from_fn(move || {
+        if cancel.is_cancelled() {
+            None
+        } else {
+            entries.next()
+        }
+    }))
+}
+
+/// Install one watch immediately before reading each directory. The native
+/// backend never receives a recursive request (which hides an uncancellable walk).
+struct Monitor<'a> {
+    watcher: &'a mut dyn Watcher,
+    registrations: &'a mut HashSet<PathBuf>,
+    failed: bool,
+}
+impl Monitor<'_> {
+    fn watch(&mut self, path: &Path) {
+        if self.registrations.contains(path) {
+            return;
+        }
+        if self
+            .watcher
+            .watch(path, RecursiveMode::NonRecursive)
+            .is_ok()
+        {
+            self.registrations.insert(path.to_path_buf());
+        } else {
+            self.failed = true;
+        }
+    }
+}
+
 struct Scanner<'a> {
     cache: &'a mut Cache,
+    monitor: Option<Monitor<'a>>,
     request: &'a Request,
     shared: &'a Shared,
     dirs: u64,
@@ -179,6 +220,15 @@ fn entry_node(entry: &std::fs::DirEntry) -> std::io::Result<Node> {
 }
 
 impl Scanner<'_> {
+    fn watch(&mut self, path: &Path) -> anyhow::Result<()> {
+        anyhow::ensure!(!self.request.cancel.is_cancelled(), "Scan cancelled");
+        if let Some(monitor) = &mut self.monitor {
+            monitor.watch(path);
+        }
+        anyhow::ensure!(!self.request.cancel.is_cancelled(), "Scan cancelled");
+        Ok(())
+    }
+
     fn progress(&mut self, now: Instant) {
         if now.duration_since(self.last_progress) < PROGRESS_INTERVAL {
             return;
@@ -239,7 +289,9 @@ impl Scanner<'_> {
 
     fn list_root(&mut self) -> anyhow::Result<()> {
         let path = &self.request.path;
+        self.watch(path)?;
         let metadata = std::fs::metadata(path)?;
+        anyhow::ensure!(!self.request.cancel.is_cancelled(), "Scan cancelled");
         anyhow::ensure!(metadata.is_dir(), "Disk usage needs a directory");
         self.preview = Some(Progress {
             tree: Node {
@@ -262,7 +314,7 @@ impl Scanner<'_> {
         // A second streaming pass finds directories without retaining an
         // unbounded queue of paths or stat-ing every file twice.
         self.dirs += 1;
-        for entry in std::fs::read_dir(path)? {
+        for entry in entries(path, &self.request.cancel)? {
             anyhow::ensure!(!self.request.cancel.is_cancelled(), "Scan cancelled");
             match entry.and_then(|entry| entry_node(&entry)) {
                 Ok(child) => {
@@ -288,7 +340,7 @@ impl Scanner<'_> {
     fn scan_children(&mut self) -> anyhow::Result<()> {
         let path = &self.request.path;
         for entry in if self.preview.as_ref().expect("root preview").tree.dirs > 0 {
-            Some(std::fs::read_dir(path)?)
+            Some(entries(path, &self.request.cancel)?)
         } else {
             None
         }
@@ -330,7 +382,7 @@ impl Scanner<'_> {
     }
 
     fn directory(&mut self, path: &Path, depth: usize) -> anyhow::Result<Node> {
-        anyhow::ensure!(!self.request.cancel.is_cancelled(), "Scan cancelled");
+        self.watch(path)?;
         if let Some(node) = self.cache.get(path) {
             if let Some(branch) = self.preview.as_mut().and_then(|p| p.branch.as_mut()) {
                 if depth == 1 {
@@ -372,7 +424,7 @@ impl Scanner<'_> {
             branch.id = node.id;
         }
         self.progress(Instant::now());
-        let entries = std::fs::read_dir(path)?;
+        let entries = entries(path, &self.request.cancel)?;
         let initial_errors = self.errors;
         self.dirs += 1;
         for entry in entries {
@@ -435,6 +487,7 @@ impl Scanner<'_> {
                 self.progress(Instant::now());
             }
         }
+        anyhow::ensure!(!self.request.cancel.is_cancelled(), "Scan cancelled");
         trim(&mut node);
         node.incomplete = self.errors != initial_errors;
         if !node.incomplete {
@@ -485,10 +538,11 @@ impl Worker {
         {
             return;
         }
-        // Native recursive watch setup itself walks the tree. Show the visible
-        // level before that work; these unmonitored observations are never
-        // cached and root() reads them again once coverage is established.
+        // Show the visible level before registering watches. These unmonitored
+        // observations are never cached; root() rereads after the root watch.
+        // Descendant watches are installed cooperatively as Scanner visits them.
         let mut scanner = Scanner {
+            monitor: None,
             cache: &mut self.cache,
             request,
             shared: &self.shared,
@@ -503,7 +557,10 @@ impl Worker {
         }
     }
 
-    fn watch(&mut self, path: &Path) -> bool {
+    fn watch(&mut self, path: &Path, cancel: &CancelToken) -> bool {
+        if cancel.is_cancelled() {
+            return false;
+        }
         // Watching the resolved inode cannot detect replacement of an alias in
         // this path's ancestors. Revalidate aliases periodically instead.
         if std::fs::canonicalize(path).is_ok_and(|resolved| resolved != path) {
@@ -515,9 +572,11 @@ impl Worker {
         let Some(watcher) = self.watcher.as_mut() else {
             return false;
         };
-        if watcher.watch(path, RecursiveMode::Recursive).is_err() {
-            // Recursive registration can fail after adding part of a subtree.
-            // Removing that partial parent can also remove shared child watches.
+        if cancel.is_cancelled() {
+            return false;
+        }
+        if watcher.watch(path, RecursiveMode::NonRecursive).is_err() {
+            // Discard stale coverage if registering this root fails.
             let _ = watcher.unwatch(path);
             self.roots.retain(|root| !root.starts_with(path));
             self.unwatch(path);
@@ -555,9 +614,9 @@ impl Worker {
                 .iter()
                 .any(|root| active.request.path.starts_with(root))
     }
-    fn scan(&mut self, request: &Request, watched: bool) {
+    fn scan(&mut self, request: &Request, watched: bool) -> bool {
         if request.cancel.is_cancelled() {
-            return;
+            return watched;
         }
         if request.force || !watched {
             self.cache.invalidate(&request.path);
@@ -575,7 +634,17 @@ impl Worker {
         // Do not publish a busy state for every cache hit or short update.
         // Scanner progress wakes the UI only once real work lasts long enough.
         let started = Instant::now();
+        let monitor = if watched {
+            self.watcher.as_mut().map(|watcher| Monitor {
+                watcher,
+                registrations: &mut self.registrations,
+                failed: false,
+            })
+        } else {
+            None
+        };
         let mut scanner = Scanner {
+            monitor,
             cache: &mut self.cache,
             request,
             shared: &self.shared,
@@ -588,6 +657,10 @@ impl Worker {
         let tree = scanner.root();
         let scanned_dirs = scanner.dirs;
         let errors = scanner.errors;
+        let watched = watched && !scanner.monitor.as_ref().is_some_and(|m| m.failed);
+        if !watched {
+            self.cache.invalidate(&request.path);
+        }
         let mut statuses = self.shared.statuses.lock();
         if !request.cancel.is_cancelled()
             && let Some(s) = statuses
@@ -636,6 +709,7 @@ impl Worker {
         }
         drop(statuses);
         self.shared.changed();
+        watched
     }
     fn changes(&mut self, changes: Changes) -> HashSet<PaneId> {
         let affected = self
@@ -661,7 +735,9 @@ impl Worker {
         for path in changes.paths {
             self.cache.invalidate(&path);
             // Also handle removal/replacement of an ancestor of a watched root.
-            if self.roots.iter().any(|root| root.starts_with(&path)) {
+            if self.registrations.contains(&path)
+                || self.roots.iter().any(|root| root.starts_with(&path))
+            {
                 self.roots.retain(|root| !root.starts_with(&path));
                 self.unwatch(&path);
             }
@@ -678,12 +754,13 @@ impl Worker {
                     // Never reuse data collected during a gap in coverage, even
                     // when re-registering succeeds on this attempt.
                     self.cache.invalidate(&state.request.path);
-                    state.watchable = self.watch(&state.request.path);
+                    state.watchable = self.watch(&state.request.path, &state.request.cancel);
                 }
-                self.scan(&state.request, self.monitored(state));
+                state.watchable = self.scan(&state.request, self.monitored(state));
                 state.last_scan = Instant::now();
             }
         }
+        active.retain(|_, state| !state.request.cancel.is_cancelled());
         self.active = active;
     }
 }
@@ -742,8 +819,8 @@ pub(super) fn run(
                     if request.cancel.is_cancelled() {
                         continue;
                     }
-                    let covered = worker.watch(&request.path);
-                    worker.scan(&request, covered);
+                    let covered = worker.watch(&request.path, &request.cancel);
+                    let covered = worker.scan(&request, covered);
                     worker.active.insert(
                         request.pane,
                         Active {
@@ -795,6 +872,7 @@ mod tests {
 
     fn scanner<'a>(cache: &'a mut Cache, request: &'a Request, shared: &'a Shared) -> Scanner<'a> {
         Scanner {
+            monitor: None,
             cache,
             request,
             shared,
@@ -831,6 +909,80 @@ mod tests {
             }
         });
         (shared, rx)
+    }
+
+    struct InterruptingWatcher {
+        cancel: CancelToken,
+        calls: usize,
+        stop_after: usize,
+    }
+    impl Watcher for InterruptingWatcher {
+        fn new<F: notify::EventHandler>(_: F, _: notify::Config) -> notify::Result<Self> {
+            unreachable!("constructed with a request token")
+        }
+        fn watch(&mut self, _: &Path, mode: RecursiveMode) -> notify::Result<()> {
+            assert_eq!(
+                mode,
+                RecursiveMode::NonRecursive,
+                "recursive registration bypasses cancellation"
+            );
+            self.calls += 1;
+            if self.calls == self.stop_after {
+                self.cancel.cancel();
+            }
+            Ok(())
+        }
+        fn unwatch(&mut self, _: &Path) -> notify::Result<()> {
+            Ok(())
+        }
+        fn kind() -> notify::WatcherKind {
+            notify::WatcherKind::NullWatcher
+        }
+    }
+
+    #[test]
+    fn navigation_interrupts_watch_setup_before_visiting_the_remaining_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        for i in 0..12 {
+            let dir = tmp.path().join(format!("Folder-{i}"));
+            std::fs::create_dir(&dir).unwrap();
+            std::fs::write(dir.join("example.txt"), b"data").unwrap();
+        }
+        let request = request(0, tmp.path().into());
+        let shared = shared();
+        let mut cache = Cache::default();
+        let mut registrations = HashSet::new();
+        let mut watcher = InterruptingWatcher {
+            cancel: request.cancel.clone(),
+            calls: 0,
+            stop_after: 2,
+        };
+        let mut scan = scanner(&mut cache, &request, &shared);
+        scan.monitor = Some(Monitor {
+            watcher: &mut watcher,
+            registrations: &mut registrations,
+            failed: false,
+        });
+        assert!(scan.root().is_err());
+        drop(scan);
+        assert_eq!(watcher.calls, 2);
+        assert!(cache.dirs.is_empty());
+        assert_eq!(registrations.len(), 2);
+        // A replacement request can finish with existing watches, without
+        // accepting the cancelled root as a cached result.
+        let fresh = self::request(0, tmp.path().into());
+        watcher.stop_after = usize::MAX;
+        let mut scan = scanner(&mut cache, &fresh, &shared);
+        scan.monitor = Some(Monitor {
+            watcher: &mut watcher,
+            registrations: &mut registrations,
+            failed: false,
+        });
+        let tree = scan.root().unwrap();
+        assert_eq!(tree.size, 48);
+        assert_eq!(tree.dirs, 12);
+        assert!(!tree.incomplete);
+        assert_eq!(registrations.len(), 13);
     }
 
     #[test]
@@ -1171,6 +1323,7 @@ mod tests {
         });
         let started = Instant::now();
         let mut scanner = Scanner {
+            monitor: None,
             cache: &mut cache,
             request: &request,
             shared: &shared,

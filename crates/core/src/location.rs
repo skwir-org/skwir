@@ -239,7 +239,10 @@ impl Listing {
                     self.entries.shift_remove(&id);
                 }
             }
-            ListingEvent::Complete => self.complete = true,
+            ListingEvent::Complete => {
+                self.complete = true;
+                self.error = None;
+            }
             ListingEvent::Error(e) => self.error = Some(e),
         }
         self.version += 1;

@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use indexmap::IndexSet;
 
+use crate::cancel::CancelToken;
 use crate::entry::EntryId;
 use crate::location::{Listing, Location, OpenLocation, SortSpec};
 
@@ -91,6 +92,7 @@ impl Selection {
 pub struct Pane {
     pub id: PaneId,
     pub open: Option<Arc<dyn OpenLocation>>,
+    location_lifetime: CancelToken,
     pub listing: Listing,
     pub selection: Selection,
     /// Sort and hidden-file settings; views render `listing.sorted(sort)`.
@@ -105,12 +107,28 @@ impl Pane {
         Pane {
             id,
             open: None,
+            location_lifetime: CancelToken::new(),
             listing: Listing::default(),
             selection: Selection::default(),
             sort: SortSpec::default(),
             history: Vec::new(),
             history_pos: 0,
         }
+    }
+
+    /// Work tied to this location stops immediately on navigation or pane close.
+    pub fn location_lifetime(&self) -> CancelToken {
+        self.location_lifetime.child()
+    }
+
+    pub(crate) fn replace_open(&mut self, open: Arc<dyn OpenLocation>) {
+        self.location_lifetime.cancel();
+        self.location_lifetime = CancelToken::new();
+        if let Some(old) = self.open.replace(open) {
+            old.close();
+        }
+        self.listing = Listing::default();
+        self.selection.clear();
     }
 
     pub fn location(&self) -> Option<&Location> {
@@ -126,6 +144,15 @@ impl Pane {
             self.selection.retain_in(&self.listing);
         }
         n
+    }
+}
+
+impl Drop for Pane {
+    fn drop(&mut self) {
+        self.location_lifetime.cancel();
+        if let Some(open) = &self.open {
+            open.close();
+        }
     }
 }
 

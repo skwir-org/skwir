@@ -134,8 +134,8 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
     let items = match (is_query, complete) {
         (true, false) => format!("searching… {} results", format::thousands(count)),
         (true, true) => format!("{} results", format::thousands(count)),
-        (false, false) => format!("{} items…", format::thousands(count)),
-        (false, true) => format!("{} items", format::thousands(count)),
+        (false, false) if error.is_none() => format!("Loading… {} items", format::thousands(count)),
+        (false, _) => format!("{} items", format::thousands(count)),
     };
     let mut bar = div()
         .h(px(26.))

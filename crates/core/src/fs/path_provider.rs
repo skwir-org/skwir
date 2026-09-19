@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crossbeam_channel::Receiver;
@@ -39,7 +40,7 @@ impl LocationProvider for PathProvider {
         } else {
             std::env::current_dir()?.join(path)
         };
-        PathLocation::open(location.clone(), path, ctx)
+        Ok(PathLocation::open(location.clone(), path, ctx))
     }
 }
 
@@ -50,14 +51,18 @@ struct Shared {
     names: Mutex<HashMap<EntryId, OsString>>,
     tx: EventSink,
     ctx: OpenContext,
+    _watcher: Mutex<Option<watch::WatchHandle>>,
 }
 
 /// An open directory.
 pub struct PathLocation {
     location: Location,
-    shared: Arc<Shared>,
+    dir: PathBuf,
+    ctx: OpenContext,
+    tx: EventSink,
+    shared: Arc<Mutex<Option<Arc<Shared>>>>,
+    opening: Arc<AtomicBool>,
     rx: Receiver<ListingEvent>,
-    watcher: Mutex<Option<watch::WatchHandle>>,
 }
 
 fn open_dirfd(path: &Path) -> rustix::io::Result<OwnedFd> {
@@ -79,59 +84,103 @@ fn kind_of(t: FileType) -> EntryKind {
 }
 
 impl PathLocation {
-    fn open(
-        location: Location,
-        dir: PathBuf,
-        ctx: OpenContext,
-    ) -> anyhow::Result<Arc<dyn OpenLocation>> {
-        let dirfd = open_dirfd(&dir)?;
-        let st = rustix::fs::fstat(&dirfd)?;
+    fn open(location: Location, dir: PathBuf, ctx: OpenContext) -> Arc<Self> {
         let (tx, rx) = ctx.channel();
-        let shared = Arc::new(Shared {
-            dir,
-            dirfd,
-            dev: st.st_dev,
-            names: Mutex::new(HashMap::new()),
-            tx,
-            ctx,
-        });
-        let watcher = match watch::watch(&shared.dir, Duration::from_millis(50), &shared.ctx.cancel)
-        {
-            Ok((w, changes)) => {
-                let s = Arc::clone(&shared);
-                std::thread::Builder::new()
-                    .name("bibli-watch-apply".into())
-                    .spawn(move || {
-                        for c in changes {
-                            if s.ctx.cancel.is_cancelled() {
-                                break;
-                            }
-                            s.apply_changes(c);
-                        }
-                    })
-                    .expect("spawn watch apply thread");
-                Some(w)
-            }
-            Err(e) => {
-                tracing::warn!(dir = %shared.dir.display(), "watch unavailable: {e}");
-                None
-            }
-        };
-        let this = Arc::new(PathLocation {
+        let this = Arc::new(Self {
             location,
-            shared,
+            dir,
+            ctx,
+            tx,
             rx,
-            watcher: Mutex::new(watcher),
+            shared: Arc::new(Mutex::new(None)),
+            opening: Arc::new(AtomicBool::new(false)),
         });
-        this.start_listing(None);
-        Ok(this)
+        this.start_open();
+        this
+    }
+
+    fn start_open(&self) {
+        if self.ctx.cancel.is_cancelled() || self.opening.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let dir = self.dir.clone();
+        let ctx = self.ctx.clone();
+        let tx = self.tx.clone();
+        let slot = Arc::clone(&self.shared);
+        let opening = Arc::clone(&self.opening);
+        self.ctx.scheduler.spawn(
+            Priority::Visible,
+            "fs.open",
+            ctx.cancel.clone(),
+            move || {
+                let result = (|| -> anyhow::Result<()> {
+                    // Opening/stat-ing a sleeping disk and installing a watch are I/O.
+                    // Publish the handle first, then stream entries on this worker.
+                    let dirfd = open_dirfd(&dir)?;
+                    if ctx.cancel.is_cancelled() {
+                        return Ok(());
+                    }
+                    let st = rustix::fs::fstat(&dirfd)?;
+                    if ctx.cancel.is_cancelled() {
+                        return Ok(());
+                    }
+                    let (watcher, changes) =
+                        match watch::watch(&dir, Duration::from_millis(50), &ctx.cancel) {
+                            Ok((watcher, changes)) => (Some(watcher), Some(changes)),
+                            Err(error) => {
+                                tracing::warn!("watch unavailable: {error}");
+                                (None, None)
+                            }
+                        };
+                    let shared = Arc::new(Shared {
+                        dir,
+                        dirfd,
+                        dev: st.st_dev,
+                        names: Mutex::new(HashMap::new()),
+                        tx: tx.clone(),
+                        ctx: ctx.clone(),
+                        _watcher: Mutex::new(watcher),
+                    });
+                    {
+                        let mut slot = slot.lock();
+                        if ctx.cancel.is_cancelled() {
+                            return Ok(());
+                        }
+                        *slot = Some(Arc::clone(&shared));
+                    }
+                    if let Some(changes) = changes {
+                        let s = Arc::clone(&shared);
+                        std::thread::Builder::new()
+                            .name("bibli-watch-apply".into())
+                            .spawn(move || {
+                                for change in changes {
+                                    if s.ctx.cancel.is_cancelled() {
+                                        break;
+                                    }
+                                    s.apply_changes(change);
+                                }
+                            })?;
+                    }
+                    shared.list(&ctx.cancel, None);
+                    Ok(())
+                })();
+                opening.store(false, Ordering::Release);
+                if !ctx.cancel.is_cancelled()
+                    && let Err(error) = result
+                {
+                    tx.send(ListingEvent::Error(error.to_string()));
+                }
+            },
+        );
     }
 
     fn start_listing(&self, previous: Option<Vec<EntryId>>) {
-        let s = Arc::clone(&self.shared);
-        let cancel = s.ctx.cancel.child();
-        self.shared
-            .ctx
+        let Some(s) = self.shared.lock().clone() else {
+            self.start_open();
+            return;
+        };
+        let cancel = self.ctx.cancel.child();
+        self.ctx
             .scheduler
             .spawn(Priority::Visible, "fs.list", cancel.clone(), move || {
                 s.list(&cancel, previous);
@@ -143,7 +192,10 @@ impl Shared {
     /// Stream the directory in batches. `previous` (on refresh) lets us emit
     /// `Removed` for entries that disappeared.
     fn list(&self, cancel: &CancelToken, previous: Option<Vec<EntryId>>) {
-        let dir = match Dir::read_from(&self.dirfd) {
+        if cancel.is_cancelled() {
+            return;
+        }
+        let mut dir = match Dir::read_from(&self.dirfd) {
             Ok(d) => d,
             Err(e) => {
                 self.tx.send(ListingEvent::Error(e.to_string()));
@@ -152,7 +204,10 @@ impl Shared {
         };
         let mut batch = Vec::with_capacity(self.ctx.batch_size);
         let mut seen: Vec<EntryId> = Vec::new();
-        for ent in dir {
+        while !cancel.is_cancelled() {
+            let Some(ent) = dir.next() else {
+                break;
+            };
             if cancel.is_cancelled() {
                 return;
             }
@@ -183,6 +238,9 @@ impl Shared {
                 }
             }
         }
+        if cancel.is_cancelled() {
+            return;
+        }
         if !batch.is_empty() && !self.tx.send(ListingEvent::Added(batch)) {
             return;
         }
@@ -205,6 +263,9 @@ impl Shared {
         let mut updated = Vec::with_capacity(ids.len());
         let mut gone = Vec::new();
         for &id in ids {
+            if self.ctx.cancel.is_cancelled() {
+                return;
+            }
             let Some(name) = self.names.lock().get(&id).cloned() else {
                 continue;
             };
@@ -240,6 +301,9 @@ impl Shared {
         let mut added = Vec::new();
         let mut removed = Vec::new();
         for name in c.names {
+            if self.ctx.cancel.is_cancelled() {
+                return;
+            }
             let mut e = Entry::new(EntryId { dev: 0, ino: 0 }, name.clone(), EntryKind::Unknown);
             if stat_entry(&self.dirfd, &mut e) {
                 let mut names = self.names.lock();
@@ -293,32 +357,43 @@ impl OpenLocation for PathLocation {
         if ids.is_empty() {
             return;
         }
-        let s = Arc::clone(&self.shared);
+        let Some(s) = self.shared.lock().clone() else {
+            return;
+        };
         let ids = ids.to_vec();
-        self.shared
-            .ctx
+        self.ctx
             .scheduler
-            .spawn(priority, "fs.stat", s.ctx.cancel.child(), move || {
+            .spawn(priority, "fs.stat", self.ctx.cancel.child(), move || {
                 s.hydrate(&ids);
             });
     }
 
     fn path_of(&self, id: EntryId) -> Option<PathBuf> {
-        self.shared
-            .names
-            .lock()
-            .get(&id)
-            .map(|n| self.shared.dir.join(n))
+        let shared = self.shared.lock().clone()?;
+        let name = shared.names.lock().get(&id).cloned()?;
+        Some(shared.dir.join(name))
     }
 
     fn refresh(&self) {
-        let prev: Vec<EntryId> = self.shared.names.lock().keys().copied().collect();
-        self.start_listing(Some(prev));
+        let previous = self
+            .shared
+            .lock()
+            .as_ref()
+            .map(|s| s.names.lock().keys().copied().collect());
+        self.start_listing(previous);
     }
 
     fn close(&self) {
-        self.shared.ctx.cancel.cancel();
-        self.watcher.lock().take();
+        self.ctx.cancel.cancel();
+        if let Some(shared) = self.shared.lock().take() {
+            // Native watcher and directory descriptor cleanup stays off the UI.
+            self.ctx.scheduler.spawn(
+                Priority::Background,
+                "fs.close",
+                CancelToken::new(),
+                move || drop(shared),
+            );
+        }
     }
 }
 

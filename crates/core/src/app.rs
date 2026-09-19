@@ -220,15 +220,12 @@ impl App {
         let p = ws
             .pane_mut(pane)
             .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-        if let Some(old) = p.open.take() {
-            old.close();
-        }
-        p.listing = crate::location::Listing::default();
-        p.selection.clear();
+        p.replace_open(open);
         p.history.truncate(p.history_pos + 1);
         p.history.push(location.clone());
         p.history_pos = p.history.len() - 1;
-        p.open = Some(open);
+        drop(ws);
+        self.wake();
         Ok(())
     }
 
@@ -509,13 +506,10 @@ mod builtin {
                     let p = ws
                         .pane_mut(pane)
                         .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-                    if let Some(old) = p.open.take() {
-                        old.close();
-                    }
-                    p.listing = crate::location::Listing::default();
-                    p.selection.clear();
+                    p.replace_open(open);
                     p.history_pos = pos;
-                    p.open = Some(open);
+                    drop(ws);
+                    app.wake();
                 }
                 Ok(Outcome::Done)
             },

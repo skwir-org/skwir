@@ -245,6 +245,30 @@ across fallback scans and retention during Ctrl+R. The standard `just bench-chec
 passed every unchanged budget. Fallback scanning itself is unchanged and remains
 necessary when monitoring is unavailable.
 
+Navigation cancellation follow-up: Usage requests now follow the pane's location
+lifetime, so navigation, Back and pane closure cancel them without waiting for
+the next UI synchronization. Reopening the same path starts a fresh request.
+Native recursive watch setup is replaced by individual directory registrations
+during the cancellable traversal; completed cached branches remain reusable.
+An already-issued operating-system read must still return before its worker can
+observe cancellation. Filesystem open/stat/watch setup now runs on the scheduler,
+allowing navigation and repainting while a drive wakes. A one-shot 200 ms delay
+shows a per-pane loading message for slow listings; asynchronous open errors
+appear in that pane and refresh can recover. Regression tests cover cancellation
+during watch registration, independent panes, Back/close, pending opens, stale
+results and recovery after a missing directory is created.
+Validation: strict lint and all 177 default tests pass (six optional native-tool
+tests skipped), with the affected Usage/listing tests repeated after the final
+cancellation changes. An isolated Xvfb debug run injected a five-second directory
+open delay and verified the loading banner, navigation while that read was still
+blocked, open errors, switching away from an unfinished Usage scan, and reopening
+the same path. The 10k-image grid and 100k-entry list were also paged; after their
+background work settled, CPU measured 1.3% over three seconds. This used software
+rendering and synthetic files, not a physical sleeping drive; UI memory budgets
+were not remeasured. The first microbenchmark run narrowly missed image streaming
+(12.66 ms against 12 ms); the final standard `just bench-check` passed every
+unchanged budget (9.62 ms image streaming).
+
 ---
 
 Video playback follow-up (ADR-008): `preview-media` now opens an optional

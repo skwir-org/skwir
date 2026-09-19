@@ -183,6 +183,15 @@ docs/              PLAN.md, adr/
   an open location, and cancel superseded requests. Only accept results for the
   current request (e.g. the generation check in `crates/ui/src/preview.rs`);
   cancellation alone does not prevent stale results.
+- Pane-owned background work links to `Pane::location_lifetime`; navigation,
+  Back and pane close cancel it independently of the next UI render. Replace
+  locations through `Pane::replace_open` so no navigation path misses this.
+  Directory open/stat/watch setup belongs on workers too: a sleeping disk can
+  block any of those calls. Opening failures arrive as listing errors.
+- Usage installs non-recursive watches as its cancellable scanner visits each
+  directory, before reading it. Never delegate a whole recursive walk to a
+  watcher API: it cannot observe our request cancellation. Cache only completed
+  breakdowns, and invalidate data collected without reliable watch coverage.
 - Scope filesystem invalidation and fallback deadlines to affected subscriptions.
   Cache eviction is not a content change; an unrelated event must not rescan every
   pane. Keep queued/running state separate from delayed visible progress so quick

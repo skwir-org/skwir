@@ -47,6 +47,7 @@ pub struct UsageState {
     pub status: Option<Status>,
     pub hover_path: Option<PathBuf>,
     root: Option<PathBuf>,
+    location_lifetime: Option<bibli_core::CancelToken>,
     revision: Option<u64>,
 }
 
@@ -68,9 +69,23 @@ impl Shell {
             .read()
             .pane(self.pane)
             .and_then(|p| p.location().and_then(bibli_core::Location::path));
-        if self.ui().usage.root != dir {
+        if self.ui().usage.root != dir
+            || self
+                .ui()
+                .usage
+                .location_lifetime
+                .as_ref()
+                .is_some_and(bibli_core::CancelToken::is_cancelled)
+        {
+            let location_lifetime = self
+                .app
+                .workspace
+                .read()
+                .pane(self.pane)
+                .map(bibli_core::workspace::Pane::location_lifetime);
             self.ui_mut().usage = UsageState {
                 root: dir.clone(),
+                location_lifetime,
                 ..UsageState::default()
             };
             let command = if dir.is_some() {

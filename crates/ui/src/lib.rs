@@ -28,6 +28,7 @@ mod inspector_text;
 pub mod jump;
 pub mod keymap;
 pub mod list;
+mod loading;
 mod media;
 pub mod menu;
 pub mod palette;

@@ -1,8 +1,9 @@
 //! Directory watching, coalesced into named changes.
 //!
 //! On Linux this talks to inotify directly: adding a non-recursive watch is
-//! two syscalls with no thread round trip, which keeps `open` in the tens of
-//! microseconds. Elsewhere the `notify` crate is used.
+//! two syscalls with no thread round trip. Registration still belongs on a
+//! worker: resolving a watched path can wait for a sleeping drive. Elsewhere
+//! the `notify` crate is used.
 
 use std::collections::HashSet;
 use std::ffi::OsString;
