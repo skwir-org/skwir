@@ -660,6 +660,17 @@ impl Shell {
                 let dir = arg("dir").unwrap_or_else(|| "reset".into());
                 self.zoom_step(&dir, cx);
             }
+            "media_control" => self.media_control(args, cx),
+            "media_scrub" => self.media_scrub(args, cx),
+            "media_fullscreen" => self.media_fullscreen(window, cx),
+            "media_controls" => self.media_toggle_controls(window, cx),
+            "media_escape" => {
+                if self.preview.media.fullscreen.is_some() {
+                    self.media_exit_fullscreen(window, cx);
+                } else {
+                    self.preview_close(window, cx);
+                }
+            }
             "preview_page" => self.preview_page(
                 args.get("delta")
                     .and_then(serde_json::Value::as_i64)
@@ -864,6 +875,7 @@ impl Shell {
         }
         self.sync_preview(window, cx);
         self.sync_reader(cx);
+        self.sync_media(window, cx);
         for id in self.panes.iter().map(|p| p.id).collect::<Vec<_>>() {
             self.with_pane(id, |shell| shell.sync_usage(cx));
         }

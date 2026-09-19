@@ -25,6 +25,17 @@ layout (`crates/gpui/...`) so they apply there with `git apply -p1`.
   explicit `f32` suffix. Rust 1.98 warns that the implicit fallback becomes a
   hard error (`float_literal_f32_fallback`, rust-lang/rust#154024).
 
+- `0003-blade-atlas-retirement.patch`: removing the last image from a Blade
+  texture cancels queued initialization/uploads before recycling its atlas
+  index. Physical destruction waits for the renderer's previous GPU submission
+  to complete; texture views are destroyed before their textures. This fixes
+  rapid preview replacement between UI drawing and Wayland presentation,
+  including index reuse by a smaller replacement texture. Two ignored GPU
+  regression tests cover removal before flush and slot reuse. They live in
+  `platform::blade::blade_atlas::tests` and require a working GPU context.
+  On Linux, run `just atlas-check` in the development shell. The runner uses an
+  isolated copy so GPUI's dev dependencies do not enter bibli's workspace.
+
 ## Regenerating a patch
 
     G=$(ls -d ~/.cargo/registry/src/*/gpui-0.2.2)

@@ -117,6 +117,33 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
 /// Builtin bindings that carry arguments (`keys, command, args json, when`).
 const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     (
+        "space",
+        "ui.media_control",
+        r#"{"action":"play"}"#,
+        Some("MediaPlayer"),
+    ),
+    (
+        "left",
+        "ui.preview_seek",
+        r#"{"delta":-5}"#,
+        Some("MediaPlayer"),
+    ),
+    (
+        "right",
+        "ui.preview_seek",
+        r#"{"delta":5}"#,
+        Some("MediaPlayer"),
+    ),
+    (
+        "m",
+        "ui.media_control",
+        r#"{"action":"mute"}"#,
+        Some("MediaPlayer"),
+    ),
+    ("f", "ui.media_fullscreen", "{}", Some("MediaPlayer")),
+    ("c", "ui.media_controls", "{}", Some("MediaPlayer")),
+    ("escape", "ui.media_escape", "{}", Some("MediaPlayer")),
+    (
         "pageup",
         "ui.preview_page",
         r#"{"delta":-1}"#,

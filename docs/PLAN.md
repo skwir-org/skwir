@@ -229,6 +229,64 @@ necessary when monitoring is unavailable.
 
 ---
 
+Video playback follow-up (ADR-008): `preview-media` now opens an optional
+GStreamer worker session, initially paused, with play/pause, seek dragging,
+volume/mute, speed, audio/subtitle tracks, fullscreen and keyboard controls in
+the shared preview frame. `auto` retains FFmpeg still previews when playback is
+unavailable; explicit GStreamer selection reports missing dependencies. The Nix
+shell includes playback plugins and `just run` builds the worker. Frame delivery
+uses one reusable RAM-backed slot and a latest-frame mailbox; provider disable,
+selection changes and closing cancel the session without waiting on the UI.
+The worker owns A/V synchronization, and events wake the UI. Output is capped
+at a 1920-pixel side; native-resolution 4K output, GPU buffer sharing, external
+subtitle-file selection and a second backend are deferred. The synthetic check
+in `tools/media/check.py` covers paused seeking, two audio tracks, embedded
+subtitles, volume, rate, end-of-stream and replay. Validation and measurements
+are recorded in `docs/video-playback.md`. Lint, 148 default tests and the
+filesystem/thumbnail benchmark gate pass. Native checks cover both resolutions
+and the real audio backend with muted output; audible lip sync is unverified.
+The historical UI memory gate remains open. Native checks also compare paused
+pixels with subtitles on/off. Track changes re-preroll and restore position and
+play state, avoiding paused output-reconfiguration races.
+
+Video-switching crash follow-up: rapid selection changes exposed a Blade atlas
+lifetime bug in vendored GPUI. An evicted texture could still have queued
+initialization/uploads, and its index could be reused before those uploads ran.
+Patch 0003 cancels queued work before recycling the index and retires native
+textures after the previous GPU submission completes. Two explicit GPU
+regressions cover removal before presentation and reuse by a smaller texture;
+`just atlas-check` runs them without adding GPUI dev dependencies to the workspace.
+Lint, 148 default tests, both GPU tests and the benchmark gate pass. The release
+app survived 320 rapid video selections and reaped its workers on preview close;
+the unpatched build reproduced the reported panic after 49 switches. Scrolling
+50 pages each in the 10k-image grid and 100k-entry list also passed; the final
+five-second idle CPU sample was 1.4% of one core.
+
+Video interaction follow-up: seek intent remains visible across mouse release;
+both status and frame messages reject older command generations. Flushing seeks
+retain the target until the entire pipeline finishes preroll. Initial paused
+previews retain the shared thumbnail service's image until Play or Seek.
+Fullscreen uses a black, aspect-preserving canvas that upscales small sources,
+with an overlaid toolbar collapsed by its button or C. Real-window checks verified
+320×180 upscaling to a 2560×1440 display, black side bars for 320×240 video,
+controls, restoration of window size, and a stable seek bar across mouse release.
+Five repeated native seek/track tests plus a 1080p run passed. Lint, 148 default
+tests and all microbenchmark budgets pass; the optional native-tool tests remain
+skipped in the default suite.
+
+Video poster/controls follow-up: fullscreen controls use a cancellable one-second
+inactivity timer; pointer movement reveals them, while hover, scrubbing, open
+menus and keyboard focus prevent hiding. A cached native-resolution FFmpeg
+poster replaces the thumbnail asynchronously, bounded to 8192 pixels per side
+without upscaling. Starting playback or seeking cancels extraction and rejects
+late results. Posters sample a representative timestamp independently of the
+desktop thumbnail, whose timestamp is unavailable. Native checks verify exact
+3840×2160 output and cache reuse, no upscaling of small input, and cancellation.
+The separate Hide/Show button is removed. Real-window checks cover idle and
+playing video, movement resetting the deadline, hover protection, menu focus
+and dismissal, and fullscreen exit. Lint, 148 default tests, two explicit native
+video tests and the benchmark gate pass.
+
 ## Phase 0 — Foundations and toolkit spike (~2 weeks)
 
 Goal: a repo that can measure itself, and a toolkit decision backed by numbers.

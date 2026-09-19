@@ -20,6 +20,7 @@ png.workspace = true
 parking_lot.workspace = true
 tempfile.workspace = true
 serde_json.workspace = true
+crossbeam-channel.workspace = true
 rustix = { workspace = true, features = ["process"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

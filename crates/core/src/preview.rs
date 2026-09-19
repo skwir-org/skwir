@@ -37,6 +37,14 @@ pub trait PreviewProvider: Send + Sync {
     fn id(&self) -> &'static str;
     fn accepts(&self, request: &PreviewRequest) -> bool;
     fn render(&self, request: &PreviewRequest, cancel: &CancelToken) -> anyhow::Result<Preview>;
+    fn open_media(
+        &self,
+        _request: &PreviewRequest,
+        _lifetime: &CancelToken,
+        _wake: crate::location::Waker,
+    ) -> anyhow::Result<Option<Arc<dyn crate::media::MediaSession>>> {
+        Ok(None)
+    }
     fn open_document(
         &self,
         _request: &PreviewRequest,
@@ -60,6 +68,26 @@ pub struct Previews {
 }
 
 impl Previews {
+    /// Blocking startup on a scheduler worker; subsequent controls are nonblocking.
+    pub fn open_media(
+        &self,
+        request: &PreviewRequest,
+        lifetime: &CancelToken,
+        wake: crate::location::Waker,
+    ) -> anyhow::Result<Option<Arc<dyn crate::media::MediaSession>>> {
+        let providers = self.providers.read().clone();
+        for p in providers {
+            let lifetime = lifetime.linked(&p.lifetime);
+            anyhow::ensure!(!lifetime.is_cancelled(), "preview cancelled");
+            if p.provider.accepts(request) {
+                let session = p.provider.open_media(request, &lifetime, wake)?;
+                anyhow::ensure!(!lifetime.is_cancelled(), "preview cancelled");
+                return Ok(session);
+            }
+        }
+        Ok(None)
+    }
+
     /// Open an optional reader session on a worker. Its lifetime follows both
     /// the preview and the provider registration, independent of page requests.
     pub fn open_document(
@@ -148,6 +176,15 @@ mod tests {
         fn accepts(&self, _: &PreviewRequest) -> bool {
             true
         }
+        fn open_media(
+            &self,
+            request: &PreviewRequest,
+            lifetime: &CancelToken,
+            _: crate::location::Waker,
+        ) -> anyhow::Result<Option<Arc<dyn crate::media::MediaSession>>> {
+            self.render(request, lifetime)?;
+            Ok(None)
+        }
         fn open_document(
             &self,
             request: &PreviewRequest,
@@ -187,15 +224,19 @@ mod tests {
             seconds: None,
             max_side: 128,
         };
-        for attempt in 0..4 {
+        for attempt in 0..6 {
             previews.register("test", provider.clone());
             let service = Arc::clone(&previews);
             let req = request.clone();
             let worker = std::thread::spawn(move || {
                 if attempt < 2 {
                     service.render(&req, &CancelToken::new()).map(|_| ())
-                } else {
+                } else if attempt < 4 {
                     service.open_document(&req, &CancelToken::new()).map(|_| ())
+                } else {
+                    service
+                        .open_media(&req, &CancelToken::new(), Arc::new(|| {}))
+                        .map(|_| ())
                 }
             });
             rx.recv_timeout(Duration::from_secs(2)).unwrap();

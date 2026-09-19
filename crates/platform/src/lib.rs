@@ -13,6 +13,7 @@
 
 pub mod document;
 pub mod icons;
+pub mod media;
 pub mod mime;
 pub mod open;
 pub mod places;

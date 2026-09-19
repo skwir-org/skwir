@@ -27,6 +27,7 @@ pub mod document;
 pub mod entry;
 pub mod fs;
 pub mod location;
+pub mod media;
 pub mod metadata;
 pub mod op;
 pub mod plugin;

@@ -15,6 +15,7 @@ use parking_lot::{Mutex, MutexGuard};
 use crate::process;
 
 const MAX_SIDE: u32 = 2048;
+const MAX_VIDEO_SIDE: u32 = 8192;
 const MAX_ARTIFACT: u64 = 64 * 1024 * 1024;
 const RENDER_TIMEOUT: Duration = Duration::from_secs(15);
 const CONVERT_TIMEOUT: Duration = Duration::from_secs(45);
@@ -50,12 +51,12 @@ fn read_artifact(path: &Path) -> anyhow::Result<Vec<u8>> {
 fn decode_preview(bytes: &[u8], max_side: u32) -> anyhow::Result<Image> {
     let reader = || image::ImageReader::new(Cursor::new(bytes)).with_guessed_format();
     let (w, h) = reader()?.into_dimensions()?;
+    let side = max_side.clamp(64, MAX_VIDEO_SIDE);
     anyhow::ensure!(
-        w > 0 && h > 0 && w <= MAX_SIDE && h <= MAX_SIDE,
+        w > 0 && h > 0 && w <= side && h <= side,
         "preview dimensions exceed limit"
     );
     let image = reader()?.decode()?;
-    let side = max_side.clamp(64, MAX_SIDE);
     // Renderers already size their output. Avoid resampling every pixel again,
     // including on cache hits, when it already fits the requested bounds.
     let image = if w > side || h > side {
@@ -149,19 +150,41 @@ fn finish(
 }
 
 pub struct MediaPreviews {
+    backend: String,
     cache: CacheSlot,
     gate: Mutex<()>,
 }
 impl MediaPreviews {
+    pub fn with_backend(mut self, backend: String) -> Self {
+        self.backend = backend;
+        self
+    }
     pub fn new(cache: CacheSlot) -> Self {
         Self {
             cache,
+            backend: "auto".into(),
             gate: Mutex::new(()),
         }
     }
 }
 
 impl PreviewProvider for MediaPreviews {
+    fn open_media(
+        &self,
+        req: &PreviewRequest,
+        lifetime: &CancelToken,
+        wake: bibli_core::location::Waker,
+    ) -> anyhow::Result<Option<std::sync::Arc<dyn bibli_core::media::MediaSession>>> {
+        if self.backend == "stills" {
+            return Ok(None);
+        }
+        let session = crate::media::WorkerSession::open(req.entry.resolve()?, lifetime, wake)?;
+        anyhow::ensure!(
+            session.is_some() || self.backend == "auto",
+            "Install bibli-media-worker and GStreamer playback plugins, or select the stills backend"
+        );
+        Ok(session)
+    }
     fn id(&self) -> &'static str {
         "preview-media"
     }
@@ -181,6 +204,7 @@ impl PreviewProvider for MediaPreviews {
                 tool_stamp(&ffprobe)?,
                 req.seconds,
                 req.max_side,
+                "native-video-v2",
             ),
         )?;
         if let Some(preview) = cached(&self.cache, &key, req.max_side) {
@@ -213,7 +237,7 @@ impl PreviewProvider for MediaPreviews {
             .min(duration.map_or(f64::MAX, |d| (d - 0.1).max(0.0)));
         let tmp = tempfile::tempdir()?;
         let output = tmp.path().join("frame.png");
-        let side = req.max_side.clamp(64, MAX_SIDE);
+        let side = req.max_side.clamp(64, MAX_VIDEO_SIDE);
         let mut command = Command::new(ffmpeg);
         command
             .args(["-nostdin", "-v", "error", "-threads", "1", "-ss"])
@@ -232,9 +256,9 @@ impl PreviewProvider for MediaPreviews {
                 "-vf",
             ])
             .arg(format!(
-                "scale={side}:{side}:force_original_aspect_ratio=decrease,setsar=1"
+                "scale='min(iw,{side})':'min(ih,{side})':force_original_aspect_ratio=decrease,setsar=1"
             ))
-            .args(["-threads", "1"])
+            .args(["-threads", "1", "-compression_level", "1"])
             .arg(&output);
         process::run(&mut command, cancel, RENDER_TIMEOUT)?;
         anyhow::ensure!(
@@ -909,6 +933,11 @@ mod tests {
         req.mime = Some("video/x-matroska".into());
         req.seconds = Some(0.0);
         let start = backend.render(&req, &token).unwrap();
+        assert_eq!(
+            (start.image.width, start.image.height),
+            (160, 90),
+            "do not upscale the source"
+        );
         req.seconds = Some(2.0);
         let later = backend.render(&req, &token).unwrap();
         assert_ne!(start.image.rgba, later.image.rgba);
@@ -919,6 +948,48 @@ mod tests {
             backend.render(&req, &token).unwrap().image.rgba,
             later.image.rgba
         );
+    }
+
+    #[test]
+    #[ignore = "requires installed FFmpeg and ffprobe"]
+    fn real_video_poster_preserves_source_resolution() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("Synthetic 4K poster.mkv");
+        let token = CancelToken::new();
+        process::run(
+            Command::new(process::required("ffmpeg").unwrap())
+                .args([
+                    "-nostdin",
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=blue:size=3840x2160:rate=1",
+                    "-t",
+                    "2",
+                    "-c:v",
+                    "ffv1",
+                    "-threads",
+                    "1",
+                ])
+                .arg(&path),
+            &token,
+            RENDER_TIMEOUT,
+        )
+        .unwrap();
+        let backend = MediaPreviews::new(Cache::new(tmp.path()).namespace("preview"));
+        let mut req = request(&path);
+        req.mime = Some("video/x-matroska".into());
+        req.max_side = u32::MAX;
+        let poster = backend.render(&req, &token).unwrap();
+        assert_eq!((poster.image.width, poster.image.height), (3840, 2160));
+        assert_eq!(
+            backend.render(&req, &token).unwrap().image.rgba,
+            poster.image.rgba
+        );
+        token.cancel();
+        assert!(backend.render(&req, &token).is_err());
     }
 
     #[test]

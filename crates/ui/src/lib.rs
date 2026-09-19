@@ -24,6 +24,7 @@ pub mod input;
 pub mod jump;
 pub mod keymap;
 pub mod list;
+mod media;
 pub mod menu;
 pub mod palette;
 pub mod preview;

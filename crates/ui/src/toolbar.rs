@@ -14,9 +14,37 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         }};
     }
     assets!(
-        "back", "up", "list", "grid", "columns", "preview", "split", "usage", "calendar", "search",
-        "settings", "more", "contents", "left", "right", "plus", "minus", "fit", "width", "copy",
-        "open", "close", "chevron", "eye", "move", "refresh"
+        "back",
+        "up",
+        "list",
+        "grid",
+        "columns",
+        "preview",
+        "split",
+        "usage",
+        "calendar",
+        "search",
+        "settings",
+        "more",
+        "contents",
+        "left",
+        "right",
+        "plus",
+        "minus",
+        "fit",
+        "width",
+        "copy",
+        "open",
+        "close",
+        "chevron",
+        "eye",
+        "move",
+        "refresh",
+        "play",
+        "pause",
+        "volume",
+        "muted",
+        "fullscreen"
     )
 }
 

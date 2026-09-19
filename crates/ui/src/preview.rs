@@ -57,6 +57,7 @@ struct PreviewResult {
     content: PreviewContent,
     complete: bool,
     session: Option<Arc<dyn bibli_core::document::DocumentSession>>,
+    media: Option<Arc<dyn bibli_core::media::MediaSession>>,
 }
 
 /// Facts shown in the header, read from the entry's metadata.
@@ -103,6 +104,7 @@ enum PreviewPhase {
 
 pub struct PreviewState {
     pub reader: crate::reader::ReaderState,
+    pub media: crate::media::MediaState,
     pub menu: Option<crate::toolbar::Popup>,
     pub open: bool,
     pub peek: bool,
@@ -128,6 +130,7 @@ impl Default for PreviewState {
         let (tx, rx) = flume::unbounded();
         PreviewState {
             reader: crate::reader::ReaderState::default(),
+            media: crate::media::MediaState::default(),
             menu: None,
             open: false,
             peek: false,
@@ -406,6 +409,20 @@ impl Shell {
             if result.generation == self.preview.generation {
                 if result.complete {
                     self.preview.reader.tried = true;
+                    if let Some(session) = result.media {
+                        self.preview.media.session = Some(session);
+                        let focus = cx.focus_handle();
+                        if self.preview.peek
+                            && self
+                                .preview
+                                .peek_focus
+                                .as_ref()
+                                .is_some_and(|f| f.contains_focused(window, cx))
+                        {
+                            window.focus(&focus);
+                        }
+                        self.preview.media.focus = Some(focus);
+                    }
                     if let Some(session) = result.session {
                         self.preview.reader.session = Some(session);
                         self.preview
@@ -438,7 +455,18 @@ impl Shell {
                     self.set_status(error.clone(), true, cx);
                     continue;
                 }
-                self.replace_preview_content(Some(result.content), window, cx);
+                // Opening a player must not replace its thumbnail with a generic
+                // card while the initial paused pipeline is warming up.
+                let poster = matches!(
+                    &result.content,
+                    PreviewContent::Image {
+                        detail: Some(PreviewInfo::Video { .. }),
+                        ..
+                    }
+                ) && self.preview.media.accept_poster();
+                if self.preview.media.session.is_none() || poster {
+                    self.replace_preview_content(Some(result.content), window, cx);
+                }
                 self.preview.phase = if result.complete {
                     PreviewPhase::Idle
                 } else {
@@ -493,6 +521,7 @@ impl Shell {
                             generation,
                             complete: false,
                             session: None,
+                            media: None,
                             content: PreviewContent::Image {
                                 image: render,
                                 width: image.width,
@@ -502,6 +531,65 @@ impl Shell {
                             },
                         });
                         wake();
+                    }
+                }
+                if request
+                    .mime
+                    .as_deref()
+                    .is_some_and(|m| m.starts_with("video/"))
+                {
+                    match previews.open_media(&request, &lifetime, wake.clone()) {
+                        Ok(Some(media)) => {
+                            if !cancel.is_cancelled() {
+                                let _ = tx.send(PreviewResult {
+                                    generation,
+                                    content: PreviewContent::Generic,
+                                    complete: true,
+                                    session: None,
+                                    media: Some(media),
+                                });
+                                wake();
+                            }
+                            // Keep startup/playback independent of optional poster
+                            // extraction. The same cancellation token stops FFmpeg
+                            // when Play/Seek, selection or provider changes supersede it.
+                            let mut poster = request.clone();
+                            poster.max_side = u32::MAX;
+                            if let Ok(Some(preview)) = previews.render(&poster, &cancel)
+                                && let Some(image) = crate::thumbs::to_render_image(&preview.image)
+                                && !cancel.is_cancelled()
+                            {
+                                let _ = tx.send(PreviewResult {
+                                    generation,
+                                    content: PreviewContent::Image {
+                                        image,
+                                        width: preview.image.width,
+                                        height: preview.image.height,
+                                        detail: Some(preview.info),
+                                        document: None,
+                                    },
+                                    complete: true,
+                                    session: None,
+                                    media: None,
+                                });
+                                wake();
+                            }
+                            return;
+                        }
+                        Err(error) => {
+                            if !cancel.is_cancelled() {
+                                let _ = tx.send(PreviewResult {
+                                    generation,
+                                    content: PreviewContent::Error(error.to_string()),
+                                    complete: true,
+                                    session: None,
+                                    media: None,
+                                });
+                                wake();
+                            }
+                            return;
+                        }
+                        Ok(None) => {}
                     }
                 }
                 let reader = if let Some(session) = session {
@@ -540,6 +628,7 @@ impl Shell {
                                 content,
                                 complete: true,
                                 session: Some(session),
+                                media: None,
                             });
                             wake();
                         }
@@ -552,6 +641,7 @@ impl Shell {
                                 content: PreviewContent::Error(format!("{error:#}")),
                                 complete: true,
                                 session: None,
+                                media: None,
                             });
                             wake();
                         }
@@ -590,20 +680,21 @@ impl Shell {
                         content,
                         complete: true,
                         session: None,
+                        media: None,
                     });
                     wake();
                 }
             });
     }
 
-    fn cancel_pending_preview(&mut self) {
+    pub(crate) fn cancel_pending_preview(&mut self) {
         if let Some(cancel) = self.preview.cancel.take() {
             cancel.cancel();
         }
         self.preview.generation = self.preview.generation.wrapping_add(1);
     }
 
-    fn replace_preview_content(
+    pub(crate) fn replace_preview_content(
         &mut self,
         content: Option<PreviewContent>,
         window: &mut Window,
@@ -630,6 +721,8 @@ impl Shell {
         self.preview.info = Info::default();
         while self.preview.rx.try_recv().is_ok() {}
         self.replace_preview_content(None, window, cx);
+        self.media_exit_fullscreen(window, cx);
+        self.preview.media = crate::media::MediaState::default();
         self.preview.reader = crate::reader::ReaderState::default();
         self.preview.phase = PreviewPhase::Idle;
 
@@ -687,6 +780,15 @@ impl Shell {
     }
 
     pub fn preview_seek(&mut self, delta: f64, cx: &mut Context<Self>) {
+        if self.preview.media.session.is_some() {
+            self.media_send(
+                bibli_core::media::Control::Seek(
+                    (self.preview.media.state.position + delta).max(0.),
+                ),
+                cx,
+            );
+            return;
+        }
         let Some(PreviewContent::Image {
             detail: Some(PreviewInfo::Video { duration, .. }),
             ..
@@ -755,18 +857,38 @@ impl Shell {
         }
         self.preview.menu = None;
         let focus = cx.focus_handle();
-        window.focus(&focus);
+        window.focus(self.preview.media.focus.as_ref().unwrap_or(&focus));
         self.preview.peek_focus = Some(focus);
         self.preview.peek = true;
         cx.notify();
     }
 
     pub fn close_peek(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.media_exit_fullscreen(window, cx);
+        if let Some(session) = &self.preview.media.session {
+            let _ = session.control(bibli_core::media::Control::Play(false));
+        }
         self.preview.menu = None;
         self.preview.peek = false;
         self.preview.peek_focus = None;
         window.focus(&self.ui().focus);
         cx.notify();
+    }
+
+    pub fn video_thumbnail(&self) -> bibli_core::thumbs::ThumbState {
+        use bibli_core::thumbs::{ThumbRequest, ThumbSize, ThumbState};
+        let Some(key) = &self.preview.key else {
+            return ThumbState::Unavailable;
+        };
+        self.app.thumbnails.get(
+            ThumbRequest {
+                entry: EntryRef::new(key.id, &key.path),
+                mime: self.preview.info.mime.clone().map(Into::into),
+                mtime: key.modified,
+                size: ThumbSize::Large,
+            },
+            Priority::Visible,
+        )
     }
 
     pub fn preview_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -821,7 +943,9 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
         .flex_col()
         .when(document && interactive, |d| d.key_context(keymap::READER));
     if interactive && !shell.preview.info.name.is_empty() {
-        let controls = if document {
+        let controls = if shell.preview.media.session.is_some() {
+            crate::media::toolbar(shell, theme, cx)
+        } else if document {
             crate::reader::toolbar(shell, theme, cx)
         } else {
             crate::preview_toolbar::render(shell, theme, cx)
@@ -841,7 +965,25 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
         ));
     }
     frame
-        .child(content(shell, theme, interactive, cx))
+        .when_some(
+            shell.preview.media.focus.as_ref().filter(|_| interactive),
+            |d, focus| d.track_focus(focus).key_context("MediaPlayer"),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h_0()
+                .when_some(
+                    shell.preview.media.focus.as_ref().filter(|_| interactive),
+                    |d, focus| {
+                        let focus = focus.clone();
+                        d.on_mouse_down(MouseButton::Left, move |_, window, _| window.focus(&focus))
+                    },
+                )
+                .child(content(shell, theme, interactive, cx)),
+        )
         .into_any_element()
 }
 
@@ -1113,6 +1255,9 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
     if !shell.preview.peek {
         return None;
     }
+    if shell.preview.media.fullscreen.is_some() {
+        return Some(crate::media::fullscreen(shell, cx));
+    }
     let theme = cx.global::<Theme>().clone();
     let focus = shell.preview.peek_focus.clone()?;
     Some(
@@ -1153,7 +1298,11 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
                             .text_color(theme.text_muted)
                             .border_t_1()
                             .border_color(theme.border)
-                            .child("Space or Escape to close · arrows to move"),
+                            .child(if shell.preview.media.session.is_some() {
+                                "Space play/pause · arrows seek · M mute · F fullscreen · Escape exit"
+                            } else {
+                                "Space or Escape to close · arrows to move"
+                            }),
                     ),
             )
             .into_any_element(),

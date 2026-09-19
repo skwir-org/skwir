@@ -9,6 +9,7 @@ members = [
     "crates/bibli",
     "crates/pdf-worker",
     "crates/poppler-worker",
+    "crates/media-worker",
 ]
 # Toolkit spikes live in their own workspace so their heavy dependency
 # trees never touch the main build.

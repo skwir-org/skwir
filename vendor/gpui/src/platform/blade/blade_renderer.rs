@@ -911,9 +911,9 @@ impl BladeRenderer {
 
         profiling::scope!("finish");
         self.instance_belt.flush(&sync_point);
-        self.atlas.after_frame(&sync_point);
 
         self.wait_for_gpu();
+        self.atlas.after_frame(&sync_point);
         self.last_sync_point = Some(sync_point);
     }
 }

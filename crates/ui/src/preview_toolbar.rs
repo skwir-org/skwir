@@ -86,6 +86,12 @@ fn open_button() -> Button {
 
 fn caption(shell: &Shell) -> String {
     match &shell.preview.content {
+        Some(PreviewContent::Image {
+            width,
+            height,
+            detail: Some(PreviewInfo::Video { .. }),
+            ..
+        }) => format!("Video still · {width} × {height}"),
         Some(PreviewContent::Image { width, height, .. }) => format!("{width} × {height}"),
         Some(PreviewContent::Text { lines, truncated }) => format!(
             "{} lines{}",

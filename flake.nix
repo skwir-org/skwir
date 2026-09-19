@@ -52,8 +52,11 @@
           libiconv
         ];
 
-        # Only the optional Poppler worker links these; bibli itself does not.
-        buildInputs = [ pkgs.poppler_gi pkgs.cairo pkgs.glib ]
+        # Optional native workers link these; bibli itself does not.
+        mediaPlugins = with pkgs.gst_all_1; [
+          gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav
+        ];
+        buildInputs = [ pkgs.poppler_gi pkgs.cairo pkgs.glib pkgs.gst_all_1.gstreamer ] ++ mediaPlugins
           ++ (lib.optionals stdenv.hostPlatform.isLinux linuxBuildInputs) ++ darwinBuildInputs;
 
         nativeBuildInputs = with pkgs; [
@@ -94,6 +97,7 @@
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
           RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
           RUST_BACKTRACE = "1";
+          GST_PLUGIN_SYSTEM_PATH_1_0 = lib.makeSearchPath "lib/gstreamer-1.0" mediaPlugins;
 
           # wgpu/winit dlopen these at runtime; make them findable from `cargo run`.
           LD_LIBRARY_PATH = lib.optionalString stdenv.hostPlatform.isLinux (lib.makeLibraryPath linuxRuntimeLibs);

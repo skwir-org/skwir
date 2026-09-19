@@ -1,0 +1,694 @@
+//! Embedded playback controls. Only the session manager touches media I/O.
+use crate::{
+    preview::PreviewContent,
+    shell::Shell,
+    theme::Theme,
+    toolbar::{self, Button},
+};
+use bibli_core::media::{Control, Frame, MediaSession, Playback};
+use gpui::{
+    AnyElement, Bounds, Context, FocusHandle, MouseButton, Pixels, RenderImage, Window, div,
+    prelude::*, px,
+};
+use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
+
+#[derive(Default)]
+enum Poster {
+    #[default]
+    Waiting,
+    Thumbnail,
+    Unavailable,
+    Dismissed,
+}
+
+struct FullscreenRestore {
+    entered: bool,
+    was_peek: bool,
+}
+
+pub struct Fullscreen {
+    pub controls_hidden: bool,
+    restore: FullscreenRestore,
+    controls_hovered: bool,
+    controls_focus: FocusHandle,
+    pointer: gpui::Point<Pixels>,
+    hide_task: Option<gpui::Task<()>>,
+}
+
+impl MediaState {
+    pub(crate) fn accept_poster(&mut self) -> bool {
+        if self.session.is_none() || matches!(self.poster, Poster::Dismissed) {
+            return false;
+        }
+        self.poster = Poster::Thumbnail;
+        self.initial_frame = None;
+        true
+    }
+}
+
+#[derive(Default)]
+pub struct MediaState {
+    pub session: Option<Arc<dyn MediaSession>>,
+    pub state: Playback,
+    pub focus: Option<FocusHandle>,
+    pub fullscreen: Option<Fullscreen>,
+    poster: Poster,
+    initial_frame: Option<Frame>,
+    scrub: Option<f64>,
+}
+
+impl Shell {
+    pub fn sync_media(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(session) = &self.preview.media.session else {
+            return;
+        };
+        let update = session.take_update();
+        if let Some(state) = update.state {
+            self.preview.media.state = state;
+        }
+        let mut frame = update.frame;
+        if !matches!(self.preview.media.poster, Poster::Dismissed) {
+            if matches!(self.preview.media.poster, Poster::Waiting) {
+                use bibli_core::thumbs::ThumbState;
+                match self.video_thumbnail() {
+                    ThumbState::Ready(image) => {
+                        if let Some(render) = crate::thumbs::to_render_image(&image) {
+                            self.replace_preview_content(
+                                Some(PreviewContent::Image {
+                                    image: render,
+                                    width: image.width,
+                                    height: image.height,
+                                    detail: None,
+                                    document: None,
+                                }),
+                                window,
+                                cx,
+                            );
+                        }
+                        self.preview.media.poster = Poster::Thumbnail;
+                        self.preview.media.initial_frame = None;
+                    }
+                    ThumbState::Unavailable => {
+                        self.preview.media.poster = Poster::Unavailable;
+                        frame = frame.or_else(|| self.preview.media.initial_frame.take());
+                    }
+                    ThumbState::Pending => {
+                        if frame.is_some() {
+                            self.preview.media.initial_frame = frame.take();
+                        }
+                    }
+                }
+            }
+            if !matches!(self.preview.media.poster, Poster::Unavailable) {
+                frame = None;
+            }
+        }
+        if let Some(frame) = frame {
+            let Some(buffer) = image::RgbaImage::from_raw(frame.width, frame.height, frame.bgra)
+            else {
+                return;
+            };
+            let image = Arc::new(RenderImage::new(smallvec::SmallVec::from_buf([
+                image::Frame::new(buffer),
+            ])));
+            let state = &self.preview.media.state;
+            self.replace_preview_content(
+                Some(PreviewContent::Image {
+                    image,
+                    width: frame.width,
+                    height: frame.height,
+                    detail: Some(bibli_core::preview::PreviewInfo::Video {
+                        seconds: state.position,
+                        duration: state.duration,
+                    }),
+                    document: None,
+                }),
+                window,
+                cx,
+            );
+        }
+        if let Some(error) = update.error {
+            self.preview.media.state.status = bibli_core::media::PlaybackStatus::Paused;
+            self.set_status(error, true, cx);
+        }
+        self.arm_media_hide(window, cx);
+    }
+    pub fn media_send(&mut self, command: Control, cx: &mut Context<Self>) {
+        if let Some(session) = &self.preview.media.session {
+            match session.control(command) {
+                Ok(()) => {
+                    if let Control::Seek(position) = command {
+                        self.preview.media.state.position =
+                            position.min(self.preview.media.state.duration.unwrap_or(position));
+                    }
+                    if matches!(command, Control::Play(true) | Control::Seek(_)) {
+                        self.preview.media.poster = Poster::Dismissed;
+                        self.preview.media.initial_frame = None;
+                        self.cancel_pending_preview();
+                    }
+                }
+                Err(error) => self.set_status(error.to_string(), true, cx),
+            }
+        }
+        cx.notify();
+    }
+    pub fn media_control(&mut self, args: &serde_json::Value, cx: &mut Context<Self>) {
+        let state = &self.preview.media.state;
+        let value = args.get("value").and_then(serde_json::Value::as_f64);
+        let command = match args.get("action").and_then(serde_json::Value::as_str) {
+            Some("play") => Some(Control::Play(!state.playing())),
+            Some("mute") => Some(Control::Mute(!state.muted)),
+            Some("volume") => value.map(Control::Volume),
+            Some("rate") => value.map(Control::Rate),
+            Some("audio") => args
+                .get("value")
+                .and_then(serde_json::Value::as_i64)
+                .and_then(|n| i32::try_from(n).ok())
+                .map(Control::Audio),
+            Some("subtitle") => args
+                .get("value")
+                .and_then(serde_json::Value::as_i64)
+                .and_then(|n| i32::try_from(n).ok())
+                .map(Control::Subtitle),
+            _ => None,
+        };
+        if let Some(command) = command {
+            self.media_send(command, cx);
+        }
+    }
+    pub fn media_scrub(&mut self, args: &serde_json::Value, cx: &mut Context<Self>) {
+        let Some(duration) = self
+            .preview
+            .media
+            .state
+            .duration
+            .filter(|_| self.preview.media.state.seekable)
+        else {
+            return;
+        };
+        let fraction = args
+            .get("fraction")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.)
+            .clamp(0., 1.);
+        match args.get("phase").and_then(serde_json::Value::as_str) {
+            Some("down") => self.preview.media.scrub = Some(fraction * duration),
+            Some("move") if self.preview.media.scrub.is_some() => {
+                self.preview.media.scrub = Some(fraction * duration);
+            }
+            Some("up") if self.preview.media.scrub.take().is_some() => {
+                self.media_send(Control::Seek(fraction * duration), cx);
+            }
+            _ => {}
+        }
+        cx.notify();
+    }
+    pub fn media_fullscreen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.preview.media.fullscreen.is_some() {
+            self.media_exit_fullscreen(window, cx);
+            return;
+        }
+        if self.preview.media.session.is_none() {
+            return;
+        }
+        let entered = !window.is_fullscreen();
+        if entered {
+            window.toggle_fullscreen();
+        }
+        self.preview.media.fullscreen = Some(Fullscreen {
+            restore: FullscreenRestore {
+                entered,
+                was_peek: self.preview.peek,
+            },
+            controls_hidden: false,
+            controls_hovered: false,
+            controls_focus: cx.focus_handle(),
+            pointer: window.mouse_position(),
+            hide_task: None,
+        });
+        self.preview.peek = true;
+        let focus = self
+            .preview
+            .media
+            .focus
+            .clone()
+            .unwrap_or_else(|| cx.focus_handle());
+        self.preview
+            .peek_focus
+            .get_or_insert_with(|| cx.focus_handle());
+        window.focus(&focus);
+        self.preview.menu = None;
+        self.arm_media_hide(window, cx);
+        cx.notify();
+    }
+    pub fn media_exit_fullscreen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(fullscreen) = self.preview.media.fullscreen.take() else {
+            return;
+        };
+        if fullscreen.restore.entered && window.is_fullscreen() {
+            window.toggle_fullscreen();
+        }
+        self.preview.peek = fullscreen.restore.was_peek;
+        self.preview.menu = None;
+        if !self.preview.peek {
+            window.focus(&self.ui().focus);
+        }
+        cx.notify();
+    }
+    pub fn media_toggle_controls(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(fullscreen) = &mut self.preview.media.fullscreen {
+            fullscreen.controls_hidden = !fullscreen.controls_hidden;
+            fullscreen.hide_task = None;
+            self.preview.menu = None;
+            if let Some(focus) = &self.preview.media.focus {
+                window.focus(focus);
+            }
+            cx.notify();
+        }
+    }
+
+    fn arm_media_hide(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let Some(fullscreen) = &mut self.preview.media.fullscreen else {
+            return;
+        };
+        if fullscreen.controls_hidden
+            || fullscreen.controls_hovered
+            || fullscreen.hide_task.is_some()
+            || self.preview.menu.is_some()
+            || self.preview.media.scrub.is_some()
+            || fullscreen.controls_focus.contains_focused(window, cx)
+        {
+            return;
+        }
+        let focus = fullscreen.controls_focus.clone();
+        let pane = self.pane;
+        tracing::trace!("fullscreen controls: inactivity timer armed");
+        fullscreen.hide_task = Some(cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(Duration::from_secs(1)).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if this.pane != pane {
+                    return;
+                }
+                let Some(fullscreen) = &mut this.preview.media.fullscreen else {
+                    return;
+                };
+                fullscreen.hide_task = None;
+                tracing::trace!(
+                    hovered = fullscreen.controls_hovered,
+                    menu = this.preview.menu.is_some(),
+                    scrub = this.preview.media.scrub.is_some(),
+                    focused = focus.contains_focused(window, cx),
+                    "fullscreen controls: inactivity deadline"
+                );
+                if !fullscreen.controls_hovered
+                    && this.preview.menu.is_none()
+                    && this.preview.media.scrub.is_none()
+                    && !focus.contains_focused(window, cx)
+                {
+                    fullscreen.controls_hidden = true;
+                    cx.notify();
+                }
+            });
+        }));
+    }
+
+    fn media_pointer_moved(
+        &mut self,
+        position: gpui::Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(fullscreen) = &mut self.preview.media.fullscreen else {
+            return;
+        };
+        // GPUI can redispatch a stationary pointer after layout/paint. Only real
+        // movement should reveal the toolbar or restart its inactivity deadline.
+        if fullscreen.pointer == position {
+            return;
+        }
+        fullscreen.pointer = position;
+        tracing::trace!(
+            hovered = fullscreen.controls_hovered,
+            menu = self.preview.menu.is_some(),
+            focused = fullscreen.controls_focus.contains_focused(window, cx),
+            "fullscreen controls: pointer moved"
+        );
+        fullscreen.hide_task = None;
+        if !fullscreen.controls_hovered
+            && self.preview.menu.is_none()
+            && fullscreen.controls_focus.contains_focused(window, cx)
+            && let Some(focus) = &self.preview.media.focus
+        {
+            window.focus(focus);
+        }
+        if fullscreen.controls_hidden {
+            fullscreen.controls_hidden = false;
+            cx.notify();
+        }
+        self.arm_media_hide(window, cx);
+    }
+
+    fn media_controls_hovered(
+        &mut self,
+        hovered: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(fullscreen) = &mut self.preview.media.fullscreen {
+            fullscreen.controls_hovered = hovered;
+            fullscreen.hide_task = None;
+            if !hovered
+                && self.preview.menu.is_none()
+                && fullscreen.controls_focus.contains_focused(window, cx)
+                && let Some(focus) = &self.preview.media.focus
+            {
+                window.focus(focus);
+            }
+        }
+        self.arm_media_hide(window, cx);
+    }
+}
+
+/// A full-window canvas, independent of the preview card's chrome and zoom.
+/// The image fills its bounds with Contain, including upscaling small videos.
+pub fn fullscreen(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
+    let theme = cx.global::<Theme>().clone();
+    let hidden = shell
+        .preview
+        .media
+        .fullscreen
+        .as_ref()
+        .is_some_and(|s| s.controls_hidden);
+    div()
+        .id("video-fullscreen-canvas")
+        .absolute()
+        .inset_0()
+        .bg(gpui::black())
+        .occlude()
+        .key_context("MediaPlayer")
+        .on_mouse_move(
+            cx.listener(|this, event: &gpui::MouseMoveEvent, window, cx| {
+                this.media_pointer_moved(event.position, window, cx);
+            }),
+        )
+        .when_some(shell.preview.media.focus.as_ref(), |d, focus| {
+            let handle = focus.clone();
+            d.track_focus(focus)
+                .on_mouse_down(MouseButton::Left, move |_, window, _| window.focus(&handle))
+        })
+        .when_some(shell.preview.content.as_ref(), |d, content| {
+            if let PreviewContent::Image { image, .. } = content {
+                d.child(
+                    gpui::img(image.clone())
+                        .absolute()
+                        .size_full()
+                        .object_fit(gpui::ObjectFit::Contain),
+                )
+            } else {
+                d
+            }
+        })
+        .when(!hidden, |d| {
+            d.child(
+                div()
+                    .id("video-fullscreen-controls")
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .flex()
+                    .flex_col()
+                    .when_some(shell.preview.media.fullscreen.as_ref(), |d, fullscreen| {
+                        d.track_focus(&fullscreen.controls_focus)
+                    })
+                    .on_hover(cx.listener(|this, hovered, window, cx| {
+                        this.media_controls_hovered(*hovered, window, cx);
+                    }))
+                    .bg(theme.surface)
+                    .child(toolbar(shell, &theme, cx)),
+            )
+        })
+        .into_any_element()
+}
+
+fn time(seconds: f64) -> String {
+    let total = seconds.max(0.) as u64;
+    if total >= 3600 {
+        format!("{}:{:02}:{:02}", total / 3600, total / 60 % 60, total % 60)
+    } else {
+        format!("{}:{:02}", total / 60, total % 60)
+    }
+}
+fn control(
+    id: impl Into<gpui::SharedString>,
+    icon: &str,
+    title: impl Into<gpui::SharedString>,
+    action: &str,
+    value: serde_json::Value,
+) -> Button {
+    Button::new(id, icon.to_owned(), title, "ui.media_control")
+        .args(serde_json::json!({"action": action, "value":value}))
+}
+
+fn seek_bar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
+    let bounds = Rc::new(Cell::new(Bounds::<Pixels>::default()));
+    let measured = bounds.clone();
+    let state = &shell.preview.media.state;
+    let duration = state.duration.unwrap_or(0.);
+    let position = shell.preview.media.scrub.unwrap_or(state.position);
+    let fraction = if duration > 0. {
+        (position / duration).clamp(0., 1.) as f32
+    } else {
+        0.
+    };
+    let pane = shell.pane;
+    let down = bounds.clone();
+    let moved = bounds.clone();
+    let up = bounds.clone();
+    let coordinate = |bounds: Bounds<Pixels>, x: Pixels| {
+        f32::from(x - bounds.origin.x) / f32::from(bounds.size.width).max(1.)
+    };
+    div().id("video-seek").relative().flex_1().min_w(px(40.)).h(px(30.)).cursor_pointer()
+        .child(gpui::canvas(move |b, _, _| measured.set(b), |_, (), _, _| {}).absolute().size_full())
+        .child(div().absolute().top(px(13.)).h(px(4.)).w_full().rounded_full().bg(theme.border))
+        .child(div().absolute().top(px(13.)).h(px(4.)).w(gpui::relative(fraction)).rounded_full().bg(theme.accent))
+        .on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &gpui::MouseDownEvent, window, cx| {
+            this.with_pane(pane, |this| this.run("ui.media_scrub", serde_json::json!({"phase":"down", "fraction":coordinate(down.get(), ev.position.x)}), window, cx));
+            cx.stop_propagation();
+        }))
+        .on_mouse_move(cx.listener(move |this, ev: &gpui::MouseMoveEvent, window, cx| {
+            if this.preview.media.scrub.is_some() {
+                this.with_pane(pane, |this| this.run("ui.media_scrub", serde_json::json!({"phase":"move", "fraction":coordinate(moved.get(), ev.position.x)}), window, cx));
+            }
+        }))
+        .on_mouse_up(MouseButton::Left, cx.listener(move |this, ev: &gpui::MouseUpEvent, window, cx| {
+            if this.preview.media.scrub.is_some() {
+                this.with_pane(pane, |this| this.run("ui.media_scrub", serde_json::json!({"phase":"up", "fraction":coordinate(up.get(), ev.position.x)}), window, cx));
+            }
+        }))
+        .on_mouse_up_out(MouseButton::Left, cx.listener(move |this, ev: &gpui::MouseUpEvent, window, cx| {
+            if this.preview.media.scrub.is_some() {
+                this.with_pane(pane, |this| this.run("ui.media_scrub", serde_json::json!({"phase":"up", "fraction":coordinate(bounds.get(), ev.position.x)}), window, cx));
+            }
+        })).into_any_element()
+}
+
+fn row(
+    shell: &Shell,
+    theme: &Theme,
+    mode: usize,
+    anchor: &crate::elements::popover::PopoverAnchor,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let state = &shell.preview.media.state;
+    let mut row = toolbar::row(theme).id(("video-tools", mode)).child(
+        control(
+            "video-play",
+            if state.playing() { "pause" } else { "play" },
+            "Play / pause (Space)",
+            "play",
+            serde_json::Value::Null,
+        )
+        .render(shell, cx),
+    );
+    if mode < 2 {
+        row = row.child(
+            div()
+                .text_xs()
+                .flex_none()
+                .child(time(shell.preview.media.scrub.unwrap_or(state.position))),
+        );
+    }
+    row = row.child(seek_bar(shell, theme, cx));
+    if mode == 0 {
+        row = row
+            .child(
+                div()
+                    .text_xs()
+                    .flex_none()
+                    .text_color(theme.text_muted)
+                    .child(state.duration.map_or_else(|| "—".into(), time)),
+            )
+            .child(
+                control(
+                    "video-mute",
+                    if state.muted { "muted" } else { "volume" },
+                    "Mute / unmute (M)",
+                    "mute",
+                    serde_json::Value::Null,
+                )
+                .render(shell, cx),
+            );
+    }
+    if mode < 2 {
+        row = row.child(
+            Button::new(
+                "video-fullscreen",
+                "fullscreen",
+                "Fullscreen (F)",
+                "ui.media_fullscreen",
+            )
+            .active(shell.preview.media.fullscreen.is_some())
+            .render(shell, cx),
+        );
+    }
+    row.child(
+        Button::new(
+            "video-options",
+            "more",
+            "Playback options",
+            "ui.preview_menu",
+        )
+        .anchor_if(anchor, true)
+        .active(shell.preview.menu.is_some())
+        .render(shell, cx),
+    )
+    .into_any_element()
+}
+
+pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
+    let state = &shell.preview.media.state;
+    let anchor = crate::elements::popover::PopoverAnchor::default();
+    let mut root = div()
+        .relative()
+        .flex_none()
+        .child(crate::elements::adaptive::AdaptiveRow {
+            variants: (0..3)
+                .map(|mode| row(shell, theme, mode, &anchor, cx))
+                .collect(),
+            height: 42.,
+        });
+    if let Some(popup) = &shell.preview.menu {
+        let mut panel = toolbar::popup_panel(popup, "ui.preview_menu", theme, cx)
+            .max_h(px(480.))
+            .overflow_y_scroll();
+        panel = panel
+            .child(div().text_xs().child(format!(
+                "{} / {}",
+                time(state.position),
+                state.duration.map_or_else(|| "—".into(), time)
+            )))
+            .child(
+                control(
+                    "video-menu-mute",
+                    if state.muted { "muted" } else { "volume" },
+                    "Mute / unmute",
+                    "mute",
+                    serde_json::Value::Null,
+                )
+                .label(if state.muted { "Unmute" } else { "Mute" })
+                .render(shell, cx),
+            )
+            .child(
+                Button::new(
+                    "video-menu-fullscreen",
+                    "fullscreen",
+                    "Fullscreen",
+                    "ui.media_fullscreen",
+                )
+                .label("Fullscreen")
+                .render(shell, cx),
+            );
+        panel = panel.child(div().text_xs().text_color(theme.text_muted).child("Volume"));
+        let mut row = div().flex().gap_1();
+        for value in [0., 0.25, 0.5, 0.75, 1.] {
+            let label = format!("{:.0}%", value * 100.);
+            row = row.child(
+                control(
+                    format!("volume-{label}"),
+                    "",
+                    label.clone(),
+                    "volume",
+                    value.into(),
+                )
+                .label(label)
+                .active((state.volume - value).abs() < 0.01)
+                .render(shell, cx),
+            );
+        }
+        panel = panel.child(row).child(
+            div()
+                .text_xs()
+                .text_color(theme.text_muted)
+                .child("Playback speed"),
+        );
+        let mut row = div().flex().gap_1();
+        for value in [0.5, 1., 1.25, 1.5, 2.] {
+            let label = format!("{value}×");
+            row = row.child(
+                control(
+                    format!("rate-{label}"),
+                    "",
+                    label.clone(),
+                    "rate",
+                    value.into(),
+                )
+                .label(label)
+                .active((state.rate - value).abs() < 0.01)
+                .enabled(state.seekable)
+                .render(shell, cx),
+            );
+        }
+        panel = panel.child(row);
+        for (title, action, tracks, selected) in [
+            ("Audio", "audio", &state.audio_tracks, state.audio),
+            (
+                "Subtitles",
+                "subtitle",
+                &state.subtitle_tracks,
+                state.subtitle,
+            ),
+        ] {
+            panel = panel.child(div().text_xs().text_color(theme.text_muted).child(title));
+            if action == "subtitle" {
+                panel = panel.child(
+                    control("subtitles-off", "", "Off", action, (-1).into())
+                        .label("Off")
+                        .active(selected == -1)
+                        .render(shell, cx),
+                );
+            }
+            for (i, label) in tracks.iter().enumerate() {
+                panel = panel.child(
+                    control(format!("{action}-{i}"), "", label.clone(), action, i.into())
+                        .label(label.clone())
+                        .active(i as i32 == selected)
+                        .render(shell, cx)
+                        .justify_start(),
+                );
+            }
+        }
+        panel = panel.child(
+            Button::new(
+                "video-external",
+                "open",
+                "Open externally",
+                "ui.preview_open_external",
+            )
+            .label("Open externally")
+            .render(shell, cx),
+        );
+        root = root.child(anchor.popup(panel));
+    }
+    root.into_any_element()
+}

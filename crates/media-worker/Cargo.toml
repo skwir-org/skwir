@@ -1,0 +1,18 @@
+[package]
+name = "bibli-media-worker"
+description = "Optional isolated GStreamer playback worker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bibli-core.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+gstreamer = "0.24"
+gstreamer-app = "0.24"
+gstreamer-video = "0.24"
+
+[lints]
+workspace = true
