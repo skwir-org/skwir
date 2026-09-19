@@ -69,8 +69,12 @@ Selection supports preview, context menus and normal file operations.
 
 Sizes are cached in memory and updated when files change. Unchanged cached
 folders need no new scan; **Ctrl+R** or the refresh button forces recalculation.
-The previous chart remains visible during updates. If live monitoring is
+The previous chart remains visible until fresh results arrive. If live monitoring is
 unavailable, a warning appears and active folders are rechecked periodically.
+During the first scan, files appear first and folder totals grow as they are
+counted. Striped blocks are incomplete; the header shows the amount counted so
+far. Block proportions settle when the scan finishes. Later background updates
+keep that chart visible and replace it only when fresh totals are ready.
 
 The chart shows the largest 64 children; the smaller-items block opens List on
 a double-click. Totals include hidden files, while `ctrl-h` controls their

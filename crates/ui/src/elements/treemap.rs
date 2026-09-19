@@ -5,10 +5,10 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, Background, BorderStyle, Bounds, ContentMask, Corners, DispatchPhase, Edges, Element,
-    ElementId, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement,
-    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, ShapedLine, SharedString, Style,
-    TextRun, Window, pattern_slash, point, px, quad, relative, size,
+    App, BorderStyle, Bounds, ContentMask, Corners, DispatchPhase, Edges, Element, ElementId,
+    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId,
+    MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, ShapedLine, SharedString, Style, TextRun,
+    Window, pattern_slash, point, px, quad, relative, size,
 };
 
 use crate::treemap::{Rect, squarify};
@@ -209,19 +209,26 @@ impl Element for Treemap {
     ) {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             for b in &prepaint.blocks {
-                let background: Background = if b.hatched {
-                    pattern_slash(b.color.opacity(0.5), 2.0, 8.0)
-                } else {
-                    b.color.into()
-                };
                 window.paint_quad(quad(
                     b.bounds,
                     Corners::default(),
-                    background,
+                    b.color,
                     Edges::all(px(1.)),
                     self.border,
                     BorderStyle::Solid,
                 ));
+                if b.hatched {
+                    // Patterns have transparent gaps. Keep the solid base so
+                    // labels retain their contrast in both light and dark themes.
+                    window.paint_quad(quad(
+                        b.bounds,
+                        Corners::default(),
+                        pattern_slash(gpui::black().opacity(0.2), 2.0, 8.0),
+                        Edges::all(px(1.)),
+                        self.border,
+                        BorderStyle::Solid,
+                    ));
+                }
                 if let Some(line) = &b.label {
                     let origin = b.bounds.origin + point(px(4.), px(2.));
                     let mask = ContentMask {

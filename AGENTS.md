@@ -185,6 +185,12 @@ docs/              PLAN.md, adr/
   Cache eviction is not a content change; an unrelated event must not rescan every
   pane. Keep queued/running state separate from delayed visible progress so quick
   cache hits do not flash a busy indicator.
+- Progressive Usage snapshots are lower bounds, explicitly marked incomplete.
+  Keep partial trees out of the completed cache, bound the visible snapshot,
+  and preserve entry identity as blocks reorder. Once a scan has finished,
+  retain that chart through subsequent refreshes and replace it atomically;
+  a finished result can still be incomplete because of read errors. Automatic
+  revalidation must not reintroduce unknown blocks or busy flashes. See ADR-007.
 - Entries arrive before metadata. Treat missing fields as unknown, request
   hydration in batches, and react to `Updated` events instead of stat-ing each
   row during rendering. For virtual locations, use `OpenLocation::path_of` or

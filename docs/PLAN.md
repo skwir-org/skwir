@@ -197,6 +197,36 @@ A full-suite 15-run check passed every unchanged budget (image streaming
 10.4 ms). The final standard five-run `just bench-check` also passed every budget
 (image streaming 9.7 ms). Earlier runs were variable; no budgets were loosened.
 
+Progressive Usage follow-up: a shallow snapshot shows files and unknown folders
+before recursive watch setup, then bounded snapshots publish growing subtree
+totals at most every 200 ms. Unfinished blocks are striped and totals labelled
+as counted so far; hover identity and colors remain stable as sizes reorder.
+The initial unmonitored snapshot is reread after watch registration, and only
+complete, readable breakdowns enter the cache. This improves time to useful
+display; full totals still require the recursive traversal. Lint and 143 tests
+pass (five optional native tests skipped), including early publication, exact
+final totals, nested cache reuse, cancellation and watch-setup revalidation.
+Debug UI checks on the synthetic million-file tree observed the initial blocks,
+growing counts and completed chart, and confirmed readable striped labels;
+the 10k-image grid and 100k-entry list were also paged. After those checks the
+debug process used 228.4 MiB PSS and 2.2% idle CPU over five seconds, including
+retained Usage state; this is not a controlled memory comparison. The unchanged
+benchmark binary initially missed several image budgets (streaming 24.0 ms
+against 12 ms); a full 15-run check passed every unchanged budget (9.1 ms image
+streaming). Timing variability and the historical UI memory gate remain open.
+
+Progressive refresh correction: a finished snapshot now remains visible through
+subsequent scans, including fallback revalidation. Automatic refresh publishes
+no intermediate progress; explicit refresh reports progress over the retained
+chart. Both replace it atomically on completion. Snapshot completion is tracked
+separately from incomplete totals due to read errors. Lint and 144 tests pass;
+the new regression covers repeated automatic refresh, manual refresh and read
+errors without relying on filesystem timing. An isolated debug UI check through
+a synthetic directory alias confirmed identical completed-chart screenshots
+across fallback scans and retention during Ctrl+R. The standard `just bench-check`
+passed every unchanged budget. Fallback scanning itself is unchanged and remains
+necessary when monitoring is unavailable.
+
 ---
 
 ## Phase 0 — Foundations and toolkit spike (~2 weeks)

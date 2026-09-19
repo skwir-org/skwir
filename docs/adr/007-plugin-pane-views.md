@@ -34,6 +34,29 @@ is not a total process-memory limit. The scan bounds temporary child lists and
 checks cancellation while reading directories. Missing/evicted details are
 computed on demand; unchanged siblings are reused during ancestor updates.
 
+On a cache miss, Usage first lists the current directory's files and unknown
+folders, then streams its child directories through the recursive scanner.
+A second directory listing avoids retaining an unbounded queue of paths and
+uses entry types to avoid stat-ing ordinary files twice. It is skipped for
+folders containing only files. Only the visible breakdown and the running
+branch's counters are needed for progress, including within a large subtree.
+Snapshots have `incomplete` totals and striped blocks; the UI labels them as
+counted so far, rather than implying that unknown folders are empty. Completed
+subtrees enter the cache; partial or unreadable breakdowns do not. Filesystem
+events queued during a scan reconcile changes between the two listing passes.
+For a cold watch root, an initial shallow snapshot precedes recursive watch
+registration, which itself walks the tree. This snapshot is never cached; the
+scanner rereads the current directory after registration to cover changes made
+during setup. This costs an additional shallow pass on first open but prevents
+watch setup from leaving the view blank. Subsequent progress snapshots are
+throttled to the existing 200 ms interval. Progressive rendering is only used
+until a location's first scan finishes. Later refreshes retain the finished
+chart and replace it atomically when fresh totals are ready; automatic refreshes
+publish no intermediate busy state. Explicit refresh may show delayed progress
+over the retained chart. Snapshot completion is separate from total completeness,
+since read errors can leave a finished result incomplete. Hover identity and
+block colors survive size-based reordering.
+
 Recursive watches are established before scanning, without following symlinks.
 Coalesced events invalidate affected subtrees and ancestor totals; only panes
 whose paths intersect those events refresh, retaining their previous display.

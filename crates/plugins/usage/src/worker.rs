@@ -11,7 +11,7 @@ use notify::{EventKind, RecursiveMode, Watcher};
 use parking_lot::Mutex;
 use std::collections::{BTreeMap, HashSet};
 
-use super::{Message, Node, Request, Shared, Status};
+use super::{Message, Node, Request, Shared, SnapshotKind, Status};
 
 const MAX_CHILDREN: usize = 64;
 const MAX_CACHE_BYTES: usize = 16 * 1024 * 1024;
@@ -115,31 +115,235 @@ struct Scanner<'a> {
     entries: u64,
     errors: u64,
     last_progress: Instant,
+    preview: Option<Progress>,
 }
+
+/// Only the visible level and the branch being counted are retained. Partial
+/// nodes never enter Cache; descendants still cache only completed breakdowns.
+struct Progress {
+    tree: Node,
+    branch: Option<Node>,
+}
+impl Progress {
+    fn snapshot(&self) -> Node {
+        let mut tree = self.tree.clone();
+        tree.incomplete = true;
+        if let Some(branch) = &self.branch {
+            add_contents(&mut tree, branch);
+            replace_pending(&mut tree, branch.clone());
+        }
+        trim(&mut tree);
+        tree
+    }
+}
+
+fn add_contents(total: &mut Node, child: &Node) {
+    total.size += child.size;
+    total.alloc += child.alloc;
+    total.files += child.files;
+    total.dirs += child.dirs;
+}
+
+fn replace_pending(tree: &mut Node, mut child: Node) {
+    if let Some(index) = tree.children.iter().position(|n| n.path == child.path) {
+        tree.children.swap_remove(index);
+    } else {
+        // Pending children have no known bytes. They may be in the bounded
+        // aggregate rather than individually displayed. Changes between the two
+        // directory passes are reconciled by the queued filesystem events.
+        tree.other_count = tree.other_count.saturating_sub(1);
+        tree.other_incomplete = tree.other_incomplete.saturating_sub(1);
+    }
+    child.children.clear();
+    tree.children.push(child);
+    trim(tree);
+}
+
+fn entry_node(entry: &std::fs::DirEntry) -> std::io::Result<Node> {
+    let metadata = std::fs::symlink_metadata(entry.path())?;
+    let is_dir = metadata.is_dir();
+    Ok(Node {
+        id: Some(bibli_core::EntryId {
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+        }),
+        path: entry.path(),
+        name: entry.file_name().to_string_lossy().into_owned(),
+        is_dir,
+        incomplete: is_dir,
+        size: if is_dir { 0 } else { metadata.len() },
+        alloc: if is_dir { 0 } else { metadata.blocks() * 512 },
+        files: u64::from(!is_dir),
+        ..Node::default()
+    })
+}
+
 impl Scanner<'_> {
     fn progress(&mut self, now: Instant) {
         if now.duration_since(self.last_progress) < PROGRESS_INTERVAL {
             return;
         }
         self.last_progress = now;
+        self.publish(true);
+    }
+
+    fn publish(&self, updating: bool) {
         let mut statuses = self.shared.statuses.lock();
         let Some(s) = statuses.get_mut(&self.request.pane).filter(|s| {
             s.generation == self.request.generation && !self.request.cancel.is_cancelled()
         }) else {
             return;
         };
-        s.updating = true;
+        // Progressive results are for the first scan of this location only.
+        // Background revalidation must not turn a finished chart into unknown
+        // blocks again. Explicit refresh can report progress over the old chart.
+        if s.snapshot == SnapshotKind::Finished && !self.request.force {
+            return;
+        }
+        s.updating = updating;
         s.scanned_dirs = self.dirs;
+        if s.snapshot == SnapshotKind::Progressive
+            && let Some(preview) = &self.preview
+        {
+            let tree = preview.snapshot();
+            s.size = tree.size;
+            s.alloc = tree.alloc;
+            s.files = tree.files;
+            s.dirs = tree.dirs;
+            s.tree = Some(tree);
+            s.error = None;
+        }
         drop(statuses);
         self.shared.changed();
+    }
+
+    fn root(&mut self) -> anyhow::Result<Node> {
+        let path = &self.request.path;
+        anyhow::ensure!(!self.request.cancel.is_cancelled(), "Scan cancelled");
+        if let Some(node) = self.cache.get(path) {
+            return Ok(node);
+        }
+        self.list_root()?;
+        self.scan_children()?;
+        anyhow::ensure!(!self.request.cancel.is_cancelled(), "Scan cancelled");
+        let mut node = self.preview.take().expect("root preview").tree;
+        trim(&mut node);
+        node.incomplete = self.errors > 0
+            || node.other_incomplete > 0
+            || node.children.iter().any(|child| child.incomplete);
+        if !node.incomplete {
+            self.cache.insert(node.clone());
+        }
+        Ok(node)
+    }
+
+    fn list_root(&mut self) -> anyhow::Result<()> {
+        let path = &self.request.path;
+        let metadata = std::fs::metadata(path)?;
+        anyhow::ensure!(metadata.is_dir(), "Disk usage needs a directory");
+        self.preview = Some(Progress {
+            tree: Node {
+                id: Some(bibli_core::EntryId {
+                    dev: metadata.dev(),
+                    ino: metadata.ino(),
+                }),
+                path: path.clone(),
+                name: path
+                    .file_name()
+                    .unwrap_or(path.as_os_str())
+                    .to_string_lossy()
+                    .into_owned(),
+                is_dir: true,
+                ..Node::default()
+            },
+            branch: None,
+        });
+        // List files and unknown folders before descending into any subtree.
+        // A second streaming pass finds directories without retaining an
+        // unbounded queue of paths or stat-ing every file twice.
+        self.dirs += 1;
+        for entry in std::fs::read_dir(path)? {
+            anyhow::ensure!(!self.request.cancel.is_cancelled(), "Scan cancelled");
+            match entry.and_then(|entry| entry_node(&entry)) {
+                Ok(child) => {
+                    let tree = &mut self.preview.as_mut().expect("root preview").tree;
+                    add_contents(tree, &child);
+                    tree.dirs += u64::from(child.is_dir);
+                    tree.children.push(child);
+                    if tree.children.len() > MAX_CHILDREN * 2 {
+                        trim(tree);
+                    }
+                }
+                Err(_) => self.errors += 1,
+            }
+            self.entries += 1;
+            if self.entries % 256 == 0 {
+                self.progress(Instant::now());
+            }
+        }
+        self.progress(Instant::now());
+        Ok(())
+    }
+
+    fn scan_children(&mut self) -> anyhow::Result<()> {
+        let path = &self.request.path;
+        for entry in if self.preview.as_ref().expect("root preview").tree.dirs > 0 {
+            Some(std::fs::read_dir(path)?)
+        } else {
+            None
+        }
+        .into_iter()
+        .flatten()
+        {
+            anyhow::ensure!(!self.request.cancel.is_cancelled(), "Scan cancelled");
+            let entry = match entry.and_then(|entry| entry.file_type().map(|kind| (entry, kind))) {
+                Ok((entry, kind)) if kind.is_dir() => entry,
+                Ok(_) => continue,
+                Err(_) => {
+                    self.errors += 1;
+                    continue;
+                }
+            };
+            let pending = Node {
+                path: entry.path(),
+                name: entry.file_name().to_string_lossy().into_owned(),
+                is_dir: true,
+                incomplete: true,
+                ..Node::default()
+            };
+            self.preview.as_mut().expect("root preview").branch = Some(pending.clone());
+            let child = match self.directory(&pending.path, 1) {
+                Ok(child) => child,
+                Err(_) if self.request.cancel.is_cancelled() => anyhow::bail!("Scan cancelled"),
+                Err(_) => {
+                    self.errors += 1;
+                    pending
+                }
+            };
+            let preview = self.preview.as_mut().expect("root preview");
+            preview.branch = None;
+            add_contents(&mut preview.tree, &child);
+            replace_pending(&mut preview.tree, child);
+            self.progress(Instant::now());
+        }
+        Ok(())
     }
 
     fn directory(&mut self, path: &Path, depth: usize) -> anyhow::Result<Node> {
         anyhow::ensure!(!self.request.cancel.is_cancelled(), "Scan cancelled");
         if let Some(node) = self.cache.get(path) {
+            if let Some(branch) = self.preview.as_mut().and_then(|p| p.branch.as_mut()) {
+                if depth == 1 {
+                    branch.id = node.id;
+                }
+                add_contents(branch, &node);
+                branch.dirs += u64::from(depth > 1);
+            }
             return Ok(node);
         }
-        self.progress(Instant::now());
+        if let Some(branch) = self.preview.as_mut().and_then(|p| p.branch.as_mut()) {
+            branch.dirs += u64::from(depth > 1);
+        }
         anyhow::ensure!(depth < 256, "Directory nesting exceeds the scan limit");
         let mut node = Node {
             name: path.file_name().map_or_else(
@@ -162,6 +366,12 @@ impl Scanner<'_> {
             dev: metadata.dev(),
             ino: metadata.ino(),
         });
+        if depth == 1
+            && let Some(branch) = self.preview.as_mut().and_then(|p| p.branch.as_mut())
+        {
+            branch.id = node.id;
+        }
+        self.progress(Instant::now());
         let entries = std::fs::read_dir(path)?;
         let initial_errors = self.errors;
         self.dirs += 1;
@@ -186,6 +396,7 @@ impl Scanner<'_> {
                             path,
                             name: entry.file_name().to_string_lossy().into_owned(),
                             is_dir: true,
+                            incomplete: true,
                             ..Node::default()
                         }
                     }
@@ -204,6 +415,11 @@ impl Scanner<'_> {
                 dev: metadata.dev(),
                 ino: metadata.ino(),
             });
+            if !child.is_dir
+                && let Some(branch) = self.preview.as_mut().and_then(|p| p.branch.as_mut())
+            {
+                add_contents(branch, &child);
+            }
             node.size += child.size;
             node.alloc += child.alloc;
             node.files += child.files;
@@ -220,7 +436,8 @@ impl Scanner<'_> {
             }
         }
         trim(&mut node);
-        if self.errors == initial_errors {
+        node.incomplete = self.errors != initial_errors;
+        if !node.incomplete {
             self.cache.insert(node.clone());
         }
         Ok(node)
@@ -234,6 +451,7 @@ fn trim(node: &mut Node) {
             node.other_alloc += child.alloc;
             node.other_size += child.size;
             node.other_count += 1;
+            node.other_incomplete += u64::from(child.incomplete);
         }
     }
 }
@@ -254,6 +472,37 @@ struct Worker {
     registrations: HashSet<PathBuf>,
 }
 impl Worker {
+    fn prepare(&mut self, request: &Request) {
+        if request.cancel.is_cancelled()
+            || self.cache.dirs.contains_key(&request.path)
+            || self.roots.iter().any(|root| request.path.starts_with(root))
+            || self
+                .shared
+                .statuses
+                .lock()
+                .get(&request.pane)
+                .is_none_or(|s| s.tree.is_some())
+        {
+            return;
+        }
+        // Native recursive watch setup itself walks the tree. Show the visible
+        // level before that work; these unmonitored observations are never
+        // cached and root() reads them again once coverage is established.
+        let mut scanner = Scanner {
+            cache: &mut self.cache,
+            request,
+            shared: &self.shared,
+            dirs: 0,
+            entries: 0,
+            errors: 0,
+            last_progress: Instant::now(),
+            preview: None,
+        };
+        if scanner.list_root().is_ok() {
+            scanner.publish(false);
+        }
+    }
+
     fn watch(&mut self, path: &Path) -> bool {
         // Watching the resolved inode cannot detect replacement of an alias in
         // this path's ancestors. Revalidate aliases periodically instead.
@@ -334,8 +583,9 @@ impl Worker {
             entries: 0,
             errors: 0,
             last_progress: started,
+            preview: None,
         };
-        let tree = scanner.directory(&request.path, 0);
+        let tree = scanner.root();
         let scanned_dirs = scanner.dirs;
         let errors = scanner.errors;
         let mut statuses = self.shared.statuses.lock();
@@ -344,6 +594,7 @@ impl Worker {
                 .get_mut(&request.pane)
                 .filter(|s| s.generation == request.generation)
         {
+            let incomplete = tree.as_ref().is_ok_and(|n| n.incomplete);
             let error = tree
                 .as_ref()
                 .err()
@@ -352,6 +603,10 @@ impl Worker {
                     (errors > 0).then(|| {
                         format!("{errors} entries could not be read; totals are incomplete")
                     })
+                })
+                .or_else(|| {
+                    incomplete
+                        .then(|| "Directory changed during scan; totals are incomplete".into())
                 })
                 .or_else(|| {
                     (!watched)
@@ -367,9 +622,14 @@ impl Worker {
                 dirs: node.as_ref().map_or(0, |n| n.dirs),
                 size: node.as_ref().map_or(0, |n| n.size),
                 alloc: node.as_ref().map_or(0, |n| n.alloc),
+                snapshot: if node.is_some() {
+                    SnapshotKind::Finished
+                } else {
+                    SnapshotKind::Progressive
+                },
                 tree: node,
                 error,
-                stale: !watched || errors > 0,
+                stale: !watched || incomplete,
                 scanned_dirs,
                 generation: request.generation,
             };
@@ -478,6 +738,10 @@ pub(super) fn run(
                     if request.cancel.is_cancelled() {
                         continue;
                     }
+                    worker.prepare(&request);
+                    if request.cancel.is_cancelled() {
+                        continue;
+                    }
                     let covered = worker.watch(&request.path);
                     worker.scan(&request, covered);
                     worker.active.insert(
@@ -527,6 +791,283 @@ mod tests {
             revision: Arc::default(),
             wake: Arc::new(|| {}),
         })
+    }
+
+    fn scanner<'a>(cache: &'a mut Cache, request: &'a Request, shared: &'a Shared) -> Scanner<'a> {
+        Scanner {
+            cache,
+            request,
+            shared,
+            dirs: 0,
+            entries: 0,
+            errors: 0,
+            // Deterministic first publication, without depending on disk speed.
+            last_progress: Instant::now().checked_sub(PROGRESS_INTERVAL).unwrap(),
+            preview: None,
+        }
+    }
+
+    fn observed(request: &Request) -> (Arc<Shared>, Receiver<Status>) {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let pane = request.pane;
+        let shared = Arc::new_cyclic(|weak: &std::sync::Weak<Shared>| {
+            let weak = weak.clone();
+            Shared {
+                statuses: Mutex::new(HashMap::from([(
+                    pane,
+                    Status {
+                        root: Some(request.path.clone()),
+                        scanning: true,
+                        generation: request.generation,
+                        ..Status::default()
+                    },
+                )])),
+                revision: Arc::default(),
+                wake: Arc::new(move || {
+                    if let Some(shared) = weak.upgrade() {
+                        tx.send(shared.statuses.lock()[&pane].clone()).unwrap();
+                    }
+                }),
+            }
+        });
+        (shared, rx)
+    }
+
+    #[test]
+    fn refresh_progress_retains_finished_results_until_replacement_is_ready() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("child")).unwrap();
+        let file = tmp.path().join("child/payload");
+        std::fs::write(&file, b"old").unwrap();
+        let mut request = request(0, tmp.path().into());
+        let (shared, updates) = observed(&request);
+        let mut worker = Worker {
+            shared: Arc::clone(&shared),
+            cache: Cache::default(),
+            active: HashMap::new(),
+            watcher: None,
+            roots: Vec::new(),
+            registrations: HashSet::new(),
+        };
+        worker.scan(&request, false);
+        assert_eq!(
+            shared.statuses.lock()[&request.pane].snapshot,
+            SnapshotKind::Finished
+        );
+        // Repeated fallback passes, explicit refresh, and a finished result
+        // with read errors all retain the displayed breakdown during work.
+        for (index, (force, incomplete)) in [
+            (false, false),
+            (false, false),
+            (true, false),
+            (true, true),
+            (false, true),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            request.force = force;
+            {
+                let mut statuses = shared.statuses.lock();
+                let s = statuses.get_mut(&request.pane).unwrap();
+                s.scanning = true;
+                s.tree.as_mut().unwrap().incomplete = incomplete;
+                s.error = incomplete.then(|| "Some entries could not be read".into());
+            }
+            let before = shared.statuses.lock()[&request.pane].clone();
+            updates.try_iter().for_each(drop);
+            std::fs::write(&file, vec![0; 10 + index]).unwrap();
+            worker.cache.clear();
+            // Force a progress checkpoint independently of filesystem speed.
+            let fresh = scanner(&mut worker.cache, &request, &shared)
+                .root()
+                .unwrap();
+            assert_eq!(fresh.size, (10 + index) as u64);
+            let during = shared.statuses.lock()[&request.pane].clone();
+            assert_eq!(
+                serde_json::to_value(&during.tree).unwrap(),
+                serde_json::to_value(&before.tree).unwrap()
+            );
+            assert_eq!(
+                (during.size, during.alloc, during.files, during.dirs),
+                (before.size, before.alloc, before.files, before.dirs)
+            );
+            assert_eq!(during.error, before.error);
+            assert_eq!(during.updating, force);
+            let progress: Vec<_> = updates.try_iter().collect();
+            assert_eq!(
+                !progress.is_empty(),
+                force,
+                "automatic refresh must stay silent"
+            );
+            worker.scan(&request, false);
+            let finished = shared.statuses.lock()[&request.pane].clone();
+            assert_eq!(finished.size, fresh.size);
+            assert!(!finished.scanning && !finished.updating);
+            assert!(!finished.tree.unwrap().incomplete);
+        }
+    }
+
+    #[test]
+    fn watch_setup_preview_is_uncached_and_revalidated_before_completion() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("direct");
+        std::fs::write(&file, b"old").unwrap();
+        std::fs::create_dir(tmp.path().join("child")).unwrap();
+        std::fs::write(tmp.path().join("child/payload"), b"data").unwrap();
+        let request = request(0, tmp.path().into());
+        let (shared, updates) = observed(&request);
+        let mut worker = Worker {
+            shared,
+            cache: Cache::default(),
+            active: HashMap::new(),
+            watcher: None,
+            roots: Vec::new(),
+            registrations: HashSet::new(),
+        };
+        worker.prepare(&request);
+        let initial = updates.try_recv().unwrap();
+        assert_eq!(initial.size, 3);
+        assert!(initial.tree.unwrap().incomplete);
+        assert!(worker.cache.dirs.is_empty());
+        std::fs::write(&file, b"new content").unwrap();
+        worker.scan(&request, false);
+        let final_status = worker.shared.statuses.lock()[&request.pane].clone();
+        assert!(!final_status.scanning);
+        assert_eq!(final_status.size, 15);
+        assert!(!final_status.tree.unwrap().incomplete);
+    }
+
+    #[test]
+    fn progressive_root_shows_files_before_subtrees_and_finishes_with_exact_totals() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("summary.txt"), b"hello").unwrap();
+        for index in 0..80 {
+            let dir = tmp.path().join(format!("folder-{index:02}"));
+            std::fs::create_dir(&dir).unwrap();
+            std::fs::write(dir.join("payload"), [0; 37]).unwrap();
+        }
+        let request = request(0, tmp.path().into());
+        let (shared, updates) = observed(&request);
+        let mut cache = Cache::default();
+        let result = scanner(&mut cache, &request, &shared).root().unwrap();
+        let first = updates.try_recv().unwrap();
+        assert!(first.scanning && first.tree.as_ref().unwrap().incomplete);
+        assert_eq!((first.size, first.files, first.dirs), (5, 1, 80));
+        let tree = first.tree.unwrap();
+        assert_eq!(tree.children.len(), MAX_CHILDREN);
+        assert!(
+            tree.children
+                .iter()
+                .any(|n| n.name == "summary.txt" && !n.incomplete)
+        );
+        assert!(
+            tree.children
+                .iter()
+                .filter(|n| n.is_dir)
+                .all(|n| n.incomplete && n.id.is_some())
+        );
+        assert!(tree.other_incomplete > 0);
+        assert!(!result.incomplete);
+        assert_eq!(
+            (result.size, result.files, result.dirs),
+            (5 + 80 * 37, 81, 80)
+        );
+        assert_eq!(result.other_count, 17);
+        assert_eq!(result.other_incomplete, 0);
+        assert_eq!(
+            result.children.iter().map(|n| n.size).sum::<u64>() + result.other_size,
+            result.size
+        );
+        assert_eq!(
+            result.children.iter().map(|n| n.alloc).sum::<u64>() + result.other_alloc,
+            result.alloc
+        );
+        assert!(cache.dirs.values().all(|(node, _)| !node.incomplete));
+        let revision = shared.revision.load(std::sync::atomic::Ordering::Acquire);
+        assert_eq!(
+            scanner(&mut cache, &request, &shared).root().unwrap().size,
+            result.size
+        );
+        assert_eq!(
+            shared.revision.load(std::sync::atomic::Ordering::Acquire),
+            revision,
+            "a cached root publishes no partial updates"
+        );
+    }
+
+    #[test]
+    fn progressive_branch_counts_nested_and_cached_contents_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let child = tmp.path().join("child");
+        std::fs::create_dir_all(child.join("nested")).unwrap();
+        std::fs::write(child.join("direct"), b"one").unwrap();
+        std::fs::write(child.join("nested/file"), b"two!").unwrap();
+        let request = request(0, tmp.path().into());
+        let shared = shared();
+        let mut cache = Cache::default();
+        for pass in 0..2 {
+            // On the second pass reuse the nested cache but recalculate its parent.
+            let pending = Node {
+                path: child.clone(),
+                is_dir: true,
+                incomplete: true,
+                ..Node::default()
+            };
+            let mut scan = scanner(&mut cache, &request, &shared);
+            scan.preview = Some(Progress {
+                tree: Node {
+                    dirs: 1,
+                    children: vec![pending.clone()],
+                    ..Node::default()
+                },
+                branch: Some(pending),
+            });
+            let result = scan.directory(&child, 1).unwrap();
+            let partial = scan.preview.as_ref().unwrap().snapshot();
+            assert_eq!((partial.size, partial.files, partial.dirs), (7, 2, 2));
+            assert!(partial.children[0].incomplete && partial.children[0].id.is_some());
+            assert_eq!(partial.children[0].alloc, result.alloc);
+            assert_eq!(scan.dirs, if pass == 0 { 2 } else { 1 });
+            if let Some((node, stamp)) = cache.dirs.remove(&child) {
+                cache.bytes -= cost(&node);
+                cache.order.remove(&stamp);
+            }
+        }
+    }
+
+    #[test]
+    fn cancelling_a_partial_scan_never_caches_the_unfinished_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("child")).unwrap();
+        std::fs::write(tmp.path().join("child/payload"), b"data").unwrap();
+        let request = request(0, tmp.path().into());
+        let cancel = request.cancel.clone();
+        let shared = Shared {
+            statuses: Mutex::new(HashMap::from([(
+                request.pane,
+                Status {
+                    generation: 1,
+                    ..Status::default()
+                },
+            )])),
+            revision: Arc::default(),
+            wake: Arc::new(move || cancel.cancel()),
+        };
+        let mut cache = Cache::default();
+        assert!(scanner(&mut cache, &request, &shared).root().is_err());
+        assert!(
+            shared.statuses.lock()[&request.pane]
+                .tree
+                .as_ref()
+                .unwrap()
+                .incomplete
+        );
+        assert!(cache.get(tmp.path()).is_none());
+        let fresh = self::request(1, tmp.path().into());
+        let result = scanner(&mut cache, &fresh, &shared).root().unwrap();
+        assert_eq!(result.size, 4);
+        assert!(!result.incomplete);
     }
 
     #[test]
@@ -637,6 +1178,7 @@ mod tests {
             entries: 0,
             errors: 0,
             last_progress: started,
+            preview: None,
         };
         scanner.directory(&request.path, 0).unwrap();
         scanner.progress(started + PROGRESS_INTERVAL / 2);

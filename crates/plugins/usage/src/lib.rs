@@ -29,6 +29,9 @@ pub struct Node {
     pub name: String,
     pub path: PathBuf,
     pub is_dir: bool,
+    /// Totals are lower bounds while scanning or when entries could not be read.
+    #[serde(default)]
+    pub incomplete: bool,
     pub size: u64,
     /// Allocated bytes reported by stat (not exclusive physical ownership of shared extents).
     pub alloc: u64,
@@ -38,6 +41,8 @@ pub struct Node {
     pub other_alloc: u64,
     pub other_size: u64,
     pub other_count: u64,
+    #[serde(default)]
+    pub other_incomplete: u64,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -58,6 +63,17 @@ pub struct Status {
     /// Directories actually read for this request (zero on a cache hit).
     pub scanned_dirs: u64,
     pub generation: u64,
+    /// A finished scan supplied the displayed tree. This is separate from
+    /// `Node::incomplete`: an unreadable subtree can leave a finished result partial.
+    #[serde(skip)]
+    snapshot: SnapshotKind,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum SnapshotKind {
+    #[default]
+    Progressive,
+    Finished,
 }
 
 struct Request {

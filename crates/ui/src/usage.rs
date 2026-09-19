@@ -21,16 +21,19 @@ pub struct Node {
     pub name: String,
     pub path: PathBuf,
     pub is_dir: bool,
+    pub incomplete: bool,
     pub size: u64,
     pub alloc: u64,
     pub children: Vec<Node>,
     pub other_alloc: u64,
     pub other_count: u64,
+    pub other_incomplete: u64,
 }
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Status {
     pub root: Option<PathBuf>,
     pub updating: bool,
+    pub scanning: bool,
     pub files: u64,
     pub dirs: u64,
     pub alloc: u64,
@@ -42,7 +45,7 @@ pub struct Status {
 #[derive(Default)]
 pub struct UsageState {
     pub status: Option<Status>,
-    pub hover_key: Option<usize>,
+    pub hover_path: Option<PathBuf>,
     root: Option<PathBuf>,
     revision: Option<u64>,
 }
@@ -142,7 +145,6 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
     let pane = shell.pane;
     let state = &shell.ui().usage;
     let status = state.status.as_ref();
-    let hover = state.hover_key;
     let mut header = toolbar::row(&theme)
         .text_color(theme.text)
         .id(("usage-tools", pane.0 as usize));
@@ -161,8 +163,16 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
                     }
                 },
                 |s| {
+                    if s.tree.is_none() && s.scanning {
+                        return "Calculating sizes…".into();
+                    }
                     format!(
-                        "{} · {} on disk · {} files · {} folders{}",
+                        "{}{} · {} on disk · {} files · {} folders{}",
+                        if s.tree.as_ref().is_some_and(|n| n.incomplete) {
+                            "Counted so far: "
+                        } else {
+                            ""
+                        },
                         format::size(s.size),
                         format::size(s.alloc),
                         format::thousands(s.files as usize),
@@ -185,6 +195,7 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
     let mut items = Vec::new();
     let mut details = Vec::new();
     let mut entry_ids = Vec::new();
+    let mut paths = Vec::new();
     if let Some(node) = status.and_then(|s| s.tree.as_ref()) {
         let show_hidden = shell.sort_spec().show_hidden;
         let ws = shell.app.workspace.read();
@@ -202,23 +213,43 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
             } else {
                 theme.text_muted
             };
-            color.h = (color.h + (index % 7) as f32 * 0.04) % 1.;
+            let color_index = child.id.map_or(index % 7, |id| (id.ino % 7) as usize);
+            color.h = (color.h + color_index as f32 * 0.04) % 1.;
             color.s = if child.is_dir { 0.55 } else { 0.1 };
             color.l = if selected { 0.65 } else { 0.42 };
             details.push(format!(
-                "{} · {} · {} on disk{}",
+                "{} · {}{} · {} on disk{}",
                 child.name,
+                if child.incomplete {
+                    "counted so far: "
+                } else {
+                    ""
+                },
                 format::size(child.size),
                 format::size(child.alloc),
                 if selected { " · selected" } else { "" }
             ));
             entry_ids.push(child.id);
+            paths.push(child.path.clone());
             items.push(TreemapItem {
                 key,
                 weight: (child.alloc as f64).max((node.alloc as f64 / 200.).max(1.)),
-                label: child.name.clone().into(),
+                label: if child.incomplete {
+                    format!(
+                        "{} · {}",
+                        child.name,
+                        if status.is_some_and(|s| s.scanning) {
+                            "calculating…"
+                        } else {
+                            "incomplete"
+                        }
+                    )
+                    .into()
+                } else {
+                    child.name.clone().into()
+                },
                 color,
-                hatched: false,
+                hatched: child.incomplete,
                 children: Vec::new(),
             });
         }
@@ -229,19 +260,34 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
                 node.other_count
             ));
             entry_ids.push(None);
+            paths.push(node.path.clone());
             items.push(TreemapItem {
                 key,
                 weight: (node.other_alloc as f64).max(1.),
-                label: format!("{} smaller items", node.other_count).into(),
+                label: format!(
+                    "{} other items{}",
+                    node.other_count,
+                    if node.other_incomplete > 0 {
+                        " · incomplete"
+                    } else {
+                        ""
+                    }
+                )
+                .into(),
                 color: theme.text_muted,
                 hatched: true,
                 children: Vec::new(),
             });
         }
     }
+    let hover = state
+        .hover_path
+        .as_ref()
+        .and_then(|path| paths.iter().position(|p| p == path));
     let hint = hover.and_then(|key| details.get(key)).cloned().unwrap_or_else(|| {
         status.and_then(|s| s.error.clone()).unwrap_or_else(|| {
-            if status.is_some_and(|s| s.updating) { format!("Scanning… {} folders read", status.map_or(0, |s| s.scanned_dirs)) }
+            if status.is_some_and(|s| s.scanning && s.tree.as_ref().is_some_and(|n| n.incomplete)) { "Striped blocks are still being counted · proportions will change as sizes arrive".into() }
+            else if status.is_some_and(|s| s.updating) { format!("Scanning… {} folders read", status.map_or(0, |s| s.scanned_dirs)) }
             else { "Click to select · double-click to open · Back/Up keeps Usage · totals include hidden files".into() }
         })
     });
@@ -256,7 +302,9 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
         hover,
         move |key, _, cx| {
             entity.update(cx, |shell, cx| {
-                shell.with_pane(pane, |shell| shell.ui_mut().usage.hover_key = key);
+                shell.with_pane(pane, |shell| {
+                    shell.ui_mut().usage.hover_path = key.and_then(|key| paths.get(key).cloned());
+                });
                 cx.notify();
             });
         },
