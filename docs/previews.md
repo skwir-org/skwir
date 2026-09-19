@@ -27,6 +27,11 @@ chapters. Other viewers search the loaded section. The command palette exposes
 Preview: hexadecimal, default presentation, source / rendered, find content,
 headings and contents, copy content and page navigation.
 
+Hex uses compact rows with byte-position headers, groups of eight bytes and
+separate offset/ASCII columns. Zero bytes and non-printing placeholders are
+muted; printable ASCII is accented. Font ligatures are disabled so adjacent
+characters remain distinct.
+
 ## Dependencies
 
 `just run` builds the native helpers alongside bibli. The Nix shell includes the

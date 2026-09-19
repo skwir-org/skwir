@@ -545,11 +545,23 @@ pub fn content(
     let selection = shell.preview.inspection.selection;
     let font_size = shell.preview.inspection.font_size;
     let mono = shell.mono_font.clone();
+    let mut hex_font = gpui::font(mono.clone());
+    // A byte viewer must preserve individual ASCII characters, even in coding fonts.
+    hex_font.features = gpui::FontFeatures(Arc::new(vec![
+        ("calt".into(), 0),
+        ("liga".into(), 0),
+        ("dlig".into(), 0),
+    ]));
+    let header_font = hex_font.clone();
     let pane = shell.pane;
-    let theme = theme.clone();
+    let list_theme = theme.clone();
     let entity = cx.entity().downgrade();
     let list = gpui::list(shell.preview.inspection.list.clone(), move |index, _, _| {
+        let theme = &list_theme;
         if index == 0 {
+            if data.kind == InspectionKind::Hex && data.notice.is_empty() && images[0].is_none() {
+                return div().into_any_element();
+            }
             return div()
                 .p_2()
                 .text_color(theme.text_muted)
@@ -562,7 +574,7 @@ pub fn content(
         let i = index - 1;
         let (logical, mut row) = if let Some(block) = data.blocks.get(i) {
             let text =
-                crate::inspector_text::render(block, i, selection, &theme, pane, entity.clone());
+                crate::inspector_text::render(block, i, selection, theme, pane, entity.clone());
             (
                 i,
                 div()
@@ -601,7 +613,15 @@ pub fn content(
                 .text_sm()
                 .pl(px(8. + r.depth.min(32) as f32 * 14.))
                 .when(data.kind == InspectionKind::Hex, |d| {
-                    d.font_family(mono.clone()).whitespace_nowrap()
+                    d.font(hex_font.clone())
+                        .text_size(px(13.))
+                        .line_height(px(18.))
+                        .py(px(1.))
+                        .whitespace_nowrap()
+                        .when(ri % 2 == 1, |d| d.bg(theme.surface.opacity(0.5)))
+                        .when(selected != Some(data.blocks.len() + ri), |d| {
+                            d.hover(|d| d.bg(theme.surface))
+                        })
                 });
             if branch {
                 row = row.child(if collapsed.contains(&ri) {
@@ -615,7 +635,17 @@ pub fn content(
                     div()
                         .w(px(column_width(data.kind, column)))
                         .flex_none()
-                        .child(cell.chars().take(512).collect::<String>()),
+                        .when(data.kind == InspectionKind::Hex && column < 2, |d| {
+                            d.border_r_1().border_color(theme.border)
+                        })
+                        .child(if data.kind == InspectionKind::Hex {
+                            hex_cell(cell, column, theme)
+                        } else {
+                            cell.chars()
+                                .take(512)
+                                .collect::<String>()
+                                .into_any_element()
+                        }),
                 );
             }
             let logical_row = data.blocks.len() + ri;
@@ -703,7 +733,19 @@ pub fn content(
         );
     }
     if !display.data.columns.is_empty() {
-        let mut header = div().p_2().flex().gap_3().text_xs();
+        let mut header = div().p_2().flex().gap_3().text_xs().when(
+            display.data.kind == InspectionKind::Hex,
+            |d| {
+                d.font(header_font)
+                    .text_size(px(13.))
+                    .line_height(px(18.))
+                    .py_1()
+                    .text_color(theme.text_muted)
+                    .bg(theme.surface)
+                    .border_b_1()
+                    .border_color(theme.border)
+            },
+        );
         for (index, column) in display.data.columns.iter().enumerate() {
             header = header.child(
                 div()
@@ -737,10 +779,53 @@ pub fn content(
 
 fn column_width(kind: InspectionKind, index: usize) -> f32 {
     if kind == InspectionKind::Hex {
-        [160., 460., 170.].get(index).copied().unwrap_or(160.)
+        [140., 400., 148.].get(index).copied().unwrap_or(140.)
     } else if kind == InspectionKind::Table {
         160.
     } else {
         140.
     }
+}
+
+fn hex_cell(text: &str, column: usize, theme: &Theme) -> AnyElement {
+    let highlights = match column {
+        0 => vec![(
+            0..text.len(),
+            gpui::HighlightStyle {
+                color: Some(theme.text_muted),
+                ..Default::default()
+            },
+        )],
+        1 => text
+            .match_indices("00")
+            .map(|(start, value)| {
+                (
+                    start..start + value.len(),
+                    gpui::HighlightStyle {
+                        color: Some(theme.text_muted),
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect(),
+        _ => text
+            .char_indices()
+            .map(|(start, c)| {
+                (
+                    start..start + c.len_utf8(),
+                    gpui::HighlightStyle {
+                        color: Some(if c == '.' {
+                            theme.text_muted
+                        } else {
+                            theme.accent
+                        }),
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect(),
+    };
+    gpui::StyledText::new(text.to_owned())
+        .with_highlights(highlights)
+        .into_any_element()
 }

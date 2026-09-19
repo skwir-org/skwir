@@ -92,7 +92,11 @@ impl PreviewProvider for Provider {
             kind: bibli_core::inspection::InspectionKind::Hex,
             title: format!("Hex · {len} bytes"),
             rows,
-            columns: vec!["Offset".into(), "Hexadecimal".into(), "ASCII".into()],
+            columns: vec![
+                "Offset".into(),
+                hex_bytes(&(0..16).collect::<Vec<_>>()),
+                "ASCII".into(),
+            ],
             position: offset,
             previous: (offset > 0).then(|| offset.saturating_sub(PAGE)),
             next: (offset + PAGE < len).then_some(offset + PAGE),
@@ -135,8 +139,14 @@ fn find(
 fn hex_bytes(bytes: &[u8]) -> String {
     use std::fmt::Write;
     let mut out = String::new();
-    for b in bytes {
-        let _ = write!(out, "{b:02X} ");
+    for (i, b) in bytes.iter().enumerate() {
+        if i > 0 {
+            out.push(' ');
+            if i % 8 == 0 {
+                out.push(' ');
+            }
+        }
+        let _ = write!(out, "{b:02X}");
     }
     out
 }
