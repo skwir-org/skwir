@@ -28,6 +28,8 @@ fn reply(message: &Reply) -> anyhow::Result<()> {
 struct Player {
     pipeline: gst::Element,
     sink: AppSink,
+    spectrum: Option<gst::Element>,
+    audio_only: bool,
     state: Playback,
     generation: u64,
     streams: Vec<gst::Stream>,
@@ -72,6 +74,29 @@ impl Player {
             .property("uri", uri.as_str())
             .property("video-sink", &sink)
             .build()?;
+        let audio_only = std::env::var_os("BIBLI_MEDIA_AUDIO_ONLY").is_some();
+        if audio_only {
+            let flags = pipeline.property_value("flags");
+            if let Some(class) = gst::glib::FlagsClass::with_type(flags.type_())
+                && let Ok(flags) = class.unset_by_nick(flags, "video")
+            {
+                pipeline.set_property_from_value("flags", &flags);
+            }
+        }
+        // Optional spectrum filter: compact bins, no visualization video frames.
+        let spectrum = audio_only
+            .then(|| {
+                gst::ElementFactory::make("spectrum")
+                    .property("bands", 32u32)
+                    .property("interval", 50_000_000u64)
+                    .property("post-messages", false)
+                    .build()
+                    .ok()
+            })
+            .flatten();
+        if let Some(filter) = &spectrum {
+            pipeline.set_property("audio-filter", filter);
+        }
         // Decoder parallelism is a preview resource policy: libav's automatic
         // thread count otherwise retains a frame pool proportional to host CPUs.
         pipeline.connect("element-setup", false, |values| {
@@ -97,6 +122,8 @@ impl Player {
         let player = Self {
             pipeline,
             sink,
+            spectrum,
+            audio_only,
             state: Playback::default(),
             generation: 0,
             streams: Vec::new(),
@@ -253,7 +280,7 @@ impl Player {
     fn select_tracks(&mut self, audio: i32, subtitle: i32) -> anyhow::Result<()> {
         let mut selected = Vec::new();
         for (kind, index) in [
-            (gst::StreamType::VIDEO, 0),
+            (gst::StreamType::VIDEO, if self.audio_only { -1 } else { 0 }),
             (gst::StreamType::AUDIO, audio),
             (gst::StreamType::TEXT, subtitle),
         ] {
@@ -409,8 +436,52 @@ fn run() -> anyhow::Result<()> {
                         dirty = true;
                     }
                 }
+                gst::MessageView::Tag(message) => {
+                    let tags = message.tags();
+                    if let Some(v) = tags.get::<gst::tags::Title>() {
+                        player.state.title = v.get().chars().take(512).collect();
+                    }
+                    if let Some(v) = tags.get::<gst::tags::Artist>() {
+                        player.state.artist = v.get().chars().take(512).collect();
+                    }
+                    if let Some(v) = tags.get::<gst::tags::Album>() {
+                        player.state.album = v.get().chars().take(512).collect();
+                    }
+                    dirty = true;
+                }
+                gst::MessageView::Element(message) => {
+                    if player.state.playing()
+                        && let Some(s) = message.structure()
+                        && s.name() == "spectrum"
+                        && let Ok(values) = s.get::<gst::List>("magnitude")
+                    {
+                        player.state.spectrum = values
+                            .iter()
+                            .take(32)
+                            .filter_map(|v| v.get::<f32>().ok())
+                            .map(|v| {
+                                if v.is_finite() {
+                                    ((v + 60.) / 60.).clamp(0., 1.)
+                                } else {
+                                    0.
+                                }
+                            })
+                            .collect();
+                        dirty = true;
+                    }
+                }
                 gst::MessageView::StreamCollection(message) => {
                     player.streams = message.stream_collection().iter().take(128).collect();
+                    if let Some(filter) = &player.spectrum {
+                        filter.set_property(
+                            "post-messages",
+                            player.audio_only
+                                || !player
+                                    .streams
+                                    .iter()
+                                    .any(|s| s.stream_type().contains(gst::StreamType::VIDEO)),
+                        );
+                    }
                     player.state.audio_tracks = player.tracks(gst::StreamType::AUDIO);
                     player.state.subtitle_tracks = player.tracks(gst::StreamType::TEXT);
                     if player.state.audio == -1 && !player.state.audio_tracks.is_empty() {

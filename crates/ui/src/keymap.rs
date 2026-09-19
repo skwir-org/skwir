@@ -117,6 +117,18 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
 /// Builtin bindings that carry arguments (`keys, command, args json, when`).
 const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     (
+        "ctrl-c",
+        "ui.inspect",
+        r#"{"action":"copy"}"#,
+        Some("Inspector"),
+    ),
+    (
+        "ctrl-f",
+        "ui.inspect",
+        r#"{"action":"search"}"#,
+        Some("Inspector"),
+    ),
+    (
         "space",
         "ui.media_control",
         r#"{"action":"play"}"#,

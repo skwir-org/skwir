@@ -21,3 +21,9 @@ pub mod preview;
 pub mod process;
 pub mod thumb_providers;
 pub mod thumbnails;
+
+pub mod inspection;
+
+pub mod rich_preview;
+
+pub mod archive;

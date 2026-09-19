@@ -1,0 +1,20 @@
+[package]
+name = "bibli-plugin-preview-structured"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bibli-core.workspace = true
+bibli-platform.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+serde_yaml_ng = "0.10"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

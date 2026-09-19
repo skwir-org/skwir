@@ -141,7 +141,14 @@ impl Shell {
                         self.preview.media.state.position =
                             position.min(self.preview.media.state.duration.unwrap_or(position));
                     }
-                    if matches!(command, Control::Play(true) | Control::Seek(_)) {
+                    if matches!(command, Control::Play(true) | Control::Seek(_))
+                        && !self
+                            .preview
+                            .info
+                            .mime
+                            .as_deref()
+                            .is_some_and(|m| m.starts_with("audio/"))
+                    {
                         self.preview.media.poster = Poster::Dismissed;
                         self.preview.media.initial_frame = None;
                         self.cancel_pending_preview();
@@ -691,4 +698,53 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         root = root.child(anchor.popup(panel));
     }
     root.into_any_element()
+}
+
+/// Cover and metadata remain visible during playback; spectrum has no UI timer.
+pub fn audio_content(shell: &Shell, theme: &Theme) -> AnyElement {
+    let p = &shell.preview;
+    let state = &p.media.state;
+    let mut body = div()
+        .flex_1()
+        .min_h_0()
+        .p_4()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap_3();
+    if let Some(PreviewContent::Image { image, .. }) = &p.content {
+        body = body.child(
+            gpui::img(image.clone())
+                .max_w_full()
+                .max_h(px(260.))
+                .object_fit(gpui::ObjectFit::Contain),
+        );
+    }
+    let mut bars = div().h(px(64.)).w_full().flex().items_end().gap_1();
+    for v in &state.spectrum {
+        bars = bars.child(
+            div()
+                .flex_1()
+                .h(px(if state.playing() { v * 64. } else { 2. }))
+                .bg(theme.accent),
+        );
+    }
+    body.child(div().text_lg().child(if state.title.is_empty() {
+        p.info.name.clone()
+    } else {
+        state.title.clone()
+    }))
+    .child(
+        div()
+            .text_color(theme.text_muted)
+            .child(state.artist.clone()),
+    )
+    .child(
+        div()
+            .text_color(theme.text_muted)
+            .child(state.album.clone()),
+    )
+    .child(bars)
+    .into_any_element()
 }

@@ -54,6 +54,16 @@ fn all_plugins() -> Vec<Arc<dyn Plugin>> {
         Arc::new(bibli_plugin_places::PlacesPlugin),
         Arc::new(bibli_plugin_thumbnails::ThumbnailsPlugin),
         Arc::new(bibli_plugin_preview_media::PreviewPlugin),
+        Arc::new(bibli_plugin_preview_audio::PreviewPlugin),
+        Arc::new(bibli_plugin_preview_markdown::PreviewPlugin),
+        Arc::new(bibli_plugin_preview_archives::PreviewPlugin),
+        Arc::new(bibli_plugin_preview_epub::PreviewPlugin),
+        Arc::new(bibli_plugin_preview_tables::PreviewPlugin),
+        Arc::new(bibli_plugin_preview_structured::PreviewPlugin),
+        Arc::new(bibli_plugin_preview_fonts::PreviewPlugin),
+        Arc::new(bibli_plugin_preview_email::PreviewPlugin),
+        Arc::new(bibli_plugin_preview_comics::PreviewPlugin),
+        Arc::new(bibli_plugin_preview_hex::PreviewPlugin),
         Arc::new(bibli_plugin_preview_documents::PreviewPlugin),
         Arc::new(bibli_plugin_query::QueryPlugin),
         Arc::new(bibli_plugin_shelf::ShelfPlugin::default()),
@@ -118,5 +128,5 @@ fn all_plugins_coexist_and_every_command_has_a_schema() {
             c.name
         );
     }
-    assert_eq!(app.plugins.list().len(), 15);
+    assert_eq!(app.plugins.list().len(), 25);
 }

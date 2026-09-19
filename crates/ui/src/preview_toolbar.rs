@@ -86,6 +86,7 @@ fn open_button() -> Button {
 
 fn caption(shell: &Shell) -> String {
     match &shell.preview.content {
+        Some(PreviewContent::Inspection(display)) => display.data.title.clone(),
         Some(PreviewContent::Image {
             width,
             height,
@@ -220,6 +221,13 @@ fn row(
         row = row.child(div().flex_1().min_w_0());
     }
     if mode == 0 || !image {
+        if shell.app.previews.ids().contains(&"preview-hex") {
+            row = row.child(
+                Button::new("preview-hex", "list", "View as hexadecimal", "ui.inspect")
+                    .args(serde_json::json!({"action":"hex"}))
+                    .render(shell, cx),
+            );
+        }
         row = row.child(open_button().render(shell, cx));
     } else {
         row = row.child(

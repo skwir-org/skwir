@@ -56,7 +56,7 @@
         mediaPlugins = with pkgs.gst_all_1; [
           gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav
         ];
-        buildInputs = [ pkgs.poppler_gi pkgs.cairo pkgs.glib pkgs.gst_all_1.gstreamer ] ++ mediaPlugins
+        buildInputs = [ pkgs.libarchive pkgs.poppler_gi pkgs.cairo pkgs.glib pkgs.gst_all_1.gstreamer ] ++ mediaPlugins
           ++ (lib.optionals stdenv.hostPlatform.isLinux linuxBuildInputs) ++ darwinBuildInputs;
 
         nativeBuildInputs = with pkgs; [

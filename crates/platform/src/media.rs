@@ -207,6 +207,8 @@ fn manage(
         bibli_core::media::MAX_SIDE,
         bibli_core::media::MAX_SIDE,
     )?)?)?;
+    let audio_only =
+        crate::mime::by_name(path.as_os_str()).is_some_and(|mime| mime.0.starts_with("audio/"));
     let mut command = Command::new(executable);
     command
         .arg(path)
@@ -214,6 +216,9 @@ fn manage(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
+    if audio_only {
+        command.env("BIBLI_MEDIA_AUDIO_ONLY", "1");
+    }
     // Decoder/overlay threads are recreated during track changes. glibc's
     // CPU-count-based arena limit otherwise retains hundreds of MB of freed
     // frame buffers across those threads. Bound fragmentation in this child.

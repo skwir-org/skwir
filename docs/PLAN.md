@@ -305,6 +305,24 @@ playing video, movement resetting the deadline, hover protection, menu focus
 and dismissal, and fullscreen exit. Lint, 148 default tests, two explicit native
 video tests and the benchmark gate pass.
 
+Extended previews: ten independent runtime plugins add audio,
+hexadecimal, Markdown reading mode, archives, EPUB reading mode, CSV/TSV tables,
+JSON/YAML/TOML trees, font specimens, email and comics. Audio reuses GStreamer;
+archives/comics use the optional libarchive helper. Semantic content is rendered
+by a shared virtualized GPUI viewer. EPUB publisher CSS/fixed layouts, encrypted
+archives, full-file audio waveforms and nested PDF/video sessions in containers
+remain outside this initial implementation. See ADR-009 for dependencies, bounds
+and behavior; `docs/previews.md` describes controls and installation. Strict lint,
+163 default tests (six optional tests skipped), and all microbenchmark budgets
+pass. Native checks exercise archive member reads, output limits and symlink
+rejection, plus audio tags, spectrum, playback, seek and pause with a fake audio
+sink; the paused audio worker measured 0.0% CPU and 12.6 MiB PSS. The existing
+native video regression also passes. Real-window checks cover all ten formats,
+text selection, search focus, EPUB links, section navigation, archive members,
+worker cleanup and scrolling images10k/grid and flat100k/list. A settled debug
+UI sample after the latter measured 2.2% CPU; this does not establish the release
+UI idle/startup budgets or audible playback quality on a real device.
+
 ## Phase 0 — Foundations and toolkit spike (~2 weeks)
 
 Goal: a repo that can measure itself, and a toolkit decision backed by numbers.

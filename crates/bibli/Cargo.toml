@@ -4,7 +4,7 @@ description = "bibli: the file manager binary, wiring core, plugins, and the UI 
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-rust-version.workspace = true
+rust-version = "1.88"
 
 [[bin]]
 name = "bibli"
@@ -26,6 +26,16 @@ bibli-plugin-rename-bulk.workspace = true
 bibli-plugin-shelf.workspace = true
 bibli-plugin-query.workspace = true
 bibli-plugin-preview-media.workspace = true
+bibli-plugin-preview-hex.workspace = true
+bibli-plugin-preview-markdown.workspace = true
+bibli-plugin-preview-archives.workspace = true
+bibli-plugin-preview-epub.workspace = true
+bibli-plugin-preview-tables.workspace = true
+bibli-plugin-preview-structured.workspace = true
+bibli-plugin-preview-fonts.workspace = true
+bibli-plugin-preview-email.workspace = true
+bibli-plugin-preview-comics.workspace = true
+bibli-plugin-preview-audio.workspace = true
 bibli-plugin-preview-documents.workspace = true
 bibli-ui.workspace = true
 anyhow.workspace = true
@@ -40,3 +50,5 @@ tempfile.workspace = true
 dirs.workspace = true
 serde_json.workspace = true
 xattr.workspace = true
+
+zip = { version = "8", default-features = false, features = ["deflate"] }

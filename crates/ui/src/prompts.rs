@@ -18,6 +18,14 @@ pub enum PromptKind {
     Mkdir,
     Search,
     Tags,
+    InspectSearch {
+        pane: bibli_core::workspace::PaneId,
+        generation: u64,
+    },
+    InspectJump {
+        pane: bibli_core::workspace::PaneId,
+        generation: u64,
+    },
 }
 
 pub struct PromptState {
@@ -44,6 +52,10 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let placeholder = match kind {
+            PromptKind::InspectSearch { .. } => {
+                "Text, or hex: followed by byte pairs in the hex viewer"
+            }
+            PromptKind::InspectJump { .. } => "Offset (decimal or 0x hexadecimal)",
             PromptKind::Rename => "New name",
             PromptKind::Mkdir => "Folder name",
             PromptKind::Search => "*.pdf modified<7d size>10M  (in: picks the root)",
@@ -97,6 +109,24 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         match kind {
+            PromptKind::InspectSearch { pane, generation }
+            | PromptKind::InspectJump { pane, generation } => {
+                self.with_pane(pane, |this| {
+                    if this.preview.generation == generation {
+                        let action = if matches!(kind, PromptKind::InspectSearch { .. }) {
+                            "find"
+                        } else {
+                            "jump"
+                        };
+                        this.run(
+                            "ui.inspect",
+                            serde_json::json!({"action":action,"value":text}),
+                            window,
+                            cx,
+                        );
+                    }
+                });
+            }
             PromptKind::Rename if !text.is_empty() => {
                 self.run(
                     "rename",

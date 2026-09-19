@@ -10,6 +10,7 @@ members = [
     "crates/pdf-worker",
     "crates/poppler-worker",
     "crates/media-worker",
+    "crates/archive-worker",
 ]
 # Toolkit spikes live in their own workspace so their heavy dependency
 # trees never touch the main build.
@@ -40,6 +41,16 @@ bibli-plugin-shell = { path = "crates/plugins/shell" }
 bibli-plugin-usage = { path = "crates/plugins/usage" }
 bibli-plugin-timeline = { path = "crates/plugins/timeline" }
 bibli-plugin-preview-media = { path = "crates/plugins/preview-media" }
+bibli-plugin-preview-hex = { path = "crates/plugins/preview-hex" }
+bibli-plugin-preview-markdown = { path = "crates/plugins/preview-markdown" }
+bibli-plugin-preview-archives = { path = "crates/plugins/preview-archives" }
+bibli-plugin-preview-epub = { path = "crates/plugins/preview-epub" }
+bibli-plugin-preview-tables = { path = "crates/plugins/preview-tables" }
+bibli-plugin-preview-structured = { path = "crates/plugins/preview-structured" }
+bibli-plugin-preview-fonts = { path = "crates/plugins/preview-fonts" }
+bibli-plugin-preview-email = { path = "crates/plugins/preview-email" }
+bibli-plugin-preview-comics = { path = "crates/plugins/preview-comics" }
+bibli-plugin-preview-audio = { path = "crates/plugins/preview-audio" }
 bibli-plugin-preview-documents = { path = "crates/plugins/preview-documents" }
 
 # UI toolkit (ADR-001). Pinned exactly: the API moves between releases.

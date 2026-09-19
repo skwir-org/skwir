@@ -21,6 +21,11 @@ media-check:
     cargo build -p bibli-media-worker
     python3 tools/media/check.py
 
+# Exercise audio and archive helpers against generated inputs outside the repo.
+previews-check:
+    cargo build -p bibli-media-worker -p bibli-archive-worker
+    python3 tools/previews/check.py --temporary
+
 # Run the vendored Blade atlas regression tests with a real GPU context.
 atlas-check:
     python3 tools/gpui/check-atlas.py
@@ -56,12 +61,12 @@ spike toolkit gpu="intel" rows="100000":
 
 # Run the app (release) on a directory, default: the current one.
 run dir=".":
-    cargo build --release -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-media-worker
+    cargo build --release -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-media-worker -p bibli-archive-worker
     ./target/release/bibli {{dir}}
 
 # Profile the app with samply (opens the Firefox Profiler UI when done).
 flame dir=".":
-    cargo build --release -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-media-worker
+    cargo build --release -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-media-worker -p bibli-archive-worker
     samply record ./target/release/bibli {{dir}}
 
 # Profile a bench profile's listing with a flamegraph SVG.

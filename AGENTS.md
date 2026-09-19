@@ -135,7 +135,8 @@ crates/ui          the gpui shell: views, panels, prompts, keymap, elements
 crates/bibli       the binary: wires plugins and starts the UI
 crates/pdf-worker  optional native PDF reader process (runtime-loaded PDFium)
 crates/poppler-worker optional native PDF reader process (linked poppler-glib)
-crates/media-worker optional video player process (linked GStreamer)
+crates/media-worker optional audio/video player process (linked GStreamer)
+crates/archive-worker optional archive reader process (linked libarchive)
 crates/plugins/*   one crate per plugin (see docs/PLAN.md Phase 2 and 4)
 crates/bench       synthetic trees and the performance regression check
 vendor/gpui        patched gpui 0.2.2 (see vendor/gpui/README.bibli.md)
@@ -285,6 +286,21 @@ docs/              PLAN.md, adr/
 - Generate media with `tools/media/check.py`; report worker-only versus full UI
   latency and combined PSS separately. Clocked fake audio checks timing but do
   not establish audible synchronization or real audio-device behavior.
+
+## Structured preview invariants
+
+- New format plugins publish `inspection::Inspection` from scheduler workers;
+  use the existing preview registry and owner lifetimes. Fallback providers have
+  lower priority than typed providers, including after disable/re-enable.
+- Keep rich text, table/tree rows and images toolkit-independent. The UI owns
+  virtualized layout and commands. Bound input, expansion and visible work;
+  a short file can still contain one huge field or deeply nested structure.
+- HTML reading mode is inert: no scripts, remote assets or automatic link opens.
+  Markdown images must stay within the document directory after canonicalizing;
+  EPUB resources stay inside their container and email images use content IDs.
+- Only `bibli-archive-worker` links libarchive. Member names are labels/keys,
+  never extraction paths. Read only selected regular members, bound the actual
+  decompressed bytes and keep temporary cleanup off the UI thread.
 
 ## Paths and generated queries
 

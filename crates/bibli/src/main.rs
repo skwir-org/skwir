@@ -78,6 +78,48 @@ fn main() -> anyhow::Result<()> {
         &app,
     );
 
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_preview_audio::PreviewPlugin),
+        &app,
+    );
+
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_preview_markdown::PreviewPlugin),
+        &app,
+    );
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_preview_archives::PreviewPlugin),
+        &app,
+    );
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_preview_epub::PreviewPlugin),
+        &app,
+    );
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_preview_tables::PreviewPlugin),
+        &app,
+    );
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_preview_structured::PreviewPlugin),
+        &app,
+    );
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_preview_fonts::PreviewPlugin),
+        &app,
+    );
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_preview_email::PreviewPlugin),
+        &app,
+    );
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_preview_comics::PreviewPlugin),
+        &app,
+    );
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_preview_hex::PreviewPlugin),
+        &app,
+    );
+
     let path = std::env::args_os().nth(1).map_or_else(
         || std::env::current_dir().unwrap_or_else(|_| "/".into()),
         std::path::PathBuf::from,

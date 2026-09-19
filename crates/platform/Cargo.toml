@@ -20,6 +20,8 @@ png.workspace = true
 parking_lot.workspace = true
 tempfile.workspace = true
 serde_json.workspace = true
+scraper = "0.24"
+percent-encoding = "2"
 crossbeam-channel.workspace = true
 rustix = { workspace = true, features = ["process"] }
 

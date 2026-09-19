@@ -1,0 +1,19 @@
+[package]
+name = "bibli-plugin-preview-email"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bibli-core.workspace = true
+bibli-platform.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+mail-parser = "0.11"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

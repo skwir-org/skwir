@@ -1,0 +1,21 @@
+[package]
+name = "bibli-plugin-preview-epub"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version = "1.88"
+
+[dependencies]
+bibli-core.workspace = true
+bibli-platform.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+rbook = "0.7"
+zip = { version = "8", default-features = false, features = ["deflate"] }
+roxmltree.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -24,6 +24,14 @@ pub struct Playback {
     pub audio: i32,
     pub subtitle: i32,
     pub seekable: bool,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub artist: String,
+    #[serde(default)]
+    pub album: String,
+    #[serde(default)]
+    pub spectrum: Vec<f32>,
 }
 impl Playback {
     pub fn playing(&self) -> bool {
@@ -47,6 +55,10 @@ impl Default for Playback {
             audio: -1,
             subtitle: -1,
             seekable: false,
+            title: String::new(),
+            artist: String::new(),
+            album: String::new(),
+            spectrum: Vec::new(),
         }
     }
 }

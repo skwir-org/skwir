@@ -150,11 +150,16 @@ fn finish(
 }
 
 pub struct MediaPreviews {
+    audio: bool,
     backend: String,
     cache: CacheSlot,
     gate: Mutex<()>,
 }
 impl MediaPreviews {
+    pub fn audio(mut self) -> Self {
+        self.audio = true;
+        self
+    }
     pub fn with_backend(mut self, backend: String) -> Self {
         self.backend = backend;
         self
@@ -163,6 +168,7 @@ impl MediaPreviews {
         Self {
             cache,
             backend: "auto".into(),
+            audio: false,
             gate: Mutex::new(()),
         }
     }
@@ -186,10 +192,16 @@ impl PreviewProvider for MediaPreviews {
         Ok(session)
     }
     fn id(&self) -> &'static str {
-        "preview-media"
+        if self.audio {
+            "preview-audio"
+        } else {
+            "preview-media"
+        }
     }
     fn accepts(&self, req: &PreviewRequest) -> bool {
-        req.mime.as_deref().is_some_and(|m| m.starts_with("video/"))
+        req.mime
+            .as_deref()
+            .is_some_and(|m| m.starts_with(if self.audio { "audio/" } else { "video/" }))
     }
     fn render(&self, req: &PreviewRequest, cancel: &CancelToken) -> anyhow::Result<Preview> {
         let _guard = acquire(&self.gate, cancel)?;
@@ -229,20 +241,24 @@ impl PreviewProvider for MediaPreviews {
             .as_str()
             .and_then(|s| s.parse::<f64>().ok())
             .filter(|d| d.is_finite() && *d > 0.0);
-        let seconds = req
-            .seconds
-            .filter(|t| t.is_finite())
-            .unwrap_or_else(|| duration.map_or(0.0, |d| (d * 0.1).min(30.0)))
-            .max(0.0)
-            .min(duration.map_or(f64::MAX, |d| (d - 0.1).max(0.0)));
+        let seconds = if self.audio {
+            0.
+        } else {
+            req.seconds
+                .filter(|t| t.is_finite())
+                .unwrap_or_else(|| duration.map_or(0.0, |d| (d * 0.1).min(30.0)))
+                .max(0.0)
+                .min(duration.map_or(f64::MAX, |d| (d - 0.1).max(0.0)))
+        };
         let tmp = tempfile::tempdir()?;
         let output = tmp.path().join("frame.png");
         let side = req.max_side.clamp(64, MAX_VIDEO_SIDE);
         let mut command = Command::new(ffmpeg);
-        command
-            .args(["-nostdin", "-v", "error", "-threads", "1", "-ss"])
-            .arg(format!("{seconds:.3}"))
-            .arg("-i")
+        command.args(["-nostdin", "-v", "error", "-threads", "1"]);
+        if !self.audio {
+            command.arg("-ss").arg(format!("{seconds:.3}"));
+        }
+        command.arg("-i")
             .arg(&path)
             .args([
                 "-map",

@@ -660,6 +660,7 @@ impl Shell {
                 let dir = arg("dir").unwrap_or_else(|| "reset".into());
                 self.zoom_step(&dir, cx);
             }
+            "inspect" => self.inspect_command(args, window, cx),
             "media_control" => self.media_control(args, cx),
             "media_scrub" => self.media_scrub(args, cx),
             "media_fullscreen" => self.media_fullscreen(window, cx),

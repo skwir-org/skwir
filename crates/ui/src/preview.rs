@@ -34,6 +34,7 @@ const MAX_LINES: usize = 4000;
 const IMAGE_MAX_SIDE: u32 = 2048;
 
 pub enum PreviewContent {
+    Inspection(crate::inspector::Display),
     Image {
         image: Arc<RenderImage>,
         width: u32,
@@ -96,7 +97,7 @@ struct PreviewKey {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum PreviewPhase {
+pub(crate) enum PreviewPhase {
     Idle,
     Queued,
     Loading,
@@ -104,6 +105,7 @@ enum PreviewPhase {
 
 pub struct PreviewState {
     pub reader: crate::reader::ReaderState,
+    pub inspection: crate::inspector::State,
     pub media: crate::media::MediaState,
     pub menu: Option<crate::toolbar::Popup>,
     pub open: bool,
@@ -111,9 +113,9 @@ pub struct PreviewState {
     pub width: f32,
     pub info: Info,
     pub content: Option<PreviewContent>,
-    phase: PreviewPhase,
+    pub(crate) phase: PreviewPhase,
     cancel: Option<CancelToken>,
-    generation: u64,
+    pub(crate) generation: u64,
     key: Option<PreviewKey>,
     pub(crate) page: u32,
     pub(crate) seconds: Option<f64>,
@@ -130,6 +132,7 @@ impl Default for PreviewState {
         let (tx, rx) = flume::unbounded();
         PreviewState {
             reader: crate::reader::ReaderState::default(),
+            inspection: crate::inspector::State::default(),
             media: crate::media::MediaState::default(),
             menu: None,
             open: false,
@@ -161,12 +164,12 @@ impl Drop for PreviewState {
     }
 }
 
-fn syntaxes() -> &'static SyntaxSet {
+pub(crate) fn syntaxes() -> &'static SyntaxSet {
     static S: OnceLock<SyntaxSet> = OnceLock::new();
     S.get_or_init(SyntaxSet::load_defaults_newlines)
 }
 
-fn themes() -> &'static ThemeSet {
+pub(crate) fn themes() -> &'static ThemeSet {
     static T: OnceLock<ThemeSet> = OnceLock::new();
     T.get_or_init(ThemeSet::load_defaults)
 }
@@ -495,6 +498,7 @@ impl Shell {
             seconds: self.preview.seconds,
             max_side: IMAGE_MAX_SIDE,
         };
+        let inspection = self.preview.inspection.request.clone();
         let tx = self.preview.tx.clone();
         let previews = Arc::clone(&self.app.previews);
         let wake = self.app.waker_handle();
@@ -508,6 +512,54 @@ impl Shell {
         self.app
             .scheduler
             .spawn(Priority::Visible, "preview", cancel.clone(), move || {
+                if !is_dir {
+                    let result =
+                        previews
+                            .inspect(&request, &inspection, &cancel)
+                            .and_then(|result| {
+                                if result.is_none() && inspection.source {
+                                    bibli_platform::inspection::source(
+                                        &key.path,
+                                        inspection.offset,
+                                        &cancel,
+                                    )
+                                    .map(Some)
+                                } else {
+                                    Ok(result)
+                                }
+                            });
+                    match result {
+                        Ok(Some(data)) => {
+                            if !cancel.is_cancelled() {
+                                let _ = tx.send(PreviewResult {
+                                    generation,
+                                    content: PreviewContent::Inspection(
+                                        crate::inspector::Display::new(data, key.dark),
+                                    ),
+                                    complete: true,
+                                    session: None,
+                                    media: None,
+                                });
+                                wake();
+                            }
+                            return;
+                        }
+                        Err(error) => {
+                            if !cancel.is_cancelled() {
+                                let _ = tx.send(PreviewResult {
+                                    generation,
+                                    content: PreviewContent::Error(error.to_string()),
+                                    complete: true,
+                                    session: None,
+                                    media: None,
+                                });
+                                wake();
+                            }
+                            return;
+                        }
+                        Ok(None) => {}
+                    }
+                }
                 // Reuse only an already cached desktop thumbnail as initial feedback.
                 if show_thumbnail {
                     use bibli_core::thumbs::{ThumbRequest, ThumbSize, ThumbnailProvider};
@@ -542,7 +594,7 @@ impl Shell {
                 if request
                     .mime
                     .as_deref()
-                    .is_some_and(|m| m.starts_with("video/"))
+                    .is_some_and(|m| m.starts_with("video/") || m.starts_with("audio/"))
                 {
                     match previews.open_media(&request, &lifetime, wake.clone()) {
                         Ok(Some(media)) => {
@@ -708,8 +760,24 @@ impl Shell {
     ) {
         // RenderImage's Arc does not own its uploaded atlas entry. Evict it
         // explicitly, just like the thumbnail LRU, on replacement and close.
-        if let Some(PreviewContent::Image { image, .. }) = self.preview.content.take() {
-            cx.drop_image(image, Some(window));
+        match self.preview.content.take() {
+            Some(PreviewContent::Image { image, .. }) => {
+                cx.drop_image(image, Some(window));
+            }
+            Some(PreviewContent::Inspection(display)) => {
+                for image in display.images.into_iter().flatten() {
+                    cx.drop_image(image, Some(window));
+                }
+            }
+            _ => {}
+        }
+        if let Some(PreviewContent::Inspection(display)) = &content {
+            self.preview.inspection.reset(&display.data);
+            self.preview
+                .inspection
+                .focus
+                .get_or_insert_with(|| cx.focus_handle());
+            self.preview.inspection.request.offset = display.data.position;
         }
         self.preview.content = content;
     }
@@ -731,6 +799,7 @@ impl Shell {
         self.preview.media = crate::media::MediaState::default();
         self.clear_document_pages(window, cx);
         self.preview.reader = crate::reader::ReaderState::default();
+        self.preview.inspection = crate::inspector::State::default();
         self.preview.phase = PreviewPhase::Idle;
 
         self.preview.page = 1;
@@ -743,6 +812,21 @@ impl Shell {
     }
 
     pub fn preview_page(&mut self, delta: i32, cx: &mut Context<Self>) {
+        if let Some(PreviewContent::Inspection(display)) = &self.preview.content {
+            if let Some(offset) = if delta < 0 {
+                display.data.previous
+            } else {
+                display.data.next
+            } {
+                self.preview.inspection.request.offset = offset;
+                self.preview.inspection.request.target = None;
+                self.preview.inspection.request.query = None;
+                self.cancel_pending_preview();
+                self.preview.phase = PreviewPhase::Queued;
+                cx.notify();
+            }
+            return;
+        }
         let Some(PreviewContent::Image {
             detail: Some(PreviewInfo::Document { pages, .. }),
             ..
@@ -975,7 +1059,9 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
         .flex_col()
         .when(document && interactive, |d| d.key_context(keymap::READER));
     if interactive && !shell.preview.info.name.is_empty() {
-        let controls = if shell.preview.media.session.is_some() {
+        let controls = if matches!(shell.preview.content, Some(PreviewContent::Inspection(_))) {
+            crate::inspector::toolbar(shell, theme, cx)
+        } else if shell.preview.media.session.is_some() {
             crate::media::toolbar(shell, theme, cx)
         } else if document {
             crate::reader::toolbar(shell, theme, cx)
@@ -1021,7 +1107,18 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
 
 fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>) -> AnyElement {
     let p = &shell.preview;
+    if p.media.session.is_some()
+        && p.info
+            .mime
+            .as_deref()
+            .is_some_and(|m| m.starts_with("audio/"))
+    {
+        return crate::media::audio_content(shell, theme);
+    }
     match &p.content {
+        Some(PreviewContent::Inspection(display)) => {
+            crate::inspector::content(shell, display, theme, cx)
+        }
         None if p.phase != PreviewPhase::Idle => div()
             .flex_1()
             .flex()
