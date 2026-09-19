@@ -98,6 +98,7 @@ impl PreviewProvider for Provider {
                     format!("{} bytes", a.contents().len()),
                 ],
                 target: Some(i.to_string()),
+                bytes: Some(a.contents().len() as u64),
                 ..Row::default()
             })
             .collect();

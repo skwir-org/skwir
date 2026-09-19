@@ -323,6 +323,36 @@ worker cleanup and scrolling images10k/grid and flat100k/list. A settled debug
 UI sample after the latter measured 2.2% CPU; this does not establish the release
 UI idle/startup budgets or audible playback quality on a real device.
 
+Archive presentation follow-up: contents use the file list's row density,
+themed icons, aligned human-readable sizes, folder-first ordering and a summary
+footer, with expand/collapse-all controls. Lint, 164 tests and isolated X11 UI
+checks pass, including narrow-panel truncation and member preview/back navigation.
+An initial benchmark run exceeded images10k first-batch (2664 us / 2500 us budget)
+and completion (20363 us / 12000 us) timings; the cause was not established.
+The subsequent ASF validation run passed all budgets (1663 us and 11753 us).
+
+ASF preview follow-up: the media provider recognizes application/vnd.ms-asf,
+application/x-ms-asf and the .asf extension. Provider ownership controls startup,
+including when a generic binary MIME would otherwise select the hex fallback.
+The GStreamer worker reports audio-only streams and enables their spectrum;
+video streams keep the existing player. Lint and 166 tests pass, plus synthetic
+WMV/WMA ASF playback/seek/pause checks and the existing native video regression.
+
+
+Structured preview follow-up: JSON/YAML/TOML use syntax-highlighted code lines,
+line numbers and parser-derived folds, with expand/collapse-all controls. JSON
+gets two-space formatting; TOML/YAML retain syntax, comments, order and indentation.
+Source mode, search and selection/copy remain available, including blank lines.
+Parsing/highlighting stay on workers; the viewer virtualizes visible lines and
+preserves logical indices when folded. Invalid or oversized input falls back to
+paginated source. Lint and 174 tests pass (six optional native tests skipped);
+isolated X11 checks exercise all three formats, folding, source and search.
+The TOML grammar loads separately from precompiled default syntaxes to avoid
+rebuilding them on first preview. The first benchmark run exceeded images10k
+completion (12966 us / 12000 us); a rerun after concurrent builds finished passed
+all unchanged budgets (9897 us). UI startup/idle budgets remain unestablished by
+these functional checks.
+
 ## Phase 0 — Foundations and toolkit spike (~2 weeks)
 
 Goal: a repo that can measure itself, and a toolkit decision backed by numbers.

@@ -34,8 +34,9 @@ newer Rust. Other crates retain their existing minimum. Prefer this limited read
 a browser before its resource and platform integration costs are measured.
 litehtml remains an alternative to evaluate for CSS fidelity, not a bundled dependency.
 
-CSV uses csv (MIT/Unlicense), JSON uses serde_json, TOML uses the existing parser,
-YAML uses serde_yaml_ng (MIT), email uses mail-parser (MIT/Apache-2.0), and font
+CSV uses csv (MIT/Unlicense), JSON uses serde_json, TOML uses toml_edit source
+spans (MIT/Apache-2.0), YAML uses yaml-rust parser events (MIT/Apache-2.0),
+email uses mail-parser (MIT/Apache-2.0), and font
 specimens use fontdue (MIT/Apache-2.0/Zlib) with ttf-parser. Fonts are rasterized on
 workers, never installed or registered permanently with the UI font system.
 
@@ -52,7 +53,12 @@ No 7-Zip fallback is added without an observed compatibility need.
 - Hexadecimal display reads 4096-byte sections; search streams bounded chunks and
   checks cancellation. It is read-only. Source mode reads 32 KiB sections.
 - Parsed text/table/structured inputs are bounded to 2 MiB. Tables show 500 rows
-  per section and at most 64 columns. Trees are capped at 10000 nodes / 64 levels.
+  per section and at most 64 columns. Code previews are capped at 10000 lines / 64 levels, with 4096 bytes per
+  line; JSON formatting also caps nodes at 10000. Invalid or oversized input
+  falls back to paginated source. Fold ranges refer to logical source lines,
+  come from parser spans/events, and are nested or disjoint. JSON is formatted;
+  TOML/YAML retain comments, ordering and indentation. Highlighting maintains
+  parser state across lines on a worker; the UI virtualizes visible lines.
 - Rich content is limited to 2000 semantic blocks and eight embedded images.
   Local Markdown images must resolve within its directory, including symlinks.
   Email images resolve only embedded content IDs. EPUB resources remain inside

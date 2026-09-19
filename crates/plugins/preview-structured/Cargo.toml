@@ -10,8 +10,8 @@ bibli-core.workspace = true
 bibli-platform.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
-toml.workspace = true
-serde_yaml_ng = "0.10"
+toml_edit = "0.22"
+yaml-rust = "0.4"
 
 [dev-dependencies]
 tempfile.workspace = true

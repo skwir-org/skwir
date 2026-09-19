@@ -32,6 +32,9 @@ pub struct Playback {
     pub album: String,
     #[serde(default)]
     pub spectrum: Vec<f32>,
+    /// Determined from decoded streams, since container MIME types may be ambiguous.
+    #[serde(default)]
+    pub audio_only: bool,
 }
 impl Playback {
     pub fn playing(&self) -> bool {
@@ -59,6 +62,7 @@ impl Default for Playback {
             artist: String::new(),
             album: String::new(),
             spectrum: Vec::new(),
+            audio_only: false,
         }
     }
 }

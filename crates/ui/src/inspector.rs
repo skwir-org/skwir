@@ -13,15 +13,40 @@ use std::{collections::BTreeSet, sync::Arc};
 pub struct Display {
     pub data: Arc<Inspection>,
     pub images: Vec<Option<Arc<RenderImage>>>,
+    row_icons: Arc<Vec<Option<Arc<std::path::Path>>>>,
 }
 impl Display {
     pub fn new(mut data: Inspection, dark: bool) -> Self {
-        data.blocks = bibli_core::inspection::split_blocks(data.blocks);
+        // Display conversion runs on a worker. Resolve themed archive icons here,
+        // never by inspecting archive member paths or doing I/O while drawing rows.
+        let row_icons = if data.kind == InspectionKind::Archive {
+            data.rows
+                .iter()
+                .map(|row| {
+                    if row.branch {
+                        bibli_platform::icons::folder(18)
+                    } else {
+                        row.cells
+                            .first()
+                            .and_then(|name| bibli_platform::mime::by_name(name.as_ref()))
+                            .and_then(|mime| bibli_platform::icons::for_mime(&mime, 18))
+                    }
+                    .map(Arc::from)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if data.kind == InspectionKind::Code {
+            crate::code_preview::highlight(&mut data, dark);
+        } else {
+            data.blocks = bibli_core::inspection::split_blocks(data.blocks);
+        }
         for block in &mut data.blocks {
-            if !block.code {
+            if !block.code || data.kind == InspectionKind::Code {
                 continue;
             }
-            let syntaxes = crate::preview::syntaxes();
+            let syntaxes = crate::preview::syntaxes(block.language.as_deref());
             let syntax = block
                 .language
                 .as_deref()
@@ -64,6 +89,7 @@ impl Display {
         Self {
             data: Arc::new(data),
             images,
+            row_icons: Arc::new(row_icons),
         }
     }
 }
@@ -105,6 +131,11 @@ impl State {
         self.reindex(data);
     }
     fn reindex(&mut self, data: &Inspection) {
+        if data.kind == InspectionKind::Code {
+            self.visible = Arc::new(crate::code_preview::visible(data, &self.collapsed));
+            self.list.reset(self.visible.len() + 1);
+            return;
+        }
         let mut hidden = None;
         self.visible = Arc::new(
             data.rows
@@ -225,6 +256,9 @@ impl Shell {
                 }
                 "select" => {
                     self.preview.inspection.selected = args["index"].as_u64().map(|i| i as usize);
+                    if let Some(focus) = &self.preview.inspection.focus {
+                        window.focus(focus);
+                    }
                     cx.notify();
                     return;
                 }
@@ -236,6 +270,31 @@ impl Shell {
                         }
                         self.preview.inspection.reindex(&display.data);
                     }
+                    cx.notify();
+                    return;
+                }
+                "expand_all" | "collapse_all"
+                    if matches!(
+                        display.data.kind,
+                        InspectionKind::Archive | InspectionKind::Code
+                    ) =>
+                {
+                    let state = &mut self.preview.inspection;
+                    state.collapsed =
+                        if action == "collapse_all" && display.data.kind == InspectionKind::Code {
+                            display.data.folds.iter().map(|fold| fold.start).collect()
+                        } else if action == "collapse_all" {
+                            display
+                                .data
+                                .rows
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(i, r)| r.branch.then_some(i))
+                                .collect()
+                        } else {
+                            BTreeSet::new()
+                        };
+                    state.reindex(&display.data);
                     cx.notify();
                     return;
                 }
@@ -454,17 +513,35 @@ fn tools(data: &Inspection) -> Vec<(&'static str, &'static str, &'static str, &'
     if data.kind == InspectionKind::Hex {
         tools.push(("inspect-offset", "move", "Jump to byte offset", "offset"));
     }
+    if matches!(data.kind, InspectionKind::Archive | InspectionKind::Code) {
+        tools.extend([
+            (
+                "inspect-expand-all",
+                "plus",
+                "Expand all sections",
+                "expand_all",
+            ),
+            (
+                "inspect-collapse-all",
+                "minus",
+                "Collapse all sections",
+                "collapse_all",
+            ),
+        ]);
+    }
     if !data.blocks.is_empty() {
         tools.extend([
             ("inspect-smaller", "minus", "Smaller text", "smaller"),
             ("inspect-larger", "plus", "Larger text", "larger"),
-            (
-                "inspect-outline",
-                "contents",
-                "Headings and contents",
-                "outline",
-            ),
         ]);
+    }
+    if data.blocks.iter().any(|block| block.heading > 0) || data.kind == InspectionKind::Book {
+        tools.push((
+            "inspect-outline",
+            "contents",
+            "Headings and contents",
+            "outline",
+        ));
     }
     tools
 }
@@ -539,6 +616,7 @@ pub fn content(
 ) -> AnyElement {
     let data = display.data.clone();
     let images = display.images.clone();
+    let row_icons = display.row_icons.clone();
     let visible = shell.preview.inspection.visible.clone();
     let collapsed = shell.preview.inspection.collapsed.clone();
     let selected = shell.preview.inspection.selected;
@@ -559,7 +637,11 @@ pub fn content(
     let list = gpui::list(shell.preview.inspection.list.clone(), move |index, _, _| {
         let theme = &list_theme;
         if index == 0 {
-            if data.kind == InspectionKind::Hex && data.notice.is_empty() && images[0].is_none() {
+            if matches!(data.kind, InspectionKind::Archive | InspectionKind::Code)
+                || (data.kind == InspectionKind::Hex
+                    && data.notice.is_empty()
+                    && images[0].is_none())
+            {
                 return div().into_any_element();
             }
             return div()
@@ -572,6 +654,22 @@ pub fn content(
                 .into_any_element();
         }
         let i = index - 1;
+        if data.kind == InspectionKind::Code {
+            let logical = visible[i];
+            return crate::code_preview::CodeRow {
+                data: &data,
+                line: logical,
+                collapsed: &collapsed,
+                selected,
+                selection,
+                font_size,
+                mono: &mono,
+                theme,
+                pane,
+                entity: entity.clone(),
+            }
+            .render();
+        }
         let (logical, mut row) = if let Some(block) = data.blocks.get(i) {
             let text =
                 crate::inspector_text::render(block, i, selection, theme, pane, entity.clone());
@@ -604,26 +702,37 @@ pub fn content(
             let weak = entity.clone();
             let target = r.target.clone();
             let branch = r.branch;
-            let mut row = div()
+            let mut row = if data.kind == InspectionKind::Archive {
+                crate::archive_preview::row(
+                    r,
+                    row_icons.get(ri).and_then(|i| i.as_deref()),
+                    collapsed.contains(&ri),
+                    selected == Some(data.blocks.len() + ri),
+                    theme,
+                )
                 .id(("inspect-row", ri))
-                .p_2()
-                .w_full()
-                .flex()
-                .gap_3()
-                .text_sm()
-                .pl(px(8. + r.depth.min(32) as f32 * 14.))
-                .when(data.kind == InspectionKind::Hex, |d| {
-                    d.font(hex_font.clone())
-                        .text_size(px(13.))
-                        .line_height(px(18.))
-                        .py(px(1.))
-                        .whitespace_nowrap()
-                        .when(ri % 2 == 1, |d| d.bg(theme.surface.opacity(0.5)))
-                        .when(selected != Some(data.blocks.len() + ri), |d| {
-                            d.hover(|d| d.bg(theme.surface))
-                        })
-                });
-            if branch {
+            } else {
+                div()
+                    .id(("inspect-row", ri))
+                    .p_2()
+                    .w_full()
+                    .flex()
+                    .gap_3()
+                    .text_sm()
+                    .pl(px(8. + r.depth.min(32) as f32 * 14.))
+                    .when(data.kind == InspectionKind::Hex, |d| {
+                        d.font(hex_font.clone())
+                            .text_size(px(13.))
+                            .line_height(px(18.))
+                            .py(px(1.))
+                            .whitespace_nowrap()
+                            .when(ri % 2 == 1, |d| d.bg(theme.surface.opacity(0.5)))
+                            .when(selected != Some(data.blocks.len() + ri), |d| {
+                                d.hover(|d| d.bg(theme.surface))
+                            })
+                    })
+            };
+            if branch && data.kind != InspectionKind::Archive {
                 row = row.child(if collapsed.contains(&ri) {
                     "▸"
                 } else {
@@ -631,6 +740,9 @@ pub fn content(
                 });
             }
             for (column, cell) in r.cells.iter().enumerate() {
+                if data.kind == InspectionKind::Archive {
+                    break;
+                }
                 row = row.child(
                     div()
                         .w(px(column_width(data.kind, column)))
@@ -732,7 +844,9 @@ pub fn content(
                 .child(outline),
         );
     }
-    if !display.data.columns.is_empty() {
+    if display.data.kind == InspectionKind::Archive {
+        body = body.child(crate::archive_preview::header(theme));
+    } else if !display.data.columns.is_empty() {
         let mut header = div().p_2().flex().gap_3().text_xs().when(
             display.data.kind == InspectionKind::Hex,
             |d| {
@@ -756,7 +870,30 @@ pub fn content(
         }
         body = body.child(header);
     }
-    let body = body.child(div().flex_1().min_h_0().child(list));
+    let mut body = body.child(div().flex_1().min_h_0().child(list));
+    if display.data.kind == InspectionKind::Archive {
+        let total = display
+            .data
+            .rows
+            .iter()
+            .filter_map(|r| r.bytes)
+            .fold(0u64, u64::saturating_add);
+        body = body.child(
+            div()
+                .flex_none()
+                .px_2()
+                .py_1()
+                .text_xs()
+                .text_color(theme.text_muted)
+                .border_t_1()
+                .border_color(theme.border)
+                .child(format!(
+                    "{} · {} unpacked",
+                    display.data.notice,
+                    crate::format::size(total)
+                )),
+        );
+    }
     if matches!(
         display.data.kind,
         InspectionKind::Table | InspectionKind::Hex

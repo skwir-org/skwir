@@ -84,16 +84,7 @@ impl Player {
             }
         }
         // Optional spectrum filter: compact bins, no visualization video frames.
-        let spectrum = audio_only
-            .then(|| {
-                gst::ElementFactory::make("spectrum")
-                    .property("bands", 32u32)
-                    .property("interval", 50_000_000u64)
-                    .property("post-messages", false)
-                    .build()
-                    .ok()
-            })
-            .flatten();
+        let spectrum = audio_only.then(spectrum_filter).flatten();
         if let Some(filter) = &spectrum {
             pipeline.set_property("audio-filter", filter);
         }
@@ -124,7 +115,10 @@ impl Player {
             sink,
             spectrum,
             audio_only,
-            state: Playback::default(),
+            state: Playback {
+                audio_only,
+                ..Playback::default()
+            },
             generation: 0,
             streams: Vec::new(),
             selection: None,
@@ -315,6 +309,15 @@ enum Event {
     Closed,
 }
 
+fn spectrum_filter() -> Option<gst::Element> {
+    gst::ElementFactory::make("spectrum")
+        .property("bands", 32u32)
+        .property("interval", 50_000_000u64)
+        .property("post-messages", false)
+        .build()
+        .ok()
+}
+
 fn run() -> anyhow::Result<()> {
     if let Err(error) = gst::init() {
         reply(&Reply::Unavailable(error.to_string()))?;
@@ -472,15 +475,26 @@ fn run() -> anyhow::Result<()> {
                 }
                 gst::MessageView::StreamCollection(message) => {
                     player.streams = message.stream_collection().iter().take(128).collect();
+                    player.state.audio_only = player.audio_only
+                        || (!player
+                            .streams
+                            .iter()
+                            .any(|s| s.stream_type().contains(gst::StreamType::VIDEO))
+                            && player
+                                .streams
+                                .iter()
+                                .any(|s| s.stream_type().contains(gst::StreamType::AUDIO)));
+                    // Ambiguous containers (e.g. ASF) become audio previews only
+                    // after stream discovery. Video pipelines retain no FFT filter.
+                    if player.state.audio_only
+                        && player.spectrum.is_none()
+                        && let Some(filter) = spectrum_filter()
+                    {
+                        player.pipeline.set_property("audio-filter", &filter);
+                        player.spectrum = Some(filter);
+                    }
                     if let Some(filter) = &player.spectrum {
-                        filter.set_property(
-                            "post-messages",
-                            player.audio_only
-                                || !player
-                                    .streams
-                                    .iter()
-                                    .any(|s| s.stream_type().contains(gst::StreamType::VIDEO)),
-                        );
+                        filter.set_property("post-messages", player.state.audio_only);
                     }
                     player.state.audio_tracks = player.tracks(gst::StreamType::AUDIO);
                     player.state.subtitle_tracks = player.tracks(gst::StreamType::TEXT);

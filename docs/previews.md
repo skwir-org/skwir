@@ -11,10 +11,10 @@ Each format is enabled by an independent plugin in **Settings → Plugins**:
 | `preview-audio` | Audio playback, seeking, volume, speed, tags, embedded cover and live spectrum. Playback starts paused. |
 | `preview-hex` | Read-only hexadecimal/ASCII ranges for binary files; available explicitly for any file. Jump to a decimal or `0x` offset; search text or `hex: 00 ff 7a` byte sequences. |
 | `preview-markdown` | Markdown reading mode with source toggle, headings, emphasis, lists, tables, code highlighting, links and local images. |
-| `preview-archives` | Archive tree, folder collapse and selected-member image/text/byte previews. |
+| `preview-archives` | File-list-style archive tree with themed icons, folders first, aligned sizes, expand/collapse controls and selected-member image/text/byte previews. |
 | `preview-epub` | Reflowing EPUB chapters, contents, embedded images, links, text size, selection/copy, source and book search. |
 | `preview-tables` | CSV/TSV tables, quoted multiline cells, horizontal scrolling and section navigation. |
-| `preview-structured` | Expandable JSON/YAML/TOML trees and source toggle. |
+| `preview-structured` | Syntax-highlighted JSON/YAML/TOML code with line numbers, folding and source toggle. |
 | `preview-fonts` | TTF/OTF/TTC specimens and character sheets. Find sets the specimen text; sections advance through supported characters. |
 | `preview-email` | EML headers, inert HTML/text, embedded content-ID images and attachment previews. |
 | `preview-comics` | CBZ/CBR/CB7/CBT image pages in numeric filename order. |
@@ -45,6 +45,13 @@ need no external runtime or network service.
   libarchive loads into the UI process.
 - Existing PDF, Office and video backend settings are unchanged.
 
+ASF containers (`application/vnd.ms-asf`, `application/x-ms-asf`, or `.asf`)
+use `preview-media`. GStreamer discovers their streams: video files use the video
+player, while audio-only files show the audio presentation and spectrum. ASF needs
+the [GStreamer ASF demuxer](https://gstreamer.freedesktop.org/documentation/asf/asfdemux.html)
+from `gst-plugins-ugly`; the dev shell includes it alongside `gst-libav` for
+Windows Media codecs. Reload the dev shell after changing its plugin packages.
+
 EPUB is a native **reading mode**, not a browser: publisher CSS, fixed-page
 layouts, scripts and DRM are unsupported. Markdown and email do not fetch remote
 images. Encrypted archives need an external application. Selected container
@@ -52,12 +59,22 @@ members and mail attachments currently preview as images, text or bytes; they do
 not launch nested PDF/video sessions. Large inputs have explicit bounds and
 errors rather than unbounded parsing; see [ADR-009](adr/009-structured-previews.md).
 
+Structured previews format JSON with two-space indentation; TOML and YAML keep
+their original syntax, indentation, comments and ordering. Click a gutter arrow
+to fold an object, array or section; the toolbar also offers expand/collapse all.
+Find reveals matching lines, and text selection/copy preserves blank lines.
+Source shows the original JSON formatting. These are read-only presentations.
+Invalid or oversized documents fall back to paginated source with a diagnostic;
+code previews are bounded to 2 MiB, 10000 lines and 4096 bytes per line.
+
 ## Reproducible checks
 
 `just previews-check` generates temporary audio and archives and exercises real
 workers, using a clocked fake audio sink. It verifies tags, spectrum, seek/pause,
 archive member reads, path handling, output limits and symlink rejection. This
 does not establish audible output quality on a real device.
+It also generates ASF video and audio-only fixtures and checks stream detection,
+playback, seeking and pause without an audio-only filename hint.
 
 For manual UI checks, generate synthetic files outside the repository:
 

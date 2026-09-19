@@ -58,6 +58,16 @@ pub struct MediaState {
 }
 
 impl Shell {
+    pub(crate) fn media_is_audio(&self) -> bool {
+        self.preview.media.state.audio_only
+            || self
+                .preview
+                .info
+                .mime
+                .as_deref()
+                .is_some_and(|m| m.starts_with("audio/"))
+    }
+
     pub fn sync_media(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(session) = &self.preview.media.session else {
             return;
@@ -142,12 +152,7 @@ impl Shell {
                             position.min(self.preview.media.state.duration.unwrap_or(position));
                     }
                     if matches!(command, Control::Play(true) | Control::Seek(_))
-                        && !self
-                            .preview
-                            .info
-                            .mime
-                            .as_deref()
-                            .is_some_and(|m| m.starts_with("audio/"))
+                        && !self.media_is_audio()
                     {
                         self.preview.media.poster = Poster::Dismissed;
                         self.preview.media.initial_frame = None;

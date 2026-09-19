@@ -16,6 +16,8 @@ pub struct InspectRequest {
 pub enum InspectionKind {
     #[default]
     Text,
+    /// One bounded source line per block, with optional folding ranges.
+    Code,
     Hex,
     Table,
     Tree,
@@ -32,6 +34,9 @@ pub struct Inspection {
     pub blocks: Vec<Block>,
     pub rows: Vec<Row>,
     pub columns: Vec<String>,
+    /// Code block ranges: the first line remains visible, the rest can fold.
+    /// Sorted by start; ranges must be nested or disjoint, never crossing.
+    pub folds: Vec<std::ops::Range<usize>>,
     pub image: Option<Image>,
     pub previous: Option<u64>,
     pub next: Option<u64>,
@@ -63,6 +68,8 @@ pub struct Run {
 #[derive(Clone, Debug, Default)]
 pub struct Row {
     pub cells: Vec<String>,
+    /// Uncompressed byte size of a file/member/attachment, when known.
+    pub bytes: Option<u64>,
     pub depth: usize,
     pub branch: bool,
     /// Provider-local member key; only activated by a user command.

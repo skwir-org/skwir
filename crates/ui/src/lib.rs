@@ -15,6 +15,8 @@
 )]
 
 pub mod address;
+mod archive_preview;
+mod code_preview;
 pub mod dnd;
 mod dragicon;
 pub mod elements;

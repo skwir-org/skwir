@@ -29,7 +29,13 @@ impl Selection {
             .enumerate()
             .filter_map(|(i, b)| {
                 let r = self.range(i, b.text.len());
-                if r.is_empty() { None } else { b.text.get(r) }
+                // Interior empty lines are part of a cross-line selection.
+                let (first, last) = (self.start.0.min(self.end.0), self.start.0.max(self.end.0));
+                if r.is_empty() && (i < first || i > last || self.start == self.end) {
+                    None
+                } else {
+                    b.text.get(r)
+                }
             })
             .collect();
         (!parts.is_empty()).then(|| parts.join("\n"))
@@ -170,6 +176,39 @@ pub fn render(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn selection_preserves_blank_lines_and_line_boundaries() {
+        let blocks = ["first", "", "last"].map(|text| Block {
+            text: text.into(),
+            ..Block::default()
+        });
+        assert_eq!(
+            Selection {
+                start: (0, 5),
+                end: (2, 0)
+            }
+            .text(&blocks)
+            .as_deref(),
+            Some("\n\n")
+        );
+        assert_eq!(
+            Selection {
+                start: (0, 0),
+                end: (2, 4)
+            }
+            .text(&blocks)
+            .as_deref(),
+            Some("first\n\nlast")
+        );
+        assert!(
+            Selection {
+                start: (0, 0),
+                end: (0, 0)
+            }
+            .text(&blocks)
+            .is_none()
+        );
+    }
     #[test]
     fn reverse_selection_crosses_blocks() {
         let blocks = vec![

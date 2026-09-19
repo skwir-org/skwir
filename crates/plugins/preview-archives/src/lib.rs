@@ -67,46 +67,133 @@ impl PreviewProvider for Provider {
             return archive::member_preview(&member.name, &archive::read(&path, index, cancel)?)
                 .map(Some);
         }
-        let mut rows = BTreeMap::new();
-        for member in &members {
-            inspection::check(cancel)?;
-            let parts: Vec<_> = member.name.split('/').filter(|p| !p.is_empty()).collect();
-            anyhow::ensure!(parts.len() <= 64, "Archive path exceeds 64 components");
-            for end in 1..=parts.len() {
-                let name: Vec<String> = parts[..end].iter().map(|s| (*s).to_owned()).collect();
-                let directory = end < parts.len() || member.directory;
-                rows.entry(name).or_insert_with(|| Row {
-                    cells: vec![
-                        parts[end - 1].into(),
-                        if directory {
-                            String::new()
-                        } else {
-                            format!(
-                                "{} bytes{}",
-                                member.size,
-                                if member.encrypted {
-                                    " · encrypted"
-                                } else {
-                                    ""
-                                }
-                            )
-                        },
-                    ],
-                    depth: end - 1,
-                    branch: directory,
-                    target: (!directory && member.regular && !member.encrypted)
-                        .then(|| member.index.to_string()),
-                });
-            }
-        }
+        let rows = member_rows(&members, cancel)?;
+        let folders = rows.iter().filter(|r| r.branch).count();
         Ok(Some(Inspection {
             kind: bibli_core::inspection::InspectionKind::Archive,
             title: format!("Archive · {} members", members.len()),
-            rows: rows.into_values().collect(),
-            columns: vec!["Member".into(), "Size".into()],
-            notice: "Select a member to preview · folders collapse · links are never followed"
-                .into(),
+            notice: format!("{} files · {folders} folders", rows.len() - folders),
+            rows,
+            columns: vec!["Name".into(), "Size".into()],
             ..Inspection::default()
         }))
+    }
+}
+
+fn member_rows(members: &[archive::Member], cancel: &CancelToken) -> anyhow::Result<Vec<Row>> {
+    let mut rows = BTreeMap::new();
+    for member in members {
+        inspection::check(cancel)?;
+        let parts: Vec<_> = member.name.split('/').filter(|p| !p.is_empty()).collect();
+        anyhow::ensure!(parts.len() <= 64, "Archive path exceeds 64 components");
+        for end in 1..=parts.len() {
+            let name: Vec<String> = parts[..end].iter().map(|s| (*s).to_owned()).collect();
+            let directory = end < parts.len() || member.directory;
+            rows.entry(name).or_insert_with(|| Row {
+                cells: vec![
+                    parts[end - 1].into(),
+                    if directory {
+                        String::new()
+                    } else {
+                        format!(
+                            "{} bytes{}",
+                            member.size,
+                            if member.encrypted {
+                                " · encrypted"
+                            } else {
+                                ""
+                            }
+                        )
+                    },
+                    if directory || (member.regular && !member.encrypted) {
+                        String::new()
+                    } else if member.encrypted {
+                        "Encrypted".into()
+                    } else {
+                        "Link / special".into()
+                    },
+                ],
+                bytes: (!directory)
+                    .then(|| u64::try_from(member.size).ok())
+                    .flatten(),
+                depth: end - 1,
+                branch: directory,
+                target: (!directory && member.regular && !member.encrypted)
+                    .then(|| member.index.to_string()),
+            });
+        }
+    }
+    // Sort sibling folders first while keeping every subtree contiguous for
+    // the viewer's depth-based collapse operation. Never sort flattened rows.
+    let mut ordered: Vec<_> = rows
+        .iter()
+        .map(|(path, row)| {
+            let key: Vec<_> = path
+                .iter()
+                .enumerate()
+                .map(|(i, part)| {
+                    let branch = rows.get(&path[..=i]).is_some_and(|r| r.branch);
+                    (!branch, part.to_lowercase(), part.clone())
+                })
+                .collect();
+            (key, row.clone())
+        })
+        .collect();
+    ordered.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(ordered.into_iter().map(|(_, row)| row).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folder_first_order_keeps_subtrees_and_member_identity() {
+        let members: Vec<_> = [
+            "a.txt",
+            "Zoo's/child.bin",
+            "Zoo's/nested/last.txt",
+            "Zoo's.ext",
+            "alpha/empty",
+            "secret.zip",
+            "shortcut",
+        ]
+        .iter()
+        .enumerate()
+        .map(|(i, name)| archive::Member {
+            index: i as u64,
+            name: (*name).into(),
+            size: if i == 6 { -1 } else { 1536 },
+            directory: false,
+            regular: i != 6,
+            encrypted: i == 5,
+        })
+        .collect();
+        let rows = member_rows(&members, &CancelToken::new()).unwrap();
+        assert_eq!(
+            rows.iter()
+                .map(|r| (r.cells[0].as_str(), r.depth))
+                .collect::<Vec<_>>(),
+            vec![
+                ("alpha", 0),
+                ("empty", 1),
+                ("Zoo's", 0),
+                ("nested", 1),
+                ("last.txt", 2),
+                ("child.bin", 1),
+                ("a.txt", 0),
+                ("secret.zip", 0),
+                ("shortcut", 0),
+                ("Zoo's.ext", 0),
+            ]
+        );
+        assert!(rows[2].branch);
+        assert_eq!(rows[2].bytes, None);
+        assert_eq!(rows[5].bytes, Some(1536));
+        assert_eq!(rows[5].target.as_deref(), Some("1"));
+        assert_eq!(rows[7].cells[2], "Encrypted");
+        assert_eq!(rows[7].target, None);
+        assert_eq!(rows[8].bytes, None);
+        assert_eq!(rows[8].target, None);
     }
 }

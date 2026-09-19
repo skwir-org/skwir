@@ -202,6 +202,11 @@ impl PreviewProvider for MediaPreviews {
         req.mime
             .as_deref()
             .is_some_and(|m| m.starts_with(if self.audio { "audio/" } else { "video/" }))
+            || (!self.audio
+                && (matches!(
+                    req.mime.as_deref(),
+                    Some("application/vnd.ms-asf" | "application/x-ms-asf")
+                ) || extension(&req.entry.path) == "asf"))
     }
     fn render(&self, req: &PreviewRequest, cancel: &CancelToken) -> anyhow::Result<Preview> {
         let _guard = acquire(&self.gate, cancel)?;
@@ -677,6 +682,33 @@ mod tests {
             seconds: None,
             max_side: 256,
         }
+    }
+
+    #[test]
+    fn asf_containers_are_media_even_with_application_mime() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = Cache::new(tmp.path().join("cache"));
+        let video = MediaPreviews::new(cache.namespace("video"));
+        let audio = MediaPreviews::new(cache.namespace("audio")).audio();
+        let path = tmp.path().join("Synthetic clip.ASF");
+        std::fs::write(&path, b"synthetic container marker").unwrap();
+        let mut req = request(&path);
+        for mime in [
+            Some("application/vnd.ms-asf"),
+            Some("application/x-ms-asf"),
+            Some("video/x-ms-asf"),
+            Some("application/octet-stream"),
+            None,
+        ] {
+            req.mime = mime.map(str::to_owned);
+            assert!(video.accepts(&req));
+            assert!(!audio.accepts(&req));
+        }
+        req.entry.path = tmp.path().join("clip.data");
+        req.mime = Some("application/vnd.ms-asf".into());
+        assert!(video.accepts(&req));
+        req.mime = Some("application/octet-stream".into());
+        assert!(!video.accepts(&req));
     }
 
     /// A valid, deterministic two-page PDF with visibly different pages.

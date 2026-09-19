@@ -99,9 +99,10 @@ impl Previews {
                 anyhow::ensure!(!cancel.is_cancelled(), "preview cancelled");
                 let result = p.provider.inspect(request, view, &cancel)?;
                 anyhow::ensure!(!cancel.is_cancelled(), "preview cancelled");
-                if result.is_some() {
-                    return Ok(result);
-                }
+                // The first matching provider owns the presentation, just as in
+                // open_media/open_document. A reader without an inspection result
+                // must not be displaced by a lower-priority hexadecimal fallback.
+                return Ok(result);
             }
         }
         Ok(None)

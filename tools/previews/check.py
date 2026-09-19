@@ -132,6 +132,46 @@ def check_audio(executable, root):
         os.environ.pop("BIBLI_MEDIA_AUDIO_ONLY", None)
 
 
+def check_asf(executable, root):
+    spec = importlib.util.spec_from_file_location("media_check", Path(__file__).resolve().parents[1] / "media" / "check.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    # These files deliberately have the same extension/container MIME. Let the
+    # worker discover their streams instead of supplying the audio-only hint.
+    hint = os.environ.pop("BIBLI_MEDIA_AUDIO_ONLY", None)
+    try:
+        for audio_only in [False, True]:
+            path = root / ("Synthetic audio.asf" if audio_only else "Synthetic video.asf")
+            command = ["ffmpeg", "-nostdin", "-v", "error", "-y"]
+            if not audio_only:
+                command += ["-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10"]
+            command += ["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100", "-t", "6", "-c:a", "wmav2"]
+            if not audio_only:
+                command += ["-c:v", "wmv2", "-threads", "1"]
+            subprocess.run(command + [str(path)], check=True)
+            worker = module.Worker(executable, path)
+            try:
+                worker.until(lambda: worker.state.get("duration") is not None)
+                assert worker.state["audio_only"] == audio_only
+                assert worker.state["audio_tracks"]
+                worker.control({"Play": True})
+                worker.until(lambda: worker.state.get("position", 0) > .3 and (len(worker.state.get("spectrum", [])) == 32 if audio_only else worker.frames > 0))
+                worker.control({"Seek": 3.0})
+                worker.until(lambda: worker.state.get("position", 0) >= 2.8)
+                worker.control({"Play": False})
+                worker.until(lambda: worker.state.get("status") == "Paused")
+                if audio_only:
+                    assert worker.frames == 0
+                else:
+                    assert not worker.state.get("spectrum")
+            finally:
+                worker.close()
+        print("ASF: video and audio-only stream detection, playback, seek/pause and audio spectrum passed")
+    finally:
+        if hint is not None:
+            os.environ["BIBLI_MEDIA_AUDIO_ONLY"] = hint
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path)
@@ -148,6 +188,7 @@ def main():
         if not args.generate_only:
             check_archive(args.archive_worker, root)
             check_audio(args.media_worker, root)
+            check_asf(args.media_worker, root)
 
 
 if __name__ == "__main__":

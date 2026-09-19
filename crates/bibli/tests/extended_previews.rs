@@ -38,6 +38,38 @@ fn inspect(app: &App, path: &Path, view: &InspectRequest) -> Inspection {
         .unwrap()
 }
 #[test]
+fn asf_media_ownership_precedes_hex_fallback_but_allows_explicit_hex() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("Synthetic container.ASF");
+    std::fs::write(&path, b"synthetic container marker").unwrap();
+    let app = app(tmp.path());
+    app.plugins
+        .add(Arc::new(bibli_plugin_preview_media::PreviewPlugin), &app);
+    let request = request(&path); // Deliberately generic application/octet-stream.
+    let default = InspectRequest::default();
+    assert!(
+        app.previews
+            .inspect(&request, &default, &CancelToken::new())
+            .unwrap()
+            .is_none()
+    );
+    let explicit = InspectRequest {
+        provider: Some("preview-hex".into()),
+        ..InspectRequest::default()
+    };
+    assert!(inspect(&app, &path, &explicit).title.starts_with("Hex"));
+    assert!(app.plugins.set_enabled("preview-media", false, &app));
+    assert!(inspect(&app, &path, &default).title.starts_with("Hex"));
+    assert!(app.plugins.set_enabled("preview-media", true, &app));
+    assert!(
+        app.previews
+            .inspect(&request, &default, &CancelToken::new())
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
 fn markdown_styles_source_and_plugin_fallback() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("Synthetic d'Example.md");
@@ -80,7 +112,7 @@ fn markdown_styles_source_and_plugin_fallback() {
     );
 }
 #[test]
-fn csv_quoted_newlines_and_structured_hierarchy() {
+fn csv_quoted_newlines_and_structured_code() {
     let tmp = tempfile::tempdir().unwrap();
     let app = app(tmp.path());
     let csv = tmp.path().join("Synthetic table.csv");
@@ -100,11 +132,57 @@ fn csv_quoted_newlines_and_structured_hierarchy() {
     ] {
         let path = tmp.path().join(name);
         std::fs::write(&path, source).unwrap();
-        let tree = inspect(&app, &path, &InspectRequest::default());
-        assert!(tree.rows.iter().any(|r| r.depth == 3 && r.cells[1] == "2"));
-        assert!(tree.rows[0].branch);
+        let code = inspect(&app, &path, &InspectRequest::default());
+        assert_eq!(code.kind, bibli_core::inspection::InspectionKind::Code);
+        assert!(code.blocks.iter().all(|block| block.code));
+        assert!(!code.folds.is_empty());
+        assert!(code.plain_text().contains("items"));
+        if name != "data.json" {
+            assert_eq!(code.plain_text(), source);
+        }
     }
 }
+#[test]
+fn structured_source_toggle_and_invalid_input_remain_readable() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    let path = tmp.path().join("Synthetic document.json");
+    let source = r#"{"nested":{"enabled":true}}"#;
+    std::fs::write(&path, source).unwrap();
+    let formatted = inspect(&app, &path, &InspectRequest::default());
+    assert!(formatted.blocks.len() > 1);
+    let original = inspect(
+        &app,
+        &path,
+        &InspectRequest {
+            source: true,
+            ..InspectRequest::default()
+        },
+    );
+    assert_eq!(original.plain_text(), source);
+    std::fs::write(&path, "{incomplete").unwrap();
+    let invalid = inspect(&app, &path, &InspectRequest::default());
+    assert_eq!(invalid.plain_text(), "{incomplete");
+    assert!(invalid.notice.starts_with("Showing source:"));
+    // Bounded fallback remains pageable even for a single huge source line.
+    let large = format!("\"{}\"", "a".repeat(40000));
+    std::fs::write(&path, &large).unwrap();
+    let first = inspect(&app, &path, &InspectRequest::default());
+    let next = first.next.unwrap();
+    let second = inspect(
+        &app,
+        &path,
+        &InspectRequest {
+            offset: next,
+            ..InspectRequest::default()
+        },
+    );
+    assert_eq!(
+        format!("{}{}", first.plain_text(), second.plain_text()),
+        large
+    );
+}
+
 #[test]
 fn hex_ranges_search_and_truncation() {
     let tmp = tempfile::tempdir().unwrap();

@@ -164,9 +164,28 @@ impl Drop for PreviewState {
     }
 }
 
-pub(crate) fn syntaxes() -> &'static SyntaxSet {
-    static S: OnceLock<SyntaxSet> = OnceLock::new();
-    S.get_or_init(SyntaxSet::load_defaults_newlines)
+pub(crate) fn syntaxes(language: Option<&str>) -> &'static SyntaxSet {
+    static DEFAULTS: OnceLock<SyntaxSet> = OnceLock::new();
+    static TOML: OnceLock<SyntaxSet> = OnceLock::new();
+    if language.is_some_and(|language| language.eq_ignore_ascii_case("toml")) {
+        TOML.get_or_init(|| {
+            // Keep the bundled grammar separate: rebuilding the precompiled
+            // default set would delay every language's first preview.
+            let mut builder = syntect::parsing::SyntaxSetBuilder::new();
+            builder.add_plain_text_syntax();
+            builder.add(
+                syntect::parsing::SyntaxDefinition::load_from_str(
+                    include_str!("../assets/syntaxes/TOML.sublime-syntax"),
+                    true,
+                    None,
+                )
+                .expect("bundled TOML grammar"),
+            );
+            builder.build()
+        })
+    } else {
+        DEFAULTS.get_or_init(SyntaxSet::load_defaults_newlines)
+    }
 }
 
 pub(crate) fn themes() -> &'static ThemeSet {
@@ -220,7 +239,7 @@ fn decode_image(path: &Path, cancel: &CancelToken) -> anyhow::Result<PreviewCont
 fn highlight(path: &Path, bytes: &[u8], dark: bool) -> PreviewContent {
     let truncated = bytes.len() >= TEXT_LIMIT;
     let text = String::from_utf8_lossy(bytes);
-    let ss = syntaxes();
+    let ss = syntaxes(path.extension().and_then(|extension| extension.to_str()));
     let syntax = path
         .extension()
         .and_then(|e| e.to_str())
@@ -591,64 +610,59 @@ impl Shell {
                         wake();
                     }
                 }
-                if request
-                    .mime
-                    .as_deref()
-                    .is_some_and(|m| m.starts_with("video/") || m.starts_with("audio/"))
-                {
-                    match previews.open_media(&request, &lifetime, wake.clone()) {
-                        Ok(Some(media)) => {
-                            if !cancel.is_cancelled() {
-                                let _ = tx.send(PreviewResult {
-                                    generation,
-                                    content: PreviewContent::Generic,
-                                    complete: true,
-                                    session: None,
-                                    media: Some(media),
-                                });
-                                wake();
-                            }
-                            // Keep startup/playback independent of optional poster
-                            // extraction. The same cancellation token stops FFmpeg
-                            // when Play/Seek, selection or provider changes supersede it.
-                            let mut poster = request.clone();
-                            poster.max_side = u32::MAX;
-                            if let Ok(Some(preview)) = previews.render(&poster, &cancel)
-                                && let Some(image) = crate::thumbs::to_render_image(&preview.image)
-                                && !cancel.is_cancelled()
-                            {
-                                let _ = tx.send(PreviewResult {
-                                    generation,
-                                    content: PreviewContent::Image {
-                                        image,
-                                        width: preview.image.width,
-                                        height: preview.image.height,
-                                        detail: Some(preview.info),
-                                        document: None,
-                                    },
-                                    complete: true,
-                                    session: None,
-                                    media: None,
-                                });
-                                wake();
-                            }
-                            return;
+                // Provider registration owns media recognition, including container MIME types.
+                match previews.open_media(&request, &lifetime, wake.clone()) {
+                    Ok(Some(media)) => {
+                        if !cancel.is_cancelled() {
+                            let _ = tx.send(PreviewResult {
+                                generation,
+                                content: PreviewContent::Generic,
+                                complete: true,
+                                session: None,
+                                media: Some(media),
+                            });
+                            wake();
                         }
-                        Err(error) => {
-                            if !cancel.is_cancelled() {
-                                let _ = tx.send(PreviewResult {
-                                    generation,
-                                    content: PreviewContent::Error(error.to_string()),
-                                    complete: true,
-                                    session: None,
-                                    media: None,
-                                });
-                                wake();
-                            }
-                            return;
+                        // Keep startup/playback independent of optional poster
+                        // extraction. The same cancellation token stops FFmpeg
+                        // when Play/Seek, selection or provider changes supersede it.
+                        let mut poster = request.clone();
+                        poster.max_side = u32::MAX;
+                        if let Ok(Some(preview)) = previews.render(&poster, &cancel)
+                            && let Some(image) = crate::thumbs::to_render_image(&preview.image)
+                            && !cancel.is_cancelled()
+                        {
+                            let _ = tx.send(PreviewResult {
+                                generation,
+                                content: PreviewContent::Image {
+                                    image,
+                                    width: preview.image.width,
+                                    height: preview.image.height,
+                                    detail: Some(preview.info),
+                                    document: None,
+                                },
+                                complete: true,
+                                session: None,
+                                media: None,
+                            });
+                            wake();
                         }
-                        Ok(None) => {}
+                        return;
                     }
+                    Err(error) => {
+                        if !cancel.is_cancelled() {
+                            let _ = tx.send(PreviewResult {
+                                generation,
+                                content: PreviewContent::Error(error.to_string()),
+                                complete: true,
+                                session: None,
+                                media: None,
+                            });
+                            wake();
+                        }
+                        return;
+                    }
+                    Ok(None) => {}
                 }
                 let reader = if let Some(session) = session {
                     Ok(Some(session))
@@ -1107,12 +1121,7 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
 
 fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>) -> AnyElement {
     let p = &shell.preview;
-    if p.media.session.is_some()
-        && p.info
-            .mime
-            .as_deref()
-            .is_some_and(|m| m.starts_with("audio/"))
-    {
+    if p.media.session.is_some() && shell.media_is_audio() {
         return crate::media::audio_content(shell, theme);
     }
     match &p.content {
