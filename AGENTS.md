@@ -231,6 +231,14 @@ docs/              PLAN.md, adr/
 - `RenderImage` reference counts do not release uploaded GPUI atlas entries.
   Explicitly call `cx.drop_image(image, Some(window))` when replacing/closing
   a preview, as the thumbnail LRU does on eviction.
+- Continuous reading virtualizes pages with a logical page/offset anchor. Size
+  changes and fit/zoom are resolved in prepaint; invalidate measured row heights
+  without resetting that anchor. Render only demanded pages and neighbours,
+  serialize requests, reject cancelled generations, and evict offscreen pixel
+  buffers and their atlas entries together. Page interactions carry a page
+  number; never apply an adjacent page's selection or links to the opening page.
+  Overdraw measurement is not stable between frames: keep prefetch neighbours
+  explicit so a later layout does not cancel the work it just requested.
 - PDF pixel, text, link and search rectangles share normalized coordinates.
   Fit/zoom transforms belong in `elements/document.rs` prepaint. Verify rotated
   pages with `tools/pdf/check.py` for both engines; use only its synthetic

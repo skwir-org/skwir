@@ -77,6 +77,11 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
         "Preview: actual size (100%)",
     ),
     ("ui.reader_find", "{}", "Document: find text"),
+    (
+        "ui.reader_continuous",
+        "{}",
+        "Document: toggle continuous scrolling",
+    ),
     ("ui.reader_outline", "{}", "Document: contents"),
     ("ui.reader_copy", "{}", "Document: copy selected text"),
     ("ui.reader_select_all", "{}", "Document: select page text"),

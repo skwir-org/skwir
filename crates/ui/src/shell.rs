@@ -688,10 +688,15 @@ impl Shell {
             "preview_zoom" => self.preview_zoom(arg("dir").as_deref().unwrap_or("reset"), cx),
             "toggle_preview" => self.toggle_preview(window, cx),
             "preview_close" => self.preview_close(window, cx),
+            "reader_continuous" => self.reader_continuous(window, cx),
             "reader_pointer" => self.reader_pointer(
                 args.get("phase")
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("up"),
+                args.get("page")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|p| u32::try_from(p).ok())
+                    .unwrap_or(self.preview.page),
                 args.get("x")
                     .and_then(serde_json::Value::as_f64)
                     .unwrap_or(0.) as f32,
@@ -875,6 +880,7 @@ impl Shell {
         }
         self.sync_preview(window, cx);
         self.sync_reader(cx);
+        self.sync_document_scroll(window, cx);
         self.sync_media(window, cx);
         for id in self.panes.iter().map(|p| p.id).collect::<Vec<_>>() {
             self.with_pane(id, |shell| shell.sync_usage(cx));

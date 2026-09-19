@@ -32,7 +32,8 @@ as PDFium does; the shared UI retains the displayed page while work completes.
 The two backends expose the same current reader features and limitations:
 per-page selection, text-layer search, page links/HTTP(S) links, outlines,
 fit/zoom and page navigation. Neither adds OCR, password prompts, annotation
-editing, forms, continuous scrolling or cross-page selection. Native workers
+editing, forms or cross-page selection. Continuous scrolling was subsequently
+added to the shared UI without changing this protocol. Native workers
 isolate crashes and cancellation, but are not filesystem sandboxes.
 
 Poppler retains its [GPL license](https://gitlab.freedesktop.org/poppler/poppler/-/blob/master/COPYING).

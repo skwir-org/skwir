@@ -74,7 +74,8 @@ Text selection/copy, whole-document search, links and outlines are available
 when PDFium loads, including converted Office documents. Selection is currently
 per page, state lasts for the selected document, and scans need an existing
 text layer. Password prompts, OCR, annotations/editing, cross-page selection,
-continuous scrolling and persistent reading positions are deferred.
+persistent reading positions are deferred. A later shared UI update adds
+continuous scrolling without changing the worker protocol (see `docs/PLAN.md`).
 
 Default tests cover worker lifetime, cancellation/restart, source invalidation,
 selection and fit geometry without native PDFium. `tools/pdf/check.py` exercises

@@ -31,6 +31,7 @@ pub mod preview;
 mod preview_toolbar;
 pub mod prompts;
 pub mod reader;
+mod reader_scroll;
 pub mod renamebulk;
 pub mod review;
 pub mod settings;

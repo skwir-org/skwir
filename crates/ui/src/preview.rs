@@ -431,6 +431,7 @@ impl Shell {
                             .get_or_insert_with(|| cx.focus_handle());
                     }
                     self.preview.reader.selection = None;
+                    self.preview.reader.selection_page = None;
                     self.preview.reader.down = None;
                 }
                 if let PreviewContent::Image {
@@ -439,7 +440,12 @@ impl Shell {
                 } = &result.content
                 {
                     match detail {
-                        PreviewInfo::Document { page, .. } => self.preview.page = *page,
+                        PreviewInfo::Document { page, .. } => {
+                            self.preview.page = *page;
+                            if std::mem::take(&mut self.preview.reader.scroll.bottom_on_load) {
+                                self.preview.reader.scroll.single.scroll_to_bottom();
+                            }
+                        }
                         PreviewInfo::Video { seconds, .. } => self.preview.seconds = Some(*seconds),
                     }
                 }
@@ -723,6 +729,7 @@ impl Shell {
         self.replace_preview_content(None, window, cx);
         self.media_exit_fullscreen(window, cx);
         self.preview.media = crate::media::MediaState::default();
+        self.clear_document_pages(window, cx);
         self.preview.reader = crate::reader::ReaderState::default();
         self.preview.phase = PreviewPhase::Idle;
 
@@ -751,6 +758,16 @@ impl Shell {
         self.preview_go_page(next, cx);
     }
 
+    pub(crate) fn reader_mode_changed(&mut self) {
+        self.cancel_pending_preview();
+        let loaded = matches!(&self.preview.content, Some(PreviewContent::Image { document: Some(page), .. }) if page.page == self.preview.page);
+        self.preview.phase = if self.preview.reader.scroll.continuous || loaded {
+            PreviewPhase::Idle
+        } else {
+            PreviewPhase::Queued
+        };
+    }
+
     pub fn preview_go_page(&mut self, next: u32, cx: &mut Context<Self>) {
         let pages = self
             .preview
@@ -769,10 +786,25 @@ impl Shell {
             return;
         };
         let next = next.clamp(1, pages);
+        if self.preview.reader.scroll.continuous {
+            self.preview.reader.scroll.list.scroll_to(gpui::ListOffset {
+                item_ix: next as usize - 1,
+                offset_in_item: px(0.),
+            });
+            self.preview.page = next;
+            self.preview.reader.page_input = None;
+            cx.notify();
+            return;
+        }
         if next != self.preview.page {
             self.preview.reader.page_input = None;
             self.preview.reader.cancel_search();
             self.cancel_pending_preview();
+            self.preview
+                .reader
+                .scroll
+                .single
+                .set_offset(gpui::point(px(0.), px(0.)));
             self.preview.page = next;
             self.preview.phase = PreviewPhase::Queued;
             cx.notify();

@@ -27,6 +27,7 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "settings",
         "more",
         "contents",
+        "continuous",
         "left",
         "right",
         "plus",

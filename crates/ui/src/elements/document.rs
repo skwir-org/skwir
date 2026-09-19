@@ -52,7 +52,7 @@ impl Element for DocumentElement {
     type RequestLayoutState = ();
     type PrepaintState = Prepaint;
     fn id(&self) -> Option<ElementId> {
-        Some("document-page".into())
+        Some(("document-page", self.page.page as usize).into())
     }
     fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
         None
@@ -194,6 +194,70 @@ impl Element for DocumentElement {
                 callback("up", x, y, window, cx);
             }
         });
+    }
+}
+
+/// Build a virtual document list with the current viewport dimensions. Layout
+/// inputs never make a round trip through `Shell::render`.
+pub struct DocumentViewport {
+    pub build: Box<dyn FnOnce(gpui::Size<Pixels>, &mut Window, &mut App) -> gpui::AnyElement>,
+    pub laid_out: Box<dyn FnOnce(&mut Window, &mut App)>,
+}
+impl IntoElement for DocumentViewport {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+impl Element for DocumentViewport {
+    type RequestLayoutState = ();
+    type PrepaintState = gpui::AnyElement;
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        let mut style = Style::default();
+        style.size.width = relative(1.).into();
+        style.size.height = relative(1.).into();
+        (window.request_layout(style, [], cx), ())
+    }
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) -> gpui::AnyElement {
+        let build = std::mem::replace(&mut self.build, Box::new(|_, _, _| unreachable!()));
+        let mut child = build(bounds.size, window, cx);
+        child.layout_as_root(bounds.size.map(gpui::AvailableSpace::Definite), window, cx);
+        child.prepaint_at(bounds.origin, window, cx);
+        let laid_out = std::mem::replace(&mut self.laid_out, Box::new(|_, _| {}));
+        laid_out(window, cx);
+        child
+    }
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        child: &mut gpui::AnyElement,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        child.paint(window, cx);
     }
 }
 

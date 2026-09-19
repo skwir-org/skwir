@@ -102,3 +102,25 @@ The default shell can run `just poppler-check` without PDFium. The broader
 installed-tool tests additionally require Poppler CLI utilities, LibreOffice,
 bubblewrap and FFmpeg on PATH. Run measurements with other builds/tests and
 test UI windows stopped. Keep reports aggregate and synthetic.
+
+## Scrolling modes
+
+Both native readers now offer **Continuous document scrolling** in the top
+reader toolbar and the command palette. It stays active for the selected
+preview. Pages scroll vertically, with horizontal panning when zoomed wider
+than the viewport. Fit page, Fit width, zoom, text selection, search, links,
+contents and direct page entry remain available. Selection is per page.
+
+In single-page mode, the wheel turns pages when the page fits. For larger
+pages, scroll to the bottom or top first, then continue scrolling to turn.
+Backward wheel turns open the previous page at its bottom. Small trackpad
+deltas accumulate before a turn, and rapid turns are throttled.
+
+Continuous mode draws only visible rows and requests nearby pages one at a
+time. Page geometry is learned lazily, with placeholders for unread pages;
+the current page and offset remain anchored when a placeholder is replaced.
+The UI keeps a 64 MiB pixel cache target and evicts offscreen pages and GPU
+textures together. The visible/prefetched set may exceed that target, and the
+opening preview is retained separately. This is a pixel-cache target, not a
+process memory cap. Closing/replacing the preview cancels pending requests
+and releases cached images. The timing/PSS tables above predate this mode.

@@ -62,6 +62,24 @@ UI memory budget remains an open gate; measurements include the child process
 and are recorded separately from filesystem microbenchmarks. After 50 page
 turns, bibli plus PDFium measured about 201 MiB PSS versus 177 MiB with Poppler;
 both stabilized across turns. Fresh idle was 115–117 MiB, still above target.
+Continuous document follow-up (2026-09-19): PDFium and Poppler share a toolbar
+switch between single-page and continuous scrolling, also available as
+`ui.reader_continuous` in the command palette. A virtual list draws visible
+pages, retaining a logical reading anchor across mixed page sizes, resizing
+and zoom. Rendering is serialized and cancellable; neighbouring pages are
+prefetched and offscreen pixels are evicted over a 64 MiB cache target.
+Visible pages and the original preview are retained independently of that
+soft cache target. Single-page wheel scrolling pans zoomed content first,
+then changes page at an edge; backward turns start at the previous page's
+bottom. Text selection remains per page; search, links, contents and page entry
+navigate within the chosen mode. No native worker protocol change is needed.
+Validation: lint, all 153 default tests and every microbenchmark budget pass
+(six optional native-tool tests skipped). Synthetic UI checks with both engines
+cover wheel turns, continuous navigation through mixed page sizes, rotated-page
+copy, search and mode switching. Additional checks exercise zoomed-page edge
+turns, worker cleanup and the 10k-image grid/100k-entry list. These used a debug
+build; the historical release UI memory gate was not remeasured.
+
 Settings follow-up: a schema-driven modal dialog opens from the toolbar,
 command palette, or Ctrl+comma. Scalar preferences of enabled plugins have
 boolean/choice controls, text/numeric inputs, per-field defaults, Save and Cancel.

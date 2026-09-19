@@ -27,6 +27,8 @@ pub struct FindInput {
     _subscription: Subscription,
 }
 pub struct ReaderState {
+    pub scroll: crate::reader_scroll::DocumentScroll,
+    pub selection_page: Option<u32>,
     pub session: Option<Arc<dyn DocumentSession>>,
     pub lifetime: CancelToken,
     pub tried: bool,
@@ -35,11 +37,11 @@ pub struct ReaderState {
     pub outlines: bool,
     find: Option<FindInput>,
     pub page_input: Option<FindInput>,
-    hits: Vec<SearchHit>,
-    active_hit: Option<usize>,
+    pub(crate) hits: Vec<SearchHit>,
+    pub(crate) active_hit: Option<usize>,
     search_cancel: Option<CancelToken>,
     generation: u64,
-    searching: bool,
+    pub(crate) searching: bool,
     tx: flume::Sender<SearchResult>,
     rx: flume::Receiver<SearchResult>,
     pub down: Option<(f32, f32)>,
@@ -48,6 +50,8 @@ impl Default for ReaderState {
     fn default() -> Self {
         let (tx, rx) = flume::unbounded();
         Self {
+            scroll: crate::reader_scroll::DocumentScroll::default(),
+            selection_page: None,
             session: None,
             lifetime: CancelToken::new(),
             tried: false,
@@ -84,11 +88,19 @@ impl ReaderState {
 }
 
 fn page(shell: &Shell) -> Option<&Arc<PageContent>> {
+    let number = shell
+        .preview
+        .reader
+        .selection_page
+        .unwrap_or(shell.preview.page);
+    if let Some(page) = shell.preview.reader.scroll.pages.get(&number) {
+        return Some(&page.content);
+    }
     match &shell.preview.content {
         Some(PreviewContent::Image {
             document: Some(page),
             ..
-        }) => Some(page),
+        }) if !shell.preview.reader.scroll.continuous || page.page == number => Some(page),
         _ => None,
     }
 }
@@ -192,11 +204,17 @@ impl Shell {
     pub fn reader_pointer(
         &mut self,
         phase: &str,
+        number: u32,
         x: f32,
         y: f32,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if phase == "down" {
+            self.preview.reader.selection_page = Some(number);
+        } else if self.preview.reader.selection_page != Some(number) {
+            return;
+        }
         let Some(page) = page(self).cloned() else {
             return;
         };
@@ -251,6 +269,7 @@ impl Shell {
         }
     }
     pub fn reader_select_all(&mut self, cx: &mut Context<Self>) {
+        self.preview.reader.selection_page = Some(self.preview.page);
         self.preview.reader.selection =
             page(self).and_then(|p| p.chars.len().checked_sub(1).map(|last| (0, last)));
         cx.notify();
@@ -416,53 +435,102 @@ pub fn page_element(
     zoom: Option<f32>,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
-    let reader = &shell.preview.reader;
-    let selection = reader.selection.map_or_else(Vec::new, |(a, b)| {
-        page.chars
-            .iter()
-            .skip(a.min(b))
-            .take(a.abs_diff(b) + 1)
-            .map(|ch| ch.bounds)
-            .collect()
-    });
-    let highlights = reader
-        .active_hit
-        .and_then(|i| reader.hits.get(i))
-        .filter(|h| h.page == page.page)
-        .map_or_else(Vec::new, |h| h.bounds.clone());
-    let entity = cx.entity().downgrade();
-    let element = crate::elements::document::DocumentElement {
+    if shell.preview.reader.scroll.continuous {
+        return crate::reader_scroll::continuous_element(shell, image, page, cx);
+    }
+    let element = page_surface(shell, image, page, zoom, shell.preview.fit_width, cx);
+    div()
+        .id("reader-canvas")
+        .flex_1()
+        .min_h_0()
+        .w_full()
+        .overflow_hidden()
+        .track_scroll(&shell.preview.reader.scroll.single)
+        .on_scroll_wheel(cx.listener(|shell, event, window, cx| {
+            shell.reader_wheel(event, window, cx);
+        }))
+        .when_some(shell.preview.reader.focus.as_ref(), |d, focus| {
+            d.track_focus(focus).key_context(crate::keymap::READER)
+        })
+        .child(element)
+        .into_any_element()
+}
+
+pub(crate) fn page_surface(
+    shell: &Shell,
+    image: Arc<RenderImage>,
+    page: Arc<PageContent>,
+    zoom: Option<f32>,
+    fit_width: bool,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    surface(
+        image,
+        page,
+        zoom,
+        fit_width,
+        shell.preview.reader.selection_page,
+        shell.preview.reader.selection,
+        shell
+            .preview
+            .reader
+            .active_hit
+            .and_then(|i| shell.preview.reader.hits.get(i))
+            .cloned(),
+        cx.global::<Theme>().accent,
+        cx.entity().downgrade(),
+    )
+}
+
+// Snapshot the interaction state so virtual rows need no Shell borrow during layout.
+#[allow(clippy::too_many_arguments)] // All inputs belong to one page's rendering snapshot.
+pub(crate) fn surface(
+    image: Arc<RenderImage>,
+    page: Arc<PageContent>,
+    zoom: Option<f32>,
+    fit_width: bool,
+    selection_page: Option<u32>,
+    selection: Option<(usize, usize)>,
+    hit: Option<SearchHit>,
+    color: gpui::Hsla,
+    entity: gpui::WeakEntity<Shell>,
+) -> AnyElement {
+    let number = page.page;
+    let selection = selection
+        .filter(|_| selection_page == Some(number))
+        .map_or_else(Vec::new, |(a, b)| {
+            page.chars
+                .iter()
+                .skip(a.min(b))
+                .take(a.abs_diff(b) + 1)
+                .map(|ch| ch.bounds)
+                .collect()
+        });
+    let highlights = hit
+        .filter(|h| h.page == number)
+        .map_or_else(Vec::new, |h| h.bounds);
+    crate::elements::document::DocumentElement {
         image,
         page,
         selection,
         highlights,
         zoom,
-        fit_width: shell.preview.fit_width,
-        color: cx.global::<Theme>().accent,
+        fit_width,
+        color,
         on_pointer: Rc::new(move |phase, x, y, window, cx| {
             if let Some(entity) = entity.upgrade() {
                 entity.update(cx, |shell, cx| {
                     shell.run(
                         "ui.reader_pointer",
-                        serde_json::json!({"phase":phase,"x":x,"y":y}),
+                        serde_json::json!({"phase":phase,"page":number,"x":x,"y":y}),
                         window,
                         cx,
                     );
                 });
             }
         }),
-    };
-    div()
-        .id("reader-canvas")
-        .flex_1()
-        .min_h_0()
-        .w_full()
-        .overflow_scroll()
-        .when_some(reader.focus.as_ref(), |d, focus| {
-            d.track_focus(focus).key_context(crate::keymap::READER)
-        })
-        .child(element)
-        .into_any_element()
+    }
+    .into_any_element()
 }
 
 fn document_pages(shell: &Shell) -> u32 {
@@ -598,6 +666,17 @@ fn reader_row(
                     .render(shell, cx),
             );
     }
+    bar = bar.child(
+        Button::new(
+            "reader-continuous",
+            "continuous",
+            "Continuous document scrolling",
+            "ui.reader_continuous",
+        )
+        .active(reader.scroll.continuous)
+        .enabled(native)
+        .render(shell, cx),
+    );
     bar = bar.child(
         Button::new("preview-fit", "fit", "Fit whole page", "ui.preview_zoom")
             .args(serde_json::json!({"dir":"reset"}))
