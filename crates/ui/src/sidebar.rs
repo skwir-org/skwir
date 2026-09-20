@@ -114,6 +114,9 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
         }
         let is_current = place.location.to_string() == current;
         let location = place.location.to_string();
+        // Present but not mounted: clicking mounts it (or asks to unlock it).
+        let activate = place.activate.clone();
+        let waiting = activate.is_some();
         let icon: AnyElement = match place
             .icon
             .as_deref()
@@ -173,16 +176,36 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
                 d.bg(theme.selection_bg).text_color(theme.selection_text)
             })
             .when(!is_current, |d| d.hover(move |s| s.bg(hover)))
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.run(
+            .on_click(cx.listener(move |this, _, window, cx| match &activate {
+                Some(activate) => this.run(&activate.name, activate.args.clone(), window, cx),
+                None => this.run(
                     "navigate",
                     serde_json::json!({ "location": location }),
                     window,
                     cx,
-                );
+                ),
             }))
-            .child(icon)
-            .child(texts);
+            .child(
+                div()
+                    .flex_none()
+                    .when(waiting, |d| d.opacity(0.55))
+                    .child(icon),
+            )
+            .child(texts.when(waiting, |d| d.text_color(theme.text_muted)));
+        if waiting {
+            tip = Some(
+                if place
+                    .activate
+                    .as_ref()
+                    .is_some_and(|a| &*a.name == "ui.unlock_prompt")
+                {
+                    "Locked. Click to enter its passphrase and open it."
+                } else {
+                    "Not mounted. Click to mount and open it."
+                }
+                .into(),
+            );
+        }
         if let Some(tip) = tip {
             let font = font.clone();
             row = row.tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), font.clone(), cx));

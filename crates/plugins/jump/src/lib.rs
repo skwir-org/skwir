@@ -190,6 +190,7 @@ impl Plugin for JumpPlugin {
                 group: "places".into(),
                 space: None,
                 eject: None,
+                activate: None,
             },
         );
         app.registry.keymap.add(

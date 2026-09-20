@@ -518,12 +518,28 @@ impl PaneView for ListView {
         )
         .track_scroll(self.scroll.clone())
         .size_full();
+        let marquee = crate::elements::marquee::Marquee {
+            pane,
+            shell: cx.weak_entity(),
+            geometry: crate::elements::marquee::Geometry::Rows { height: ROW_HEIGHT },
+            count,
+            offset: self.scroll.0.borrow().base_handle.offset(),
+            drag: shell.marquee.clone(),
+        };
         div()
             .size_full()
             .flex()
             .flex_col()
             .child(header(shell, &theme, cx))
-            .child(div().flex_1().min_h_0().w_full().child(list))
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .child(list)
+                    .child(marquee),
+            )
             .into_any_element()
     }
 

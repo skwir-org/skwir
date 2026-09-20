@@ -767,6 +767,7 @@ dependencies = [
  "anyhow",
  "bibli-core",
  "bibli-platform",
+ "notify",
  "parking_lot",
  "schemars",
  "serde",

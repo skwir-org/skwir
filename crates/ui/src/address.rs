@@ -148,7 +148,7 @@ fn app_row(
                     Button::new(
                         "preview-toggle",
                         "preview",
-                        "Preview panel · F3",
+                        "Preview panel · F11",
                         "ui.toggle_preview",
                     )
                     .active(shell.preview.open),
@@ -159,13 +159,8 @@ fn app_row(
             )
             .child(
                 labelled(
-                    Button::new(
-                        "split-toggle",
-                        "split",
-                        "Split panes · Ctrl+Shift+D",
-                        "ui.split",
-                    )
-                    .active(shell.is_split()),
+                    Button::new("split-toggle", "split", "Split panes · F3", "ui.split")
+                        .active(shell.is_split()),
                     "Split",
                     mode,
                 )
@@ -244,22 +239,17 @@ fn sort_items(shell: &Shell) -> Vec<Button> {
     items
 }
 
-pub fn render_toolbar(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
-    let theme = cx.global::<Theme>().clone();
-    let anchors = [
-        crate::elements::popover::PopoverAnchor::default(),
-        crate::elements::popover::PopoverAnchor::default(),
-    ];
-    let mut root = div().relative().flex_none().child(AdaptiveRow {
-        variants: (0..3)
-            .map(|mode| app_row(shell, mode, &anchors, cx))
-            .collect(),
-        height: 42.,
-    });
-    let Some(popup) = &shell.toolbar_menu else {
-        return root.into_any_element();
-    };
-    let mut panel = toolbar::popup_panel(popup, "ui.toolbar_menu", &theme, cx);
+/// The More menu. It holds what has no button in the chosen toolbar variant:
+/// always Timeline, the palette and Settings; in the narrowest variant also
+/// the views, panels and folder tools that variant dropped.
+fn more_panel(
+    shell: &Shell,
+    popup: &toolbar::Popup,
+    everything: bool,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let mut panel = toolbar::popup_panel(popup, "ui.toolbar_menu", theme, cx);
     let group = |panel: gpui::Stateful<gpui::Div>, title: &'static str| {
         panel.child(
             div()
@@ -271,20 +261,7 @@ pub fn render_toolbar(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
                 .child(title),
         )
     };
-    if popup.kind == SORT {
-        let items = sort_items(shell);
-        panel = group(panel, "Sort by");
-        for (index, item) in items.into_iter().enumerate() {
-            if index == 3 {
-                panel = group(panel, "Show");
-            } else if index == 4 {
-                panel = group(panel, "Icon size");
-            }
-            panel = panel.child(item.render(shell, cx));
-        }
-        root = root.child(anchors[0].popup(panel));
-    } else {
-        // The narrowest toolbar drops its buttons; they live here instead.
+    if everything {
         panel = group(panel, "View");
         for spec in shell.available_views() {
             panel = panel.child(
@@ -299,31 +276,16 @@ pub fn render_toolbar(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
                 Button::new(
                     "menu-preview",
                     "preview",
-                    "Preview panel · F3",
+                    "Preview panel · F11",
                     "ui.toggle_preview",
                 )
                 .active(shell.preview.open),
                 "Preview panel",
             ),
             (
-                Button::new(
-                    "menu-split",
-                    "split",
-                    "Split panes · Ctrl+Shift+D",
-                    "ui.split",
-                )
-                .active(shell.is_split()),
+                Button::new("menu-split", "split", "Split panes · F3", "ui.split")
+                    .active(shell.is_split()),
                 "Split panes",
-            ),
-            (
-                Button::new(
-                    "menu-timeline",
-                    "calendar",
-                    "Timeline · Ctrl+Shift+L",
-                    "ui.timeline",
-                )
-                .active(shell.timeline.open),
-                "Timeline",
             ),
         ] {
             panel = panel.child(menu_item(button, label).render(shell, cx));
@@ -345,29 +307,97 @@ pub fn render_toolbar(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
             panel = panel.child(item.render(shell, cx));
         }
         panel = group(panel, "bibli");
-        for (button, label) in [
-            (
-                Button::new(
-                    "menu-palette",
-                    "command",
-                    "Command palette · Ctrl+Shift+P",
-                    "ui.palette",
-                ),
-                "Command palette…",
+    }
+    for (button, label) in [
+        (
+            Button::new(
+                "menu-timeline",
+                "calendar",
+                "Timeline · Ctrl+Shift+L",
+                "ui.timeline",
+            )
+            .active(shell.timeline.open),
+            "Timeline",
+        ),
+        (
+            Button::new(
+                "menu-palette",
+                "command",
+                "Command palette · Ctrl+Shift+P",
+                "ui.palette",
             ),
-            (
-                Button::new(
-                    "menu-settings",
-                    "settings",
-                    "Settings · Ctrl+,",
-                    "ui.settings",
-                ),
-                "Settings…",
+            "Command palette…",
+        ),
+        (
+            Button::new(
+                "menu-shortcuts",
+                "keyboard",
+                "Shortcuts here · F1",
+                "ui.shortcuts",
             ),
-        ] {
-            panel = panel.child(menu_item(button, label).render(shell, cx));
+            "Shortcuts…",
+        ),
+        (
+            Button::new(
+                "menu-settings",
+                "settings",
+                "Settings · Ctrl+,",
+                "ui.settings",
+            ),
+            "Settings…",
+        ),
+    ] {
+        panel = panel.child(menu_item(button, label).render(shell, cx));
+    }
+    panel.into_any_element()
+}
+
+pub fn render_toolbar(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
+    let theme = cx.global::<Theme>().clone();
+    let anchors = [
+        crate::elements::popover::PopoverAnchor::default(),
+        crate::elements::popover::PopoverAnchor::default(),
+    ];
+    let chosen = crate::elements::adaptive::Chosen::default();
+    let mut root = div().relative().flex_none().child(AdaptiveRow {
+        variants: (0..3)
+            .map(|mode| app_row(shell, mode, &anchors, cx))
+            .collect(),
+        height: 42.,
+        chosen: Some(chosen.clone()),
+    });
+    let Some(popup) = &shell.toolbar_menu else {
+        return root.into_any_element();
+    };
+    if popup.kind == SORT {
+        let mut panel = toolbar::popup_panel(popup, "ui.toolbar_menu", &theme, cx);
+        for (index, item) in sort_items(shell).into_iter().enumerate() {
+            let title = match index {
+                0 => Some("Sort by"),
+                3 => Some("Show"),
+                4 => Some("Icon size"),
+                _ => None,
+            };
+            if let Some(title) = title {
+                panel = panel.child(
+                    div()
+                        .px_2()
+                        .pt_2()
+                        .pb_1()
+                        .text_xs()
+                        .text_color(theme.text_muted)
+                        .child(title),
+                );
+            }
+            panel = panel.child(item.render(shell, cx));
         }
-        root = root.child(anchors[1].popup(panel));
+        root = root.child(anchors[0].popup(panel));
+    } else {
+        // One panel per toolbar variant; the row's choice picks it, this frame.
+        let panels = (0..3)
+            .map(|mode| more_panel(shell, popup, mode == 2, &theme, cx))
+            .collect();
+        root = root.child(anchors[1].popup_for(&chosen, panels));
     }
     root.into_any_element()
 }

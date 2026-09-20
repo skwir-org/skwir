@@ -379,3 +379,45 @@ fn requirements_are_probed_on_demand_and_notifications_can_name_a_setting() {
     let notes = app.take_notifications();
     assert_eq!(notes[0].setting.as_deref(), Some("sample.engine"));
 }
+
+#[test]
+fn startup_opens_the_chosen_folder_or_the_last_one_and_falls_back_to_home() {
+    use bibli_core::settings::{
+        LAST_LOCATION, STARTUP, STARTUP_FOLDER, remember_location, startup_folder,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let (_tmp, app, _) = fixture(Some(dir.path().join("settings.toml")));
+    let home = std::path::Path::new("/home/example");
+    assert_eq!(startup_folder(&app.settings, home), home);
+    app.settings.set(
+        STARTUP_FOLDER,
+        toml::Value::String("/srv/it's shared".into()),
+    );
+    assert_eq!(
+        startup_folder(&app.settings, home),
+        std::path::Path::new("/srv/it's shared")
+    );
+    // Not remembered unless asked for: the file is not rewritten at every exit.
+    remember_location(&app.settings, std::path::Path::new("/example/work"));
+    assert_eq!(
+        app.settings.get::<String>(LAST_LOCATION).as_deref(),
+        Some("")
+    );
+    app.settings
+        .set(STARTUP, toml::Value::String("last".into()));
+    assert_eq!(
+        startup_folder(&app.settings, home),
+        home,
+        "nothing remembered yet"
+    );
+    remember_location(&app.settings, std::path::Path::new("/example/work"));
+    assert_eq!(
+        startup_folder(&app.settings, home),
+        std::path::Path::new("/example/work")
+    );
+    let reloaded = Settings::load(dir.path().join("settings.toml")).unwrap();
+    assert_eq!(
+        reloaded.get::<String>(LAST_LOCATION).as_deref(),
+        Some("/example/work")
+    );
+}

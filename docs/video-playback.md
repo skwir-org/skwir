@@ -1,7 +1,7 @@
 # Video playback
 
 Use `just run` inside the development shell. Select a video and open Preview
-(F3) or Peek (Space). Playback starts paused. The file thumbnail appears first,
+(F11) or Peek (Space). Playback starts paused. The file thumbnail appears first,
 then an optional FFmpeg job replaces it with a representative frame at source
 resolution (up to 8192 pixels per side, without upscaling). It samples 10% into
 the video, capped at 30 seconds; desktop thumbnailers do not expose a standard

@@ -12,7 +12,14 @@ use gpui::{
 pub struct AdaptiveRow {
     pub variants: Vec<AnyElement>,
     pub height: f32,
+    /// Receives the chosen variant during prepaint, for a popover drawn later
+    /// in the same frame (`PopoverAnchor::popup_for`). Created per render:
+    /// nothing measured survives the frame.
+    pub chosen: Option<Chosen>,
 }
+
+/// The variant an [`AdaptiveRow`] chose this frame.
+pub type Chosen = std::rc::Rc<std::cell::Cell<Option<usize>>>;
 impl IntoElement for AdaptiveRow {
     type Element = Self;
     fn into_element(self) -> Self {
@@ -91,6 +98,9 @@ impl Element for AdaptiveRow {
             cx,
         );
         row.prepaint_at(bounds.origin, window, cx);
+        if let Some(chosen) = &self.chosen {
+            chosen.set(Some(selected));
+        }
         Some(selected)
     }
     fn paint(

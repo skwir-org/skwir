@@ -51,7 +51,7 @@ fn all_plugins() -> Vec<Arc<dyn Plugin>> {
     vec![
         Arc::new(bibli_plugin_ops_basic::OpsBasicPlugin::default()),
         Arc::new(bibli_plugin_open_with::OpenWithPlugin),
-        Arc::new(bibli_plugin_places::PlacesPlugin),
+        Arc::new(bibli_plugin_places::PlacesPlugin::default()),
         Arc::new(bibli_plugin_thumbnails::ThumbnailsPlugin),
         Arc::new(bibli_plugin_preview_media::PreviewPlugin),
         Arc::new(bibli_plugin_preview_audio::PreviewPlugin),

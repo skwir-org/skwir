@@ -9,6 +9,11 @@ use serde::de::DeserializeOwned;
 use std::io::Write;
 
 pub const PRESERVE_TAGS_ON_COPY: &str = "core.preserve_tags_on_copy";
+/// `last` or `folder`.
+pub const STARTUP: &str = "core.startup";
+pub const STARTUP_FOLDER: &str = "core.startup_folder";
+/// Application data: where the window was when it closed.
+pub const LAST_LOCATION: &str = "core.last_location";
 
 /// How an editor should present a setting. The value's type is still the
 /// type of `default`; the kind only picks the control.
@@ -266,6 +271,30 @@ pub(crate) fn register(app: &crate::App) {
         )
         .section("Files"),
     );
+    app.settings.declare(
+        SettingSpec::choice(
+            STARTUP,
+            "Open at startup",
+            "Where a new window starts when no folder is given on the command line.",
+            "folder",
+            &[("folder", "A chosen folder"), ("last", "The last folder")],
+        )
+        .section("Startup"),
+    );
+    app.settings.declare(
+        SettingSpec::path(
+            STARTUP_FOLDER,
+            "Startup folder",
+            "Used when a chosen folder opens at startup. Leave empty for your home folder.",
+            "",
+        )
+        .section("Startup"),
+    );
+    app.settings.declare(SettingSpec::data(
+        LAST_LOCATION,
+        "The folder shown when the window was last closed",
+        toml::Value::String(String::new()),
+    ));
     app.commands.register::<ApplyArgs, _>(
         "core",
         "settings.apply",
@@ -336,6 +365,38 @@ impl Drop for SaveGuard {
         }
         drop(status);
         app.wake();
+    }
+}
+
+/// Where a window opens when the command line names no folder: the last
+/// folder or the chosen one, per `core.startup`, falling back to `home`.
+pub fn startup_folder(settings: &Settings, home: &Path) -> PathBuf {
+    let stored = |key: &str| {
+        settings
+            .get::<String>(key)
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+    };
+    let choice = match settings.get::<String>(STARTUP).as_deref() {
+        Some("last") => stored(LAST_LOCATION),
+        _ => stored(STARTUP_FOLDER),
+    };
+    choice.unwrap_or_else(|| home.to_path_buf())
+}
+
+/// Record the folder to reopen. Writes the settings file on the calling
+/// thread: for the moment the application closes, not for a UI callback.
+pub fn remember_location(settings: &Settings, folder: &Path) {
+    if settings.get::<String>(STARTUP).as_deref() != Some("last") {
+        return;
+    }
+    let folder = folder.to_string_lossy().into_owned();
+    if settings.get::<String>(LAST_LOCATION).as_deref() == Some(folder.as_str()) {
+        return;
+    }
+    settings.set(LAST_LOCATION, toml::Value::String(folder));
+    if let Err(error) = settings.save() {
+        tracing::warn!("cannot remember the last folder: {error:#}");
     }
 }
 

@@ -121,6 +121,25 @@ current source before assuming a planned crate, command, or API exists.
   (`views::list::CUT_OPACITY`) and the status bar shows the count, because
   the clipboard is invisible once the pane shows another folder. Escape with
   nothing selected, or a click on that count, forgets it.
+- **Rubber band.** `elements/marquee.rs` sits over a view's scroll area: it
+  reads its bounds in prepaint, converts the pointer to content coordinates
+  with the view's scroll offset, and asks pure, tested geometry which
+  entries a rectangle covers. A view that wants it supplies a `Geometry`.
+  The release listener is registered every frame: a quick click presses and
+  releases before the repaint that would register it.
+- **A menu that depends on a toolbar variant** is built once per variant and
+  chosen in the popover's deferred prepaint from `AdaptiveRow::chosen`, in the
+  same frame (`PopoverAnchor::popup_for`). More holds what has no button.
+- **Volumes.** The places plugin lists mounted volumes from mountinfo and
+  present-but-unmounted ones from `lsblk` (on a worker). A place with
+  `activate` runs that command instead of navigating: `places.mount`, or
+  `ui.unlock_prompt` for a locked container, which asks for the passphrase in
+  a masked input and dispatches `places.unlock` directly, never through
+  `Shell::run` (it traces arguments). The passphrase reaches udisks on
+  standard input, is never stored, logged or put on a command line, and its
+  argument struct has no `Debug`. Unmounting locks the container under the
+  filesystem. Test this with fake `lsblk`/`udisksctl` scripts first on PATH,
+  never on a real drive.
 - **Popups own the keyboard.** A menu or popover takes focus when it opens
   and returns it when it closes, with its own key context (see `menu.rs`):
   otherwise keys act on a selection hidden behind it.

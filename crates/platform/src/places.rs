@@ -40,13 +40,218 @@ pub fn space(path: &Path) -> Option<(u64, u64)> {
     (total > 0).then(|| (stat.f_bavail.saturating_mul(stat.f_frsize), total))
 }
 
-/// The desktop's own way to unmount a volume the user mounted: udisks, which
-/// needs no privileges for removable media.
-pub fn unmount_command(source: &str) -> (&'static str, Vec<String>) {
-    (
-        "udisksctl",
-        vec!["unmount".into(), "--block-device".into(), source.into()],
-    )
+/// A volume that is present but not mounted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Volume {
+    /// Device to hand to udisks (`/dev/sdb1`, `/dev/mapper/luks-…`).
+    pub device: String,
+    pub label: String,
+    pub size: u64,
+    /// Encrypted and locked: it needs a passphrase before it can be mounted.
+    pub locked: bool,
+    pub hotplug: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct BlockDevices {
+    blockdevices: Vec<BlockDevice>,
+}
+
+#[derive(serde::Deserialize)]
+struct BlockDevice {
+    path: String,
+    label: Option<String>,
+    size: Option<u64>,
+    fstype: Option<String>,
+    mountpoint: Option<String>,
+    #[serde(default)]
+    hotplug: bool,
+    pkname: Option<String>,
+}
+
+const LSBLK_ARGS: [&str; 5] = [
+    "--json",
+    "--bytes",
+    "--list",
+    "--output",
+    "PATH,LABEL,SIZE,FSTYPE,MOUNTPOINT,HOTPLUG,PKNAME",
+];
+
+/// Below this a FAT or NTFS partition is a boot or recovery partition, which
+/// desktops hide too.
+const SYSTEM_PARTITION_MAX: u64 = 2 << 30;
+
+fn device_name(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+/// Volumes from `lsblk --json --list` that could be mounted and are not:
+/// filesystems without a mount point, and locked encrypted containers.
+/// Members of something else (swap, RAID, LVM, an unlocked container) and
+/// small system partitions are left out.
+pub fn parse_lsblk(json: &str) -> Vec<Volume> {
+    let Ok(listing) = serde_json::from_str::<BlockDevices>(json) else {
+        return Vec::new();
+    };
+    let devices = listing.blockdevices;
+    devices
+        .iter()
+        .filter_map(|device| {
+            let fstype = device.fstype.as_deref()?;
+            if device.mountpoint.is_some()
+                || matches!(
+                    fstype,
+                    "swap" | "LVM2_member" | "linux_raid_member" | "zfs_member"
+                )
+            {
+                return None;
+            }
+            let size = device.size.unwrap_or(0);
+            if matches!(fstype, "vfat" | "ntfs") && size < SYSTEM_PARTITION_MAX {
+                return None;
+            }
+            let locked = fstype == "crypto_LUKS";
+            // An unlocked container shows up again as its cleartext device.
+            let name = device_name(&device.path);
+            if locked
+                && devices
+                    .iter()
+                    .any(|other| other.pkname.as_deref() == Some(name))
+            {
+                return None;
+            }
+            // A cleartext device inherits "hotplug" from the disk under it.
+            let hotplug = device.hotplug
+                || device.pkname.as_ref().is_some_and(|parent| {
+                    devices
+                        .iter()
+                        .any(|other| device_name(&other.path) == parent && other.hotplug)
+                });
+            Some(Volume {
+                device: device.path.clone(),
+                label: device.label.clone().unwrap_or_default(),
+                size,
+                locked,
+                hotplug,
+            })
+        })
+        .collect()
+}
+
+/// The encrypted device under a cleartext one (`/dev/sdb2` for
+/// `/dev/mapper/luks-…`), to lock it after unmounting. The kernel may name
+/// the cleartext device `/dev/dm-3`; both spellings resolve to the same node.
+pub fn container_of(json: &str, cleartext: &str) -> Option<String> {
+    let listing = serde_json::from_str::<BlockDevices>(json).ok()?;
+    let resolved = std::fs::canonicalize(cleartext).ok();
+    let device = listing.blockdevices.iter().find(|device| {
+        device.path == cleartext
+            || resolved.as_deref().is_some_and(|path| {
+                std::fs::canonicalize(&device.path).ok().as_deref() == Some(path)
+            })
+    })?;
+    let parent = device.pkname.as_ref()?;
+    listing
+        .blockdevices
+        .iter()
+        .find(|other| device_name(&other.path) == parent)
+        .filter(|other| other.fstype.as_deref() == Some("crypto_LUKS"))
+        .map(|other| other.path.clone())
+}
+
+/// Run `lsblk` and return its JSON. Spawns a process: call from a worker.
+pub fn lsblk() -> Option<String> {
+    let output = std::process::Command::new("lsblk")
+        .args(LSBLK_ARGS)
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+pub fn unmounted_volumes() -> Vec<Volume> {
+    lsblk().map(|json| parse_lsblk(&json)).unwrap_or_default()
+}
+
+fn udisks(verb: &str, device: &str) -> std::process::Command {
+    let mut command = std::process::Command::new("udisksctl");
+    command
+        .arg(verb)
+        .arg("--block-device")
+        .arg(device)
+        .arg("--no-user-interaction");
+    command
+}
+
+fn finished(output: std::io::Result<std::process::Output>) -> anyhow::Result<String> {
+    let output = output.map_err(|error| anyhow::anyhow!("udisksctl could not be run: {error}"))?;
+    anyhow::ensure!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr).trim().to_owned()
+    );
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// `Mounted /dev/sdb1 at /run/media/example/USB stick` gives the mount point.
+pub fn mount_point_of(message: &str) -> Option<PathBuf> {
+    let (_, path) = message.trim().split_once(" at ")?;
+    Some(PathBuf::from(path.trim_end_matches('.')))
+}
+
+/// `Unlocked /dev/sdb2 as /dev/dm-3.` gives the cleartext device.
+pub fn cleartext_of(message: &str) -> Option<String> {
+    let (_, device) = message.trim().split_once(" as ")?;
+    Some(device.trim_end_matches('.').to_owned())
+}
+
+/// Mount through udisks and return the mount point. Blocks: worker only.
+pub fn mount(device: &str) -> anyhow::Result<PathBuf> {
+    let message = finished(udisks("mount", device).output())?;
+    mount_point_of(&message)
+        .ok_or_else(|| anyhow::anyhow!("udisksctl did not say where it mounted the volume"))
+}
+
+/// Unlock an encrypted volume and return its cleartext device. The
+/// passphrase travels on the child's standard input, never on a command
+/// line, and is not kept. Blocks: worker only.
+pub fn unlock(device: &str, passphrase: &str) -> anyhow::Result<String> {
+    use std::io::Write as _;
+    let mut child = udisks("unlock", device)
+        .arg("--key-file")
+        .arg("/dev/stdin")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|error| anyhow::anyhow!("udisksctl could not be run: {error}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        // No trailing newline: a key file is taken byte for byte.
+        stdin.write_all(passphrase.as_bytes())?;
+    }
+    let message = finished(child.wait_with_output()).map_err(|error| {
+        let text = error.to_string();
+        if text.contains("Failed to activate") || text.contains("No key available") {
+            anyhow::anyhow!("The passphrase was not accepted")
+        } else {
+            error
+        }
+    })?;
+    cleartext_of(&message)
+        .ok_or_else(|| anyhow::anyhow!("udisksctl did not name the unlocked device"))
+}
+
+/// Unmount, then lock the container under it if there is one, so the volume
+/// is safe to unplug and asks for its passphrase next time. Blocks: worker only.
+pub fn unmount(source: &str) -> anyhow::Result<()> {
+    let container = lsblk().and_then(|json| container_of(&json, source));
+    finished(udisks("unmount", source).output())?;
+    if let Some(container) = container {
+        finished(udisks("lock", &container).output())?;
+    }
+    Ok(())
 }
 
 pub fn home() -> Option<PathBuf> {
@@ -324,6 +529,54 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
+    const LSBLK: &str = r#"{"blockdevices": [
+        {"path":"/dev/sda","label":null,"size":500107862016,"fstype":null,"mountpoint":null,"hotplug":true,"pkname":null},
+        {"path":"/dev/sda1","label":null,"size":104857600,"fstype":"vfat","mountpoint":null,"hotplug":true,"pkname":"sda"},
+        {"path":"/dev/sda3","label":"Windows","size":499000000000,"fstype":"ntfs","mountpoint":null,"hotplug":true,"pkname":"sda"},
+        {"path":"/dev/sdb2","label":null,"size":3840000000000,"fstype":"crypto_LUKS","mountpoint":null,"hotplug":true,"pkname":"sdb"},
+        {"path":"/dev/sdb","label":null,"size":4001000000000,"fstype":null,"mountpoint":null,"hotplug":true,"pkname":null},
+        {"path":"/dev/sdc","label":null,"size":2000000000000,"fstype":"crypto_LUKS","mountpoint":null,"hotplug":false,"pkname":null},
+        {"path":"/dev/mapper/luks-example","label":"Backup 4T","size":3840000000000,"fstype":"btrfs","mountpoint":null,"hotplug":false,"pkname":"sdb2"},
+        {"path":"/dev/nvme0n1p2","label":null,"size":1024000000000,"fstype":"crypto_LUKS","mountpoint":null,"hotplug":false,"pkname":"nvme0n1"},
+        {"path":"/dev/mapper/cryptroot","label":"root","size":1024000000000,"fstype":"btrfs","mountpoint":"/","hotplug":false,"pkname":"nvme0n1p2"},
+        {"path":"/dev/nvme0n1p3","label":null,"size":8000000000,"fstype":"swap","mountpoint":null,"hotplug":false,"pkname":"nvme0n1"}
+    ]}"#;
+
+    #[test]
+    fn unmounted_volumes_are_listed_without_members_and_system_partitions() {
+        let volumes = super::parse_lsblk(LSBLK);
+        let devices: Vec<&str> = volumes.iter().map(|v| v.device.as_str()).collect();
+        assert_eq!(
+            devices,
+            ["/dev/sda3", "/dev/sdc", "/dev/mapper/luks-example"],
+            "no EFI partition, no unlocked or in-use container, no swap, nothing mounted"
+        );
+        assert!(volumes[1].locked && !volumes[0].locked);
+        assert!(
+            volumes[2].hotplug,
+            "inherited from the disk under the container"
+        );
+        assert_eq!(volumes[2].label, "Backup 4T");
+        assert!(super::parse_lsblk("not json").is_empty());
+    }
+
+    #[test]
+    fn a_cleartext_device_names_its_container_and_udisks_messages_are_read() {
+        assert_eq!(
+            super::container_of(LSBLK, "/dev/mapper/luks-example").as_deref(),
+            Some("/dev/sdb2")
+        );
+        assert_eq!(super::container_of(LSBLK, "/dev/sda3"), None);
+        assert_eq!(
+            super::mount_point_of("Mounted /dev/sdb1 at /run/media/example/USB stick\n"),
+            Some(std::path::PathBuf::from("/run/media/example/USB stick"))
+        );
+        assert_eq!(
+            super::cleartext_of("Unlocked /dev/sdb2 as /dev/dm-3.\n").as_deref(),
+            Some("/dev/dm-3")
+        );
+    }
+
     #[test]
     fn bookmarks_are_added_once_as_escaped_uris() {
         let path = std::path::Path::new("/example/Work files/it's 100% done");
@@ -349,10 +602,6 @@ mod tests {
         let mounts = super::parse_mountinfo(line);
         assert_eq!(mounts[0].source, "/dev/sdb1");
         assert!(mounts[0].removable);
-        assert_eq!(
-            super::unmount_command(&mounts[0].source).1,
-            ["unmount", "--block-device", "/dev/sdb1"]
-        );
     }
 
     use super::*;

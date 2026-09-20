@@ -126,6 +126,9 @@ pub struct Place {
     pub space: Option<(u64, u64)>,
     /// A command that detaches the volume (the sidebar shows an eject button).
     pub eject: Option<Invocation>,
+    /// Run this instead of opening `location`: a volume that must be mounted
+    /// (or unlocked) first. Such a place is drawn as not yet available.
+    pub activate: Option<Invocation>,
 }
 
 /// A menu contribution. `when` is a space-separated list of tokens that must

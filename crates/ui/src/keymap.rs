@@ -109,8 +109,11 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("space", "ui.peek", Some("pane")),
     ("ctrl-shift-space", "ui.toggle_preview", None),
     // Layouts where shift+space types a character (fr: U+202F) never
-    // produce `ctrl-shift-space`; F3 is the layout-independent fallback.
-    ("f3", "ui.toggle_preview", None),
+    // produce `ctrl-shift-space`; F11 is the layout-independent fallback.
+    // F3 splits and F11 shows the side panel, as in Dolphin; inside a
+    // document F3 stays "next match", the deeper context wins.
+    ("f11", "ui.toggle_preview", None),
+    ("f3", "ui.split", None),
     ("space", "ui.peek_close", Some("peek")),
     ("escape", "ui.peek_close", Some("peek")),
     ("left", "ui.peek_prev", Some("peek")),

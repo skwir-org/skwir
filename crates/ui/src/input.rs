@@ -72,6 +72,8 @@ pub fn key_bindings() -> Vec<KeyBinding> {
     ]
 }
 
+const BULLET: char = '•';
+
 /// What an input tells its owner.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InputEvent {
@@ -87,6 +89,8 @@ pub struct TextInput {
     focus_handle: FocusHandle,
     content: SharedString,
     placeholder: SharedString,
+    /// Show a bullet per character, and keep the text off the clipboard.
+    masked: bool,
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
@@ -103,6 +107,7 @@ impl TextInput {
             focus_handle: cx.focus_handle(),
             content: "".into(),
             placeholder: placeholder.into(),
+            masked: false,
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,
@@ -110,6 +115,22 @@ impl TextInput {
             last_bounds: None,
             is_selecting: false,
         }
+    }
+
+    /// For secrets: bullets on screen, no copy or cut.
+    pub fn set_masked(&mut self, masked: bool) {
+        self.masked = masked;
+    }
+
+    /// Byte offset in the text for a byte offset in what is displayed.
+    fn text_offset(&self, offset: usize) -> usize {
+        if !self.masked {
+            return offset;
+        }
+        self.content
+            .char_indices()
+            .nth(offset / BULLET.len_utf8())
+            .map_or(self.content.len(), |(index, _)| index)
     }
 
     pub fn text(&self) -> &str {
@@ -233,7 +254,7 @@ impl TextInput {
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.selected_range.is_empty() {
+        if !self.selected_range.is_empty() && !self.masked {
             cx.write_to_clipboard(ClipboardItem::new_string(
                 self.content[self.selected_range.clone()].to_string(),
             ));
@@ -241,7 +262,7 @@ impl TextInput {
     }
 
     fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.selected_range.is_empty() {
+        if !self.selected_range.is_empty() && !self.masked {
             cx.write_to_clipboard(ClipboardItem::new_string(
                 self.content[self.selected_range.clone()].to_string(),
             ));
@@ -311,7 +332,7 @@ impl TextInput {
         if position.y > bounds.bottom() {
             return self.content.len();
         }
-        line.closest_index_for_x(position.x - bounds.left())
+        self.text_offset(line.closest_index_for_x(position.x - bounds.left()))
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -567,9 +588,30 @@ impl Element for TextElement {
     ) -> Self::PrepaintState {
         let theme = cx.global::<Theme>().clone();
         let input = self.input.read(cx);
-        let content = input.content.clone();
-        let selected_range = input.selected_range.clone();
-        let cursor = input.cursor_offset();
+        // A masked input shapes bullets; offsets into the text become
+        // offsets into the bullets (one bullet per character).
+        let masked = input.masked;
+        let shown = |offset: usize| {
+            if masked {
+                input.content[..offset].chars().count() * BULLET.len_utf8()
+            } else {
+                offset
+            }
+        };
+        let content: SharedString = if masked {
+            BULLET
+                .to_string()
+                .repeat(input.content.chars().count())
+                .into()
+        } else {
+            input.content.clone()
+        };
+        let selected_range = shown(input.selected_range.start)..shown(input.selected_range.end);
+        let cursor = shown(input.cursor_offset());
+        let marked_range = input
+            .marked_range
+            .as_ref()
+            .map(|marked| shown(marked.start)..shown(marked.end));
         let style = window.text_style();
 
         let (display_text, text_color) = if content.is_empty() {
@@ -586,7 +628,7 @@ impl Element for TextElement {
             underline: None,
             strikethrough: None,
         };
-        let runs = if let Some(marked) = input.marked_range.as_ref() {
+        let runs = if let Some(marked) = marked_range.as_ref() {
             vec![
                 TextRun {
                     len: marked.start,

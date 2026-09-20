@@ -763,6 +763,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
                 .map(|mode| reader_row(shell, mode, &anchor, cx))
                 .collect(),
             height: 42.,
+            chosen: None,
         });
     if let Some(popup) = &shell.preview.menu {
         let mut panel = toolbar::popup_panel(popup, "ui.preview_menu", theme, cx);

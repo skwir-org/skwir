@@ -201,7 +201,27 @@ impl PaneView for GridView {
         .track_scroll(self.scroll.clone())
         .size_full()
         .px_1();
-        div().size_full().child(grid).into_any_element()
+        let marquee = crate::elements::marquee::Marquee {
+            pane,
+            shell: cx.weak_entity(),
+            geometry: crate::elements::marquee::Geometry::Cells {
+                width: GridView::cell_w(zoom),
+                height: GridView::cell_h(zoom),
+                // The column count of the last prepaint: a band dragged in the
+                // frame a resize lands is off by that frame only.
+                cols: self.scroll.cols(),
+                pad_x: 4.,
+            },
+            count,
+            offset: self.scroll.0.borrow().base_handle.offset(),
+            drag: shell.marquee.clone(),
+        };
+        div()
+            .relative()
+            .size_full()
+            .child(grid)
+            .child(marquee)
+            .into_any_element()
     }
 
     fn scroll_to(&mut self, ix: usize) {

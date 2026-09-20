@@ -185,6 +185,7 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
             let stats_app = Arc::clone(&app);
             cx.on_window_closed(move |cx| {
                 if cx.windows().is_empty() {
+                    remember_location(&stats_app);
                     let (decoded, skipped, bytes) = stats_app.thumbnails.stats();
                     tracing::info!(decoded, skipped, cached_bytes = bytes, "thumbnail stats");
                     cx.quit();
@@ -223,4 +224,17 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
                 .ok();
         });
     Ok(())
+}
+
+/// Note where the active pane is, for "open the last folder at startup".
+pub(crate) fn remember_location(app: &App) {
+    let folder = app
+        .workspace
+        .read()
+        .active()
+        .location()
+        .and_then(bibli_core::Location::path);
+    if let Some(folder) = folder {
+        bibli_core::settings::remember_location(&app.settings, &folder);
+    }
 }

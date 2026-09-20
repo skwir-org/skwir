@@ -537,6 +537,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         .child(crate::elements::adaptive::AdaptiveRow {
             variants,
             height: 42.,
+            chosen: None,
         });
     if let Some(popup) = &shell.preview.menu {
         let mut panel = toolbar::popup_panel(popup, "ui.preview_menu", theme, cx);

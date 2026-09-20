@@ -31,8 +31,10 @@ fn main() -> anyhow::Result<()> {
         std::sync::Arc::new(bibli_plugin_open_with::OpenWithPlugin),
         &app,
     );
-    app.plugins
-        .add(std::sync::Arc::new(bibli_plugin_places::PlacesPlugin), &app);
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_places::PlacesPlugin::default()),
+        &app,
+    );
     app.plugins.add(
         std::sync::Arc::new(bibli_plugin_thumbnails::ThumbnailsPlugin),
         &app,
@@ -120,8 +122,13 @@ fn main() -> anyhow::Result<()> {
         &app,
     );
 
+    // A folder on the command line wins; otherwise the startup preference.
     let path = std::env::args_os().nth(1).map_or_else(
-        || std::env::current_dir().unwrap_or_else(|_| "/".into()),
+        || {
+            let home =
+                std::env::var_os("HOME").map_or_else(|| "/".into(), std::path::PathBuf::from);
+            bibli_core::settings::startup_folder(&app.settings, &home)
+        },
         std::path::PathBuf::from,
     );
     let path = std::path::absolute(&path).unwrap_or(path);

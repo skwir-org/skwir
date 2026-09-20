@@ -98,6 +98,10 @@ pub struct Shell {
     /// membership here instead of taking the lock each.
     pub pending: Arc<bibli_core::pending::Pending>,
     pub shortcuts: Option<crate::shortcuts::Overview>,
+    /// A rubber-band selection in progress.
+    pub marquee: Option<crate::elements::marquee::Drag>,
+    /// The encrypted volume the passphrase prompt is for.
+    pub unlock_device: Option<String>,
     pub nudges: crate::shortcuts::Nudges,
     pub last_search: String,
     pub shelf_count: usize,
@@ -196,6 +200,8 @@ impl Shell {
             toasts: crate::toast::ToastState::default(),
             pending: Arc::default(),
             shortcuts: None,
+            marquee: None,
+            unlock_device: None,
             nudges: crate::shortcuts::Nudges::default(),
             last_search: String::new(),
             shelf_count: 0,
@@ -614,6 +620,20 @@ impl Shell {
             "toolbar_menu" => self.toggle_toolbar_menu(args, window, cx),
             name if name.starts_with("settings_") => self.settings_command(name, args, window, cx),
             "shortcuts" => self.toggle_shortcuts(window, cx),
+            "unlock_prompt" => {
+                if let Some(device) = arg("device") {
+                    let title = arg("title").unwrap_or_else(|| "this volume".into());
+                    self.unlock_device = Some(device);
+                    self.open_prompt(
+                        crate::prompts::PromptKind::Passphrase,
+                        &format!("Unlock “{title}”"),
+                        "",
+                        None,
+                        window,
+                        cx,
+                    );
+                }
+            }
             name if name.starts_with("menu_") => self.menu_command(name, window, cx),
             "palette" => self.open_palette(window, cx),
             "palette_up" => self.palette_move(-1, cx),
@@ -842,6 +862,7 @@ impl Shell {
             "page_up" => self.navigate_by(Nav::PageUp, false, window, cx),
             "page_down" => self.navigate_by(Nav::PageDown, false, window, cx),
             "quit" => {
+                crate::remember_location(&self.app);
                 let (decoded, skipped, bytes) = self.app.thumbnails.stats();
                 tracing::info!(decoded, skipped, cached_bytes = bytes, "thumbnail stats");
                 cx.quit();

@@ -351,6 +351,71 @@ impl Shell {
         }
     }
 
+    // ------------------------------------------------------------ marquee
+
+    /// A press on the empty part of a view: the selection goes (unless Ctrl
+    /// or Shift keeps it) and a rubber band may follow.
+    pub fn marquee_begin(
+        &mut self,
+        pane: PaneId,
+        start: (f32, f32),
+        position: gpui::Point<gpui::Pixels>,
+        keep: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.activate_pane(pane, cx);
+        window.focus(&self.ui().focus);
+        let kept = if keep {
+            let ws = self.app.workspace.read();
+            ws.pane(pane)
+                .map(|p| p.selection.iter().collect())
+                .unwrap_or_default()
+        } else {
+            self.select_ids(Vec::new(), "replace", window, cx);
+            Vec::new()
+        };
+        self.marquee = Some(crate::elements::marquee::Drag {
+            pane,
+            start,
+            current: position,
+            covered: Vec::new(),
+            kept,
+        });
+        cx.notify();
+    }
+
+    pub fn marquee_move(
+        &mut self,
+        position: gpui::Point<gpui::Pixels>,
+        covered: Vec<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(drag) = self.marquee.as_mut() else {
+            return;
+        };
+        drag.current = position;
+        if drag.covered != covered {
+            drag.covered.clone_from(&covered);
+            let mut ids = drag.kept.clone();
+            let sorted = &self.ui().list.sorted;
+            ids.extend(
+                covered
+                    .iter()
+                    .filter_map(|index| sorted.get(*index).copied()),
+            );
+            self.select_ids(ids, "replace", window, cx);
+        }
+        cx.notify();
+    }
+
+    pub fn marquee_end(&mut self, cx: &mut Context<Self>) {
+        if self.marquee.take().is_some() {
+            cx.notify();
+        }
+    }
+
     /// Wrap a view's element in the pane container: focus, key context,
     /// type-ahead, empty-area context menu, external drops.
     pub fn pane_container(&mut self, content: AnyElement, cx: &mut Context<Self>) -> AnyElement {

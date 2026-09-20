@@ -14,6 +14,8 @@ use crate::theme::Theme;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PromptKind {
+    /// The passphrase of `Shell::unlock_device`. Masked, never trimmed.
+    Passphrase,
     Rename,
     Mkdir,
     Search,
@@ -56,6 +58,7 @@ impl Shell {
                 "Text, or hex: followed by byte pairs in the hex viewer"
             }
             PromptKind::InspectJump { .. } => "Offset (decimal or 0x hexadecimal)",
+            PromptKind::Passphrase => "Passphrase",
             PromptKind::Rename => "New name",
             PromptKind::Mkdir => "Folder name",
             PromptKind::Search => "*.pdf modified<7d size>10M  (in: picks the root)",
@@ -63,6 +66,7 @@ impl Shell {
         };
         let input = cx.new(|cx| TextInput::new(placeholder, cx));
         input.update(cx, |i, cx| {
+            i.set_masked(kind == PromptKind::Passphrase);
             i.set_text(initial.to_owned(), cx);
             match select {
                 Some(r) => i.select_range(r, cx),
@@ -74,8 +78,13 @@ impl Shell {
             window,
             |this, input, ev: &InputEvent, window, cx| match ev {
                 InputEvent::Submit => {
-                    let text = input.read(cx).text().trim().to_owned();
                     let kind = this.prompt.as_ref().map(|p| p.kind);
+                    // Spaces can be part of a passphrase.
+                    let text = if kind == Some(PromptKind::Passphrase) {
+                        input.read(cx).text().to_owned()
+                    } else {
+                        input.read(cx).text().trim().to_owned()
+                    };
                     this.prompt = None;
                     window.focus(&this.ui().focus);
                     if let Some(kind) = kind {
@@ -84,6 +93,7 @@ impl Shell {
                     cx.notify();
                 }
                 InputEvent::Cancel => {
+                    this.unlock_device = None;
                     this.prompt = None;
                     window.focus(&this.ui().focus);
                     cx.notify();
@@ -126,6 +136,25 @@ impl Shell {
                         );
                     }
                 });
+            }
+            PromptKind::Passphrase => {
+                let Some(device) = self.unlock_device.take() else {
+                    return;
+                };
+                if text.is_empty() {
+                    return;
+                }
+                // Dispatched directly, not through `run`: `run` traces the
+                // arguments of what it runs, and this one is a secret.
+                let pane = self.pane;
+                let unlock = Invocation::with_args(
+                    "places.unlock",
+                    &serde_json::json!({ "device": device, "passphrase": text, "pane": pane }),
+                );
+                match self.app.dispatch(&unlock) {
+                    Ok(_) => self.set_status("Unlocking…", false, cx),
+                    Err(error) => self.set_status(format!("{error:#}"), true, cx),
+                }
             }
             PromptKind::Rename if !text.is_empty() => {
                 self.run(

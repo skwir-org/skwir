@@ -1,6 +1,6 @@
 # Optional previews
 
-Open the preview panel with **F3**, or press **Space** for peek. New formats use
+Open the preview panel with **F11**, or press **Space** for peek. New formats use
 the shared toolbar, whose less frequent actions move into **More** in a narrow
 panel. **Alt+Page Up / Page Down** changes sections, chapters or comic pages.
 

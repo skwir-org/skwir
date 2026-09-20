@@ -453,6 +453,7 @@ impl Plugin for ShelfPlugin {
                 group: "places".into(),
                 space: None,
                 eject: None,
+                activate: None,
             },
         );
         for (keys, command, when) in BINDINGS {

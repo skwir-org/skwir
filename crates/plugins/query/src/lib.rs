@@ -111,6 +111,7 @@ fn register_places(app: &App) {
                 group: "queries".into(),
                 space: None,
                 eject: None,
+                activate: None,
             },
         );
     }
