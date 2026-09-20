@@ -49,11 +49,11 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
     let drop_tint = theme.selection_bg.opacity(0.35);
     let mut column = div()
         .id("sidebar")
-        .w(px(200.))
-        .h_full()
+        .size_full()
         .flex()
         .flex_col()
         .overflow_y_scroll()
+        .track_scroll(&shell.sidebar_scroll)
         .border_r_1()
         .border_color(theme.border)
         .bg(theme.surface)
@@ -234,7 +234,19 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
         }
         column = column.child(row);
     }
-    column.into_any_element()
+    // The bar is a sibling of the scrolling column, not a child: a child
+    // would scroll away with the places.
+    div()
+        .relative()
+        .w(px(200.))
+        .h_full()
+        .flex_none()
+        .child(column)
+        .child(crate::elements::scrollbar::vertical(
+            "sidebar-scrollbar",
+            crate::elements::scrollbar::Scrolls::Offset(shell.sidebar_scroll.clone()),
+        ))
+        .into_any_element()
 }
 
 #[cfg(test)]

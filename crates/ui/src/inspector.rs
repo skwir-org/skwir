@@ -449,8 +449,28 @@ impl Shell {
                 cx.open_url(href);
                 return;
             }
+            // A link to a neighbouring file or folder is a place in the
+            // filesystem: go there, select it, and let the preview follow the
+            // selection. Only a book's links mean something inside a
+            // container, so those fall through to the provider below.
             if kind != Some(InspectionKind::Book) {
-                self.set_status("Only web links can be opened from this preview", false, cx);
+                match self
+                    .preview
+                    .path()
+                    .and_then(|from| document_link(from, href))
+                {
+                    Some(target) => {
+                        let pane = self.pane;
+                        if !self.reveal_path(pane, &target, window, cx) {
+                            let name = target.file_name().map_or_else(
+                                || target.display().to_string(),
+                                |name| name.to_string_lossy().into_owned(),
+                            );
+                            self.set_status(format!("{name} is not there any more"), true, cx);
+                        }
+                    }
+                    None => self.set_status("This link goes nowhere we can open", false, cx),
+                }
                 return;
             }
         }
@@ -529,6 +549,55 @@ impl Shell {
         cx.notify();
     }
 }
+/// Whether the link names a URI scheme (`mailto:`, `irc:`, `https:`) rather
+/// than a path. A colon after a slash belongs to a file name, not a scheme.
+fn has_scheme(href: &str) -> bool {
+    let Some(colon) = href.find(':') else {
+        return false;
+    };
+    let scheme = &href[..colon];
+    !scheme.is_empty()
+        && !scheme.contains('/')
+        && scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+}
+
+/// Where a document's link points on this machine, or `None` when it names
+/// something we cannot resolve (another scheme, or a path that escapes into
+/// nothing). `from` is the document holding the link, so a relative link is
+/// read the way the author wrote it: next to their file.
+fn document_link(from: &std::path::Path, href: &str) -> Option<std::path::PathBuf> {
+    let href = href.split(['#', '?']).next().filter(|h| !h.is_empty())?;
+    let href = bibli_platform::places::percent_decode(href);
+    let path = if let Some(rest) = href.strip_prefix("file://") {
+        // file://host/path is not ours to resolve; file:///path is.
+        std::path::PathBuf::from(rest.strip_prefix('/').map(|p| format!("/{p}"))?)
+    } else if has_scheme(&href) {
+        return None;
+    } else if href.starts_with('/') {
+        std::path::PathBuf::from(href)
+    } else {
+        from.parent()?.join(href)
+    };
+    // Resolve `.` and `..` by text only. Canonicalizing would follow symlinks
+    // and show the user a folder whose name their link never mentioned.
+    let mut out = std::path::PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !out.pop() {
+                    out.push("..");
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    Some(out)
+}
+
 fn button(id: &'static str, icon: &'static str, title: &'static str, action: &str) -> Button {
     Button::new(id, icon, title, "ui.inspect").args(serde_json::json!({"action":action}))
 }
@@ -944,13 +1013,23 @@ pub fn content(
     // pane. This is a maximum, not a measurement: a narrow pane keeps all of
     // its width.
     let mut body = body.child(
-        div().flex_1().min_h_0().flex().justify_center().child(
-            div()
-                .w_full()
-                .h_full()
-                .when_some(measure, |d, measure| d.max_w(px(measure)))
-                .child(list),
-        ),
+        div()
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .justify_center()
+            .child(
+                div()
+                    .w_full()
+                    .h_full()
+                    .when_some(measure, |d, measure| d.max_w(px(measure)))
+                    .child(list),
+            )
+            .child(crate::elements::scrollbar::vertical(
+                "inspect-scrollbar",
+                crate::elements::scrollbar::Scrolls::Items(shell.preview.inspection.list.clone()),
+            )),
     );
     if display.data.kind == InspectionKind::Archive {
         let total = display
@@ -1052,6 +1131,33 @@ fn hex_cell(text: &str, column: usize, theme: &Theme) -> AnyElement {
 mod tests {
     use super::*;
     use bibli_core::inspection::{Block, Row};
+
+    #[test]
+    fn a_documents_links_resolve_next_to_it() {
+        let dir = std::path::Path::new("/notes/trip");
+        let from = dir.join("Day one.md");
+        let at = |href| document_link(&from, href);
+        assert_eq!(at("Day two.md"), Some(dir.join("Day two.md")));
+        assert_eq!(at("Day%20two.md"), Some(dir.join("Day two.md")));
+        assert_eq!(at("photos/"), Some(dir.join("photos")));
+        assert_eq!(at("notes.md#later"), Some(dir.join("notes.md")));
+        assert_eq!(
+            at("file:///etc/hostname"),
+            Some(std::path::PathBuf::from("/etc/hostname"))
+        );
+        assert_eq!(
+            at("/srv/shared/plan.md"),
+            Some("/srv/shared/plan.md".into())
+        );
+        assert_eq!(at("../gear/list.md"), Some("/notes/gear/list.md".into()));
+        assert_eq!(at("./same.md"), Some(dir.join("same.md")));
+        // Other schemes and empty targets are not places on this machine.
+        assert_eq!(at("https://example.invalid/x"), None);
+        assert_eq!(at("mailto:someone@example.invalid"), None);
+        assert_eq!(at("file://host/share/x"), None);
+        assert_eq!(at(""), None);
+        assert_eq!(at("#section"), None);
+    }
 
     fn archive() -> Display {
         let rows = [

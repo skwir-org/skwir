@@ -221,6 +221,12 @@ impl PaneView for GridView {
             .size_full()
             .child(grid)
             .child(marquee)
+            .child(crate::elements::scrollbar::vertical(
+                ("grid-scrollbar", pane.0 as usize),
+                crate::elements::scrollbar::Scrolls::Offset(
+                    self.scroll.0.borrow().base_handle.clone(),
+                ),
+            ))
             .into_any_element()
     }
 

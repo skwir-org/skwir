@@ -127,6 +127,18 @@ current source before assuming a planned crate, command, or API exists.
   entries a rectangle covers. A view that wants it supplies a `Geometry`.
   The release listener is registered every frame: a quick click presses and
   releases before the repaint that would register it.
+- **Scrolling.** Every view that scrolls carries a scrollbar
+  (`elements/scrollbar.rs`) over its right edge: the view hands it whichever
+  handle it already scrolls with, and the thumb is placed in prepaint from
+  that handle's numbers. The gutter takes the pointer only while there is a
+  bar in it, so a press beside the rows never selects one. Wrapping a
+  scrolling element to overlay a bar must preserve its flex context — a body
+  that grew in a column needs a column — or it silently stops scrolling.
+- **What the window remembers.** The shape of the last window (view, split,
+  preview and its width, timeline, zoom) is application data, not preference:
+  `session.rs` keeps it under one key, restores it at startup and writes it
+  only when it changes, never per frame. A new pane opens in the view the
+  current one shows.
 - **A menu that depends on a toolbar variant** is built once per variant and
   chosen in the popover's deferred prepaint from `AdaptiveRow::chosen`, in the
   same frame (`PopoverAnchor::popup_for`). More holds what has no button.
@@ -146,7 +158,10 @@ current source before assuming a planned crate, command, or API exists.
 - **List columns** give way by layout alone: the detail columns sit in a
   wrapping flex line one row tall (`views/list.rs::details`), so they drop
   whole, last first, and the name keeps its minimum width in a pane of any
-  width. Header and rows share that one function. The sidebar gives way to
+  width. Header and rows share that one function. Which columns show is
+  chosen where they are — the header's own menu (`Shell::open_column_menu`),
+  not the Settings dialog — and still through `settings.apply`, so the
+  dialog and the header never disagree. The sidebar gives way to
   the panes below a window width computed in `Shell::render`; the window's
   width is known before layout, an element's is not.
 - **Commands are the one surface.** Every user action is a command

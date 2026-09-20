@@ -1080,7 +1080,21 @@ impl Render for SettingsView {
                     .flex()
                     .flex_col()
                     .child(header)
-                    .child(body),
+                    // A column, like the one the body used to sit in directly:
+                    // the page keeps the height it scrolls within.
+                    .child(
+                        div()
+                            .relative()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_h_0()
+                            .child(body)
+                            .child(crate::elements::scrollbar::vertical(
+                                "settings-scrollbar",
+                                crate::elements::scrollbar::Scrolls::Offset(self.scroll.clone()),
+                            )),
+                    ),
             );
         // The backdrop closes the dialog: nothing is lost, every change is
         // already applied.

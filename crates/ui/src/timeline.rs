@@ -83,6 +83,7 @@ impl Shell {
             let ids: Vec<bibli_core::EntryId> = self.ui().list.sorted.to_vec();
             self.request_hydrate(ids);
         }
+        self.remember_session();
         cx.notify();
     }
 

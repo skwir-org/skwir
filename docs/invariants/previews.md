@@ -8,6 +8,12 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
 - Keep rich text, table/tree rows and images toolkit-independent. The UI owns
   virtualized layout and commands. Bound input, expansion and visible work;
   a short file can still contain one huge field or deeply nested structure.
+- A link in a document goes where it says: `http`, `https` and `mailto` to the
+  desktop's browser, a heading anchor to that heading, and anything else to a
+  place on this machine — resolved next to the document, never canonicalized,
+  so the folder shown is the one the link named. The pane navigates there and
+  `Shell::reveal_path` selects the file once the listing has it, which is what
+  opens it in the preview. A link is a place to show, never a file to run.
 - HTML reading mode is inert: no scripts, remote assets or automatic link opens.
   Markdown images must stay within the document directory after canonicalizing;
   EPUB resources stay inside their container and email images use content IDs.
@@ -45,8 +51,9 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   must stay legible: it is what EPUB, email and HTML read in. A block's frame
   (spacing, quote border, list indent) is drawn once for every kind of block;
   only the middle differs, so nothing can return early and lose the border.
-  Reading mode also caps the text column at `MarkdownStyle::measure` and
-  centres it: a maximum, applied in layout, never a measured width.
+  Reading mode also caps the text column at `MarkdownStyle::measure`, centres
+  it and keeps `page_padding` between the text and the edge of the pane: all
+  maxima and paddings applied in layout, never a measured width.
 - Only `bibli-archive-worker` links libarchive. Member names are labels/keys,
   never extraction paths. Read only selected regular members, bound the actual
   decompressed bytes and keep temporary cleanup off the UI thread.

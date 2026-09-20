@@ -55,6 +55,14 @@ pub struct PaneUi {
     _sub: Subscription,
 }
 
+/// A pending "show me this file": the pane it belongs to, the file name to
+/// look for, and when to stop waiting for a listing that never brings it.
+struct Reveal {
+    pane: PaneId,
+    name: std::ffi::OsString,
+    until: Instant,
+}
+
 pub struct Shell {
     pub app: Arc<App>,
     /// The pane commands act on: the workspace's active pane, or the pane
@@ -105,6 +113,17 @@ pub struct Shell {
     pub nudges: crate::shortcuts::Nudges,
     pub last_search: String,
     pub shelf_count: usize,
+    /// A file to select once the folder it lives in has listed it: a listing
+    /// streams, so a link followed to another folder cannot select its target
+    /// in the same frame it navigates.
+    reveal: Option<Reveal>,
+    /// The window's shape as last written to settings; `remember_session`
+    /// compares against it so nothing is written on an ordinary frame.
+    pub(crate) stored_session: crate::session::Session,
+    /// Scroll position of the sidebar, so it can have a scrollbar.
+    pub sidebar_scroll: gpui::ScrollHandle,
+    /// A remembered view id waiting for its pane's views to be reconciled.
+    restoring_view: Option<String>,
     started: Instant,
     first_frame_logged: bool,
     _subscriptions: Vec<Subscription>,
@@ -123,6 +142,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> Self {
         crate::settings::declare(&app);
+        crate::session::declare(&app);
         cx.set_global(Theme::resolve(&app, window.appearance()));
         let mut subs = Vec::new();
         subs.push(cx.observe_window_appearance(window, |this, window, cx| {
@@ -205,6 +225,10 @@ impl Shell {
             nudges: crate::shortcuts::Nudges::default(),
             last_search: String::new(),
             shelf_count: 0,
+            reveal: None,
+            stored_session: crate::session::Session::default(),
+            sidebar_scroll: gpui::ScrollHandle::new(),
+            restoring_view: None,
             started,
             first_frame_logged: false,
             _subscriptions: subs,
@@ -216,7 +240,32 @@ impl Shell {
         {
             shell.set_status(format!("{e:#}"), true, cx);
         }
+        shell.restore_session(window, cx);
         shell
+    }
+
+    /// Put the window back the way it was left: the same view, the same
+    /// split, the same panels. The view waits for `sync_views`, which is
+    /// what decides which views this build and its plugins actually have.
+    fn restore_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(session) = crate::session::restore(&self.app) else {
+            return;
+        };
+        if session.zoom > 0 {
+            self.zoom = session.zoom;
+        }
+        self.preview.open = session.preview;
+        if session.preview_width > 0. {
+            self.preview.width = session.preview_width;
+        }
+        self.timeline.open = session.timeline;
+        if !session.view.is_empty() {
+            self.restoring_view = Some(session.view);
+        }
+        if session.split {
+            self.split(window, cx);
+        }
+        self.stored_session = self.session();
     }
 
     fn make_pane_ui(&self, id: PaneId, window: &mut Window, cx: &mut Context<Self>) -> PaneUi {
@@ -318,6 +367,81 @@ impl Shell {
         self.panes.iter().map(|p| p.id).find(|id| *id != self.pane)
     }
 
+    /// Show `path` in `pane`: navigate to the folder that holds it and select
+    /// the file itself once the listing reaches it. A directory is simply
+    /// opened. Returns false if the path is not there.
+    pub fn reveal_path(
+        &mut self,
+        pane: PaneId,
+        path: &std::path::Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Ok(metadata) = std::fs::metadata(path) else {
+            return false;
+        };
+        let (folder, name) = if metadata.is_dir() {
+            (path.to_path_buf(), None)
+        } else {
+            match (path.parent(), path.file_name()) {
+                (Some(parent), Some(name)) => (parent.to_path_buf(), Some(name.to_owned())),
+                _ => return false,
+            }
+        };
+        self.activate_pane(pane, cx);
+        self.run(
+            "navigate",
+            serde_json::json!({ "location": folder.to_string_lossy() }),
+            window,
+            cx,
+        );
+        self.reveal = name.map(|name| Reveal {
+            pane,
+            name,
+            until: Instant::now() + std::time::Duration::from_secs(10),
+        });
+        true
+    }
+
+    /// Select what `reveal_path` is waiting for, once the listing has it.
+    fn take_reveal(&mut self, cx: &mut Context<Self>) {
+        let Some(reveal) = self.reveal.as_ref() else {
+            return;
+        };
+        let found = self
+            .app
+            .workspace
+            .read()
+            .pane(reveal.pane)
+            .and_then(|pane| {
+                pane.listing
+                    .find_by_name(&reveal.name)
+                    .map(|entry| entry.id)
+            });
+        let Some(id) = found else {
+            if reveal.until < Instant::now() {
+                self.reveal = None;
+            }
+            return;
+        };
+        let pane = reveal.pane;
+        self.reveal = None;
+        {
+            let mut ws = self.app.workspace.write();
+            if let Some(pane) = ws.pane_mut(pane) {
+                pane.selection.set([id]);
+            }
+        }
+        let saved = self.pane;
+        self.pane = pane;
+        let index = self.cursor_index();
+        if let Some(index) = index {
+            self.with_view(|view, _| view.scroll_to(index));
+        }
+        self.pane = saved;
+        cx.notify();
+    }
+
     /// Make `id` the active pane (workspace and shell agree).
     pub fn activate_pane(&mut self, id: PaneId, cx: &mut Context<Self>) {
         if self.app.workspace.read().active_id() == id && self.pane == id {
@@ -341,6 +465,7 @@ impl Shell {
                 self.panes.retain(|p| p.id != o);
             }
             window.focus(&self.ui().focus);
+            self.remember_session();
             cx.notify();
             return;
         }
@@ -348,14 +473,19 @@ impl Shell {
             let ws = self.app.workspace.read();
             ws.pane(self.pane).and_then(|p| p.location().cloned())
         };
+        let view = self.ui().view_id;
         let id = self.app.workspace.write().add_pane();
-        let ui = self.make_pane_ui(id, window, cx);
+        let mut ui = self.make_pane_ui(id, window, cx);
+        // A split shows the same folder; showing it in another view as well
+        // would be a second surprise.
+        ui.view_id = view;
         self.panes.push(ui);
         if let Some(loc) = here
             && let Err(e) = self.app.navigate(id, &loc)
         {
             self.set_status(format!("{e:#}"), true, cx);
         }
+        self.remember_session();
         cx.notify();
     }
 
@@ -461,6 +591,7 @@ impl Shell {
         match known {
             Some(k) => {
                 self.ui_mut().view_id = k;
+                self.remember_session();
                 let ix = self.cursor_index();
                 self.with_view(|v, _| {
                     if let Some(ix) = ix {
@@ -486,6 +617,7 @@ impl Shell {
                 v.scroll_to(ix);
             }
         });
+        self.remember_session();
         cx.notify();
     }
 
@@ -760,6 +892,12 @@ impl Shell {
                 let id = arg("id").unwrap_or_else(|| view::LIST.into());
                 self.set_view(&id, cx);
             }
+            "columns" => {
+                if let Some(key) = arg("key") {
+                    self.toggle_column(&key, cx);
+                }
+            }
+            "columns_reset" => self.reset_column_widths(cx),
             "zoom" => {
                 let dir = arg("dir").unwrap_or_else(|| "reset".into());
                 self.zoom_step(&dir, cx);
@@ -931,6 +1069,16 @@ impl Shell {
         let t0 = Instant::now();
         let report = self.app.pump_report();
         self.sync_views();
+        if let Some(id) = self.restoring_view.take()
+            && self.ui().views.contains_key(id.as_str())
+        {
+            self.set_view(&id, cx);
+            for pane in &mut self.panes {
+                if let Some(known) = pane.views.keys().find(|k| ***k == *id).copied() {
+                    pane.view_id = known;
+                }
+            }
+        }
         self.app.thumbnails.tick();
         self.drain_executor(cx);
         for n in self.app.take_notifications() {
@@ -1006,6 +1154,7 @@ impl Shell {
             }
         }
         self.pane = saved;
+        self.take_reveal(cx);
         self.sync_loading(cx);
         if report.applied > 0 || resorted_any {
             tracing::debug!(

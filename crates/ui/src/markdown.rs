@@ -51,6 +51,8 @@ pub struct MarkdownStyle {
     pub quote_text: Hsla,
     pub quote_border: Hsla,
     pub list_indent: f32,
+    /// Space between the text column and the edge of the pane.
+    pub page_padding: f32,
     pub marker_color: Hsla,
     /// The widest the text column may be, when reading asks for a measure.
     pub measure: Option<f32>,
@@ -94,6 +96,7 @@ impl MarkdownStyle {
             },
             quote_border: theme.accent,
             list_indent: if reading { 24. } else { 20. },
+            page_padding: if reading { 28. } else { 8. },
             marker_color: if reading {
                 theme.text_muted
             } else {
@@ -124,11 +127,12 @@ pub fn block(
         return div()
             .id(id)
             .w_full()
+            .px(px(style.page_padding))
             .py(px(style.section_spacing))
             .child(div().h(px(1.)).w_full().bg(style.border))
             .into_any_element();
     }
-    let mut row = div().id(id).w_full().px_2();
+    let mut row = div().id(id).w_full().px(px(style.page_padding));
     row = if block.heading > 0 {
         row.pt(px(style.heading_top)).pb(px(style.heading_bottom))
     } else if block.code {

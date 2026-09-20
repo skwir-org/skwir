@@ -160,6 +160,14 @@ impl Default for PreviewState {
     }
 }
 
+impl PreviewState {
+    /// The file the panel is showing, when it is a file on disk. Links inside
+    /// a document are relative to it.
+    pub fn path(&self) -> Option<&Path> {
+        self.key.as_ref().map(|key| key.path.as_path())
+    }
+}
+
 impl Drop for PreviewState {
     fn drop(&mut self) {
         if let Some(cancel) = &self.cancel {
@@ -991,6 +999,7 @@ impl Shell {
             self.preview.menu = None;
             window.focus(&self.ui().focus);
         }
+        self.remember_session();
         cx.notify();
     }
 
@@ -1042,6 +1051,7 @@ impl Shell {
             self.preview.open = false;
             self.preview.menu = None;
             window.focus(&self.ui().focus);
+            self.remember_session();
             cx.notify();
         }
     }
@@ -1072,7 +1082,11 @@ impl Shell {
             .on_drag_move(cx.listener(Self::on_column_drag))
             .on_mouse_up(
                 gpui::MouseButton::Left,
-                cx.listener(|this, _, _, _| this.finish_column_drag()),
+                cx.listener(|this, _, _, _| {
+                    this.finish_column_drag();
+                    // The panel's edge has no drag-end of its own; this is it.
+                    this.remember_session();
+                }),
             )
     }
 }
@@ -1265,7 +1279,14 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
             )
             .track_scroll(p.text_scroll.clone())
             .size_full();
+            let bar = crate::elements::scrollbar::vertical(
+                "preview-text-scrollbar",
+                crate::elements::scrollbar::Scrolls::Offset(
+                    p.text_scroll.0.borrow().base_handle.clone(),
+                ),
+            );
             div()
+                .relative()
                 .flex_1()
                 .min_h_0()
                 .flex()
@@ -1278,7 +1299,15 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                 } else {
                     rgb(0xeff1f5)
                 })
-                .child(div().flex_1().min_h_0().w_full().child(list))
+                .child(
+                    div()
+                        .relative()
+                        .flex_1()
+                        .min_h_0()
+                        .w_full()
+                        .child(list)
+                        .child(bar),
+                )
                 .when(*truncated, |d| {
                     d.child(
                         div()

@@ -415,6 +415,7 @@ pub fn continuous_element(
     let errors = scroll.errors.clone();
     let list = scroll.list.clone();
     let after_list = list.clone();
+    let bar_list = list.clone();
     let count = list.item_count() as u32;
     let layout = scroll.layout.clone();
     let requested = Rc::new(RefCell::new(Vec::new()));
@@ -497,17 +498,27 @@ pub fn continuous_element(
             })
             .w(px(content_width))
             .h(bounds.height);
+            let bar = crate::elements::scrollbar::vertical(
+                "document-scrollbar",
+                crate::elements::scrollbar::Scrolls::Items(bar_list),
+            );
             div()
-                .id("document-horizontal-scroll")
+                .relative()
                 .size_full()
-                .overflow_x_scroll()
-                .map(|mut d| {
-                    // Vertical wheel gestures belong to the document list;
-                    // do not also convert them into horizontal panning.
-                    d.style().restrict_scroll_to_axis = Some(true);
-                    d
-                })
-                .child(rows)
+                .child(
+                    div()
+                        .id("document-horizontal-scroll")
+                        .size_full()
+                        .overflow_x_scroll()
+                        .map(|mut d| {
+                            // Vertical wheel gestures belong to the document list;
+                            // do not also convert them into horizontal panning.
+                            d.style().restrict_scroll_to_axis = Some(true);
+                            d
+                        })
+                        .child(rows),
+                )
+                .child(bar)
                 .into_any_element()
         }),
         laid_out: Box::new(move |window, cx| {

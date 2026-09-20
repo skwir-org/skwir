@@ -164,6 +164,60 @@ impl Shell {
         cx.notify();
     }
 
+    /// The list header's own menu: which detail columns it shows. Choosing
+    /// columns belongs where they are, not three clicks away in Settings, so
+    /// the header answers a right-click with this instead of the dialog.
+    pub fn open_column_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut items: Vec<MenuItem> = crate::settings::COLUMN_KEYS
+            .iter()
+            .enumerate()
+            .map(|(i, key)| {
+                let shown = self.columns[i];
+                MenuItem {
+                    menu: "columns".into(),
+                    title: self
+                        .app
+                        .settings
+                        .spec(key)
+                        .map_or_else(|| (*key).to_owned(), |spec| spec.title.clone()),
+                    command: bibli_core::command::Invocation::with_args(
+                        "ui.columns",
+                        &serde_json::json!({ "key": key }),
+                    ),
+                    when: None,
+                    order: i as i32,
+                    icon: shown.then(|| "check".to_owned()),
+                    submenu: None,
+                }
+            })
+            .collect();
+        items.push(MenuItem {
+            menu: "columns".into(),
+            title: "Reset widths".into(),
+            command: bibli_core::command::Invocation::new("ui.columns_reset"),
+            when: None,
+            order: 100,
+            icon: Some("revert".into()),
+            submenu: None,
+        });
+        let focus = cx.focus_handle();
+        window.focus(&focus);
+        window.prevent_default();
+        self.menu = Some(MenuState {
+            position,
+            items,
+            focus,
+            highlighted: None,
+            expanded: None,
+        });
+        cx.notify();
+    }
+
     pub fn close_context_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.menu.take().is_some() {
             window.focus(&self.ui().focus);

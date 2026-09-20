@@ -42,6 +42,7 @@ pub mod reader;
 mod reader_scroll;
 pub mod renamebulk;
 pub mod review;
+pub mod session;
 pub mod settings;
 mod settings_view;
 pub mod shell;

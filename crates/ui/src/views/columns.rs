@@ -191,12 +191,17 @@ fn ancestor_column(
     .size_full();
     let mut col = div()
         .id(("colwrap", k))
+        .relative()
         .w(px(COLUMN_W))
         .h_full()
         .flex_none()
         .border_r_1()
         .border_color(theme.border)
-        .child(list);
+        .child(list)
+        .child(crate::elements::scrollbar::vertical(
+            ("column-scrollbar", k),
+            crate::elements::scrollbar::Scrolls::Offset(a.scroll.0.borrow().base_handle.clone()),
+        ));
     col = dnd::droppable_dir(col, a.path.clone(), cx);
     col.into_any_element()
 }
@@ -257,12 +262,19 @@ impl PaneView for ColumnsView {
         .size_full();
         let mut last_col = div()
             .id("column-last-wrap")
+            .relative()
             .w(px(COLUMN_W * 1.25))
             .h_full()
             .flex_none()
             .border_r_1()
             .border_color(theme.border)
-            .child(last);
+            .child(last)
+            .child(crate::elements::scrollbar::vertical(
+                ("column-scrollbar-last", pane.0 as usize),
+                crate::elements::scrollbar::Scrolls::Offset(
+                    self.scroll.0.borrow().base_handle.clone(),
+                ),
+            ));
         if let Some(b) = &base {
             last_col = dnd::droppable_dir(last_col, b.clone(), cx);
         }

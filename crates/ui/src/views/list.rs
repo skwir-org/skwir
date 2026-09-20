@@ -69,6 +69,10 @@ impl Shell {
         if self.column_drag.take().is_none() {
             return;
         }
+        self.store_column_widths();
+    }
+
+    fn store_column_widths(&self) {
         self.app.settings.set(
             crate::settings::COLUMN_WIDTHS_KEY,
             toml::Value::Array(
@@ -79,6 +83,34 @@ impl Shell {
             ),
         );
         self.save_settings_later();
+    }
+
+    /// `ui.columns`: show or hide one detail column, from the header's menu.
+    /// It goes through `settings.apply` like any other preference, so the
+    /// dialog and the header always agree and the choice outlives the window.
+    pub fn toggle_column(&mut self, key: &str, cx: &mut Context<Self>) {
+        let Some(index) = crate::settings::COLUMN_KEYS.iter().position(|k| *k == key) else {
+            return;
+        };
+        let shown = !self.columns[index];
+        self.columns[index] = shown;
+        cx.notify();
+        if let Err(error) = self
+            .app
+            .dispatch(&bibli_core::command::Invocation::with_args(
+                "settings.apply",
+                &serde_json::json!({ "changes": { key: shown.to_string() } }),
+            ))
+        {
+            self.set_status(format!("{error:#}"), true, cx);
+        }
+    }
+
+    /// `ui.columns_reset`: back to the widths the view ships with.
+    pub fn reset_column_widths(&mut self, cx: &mut Context<Self>) {
+        self.column_widths = DEFAULT_WIDTHS;
+        self.store_column_widths();
+        cx.notify();
     }
 }
 
@@ -413,17 +445,12 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Div {
         .text_color(theme.text_muted)
         .border_b_1()
         .border_color(theme.border)
-        // Right-click the header to choose columns.
+        // Right-click the header to choose columns, where they are.
         .on_mouse_down(
             MouseButton::Right,
-            cx.listener(|this, _, window, cx| {
+            cx.listener(|this, ev: &MouseDownEvent, window, cx| {
                 cx.stop_propagation();
-                this.run(
-                    "ui.settings",
-                    serde_json::json!({ "key": crate::settings::COLUMN_KEYS[0] }),
-                    window,
-                    cx,
-                );
+                this.open_column_menu(ev.position, window, cx);
             }),
         )
         .child(div().size(px(ICON_PX)).flex_none())
@@ -538,7 +565,13 @@ impl PaneView for ListView {
                     .min_h_0()
                     .w_full()
                     .child(list)
-                    .child(marquee),
+                    .child(marquee)
+                    .child(crate::elements::scrollbar::vertical(
+                        ("list-scrollbar", pane.0 as usize),
+                        crate::elements::scrollbar::Scrolls::Offset(
+                            self.scroll.0.borrow().base_handle.clone(),
+                        ),
+                    )),
             )
             .into_any_element()
     }
