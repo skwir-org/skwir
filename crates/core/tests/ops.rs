@@ -216,3 +216,87 @@ fn entry_ref_follows_a_rename_and_rejects_a_replacement() {
         Err(bibli_core::op::ResolveError::Replaced { .. })
     ));
 }
+
+/// A step that cancels its own plan while it runs, so the test needs no timing.
+#[derive(Debug, Clone)]
+struct CancelHere {
+    executor: std::sync::Weak<bibli_core::op::Executor>,
+    plan: std::sync::Arc<std::sync::OnceLock<bibli_core::op::PlanId>>,
+    dir: PathBuf,
+}
+
+impl Operation for CancelHere {
+    fn kind(&self) -> &'static str {
+        "test.cancel_here"
+    }
+    fn args(&self) -> serde_json::Value {
+        serde_json::json!({})
+    }
+    fn describe(&self) -> bibli_core::op::Change {
+        Mkdir {
+            path: self.dir.clone(),
+        }
+        .describe()
+    }
+    fn check(&self) -> StepStatus {
+        Mkdir {
+            path: self.dir.clone(),
+        }
+        .check()
+    }
+    fn apply(&self) -> anyhow::Result<Option<Box<dyn Operation>>> {
+        let executor = self.executor.upgrade().expect("executor alive");
+        assert!(executor.cancel(*self.plan.get().expect("plan id set")));
+        Mkdir {
+            path: self.dir.clone(),
+        }
+        .apply()
+    }
+    fn clone_box(&self) -> Box<dyn Operation> {
+        Box::new(Clone::clone(self))
+    }
+}
+
+#[test]
+fn a_running_plan_is_cancelled_by_id_and_its_partial_result_can_be_undone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    let id = std::sync::Arc::new(std::sync::OnceLock::new());
+    let dirs: Vec<PathBuf> = (0..4)
+        .map(|i| tmp.path().join(format!("folder {i}")))
+        .collect();
+    let mut plan = Plan::new("create folders");
+    plan.push(Mkdir {
+        path: dirs[0].clone(),
+    });
+    plan.push(CancelHere {
+        executor: std::sync::Arc::downgrade(&app.executor),
+        plan: std::sync::Arc::clone(&id),
+        dir: dirs[1].clone(),
+    });
+    plan.push(Mkdir {
+        path: dirs[2].clone(),
+    });
+    plan.push(Mkdir {
+        path: dirs[3].clone(),
+    });
+    id.set(plan.id).unwrap();
+
+    let result = app
+        .executor
+        .execute_blocking(&plan, &app.lifetime().child());
+    assert!(result.cancelled);
+    assert_eq!(
+        result.applied, 2,
+        "the running step completes, later ones do not start"
+    );
+    assert!(dirs[1].is_dir() && !dirs[2].exists());
+    assert!(
+        !app.executor.cancel(plan.id),
+        "a finished plan is not running"
+    );
+
+    let undone = app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert_eq!(undone.applied, 2);
+    assert!(!dirs[0].exists() && !dirs[1].exists());
+}

@@ -7,6 +7,8 @@ use gpui::{Global, Hsla, WindowAppearance, rgb};
 pub struct Theme {
     pub bg: Hsla,
     pub surface: Hsla,
+    /// Background of the row or control under the pointer.
+    pub hover: Hsla,
     pub border: Hsla,
     pub text: Hsla,
     pub text_muted: Hsla,
@@ -24,6 +26,7 @@ impl Theme {
         Theme {
             bg: rgb(0xfafafa).into(),
             surface: rgb(0xf0f0f0).into(),
+            hover: rgb(0xe9eef7).into(),
             border: rgb(0xd8d8d8).into(),
             text: rgb(0x1f1f1f).into(),
             text_muted: rgb(0x707070).into(),
@@ -39,6 +42,7 @@ impl Theme {
         Theme {
             bg: rgb(0x1e1e1e).into(),
             surface: rgb(0x262626).into(),
+            hover: rgb(0x2b3038).into(),
             border: rgb(0x3a3a3a).into(),
             text: rgb(0xe6e6e6).into(),
             text_muted: rgb(0x9a9a9a).into(),

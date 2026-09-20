@@ -32,6 +32,10 @@ pub const CORE_OWNER: &str = "core";
 pub const UI_OWNER: &str = "ui";
 
 pub const THEME_KEY: &str = "ui.theme";
+pub const DATES_KEY: &str = "ui.date_format";
+/// Detail columns of the list view, in the order they give way when a pane
+/// gets narrow (the last one first).
+pub const COLUMN_KEYS: [&str; 3] = ["ui.column_size", "ui.column_modified", "ui.column_type"];
 
 /// Declare the shell's own preferences. They live in the `ui` namespace and
 /// exist only while a shell does, so headless tools never see them.
@@ -43,6 +47,29 @@ pub fn declare(app: &App) {
         "auto",
         &[("auto", "Automatic"), ("light", "Light"), ("dark", "Dark")],
     ));
+    app.settings.declare(SettingSpec::choice(
+        DATES_KEY,
+        "Dates",
+        "Friendly dates read as Today 14:02, Tuesday 09:30 or 12 Mar, with the exact time in a tooltip. ISO shows 2026-03-12 14:02 everywhere.",
+        "friendly",
+        &[("friendly", "Friendly"), ("iso", "ISO 8601")],
+    ));
+    for (key, title, description) in [
+        (COLUMN_KEYS[0], "Size", "Show the size of files."),
+        (
+            COLUMN_KEYS[1],
+            "Modified",
+            "Show when each item last changed.",
+        ),
+        (
+            COLUMN_KEYS[2],
+            "Type",
+            "Show the kind of file, such as PDF document. It is the first column to give way in a narrow pane.",
+        ),
+    ] {
+        app.settings
+            .declare(SettingSpec::toggle(key, title, description, true).section("List columns"));
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

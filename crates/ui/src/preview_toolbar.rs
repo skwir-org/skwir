@@ -115,9 +115,7 @@ fn caption(shell: &Shell) -> String {
             lines.len(),
             if *truncated { " · partial" } else { "" }
         ),
-        Some(PreviewContent::Dir { items }) => {
-            format!("{} items", crate::format::thousands(*items))
-        }
+        Some(PreviewContent::Dir { items }) => crate::format::count(*items, "item"),
         Some(PreviewContent::Error(_)) => "Preview unavailable".into(),
         Some(PreviewContent::Generic) => "No preview".into(),
         None => "Loading…".into(),

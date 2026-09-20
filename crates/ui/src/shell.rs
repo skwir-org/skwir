@@ -25,7 +25,6 @@ use crate::palette::PaletteState;
 use crate::preview::PreviewState;
 use crate::prompts::{ConfirmState, PromptKind, PromptState};
 use crate::renamebulk::BulkState;
-use crate::status::StatusState;
 use crate::theme::Theme;
 use crate::thumbs::ThumbCache;
 use crate::timeline::TimelineState;
@@ -68,6 +67,11 @@ pub struct Shell {
     pub zoom: u32,
     pub thumbs: ThumbCache,
     pub icons: IconCache,
+    pub type_names: crate::typenames::TypeNames,
+    /// `ui.date_format`, resolved when the settings revision changes.
+    pub friendly_dates: bool,
+    /// Size, Modified, Type: which detail columns the list shows.
+    pub columns: [bool; 3],
     pub preview: PreviewState,
     pub palette: Option<PaletteState>,
     pub jump: Option<JumpState>,
@@ -84,7 +88,7 @@ pub struct Shell {
     pub reviews: VecDeque<Plan>,
     pub review_focus: Option<FocusHandle>,
     pub timeline: TimelineState,
-    pub status: StatusState,
+    pub toasts: crate::toast::ToastState,
     pub last_search: String,
     pub shelf_count: usize,
     started: Instant,
@@ -126,6 +130,28 @@ impl Shell {
         })
         .detach();
 
+        // Friendly dates say "Today" and "Yesterday": repaint once when the
+        // day changes. One timer per day, not a clock.
+        cx.spawn(async move |this, cx| {
+            loop {
+                let now = jiff::Zoned::now();
+                let wait = now
+                    .date()
+                    .tomorrow()
+                    .ok()
+                    .and_then(|date| date.to_zoned(now.time_zone().clone()).ok())
+                    .and_then(|midnight| now.duration_until(&midnight).try_into().ok())
+                    .unwrap_or(std::time::Duration::from_secs(3600));
+                cx.background_executor()
+                    .timer(wait + std::time::Duration::from_secs(1))
+                    .await;
+                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+
         let pane = app.workspace.read().active_id();
         let mut shell = Shell {
             app,
@@ -137,6 +163,9 @@ impl Shell {
             zoom: 128,
             thumbs: ThumbCache::default(),
             icons: IconCache::default(),
+            type_names: crate::typenames::TypeNames::default(),
+            friendly_dates: true,
+            columns: [true; 3],
             preview: PreviewState::default(),
             palette: None,
             jump: None,
@@ -151,7 +180,7 @@ impl Shell {
             reviews: VecDeque::new(),
             review_focus: None,
             timeline: TimelineState::default(),
-            status: StatusState::default(),
+            toasts: crate::toast::ToastState::default(),
             last_search: String::new(),
             shelf_count: 0,
             started,
@@ -562,6 +591,7 @@ impl Shell {
             "toolbar_prev" => window.focus_prev(),
             "toolbar_menu" => self.toggle_toolbar_menu(args, window, cx),
             name if name.starts_with("settings_") => self.settings_command(name, args, window, cx),
+            name if name.starts_with("menu_") => self.menu_command(name, window, cx),
             "palette" => self.open_palette(window, cx),
             "palette_up" => self.palette_move(-1, cx),
             "palette_down" => self.palette_move(1, cx),
@@ -861,15 +891,25 @@ impl Shell {
         self.drain_executor(cx);
         for n in self.app.take_notifications() {
             let error = matches!(n.level, NotifyLevel::Error | NotifyLevel::Warning);
-            self.set_status_for(n.text, error, if error { 8 } else { 4 }, cx);
-            if let Some(message) = &mut self.status.message {
-                message.setting = n.setting;
+            match n.setting {
+                Some(key) if error => self.set_status_about(n.text, &key, cx),
+                _ => self.set_status(n.text, error, cx),
             }
         }
         let revision = self.app.settings.revision();
         if revision != self.theme_revision {
             self.theme_revision = revision;
             cx.set_global(Theme::resolve(&self.app, window.appearance()));
+            self.friendly_dates = self
+                .app
+                .settings
+                .get::<String>(crate::settings::DATES_KEY)
+                .is_none_or(|format| format != "iso");
+            self.columns = crate::settings::COLUMN_KEYS
+                .map(|key| self.app.settings.get::<bool>(key).unwrap_or(true));
+        }
+        if self.type_names.absorb() {
+            cx.notify();
         }
         if let Some(settings) = self.settings.clone() {
             settings.update(cx, |settings, cx| settings.sync(window, cx));
@@ -1021,7 +1061,11 @@ impl Render for Shell {
         self.sync(window, cx);
         let theme = cx.global::<Theme>().clone();
         let toolbar = address::render_toolbar(self, cx);
-        let side = sidebar::render(self, cx);
+        // The window's own width is known before layout, unlike an element's.
+        // Below it the panes keep the room: places stay reachable through the
+        // address bar, the palette and Jump.
+        let needed = px(520. + 300. * self.panes.len().saturating_sub(1) as f32);
+        let side = (window.viewport_size().width >= needed).then(|| sidebar::render(self, cx));
         let pane_ids: Vec<PaneId> = self.panes.iter().map(|p| p.id).collect();
         let mut columns = Vec::new();
         for id in pane_ids {
@@ -1048,6 +1092,7 @@ impl Render for Shell {
             .settings
             .clone()
             .map(gpui::IntoElement::into_any_element);
+        let toast = crate::toast::render(self, cx);
         let overlays = [
             menu::render(self, cx),
             prompts::render_prompt(self, cx),
@@ -1078,11 +1123,12 @@ impl Render for Shell {
                     .flex_1()
                     .min_h_0()
                     .w_full()
-                    .child(side)
+                    .children(side)
                     .children(columns)
                     .children(panel),
             )
             .child(status_bar)
+            .children(toast)
             .children(overlays.into_iter().flatten())
             .children(settings)
             .child(div().h(px(0.)));

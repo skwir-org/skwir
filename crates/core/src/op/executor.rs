@@ -81,6 +81,17 @@ pub struct Executor {
     tx: Sender<ExecEvent>,
     rx: Receiver<ExecEvent>,
     waker: Mutex<Option<crate::location::Waker>>,
+    /// Plans being applied, so a surface can cancel one by id.
+    running: Mutex<Vec<(PlanId, CancelToken)>>,
+}
+
+/// Removes a plan from `running` however `apply_plan` leaves.
+struct Running<'a>(&'a Executor, PlanId);
+
+impl Drop for Running<'_> {
+    fn drop(&mut self) {
+        self.0.running.lock().retain(|(id, _)| *id != self.1);
+    }
 }
 
 impl Executor {
@@ -92,6 +103,7 @@ impl Executor {
             tx,
             rx,
             waker: Mutex::new(None),
+            running: Mutex::new(Vec::new()),
         })
     }
 
@@ -105,6 +117,17 @@ impl Executor {
         if let Some(w) = self.waker.lock().as_ref() {
             w();
         }
+    }
+
+    /// Stop a running plan after its current step. Steps already applied stay
+    /// applied and are journaled, so the partial result can be undone.
+    pub fn cancel(&self, plan: PlanId) -> bool {
+        self.running
+            .lock()
+            .iter()
+            .find(|(id, _)| *id == plan)
+            .map(|(_, token)| token.cancel())
+            .is_some()
     }
 
     /// Progress and completion events.
@@ -236,6 +259,8 @@ impl Executor {
     /// The core loop: check, skip if done, apply, collect inverses in reverse order.
     fn apply_plan(&self, plan: &Plan, cancel: &CancelToken) -> (ExecResult, Option<Plan>) {
         let total = plan.steps.len();
+        self.running.lock().push((plan.id, cancel.clone()));
+        let _running = Running(self, plan.id);
         self.emit(ExecEvent::Started {
             plan: plan.id,
             title: plan.title.clone(),

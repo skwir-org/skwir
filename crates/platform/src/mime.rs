@@ -50,6 +50,23 @@ pub fn by_content(path: &Path) -> Option<Mime> {
     imp::by_content(path)
 }
 
+/// The untranslated `<comment>` of a shared-mime-info type file, capitalized.
+#[cfg(any(target_os = "linux", test))]
+fn comment_of(xml: &str) -> Option<String> {
+    let start = xml.find("<comment>")? + "<comment>".len();
+    let end = start + xml[start..].find("</comment>")?;
+    let text = xml[start..end]
+        .trim()
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&apos;", "'")
+        .replace("&quot;", "\"");
+    let mut chars = text.chars();
+    let first = chars.next()?;
+    Some(first.to_uppercase().chain(chars).collect())
+}
+
 pub fn is_directory(mime: &Mime) -> bool {
     mime.0 == "inode/directory"
 }
@@ -98,9 +115,22 @@ mod imp {
             .unwrap_or_else(|| format!("{}-x-generic", m.top_level()))
     }
 
-    pub fn description(_m: &Mime) -> Option<String> {
-        // xdg-mime 0.4 does not expose the <comment> element.
-        None
+    /// xdg-mime 0.4 does not expose the `<comment>` element, so read it from
+    /// the per-type XML the database installs. Reads a file: call from a
+    /// worker and cache the answer.
+    pub fn description(m: &Mime) -> Option<String> {
+        let home = std::env::var_os("XDG_DATA_HOME")
+            .map(std::path::PathBuf::from)
+            .or_else(|| dirs::home_dir().map(|home| home.join(".local/share")));
+        let system = std::env::var_os("XDG_DATA_DIRS")
+            .unwrap_or_else(|| "/usr/local/share:/usr/share".into());
+        home.into_iter()
+            .chain(std::env::split_paths(&system))
+            .find_map(|dir| {
+                let xml =
+                    std::fs::read_to_string(dir.join("mime").join(format!("{}.xml", m.0))).ok()?;
+                super::comment_of(&xml)
+            })
     }
 }
 
@@ -137,6 +167,14 @@ mod tests {
         assert_eq!(m.top_level(), "image");
         assert_eq!(m.icon_name(), "image-png");
         assert_eq!(m.generic_icon_name(), "image-x-generic");
+    }
+
+    #[test]
+    fn the_untranslated_comment_is_the_description() {
+        let xml = r#"<mime-type type="text/x-sample"><comment>plain &amp; simple document</comment>
+            <comment xml:lang="fr">document</comment></mime-type>"#;
+        assert_eq!(comment_of(xml).as_deref(), Some("Plain & simple document"));
+        assert_eq!(comment_of("<mime-type/>"), None);
     }
 
     #[test]

@@ -417,8 +417,14 @@ impl Shell {
             let mime = if entry.is_dir() {
                 Some("inode/directory".into())
             } else {
-                bibli_platform::mime::by_name(&entry.name).map(|m| m.to_string())
+                bibli_platform::mime::by_name(&entry.name).map(|m| {
+                    // Ask for the type's name now; the header reads it later.
+                    self.type_names.get(&m);
+                    m.to_string()
+                })
             };
+            let app = Arc::clone(&self.app);
+            self.type_names.request(&app);
             self.preview.info = Info {
                 name: entry.name_str().into_owned(),
                 mime,
@@ -1144,7 +1150,7 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
             .text_color(theme.text_muted)
             .child("Loading…")
             .into_any_element(),
-        None | Some(PreviewContent::Generic) => generic(&p.info, theme),
+        None | Some(PreviewContent::Generic) => generic(shell, &p.info, theme),
         Some(PreviewContent::Image {
             image,
             width,
@@ -1285,7 +1291,7 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
             .justify_center()
             .gap_2()
             .children(p.info.icon.as_ref().map(|i| icons::element(i, 64.)))
-            .child(format!("{} items", format::thousands(*items)))
+            .child(format::count(*items, "item"))
             .into_any_element(),
         Some(PreviewContent::Error(e)) => div()
             .flex_1()
@@ -1296,7 +1302,7 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
     }
 }
 
-fn generic(info: &Info, theme: &Theme) -> AnyElement {
+fn generic(shell: &Shell, info: &Info, theme: &Theme) -> AnyElement {
     let mut card = div()
         .flex_1()
         .flex()
@@ -1307,8 +1313,8 @@ fn generic(info: &Info, theme: &Theme) -> AnyElement {
         .text_color(theme.text_muted)
         .children(info.icon.as_ref().map(|i| icons::element(i, 64.)))
         .child(div().text_color(theme.text).child(info.name.clone()));
-    if let Some(m) = &info.mime {
-        card = card.child(m.clone());
+    if let Some(kind) = type_label(shell, info) {
+        card = card.child(kind);
     }
     if let Some(s) = &info.size {
         card = card.child(s.clone());
@@ -1348,18 +1354,41 @@ fn header(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shel
         )
         .child(
             div()
+                .id("preview-meta")
                 .text_xs()
                 .text_color(theme.text_muted)
                 .truncate()
+                .when_some(info.mime.clone(), |d, mime| {
+                    let font = shell.font.clone();
+                    d.tooltip(move |_, cx| {
+                        crate::toolbar::tooltip(mime.clone().into(), font.clone(), cx)
+                    })
+                })
                 .child(
-                    [info.mime.clone(), info.size.clone(), info.modified.clone()]
-                        .into_iter()
-                        .flatten()
-                        .collect::<Vec<_>>()
-                        .join(" · "),
+                    [
+                        type_label(shell, info),
+                        info.size.clone(),
+                        info.modified.clone(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(" · "),
                 ),
         )
         .into_any_element()
+}
+
+/// "PDF document" rather than `application/pdf`; the raw type is the tooltip.
+fn type_label(shell: &Shell, info: &Info) -> Option<String> {
+    if info.is_dir {
+        return Some("Folder".into());
+    }
+    let mime = info.mime.as_deref()?;
+    Some(shell.type_names.peek(mime).map_or_else(
+        || crate::typenames::fallback(&info.name),
+        |name| name.to_string(),
+    ))
 }
 
 /// The side panel, or `None` when closed.

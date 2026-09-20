@@ -24,6 +24,7 @@ pub const READER: &str = "DocumentReader";
 pub const REVIEW: &str = "Review";
 pub const JUMP: &str = "Jump";
 pub const BULK: &str = "BulkRename";
+pub const MENU: &str = "ContextMenu";
 
 /// A binding as the palette shows it: keys and command name.
 #[derive(Clone, Debug)]
@@ -42,8 +43,8 @@ const DEFAULTS: &[(&str, &str, Option<&str>)] = &[
     ("alt-up", "up", None),
     ("alt-left", "back", None),
     ("f2", "ui.rename_prompt", Some("pane single")),
-    ("delete", "trash", Some("pane")),
-    ("shift-delete", "ui.confirm_delete", Some("pane")),
+    ("delete", "trash", Some("pane selection")),
+    ("shift-delete", "ui.confirm_delete", Some("pane selection")),
     ("ctrl-z", "undo", None),
     ("ctrl-shift-z", "redo", None),
     ("ctrl-a", "select_all", Some("pane")),
@@ -65,6 +66,13 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("escape", "ui.toolbar_close", Some("ToolbarPopup")),
     ("escape", "ui.reader_find_close", Some("DocumentFind")),
     ("ctrl-,", "ui.settings", None),
+    ("escape", "ui.menu_close", Some("ContextMenu")),
+    ("up", "ui.menu_up", Some("ContextMenu")),
+    ("down", "ui.menu_down", Some("ContextMenu")),
+    ("home", "ui.menu_first", Some("ContextMenu")),
+    ("end", "ui.menu_last", Some("ContextMenu")),
+    ("enter", "ui.menu_activate", Some("ContextMenu")),
+    ("space", "ui.menu_activate", Some("ContextMenu")),
     ("escape", "ui.settings_close", Some("Settings")),
     ("tab", "ui.settings_next", Some("Settings")),
     ("shift-tab", "ui.settings_prev", Some("Settings")),
@@ -265,6 +273,55 @@ pub fn context_of(when: Option<&str>) -> String {
     }
 }
 
+/// `ctrl-shift-p` as key caps; a binding may be a sequence of strokes.
+pub fn key_caps(keys: &str) -> Vec<Vec<String>> {
+    keys.split_whitespace()
+        .map(|stroke| {
+            let mut caps: Vec<String> = Vec::new();
+            let mut parts = stroke.split('-');
+            while let Some(part) = parts.next() {
+                // `ctrl--` binds the minus key: an empty part is a literal `-`.
+                let part = if part.is_empty() {
+                    parts.next();
+                    "-"
+                } else {
+                    part
+                };
+                caps.push(match part {
+                    "ctrl" => "Ctrl".into(),
+                    "shift" => "Shift".into(),
+                    "alt" => "Alt".into(),
+                    "super" | "cmd" | "win" => "Super".into(),
+                    "escape" => "Esc".into(),
+                    "pageup" => "Page Up".into(),
+                    "pagedown" => "Page Down".into(),
+                    "left" => "←".into(),
+                    "right" => "→".into(),
+                    "up" => "↑".into(),
+                    "down" => "↓".into(),
+                    other if other.chars().count() == 1 => other.to_uppercase(),
+                    other => {
+                        let mut chars = other.chars();
+                        chars.next().map_or_else(String::new, |first| {
+                            first.to_uppercase().chain(chars).collect()
+                        })
+                    }
+                });
+            }
+            caps
+        })
+        .collect()
+}
+
+/// A binding as people read it: `ctrl-shift-n` becomes `Ctrl+Shift+N`.
+pub fn display_keys(keys: &str) -> String {
+    key_caps(keys)
+        .iter()
+        .map(|stroke| stroke.join("+"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn valid_keys(keys: &str) -> bool {
     !keys.is_empty() && keys.split_whitespace().all(|k| Keystroke::parse(k).is_ok())
 }
@@ -336,7 +393,16 @@ pub fn install(app: &App, cx: &mut gpui::App) -> Vec<KeyHint> {
 
 #[cfg(test)]
 mod tests {
-    use super::context_of;
+    use super::{context_of, display_keys, key_caps};
+
+    #[test]
+    fn keys_become_caps_including_the_minus_key() {
+        assert_eq!(key_caps("ctrl-shift-p"), vec![vec!["Ctrl", "Shift", "P"]]);
+        assert_eq!(key_caps("ctrl--"), vec![vec!["Ctrl", "-"]]);
+        assert_eq!(key_caps("g g"), vec![vec!["G"], vec!["G"]]);
+        assert_eq!(key_caps("alt-pageup"), vec![vec!["Alt", "Page Up"]]);
+        assert_eq!(display_keys("ctrl-shift-n"), "Ctrl+Shift+N");
+    }
 
     #[test]
     fn when_tokens_map_to_contexts_and_flags() {

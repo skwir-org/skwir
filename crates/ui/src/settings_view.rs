@@ -75,46 +75,6 @@ fn spec_matches(query: &str, spec: &SettingSpec, owner_title: &str) -> bool {
         .any(|label| label.to_lowercase().contains(query))
 }
 
-/// `ctrl-shift-p` as key caps; a binding may be a sequence of strokes.
-fn keycaps(keys: &str) -> Vec<Vec<String>> {
-    keys.split_whitespace()
-        .map(|stroke| {
-            let mut caps: Vec<String> = Vec::new();
-            let mut parts = stroke.split('-').peekable();
-            while let Some(part) = parts.next() {
-                // `ctrl--` binds the minus key: an empty part is a literal `-`.
-                let part = if part.is_empty() {
-                    parts.next();
-                    "-"
-                } else {
-                    part
-                };
-                caps.push(match part {
-                    "ctrl" => "Ctrl".into(),
-                    "shift" => "Shift".into(),
-                    "alt" => "Alt".into(),
-                    "super" | "cmd" | "win" => "Super".into(),
-                    "escape" => "Esc".into(),
-                    "pageup" => "Page Up".into(),
-                    "pagedown" => "Page Down".into(),
-                    "left" => "←".into(),
-                    "right" => "→".into(),
-                    "up" => "↑".into(),
-                    "down" => "↓".into(),
-                    other if other.chars().count() == 1 => other.to_uppercase(),
-                    other => {
-                        let mut chars = other.chars();
-                        chars.next().map_or_else(String::new, |first| {
-                            first.to_uppercase().chain(chars).collect()
-                        })
-                    }
-                });
-            }
-            caps
-        })
-        .collect()
-}
-
 /// A GPUI context predicate (`Pane && single`) in plain words.
 fn context_label(context: &str) -> String {
     let mut place = "Anywhere";
@@ -135,6 +95,7 @@ fn context_label(context: &str) -> String {
             "MediaPlayer" => place = "Media player",
             "Inspector" => place = "Structured previews",
             "ToolbarButton" | "ToolbarPopup" => place = "Toolbars",
+            "ContextMenu" => place = "Context menu",
             "Settings" | "SettingsNav" | "SettingControl" | "SettingNumber" => place = "Settings",
             "single" => conditions.push("one item selected"),
             "selection" => conditions.push("with a selection"),
@@ -824,7 +785,7 @@ impl SettingsView {
 
     fn binding_row(&self, hint: &KeyHint, edge: Edge, theme: &Theme) -> AnyElement {
         let mut keys = div().flex().flex_none().items_center().gap(px(10.));
-        for stroke in keycaps(&hint.keys) {
+        for stroke in crate::keymap::key_caps(&hint.keys) {
             let mut caps = div().flex().items_center().gap(px(3.));
             for cap in stroke {
                 caps = caps.child(controls::keycap(cap, theme));
@@ -1222,15 +1183,7 @@ impl Render for SettingsView {
 
 #[cfg(test)]
 mod tests {
-    use super::{context_label, keycaps};
-
-    #[test]
-    fn keys_become_caps_including_the_minus_key() {
-        assert_eq!(keycaps("ctrl-shift-p"), vec![vec!["Ctrl", "Shift", "P"]]);
-        assert_eq!(keycaps("ctrl--"), vec![vec!["Ctrl", "-"]]);
-        assert_eq!(keycaps("g g"), vec![vec!["G"], vec!["G"]]);
-        assert_eq!(keycaps("alt-pageup"), vec![vec!["Alt", "Page Up"]]);
-    }
+    use super::context_label;
 
     #[test]
     fn contexts_read_as_places_and_conditions() {

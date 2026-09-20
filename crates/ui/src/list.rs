@@ -87,11 +87,19 @@ impl Shell {
             count: pane.selection.len(),
             all_dirs: true,
             all_files: true,
+            bytes: 0,
         };
         for id in pane.selection.iter() {
             match pane.listing.get(id) {
                 Some(e) if e.is_dir() => ctx.all_files = false,
-                Some(_) => ctx.all_dirs = false,
+                Some(e) => {
+                    ctx.all_dirs = false;
+                    ctx.bytes += e
+                        .metadata
+                        .value(bibli_core::entry::keys::SIZE)
+                        .and_then(bibli_core::Value::as_u64)
+                        .unwrap_or(0);
+                }
                 None => {}
             }
         }
@@ -294,7 +302,7 @@ impl Shell {
                 if !selected {
                     self.select_ids(vec![id], "replace", window, cx);
                 }
-                self.open_context_menu(ev.position, cx);
+                self.open_context_menu(ev.position, window, cx);
             }
             _ => {}
         }
@@ -369,7 +377,7 @@ impl Shell {
                 cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
                     this.activate_pane(pane, cx);
                     window.focus(&this.ui().focus);
-                    this.open_context_menu(ev.position, cx);
+                    this.open_context_menu(ev.position, window, cx);
                 }),
             )
             .drag_over::<ExternalPaths>(move |s, _, _, _| s.bg(theme.selection_bg.opacity(0.4)))

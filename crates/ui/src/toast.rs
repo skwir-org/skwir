@@ -1,0 +1,394 @@
+//! Toasts: what just happened, with the way back. One message at a time sits
+//! above the status bar; a running operation shows its progress there with a
+//! Cancel button and turns into its result ("Moved 3 items to Trash", Undo).
+//!
+//! The only animation is a short entrance that ends by itself; nothing here
+//! keeps the UI awake.
+
+use std::path::Path;
+use std::time::Duration;
+
+use bibli_core::op::{Change, ExecEvent, PlanId};
+use gpui::{Animation, AnimationExt, AnyElement, Context, div, prelude::*, px};
+
+use crate::controls::{self, ButtonStyle};
+use crate::format;
+use crate::shell::Shell;
+use crate::theme::Theme;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tone {
+    Info,
+    Success,
+    Error,
+}
+
+/// A button on a toast: a label and the command it runs.
+#[derive(Clone, Debug)]
+pub struct Action {
+    pub label: String,
+    pub command: String,
+    pub args: serde_json::Value,
+}
+
+#[derive(Clone, Debug)]
+pub struct Toast {
+    pub text: String,
+    pub tone: Tone,
+    pub action: Option<Action>,
+}
+
+/// A plan being applied.
+#[derive(Clone, Debug)]
+pub struct Running {
+    pub plan: PlanId,
+    pub title: String,
+    pub step: usize,
+    pub total: usize,
+    /// First change that was applied, to name a single item in the result.
+    first: Option<Change>,
+    cancelling: bool,
+}
+
+#[derive(Default)]
+pub struct ToastState {
+    pub current: Option<Toast>,
+    pub running: Option<Running>,
+    generation: u64,
+    close: Option<gpui::FocusHandle>,
+}
+
+fn name_of(path: &Path) -> String {
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
+}
+
+fn folder_of(path: &Path) -> String {
+    path.parent().map_or_else(String::new, name_of)
+}
+
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
+}
+
+/// What an applied plan did, in a sentence: the item by name when there is
+/// one, a count otherwise. Falls back to the plan's title.
+pub fn describe(title: &str, first: Option<&Change>, applied: usize) -> String {
+    let many = format::count(applied, "item");
+    let one = applied == 1;
+    let quoted = |path: &Path| format!("“{}”", name_of(path));
+    match first {
+        _ if title.starts_with("undo ") => {
+            format!("Undid: {}", title.trim_start_matches("undo "))
+        }
+        Some(Change::Trash { path }) if one => format!("Moved {} to Trash", quoted(path)),
+        Some(Change::Trash { .. }) => format!("Moved {many} to Trash"),
+        Some(Change::Restore { path }) if one => format!("Restored {}", quoted(path)),
+        Some(Change::Restore { .. }) => format!("Restored {many}"),
+        Some(Change::Delete { path }) if one => format!("Deleted {} permanently", quoted(path)),
+        Some(Change::Delete { .. }) => format!("Deleted {many} permanently"),
+        Some(Change::Rename { from, to }) if one => {
+            format!("Renamed {} to {}", quoted(from), quoted(to))
+        }
+        Some(Change::Rename { .. }) => format!("Renamed {many}"),
+        Some(Change::Move { from, to }) if one => {
+            format!("Moved {} to {}", quoted(from), folder_of(to))
+        }
+        Some(Change::Move { to, .. }) => format!("Moved {many} to {}", folder_of(to)),
+        Some(Change::Copy { from, to }) if one => {
+            format!("Copied {} to {}", quoted(from), folder_of(to))
+        }
+        Some(Change::Copy { to, .. }) => format!("Copied {many} to {}", folder_of(to)),
+        Some(Change::Create {
+            path,
+            directory: true,
+        }) if one => format!("Created folder {}", quoted(path)),
+        Some(Change::Create { path, .. }) if one => format!("Created {}", quoted(path)),
+        _ if applied == 0 => format!("{}: nothing to do", capitalized(title)),
+        _ => format!("{} ({many})", capitalized(title)),
+    }
+}
+
+impl Shell {
+    /// Show `toast`, replacing the current one, for a time that fits its
+    /// weight: errors and anything with a button stay longer.
+    pub fn toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
+        let seconds = match (&toast.tone, &toast.action) {
+            (Tone::Error, _) => 10,
+            (_, Some(_)) => 8,
+            _ => 4,
+        };
+        self.toasts.current = Some(toast);
+        self.toasts.generation += 1;
+        let generation = self.toasts.generation;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_secs(seconds))
+                .await;
+            this.update(cx, |shell, cx| {
+                if shell.toasts.generation == generation {
+                    shell.toasts.current = None;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    pub fn dismiss_toast(&mut self, cx: &mut Context<Self>) {
+        self.toasts.current = None;
+        self.toasts.generation += 1;
+        cx.notify();
+    }
+
+    /// Apply pending executor events: progress while a plan runs, then one
+    /// toast saying what it did and offering the way back.
+    pub fn drain_executor(&mut self, cx: &mut Context<Self>) {
+        let rx = self.app.executor.events().clone();
+        let mut any = false;
+        while let Ok(event) = rx.try_recv() {
+            any = true;
+            match event {
+                ExecEvent::Started { plan, title, total } => {
+                    self.toasts.running = Some(Running {
+                        plan,
+                        title,
+                        step: 0,
+                        total,
+                        first: None,
+                        cancelling: false,
+                    });
+                }
+                ExecEvent::Step(progress) => {
+                    if let Some(running) = &mut self.toasts.running {
+                        running.step = progress.step + 1;
+                        running.total = progress.total;
+                        if running.first.is_none() && progress.error.is_none() {
+                            running.first = Some(progress.change);
+                        }
+                    }
+                }
+                ExecEvent::Finished {
+                    applied,
+                    error,
+                    cancelled,
+                    undoable,
+                    ..
+                } => {
+                    let running = self.toasts.running.take();
+                    let (title, first) =
+                        running.map_or_else(|| (String::new(), None), |r| (r.title, r.first));
+                    let was_undo = title.starts_with("undo ");
+                    let done = describe(&title, first.as_ref(), applied);
+                    let (text, tone) = match (error, cancelled) {
+                        (Some(error), _) if applied > 0 => {
+                            (format!("{done}, then stopped: {error}"), Tone::Error)
+                        }
+                        (Some(error), _) => {
+                            (format!("{}: {error}", capitalized(&title)), Tone::Error)
+                        }
+                        (None, true) => (format!("Cancelled. {done}"), Tone::Info),
+                        (None, false) => (done, Tone::Success),
+                    };
+                    let action = if was_undo {
+                        self.app.executor.can_redo().then(|| Action {
+                            label: "Redo".into(),
+                            command: "redo".into(),
+                            args: serde_json::json!({}),
+                        })
+                    } else {
+                        (undoable && applied > 0).then(|| Action {
+                            label: "Undo".into(),
+                            command: "undo".into(),
+                            args: serde_json::json!({}),
+                        })
+                    };
+                    self.toast(Toast { text, tone, action }, cx);
+                }
+            }
+        }
+        if any {
+            cx.notify();
+        }
+    }
+}
+
+pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
+    let theme = cx.global::<Theme>().clone();
+    let close = shell
+        .toasts
+        .close
+        .get_or_insert_with(|| cx.focus_handle())
+        .clone();
+    let card = |tone: Tone| {
+        div()
+            .max_w(px(560.))
+            .min_w(px(260.))
+            .pl_3()
+            .pr_1()
+            .py_1()
+            .flex()
+            .items_center()
+            .gap_3()
+            .rounded_lg()
+            .border_1()
+            .border_color(match tone {
+                Tone::Error => theme.error,
+                _ => theme.border,
+            })
+            .bg(theme.bg)
+            .shadow_lg()
+            .occlude()
+    };
+    let glyph = |tone: Tone| match tone {
+        Tone::Success => controls::glyph("check", theme.accent, 15.),
+        Tone::Error => controls::glyph("warning", theme.error, 15.),
+        Tone::Info => controls::glyph("eye", theme.text_muted, 15.),
+    };
+    // A plan with a single step finishes before anyone could read a bar.
+    let content = if let Some(running) = shell.toasts.running.as_ref().filter(|r| r.total > 1) {
+        let fraction = (running.step as f32 / running.total.max(1) as f32).clamp(0., 1.);
+        let plan = running.plan;
+        let focus = close.clone();
+        card(Tone::Info)
+            .py_2()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(240.))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(format!(
+                        "{} — {} of {}",
+                        capitalized(&running.title),
+                        format::thousands(running.step),
+                        format::thousands(running.total)
+                    ))
+                    .child(
+                        div()
+                            .h(px(4.))
+                            .w_full()
+                            .rounded_full()
+                            .bg(theme.border)
+                            .child(
+                                div()
+                                    .h_full()
+                                    .rounded_full()
+                                    .bg(theme.accent)
+                                    .w(gpui::relative(fraction)),
+                            ),
+                    ),
+            )
+            .child(
+                controls::button(
+                    "toast-cancel",
+                    if running.cancelling {
+                        "Stopping…"
+                    } else {
+                        "Cancel"
+                    },
+                    None,
+                    ButtonStyle::Plain,
+                    &focus,
+                    &theme,
+                )
+                .mr_2()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if this.app.executor.cancel(plan)
+                        && let Some(running) = &mut this.toasts.running
+                    {
+                        running.cancelling = true;
+                    }
+                    cx.notify();
+                })),
+            )
+    } else {
+        let toast = shell.toasts.current.clone()?;
+        let mut card = card(toast.tone)
+            .child(glyph(toast.tone))
+            .child(div().flex_1().min_w_0().py_1().child(toast.text.clone()));
+        if let Some(action) = toast.action {
+            let focus = cx.focus_handle();
+            let label = action.label.clone();
+            card = card.child(
+                controls::button(
+                    "toast-action",
+                    label,
+                    None,
+                    ButtonStyle::Plain,
+                    &focus,
+                    &theme,
+                )
+                .text_color(theme.accent)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.dismiss_toast(cx);
+                    this.run(&action.command, action.args.clone(), window, cx);
+                })),
+            );
+        }
+        card.child(
+            controls::icon_button("toast-close", "close", &close, &theme)
+                .on_click(cx.listener(|this, _, _, cx| this.dismiss_toast(cx))),
+        )
+    };
+    let generation = shell.toasts.generation;
+    Some(
+        div()
+            .absolute()
+            .bottom(px(38.))
+            .left_0()
+            .right_0()
+            .flex()
+            .justify_center()
+            .child(content.with_animation(
+                ("toast", generation),
+                Animation::new(Duration::from_millis(140)).with_easing(gpui::ease_out_quint()),
+                |card, delta| card.opacity(delta).mt(px(8. * (1. - delta))),
+            ))
+            .into_any_element(),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::describe;
+    use bibli_core::op::Change;
+    use std::path::PathBuf;
+
+    #[test]
+    fn results_name_one_item_and_count_several() {
+        let trash = Change::Trash {
+            path: PathBuf::from("/example/it's a draft.txt"),
+        };
+        assert_eq!(
+            describe("move to trash", Some(&trash), 1),
+            "Moved “it's a draft.txt” to Trash"
+        );
+        assert_eq!(
+            describe("move to trash", Some(&trash), 3),
+            "Moved 3 items to Trash"
+        );
+        let copy = Change::Copy {
+            from: PathBuf::from("/example/a.txt"),
+            to: PathBuf::from("/example/Archive 2026/a.txt"),
+        };
+        assert_eq!(
+            describe("copy", Some(&copy), 2),
+            "Copied 2 items to Archive 2026"
+        );
+        assert_eq!(
+            describe("undo move to trash", Some(&trash), 1),
+            "Undid: move to trash"
+        );
+        assert_eq!(describe("add tag", None, 2), "Add tag (2 items)");
+        assert_eq!(describe("paste", None, 0), "Paste: nothing to do");
+    }
+}

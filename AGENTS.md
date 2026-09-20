@@ -75,6 +75,25 @@ current source before assuming a planned crate, command, or API exists.
   measure anchors in the current prepaint, including after responsive reflow.
   GPUI cannot nest deferred draws: keep peek in the normal overlay tree and
   defer its popovers, below modal dialogs.
+- **Feedback.** Anything the user did gets an answer in `crates/ui/src/toast.rs`:
+  a sentence built from the applied `Change`s ("Moved “a.txt” to Trash",
+  "Copied 3 items to Archive"), with Undo when the journal can take it back
+  and Redo after an undo. A plan with more than one step shows a progress bar
+  with Cancel (`Executor::cancel`). `Shell::set_status` is a toast;
+  `set_status_about` adds a link to the setting that fixes the problem. The
+  status bar holds state (counts, selection size, the Undo button), never
+  messages. A key whose command needs a selection carries `selection` in its
+  `when`, so it does nothing instead of reporting "nothing selected". The only
+  animation allowed is a bounded entrance (under 200 ms) that ends by itself.
+- **Popups own the keyboard.** A menu or popover takes focus when it opens
+  and returns it when it closes, with its own key context (see `menu.rs`):
+  otherwise keys act on a selection hidden behind it.
+- **List columns** give way by layout alone: the detail columns sit in a
+  wrapping flex line one row tall (`views/list.rs::details`), so they drop
+  whole, last first, and the name keeps its minimum width in a pane of any
+  width. Header and rows share that one function. The sidebar gives way to
+  the panes below a window width computed in `Shell::render`; the window's
+  width is known before layout, an element's is not.
 - **Commands are the one surface.** Every user action is a command
   (`bibli_core::command`), so the keymap, palette, CLI, MCP server, and agents
   all share it. The UI handles `ui.*` names itself and dispatches the rest.
@@ -341,8 +360,10 @@ Tests that need a real filesystem feature (trash, xattrs) use a temp dir under
   `VK_ICD_FILENAMES=/run/opengl-driver/share/vulkan/icd.d/lvp_icd.x86_64.json`
   (the NVIDIA driver cannot create a surface on Xvfb; lavapipe can). Send
   input with `xdotool` (`nix build --print-out-paths nixpkgs#xdotool`) and
-  capture with `import -window root`. Anything that saves settings runs with
-  `XDG_CONFIG_HOME` pointing at a scratch directory.
+  capture with `import -window root`. Point `XDG_CONFIG_HOME`,
+  `XDG_CACHE_HOME` and `XDG_DATA_HOME` at scratch directories: settings,
+  the cache and the Trash all live under them, and a test that trashes a
+  fixture otherwise puts it in the user's real Trash.
 - Measure: first frame from the shell's log line, memory from
   `/proc/<pid>/smaps_rollup` (PSS), corrections/traces from `RUST_LOG=bibli_ui=trace`.
 

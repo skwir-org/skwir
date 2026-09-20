@@ -20,6 +20,12 @@ use crate::view::{Nav, PaneView};
 
 pub const ROW_HEIGHT: f32 = 26.0;
 const ICON_PX: f32 = 18.0;
+/// The name never gets narrower than this; detail columns give way first.
+const NAME_MIN: f32 = 150.0;
+const SIZE_W: f32 = 80.0;
+const MODIFIED_W: f32 = 136.0;
+const TYPE_W: f32 = 150.0;
+const DETAIL_GAP: f32 = 12.0;
 
 #[derive(Default)]
 pub struct ListView {
@@ -36,6 +42,9 @@ pub struct RowData {
     pub path: Option<PathBuf>,
     pub size: String,
     pub modified: String,
+    /// Exact timestamp, shown as the date's tooltip.
+    pub modified_exact: String,
+    pub kind: std::sync::Arc<str>,
     pub selected: bool,
     pub is_cursor: bool,
     pub icon: Option<std::sync::Arc<std::path::Path>>,
@@ -59,7 +68,10 @@ impl Shell {
     /// Collect row data for `range` of the sorted order.
     pub fn rows(&mut self, range: Range<usize>, icon_px: u16) -> Vec<RowData> {
         let mut out = Vec::with_capacity(range.len());
-        let ws = self.app.workspace.read();
+        let friendly = self.friendly_dates;
+        let now = jiff::Zoned::now();
+        let app = std::sync::Arc::clone(&self.app);
+        let ws = app.workspace.read();
         let Some(pane) = ws.pane(self.pane) else {
             return out;
         };
@@ -85,11 +97,23 @@ impl Shell {
                         }
                     },
                 );
-            let modified = e
+            let time = e
                 .metadata
                 .value(keys::MODIFIED)
-                .and_then(bibli_core::Value::as_time)
-                .map_or_else(|| "—".to_owned(), format::time);
+                .and_then(bibli_core::Value::as_time);
+            let modified_exact = time.map_or_else(String::new, format::time);
+            let modified = match time {
+                None => "—".to_owned(),
+                Some(time) if friendly => format::friendly_time(time, &now),
+                Some(_) => modified_exact.clone(),
+            };
+            let kind: std::sync::Arc<str> = if e.is_dir() {
+                "Folder".into()
+            } else {
+                bibli_platform::mime::by_name(&e.name)
+                    .and_then(|mime| self.type_names.get(&mime))
+                    .unwrap_or_else(|| crate::typenames::fallback(&e.name_str()).into())
+            };
             out.push(RowData {
                 ix,
                 id,
@@ -102,6 +126,8 @@ impl Shell {
                 },
                 size,
                 modified,
+                modified_exact,
+                kind,
                 selected: pane.selection.contains(id),
                 is_cursor: cursor == Some(id),
                 icon: self.icons.for_entry(e, icon_px),
@@ -109,6 +135,8 @@ impl Shell {
                 tags: tags_of(e),
             });
         }
+        drop(ws);
+        self.type_names.request(&app);
         out
     }
 }
@@ -159,7 +187,7 @@ pub fn row(
         .when(r.selected, |d| {
             d.bg(theme.selection_bg).text_color(theme.selection_text)
         })
-        .when(!r.selected, |d| d.hover(|s| s.bg(theme.surface)))
+        .when(!r.selected, |d| d.hover(|s| s.bg(theme.hover)))
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
@@ -176,7 +204,7 @@ pub fn row(
         .child(
             div()
                 .flex_1()
-                .min_w_0()
+                .min_w(px(if compact { 0. } else { NAME_MIN }))
                 .flex()
                 .items_center()
                 .gap_1()
@@ -197,28 +225,82 @@ pub fn row(
                 })),
         );
     if !compact {
-        el = el
-            .child(
-                div()
-                    .w(px(90.))
-                    .flex_none()
-                    .text_right()
-                    .text_color(muted)
-                    .child(r.size.clone()),
-            )
-            .child(
-                div()
-                    .w(px(130.))
-                    .flex_none()
-                    .text_color(muted)
-                    .child(r.modified.clone()),
-            );
+        let font = shell.font.clone();
+        let exact: gpui::SharedString = r.modified_exact.clone().into();
+        let [size, modified, kind] = shell.columns;
+        el = el.child(
+            details(muted, shell.columns)
+                .when(size, |d| {
+                    d.child(
+                        div()
+                            .w(px(SIZE_W))
+                            .flex_none()
+                            .text_right()
+                            .child(r.size.clone()),
+                    )
+                })
+                .when(modified, |d| {
+                    d.child(
+                        div()
+                            .id(("modified", ix))
+                            .w(px(MODIFIED_W))
+                            .flex_none()
+                            .truncate()
+                            .when(!exact.is_empty(), |d| {
+                                d.tooltip(move |_, cx| {
+                                    crate::toolbar::tooltip(exact.clone(), font.clone(), cx)
+                                })
+                            })
+                            .child(r.modified.clone()),
+                    )
+                })
+                .when(kind, |d| {
+                    d.child(
+                        div()
+                            .w(px(TYPE_W))
+                            .flex_none()
+                            .truncate()
+                            .child(gpui::SharedString::from(r.kind.clone())),
+                    )
+                }),
+        );
     }
     el = dnd::draggable(el, shell);
     if let Some(p) = &r.path {
         el = dnd::droppable_dir(el, p.clone(), cx);
     }
     el
+}
+
+/// The detail columns of a row or of the header. A wrapping flex line one
+/// row tall: a column that no longer fits wraps below and is clipped, so
+/// columns drop whole, last first (Type, then Modified, then Size), while the
+/// name keeps `NAME_MIN`. Pure layout: nothing is measured, the header and
+/// every row agree by construction, and a pane of any width is laid out
+/// correctly in the frame it gets that width.
+fn details(color: gpui::Hsla, shown: [bool; 3]) -> Div {
+    let widths = [SIZE_W, MODIFIED_W, TYPE_W];
+    let count = shown.iter().filter(|shown| **shown).count();
+    let basis: f32 = widths
+        .iter()
+        .zip(shown)
+        .filter_map(|(width, shown)| shown.then_some(*width))
+        .sum::<f32>()
+        + DETAIL_GAP * count.saturating_sub(1) as f32;
+    div()
+        .h(px(ROW_HEIGHT - 2.))
+        .flex_shrink()
+        .flex_basis(px(basis))
+        .min_w_0()
+        .overflow_hidden()
+        .flex()
+        .flex_row()
+        .flex_wrap()
+        .justify_end()
+        .items_center()
+        .gap_x(px(DETAIL_GAP))
+        .line_height(px(ROW_HEIGHT - 2.))
+        .text_color(color)
 }
 
 fn header_cell(
@@ -256,8 +338,21 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Div {
         .text_color(theme.text_muted)
         .border_b_1()
         .border_color(theme.border)
+        // Right-click the header to choose columns.
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(|this, _, window, cx| {
+                cx.stop_propagation();
+                this.run(
+                    "ui.settings",
+                    serde_json::json!({ "key": crate::settings::COLUMN_KEYS[0] }),
+                    window,
+                    cx,
+                );
+            }),
+        )
         .child(div().size(px(ICON_PX)).flex_none())
-        .child(div().flex_1().child(header_cell(
+        .child(div().flex_1().min_w(px(NAME_MIN)).child(header_cell(
             "h-name",
             "Name",
             SortKey::Name,
@@ -266,28 +361,26 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Div {
             cx,
         )))
         .child(
-            div()
-                .w(px(90.))
-                .flex_none()
-                .flex()
-                .justify_end()
-                .child(header_cell(
-                    "h-size",
-                    "Size",
-                    SortKey::Size,
-                    shell,
-                    theme,
-                    cx,
-                )),
+            details(theme.text_muted, shell.columns)
+                .when(shell.columns[0], |d| {
+                    d.child(div().w(px(SIZE_W)).flex_none().flex().justify_end().child(
+                        header_cell("h-size", "Size", SortKey::Size, shell, theme, cx),
+                    ))
+                })
+                .when(shell.columns[1], |d| {
+                    d.child(div().w(px(MODIFIED_W)).flex_none().child(header_cell(
+                        "h-mod",
+                        "Modified",
+                        SortKey::Modified,
+                        shell,
+                        theme,
+                        cx,
+                    )))
+                })
+                .when(shell.columns[2], |d| {
+                    d.child(div().w(px(TYPE_W)).flex_none().child("Type"))
+                }),
         )
-        .child(div().w(px(130.)).flex_none().child(header_cell(
-            "h-mod",
-            "Modified",
-            SortKey::Modified,
-            shell,
-            theme,
-            cx,
-        )))
 }
 
 impl PaneView for ListView {
