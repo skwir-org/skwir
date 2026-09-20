@@ -4,13 +4,44 @@
 use std::path::{Path, PathBuf};
 
 use bibli_core::op::{self, EntryRef};
-use bibli_core::{Plan, fs};
+use bibli_core::{Plan, app::NotifyLevel, fs, scheduler::Priority, settings::Settings};
 use gpui::{
     Context, Div, ExternalPaths, Pixels, Point, Render, Stateful, Window, div, prelude::*, px,
 };
 
 use crate::shell::Shell;
 use crate::theme::Theme;
+
+/// The copy plan for foreign paths dropped into `dest`. Entries are
+/// identified by device and inode and the plan is checked before anything
+/// applies, both of which stat every path: call this on a worker.
+fn dropped_copy_plan(
+    paths: &[PathBuf],
+    dest: &Path,
+    settings: &Settings,
+) -> Result<Plan, &'static str> {
+    let steps: Vec<Box<dyn op::Operation>> = paths
+        .iter()
+        .filter_map(|p| {
+            let id = fs::stat::id_of(p)?;
+            Some(Box::new(op::Copy::from_settings(
+                EntryRef::new(id, p.clone()),
+                dest.to_path_buf(),
+                settings,
+            )) as Box<dyn op::Operation>)
+        })
+        .collect();
+    if steps.is_empty() {
+        return Err("dropped items no longer exist");
+    }
+    let n = steps.len();
+    let plan = Plan::with_steps(format!("copy {n} dropped items"), steps);
+    if plan.is_applicable() {
+        Ok(plan)
+    } else {
+        Err("dropped items conflict with existing ones")
+    }
+}
 
 /// What a drag carries: the dragging pane's selection at drag start.
 #[derive(Clone, Debug)]
@@ -105,6 +136,10 @@ impl Shell {
     /// Paths dropped onto `dest`, from another application or from our own
     /// compositor-level drag: our own selection moves (copies with ctrl),
     /// foreign paths are copied.
+    ///
+    /// Only the own-drag check (a path comparison) runs here. Identifying the
+    /// dropped entries and checking the plan stat every path, possibly on a
+    /// sleeping disk, so they run on a worker that applies the result itself.
     pub fn drop_paths_into(
         &mut self,
         paths: &[PathBuf],
@@ -116,28 +151,30 @@ impl Shell {
             self.drop_into(dest, window, cx);
             return;
         }
-        let steps: Vec<Box<dyn op::Operation>> = paths
+        let paths: Vec<PathBuf> = paths
             .iter()
             .filter(|p| p.parent() != Some(dest))
-            .filter_map(|p| {
-                let id = fs::stat::id_of(p)?;
-                Some(Box::new(op::Copy::from_settings(
-                    EntryRef::new(id, p.clone()),
-                    dest.to_path_buf(),
-                    &self.app.settings,
-                )) as Box<dyn op::Operation>)
-            })
+            .cloned()
             .collect();
-        if steps.is_empty() {
+        if paths.is_empty() {
             return;
         }
-        let n = steps.len();
-        let plan = Plan::with_steps(format!("copy {n} dropped items"), steps);
-        if plan.is_applicable() {
-            self.app.apply(plan);
-        } else {
-            self.set_status("dropped items conflict with existing ones", true, cx);
-        }
+        let app = self.app.clone();
+        let dest = dest.to_path_buf();
+        // The drop belongs to the pane it landed on, whatever is active later.
+        let pane = self.pane;
+        self.app.scheduler.spawn(
+            Priority::Visible,
+            "drop-copy-plan",
+            self.app.lifetime().child(),
+            move || match dropped_copy_plan(&paths, &dest, &app.settings) {
+                Ok(plan) => {
+                    tracing::debug!(?pane, steps = plan.steps.len(), "apply dropped paths");
+                    app.apply(plan);
+                }
+                Err(reason) => app.notify(NotifyLevel::Error, reason),
+            },
+        );
     }
 
     /// Drop the dragging selection into `dest`: a `move` plan, or `copy` with ctrl held.
@@ -217,4 +254,49 @@ pub fn droppable_dir<E: InteractiveElement>(el: E, dir: PathBuf, cx: &mut Contex
     .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
         this.drop_paths_into(paths.paths(), &dir2, window, cx);
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A scratch tree under the user's cache, never `/tmp` (see AGENTS.md).
+    fn scratch(name: &str) -> PathBuf {
+        let base = PathBuf::from(std::env::var_os("HOME").expect("home"))
+            .join(".cache")
+            .join("bibli-tests")
+            .join(format!("dnd-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).expect("scratch");
+        base
+    }
+
+    #[test]
+    fn dropped_paths_become_a_checked_copy_plan() {
+        let base = scratch("plan");
+        let src = base.join("from");
+        let dest = base.join("into");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&dest).unwrap();
+        let file = src.join("it's a file.txt");
+        std::fs::write(&file, b"hello").unwrap();
+        let settings = Settings::in_memory();
+
+        let plan = dropped_copy_plan(std::slice::from_ref(&file), &dest, &settings).expect("plan");
+        assert_eq!(plan.steps.len(), 1);
+
+        // A vanished source contributes no step; nothing is left to apply.
+        assert_eq!(
+            dropped_copy_plan(&[base.join("missing")], &dest, &settings).err(),
+            Some("dropped items no longer exist")
+        );
+
+        // A different file under the same name conflicts instead of applying.
+        std::fs::write(dest.join("it's a file.txt"), b"other contents").unwrap();
+        assert_eq!(
+            dropped_copy_plan(&[file], &dest, &settings).err(),
+            Some("dropped items conflict with existing ones")
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

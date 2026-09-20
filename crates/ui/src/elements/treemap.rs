@@ -58,12 +58,18 @@ pub fn treemap(
     }
 }
 
-struct Laid {
+/// Where a block is, for hit-testing.
+#[derive(Clone, Copy)]
+struct Block {
     key: usize,
     bounds: Bounds<Pixels>,
+    depth: usize,
+}
+
+struct Laid {
+    block: Block,
     color: Hsla,
     hatched: bool,
-    depth: usize,
     label: Option<ShapedLine>,
 }
 
@@ -79,6 +85,7 @@ fn layout_level(
     items: &[TreemapItem],
     area: Rect,
     depth: usize,
+    label_color: Hsla,
     out: &mut Vec<Laid>,
     window: &mut Window,
 ) {
@@ -97,7 +104,7 @@ fn layout_level(
             let run = TextRun {
                 len: item.label.len(),
                 font: style.font(),
-                color: style.color,
+                color: label_color,
                 background_color: None,
                 underline: None,
                 strikethrough: None,
@@ -111,12 +118,14 @@ fn layout_level(
             None
         };
         out.push(Laid {
-            key: item.key,
-            bounds,
+            block: Block {
+                key: item.key,
+                bounds,
+                depth,
+            },
             color: item.color,
             hatched: item.hatched,
-            depth,
-            label: label.is_some().then(|| label.unwrap()),
+            label,
         });
         if !item.children.is_empty() && r.w > 40.0 && r.h > 40.0 {
             let label_h = if r.h > 40.0 { LABEL_H } else { 0.0 };
@@ -126,13 +135,13 @@ fn layout_level(
                 (r.w - 2.0 * PAD).max(0.0),
                 (r.h - 2.0 * PAD - label_h).max(0.0),
             );
-            layout_level(&item.children, inner, depth + 1, out, window);
+            layout_level(&item.children, inner, depth + 1, label_color, out, window);
         }
     }
 }
 
 /// The deepest block containing `p`.
-fn hit(blocks: &[Laid], p: gpui::Point<Pixels>) -> Option<usize> {
+fn hit(blocks: &[Block], p: gpui::Point<Pixels>) -> Option<usize> {
     blocks
         .iter()
         .filter(|b| b.bounds.contains(&p))
@@ -190,9 +199,7 @@ impl Element for Treemap {
             f64::from(f32::from(bounds.size.height)),
         );
         let mut blocks = Vec::new();
-        let style = window.text_style();
-        let _ = style;
-        layout_level(&self.items, area, 0, &mut blocks, window);
+        layout_level(&self.items, area, 0, self.label_color, &mut blocks, window);
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         TreemapPrepaint { blocks, hitbox }
     }
@@ -209,8 +216,9 @@ impl Element for Treemap {
     ) {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             for b in &prepaint.blocks {
+                let bounds = b.block.bounds;
                 window.paint_quad(quad(
-                    b.bounds,
+                    bounds,
                     Corners::default(),
                     b.color,
                     Edges::all(px(1.)),
@@ -221,7 +229,7 @@ impl Element for Treemap {
                     // Patterns have transparent gaps. Keep the solid base so
                     // labels retain their contrast in both light and dark themes.
                     window.paint_quad(quad(
-                        b.bounds,
+                        bounds,
                         Corners::default(),
                         pattern_slash(gpui::black().opacity(0.2), 2.0, 8.0),
                         Edges::all(px(1.)),
@@ -230,16 +238,17 @@ impl Element for Treemap {
                     ));
                 }
                 if let Some(line) = &b.label {
-                    let origin = b.bounds.origin + point(px(4.), px(2.));
+                    let origin = bounds.origin + point(px(4.), px(2.));
                     let mask = ContentMask {
                         bounds: Bounds::new(
-                            b.bounds.origin + point(px(2.), px(0.)),
-                            size(b.bounds.size.width - px(4.), px(LABEL_H as f32)),
+                            bounds.origin + point(px(2.), px(0.)),
+                            size(bounds.size.width - px(4.), px(LABEL_H as f32)),
                         ),
                     };
-                    let _ = self.label_color;
                     window.with_content_mask(Some(mask), |window| {
-                        let _ = line.paint(origin, px(LABEL_H as f32), window, cx);
+                        if let Err(error) = line.paint(origin, px(LABEL_H as f32), window, cx) {
+                            tracing::debug!(%error, "treemap label");
+                        }
                     });
                 }
             }
@@ -247,21 +256,10 @@ impl Element for Treemap {
 
         // Hover and click: hit-test the prepaint's rectangles.
         let hitbox = prepaint.hitbox.clone();
-        let blocks: Rc<Vec<(usize, Bounds<Pixels>, usize)>> = Rc::new(
-            prepaint
-                .blocks
-                .iter()
-                .map(|b| (b.key, b.bounds, b.depth))
-                .collect(),
-        );
-        let hit_key = move |p: gpui::Point<Pixels>| -> Option<usize> {
-            blocks
-                .iter()
-                .filter(|(_, b, _)| b.contains(&p))
-                .max_by_key(|(_, _, d)| *d)
-                .map(|(k, _, _)| *k)
-        };
-        let hit_move = hit_key.clone();
+        let blocks: Rc<Vec<Block>> = Rc::new(prepaint.blocks.iter().map(|b| b.block).collect());
+        let hit_blocks = Rc::clone(&blocks);
+        let hit_key = move |p: gpui::Point<Pixels>| hit(&hit_blocks, p);
+        let hit_move = move |p: gpui::Point<Pixels>| hit(&blocks, p);
         let current = self.hovered;
         let on_hover = Rc::clone(&self.on_hover);
         let hb = hitbox.clone();
@@ -292,6 +290,5 @@ impl Element for Treemap {
                 }
             },
         );
-        let _ = hit;
     }
 }

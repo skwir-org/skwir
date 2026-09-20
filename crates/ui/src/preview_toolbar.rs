@@ -75,6 +75,22 @@ fn zoom_step(increase: bool) -> Button {
     Button::new(id, icon, title, "ui.preview_zoom").args(serde_json::json!({"dir":value}))
 }
 
+/// Whether the hexadecimal inspection provider is registered. The registry
+/// lock is taken only when its revision changed since the last read, never
+/// once per variant per frame.
+pub(crate) fn hex_available(shell: &Shell) -> bool {
+    let revision = shell.app.previews.revision();
+    let cache = &shell.preview.hex_provider;
+    if let Some((seen, hex)) = cache.get()
+        && seen == revision
+    {
+        return hex;
+    }
+    let hex = shell.app.previews.ids().contains(&"preview-hex");
+    cache.set(Some((revision, hex)));
+    hex
+}
+
 fn open_button() -> Button {
     Button::new(
         "preview-external",
@@ -123,7 +139,9 @@ fn row(
         }) => Some((*seconds, *duration)),
         _ => None,
     };
-    let mut row = toolbar::row(&theme).id(("preview-tools", mode));
+    // One id for every variant: a button's focus handle lives in element
+    // state keyed by its id path, so focus survives a responsive reflow.
+    let mut row = toolbar::row(&theme).id("preview-tools");
     if let Some((seconds, duration)) = video {
         let current = shell.preview.seconds.unwrap_or(seconds);
         let time = if mode < 2 {
@@ -221,7 +239,7 @@ fn row(
         row = row.child(div().flex_1().min_w_0());
     }
     if mode == 0 || !image {
-        if shell.app.previews.ids().contains(&"preview-hex") {
+        if hex_available(shell) {
             row = row.child(
                 Button::new("preview-hex", "list", "View as hexadecimal", "ui.inspect")
                     .args(serde_json::json!({"action":"hex"}))

@@ -1,11 +1,5 @@
 //! Virtual document scrolling and bounded, demand-driven page rendering.
-use std::{
-    cell::RefCell,
-    collections::BTreeMap,
-    rc::Rc,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc, sync::Arc};
 
 use bibli_core::{CancelToken, document::PageContent, scheduler::Priority};
 use gpui::{
@@ -99,44 +93,52 @@ impl DocumentScroll {
         }
         self.generation = self.generation.wrapping_add(1);
     }
+    /// A render failure stays visible until the user visits that page
+    /// explicitly or refreshes; then the page is requested again.
+    fn forget_errors(&mut self, only: Option<u32>) -> bool {
+        if let Some(number) = only {
+            return self.errors.remove(&number).is_some();
+        }
+        let had = !self.errors.is_empty();
+        self.errors.clear();
+        had
+    }
 }
 
-/// A trackpad gesture must accumulate intent, and cannot race many page turns
-/// while a slow page is loading. Mouse detents bypass the pixel threshold.
+/// A trackpad gesture must accumulate intent before it turns a page. Mouse
+/// detents bypass the pixel threshold. The invariant that prevents racing
+/// turns is that no turn starts while a page request is pending: a gesture
+/// arriving then is refused and its accumulated intent discarded, so the
+/// next gesture starts fresh once the page has arrived.
 #[derive(Default)]
 struct WheelTurn {
     accumulated: f32,
-    last: Option<Instant>,
-    turned: Option<Instant>,
 }
 impl WheelTurn {
-    fn turn(&mut self, delta: f32, lines: bool, now: Instant) -> i32 {
+    fn turn(&mut self, delta: f32, lines: bool, pending: bool) -> i32 {
         if !delta.is_finite() || delta == 0. {
             return 0;
         }
-        if self
-            .last
-            .is_none_or(|t| now.duration_since(t) > Duration::from_millis(250))
-            || self.accumulated.signum() != delta.signum()
-        {
+        if pending || self.accumulated.signum() != delta.signum() {
             self.accumulated = 0.;
         }
-        self.last = Some(now);
-        self.accumulated += delta;
-        if self
-            .turned
-            .is_some_and(|t| now.duration_since(t) < Duration::from_millis(250))
-        {
+        if pending {
             return 0;
         }
+        self.accumulated += delta;
         if lines || self.accumulated.abs() >= 60. {
             self.accumulated = 0.;
-            self.turned = Some(now);
             if delta < 0. { 1 } else { -1 }
         } else {
             0
         }
     }
+}
+
+/// A backward turn lands on the new page's bottom edge, but only when the
+/// turn actually changed the page: at page 1 the current page keeps its offset.
+fn lands_at_bottom(turn: i32, before: u32, after: u32) -> bool {
+    turn < 0 && after != before
 }
 
 impl Shell {
@@ -149,6 +151,7 @@ impl Shell {
         scroll.continuous = !scroll.continuous;
         scroll.cancel();
         scroll.wanted.clear();
+        scroll.errors.clear();
         scroll.list.reset(count);
         scroll.list.scroll_to(ListOffset {
             item_ix: self.preview.page as usize - 1,
@@ -189,13 +192,15 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let delta = event.delta.pixel_delta(window.line_height());
+        let pending = self.preview.phase != crate::preview::PreviewPhase::Idle;
         let scroll = &mut self.preview.reader.scroll;
+        // The handle clamps to exactly these bounds, so compare them exactly.
         let offset = scroll.single.offset();
         let maximum = scroll.single.max_offset();
         let at_edge = if delta.y < px(0.) {
-            -offset.y >= maximum.height - px(1.)
+            -offset.y >= maximum.height
         } else {
-            offset.y >= -px(1.)
+            offset.y >= px(0.)
         };
         let vertical = delta.y.abs() > delta.x.abs();
         if !at_edge
@@ -217,7 +222,7 @@ impl Shell {
         let turn = scroll.wheel.turn(
             f32::from(delta.y),
             matches!(event.delta, gpui::ScrollDelta::Lines(_)),
-            Instant::now(),
+            pending,
         );
         // Keep edge gestures out of the surrounding file list even at page 1/N.
         cx.stop_propagation();
@@ -229,15 +234,32 @@ impl Shell {
                 window,
                 cx,
             );
-            self.preview.reader.scroll.bottom_on_load = turn < 0 && self.preview.page != before;
+            self.preview.reader.scroll.bottom_on_load =
+                lands_at_bottom(turn, before, self.preview.page);
         }
     }
 
     pub(crate) fn clear_document_pages(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let scroll = &mut self.preview.reader.scroll;
         scroll.cancel();
+        // Render failures describe pages that no longer exist here.
+        scroll.errors.clear();
         for (_, page) in std::mem::take(&mut scroll.pages) {
             cx.drop_image(page.image, Some(window));
+        }
+    }
+
+    /// An explicit visit renders a failed page again.
+    pub(crate) fn reader_retry_page(&mut self, number: u32) {
+        if self.preview.reader.scroll.forget_errors(Some(number)) {
+            self.request_document_page();
+        }
+    }
+
+    /// A manual refresh retries every failed page of the continuous document.
+    pub(crate) fn reader_retry_pages(&mut self) {
+        if self.preview.reader.scroll.forget_errors(None) {
+            self.request_document_page();
         }
     }
 
@@ -617,13 +639,68 @@ mod tests {
     }
 
     #[test]
-    fn trackpad_accumulates_and_debounces_page_turns() {
+    fn trackpad_accumulates_intent_before_turning() {
         let mut wheel = WheelTurn::default();
-        let now = Instant::now();
-        assert_eq!(wheel.turn(-20., false, now), 0);
-        assert_eq!(wheel.turn(-40., false, now + Duration::from_millis(10)), 1);
-        assert_eq!(wheel.turn(-80., false, now + Duration::from_millis(20)), 0);
-        assert_eq!(wheel.turn(80., false, now + Duration::from_millis(300)), -1);
-        assert_eq!(wheel.turn(f32::NAN, false, now), 0);
+        assert_eq!(wheel.turn(-20., false, false), 0);
+        assert_eq!(wheel.turn(-40., false, false), 1);
+        // A turn consumes the accumulated intent.
+        assert_eq!(wheel.turn(-20., false, false), 0);
+        // Reversing direction starts over.
+        assert_eq!(wheel.turn(50., false, false), 0);
+        assert_eq!(wheel.turn(-30., false, false), 0);
+        assert_eq!(wheel.turn(-30., false, false), 1);
+        // Mouse detents turn at once.
+        assert_eq!(wheel.turn(1., true, false), -1);
+        assert_eq!(wheel.turn(f32::NAN, false, false), 0);
+        assert_eq!(wheel.turn(0., false, false), 0);
+    }
+
+    #[test]
+    fn page_turns_wait_for_the_pending_request() {
+        let mut wheel = WheelTurn::default();
+        assert_eq!(wheel.turn(-80., false, true), 0);
+        assert_eq!(wheel.turn(-1., true, true), 0);
+        // Refused intent does not carry over into the next gesture.
+        assert_eq!(wheel.turn(-40., false, false), 0);
+        assert_eq!(wheel.turn(-40., false, false), 1);
+        assert_eq!(wheel.turn(-1., true, false), 1);
+        // Intent accumulated before the request began is discarded too.
+        assert_eq!(wheel.turn(-40., false, false), 0);
+        assert_eq!(wheel.turn(-40., false, true), 0);
+        assert_eq!(wheel.turn(-40., false, false), 0);
+    }
+
+    #[test]
+    fn bottom_anchor_only_after_a_backward_turn_changed_the_page() {
+        assert!(lands_at_bottom(-1, 5, 4));
+        assert!(!lands_at_bottom(-1, 1, 1));
+        assert!(!lands_at_bottom(1, 4, 5));
+        assert!(!lands_at_bottom(1, 9, 9));
+    }
+
+    #[test]
+    fn narrower_later_measurement_keeps_the_requested_neighbours() {
+        let first = wanted_pages(vec![5, 6, 7, 8], 5, 100);
+        let later = wanted_pages(vec![5], 5, 100);
+        assert!([4, 5, 6].iter().all(|p| later.contains(p)));
+        assert!(later.iter().all(|p| first.contains(p)));
+        assert_eq!(later, vec![5, 4, 6]);
+        // Rows the later frame no longer shows are dropped, neighbours are not.
+        assert!(!later.contains(&7));
+        assert_eq!(wanted_pages(vec![2], 1, 100), vec![1, 2]);
+    }
+
+    #[test]
+    fn explicit_visits_and_refresh_forget_render_failures() {
+        let mut state = DocumentScroll::default();
+        assert!(!state.forget_errors(Some(3)));
+        assert!(!state.forget_errors(None));
+        state.errors.insert(3, "boom".into());
+        state.errors.insert(7, "boom".into());
+        assert!(state.forget_errors(Some(3)));
+        assert!(!state.forget_errors(Some(3)));
+        assert!(state.errors.contains_key(&7));
+        assert!(state.forget_errors(None));
+        assert!(state.errors.is_empty());
     }
 }

@@ -1,6 +1,6 @@
 //! Native reading-mode HTML: semantic blocks, inline styles and local images.
 //! Scripts, styles, frames and remote resources are never executed or fetched.
-use crate::inspection::check;
+use crate::inspection::{check, limits};
 use bibli_core::{
     CancelToken,
     inspection::{Block, Run},
@@ -20,13 +20,17 @@ pub fn html(
     let mut images = 0;
     for node in doc.tree.root().descendants() {
         check(cancel)?;
-        anyhow::ensure!(blocks.len() < 2000, "Document exceeds 2000 preview blocks");
+        anyhow::ensure!(
+            blocks.len() < limits::BLOCKS,
+            "Document exceeds {} preview blocks",
+            limits::BLOCKS
+        );
         let ancestors: Vec<_> = node
             .ancestors()
             .filter_map(|n| n.value().as_element().map(|e| (n.id(), e)))
-            .take(129)
+            .take(limits::HTML_DEPTH + 1)
             .collect();
-        if ancestors.len() > 128
+        if ancestors.len() > limits::HTML_DEPTH
             || ancestors.iter().any(|(_, e)| {
                 matches!(
                     e.name(),
@@ -138,7 +142,7 @@ pub fn html(
                 if !current.text.is_empty() {
                     blocks.push(std::mem::take(&mut current));
                 }
-                let bitmap = if images < 8 {
+                let bitmap = if images < limits::EMBEDDED_IMAGES {
                     e.attr("src").and_then(&mut image)
                 } else {
                     None
@@ -173,7 +177,8 @@ pub fn local_image(base: &std::path::Path, href: &str, cancel: &CancelToken) -> 
         return None;
     }
     let bytes =
-        crate::inspection::read(&path, 0, crate::inspection::IMAGE_LIMIT + 1, cancel).ok()?;
+        crate::inspection::read_bounded(&path, limits::BINARY_INPUT, "Embedded image", cancel)
+            .ok()?;
     crate::inspection::image(&bytes).ok()
 }
 #[cfg(test)]
@@ -185,5 +190,65 @@ mod tests {
         assert_eq!(blocks[0].heading, 1);
         assert!(blocks.iter().any(|b| b.runs.iter().any(|r| r.bold)));
         assert!(!blocks.iter().any(|b| b.text.contains("secret")));
+    }
+
+    #[test]
+    fn embedded_images_stay_bounded() {
+        let source = (0..limits::EMBEDDED_IMAGES + 3).fold(String::new(), |mut s, i| {
+            use std::fmt::Write;
+            let _ = write!(s, "<img src='{i}.png' alt='image {i}'>");
+            s
+        });
+        let mut requested = Vec::new();
+        let blocks = html(&source, &CancelToken::new(), |src| {
+            requested.push(src.to_owned());
+            None
+        })
+        .unwrap();
+        assert_eq!(requested.len(), limits::EMBEDDED_IMAGES);
+        assert_eq!(blocks.len(), limits::EMBEDDED_IMAGES + 3);
+    }
+
+    fn png(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+        let path = dir.join(name);
+        image::RgbaImage::from_pixel(1, 1, image::Rgba([9, 9, 9, 255]))
+            .save_with_format(&path, image::ImageFormat::Png)
+            .unwrap();
+        path
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn local_images_never_leave_the_document_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let docs = tmp.path().join("doc's dir");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(docs.join("nested")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        png(&docs, "in side.png");
+        png(&docs.join("nested"), "deep.png");
+        let secret = png(&outside, "secret.png");
+        std::os::unix::fs::symlink(&secret, docs.join("escape.png")).unwrap();
+        std::os::unix::fs::symlink(&outside, docs.join("dir link")).unwrap();
+        std::os::unix::fs::symlink(docs.join("nested/deep.png"), docs.join("alias.png")).unwrap();
+        let cancel = CancelToken::new();
+        let load = |href: &str| local_image(&docs, href, &cancel).is_some();
+        assert!(load("in%20side.png"));
+        assert!(load("nested/deep.png?x=1#frag"));
+        assert!(load("alias.png"), "symlink inside the directory is fine");
+        assert!(load("nested/../in side.png"));
+        assert!(!load("escape.png"), "symlink to a file outside");
+        assert!(
+            !load("dir link/secret.png"),
+            "symlink to a directory outside"
+        );
+        assert!(!load("../outside/secret.png"));
+        assert!(
+            !load(&secret.to_string_lossy()),
+            "absolute paths are rejected"
+        );
+        assert!(!load("file:///etc/hostname"));
+        assert!(!load("https://example.invalid/x.png"));
+        assert!(!load("missing.png"));
     }
 }

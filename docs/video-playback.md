@@ -33,6 +33,23 @@ generation, so queued or late replies cannot restore an older position. During
 GStreamer's asynchronous flushing seek the worker retains the requested position
 until the pipeline finishes preroll, then resumes querying its clock.
 
+A control the player cannot carry out, such as seeking or changing the speed
+of a non-seekable stream, is answered with a `Rejected` reply: the status bar
+shows the reason, the session continues, and the next state update restores
+the actual position. The UI does not send seeks or rate changes while the
+stream reports itself non-seekable, and a track change on such a stream
+restarts it from the beginning instead of restoring the position. Only decoder
+errors and a lost runtime end the session; the controls are then withdrawn
+and the last picture stays.
+
+The manager owns the single startup deadline (20 s from spawn to the first
+preroll). The worker has no timer of its own: cancelling the session kills it.
+The manager thread sleeps in one channel select over commands, replies and the
+session's cancellation signal (`CancelToken::subscribe`), so closing a preview
+reaps the worker immediately rather than on a polling interval. Inside the
+worker, bus messages travel through the loop's channel from the bus sync
+handler, so a wake and its payload are one object.
+
 Settings → `preview-media.backend`:
 
 - `auto` (default): GStreamer playback, falling back to FFmpeg stills when the
@@ -47,10 +64,17 @@ not in the file manager. `cargo build -p bibli` does not link GStreamer; workspa
 builds also build the optional worker and need its development libraries.
 
 Continuous playback uses CPU BGRA transfer and GPU upload, capped at a
-1920-pixel side even for 4K input. Decoding 4K still costs more than decoding
-1080p. The audio clock remains owned by GStreamer; old video frames may be
-skipped if the UI cannot keep up. There is no playback thread or native media
-library in the UI process when the preview is closed.
+1920-pixel side even for 4K input. The frame slot lives on `/dev/shm` when
+that is available and writable, and otherwise in the ordinary temporary
+directory, which may be disk-backed. The manager reads each frame into a
+buffer recycled from frames the UI did not take; a UI that keeps up still
+receives one owned buffer per frame, and GPUI creates a new atlas texture per
+frame. Reusing the atlas texture across frames is a follow-up that needs a
+gpui patch (`RenderImage` does not return its pixel buffer). Decoding 4K
+still costs more than decoding 1080p. The audio clock remains owned by
+GStreamer; old video frames may be skipped if the UI cannot keep up. There is
+no playback thread or native media library in the UI process when the preview
+is closed.
 
 ## Reproduce the checks
 

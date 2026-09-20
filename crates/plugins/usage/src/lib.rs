@@ -1,6 +1,8 @@
 //! Cached disk usage, owned by a lazy worker. Commands never perform filesystem I/O.
 //! Directory breakdowns are cached separately from the treemap presentation;
-//! recursive watches invalidate changed branches and their ancestors.
+//! per-directory watches invalidate changed branches and their ancestors.
+//! Statuses live only as long as their request: navigation, pane close and
+//! `usage.release` drop them.
 
 mod worker;
 
@@ -173,6 +175,7 @@ impl UsagePlugin {
         }
         let r = runtime.as_mut().expect("runtime started");
         let cancel = r.cancel.linked(&location_lifetime);
+        r.requests.retain(|_, token| !token.is_cancelled());
         if let Some(previous) = r.requests.insert(pane, cancel.clone()) {
             previous.cancel();
         }
@@ -502,7 +505,8 @@ mod tests {
         assert!(!original.stale);
         let first = scan(&app, pane, &alias, false);
         assert_eq!(first.size, 8);
-        assert!(first.stale);
+        assert!(!first.stale, "an alias is watched through its parent");
+        assert!(first.error.is_none());
         std::fs::remove_file(&alias).unwrap();
         std::os::unix::fs::symlink(&replacement, &alias).unwrap();
         wait(&app, pane, |s| s.size == 3);

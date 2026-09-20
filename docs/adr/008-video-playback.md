@@ -15,7 +15,8 @@ updates use JSON lines.
 The core owns the toolkit-independent session interface and protocol.
 
 Use one acknowledged BGRA frame slot in a private temporary directory on
-`/dev/shm` on Linux. It is reused throughout the session, read/written through
+`/dev/shm` on Linux, falling back to the ordinary temporary directory when
+that is unavailable. It is reused throughout the session, read/written through
 ordinary file APIs, and removed after the child is reaped. Other platforms use
 their temporary directory. This avoids unsafe cross-process mappings and
 per-frame files, but still involves CPU copies and a GPU upload. The worker's
@@ -42,7 +43,14 @@ video-surface import path.
 The session follows the selected file, pane and provider registration. Closing,
 replacing or disabling a preview cancels it. Only the manager kills/reaps children
 and removes temporary storage; UI destruction never waits. Decoder events wake
-the worker, and output wakes the UI. There is no UI animation or polling loop.
+the worker, and output wakes the UI. There is no UI animation or polling loop,
+and the manager thread does not poll either: it selects on the session's
+cancellation signal and owns the only startup deadline.
+
+A declined control (for example a seek on a non-seekable stream) is a
+`Rejected` reply that surfaces as a transient status while the session
+continues; only decoder errors and a lost runtime end a session, after which
+the UI withdraws the controls.
 
 `preview-media.backend` offers `auto`, `gstreamer`, and `stills`. Auto retains the
 existing FFmpeg still renderer when the player/runtime is absent. Media errors

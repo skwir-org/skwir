@@ -50,12 +50,14 @@ impl Drop for ChildGuard {
 /// Capture small diagnostic/metadata output without pipes that can deadlock.
 /// Files live in a private temporary directory and are capped while running.
 /// Rendered artifacts must separately be checked by the caller before decoding.
+/// The cap is derived from the largest helper listing (an archive's member
+/// names, JSON-escaped), so a helper bound can never exceed what is captured.
 pub fn run(
     command: &mut Command,
     cancel: &CancelToken,
     timeout: Duration,
 ) -> anyhow::Result<Vec<u8>> {
-    const OUTPUT_LIMIT: u64 = 1024 * 1024;
+    const OUTPUT_LIMIT: u64 = crate::inspection::limits::HELPER_OUTPUT;
     anyhow::ensure!(!cancel.is_cancelled(), "preview cancelled");
     let mut stdout = tempfile::tempfile()?;
     let mut stderr = tempfile::tempfile()?;

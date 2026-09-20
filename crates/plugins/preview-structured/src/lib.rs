@@ -5,7 +5,7 @@ use bibli_core::{
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
 };
-use bibli_platform::inspection;
+use bibli_platform::inspection::{self, limits};
 use std::sync::Arc;
 pub struct PreviewPlugin;
 impl Plugin for PreviewPlugin {
@@ -70,8 +70,10 @@ fn code(
             inspection::check(cancel)?;
             count += 1;
             anyhow::ensure!(
-                count <= 10000 && depth <= 64,
-                "Code preview exceeds 10000 nodes or 64 levels"
+                count <= limits::CODE_NODES && depth <= limits::NESTING,
+                "Code preview exceeds {} nodes or {} levels",
+                limits::CODE_NODES,
+                limits::NESTING
             );
             match node {
                 serde_json::Value::Array(items) => {
@@ -88,13 +90,17 @@ fn code(
         source.to_owned()
     };
     anyhow::ensure!(
-        text.len() <= inspection::TEXT_LIMIT,
-        "Formatted preview exceeds 2 MiB"
+        text.len() <= limits::TEXT_INPUT,
+        "Formatted preview exceeds {}",
+        limits::describe(limits::TEXT_INPUT)
     );
     let lines: Vec<_> = text.split('\n').collect();
     anyhow::ensure!(
-        lines.len() <= 10000 && lines.iter().all(|line| line.len() <= 4096),
-        "Code preview exceeds 10000 lines or 4096 bytes per line"
+        lines.len() <= limits::CODE_LINES
+            && lines.iter().all(|line| line.len() <= limits::LINE_BYTES),
+        "Code preview exceeds {} lines or {} bytes per line",
+        limits::CODE_LINES,
+        limits::LINE_BYTES
     );
     let folds = folds::parse(&text, language, cancel)?;
     let blocks = lines

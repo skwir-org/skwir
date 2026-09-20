@@ -100,7 +100,20 @@ pub struct Frame {
 pub struct Update {
     pub state: Option<Playback>,
     pub frame: Option<Frame>,
+    /// A control the player could not carry out (for example seeking a
+    /// non-seekable stream). Transient: the session stays usable and a
+    /// `state` with the same generation restores the actual playback state.
+    pub notice: Option<String>,
+    /// Fatal: the session has ended and its controls must be withdrawn.
     pub error: Option<String>,
+}
+impl Update {
+    pub fn is_empty(&self) -> bool {
+        self.state.is_none()
+            && self.frame.is_none()
+            && self.notice.is_none()
+            && self.error.is_none()
+    }
 }
 pub trait MediaSession: Send + Sync {
     /// Enqueue only; never wait for a decoder or pipe on the UI thread.
@@ -130,7 +143,14 @@ pub enum Reply {
         clock: Option<f64>,
         dropped: Option<u64>,
     },
+    /// A control failed; playback continues and a `State` follows.
+    Rejected {
+        generation: u64,
+        message: String,
+    },
+    /// The runtime is missing. Fatal after `Ready`.
     Unavailable(String),
+    /// Fatal: the worker is exiting.
     Error(String),
 }
 pub const MAX_SIDE: u32 = 1920;

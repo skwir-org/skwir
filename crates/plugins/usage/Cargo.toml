@@ -15,7 +15,6 @@ serde_json.workspace = true
 schemars.workspace = true
 parking_lot.workspace = true
 anyhow.workspace = true
-rustix = { workspace = true, features = ["fs"] }
 
 [dev-dependencies]
 tempfile.workspace = true

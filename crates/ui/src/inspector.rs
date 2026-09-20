@@ -14,6 +14,9 @@ pub struct Display {
     pub data: Arc<Inspection>,
     pub images: Vec<Option<Arc<RenderImage>>>,
     row_icons: Arc<Vec<Option<Arc<std::path::Path>>>>,
+    /// Case-folded search text per block, then per row, prepared on the
+    /// worker so Find never lowercases a document on the UI thread.
+    folded: Arc<Vec<String>>,
 }
 impl Display {
     pub fn new(mut data: Inspection, dark: bool) -> Self {
@@ -86,11 +89,32 @@ impl Display {
             .chain(data.blocks.iter_mut().map(|b| b.image.take()))
             .map(|i| i.and_then(|i| crate::thumbs::to_render_image(&i)))
             .collect();
+        let folded = data
+            .blocks
+            .iter()
+            .map(|b| b.text.to_lowercase())
+            .chain(data.rows.iter().map(|r| r.cells.join("\t").to_lowercase()))
+            .collect();
         Self {
             data: Arc::new(data),
             images,
             row_icons: Arc::new(row_icons),
+            folded: Arc::new(folded),
         }
+    }
+    /// The next block or row (blocks first, then rows offset by the block
+    /// count) containing `query`, which must already be lowercase. Starts after
+    /// `after` and wraps to the beginning when `wrap` is set.
+    pub fn find(&self, query: &str, after: Option<usize>, wrap: bool) -> Option<usize> {
+        if query.is_empty() || self.folded.is_empty() {
+            return None;
+        }
+        let start = after.map_or(0, |i| i + 1);
+        let hit = |range: std::ops::Range<usize>| {
+            range.into_iter().find(|&i| self.folded[i].contains(query))
+        };
+        hit(start.min(self.folded.len())..self.folded.len())
+            .or_else(|| wrap.then(|| hit(0..start.min(self.folded.len()))).flatten())
     }
 }
 pub struct State {
@@ -129,6 +153,56 @@ impl State {
         self.dragging = false;
         self.outline = false;
         self.reindex(data);
+    }
+    /// A new inspection replaced the content. Its `position` becomes the
+    /// request offset so paging and search continue from what is shown; a
+    /// book chapter found by search also reveals its first matching block.
+    pub fn arrived(&mut self, display: &Display) {
+        self.reset(&display.data);
+        self.request.offset = display.data.position;
+        if display.data.kind == InspectionKind::Book
+            && let Some(query) = self.request.query.as_deref()
+            && let Some(i) = display.find(&query.to_lowercase(), None, false)
+        {
+            self.reveal(&display.data, i);
+        }
+    }
+    /// Select and scroll to a block or row, expanding anything that hides it.
+    fn reveal(&mut self, data: &Inspection, index: usize) {
+        self.selected = Some(index);
+        self.collapsed.clear();
+        self.reindex(data);
+        self.list.scroll_to_reveal_item(index + 1);
+    }
+    fn toggle_collapsed(&mut self, data: &Inspection, index: usize) {
+        if !self.collapsed.remove(&index) {
+            self.collapsed.insert(index);
+        }
+        self.reindex(data);
+    }
+    fn collapse_all(&mut self, data: &Inspection, collapse: bool) {
+        self.collapsed = if !collapse {
+            BTreeSet::new()
+        } else if data.kind == InspectionKind::Code {
+            data.folds.iter().map(|fold| fold.start).collect()
+        } else {
+            data.rows
+                .iter()
+                .enumerate()
+                .filter_map(|(i, r)| r.branch.then_some(i))
+                .collect()
+        };
+        self.reindex(data);
+    }
+    pub fn visible(&self) -> &[usize] {
+        &self.visible
+    }
+    /// Whether the hex provider owns the shown file: explicitly selected, or
+    /// the automatic byte view of a whole file. A container member's byte page
+    /// (`target` set) belongs to its container provider, which cannot search.
+    fn hex_file(&self, kind: InspectionKind) -> bool {
+        self.request.provider.as_deref() == Some("preview-hex")
+            || (kind == InspectionKind::Hex && self.request.target.is_none())
     }
     fn reindex(&mut self, data: &Inspection) {
         if data.kind == InspectionKind::Code {
@@ -186,6 +260,10 @@ impl Shell {
             );
             return;
         }
+        let kind = match &self.preview.content {
+            Some(PreviewContent::Inspection(display)) => Some(display.data.kind),
+            _ => None,
+        };
         if let Some(PreviewContent::Inspection(display)) = &self.preview.content {
             match action {
                 "text_down" | "text_move" => {
@@ -264,11 +342,9 @@ impl Shell {
                 }
                 "collapse" => {
                     if let Some(i) = args["index"].as_u64() {
-                        let i = i as usize;
-                        if !self.preview.inspection.collapsed.remove(&i) {
-                            self.preview.inspection.collapsed.insert(i);
-                        }
-                        self.preview.inspection.reindex(&display.data);
+                        self.preview
+                            .inspection
+                            .toggle_collapsed(&display.data, i as usize);
                     }
                     cx.notify();
                     return;
@@ -279,22 +355,9 @@ impl Shell {
                         InspectionKind::Archive | InspectionKind::Code
                     ) =>
                 {
-                    let state = &mut self.preview.inspection;
-                    state.collapsed =
-                        if action == "collapse_all" && display.data.kind == InspectionKind::Code {
-                            display.data.folds.iter().map(|fold| fold.start).collect()
-                        } else if action == "collapse_all" {
-                            display
-                                .data
-                                .rows
-                                .iter()
-                                .enumerate()
-                                .filter_map(|(i, r)| r.branch.then_some(i))
-                                .collect()
-                        } else {
-                            BTreeSet::new()
-                        };
-                    state.reindex(&display.data);
+                    self.preview
+                        .inspection
+                        .collapse_all(&display.data, action == "collapse_all");
                     cx.notify();
                     return;
                 }
@@ -321,37 +384,28 @@ impl Shell {
                     cx.notify();
                     return;
                 }
+                // The hex provider searches the whole file itself; Find sets a
+                // font's specimen text. Everything else, including a container
+                // member's byte page, searches the loaded section after the
+                // selected item. A book falls back to its provider for the
+                // following chapters.
                 "find"
-                    if self.preview.inspection.request.provider.as_deref()
-                        != Some("preview-hex")
-                        && display.data.kind != InspectionKind::Hex
-                        && display.data.kind != InspectionKind::Font
-                        && display.data.kind != InspectionKind::Book =>
+                    if !self.preview.inspection.hex_file(display.data.kind)
+                        && display.data.kind != InspectionKind::Font =>
                 {
                     let query = args["value"].as_str().unwrap_or("").to_lowercase();
-                    let found = display
-                        .data
-                        .blocks
-                        .iter()
-                        .position(|b| b.text.to_lowercase().contains(&query))
-                        .or_else(|| {
-                            display
-                                .data
-                                .rows
-                                .iter()
-                                .position(|r| r.cells.join("\t").to_lowercase().contains(&query))
-                                .map(|i| display.data.blocks.len() + i)
-                        });
-                    if let Some(i) = found {
-                        self.preview.inspection.selected = Some(i);
-                        self.preview.inspection.collapsed.clear();
-                        self.preview.inspection.reindex(&display.data);
-                        self.preview.inspection.list.scroll_to_reveal_item(i + 1);
-                    } else {
-                        self.set_status("No match in this preview section", false, cx);
+                    let book = display.data.kind == InspectionKind::Book;
+                    let state = &mut self.preview.inspection;
+                    if let Some(i) = display.find(&query, state.selected, !book) {
+                        state.reveal(&display.data, i);
+                        cx.notify();
+                        return;
                     }
-                    cx.notify();
-                    return;
+                    if !book {
+                        self.set_status("No match in this preview section", false, cx);
+                        cx.notify();
+                        return;
+                    }
                 }
                 _ => {}
             }
@@ -386,22 +440,17 @@ impl Shell {
                 cx.open_url(href);
                 return;
             }
-            if !self
-                .preview
-                .info
-                .name
-                .to_ascii_lowercase()
-                .ends_with(".epub")
-            {
+            if kind != Some(InspectionKind::Book) {
                 self.set_status("Only web links can be opened from this preview", false, cx);
                 return;
             }
         }
+        let hex = crate::preview_toolbar::hex_available(self);
         let state = &mut self.preview.inspection;
-        state.request.query = None;
+        let previous_query = state.request.query.take();
         match action {
             "hex" => {
-                if !self.app.previews.ids().contains(&"preview-hex") {
+                if !hex {
                     return;
                 }
                 state.request = InspectRequest {
@@ -427,7 +476,23 @@ impl Shell {
                 state.request.offset = 0;
             }
             "find" => {
-                state.request.query = args["value"].as_str().map(str::to_owned);
+                let query = args["value"].as_str().map(str::to_owned);
+                // Searching providers report where they landed as `position`,
+                // which `arrived` stored as the offset: hex the exact match
+                // byte, a book its chapter. Resume one past it for the next
+                // match of the same query; a book got here because the shown
+                // chapter has no further match, so always move on.
+                let resume = match kind {
+                    Some(InspectionKind::Book) => true,
+                    Some(kind) if state.hex_file(kind) => {
+                        query.is_some() && query == previous_query
+                    }
+                    _ => false,
+                };
+                if resume {
+                    state.request.offset = state.request.offset.saturating_add(1);
+                }
+                state.request.query = query;
             }
             "jump" => {
                 let value = args["value"].as_str().unwrap_or("");
@@ -475,8 +540,9 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         });
     if let Some(popup) = &shell.preview.menu {
         let mut panel = toolbar::popup_panel(popup, "ui.preview_menu", theme, cx);
+        let hex = crate::preview_toolbar::hex_available(shell);
         for (id, icon, title, action) in tools(&display.data) {
-            if action == "hex" && !shell.app.previews.ids().contains(&"preview-hex") {
+            if action == "hex" && !hex {
                 continue;
             }
             panel = panel.child(
@@ -553,7 +619,9 @@ fn toolbar_row(
     anchor: &crate::elements::popover::PopoverAnchor,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
-    let mut row = toolbar::row(theme).id(("inspect-tools", mode));
+    // One id for every variant keeps a button's focus handle across reflows.
+    let mut row = toolbar::row(theme).id("inspect-tools");
+    let hex = crate::preview_toolbar::hex_available(shell);
     if shell.preview.inspection.request.target.is_some() {
         row = row
             .child(button("inspect-parent", "up", "Container contents", "back").render(shell, cx));
@@ -576,7 +644,7 @@ fn toolbar_row(
         {
             continue;
         }
-        if action == "hex" && !shell.app.previews.ids().contains(&"preview-hex") {
+        if action == "hex" && !hex {
             continue;
         }
         row = row.child(
@@ -965,4 +1033,148 @@ fn hex_cell(text: &str, column: usize, theme: &Theme) -> AnyElement {
     gpui::StyledText::new(text.to_owned())
         .with_highlights(highlights)
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bibli_core::inspection::{Block, Row};
+
+    fn archive() -> Display {
+        let rows = [
+            ("alpha", 0, true),
+            ("empty", 1, false),
+            ("Zoo's", 0, true),
+            ("nested", 1, true),
+            ("last.txt", 2, false),
+            ("child.bin", 1, false),
+            ("a.txt", 0, false),
+        ]
+        .into_iter()
+        .map(|(name, depth, branch)| Row {
+            cells: vec![name.into(), String::new(), String::new()],
+            depth,
+            branch,
+            ..Row::default()
+        })
+        .collect();
+        Display::new(
+            Inspection {
+                kind: InspectionKind::Archive,
+                rows,
+                ..Inspection::default()
+            },
+            false,
+        )
+    }
+
+    fn code(lines: &[&str], folds: Vec<std::ops::Range<usize>>) -> Display {
+        Display::new(
+            Inspection {
+                kind: InspectionKind::Code,
+                blocks: lines
+                    .iter()
+                    .map(|text| Block {
+                        text: (*text).into(),
+                        code: true,
+                        language: Some("json".into()),
+                        ..Block::default()
+                    })
+                    .collect(),
+                folds,
+                ..Inspection::default()
+            },
+            true,
+        )
+    }
+
+    #[test]
+    fn archive_rows_collapse_by_subtree_and_expand_all_restores_them() {
+        let display = archive();
+        let mut state = State::default();
+        state.reset(&display.data);
+        assert_eq!(state.visible(), [0, 1, 2, 3, 4, 5, 6]);
+        state.toggle_collapsed(&display.data, 2);
+        assert_eq!(
+            state.visible(),
+            [0, 1, 2, 6],
+            "Zoo's hides its whole subtree"
+        );
+        state.toggle_collapsed(&display.data, 2);
+        state.toggle_collapsed(&display.data, 3);
+        assert_eq!(state.visible(), [0, 1, 2, 3, 5, 6]);
+        state.collapse_all(&display.data, true);
+        assert_eq!(state.collapsed, BTreeSet::from([0, 2, 3]));
+        assert_eq!(state.visible(), [0, 2, 6]);
+        state.collapse_all(&display.data, false);
+        assert_eq!(state.visible(), [0, 1, 2, 3, 4, 5, 6]);
+        assert_eq!(state.list.item_count(), 8, "rows plus the notice item");
+    }
+
+    #[test]
+    fn find_resumes_after_the_selection_and_reveals_folded_lines() {
+        let display = code(
+            &[
+                "{",
+                "  \"Needle\": 1,",
+                "  \"items\": [",
+                "    \"needle\"",
+                "  ]",
+                "}",
+            ],
+            vec![0..5, 2..4],
+        );
+        assert_eq!(display.find("needle", None, true), Some(1));
+        assert_eq!(display.find("needle", Some(1), true), Some(3));
+        assert_eq!(display.find("needle", Some(3), true), Some(1), "wraps");
+        assert_eq!(display.find("needle", Some(3), false), None);
+        assert_eq!(display.find("absent", None, true), None);
+        assert_eq!(display.find("", None, true), None);
+        let mut state = State::default();
+        state.reset(&display.data);
+        state.collapse_all(&display.data, true);
+        assert_eq!(state.visible(), [0, 5]);
+        state.reveal(&display.data, 3);
+        assert_eq!(state.selected, Some(3));
+        assert_eq!(state.visible(), [0, 1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn rows_are_searchable_after_blocks_and_a_book_selects_its_match_on_arrival() {
+        let display = archive();
+        assert_eq!(display.find("zoo's", None, true), Some(2));
+        assert_eq!(display.find("child", Some(2), false), Some(5));
+        let book = Display::new(
+            Inspection {
+                kind: InspectionKind::Book,
+                position: 3,
+                blocks: vec![
+                    Block {
+                        text: "Chapter".into(),
+                        heading: 1,
+                        ..Block::default()
+                    },
+                    Block {
+                        text: "The Needle sits here.".into(),
+                        ..Block::default()
+                    },
+                ],
+                ..Inspection::default()
+            },
+            false,
+        );
+        let mut state = State {
+            request: InspectRequest {
+                query: Some("NEEDLE".into()),
+                ..InspectRequest::default()
+            },
+            ..State::default()
+        };
+        state.arrived(&book);
+        assert_eq!(state.request.offset, 3);
+        assert_eq!(state.selected, Some(1));
+        state.request.query = None;
+        state.arrived(&book);
+        assert_eq!(state.selected, None);
+    }
 }

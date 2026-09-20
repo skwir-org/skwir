@@ -566,7 +566,9 @@ fn reader_row(
     let native = reader.session.is_some();
     let current = shell.preview.page;
     let pages = document_pages(shell);
-    let mut bar = toolbar::row(&theme).id(("reader-tools", mode));
+    // One id for every variant, so a focused button keeps its focus handle
+    // (gpui element state keyed by the id path) across a responsive reflow.
+    let mut bar = toolbar::row(&theme).id("reader-tools");
     if mode == 0 {
         bar = bar
             .child(

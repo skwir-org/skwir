@@ -137,8 +137,31 @@ impl Shell {
                 cx,
             );
         }
+        if let Some(notice) = update.notice {
+            // The session continues; its next state update corrects the UI.
+            self.set_status(notice, false, cx);
+        }
         if let Some(error) = update.error {
+            // The manager has ended the session. Withdraw the controls and
+            // keep the last picture; every later control would only fail.
+            self.media_exit_fullscreen(window, cx);
+            self.preview.media.session = None;
             self.preview.media.state.status = bibli_core::media::PlaybackStatus::Paused;
+            // The player's key context follows its focus handle; return keys
+            // to the peek overlay or the pane instead of a dead player.
+            if let Some(focus) = self.preview.media.focus.take()
+                && focus.contains_focused(window, cx)
+            {
+                match self
+                    .preview
+                    .peek_focus
+                    .as_ref()
+                    .filter(|_| self.preview.peek)
+                {
+                    Some(peek) => window.focus(peek),
+                    None => window.focus(&self.ui().focus),
+                }
+            }
             self.set_status(error, true, cx);
         }
         self.arm_media_hide(window, cx);
@@ -171,7 +194,8 @@ impl Shell {
             Some("play") => Some(Control::Play(!state.playing())),
             Some("mute") => Some(Control::Mute(!state.muted)),
             Some("volume") => value.map(Control::Volume),
-            Some("rate") => value.map(Control::Rate),
+            // Rate changes are seeks; a non-seekable stream keeps 1x.
+            Some("rate") => value.filter(|_| state.seekable).map(Control::Rate),
             Some("audio") => args
                 .get("value")
                 .and_then(serde_json::Value::as_i64)
@@ -513,7 +537,9 @@ fn row(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let state = &shell.preview.media.state;
-    let mut row = toolbar::row(theme).id(("video-tools", mode)).child(
+    // One element id for every variant: gpui keys a button's focus handle by
+    // its id path, so focus survives a responsive reflow (see elements/adaptive.rs).
+    let mut row = toolbar::row(theme).id("video-tools").child(
         control(
             "video-play",
             if state.playing() { "pause" } else { "play" },

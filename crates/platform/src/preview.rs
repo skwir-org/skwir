@@ -390,21 +390,38 @@ impl PreviewProvider for DocumentPreviews {
         let _gate = acquire(&self.gate, lifetime)?;
         let source = req.entry.resolve()?;
         let base = fingerprint(req, &source)?;
-        for &engine in engines {
-            if crate::document::worker_path(engine).is_none() {
-                continue;
-            }
+        let available: Vec<Engine> = engines
+            .iter()
+            .copied()
+            .filter(|engine| crate::document::worker_path(*engine).is_some())
+            .collect();
+        // An Office document converts once, however many engines `auto` tries
+        // before one greets ready. Each session still owns its own scratch
+        // directory, so the converted PDF is linked or copied into it.
+        let converted = if is_pdf(req) || available.is_empty() {
+            None
+        } else {
+            let dir = tempfile::tempdir()?;
+            let pdf = self.office_pdf(
+                req,
+                &source,
+                &process::required("libreoffice")?,
+                dir.path(),
+                lifetime,
+            )?;
+            Some((dir, pdf))
+        };
+        for engine in available {
             let scratch = tempfile::tempdir()?;
-            let pdf = if is_pdf(req) {
-                source.clone()
-            } else {
-                self.office_pdf(
-                    req,
-                    &source,
-                    &process::required("libreoffice")?,
-                    scratch.path(),
-                    lifetime,
-                )?
+            let pdf = match &converted {
+                None => source.clone(),
+                Some((_, converted)) => {
+                    let pdf = scratch.path().join("document.pdf");
+                    if std::fs::hard_link(converted, &pdf).is_err() {
+                        std::fs::copy(converted, &pdf)?;
+                    }
+                    pdf
+                }
             };
             anyhow::ensure!(
                 fingerprint(req, &source)? == base,

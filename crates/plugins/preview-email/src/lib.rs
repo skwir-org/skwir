@@ -5,7 +5,11 @@ use bibli_core::{
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
 };
-use bibli_platform::{archive, inspection, rich_preview};
+use bibli_platform::{
+    archive,
+    inspection::{self, limits},
+    rich_preview,
+};
 use mail_parser::MimeHeaders;
 use std::sync::Arc;
 pub struct PreviewPlugin;
@@ -39,11 +43,7 @@ impl PreviewProvider for Provider {
         if view.source {
             return inspection::source(&path, view.offset, cancel).map(Some);
         }
-        let bytes = inspection::read(&path, 0, inspection::IMAGE_LIMIT + 1, cancel)?;
-        anyhow::ensure!(
-            bytes.len() <= inspection::IMAGE_LIMIT,
-            "Email exceeds 16 MiB preview limit"
-        );
+        let bytes = inspection::read_bounded(&path, limits::BINARY_INPUT, "Email", cancel)?;
         let message = mail_parser::MessageParser::default()
             .parse(&bytes)
             .ok_or_else(|| anyhow::anyhow!("Invalid email"))?;
@@ -55,6 +55,7 @@ impl PreviewProvider for Provider {
             return archive::member_preview(
                 attachment.attachment_name().unwrap_or("Attachment"),
                 attachment.contents(),
+                view.offset,
             )
             .map(Some);
         }
@@ -91,7 +92,7 @@ impl PreviewProvider for Provider {
         let rows = message
             .attachments()
             .enumerate()
-            .take(100)
+            .take(limits::ATTACHMENTS)
             .map(|(i, a)| Row {
                 cells: vec![
                     a.attachment_name().unwrap_or("Attachment").into(),
@@ -117,7 +118,7 @@ fn addresses(value: Option<&mail_parser::Address<'_>>) -> String {
     value
         .map(|v| {
             v.iter()
-                .take(50)
+                .take(limits::ADDRESSES)
                 .map(|a| {
                     format!(
                         "{} <{}>",

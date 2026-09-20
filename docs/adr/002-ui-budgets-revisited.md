@@ -79,3 +79,11 @@ decision per contributor: shrink it, or budget it in a new ADR with the reason.
 Until then the status line in `docs/PLAN.md` reports the gate as open, and
 per-change status notes must not restate the number without a comparison
 against the previous commit under identical conditions.
+
+Measurement caveat: PSS divides each shared page by the number of processes
+mapping it. About 60 MB of our idle footprint is the NVIDIA user-space driver
+and its LLVM, shared with the compositor and every other GPU client, so the
+same binary read 120 MB with several GPU clients alive and 162 MB on a quiet
+desktop, with identical heap (25.6 MB) and binary (25.4 MB) shares. Compare
+builds back to back under the same desktop state, and report the heap and
+binary mappings next to the total.

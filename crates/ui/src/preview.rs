@@ -125,6 +125,9 @@ pub struct PreviewState {
     rx: flume::Receiver<PreviewResult>,
     text_scroll: UniformListScrollHandle,
     pub peek_focus: Option<FocusHandle>,
+    /// Whether the hexadecimal provider is registered, keyed by the preview
+    /// registry revision it was read at (see `preview_toolbar::hex_available`).
+    pub(crate) hex_provider: std::cell::Cell<Option<(u64, bool)>>,
 }
 
 impl Default for PreviewState {
@@ -152,6 +155,7 @@ impl Default for PreviewState {
             rx,
             text_scroll: UniformListScrollHandle::new(),
             peek_focus: None,
+            hex_provider: std::cell::Cell::new(None),
         }
     }
 }
@@ -196,7 +200,7 @@ pub(crate) fn themes() -> &'static ThemeSet {
 fn to_render_image(img: image::RgbaImage) -> Arc<RenderImage> {
     let (w, h) = (img.width(), img.height());
     let mut buf = img.into_raw();
-    for p in buf.chunks_exact_mut(4) {
+    for p in buf.as_chunks_mut::<4>().0 {
         p.swap(0, 2);
     }
     let buffer = image::RgbaImage::from_raw(w, h, buf).expect("same size");
@@ -786,12 +790,11 @@ impl Shell {
             _ => {}
         }
         if let Some(PreviewContent::Inspection(display)) = &content {
-            self.preview.inspection.reset(&display.data);
+            self.preview.inspection.arrived(display);
             self.preview
                 .inspection
                 .focus
                 .get_or_insert_with(|| cx.focus_handle());
-            self.preview.inspection.request.offset = display.data.position;
         }
         self.preview.content = content;
     }
@@ -891,6 +894,8 @@ impl Shell {
             });
             self.preview.page = next;
             self.preview.reader.page_input = None;
+            // An explicit visit retries a page whose render failed earlier.
+            self.reader_retry_page(next);
             cx.notify();
             return;
         }
@@ -911,12 +916,15 @@ impl Shell {
 
     pub fn preview_seek(&mut self, delta: f64, cx: &mut Context<Self>) {
         if self.preview.media.session.is_some() {
-            self.media_send(
-                bibli_core::media::Control::Seek(
-                    (self.preview.media.state.position + delta).max(0.),
-                ),
-                cx,
-            );
+            // Same gate as the seek bar: a non-seekable stream ignores keys.
+            if self.preview.media.state.seekable {
+                self.media_send(
+                    bibli_core::media::Control::Seek(
+                        (self.preview.media.state.position + delta).max(0.),
+                    ),
+                    cx,
+                );
+            }
             return;
         }
         let Some(PreviewContent::Image {

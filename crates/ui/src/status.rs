@@ -131,10 +131,14 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
             )
         })
     };
+    // "Loading…" follows the same delayed signal as the pane banner.
+    let loading = crate::loading::pending(shell, shell.pane);
     let items = match (is_query, complete) {
         (true, false) => format!("searching… {} results", format::thousands(count)),
         (true, true) => format!("{} results", format::thousands(count)),
-        (false, false) if error.is_none() => format!("Loading… {} items", format::thousands(count)),
+        (false, false) if error.is_none() && loading => {
+            format!("Loading… {} items", format::thousands(count))
+        }
         (false, _) => format!("{} items", format::thousands(count)),
     };
     let mut bar = div()

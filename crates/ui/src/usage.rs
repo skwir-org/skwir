@@ -1,6 +1,7 @@
 //! Plugin-controlled Usage pane view. Filesystem work remains in the plugin.
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use bibli_core::{EntryId, command::Invocation};
 use gpui::{AnyElement, Context, Window, div, prelude::*, px};
@@ -48,6 +49,9 @@ pub struct UsageState {
     pub hover_path: Option<PathBuf>,
     root: Option<PathBuf>,
     location_lifetime: Option<bibli_core::CancelToken>,
+    /// The plugin's descriptor revision, captured once per registration so
+    /// frames read one atomic instead of querying the registry.
+    source: Option<Arc<AtomicU64>>,
     revision: Option<u64>,
 }
 
@@ -103,12 +107,23 @@ impl Shell {
         if dir.is_none() {
             return;
         }
+        if self.ui().usage.source.is_none() {
+            // Once per registration: `sync_views` resets this state when the
+            // plugin's view is replaced, which starts a new capture.
+            let source = self
+                .app
+                .registry
+                .views
+                .find(|s| &*s.id == "usage")
+                .map(|s| Arc::clone(&s.revision));
+            self.ui_mut().usage.source = source;
+        }
         let revision = self
-            .app
-            .registry
-            .views
-            .find(|s| &*s.id == "usage")
-            .map(|s| s.revision.load(Ordering::Acquire));
+            .ui()
+            .usage
+            .source
+            .as_ref()
+            .map(|source| source.load(Ordering::Acquire));
         if revision != self.ui().usage.revision {
             self.ui_mut().usage.revision = revision;
             if let Some(value) =

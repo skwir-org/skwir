@@ -46,16 +46,74 @@ mod native {
             Ok(())
         }
     }
-    pub fn run() -> anyhow::Result<()> {
-        let mut args = std::env::args_os().skip(1);
-        let path = args
+    /// `bibli-archive-worker <archive> --members N --names N` lists members;
+    /// `bibli-archive-worker <archive> <index> <output> --bytes N` streams one.
+    /// Every bound arrives from the caller so the UI process and this helper
+    /// can never disagree on a limit.
+    pub struct Args {
+        pub path: std::ffi::OsString,
+        pub member: Option<u64>,
+        pub output: Option<std::ffi::OsString>,
+        pub bytes: Option<usize>,
+        pub members: Option<usize>,
+        pub names: Option<usize>,
+    }
+    pub fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result<Args> {
+        let mut positional = Vec::new();
+        let mut bytes = None;
+        let mut members = None;
+        let mut names = None;
+        let mut args = args.into_iter();
+        while let Some(arg) = args.next() {
+            let slot = match arg.to_str() {
+                Some("--bytes") => &mut bytes,
+                Some("--members") => &mut members,
+                Some("--names") => &mut names,
+                _ => {
+                    positional.push(arg);
+                    continue;
+                }
+            };
+            let value = args
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("missing value for {}", arg.to_string_lossy()))?;
+            *slot = Some(value.to_string_lossy().parse::<usize>()?);
+        }
+        let mut positional = positional.into_iter();
+        let path = positional
             .next()
             .ok_or_else(|| anyhow::anyhow!("missing archive"))?;
-        let member = args
+        let member = positional
             .next()
             .map(|s| s.to_string_lossy().parse::<u64>())
             .transpose()?;
-        let output = args.next();
+        let output = positional.next();
+        if member.is_some() {
+            anyhow::ensure!(bytes.is_some(), "missing --bytes bound for member read");
+        } else {
+            anyhow::ensure!(
+                members.is_some() && names.is_some(),
+                "missing --members/--names bounds for listing"
+            );
+        }
+        Ok(Args {
+            path,
+            member,
+            output,
+            bytes,
+            members,
+            names,
+        })
+    }
+    pub fn run() -> anyhow::Result<()> {
+        let Args {
+            path,
+            member,
+            output,
+            bytes: byte_limit,
+            members: member_limit,
+            names: name_limit,
+        } = parse_args(std::env::args_os().skip(1))?;
         #[cfg(unix)]
         let path = {
             use std::os::unix::ffi::OsStrExt;
@@ -97,6 +155,7 @@ mod native {
                 let output = output
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("missing output"))?;
+                let limit = byte_limit.unwrap_or(0);
                 let mut file = std::fs::File::create(output)?;
                 let mut total = 0usize;
                 let mut buf = vec![0u8; 64 * 1024];
@@ -109,7 +168,11 @@ mod native {
                     }
                     let n = usize::try_from(n)?;
                     total += n;
-                    anyhow::ensure!(total <= 16 * 1024 * 1024, "Member preview exceeds 16 MiB");
+                    anyhow::ensure!(
+                        total <= limit,
+                        "Member preview exceeds {} limit",
+                        super::describe(limit)
+                    );
                     file.write_all(&buf[..n])?;
                 }
                 println!("{{\"bytes\":{total}}}");
@@ -123,9 +186,12 @@ mod native {
                 anyhow::ensure!(!name.is_null(), "Archive member has no name");
                 let name = unsafe { CStr::from_ptr(name) }.to_string_lossy();
                 names += name.len();
+                let (member_limit, name_limit) =
+                    (member_limit.unwrap_or(0), name_limit.unwrap_or(0));
                 anyhow::ensure!(
-                    name.len() <= 4096 && names <= 256 * 1024 && entries.len() < 4000,
-                    "Archive listing exceeds preview limit (4000 entries / 256 KiB names)"
+                    names <= name_limit && entries.len() < member_limit,
+                    "Archive listing exceeds preview limit ({member_limit} entries / {} names)",
+                    super::describe(name_limit)
                 );
                 entries.push(serde_json::json!({"index":index,"name":name,"size":unsafe{archive_entry_size(entry)},"directory":unsafe{archive_entry_filetype(entry)}==0o040_000,"regular":unsafe{archive_entry_filetype(entry)}==0o100_000,"encrypted":unsafe{archive_entry_is_encrypted(entry)}!=0}));
             }
@@ -136,9 +202,42 @@ mod native {
         Ok(())
     }
 }
+/// Whole binary units for messages, matching `bibli_platform::inspection::limits::describe`.
+fn describe(bytes: usize) -> String {
+    if bytes > 0 && bytes.is_multiple_of(1024 * 1024) {
+        format!("{} MiB", bytes / (1024 * 1024))
+    } else if bytes > 0 && bytes.is_multiple_of(1024) {
+        format!("{} KiB", bytes / 1024)
+    } else {
+        format!("{bytes} bytes")
+    }
+}
 fn main() {
     if let Err(error) = native::run() {
         eprintln!("{error:#}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::native::parse_args;
+    fn args(list: &[&str]) -> Vec<std::ffi::OsString> {
+        list.iter().map(std::ffi::OsString::from).collect()
+    }
+    #[test]
+    fn bounds_are_required_and_parsed() {
+        let listing = parse_args(args(&["a.zip", "--members", "10", "--names", "2048"])).unwrap();
+        assert_eq!(listing.member, None);
+        assert_eq!((listing.members, listing.names), (Some(10), Some(2048)));
+        let read = parse_args(args(&["a.zip", "3", "out", "--bytes", "4096"])).unwrap();
+        assert_eq!(read.member, Some(3));
+        assert_eq!(read.output.as_deref().and_then(|o| o.to_str()), Some("out"));
+        assert_eq!(read.bytes, Some(4096));
+        assert!(parse_args(args(&["a.zip"])).is_err());
+        assert!(parse_args(args(&["a.zip", "3", "out"])).is_err());
+        assert!(parse_args(args(&["a.zip", "--members", "10"])).is_err());
+        assert!(parse_args(args(&["a.zip", "--bytes"])).is_err());
+        assert!(parse_args(args(&[])).is_err());
     }
 }

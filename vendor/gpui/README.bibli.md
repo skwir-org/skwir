@@ -36,6 +36,18 @@ layout (`crates/gpui/...`) so they apply there with `git apply -p1`.
   On Linux, run `just atlas-check` in the development shell. The runner uses an
   isolated copy so GPUI's dev dependencies do not enter bibli's workspace.
 
+  The patch relies on one invariant of the callers. `BladeRenderer::draw`
+  submits the frame, waits for the *previous* submission, then destroys the
+  retired textures. That is sufficient only because every `cx.drop_image`
+  call in bibli runs from an update or render handler, before the current
+  frame's scene is built: a texture retired there can belong to the previous
+  submission (waited for) but never to the scene being drawn. Calling
+  `drop_image` from inside an element's `paint` would retire a texture that
+  primitives already recorded in the in-flight scene still reference, and the
+  renderer would free it while the GPU may still read it. Keep image drops in
+  `update`/`render` code such as `replace_preview_content`, the reader page
+  cache and the thumbnail LRU eviction; never in `prepaint` or `paint`.
+
 ## Regenerating a patch
 
     G=$(ls -d ~/.cargo/registry/src/*/gpui-0.2.2)

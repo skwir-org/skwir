@@ -206,7 +206,8 @@ fn hex_ranges_search_and_truncation() {
             ..view.clone()
         },
     );
-    assert_eq!(found.position, 4080);
+    assert_eq!(found.position, 4094, "the exact match byte, for find-next");
+    assert_eq!(found.rows[0].cells[0], "0000000000000FF0");
     assert!(found.notice.contains("FFE"));
     std::fs::write(&path, [1, 2]).unwrap();
     let truncated = inspect(
@@ -320,4 +321,295 @@ fn epub_chapters_source_navigation_and_disable() {
         },
     );
     assert!(source.plain_text().contains("<h1>"));
+}
+
+/// Every preview plugin the binary wires, each constructed the way main.rs does.
+fn all_preview_plugins() -> Vec<(&'static str, Arc<dyn Plugin>)> {
+    vec![
+        (
+            "preview-media",
+            Arc::new(bibli_plugin_preview_media::PreviewPlugin),
+        ),
+        (
+            "preview-documents",
+            Arc::new(bibli_plugin_preview_documents::PreviewPlugin),
+        ),
+        (
+            "preview-audio",
+            Arc::new(bibli_plugin_preview_audio::PreviewPlugin),
+        ),
+        (
+            "preview-markdown",
+            Arc::new(bibli_plugin_preview_markdown::PreviewPlugin),
+        ),
+        (
+            "preview-archives",
+            Arc::new(bibli_plugin_preview_archives::PreviewPlugin),
+        ),
+        (
+            "preview-epub",
+            Arc::new(bibli_plugin_preview_epub::PreviewPlugin),
+        ),
+        (
+            "preview-tables",
+            Arc::new(bibli_plugin_preview_tables::PreviewPlugin),
+        ),
+        (
+            "preview-structured",
+            Arc::new(bibli_plugin_preview_structured::PreviewPlugin),
+        ),
+        (
+            "preview-fonts",
+            Arc::new(bibli_plugin_preview_fonts::PreviewPlugin),
+        ),
+        (
+            "preview-email",
+            Arc::new(bibli_plugin_preview_email::PreviewPlugin),
+        ),
+        (
+            "preview-comics",
+            Arc::new(bibli_plugin_preview_comics::PreviewPlugin),
+        ),
+        (
+            "preview-hex",
+            Arc::new(bibli_plugin_preview_hex::PreviewPlugin),
+        ),
+    ]
+}
+
+/// Equal-priority providers are ordered by registration, so their accept sets
+/// must stay disjoint: at most one non-fallback plugin may claim a file. The
+/// registry has no accept query, so each plugin is probed alone through
+/// `render`, which returns `Ok(None)` only when nothing accepted the request.
+#[test]
+fn format_providers_never_compete_for_the_same_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fixtures: Vec<(&str, Option<&str>)> = vec![
+        ("notes.md", Some("text/markdown")),
+        ("table.csv", Some("text/csv")),
+        ("table.tsv", Some("text/tab-separated-values")),
+        ("data.json", Some("application/json")),
+        ("data.yaml", Some("application/yaml")),
+        ("data.yml", None),
+        ("data.toml", Some("application/toml")),
+        ("message.eml", Some("message/rfc822")),
+        ("book.epub", Some("application/epub+zip")),
+        ("face.ttf", Some("font/ttf")),
+        ("face.otf", Some("font/otf")),
+        ("bundle.zip", Some("application/zip")),
+        ("bundle.tar.gz", Some("application/gzip")),
+        ("bundle.7z", Some("application/x-7z-compressed")),
+        ("pages.cbz", Some("application/vnd.comicbook+zip")),
+        ("pages.cbr", None),
+        ("clip.asf", Some("application/vnd.ms-asf")),
+        ("clip.mp4", Some("video/mp4")),
+        ("song.mp3", Some("audio/mpeg")),
+        ("paper.pdf", Some("application/pdf")),
+        ("text.odt", Some("application/vnd.oasis.opendocument.text")),
+        ("blob.bin", Some("application/octet-stream")),
+        ("photo.jpg", Some("image/jpeg")),
+    ];
+    let mut claims: Vec<(String, Vec<&str>)> = Vec::new();
+    for (name, mime) in &fixtures {
+        let path = tmp.path().join(name);
+        std::fs::write(&path, b"synthetic").unwrap();
+        let mut accepted = Vec::new();
+        for (id, plugin) in all_preview_plugins() {
+            let app = App::new(AppConfig::ephemeral(tmp.path().join("state").join(id))).unwrap();
+            app.plugins.add(plugin, &app);
+            let request = PreviewRequest {
+                entry: EntryRef::from_path(&path).unwrap(),
+                mime: mime.map(str::to_owned),
+                page: 1,
+                seconds: None,
+                max_side: 64,
+            };
+            if !matches!(app.previews.render(&request, &CancelToken::new()), Ok(None)) {
+                accepted.push(id);
+            }
+        }
+        claims.push(((*name).to_owned(), accepted));
+    }
+    for (name, accepted) in &claims {
+        let format_owners: Vec<_> = accepted.iter().filter(|id| **id != "preview-hex").collect();
+        assert!(
+            format_owners.len() <= 1,
+            "{name} is claimed by several format providers: {format_owners:?}"
+        );
+    }
+    let owner = |name: &str| claims.iter().find(|(n, _)| n == name).unwrap().1.clone();
+    assert_eq!(owner("notes.md"), ["preview-markdown"]);
+    assert_eq!(owner("data.yml"), ["preview-structured"]);
+    assert_eq!(owner("bundle.tar.gz"), ["preview-archives"]);
+    assert_eq!(owner("pages.cbr"), ["preview-comics"]);
+    assert_eq!(owner("clip.asf"), ["preview-media"]);
+    assert_eq!(owner("song.mp3"), ["preview-audio"]);
+    assert_eq!(owner("paper.pdf"), ["preview-documents"]);
+    assert_eq!(
+        owner("blob.bin"),
+        ["preview-hex"],
+        "only the fallback owns generic bytes"
+    );
+    assert!(
+        owner("photo.jpg").is_empty(),
+        "bitmaps are the shell's own preview"
+    );
+}
+
+/// Fonts flow through the registry like any other format; the specimen is a
+/// synthetic TrueType built by the plugin's own test helper shape.
+#[test]
+fn font_specimens_render_and_search_sets_the_sample() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(bibli_plugin_preview_fonts::PreviewPlugin), &app);
+    let path = tmp.path().join("Synthetic face.ttf");
+    std::fs::write(&path, b"not a font at all").unwrap();
+    let request = request(&path);
+    let error = app
+        .previews
+        .inspect(&request, &InspectRequest::default(), &CancelToken::new())
+        .unwrap_err();
+    assert!(!error.to_string().is_empty());
+    let view = InspectRequest {
+        query: Some("Sample".into()),
+        ..InspectRequest::default()
+    };
+    assert!(
+        app.previews
+            .inspect(&request, &view, &CancelToken::new())
+            .is_err(),
+        "a malformed font is an error, never a silent fallback"
+    );
+}
+
+/// An uncompressed RGB PNG built without an encoder dependency.
+fn synthetic_png(width: u32, height: u32) -> Vec<u8> {
+    fn crc(bytes: &[u8]) -> u32 {
+        !bytes.iter().fold(u32::MAX, |crc, &b| {
+            (0..8).fold(crc ^ u32::from(b), |c, _| {
+                if c & 1 == 1 {
+                    0xEDB8_8320 ^ (c >> 1)
+                } else {
+                    c >> 1
+                }
+            })
+        })
+    }
+    fn chunk(out: &mut Vec<u8>, kind: [u8; 4], data: &[u8]) {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        let mut body = kind.to_vec();
+        body.extend_from_slice(data);
+        out.extend_from_slice(&body);
+        out.extend_from_slice(&crc(&body).to_be_bytes());
+    }
+    let mut raw = Vec::new();
+    for _ in 0..height {
+        raw.push(0);
+        raw.extend((0..width).flat_map(|_| [1u8, 2, 3]));
+    }
+    let (mut a, mut b) = (1u32, 0u32);
+    for &byte in &raw {
+        a = (a + u32::from(byte)) % 65521;
+        b = (b + a) % 65521;
+    }
+    let mut idat = vec![0x78, 0x01, 0x01];
+    idat.extend_from_slice(&(raw.len() as u16).to_le_bytes());
+    idat.extend_from_slice(&(!(raw.len() as u16)).to_le_bytes());
+    idat.extend_from_slice(&raw);
+    idat.extend_from_slice(&((b << 16) | a).to_be_bytes());
+    let mut ihdr = Vec::new();
+    ihdr.extend_from_slice(&width.to_be_bytes());
+    ihdr.extend_from_slice(&height.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 2, 0, 0, 0]);
+    let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+    chunk(&mut out, *b"IHDR", &ihdr);
+    chunk(&mut out, *b"IDAT", &idat);
+    chunk(&mut out, *b"IEND", &[]);
+    out
+}
+
+fn archive_worker() -> Option<std::path::PathBuf> {
+    if let Some(path) = std::env::var_os("BIBLI_ARCHIVE_WORKER") {
+        return Some(path.into());
+    }
+    let built =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/bibli-archive-worker");
+    built.is_file().then_some(built)
+}
+
+/// Needs the libarchive helper built beside the workspace target (`just
+/// previews-check` builds it); skips with a note otherwise.
+#[test]
+fn archive_members_preview_as_image_text_or_paged_bytes() {
+    use std::io::Write;
+    let Some(worker) = archive_worker() else {
+        eprintln!("skipped: bibli-archive-worker is not built");
+        return;
+    };
+    // The helper path is process-wide; tests in this binary run in separate
+    // processes under nextest, so the variable cannot leak into another test.
+    // SAFETY: no other thread of this test process reads the environment.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var("BIBLI_ARCHIVE_WORKER", &worker);
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(bibli_plugin_preview_archives::PreviewPlugin), &app);
+    let path = tmp.path().join("Synthetic bundle's.zip");
+    let png = synthetic_png(3, 2);
+    let text = "caf\u{e9} member\n".repeat(20);
+    let binary: Vec<u8> = (0..=255u8).cycle().take(5000).collect();
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+    for (name, body) in [
+        ("folder/cover.png", png.as_slice()),
+        ("folder/notes.txt", text.as_bytes()),
+        ("blob.bin", &binary),
+        ("../outside.txt", b"a name, never a path"),
+    ] {
+        zip.start_file(
+            name,
+            zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated),
+        )
+        .unwrap();
+        zip.write_all(body).unwrap();
+    }
+    zip.finish().unwrap();
+    let listing = inspect(&app, &path, &InspectRequest::default());
+    assert_eq!(
+        listing.kind,
+        bibli_core::inspection::InspectionKind::Archive
+    );
+    let target = |name: &str| {
+        let row = listing.rows.iter().find(|r| r.cells[0] == name).unwrap();
+        InspectRequest {
+            target: row.target.clone(),
+            ..InspectRequest::default()
+        }
+    };
+    let image = inspect(&app, &path, &target("cover.png"));
+    assert_eq!(image.image.map(|i| (i.width, i.height)), Some((3, 2)));
+    let notes = inspect(&app, &path, &target("notes.txt"));
+    assert_eq!(notes.plain_text(), text);
+    let bytes = inspect(&app, &path, &target("blob.bin"));
+    assert_eq!(bytes.kind, bibli_core::inspection::InspectionKind::Hex);
+    assert_eq!(bytes.rows.len(), 256);
+    assert_eq!(bytes.next, Some(4096));
+    let second = inspect(
+        &app,
+        &path,
+        &InspectRequest {
+            offset: 4096,
+            ..target("blob.bin")
+        },
+    );
+    assert_eq!(second.position, 4096);
+    assert_eq!(second.rows[0].cells[0], "0000000000001000");
+    let outside = inspect(&app, &path, &target("outside.txt"));
+    assert_eq!(outside.plain_text(), "a name, never a path");
+    assert!(!tmp.path().parent().unwrap().join("outside.txt").exists());
 }

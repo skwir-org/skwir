@@ -1,11 +1,11 @@
 //! Range-based hex viewer; whole-file searches stream and support cancellation.
 use bibli_core::{
     App, CancelToken,
-    inspection::{InspectRequest, Inspection, Row},
+    inspection::{InspectRequest, Inspection},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
 };
-use bibli_platform::inspection::{check, read};
+use bibli_platform::inspection::{self, HEX_ROW, check, limits, read};
 use std::{io::Read, sync::Arc};
 pub struct PreviewPlugin;
 impl Plugin for PreviewPlugin {
@@ -20,7 +20,6 @@ impl Plugin for PreviewPlugin {
     }
 }
 struct Provider;
-const PAGE: u64 = 4096;
 impl PreviewProvider for Provider {
     fn priority(&self) -> i32 {
         -100
@@ -31,6 +30,8 @@ impl PreviewProvider for Provider {
     fn accepts(&self, req: &PreviewRequest) -> bool {
         req.mime.as_deref() == Some("application/octet-stream")
     }
+    /// A search starts at `view.offset` and reports the match's exact byte as
+    /// `position`, so a caller that resumes one byte later finds the next one.
     fn inspect(
         &self,
         req: &PreviewRequest,
@@ -39,71 +40,47 @@ impl PreviewProvider for Provider {
     ) -> anyhow::Result<Option<Inspection>> {
         let path = req.entry.resolve()?;
         let len = path.metadata()?.len();
-        let mut offset = view.offset.min(len.saturating_sub(1)) / 16 * 16;
+        let row = HEX_ROW as u64;
+        let mut position = view.offset.min(len.saturating_sub(1)) / row * row;
         let mut notice = String::new();
         if let Some(query) = &view.query {
-            let needle = if let Some(hex) = query.strip_prefix("hex:") {
-                let hex: String = hex.chars().filter(|c| !c.is_whitespace()).collect();
-                anyhow::ensure!(
-                    hex.is_ascii() && hex.len() % 2 == 0,
-                    "Use pairs of hexadecimal digits"
-                );
-                (0..hex.len())
-                    .step_by(2)
-                    .map(|i| u8::from_str_radix(&hex[i..i + 2], 16))
-                    .collect::<Result<Vec<_>, _>>()?
-            } else {
-                query.as_bytes().to_vec()
-            };
-            anyhow::ensure!(
-                !needle.is_empty() && needle.len() <= 4096,
-                "Search must contain 1–4096 bytes"
-            );
+            let needle = needle(query)?;
             if let Some(found) = find(&path, &needle, view.offset, cancel)? {
-                offset = found / 16 * 16;
+                position = found;
                 notice = format!("Match at 0x{found:X}");
             } else {
                 notice = "No further match".into();
             }
         }
-        let bytes = read(&path, offset, PAGE as usize, cancel)?;
-        let rows = bytes
-            .chunks(16)
-            .enumerate()
-            .map(|(i, chunk)| Row {
-                cells: vec![
-                    format!("{:016X}", offset + i as u64 * 16),
-                    hex_bytes(chunk),
-                    chunk
-                        .iter()
-                        .map(|b| {
-                            if b.is_ascii_graphic() || *b == b' ' {
-                                char::from(*b)
-                            } else {
-                                '.'
-                            }
-                        })
-                        .collect(),
-                ],
-                ..Row::default()
-            })
-            .collect();
-        Ok(Some(Inspection {
-            kind: bibli_core::inspection::InspectionKind::Hex,
-            title: format!("Hex · {len} bytes"),
-            rows,
-            columns: vec![
-                "Offset".into(),
-                hex_bytes(&(0..16).collect::<Vec<_>>()),
-                "ASCII".into(),
-            ],
-            position: offset,
-            previous: (offset > 0).then(|| offset.saturating_sub(PAGE)),
-            next: (offset + PAGE < len).then_some(offset + PAGE),
-            notice,
-            ..Inspection::default()
-        }))
+        let offset = position / row * row;
+        let bytes = read(&path, offset, limits::HEX_PAGE as usize, cancel)?;
+        let mut page =
+            inspection::hex_page(format!("Hex · {len} bytes"), &bytes, len, offset, position);
+        page.notice = notice;
+        Ok(Some(page))
     }
+}
+/// `hex: 6e 65` byte pairs, or the query's UTF-8 bytes.
+fn needle(query: &str) -> anyhow::Result<Vec<u8>> {
+    let needle = if let Some(hex) = query.strip_prefix("hex:") {
+        let hex: String = hex.chars().filter(|c| !c.is_whitespace()).collect();
+        anyhow::ensure!(
+            hex.is_ascii() && hex.len().is_multiple_of(2),
+            "Use pairs of hexadecimal digits"
+        );
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16))
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        query.as_bytes().to_vec()
+    };
+    anyhow::ensure!(
+        !needle.is_empty() && needle.len() <= limits::HEX_NEEDLE,
+        "Search must contain 1–{} bytes",
+        limits::HEX_NEEDLE
+    );
+    Ok(needle)
 }
 fn find(
     path: &std::path::Path,
@@ -136,23 +113,11 @@ fn find(
     }
 }
 
-fn hex_bytes(bytes: &[u8]) -> String {
-    use std::fmt::Write;
-    let mut out = String::new();
-    for (i, b) in bytes.iter().enumerate() {
-        if i > 0 {
-            out.push(' ');
-            if i % 8 == 0 {
-                out.push(' ');
-            }
-        }
-        let _ = write!(out, "{b:02X}");
-    }
-    out
-}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bibli_core::op::EntryRef;
+
     #[test]
     fn search_crosses_chunks_and_cancels() {
         let tmp = tempfile::NamedTempFile::new().unwrap();
@@ -166,5 +131,69 @@ mod tests {
         let c = CancelToken::new();
         c.cancel();
         assert!(find(tmp.path(), b"x", 0, &c).is_err());
+    }
+
+    #[test]
+    fn needles_parse_hex_pairs_and_reject_empty_or_odd_input() {
+        assert_eq!(needle("hex: 6e 65 ").unwrap(), b"ne");
+        assert_eq!(needle("né").unwrap(), "né".as_bytes());
+        assert!(needle("hex:6").is_err());
+        assert!(needle("hex:zz").is_err());
+        assert!(needle("").is_err());
+        assert!(needle(&"a".repeat(limits::HEX_NEEDLE + 1)).is_err());
+    }
+
+    #[test]
+    fn repeated_search_resumes_after_the_previous_match() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("Synthetic bytes.bin");
+        let mut bytes = vec![0u8; 9000];
+        // Two occurrences on the same row, then one on a later page.
+        bytes[100..106].copy_from_slice(b"needle");
+        bytes[108..114].copy_from_slice(b"needle");
+        bytes[8000..8006].copy_from_slice(b"needle");
+        std::fs::write(&path, &bytes).unwrap();
+        let request = PreviewRequest {
+            entry: EntryRef::from_path(&path).unwrap(),
+            mime: Some("application/octet-stream".into()),
+            page: 1,
+            seconds: None,
+            max_side: 64,
+        };
+        let cancel = CancelToken::new();
+        let search = |offset: u64| {
+            Provider
+                .inspect(
+                    &request,
+                    &InspectRequest {
+                        query: Some("needle".into()),
+                        offset,
+                        ..InspectRequest::default()
+                    },
+                    &cancel,
+                )
+                .unwrap()
+                .unwrap()
+        };
+        let first = search(0);
+        assert_eq!(first.position, 100);
+        assert_eq!(
+            first.rows[0].cells[0], "0000000000000060",
+            "match row on top"
+        );
+        assert_eq!(first.notice, "Match at 0x64");
+        let second = search(first.position + 1);
+        assert_eq!(second.position, 108, "same row, distinct match");
+        let third = search(second.position + 1);
+        assert_eq!(third.position, 8000);
+        assert_eq!(third.rows[0].cells[0], "0000000000001F40");
+        assert_eq!(third.previous, Some(8000 - 4096));
+        let none = search(third.position + 1);
+        assert_eq!(none.notice, "No further match");
+        assert_eq!(
+            none.position,
+            8000 / 16 * 16,
+            "view stays on the current page"
+        );
     }
 }

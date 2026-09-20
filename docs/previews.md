@@ -11,7 +11,7 @@ Each format is enabled by an independent plugin in **Settings → Plugins**:
 | `preview-audio` | Audio playback, seeking, volume, speed, tags, embedded cover and live spectrum. Playback starts paused. |
 | `preview-hex` | Read-only hexadecimal/ASCII ranges for binary files; available explicitly for any file. Jump to a decimal or `0x` offset; search text or `hex: 00 ff 7a` byte sequences. |
 | `preview-markdown` | Markdown reading mode with source toggle, headings, emphasis, lists, tables, code highlighting, links and local images. |
-| `preview-archives` | File-list-style archive tree with themed icons, folders first, aligned sizes, expand/collapse controls and selected-member image/text/byte previews. |
+| `preview-archives` | File-list-style archive tree with themed icons, folders first, aligned sizes, expand/collapse controls and selected-member image/text previews; other members show paged hexadecimal bytes. |
 | `preview-epub` | Reflowing EPUB chapters, contents, embedded images, links, text size, selection/copy, source and book search. |
 | `preview-tables` | CSV/TSV tables, quoted multiline cells, horizontal scrolling and section navigation. |
 | `preview-structured` | Syntax-highlighted JSON/YAML/TOML code with line numbers, folding and source toggle. |
@@ -22,8 +22,11 @@ Each format is enabled by an independent plugin in **Settings → Plugins**:
 Text can be drag-selected and copied with the toolbar or **Ctrl+C** while the
 reader has focus. With no text range, Copy uses the selected row or current
 section. **Ctrl+F** searches the focused viewer; the search button is always
-available. Hex search streams from the current offset; EPUB search checks book
-chapters. Other viewers search the loaded section. The command palette exposes
+available. Repeating a search continues after the previous match: hex search
+streams from the byte after the last hit; EPUB search first looks further in
+the shown chapter, then asks the book for the next chapter with a match and
+wraps around. Other viewers search the loaded section after the selected item.
+The command palette exposes
 Preview: hexadecimal, default presentation, source / rendered, find content,
 headings and contents, copy content and page navigation.
 
@@ -71,7 +74,9 @@ code previews are bounded to 2 MiB, 10000 lines and 4096 bytes per line.
 
 `just previews-check` generates temporary audio and archives and exercises real
 workers, using a clocked fake audio sink. It verifies tags, spectrum, seek/pause,
-archive member reads, path handling, output limits and symlink rejection. This
+archive member reads, path handling, caller-provided output limits and symlink
+rejection. The archive worker takes every bound as an argument (`--members`,
+`--names`, `--bytes`) from `bibli_platform::inspection::limits`. This
 does not establish audible output quality on a real device.
 It also generates ASF video and audio-only fixtures and checks stream detection,
 playback, seeking and pause without an audio-only filename hint.

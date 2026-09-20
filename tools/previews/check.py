@@ -79,30 +79,40 @@ fn main() {
     subprocess.run(["ffmpeg", "-y", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-i", str(root / "cover.png"), "-map", "0:a", "-map", "1:v", "-t", "8", "-c:a", "flac", "-c:v", "png", "-disposition:v", "attached_pic", "-metadata", "title=Synthetic tone", "-metadata", "artist=Example performer", str(root / "10 Audio.flac")], check=True)
 
 
+# The helper takes every bound from its caller (bibli-platform's shared limits);
+# these mirror bibli_platform::inspection::limits for the direct checks below.
+MEMBER_BYTES = 16 * 1024 * 1024
+LISTING = ["--members", "4000", "--names", str(256 * 1024)]
+
+
 def check_archive(executable, root):
     path = root / "06 Archive's.zip"
-    entries = json.loads(subprocess.check_output([executable, str(path)]))
+    entries = json.loads(subprocess.check_output([executable, str(path), *LISTING]))
     assert len(entries) == 4
     with tempfile.TemporaryDirectory() as tmp:
         output = Path(tmp) / "member"
         target = next(e for e in entries if e["name"] == "../outside.txt")
-        subprocess.run([executable, str(path), str(target["index"]), str(output)], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run([executable, str(path), str(target["index"]), str(output), "--bytes", str(MEMBER_BYTES)], check=True, stdout=subprocess.DEVNULL)
         assert output.read_text() == "A name, never an extraction path"
         assert not (Path(tmp).parent / "outside.txt").exists()
         bomb = Path(tmp) / "large.zip"
         with zipfile.ZipFile(bomb, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("large", bytes(17 * 1024 * 1024))
-        result = subprocess.run([executable, str(bomb), "0", str(output)], capture_output=True)
+        result = subprocess.run([executable, str(bomb), "0", str(output), "--bytes", str(MEMBER_BYTES)], capture_output=True)
         assert result.returncode != 0 and b"16 MiB" in result.stderr
+        result = subprocess.run([executable, str(bomb), "0", str(output)], capture_output=True)
+        assert result.returncode != 0 and b"--bytes" in result.stderr, "a member read without a bound is refused"
+        result = subprocess.run([executable, str(path), "--members", "2", "--names", "4096"], capture_output=True)
+        assert result.returncode != 0 and b"2 entries" in result.stderr, "listing bounds come from the caller"
         tar = Path(tmp) / "links.tar"
         with tarfile.open(tar, "w") as archive:
             entry = tarfile.TarInfo("link")
             entry.type = tarfile.SYMTYPE
             entry.linkname = "../outside"
             archive.addfile(entry)
-        result = subprocess.run([executable, str(tar), "0", str(output)], capture_output=True)
+        result = subprocess.run([executable, str(tar), "0", str(output), "--bytes", str(MEMBER_BYTES)], capture_output=True)
         assert result.returncode != 0 and b"regular" in result.stderr
-    print("Archive: ZIP listing, selected bytes, traversal names, size cap and symlink rejection passed")
+    print("Archive: ZIP listing, selected bytes, traversal names, caller-provided bounds and symlink rejection passed")
 
 
 def check_audio(executable, root):

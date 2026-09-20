@@ -5,7 +5,7 @@ use bibli_core::{
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
 };
-use bibli_platform::inspection;
+use bibli_platform::inspection::{self, limits};
 use std::sync::Arc;
 pub struct PreviewPlugin;
 impl Plugin for PreviewPlugin {
@@ -40,7 +40,8 @@ impl PreviewProvider for Provider {
         if view.source {
             return inspection::source(&path, view.offset, cancel).map(Some);
         }
-        // Bound record allocation as well as row count (one quoted field can be huge).
+        // The whole input is bounded, and each cell is cut to TABLE_CELL
+        // characters so one huge quoted field cannot dominate a row.
         let source = inspection::text(&path, cancel)?;
         let mut reader = csv::ReaderBuilder::new()
             .delimiter(if inspection::extension(&path) == "tsv" {
@@ -50,11 +51,12 @@ impl PreviewProvider for Provider {
             })
             .flexible(true)
             .from_reader(source.as_bytes());
+        let mut truncated = 0usize;
         let columns = reader
             .headers()?
             .iter()
-            .take(64)
-            .map(str::to_owned)
+            .take(limits::TABLE_COLUMNS)
+            .map(|cell| bounded_cell(cell, &mut truncated))
             .collect();
         let mut rows = Vec::new();
         let mut more = false;
@@ -64,19 +66,24 @@ impl PreviewProvider for Provider {
             if (i as u64) < view.offset {
                 continue;
             }
-            if rows.len() == 500 {
+            if rows.len() == limits::TABLE_ROWS {
                 more = true;
                 break;
             }
             anyhow::ensure!(
-                record.len() <= 64,
-                "Table preview supports at most 64 columns"
+                record.len() <= limits::TABLE_COLUMNS,
+                "Table preview supports at most {} columns",
+                limits::TABLE_COLUMNS
             );
             rows.push(Row {
-                cells: record.iter().map(str::to_owned).collect(),
+                cells: record
+                    .iter()
+                    .map(|cell| bounded_cell(cell, &mut truncated))
+                    .collect(),
                 ..Row::default()
             });
         }
+        let page = limits::TABLE_ROWS as u64;
         Ok(Some(Inspection {
             kind: bibli_core::inspection::InspectionKind::Table,
             title: format!(
@@ -87,10 +94,48 @@ impl PreviewProvider for Provider {
             columns,
             rows,
             position: view.offset,
-            previous: (view.offset > 0).then(|| view.offset.saturating_sub(500)),
-            next: more.then_some(view.offset + 500),
+            previous: (view.offset > 0).then(|| view.offset.saturating_sub(page)),
+            next: more.then_some(view.offset + page),
             source_available: true,
+            notice: if truncated > 0 {
+                format!(
+                    "{truncated} cell{} longer than {} characters shortened",
+                    if truncated == 1 { "" } else { "s" },
+                    limits::TABLE_CELL
+                )
+            } else {
+                String::new()
+            },
             ..Inspection::default()
         }))
+    }
+}
+
+/// Keep at most `TABLE_CELL` characters of a cell and mark the cut visibly.
+fn bounded_cell(cell: &str, truncated: &mut usize) -> String {
+    match cell.char_indices().nth(limits::TABLE_CELL) {
+        Some((end, _)) => {
+            *truncated += 1;
+            format!("{}…", &cell[..end])
+        }
+        None => cell.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cells_are_cut_at_the_limit_and_counted() {
+        let mut truncated = 0;
+        let short = "é".repeat(limits::TABLE_CELL);
+        assert_eq!(bounded_cell(&short, &mut truncated), short);
+        assert_eq!(truncated, 0);
+        let long = "é".repeat(limits::TABLE_CELL + 1);
+        let cut = bounded_cell(&long, &mut truncated);
+        assert_eq!(cut.chars().count(), limits::TABLE_CELL + 1);
+        assert!(cut.ends_with('…'));
+        assert_eq!(truncated, 1);
     }
 }

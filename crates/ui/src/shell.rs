@@ -47,6 +47,8 @@ pub struct PaneUi {
     /// Instantiated views by id; the active one is taken out during render.
     pub views: HashMap<&'static str, Box<dyn PaneView>>,
     view_registrations: HashMap<String, bibli_core::registry::Factory>,
+    /// Registry revision the registrations above were reconciled against.
+    views_revision: u64,
     pub view_id: &'static str,
     pub grid_rows_visible: usize,
     pub usage: UsageState,
@@ -195,6 +197,9 @@ impl Shell {
                 views.insert(v.id(), v);
             }
         }
+        // Read the revision before the descriptors: a registration landing
+        // between the two reads is then picked up by the next sync_views.
+        let views_revision = self.app.registry.views.revision();
         PaneUi {
             id,
             focus: cx.focus_handle(),
@@ -209,6 +214,7 @@ impl Shell {
                 .into_iter()
                 .map(|s| (s.id.to_string(), s.factory))
                 .collect(),
+            views_revision,
             views,
             view_id: view::LIST,
             grid_rows_visible: 4,
@@ -366,8 +372,22 @@ impl Shell {
     }
 
     fn sync_views(&mut self) {
+        // One atomic per frame: reconcile only when the registry changed since
+        // a pane last looked, so descriptors are cloned per change, not per frame.
+        let revision = self.app.registry.views.revision();
+        if self
+            .panes
+            .iter()
+            .all(|pane| pane.views_revision == revision)
+        {
+            return;
+        }
         let specs = self.app.registry.views.all();
         for pane in &mut self.panes {
+            if pane.views_revision == revision {
+                continue;
+            }
+            pane.views_revision = revision;
             let replaced = view::reconcile(&mut pane.views, &mut pane.view_registrations, &specs);
             if replaced.iter().any(|id| id == "usage") {
                 pane.usage = UsageState::default();
@@ -440,8 +460,11 @@ impl Shell {
             self.open_fallback(window, cx);
             return;
         }
-        if name == "refresh" && self.ui().view_id == "usage" {
-            self.refresh_usage(cx);
+        if name == "refresh" {
+            if self.ui().view_id == "usage" {
+                self.refresh_usage(cx);
+            }
+            self.reader_retry_pages();
         }
         let inv = Invocation {
             name: name.into(),

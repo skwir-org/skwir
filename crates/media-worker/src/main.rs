@@ -11,7 +11,11 @@ use gstreamer_video::{VideoFrameExt, VideoFrameRef, VideoInfo};
 use std::{
     fs::OpenOptions,
     io::{BufRead, Read, Seek, SeekFrom, Write},
-    sync::mpsc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     time::{Duration, Instant},
 };
 
@@ -44,7 +48,9 @@ impl Drop for Player {
     }
 }
 impl Player {
-    fn new(path: &std::path::Path) -> anyhow::Result<Self> {
+    /// Builds the pipeline and wires its bus and sink to `events` before any
+    /// state change, so no message can be queued where the loop cannot see it.
+    fn new(path: &std::path::Path, events: &Arc<Events>) -> anyhow::Result<Self> {
         let sink = AppSink::builder()
             .caps(
                 &gst::Caps::builder("video/x-raw")
@@ -110,6 +116,29 @@ impl Player {
                 .build()?;
             pipeline.set_property("audio-sink", audio);
         }
+        // The sync handler runs on the posting thread and hands the message
+        // itself to the loop: wake and payload are one object, so the loop can
+        // never drain an empty queue and sleep while a message is pending.
+        let bus = pipeline.bus().context("pipeline bus")?;
+        let bus_events = events.clone();
+        bus.set_sync_handler(move |_, message| {
+            let _ = bus_events.tx.send(Event::Bus(message.clone()));
+            gst::BusSyncReply::Drop
+        });
+        let sample_events = events.clone();
+        let preroll_events = events.clone();
+        sink.set_callbacks(
+            gstreamer_app::AppSinkCallbacks::builder()
+                .new_sample(move |_| {
+                    sample_events.wake();
+                    Ok(gst::FlowSuccess::Ok)
+                })
+                .new_preroll(move |_| {
+                    preroll_events.wake();
+                    Ok(gst::FlowSuccess::Ok)
+                })
+                .build(),
+        );
         let player = Self {
             pipeline,
             sink,
@@ -128,6 +157,11 @@ impl Player {
         };
         player.pipeline.set_state(gst::State::Paused)?;
         Ok(player)
+    }
+
+    /// Whether the last asynchronous state change has completed.
+    fn settled(&self) -> bool {
+        self.pipeline.state(gst::ClockTime::ZERO).0 == Ok(gst::StateChangeSuccess::Success)
     }
 
     fn seek(&mut self, seconds: f64, rate: f64) -> anyhow::Result<()> {
@@ -208,9 +242,7 @@ impl Player {
         // Flushing seeks re-preroll asynchronously. Keep the requested position
         // until the pipeline completes that transition, even if an older
         // AsyncDone message is still queued on its bus.
-        if self.seeking
-            && self.pipeline.state(gst::ClockTime::ZERO).0 == Ok(gst::StateChangeSuccess::Success)
-        {
+        if self.seeking && self.settled() {
             self.seeking = false;
         }
         if self.restore.is_none() && !self.seeking {
@@ -256,12 +288,10 @@ impl Player {
         // Dynamic output replacement can deadlock a paused subtitle pipeline.
         // Re-preroll from READY with the desired streams, then restore position.
         // The UI retains its last image throughout; no stale preroll is published.
+        // Messages posted before this point may still be queued for the loop;
+        // the AsyncDone handler ignores them until the new preroll settles.
         let position = self.restore.unwrap_or(self.state.position);
         self.pipeline.set_state(gst::State::Ready)?;
-        if let Some(bus) = self.pipeline.bus() {
-            bus.set_flushing(true);
-            bus.set_flushing(false);
-        }
         self.state.audio = audio;
         self.state.subtitle = subtitle;
         self.state.seekable = false;
@@ -305,8 +335,24 @@ impl Player {
 
 enum Event {
     Request(Request),
+    /// A bus message, delivered with the wake that announces it.
+    Bus(gst::Message),
     Wake,
     Closed,
+}
+
+/// The loop's inbox. Bus messages and requests are never dropped; sink wakes
+/// carry no payload and coalesce to one outstanding message.
+struct Events {
+    tx: mpsc::Sender<Event>,
+    wake_pending: AtomicBool,
+}
+impl Events {
+    fn wake(&self) {
+        if !self.wake_pending.swap(true, Ordering::AcqRel) {
+            let _ = self.tx.send(Event::Wake);
+        }
+    }
 }
 
 fn spectrum_filter() -> Option<gst::Element> {
@@ -337,8 +383,12 @@ fn run() -> anyhow::Result<()> {
     let mut pixels = OpenOptions::new()
         .write(true)
         .open(scratch.join(PIXELS_FILE))?;
-    let (tx, rx) = mpsc::sync_channel(32);
-    let input_tx = tx.clone();
+    let (tx, rx) = mpsc::channel();
+    let events = Arc::new(Events {
+        tx,
+        wake_pending: AtomicBool::new(false),
+    });
+    let input_tx = events.tx.clone();
     std::thread::spawn(move || {
         let mut input = std::io::stdin().lock();
         loop {
@@ -363,43 +413,21 @@ fn run() -> anyhow::Result<()> {
         }
         let _ = input_tx.send(Event::Closed);
     });
-    let mut player = Player::new(&path)?;
-    let bus = player.pipeline.bus().context("pipeline bus")?;
-    let bus_tx = tx.clone();
-    bus.set_sync_handler(move |_, _| {
-        let _ = bus_tx.try_send(Event::Wake);
-        gst::BusSyncReply::Pass
-    });
-    let sample_tx = tx.clone();
-    player.sink.set_callbacks(
-        gstreamer_app::AppSinkCallbacks::builder()
-            .new_sample(move |_| {
-                let _ = sample_tx.try_send(Event::Wake);
-                Ok(gst::FlowSuccess::Ok)
-            })
-            .new_preroll(move |_| {
-                let _ = tx.try_send(Event::Wake);
-                Ok(gst::FlowSuccess::Ok)
-            })
-            .build(),
-    );
+    let mut player = Player::new(&path, &events)?;
     let mut occupied = false;
     let mut ready = false;
     let mut dirty = true;
     let mut last_status = Instant::now();
-    let started = Instant::now();
     loop {
-        // A paused, initialized player sleeps until decoder/input events arrive.
-        // Only the playing clock and startup need timed progress checks.
-        let event = if ready
-            && !player.state.playing()
-            && player.restore.is_none()
-            && player.selection.is_none()
-        {
-            rx.recv().map_err(|_| mpsc::RecvTimeoutError::Disconnected)
-        } else {
-            rx.recv_timeout(Duration::from_millis(250))
-        };
+        // A paused or starting player sleeps until decoder/input events arrive.
+        // Only the playing clock needs timed status reports. Startup has no
+        // deadline here: the manager owns it and kills the process.
+        let event =
+            if player.state.playing() || player.restore.is_some() || player.selection.is_some() {
+                rx.recv_timeout(Duration::from_millis(250))
+            } else {
+                rx.recv().map_err(|_| mpsc::RecvTimeoutError::Disconnected)
+            };
         match event {
             Ok(Event::Request(Request::Consumed)) => occupied = false,
             Ok(Event::Request(Request::Control {
@@ -408,7 +436,12 @@ fn run() -> anyhow::Result<()> {
             })) => {
                 player.generation = generation;
                 if let Err(error) = player.control(command) {
-                    reply(&Reply::Error(error.to_string()))?;
+                    // Not fatal: the session continues and the following
+                    // State reply restores what the player actually did.
+                    reply(&Reply::Rejected {
+                        generation,
+                        message: error.to_string(),
+                    })?;
                 }
                 dirty = true;
             }
@@ -418,116 +451,12 @@ fn run() -> anyhow::Result<()> {
                 // exit closes audio/device handles without waiting on it.
                 std::process::exit(0);
             }
-            Ok(Event::Wake) | Err(mpsc::RecvTimeoutError::Timeout) => {}
-        }
-        while let Some(message) = bus.pop() {
-            match message.view() {
-                gst::MessageView::Error(error) => {
-                    anyhow::bail!("Playback failed: {}", error.error())
-                }
-                gst::MessageView::Eos(_) => {
-                    player.pipeline.set_state(gst::State::Paused)?;
-                    player.state.status = PlaybackStatus::Ended;
-                    dirty = true;
-                }
-                gst::MessageView::StreamsSelected(message) => {
-                    let actual: Vec<_> = message.streams().filter_map(|s| s.stream_id()).collect();
-                    if player.selection.as_ref().is_some_and(|wanted| {
-                        wanted.len() == actual.len() && wanted.iter().all(|id| actual.contains(id))
-                    }) {
-                        player.selection = None;
-                        dirty = true;
-                    }
-                }
-                gst::MessageView::Tag(message) => {
-                    let tags = message.tags();
-                    if let Some(v) = tags.get::<gst::tags::Title>() {
-                        player.state.title = v.get().chars().take(512).collect();
-                    }
-                    if let Some(v) = tags.get::<gst::tags::Artist>() {
-                        player.state.artist = v.get().chars().take(512).collect();
-                    }
-                    if let Some(v) = tags.get::<gst::tags::Album>() {
-                        player.state.album = v.get().chars().take(512).collect();
-                    }
-                    dirty = true;
-                }
-                gst::MessageView::Element(message) => {
-                    if player.state.playing()
-                        && let Some(s) = message.structure()
-                        && s.name() == "spectrum"
-                        && let Ok(values) = s.get::<gst::List>("magnitude")
-                    {
-                        player.state.spectrum = values
-                            .iter()
-                            .take(32)
-                            .filter_map(|v| v.get::<f32>().ok())
-                            .map(|v| {
-                                if v.is_finite() {
-                                    ((v + 60.) / 60.).clamp(0., 1.)
-                                } else {
-                                    0.
-                                }
-                            })
-                            .collect();
-                        dirty = true;
-                    }
-                }
-                gst::MessageView::StreamCollection(message) => {
-                    player.streams = message.stream_collection().iter().take(128).collect();
-                    player.state.audio_only = player.audio_only
-                        || (!player
-                            .streams
-                            .iter()
-                            .any(|s| s.stream_type().contains(gst::StreamType::VIDEO))
-                            && player
-                                .streams
-                                .iter()
-                                .any(|s| s.stream_type().contains(gst::StreamType::AUDIO)));
-                    // Ambiguous containers (e.g. ASF) become audio previews only
-                    // after stream discovery. Video pipelines retain no FFT filter.
-                    if player.state.audio_only
-                        && player.spectrum.is_none()
-                        && let Some(filter) = spectrum_filter()
-                    {
-                        player.pipeline.set_property("audio-filter", &filter);
-                        player.spectrum = Some(filter);
-                    }
-                    if let Some(filter) = &player.spectrum {
-                        filter.set_property("post-messages", player.state.audio_only);
-                    }
-                    player.state.audio_tracks = player.tracks(gst::StreamType::AUDIO);
-                    player.state.subtitle_tracks = player.tracks(gst::StreamType::TEXT);
-                    if player.state.audio == -1 && !player.state.audio_tracks.is_empty() {
-                        player.state.audio = 0;
-                    }
-                    if !player.selected {
-                        player.selected = true;
-                        player.select_tracks(player.state.audio, player.state.subtitle)?;
-                    }
-                    dirty = true;
-                }
-                gst::MessageView::AsyncDone(_) => {
-                    if let Some(position) = player.restore.take() {
-                        player.refresh();
-                        player.seek(position, player.state.rate)?;
-                        if player.state.playing() {
-                            player.pipeline.set_state(gst::State::Playing)?;
-                        }
-                    }
-                    if !ready {
-                        reply(&Reply::Ready)?;
-                        ready = true;
-                    }
-                    dirty = true;
-                }
-                _ => {}
+            Ok(Event::Bus(message)) => {
+                handle_message(&mut player, &message, &mut ready, &mut dirty)?;
             }
+            Ok(Event::Wake) => events.wake_pending.store(false, Ordering::Release),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
-        anyhow::ensure!(
-            ready || started.elapsed() < Duration::from_secs(15),
-            "video startup timed out"
-        );
         if ready {
             player.refresh();
         }
@@ -605,6 +534,134 @@ fn run() -> anyhow::Result<()> {
             last_status = Instant::now();
         }
     }
+}
+
+/// Applies one bus message. Errors end the session; everything else updates
+/// the published state.
+fn handle_message(
+    player: &mut Player,
+    message: &gst::Message,
+    ready: &mut bool,
+    dirty: &mut bool,
+) -> anyhow::Result<()> {
+    match message.view() {
+        gst::MessageView::Error(error) => {
+            anyhow::bail!("Playback failed: {}", error.error())
+        }
+        gst::MessageView::Eos(_) => {
+            player.pipeline.set_state(gst::State::Paused)?;
+            player.state.status = PlaybackStatus::Ended;
+            *dirty = true;
+        }
+        gst::MessageView::StreamsSelected(message) => {
+            let actual: Vec<_> = message.streams().filter_map(|s| s.stream_id()).collect();
+            if player.selection.as_ref().is_some_and(|wanted| {
+                wanted.len() == actual.len() && wanted.iter().all(|id| actual.contains(id))
+            }) {
+                player.selection = None;
+                *dirty = true;
+            }
+        }
+        gst::MessageView::Tag(message) => {
+            let tags = message.tags();
+            if let Some(v) = tags.get::<gst::tags::Title>() {
+                player.state.title = v.get().chars().take(512).collect();
+            }
+            if let Some(v) = tags.get::<gst::tags::Artist>() {
+                player.state.artist = v.get().chars().take(512).collect();
+            }
+            if let Some(v) = tags.get::<gst::tags::Album>() {
+                player.state.album = v.get().chars().take(512).collect();
+            }
+            *dirty = true;
+        }
+        gst::MessageView::Element(message) => {
+            if player.state.playing()
+                && let Some(s) = message.structure()
+                && s.name() == "spectrum"
+                && let Ok(values) = s.get::<gst::List>("magnitude")
+            {
+                player.state.spectrum = values
+                    .iter()
+                    .take(32)
+                    .filter_map(|v| v.get::<f32>().ok())
+                    .map(|v| {
+                        if v.is_finite() {
+                            ((v + 60.) / 60.).clamp(0., 1.)
+                        } else {
+                            0.
+                        }
+                    })
+                    .collect();
+                *dirty = true;
+            }
+        }
+        gst::MessageView::StreamCollection(message) => {
+            player.streams = message.stream_collection().iter().take(128).collect();
+            player.state.audio_only = player.audio_only
+                || (!player
+                    .streams
+                    .iter()
+                    .any(|s| s.stream_type().contains(gst::StreamType::VIDEO))
+                    && player
+                        .streams
+                        .iter()
+                        .any(|s| s.stream_type().contains(gst::StreamType::AUDIO)));
+            // Ambiguous containers (e.g. ASF) become audio previews only
+            // after stream discovery. Video pipelines retain no FFT filter.
+            if player.state.audio_only
+                && player.spectrum.is_none()
+                && let Some(filter) = spectrum_filter()
+            {
+                player.pipeline.set_property("audio-filter", &filter);
+                player.spectrum = Some(filter);
+            }
+            if let Some(filter) = &player.spectrum {
+                filter.set_property("post-messages", player.state.audio_only);
+            }
+            player.state.audio_tracks = player.tracks(gst::StreamType::AUDIO);
+            player.state.subtitle_tracks = player.tracks(gst::StreamType::TEXT);
+            if player.state.audio == -1 && !player.state.audio_tracks.is_empty() {
+                player.state.audio = 0;
+            }
+            if !player.selected {
+                player.selected = true;
+                player.select_tracks(player.state.audio, player.state.subtitle)?;
+            }
+            *dirty = true;
+        }
+        gst::MessageView::AsyncDone(_) => {
+            if player.restore.is_some() {
+                // A message posted before the READY transition can still be
+                // queued; the re-preroll's own AsyncDone follows once settled.
+                if !player.settled() {
+                    return Ok(());
+                }
+                let position = player.restore.take().unwrap_or_default();
+                player.refresh();
+                // A non-seekable stream restarts from its beginning after a
+                // track change; failing to restore must not end the session.
+                if player.state.seekable
+                    && let Err(error) = player.seek(position, player.state.rate)
+                {
+                    reply(&Reply::Rejected {
+                        generation: player.generation,
+                        message: error.to_string(),
+                    })?;
+                }
+                if player.state.playing() {
+                    player.pipeline.set_state(gst::State::Playing)?;
+                }
+            }
+            if !*ready {
+                reply(&Reply::Ready)?;
+                *ready = true;
+            }
+            *dirty = true;
+        }
+        _ => {}
+    }
+    Ok(())
 }
 fn main() {
     if let Err(error) = run() {

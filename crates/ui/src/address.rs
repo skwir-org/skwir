@@ -41,7 +41,9 @@ fn app_row(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
-    let mut bar = toolbar::row(&theme).id(("app-tools", mode));
+    // One id for every variant, so a focused button keeps its focus handle
+    // (gpui element state keyed by the id path) across a responsive reflow.
+    let mut bar = toolbar::row(&theme).id("app-tools");
     let mut views = div()
         .flex()
         .flex_none()

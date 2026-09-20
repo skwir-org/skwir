@@ -11,8 +11,10 @@ bibli-platform.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 rbook = "0.7"
-zip = { version = "8", default-features = false, features = ["deflate"] }
+# rbook already selects flate2 with zlib-rs; zopfli (a compressor) is never needed.
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 roxmltree.workspace = true
+percent-encoding = "2"
 
 [dev-dependencies]
 tempfile.workspace = true

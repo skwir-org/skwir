@@ -9,6 +9,7 @@
 //! This trait is the future `ui-api` surface for out-of-crate views; it is
 //! kept in-crate until a third-party view exists (see the plan).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use bibli_core::registry::{Factory, ViewSpec};
@@ -99,8 +100,8 @@ pub const COLUMNS: &str = "columns";
 /// Reconcile by registration identity, including disable/re-enable between two frames.
 /// Returns removed/replaced ids so their associated pane state can be discarded.
 pub(crate) fn reconcile(
-    views: &mut std::collections::HashMap<&'static str, Box<dyn PaneView>>,
-    registrations: &mut std::collections::HashMap<String, Factory>,
+    views: &mut HashMap<&'static str, Box<dyn PaneView>>,
+    registrations: &mut HashMap<String, Factory>,
     specs: &[ViewSpec],
 ) -> Vec<String> {
     let mut replaced = Vec::new();
@@ -128,7 +129,6 @@ pub(crate) fn reconcile(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     #[test]
     fn plugin_views_follow_registration_lifetime() {

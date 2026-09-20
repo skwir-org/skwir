@@ -77,7 +77,8 @@ class Worker:
 
     def receive(self, timeout=20):
         message = self.messages.get(timeout=timeout)
-        if "Error" in message or "Unavailable" in message:
+        if "Error" in message or "Unavailable" in message or "Rejected" in message:
+            # Every control the check sends is valid for its synthetic clip.
             raise AssertionError(message)
         if "State" in message:
             if message["State"]["generation"] == self.generation:

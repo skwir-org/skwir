@@ -1,5 +1,9 @@
 //! Select the richest row that fits, using intrinsic measurement in prepaint.
 //! Breakpoints follow the controls' actual widths rather than render-time bounds.
+//!
+//! Variants share element identity: a button that appears in several variants
+//! must carry the same element id path in each, so its focus handle (stored in
+//! gpui element state keyed by that path) survives a breakpoint change.
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, Element, ElementId, GlobalElementId,
     InspectorElementId, IntoElement, LayoutId, Pixels, Style, Window, px, relative, size,
@@ -15,9 +19,27 @@ impl IntoElement for AdaptiveRow {
         self
     }
 }
+
+/// The first of `count` variants whose natural width fits `available`, or the
+/// last one (the most compact) when none fits. `natural` measures one variant
+/// and is called lazily, in order, until a variant fits. Empty rows select
+/// nothing.
+fn select(
+    count: usize,
+    available: Pixels,
+    mut natural: impl FnMut(usize) -> Pixels,
+) -> Option<usize> {
+    let last = count.checked_sub(1)?;
+    Some(
+        (0..last)
+            .find(|&index| natural(index) <= available)
+            .unwrap_or(last),
+    )
+}
+
 impl Element for AdaptiveRow {
     type RequestLayoutState = ();
-    type PrepaintState = usize;
+    type PrepaintState = Option<usize>;
     fn id(&self) -> Option<ElementId> {
         None
     }
@@ -45,25 +67,21 @@ impl Element for AdaptiveRow {
         _: &mut (),
         window: &mut Window,
         cx: &mut App,
-    ) -> usize {
-        let last = self.variants.len() - 1;
-        let selected = self
-            .variants
-            .iter_mut()
-            .enumerate()
-            .find_map(|(i, row)| {
-                let natural = row.layout_as_root(
+    ) -> Option<usize> {
+        let variants = &mut self.variants;
+        let selected = select(variants.len(), bounds.size.width, |index| {
+            variants[index]
+                .layout_as_root(
                     size(
                         AvailableSpace::MaxContent,
                         AvailableSpace::Definite(bounds.size.height),
                     ),
                     window,
                     cx,
-                );
-                (natural.width <= bounds.size.width || i == last).then_some(i)
-            })
-            .unwrap_or(last);
-        let row = &mut self.variants[selected];
+                )
+                .width
+        })?;
+        let row = &mut variants[selected];
         row.layout_as_root(
             size(
                 AvailableSpace::Definite(bounds.size.width),
@@ -73,7 +91,7 @@ impl Element for AdaptiveRow {
             cx,
         );
         row.prepaint_at(bounds.origin, window, cx);
-        selected
+        Some(selected)
     }
     fn paint(
         &mut self,
@@ -81,10 +99,45 @@ impl Element for AdaptiveRow {
         _: Option<&InspectorElementId>,
         _: Bounds<Pixels>,
         _: &mut (),
-        selected: &mut usize,
+        selected: &mut Option<usize>,
         window: &mut Window,
         cx: &mut App,
     ) {
-        self.variants[*selected].paint(window, cx);
+        if let Some(selected) = *selected {
+            self.variants[selected].paint(window, cx);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_rows_select_nothing_without_panicking() {
+        assert_eq!(select(0, px(500.), |_| unreachable!()), None);
+    }
+
+    #[test]
+    fn picks_the_first_fitting_variant_or_the_last_one() {
+        let widths = [px(600.), px(400.), px(200.)];
+        assert_eq!(select(3, px(700.), |i| widths[i]), Some(0));
+        assert_eq!(select(3, px(450.), |i| widths[i]), Some(1));
+        assert_eq!(select(3, px(400.), |i| widths[i]), Some(1));
+        assert_eq!(select(3, px(100.), |i| widths[i]), Some(2));
+        // A single variant is chosen without being measured.
+        assert_eq!(select(1, px(10.), |_| unreachable!()), Some(0));
+    }
+
+    #[test]
+    fn measures_only_until_a_variant_fits() {
+        let mut measured = Vec::new();
+        let widths = [px(600.), px(400.), px(200.)];
+        let selected = select(3, px(450.), |i| {
+            measured.push(i);
+            widths[i]
+        });
+        assert_eq!(selected, Some(1));
+        assert_eq!(measured, vec![0, 1]);
     }
 }

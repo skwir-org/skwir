@@ -1,5 +1,9 @@
 //! Optional playback process. All process and pixel I/O lives on its manager;
 //! UI methods only enqueue controls or take the latest bounded update.
+//!
+//! The manager thread sleeps in one `select!` over commands, worker replies,
+//! its session's cancellation signal and, until the worker greets, a single
+//! startup deadline. Nothing here polls on a timer.
 
 use crate::process::ChildGuard;
 use anyhow::Context;
@@ -17,10 +21,14 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
-        mpsc,
     },
     time::{Duration, Instant},
 };
+
+/// The one startup deadline: worker spawn, `GStreamer` initialization and the
+/// first preroll. The worker has none of its own; cancelling the session
+/// kills it.
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 
 pub fn worker_path() -> Option<PathBuf> {
     std::env::var_os("BIBLI_MEDIA_WORKER")
@@ -46,29 +54,44 @@ impl Shared {
         if generation != self.generation.load(Ordering::Acquire) {
             return;
         }
-        let empty = update.state.is_none() && update.frame.is_none() && update.error.is_none();
+        let empty = update.is_empty();
         update.state = Some(state);
         drop(update);
         if empty {
             (self.wake)();
         }
     }
-    fn frame(&self, generation: u64, frame: Frame) {
+    /// A control the worker declined. Stale generations are dropped like state.
+    fn notice(&self, generation: u64, message: String) {
         let mut update = self.update.lock();
         if generation != self.generation.load(Ordering::Acquire) {
             return;
         }
-        let empty = update.state.is_none() && update.frame.is_none() && update.error.is_none();
-        let previous = update.frame.replace(frame);
+        let empty = update.is_empty();
+        update.notice = Some(message);
         drop(update);
-        drop(previous);
         if empty {
             (self.wake)();
         }
     }
+    /// Publishes a frame and returns a buffer the UI will never see: the
+    /// rejected frame, or the one it superseded before the UI took it.
+    fn frame(&self, generation: u64, frame: Frame) -> Vec<u8> {
+        let mut update = self.update.lock();
+        if generation != self.generation.load(Ordering::Acquire) {
+            return frame.bgra;
+        }
+        let empty = update.is_empty();
+        let previous = update.frame.replace(frame);
+        drop(update);
+        if empty {
+            (self.wake)();
+        }
+        previous.map(|f| f.bgra).unwrap_or_default()
+    }
     fn publish(&self, apply: impl FnOnce(&mut Update)) {
         let mut update = self.update.lock();
-        let empty = update.state.is_none() && update.frame.is_none() && update.error.is_none();
+        let empty = update.is_empty();
         apply(&mut update);
         drop(update);
         if empty {
@@ -134,7 +157,7 @@ impl WorkerSession {
             wake,
         });
         let (commands, rx) = crossbeam_channel::bounded(32);
-        let (startup, ready) = mpsc::sync_channel(1);
+        let (startup, ready) = crossbeam_channel::bounded(1);
         let manager_shared = shared.clone();
         let manager_lifetime = lifetime.clone();
         std::thread::Builder::new()
@@ -157,27 +180,23 @@ impl WorkerSession {
                 }
                 manager_lifetime.cancel();
             })?;
-        let start = Instant::now();
-        loop {
-            match ready.recv_timeout(Duration::from_millis(10)) {
-                Ok(Ok(true)) => {
-                    return Ok(Some(Arc::new(Self {
-                        commands,
-                        shared,
-                        lifetime,
-                    })));
-                }
-                Ok(Ok(false)) => return Ok(None),
-                Ok(Err(error)) => return Err(error),
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    if lifetime.is_cancelled() || start.elapsed() > Duration::from_secs(20) {
-                        lifetime.cancel();
-                        anyhow::bail!("video open cancelled or timed out");
-                    }
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    anyhow::bail!("video worker stopped during startup")
-                }
+        // The manager owns the startup deadline; this only waits for its
+        // verdict or for the session to be cancelled underneath it.
+        let cancelled = lifetime.subscribe();
+        crossbeam_channel::select! {
+            recv(ready) -> verdict => match verdict {
+                Ok(Ok(true)) => Ok(Some(Arc::new(Self {
+                    commands,
+                    shared,
+                    lifetime,
+                }))),
+                Ok(Ok(false)) => Ok(None),
+                Ok(Err(error)) => Err(error),
+                Err(_) => anyhow::bail!("video worker stopped during startup"),
+            },
+            recv(cancelled.receiver()) -> _ => {
+                lifetime.cancel();
+                anyhow::bail!("video open cancelled")
             }
         }
     }
@@ -189,15 +208,9 @@ fn manage(
     lifetime: &CancelToken,
     shared: &Shared,
     commands: &crossbeam_channel::Receiver<Request>,
-    startup: &mpsc::SyncSender<anyhow::Result<bool>>,
+    startup: &crossbeam_channel::Sender<anyhow::Result<bool>>,
 ) -> anyhow::Result<()> {
-    // One private reusable slot, RAM-backed on Linux. Never one file per frame.
-    #[cfg(target_os = "linux")]
-    let scratch = tempfile::Builder::new()
-        .prefix("bibli-video-")
-        .tempdir_in("/dev/shm")?;
-    #[cfg(not(target_os = "linux"))]
-    let scratch = tempfile::tempdir()?;
+    let scratch = frame_slot_dir()?;
     let mut pixels = OpenOptions::new()
         .read(true)
         .write(true)
@@ -268,13 +281,14 @@ fn manage(
         input.flush()?;
         Ok(())
     };
-    let started = Instant::now();
+    let cancelled = lifetime.subscribe();
+    // Fires once; after the greeting it is simply never selected again.
+    let deadline = crossbeam_channel::at(Instant::now() + STARTUP_TIMEOUT);
     let mut ready = false;
+    // Buffers the UI has not taken come back here, so a UI slower than the
+    // decoder recycles one allocation instead of allocating per frame.
+    let mut spare: Vec<u8> = Vec::new();
     while !lifetime.is_cancelled() {
-        anyhow::ensure!(
-            ready || started.elapsed() < Duration::from_secs(18),
-            "video worker timed out"
-        );
         let reply = crossbeam_channel::select! {
             recv(commands) -> request => {
                 let Ok(request) = request else { break; };
@@ -291,7 +305,11 @@ fn manage(
                 }
                 result?
             },
-            default(Duration::from_millis(100)) => continue,
+            recv(cancelled.receiver()) -> _ => break,
+            recv(deadline) -> _ => {
+                anyhow::ensure!(ready, "video worker timed out");
+                continue;
+            }
         };
         match reply {
             Reply::Ready => {
@@ -299,10 +317,17 @@ fn manage(
                 ready = true;
                 let _ = startup.send(Ok(true));
             }
-            Reply::Unavailable(_) => {
+            Reply::Unavailable(message) => {
+                // Before the greeting this selects the stills fallback; a
+                // running session losing its runtime is an error, not silence.
+                anyhow::ensure!(!ready, "{message}");
                 let _ = startup.send(Ok(false));
                 return Ok(());
             }
+            Reply::Rejected {
+                generation,
+                message,
+            } => shared.notice(generation, message),
             Reply::Error(error) => anyhow::bail!("{error}"),
             Reply::State {
                 generation,
@@ -314,10 +339,11 @@ fn manage(
                 height,
                 ..
             } => {
-                let mut bgra = vec![0; bibli_core::media::frame_bytes(width, height)?];
+                let mut bgra = std::mem::take(&mut spare);
+                bgra.resize(bibli_core::media::frame_bytes(width, height)?, 0);
                 pixels.seek(SeekFrom::Start(0))?;
                 pixels.read_exact(&mut bgra)?;
-                shared.frame(
+                spare = shared.frame(
                     generation,
                     Frame {
                         width,
@@ -331,6 +357,23 @@ fn manage(
     }
     // ChildGuard reaps before scratch is removed. Neither runs on the UI.
     Ok(())
+}
+
+/// One private reusable slot; never one file per frame. RAM-backed through
+/// `/dev/shm` where that exists and is writable, otherwise the ordinary
+/// temporary directory, which may be disk-backed.
+fn frame_slot_dir() -> anyhow::Result<tempfile::TempDir> {
+    #[cfg(target_os = "linux")]
+    if let Ok(dir) = tempfile::Builder::new()
+        .prefix("bibli-video-")
+        .tempdir_in("/dev/shm")
+    {
+        return Ok(dir);
+    }
+    tempfile::Builder::new()
+        .prefix("bibli-video-")
+        .tempdir()
+        .context("create video frame slot")
 }
 
 #[cfg(all(test, target_os = "linux"))]
@@ -419,6 +462,132 @@ mod tests {
             session.take_update().error.is_some()
         });
         until(|| !std::path::Path::new(&format!("/proc/{pid}")).exists());
+    }
+    #[test]
+    fn rejected_controls_surface_a_notice_and_keep_the_session() {
+        // A non-seekable stream declines Seek; the worker answers Rejected and
+        // then reports its unchanged state under the same generation.
+        let playback = r#"{"status":"Paused","position":0.0,"duration":null,"volume":1.0,"muted":false,"rate":1.0,"audio_tracks":[],"subtitle_tracks":[],"audio":-1,"subtitle":-1,"seekable":false}"#;
+        let (_root, source, worker) = fixture(&format!(
+            "printf '%s\\n' '\"Ready\"'\nIFS= read -r line\nprintf '%s\\n' '{{\"Rejected\":{{\"generation\":1,\"message\":\"this video does not support seeking\"}}}}'\nprintf '%s\\n' '{{\"State\":{{\"generation\":1,\"playback\":{playback}}}}}'\nwhile IFS= read -r line; do :; done\n"
+        ));
+        let session = WorkerSession::open_with_worker(
+            worker,
+            source.clone(),
+            &CancelToken::new(),
+            Arc::new(|| {}),
+        )
+        .unwrap()
+        .unwrap();
+        let pid = std::fs::read_to_string(format!("{}.pid", source.display())).unwrap();
+        session.control(Control::Seek(5.)).unwrap();
+        let mut notice = None;
+        let mut state = None;
+        until(|| {
+            let update = session.take_update();
+            assert!(update.error.is_none(), "a rejected control is not fatal");
+            notice = notice.take().or(update.notice);
+            state = state.take().or(update.state);
+            notice.is_some() && state.is_some()
+        });
+        assert_eq!(
+            notice.as_deref(),
+            Some("this video does not support seeking")
+        );
+        assert!(!state.unwrap().seekable);
+        assert!(
+            std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "worker survives a rejected control"
+        );
+        session.control(Control::Play(true)).unwrap();
+        assert!(session.take_update().error.is_none());
+    }
+    #[test]
+    fn losing_the_runtime_after_ready_is_an_error() {
+        let (_root, source, worker) = fixture(
+            "printf '%s\\n' '\"Ready\"'\nprintf '%s\\n' '{\"Unavailable\":\"runtime gone\"}'\nsleep 30\n",
+        );
+        let session = WorkerSession::open_with_worker(
+            worker,
+            source.clone(),
+            &CancelToken::new(),
+            Arc::new(|| {}),
+        )
+        .unwrap()
+        .unwrap();
+        let pid = std::fs::read_to_string(format!("{}.pid", source.display())).unwrap();
+        let mut error = None;
+        until(|| {
+            error = error.take().or(session.take_update().error);
+            error.is_some()
+        });
+        assert_eq!(error.as_deref(), Some("runtime gone"));
+        until(|| !std::path::Path::new(&format!("/proc/{pid}")).exists());
+        assert!(session.control(Control::Play(true)).is_err());
+    }
+    #[test]
+    fn cancellation_wakes_the_manager_without_a_poll_interval() {
+        // The manager used to notice cancellation on a 100 ms poll. Reaping an
+        // idle worker now completes well inside that interval, repeatedly.
+        for _ in 0..4 {
+            let (_root, source, worker) = fixture("printf '%s\\n' '\"Ready\"'\nsleep 30\n");
+            let lifetime = CancelToken::new();
+            let session =
+                WorkerSession::open_with_worker(worker, source.clone(), &lifetime, Arc::new(|| {}))
+                    .unwrap()
+                    .unwrap();
+            let pid = std::fs::read_to_string(format!("{}.pid", source.display())).unwrap();
+            let proc = format!("/proc/{pid}");
+            let started = Instant::now();
+            lifetime.cancel();
+            while std::path::Path::new(&proc).exists() {
+                assert!(
+                    started.elapsed() < Duration::from_millis(50),
+                    "cancellation waited for a poll interval"
+                );
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            drop(session);
+        }
+        // Cancelling during startup returns from open without its deadline.
+        let (_root, source, worker) = fixture("sleep 30\n");
+        let lifetime = CancelToken::new();
+        let canceller = lifetime.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            canceller.cancel();
+        });
+        let started = Instant::now();
+        let result = WorkerSession::open_with_worker(worker, source, &lifetime, Arc::new(|| {}));
+        assert!(result.is_err());
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+    #[test]
+    fn untaken_frame_buffers_are_recycled() {
+        let shared = Shared {
+            update: Mutex::new(Update::default()),
+            generation: AtomicU64::new(0),
+            wake: Arc::new(|| {}),
+        };
+        let frame = |value: u8| Frame {
+            width: 1,
+            height: 1,
+            bgra: vec![value; 4],
+        };
+        assert!(
+            shared.frame(0, frame(1)).is_empty(),
+            "nothing to recycle yet"
+        );
+        assert_eq!(shared.frame(0, frame(2)), vec![1; 4], "superseded frame");
+        assert_eq!(shared.frame(9, frame(3)), vec![3; 4], "stale generation");
+        assert_eq!(
+            std::mem::take(&mut *shared.update.lock())
+                .frame
+                .unwrap()
+                .bgra,
+            vec![2; 4]
+        );
+        assert!(shared.frame(0, frame(4)).is_empty(), "taken by the UI");
     }
     #[test]
     fn latest_frame_is_bounded_and_controls_reject_stale_frames() {

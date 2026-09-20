@@ -23,6 +23,8 @@ pub mod thumb_providers;
 pub mod thumbnails;
 
 pub mod inspection;
+/// Every preview bound in one place (see `inspection::limits`).
+pub use inspection::limits;
 
 pub mod rich_preview;
 

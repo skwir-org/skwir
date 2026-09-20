@@ -1,6 +1,6 @@
 //! Fold boundaries come from parsers, never indentation guesses inside strings.
 use bibli_core::CancelToken;
-use bibli_platform::inspection::check;
+use bibli_platform::inspection::{check, limits};
 use std::ops::Range;
 
 pub fn parse(
@@ -55,7 +55,11 @@ fn json(text: &str, cancel: &CancelToken) -> anyhow::Result<Vec<Range<usize>>> {
             match ch {
                 '"' => quoted = true,
                 '{' | '[' => {
-                    anyhow::ensure!(stack.len() < 64, "Code preview exceeds 64 levels");
+                    anyhow::ensure!(
+                        stack.len() < limits::NESTING,
+                        "Code preview exceeds {} levels",
+                        limits::NESTING
+                    );
                     stack.push(line);
                 }
                 '}' | ']' => {
@@ -72,7 +76,7 @@ fn json(text: &str, cancel: &CancelToken) -> anyhow::Result<Vec<Range<usize>>> {
 }
 
 fn toml(text: &str, cancel: &CancelToken) -> anyhow::Result<Vec<Range<usize>>> {
-    let document = toml_edit::ImDocument::parse(text)?;
+    let document = toml_edit::Document::parse(text)?;
     let starts: Vec<_> = std::iter::once(0)
         .chain(text.match_indices('\n').map(|(i, _)| i + 1))
         .collect();
@@ -83,7 +87,11 @@ fn toml(text: &str, cancel: &CancelToken) -> anyhow::Result<Vec<Range<usize>>> {
     let mut headers = Vec::new();
     while let Some((item, depth)) = items.pop() {
         check(cancel)?;
-        anyhow::ensure!(depth <= 64, "Code preview exceeds 64 levels");
+        anyhow::ensure!(
+            depth <= limits::NESTING,
+            "Code preview exceeds {} levels",
+            limits::NESTING
+        );
         match item {
             toml_edit::Item::Table(table) => {
                 if depth > 0
@@ -108,7 +116,11 @@ fn toml(text: &str, cancel: &CancelToken) -> anyhow::Result<Vec<Range<usize>>> {
     }
     while let Some((value, depth)) = values.pop() {
         check(cancel)?;
-        anyhow::ensure!(depth <= 64, "Code preview exceeds 64 levels");
+        anyhow::ensure!(
+            depth <= limits::NESTING,
+            "Code preview exceeds {} levels",
+            limits::NESTING
+        );
         if let Some(span) = value.span() {
             folds.push(line(span.start)..line(span.end.saturating_sub(1)));
         }
@@ -128,19 +140,23 @@ fn toml(text: &str, cancel: &CancelToken) -> anyhow::Result<Vec<Range<usize>>> {
 }
 
 fn yaml(text: &str, cancel: &CancelToken) -> anyhow::Result<Vec<Range<usize>>> {
-    use yaml_rust::parser::{Event, Parser};
-    let mut parser = Parser::new(text.chars());
+    use yaml_rust2::parser::{Event, Parser};
+    let mut parser = Parser::new_from_str(text);
     let mut folds = Vec::new();
     let mut stack = Vec::new();
     let mut previous_scalar = None;
     loop {
         check(cancel)?;
-        let (event, mark) = parser.next()?;
+        let (event, mark) = parser.next_token()?;
         let line = mark.line().saturating_sub(1);
         match event {
             Event::StreamEnd => break,
-            Event::MappingStart(_) | Event::SequenceStart(_) => {
-                anyhow::ensure!(stack.len() < 64, "Code preview exceeds 64 levels");
+            Event::MappingStart(..) | Event::SequenceStart(..) => {
+                anyhow::ensure!(
+                    stack.len() < limits::NESTING,
+                    "Code preview exceeds {} levels",
+                    limits::NESTING
+                );
                 let start = previous_scalar
                     .take()
                     .filter(|&(row, col)| row < line && col < mark.col())

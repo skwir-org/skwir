@@ -73,13 +73,23 @@ impl Shell {
     }
 }
 
+/// The one delayed "still loading" signal; the status bar and the pane
+/// banner both derive from it so they never disagree.
+pub fn pending(shell: &Shell, pane: PaneId) -> bool {
+    shell
+        .panes
+        .iter()
+        .find(|ui| ui.id == pane)
+        .is_some_and(|ui| ui.loading.visible)
+}
+
 pub fn message(shell: &Shell, pane: PaneId) -> Option<String> {
     let ws = shell.app.workspace.read();
     let pane_state = ws.pane(pane)?;
     if let Some(error) = pane_state.listing.error() {
         return Some(format!("Unable to load location: {error}"));
     }
-    if !shell.panes.iter().find(|ui| ui.id == pane)?.loading.visible {
+    if !pending(shell, pane) {
         return None;
     }
     Some(

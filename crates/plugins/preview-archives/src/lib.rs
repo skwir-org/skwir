@@ -5,7 +5,10 @@ use bibli_core::{
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
 };
-use bibli_platform::{archive, inspection};
+use bibli_platform::{
+    archive,
+    inspection::{self, limits},
+};
 use std::{collections::BTreeMap, sync::Arc};
 pub struct PreviewPlugin;
 impl Plugin for PreviewPlugin {
@@ -64,8 +67,12 @@ impl PreviewProvider for Provider {
                 member.regular && !member.encrypted,
                 "This member cannot be previewed (directory, link or encrypted file)"
             );
-            return archive::member_preview(&member.name, &archive::read(&path, index, cancel)?)
-                .map(Some);
+            return archive::member_preview(
+                &member.name,
+                &archive::read(&path, index, cancel)?,
+                view.offset,
+            )
+            .map(Some);
         }
         let rows = member_rows(&members, cancel)?;
         let folders = rows.iter().filter(|r| r.branch).count();
@@ -85,7 +92,11 @@ fn member_rows(members: &[archive::Member], cancel: &CancelToken) -> anyhow::Res
     for member in members {
         inspection::check(cancel)?;
         let parts: Vec<_> = member.name.split('/').filter(|p| !p.is_empty()).collect();
-        anyhow::ensure!(parts.len() <= 64, "Archive path exceeds 64 components");
+        anyhow::ensure!(
+            parts.len() <= limits::NESTING,
+            "Archive path exceeds {} components",
+            limits::NESTING
+        );
         for end in 1..=parts.len() {
             let name: Vec<String> = parts[..end].iter().map(|s| (*s).to_owned()).collect();
             let directory = end < parts.len() || member.directory;
