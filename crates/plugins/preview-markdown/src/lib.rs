@@ -1,7 +1,8 @@
 //! Markdown reading mode; all parsing and embedded image reads run on workers.
+mod markdown;
 use bibli_core::{
     App, CancelToken,
-    inspection::{InspectRequest, Inspection},
+    inspection::{InspectRequest, Inspection, InspectionKind},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
 };
@@ -44,20 +45,11 @@ impl PreviewProvider for Provider {
             return Ok(Some(inspection::source(&path, view.offset, cancel)?));
         }
         let source = inspection::text(&path, cancel)?;
-        let mut html = String::new();
-        pulldown_cmark::html::push_html(
-            &mut html,
-            pulldown_cmark::Parser::new_ext(
-                &source,
-                pulldown_cmark::Options::ENABLE_TABLES
-                    | pulldown_cmark::Options::ENABLE_TASKLISTS
-                    | pulldown_cmark::Options::ENABLE_STRIKETHROUGH,
-            ),
-        );
         let base = path.parent().unwrap_or(std::path::Path::new("."));
         Ok(Some(Inspection {
+            kind: InspectionKind::Markdown,
             title: "Markdown".into(),
-            blocks: rich_preview::html(&html, cancel, |href| {
+            blocks: markdown::parse(&source, cancel, |href| {
                 rich_preview::local_image(base, href, cancel)
             })?,
             source_available: true,

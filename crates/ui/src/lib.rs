@@ -30,6 +30,7 @@ pub mod jump;
 pub mod keymap;
 pub mod list;
 mod loading;
+mod markdown;
 mod media;
 pub mod menu;
 pub mod palette;

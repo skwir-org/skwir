@@ -1,7 +1,10 @@
 //! Native rich-text selection. Geometry is read only for pointer hit testing.
-use crate::{shell::Shell, theme::Theme};
+use crate::{markdown::MarkdownStyle, shell::Shell};
 use bibli_core::{inspection::Block, workspace::PaneId};
-use gpui::{AnyElement, HighlightStyle, MouseButton, StyledText, WeakEntity, div, prelude::*};
+use gpui::{
+    AnyElement, HighlightStyle, MouseButton, StrikethroughStyle, StyledText, UnderlineStyle,
+    WeakEntity, div, prelude::*, px,
+};
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Selection {
     pub start: (usize, usize),
@@ -45,7 +48,7 @@ pub fn render(
     block: &Block,
     index: usize,
     selection: Option<Selection>,
-    theme: &Theme,
+    style: &MarkdownStyle,
     pane: PaneId,
     entity: WeakEntity<Shell>,
 ) -> AnyElement {
@@ -65,22 +68,35 @@ pub fn render(
                 .runs
                 .get(block.runs.partition_point(|r| r.range.end <= start))
                 .filter(|r| r.range.start <= start);
-            let mut style = HighlightStyle::default();
+            let mut highlight = HighlightStyle::default();
             if let Some(r) = run {
-                style.font_weight = r.bold.then_some(gpui::FontWeight::BOLD);
-                style.font_style = r.italic.then_some(gpui::FontStyle::Italic);
-                style.color = r
+                highlight.font_weight = r.bold.then_some(gpui::FontWeight::BOLD);
+                highlight.font_style = r.italic.then_some(gpui::FontStyle::Italic);
+                highlight.color = r
                     .color
                     .map(|[r, g, b]| {
                         gpui::rgb((u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b)).into()
                     })
-                    .or_else(|| r.link.as_ref().map(|_| theme.accent));
-                style.background_color = r.code.then_some(theme.surface);
+                    .or_else(|| r.link.as_ref().map(|_| style.link));
+                highlight.background_color = r.code.then_some(style.inline_code_bg);
+                if r.strikethrough {
+                    highlight.strikethrough = Some(StrikethroughStyle {
+                        thickness: px(1.),
+                        color: Some(style.text_muted),
+                    });
+                }
+                if r.link.is_some() && style.link_underline {
+                    highlight.underline = Some(UnderlineStyle {
+                        thickness: px(1.),
+                        color: Some(style.link),
+                        wavy: false,
+                    });
+                }
             }
             if selection.contains(&start) {
-                style.background_color = Some(theme.selection_bg);
+                highlight.background_color = Some(style.selection_bg);
             }
-            (start..end, style)
+            (start..end, highlight)
         })
         .collect::<Vec<_>>();
     let text = StyledText::new(block.text.clone()).with_highlights(highlights);

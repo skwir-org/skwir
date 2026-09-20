@@ -2,7 +2,7 @@
 use bibli_core::{
     App, CancelToken,
     app::AppConfig,
-    inspection::{InspectRequest, Inspection},
+    inspection::{BlockKind, InspectRequest, Inspection, InspectionKind},
     op::EntryRef,
     plugin::Plugin,
     preview::PreviewRequest,
@@ -75,12 +75,13 @@ fn markdown_styles_source_and_plugin_fallback() {
     let path = tmp.path().join("Synthetic d'Example.md");
     std::fs::write(
         &path,
-        "# Heading\n\nText with **bold** and [link](https://example.invalid).\n\n- [x] Checked\n",
+        "# Heading\n\nText with **bold** and [link](https://example.invalid).\n\n- [x] Checked\n- [ ] Todo\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n---\n",
     )
     .unwrap();
     let app = app(tmp.path());
     let rendered = inspect(&app, &path, &InspectRequest::default());
     assert_eq!(rendered.title, "Markdown");
+    assert_eq!(rendered.kind, InspectionKind::Markdown);
     assert!(rendered.blocks.iter().any(|b| b.heading == 1));
     assert!(
         rendered
@@ -89,6 +90,20 @@ fn markdown_styles_source_and_plugin_fallback() {
             .any(|b| b.runs.iter().any(|r| r.bold))
     );
     assert!(rendered.plain_text().contains('☑'));
+    let item = rendered
+        .blocks
+        .iter()
+        .find(|b| b.marker.as_deref() == Some("•"))
+        .expect("bulleted item");
+    assert_eq!(item.list_depth, 1);
+    assert!(rendered.blocks.iter().any(|b| b.kind
+        == BlockKind::TableRow {
+            cells: vec!["a".into(), "b".into()],
+            header: true
+        }));
+    assert!(rendered.blocks.iter().any(|b| b.kind == BlockKind::Rule));
+    // A table row copies as one line, not as one line per cell.
+    assert!(rendered.plain_text().contains("a\tb\n1\t2"));
     let source = inspect(
         &app,
         &path,

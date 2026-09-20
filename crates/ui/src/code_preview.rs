@@ -33,10 +33,7 @@ pub fn highlight(data: &mut Inspection, dark: bool) {
                     block.runs.push(Run {
                         range: offset..end,
                         color: Some([style.foreground.r, style.foreground.g, style.foreground.b]),
-                        bold: false,
-                        italic: false,
-                        code: false,
-                        link: None,
+                        ..Run::default()
                     });
                 }
                 offset += text.len();
@@ -92,6 +89,7 @@ impl CodeRow<'_> {
             pane,
             entity,
         } = self;
+        let style = crate::markdown::MarkdownStyle::new(theme, font_size, false);
         let fold = data
             .folds
             .binary_search_by_key(&line, |fold| fold.start)
@@ -152,7 +150,7 @@ impl CodeRow<'_> {
                         &data.blocks[line],
                         line,
                         selection,
-                        theme,
+                        &style,
                         pane,
                         entity,
                     )),

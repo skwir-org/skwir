@@ -73,10 +73,8 @@ impl Display {
                                 style.foreground.g,
                                 style.foreground.b,
                             ]),
-                            bold: false,
-                            italic: false,
                             code: true,
-                            link: None,
+                            ..bibli_core::inspection::Run::default()
                         });
                         offset += text.len();
                     }
@@ -92,7 +90,7 @@ impl Display {
         let folded = data
             .blocks
             .iter()
-            .map(|b| b.text.to_lowercase())
+            .map(|b| b.plain().to_lowercase())
             .chain(data.rows.iter().map(|r| r.cells.join("\t").to_lowercase()))
             .collect();
         Self {
@@ -319,7 +317,7 @@ impl Shell {
                                 .data
                                 .blocks
                                 .get(i)
-                                .map(|b| b.text.clone())
+                                .map(bibli_core::inspection::Block::plain)
                                 .or_else(|| {
                                     display
                                         .data
@@ -702,6 +700,11 @@ pub fn content(
     let header_font = hex_font.clone();
     let pane = shell.pane;
     let list_theme = theme.clone();
+    let list_style = crate::markdown::MarkdownStyle::new(
+        theme,
+        font_size,
+        display.data.kind == InspectionKind::Markdown,
+    );
     let entity = cx.entity().downgrade();
     let list = gpui::list(shell.preview.inspection.list.clone(), move |index, _, _| {
         let theme = &list_theme;
@@ -739,33 +742,19 @@ pub fn content(
             }
             .render();
         }
-        let (logical, mut row) = if let Some(block) = data.blocks.get(i) {
-            let text =
-                crate::inspector_text::render(block, i, selection, theme, pane, entity.clone());
-            (
+        if let Some(block) = data.blocks.get(i) {
+            return crate::markdown::block(
+                block,
                 i,
-                div()
-                    .id(("inspect-block", i))
-                    .p_2()
-                    .w_full()
-                    .text_size(px(if block.heading > 0 {
-                        font_size + f32::from(7 - block.heading) * 2.
-                    } else {
-                        font_size
-                    }))
-                    .when(block.heading > 0, |d| d.font_weight(gpui::FontWeight::BOLD))
-                    .when(block.code, |d| {
-                        d.font_family(mono.clone()).text_size(px(font_size - 2.))
-                    })
-                    .when(block.quote, |d| {
-                        d.border_l_2().border_color(theme.accent).pl_4()
-                    })
-                    .child(text)
-                    .when_some(images[i + 1].as_ref(), |d, image| {
-                        d.child(gpui::img(image.clone()).max_w_full())
-                    }),
-            )
-        } else {
+                images[i + 1].as_ref(),
+                selection,
+                &list_style,
+                &mono,
+                pane,
+                entity.clone(),
+            );
+        }
+        {
             let ri = visible[i - data.blocks.len()];
             let r = &data.rows[ri];
             let weak = entity.clone();
@@ -850,12 +839,11 @@ pub fn content(
                     });
                 });
             });
-            (data.blocks.len() + ri, row)
-        };
-        if selected == Some(logical) && logical >= data.blocks.len() {
-            row = row.bg(theme.selection_bg);
+            if selected == Some(data.blocks.len() + ri) {
+                row = row.bg(theme.selection_bg);
+            }
+            row.into_any_element()
         }
-        row.into_any_element()
     })
     .size_full();
     let mut body = div()

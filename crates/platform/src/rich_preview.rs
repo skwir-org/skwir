@@ -117,6 +117,9 @@ pub fn html(
                     italic: ancestors
                         .iter()
                         .any(|(_, e)| matches!(e.name(), "i" | "em")),
+                    strikethrough: ancestors
+                        .iter()
+                        .any(|(_, e)| matches!(e.name(), "del" | "s" | "strike")),
                     code: ancestors.iter().any(|(_, e)| e.name() == "code"),
                     link: ancestors.iter().find_map(|(_, e)| {
                         if e.name() == "a" {

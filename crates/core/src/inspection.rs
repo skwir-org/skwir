@@ -16,6 +16,8 @@ pub struct InspectRequest {
 pub enum InspectionKind {
     #[default]
     Text,
+    /// Rendered Markdown: reading typography and block layout apply.
+    Markdown,
     /// One bounded source line per block, with optional folding ranges.
     Code,
     Hex,
@@ -44,24 +46,54 @@ pub struct Inspection {
     pub source_available: bool,
     pub notice: String,
 }
+/// What a block draws. A block is text, a thematic break or one row of a
+/// table, never two of those at once: the shape decides which fields mean
+/// anything, so it is one value rather than a set of flags that can disagree.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum BlockKind {
+    /// `text` with its `runs`, plus the ambient heading/code/quote/list state.
+    #[default]
+    Text,
+    /// A thematic break, drawn as a rule; `text` is empty.
+    Rule,
+    /// One row of a table; `text` is empty and the cells hold its content.
+    TableRow { cells: Vec<String>, header: bool },
+}
 #[derive(Clone, Debug, Default)]
 pub struct Block {
     pub anchor: Option<String>,
     pub language: Option<String>,
+    pub kind: BlockKind,
     pub text: String,
     /// 0 paragraph; 1..=6 heading.
     pub heading: u8,
     pub code: bool,
     pub quote: bool,
+    /// List nesting level: 0 outside a list, 1 for a top-level item.
+    pub list_depth: u32,
+    /// The bullet or number that introduces a list item, drawn beside it.
+    pub marker: Option<String>,
     pub runs: Vec<Run>,
     pub image: Option<Image>,
 }
-#[derive(Clone, Debug)]
+impl Block {
+    /// What the block says, for copying and searching: a table row's cells
+    /// joined by tabs, every other block's text.
+    pub fn plain(&self) -> String {
+        match &self.kind {
+            BlockKind::TableRow { cells, .. } => cells.join("\t"),
+            _ => self.text.clone(),
+        }
+    }
+}
+#[derive(Clone, Debug, Default)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct Run {
     pub range: std::ops::Range<usize>,
     pub color: Option<[u8; 3]>,
     pub bold: bool,
     pub italic: bool,
+    pub strikethrough: bool,
     pub code: bool,
     pub link: Option<String>,
 }
@@ -89,7 +121,7 @@ impl Inspection {
     pub fn plain_text(&self) -> String {
         self.blocks
             .iter()
-            .map(|b| b.text.clone())
+            .map(Block::plain)
             .chain(self.rows.iter().map(|r| r.cells.join("\t")))
             .collect::<Vec<_>>()
             .join("\n")
@@ -143,10 +175,18 @@ pub fn split_blocks(blocks: Vec<Block>) -> Vec<Block> {
                 } else {
                     None
                 },
+                marker: if start == 0 {
+                    block.marker.take()
+                } else {
+                    None
+                },
+                // Only text can exceed the limit, so the kind carries over.
+                kind: block.kind.clone(),
                 language: block.language.clone(),
                 heading: block.heading,
                 code: block.code,
                 quote: block.quote,
+                list_depth: block.list_depth,
             });
             start = end;
         }
@@ -164,10 +204,7 @@ mod tests {
             runs: vec![Run {
                 range: 0..text.len(),
                 bold: true,
-                italic: false,
-                code: false,
-                link: None,
-                color: None,
+                ..Run::default()
             }],
             ..Block::default()
         }]);
@@ -180,5 +217,28 @@ mod tests {
                 .iter()
                 .all(|b| b.text.len() <= LINE_BYTES && b.runs[0].range.end == b.text.len())
         );
+    }
+
+    #[test]
+    fn a_table_row_copies_as_one_tab_separated_line() {
+        let row = |cells: &[&str], header| Block {
+            kind: BlockKind::TableRow {
+                cells: cells.iter().map(|c| (*c).to_string()).collect(),
+                header,
+            },
+            ..Block::default()
+        };
+        let data = Inspection {
+            blocks: vec![
+                Block {
+                    text: "Before".into(),
+                    ..Block::default()
+                },
+                row(&["a", "b"], true),
+                row(&["1", "2"], false),
+            ],
+            ..Inspection::default()
+        };
+        assert_eq!(data.plain_text(), "Before\na\tb\n1\t2");
     }
 }
