@@ -15,6 +15,7 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
     }
     assets!(
         "back",
+        "forward",
         "up",
         "list",
         "grid",

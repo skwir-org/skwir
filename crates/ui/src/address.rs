@@ -411,7 +411,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
                 .render(shell, cx),
         )
         .child(
-            Button::new("forward", "right", "Forward · Alt+Right", "forward")
+            Button::new("forward", "forward", "Forward · Alt+Right", "forward")
                 .enabled(forward)
                 .render(shell, cx),
         )
