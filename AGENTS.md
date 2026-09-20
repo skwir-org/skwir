@@ -130,7 +130,11 @@ current source before assuming a planned crate, command, or API exists.
 - **Scrolling.** Every view that scrolls carries a scrollbar
   (`elements/scrollbar.rs`) over its right edge: the view hands it whichever
   handle it already scrolls with, and the thumb is placed in prepaint from
-  that handle's numbers. The gutter takes the pointer only while there is a
+  that handle's numbers. A `gpui::list` measures only what it renders, so a
+  view built on one gives its items a height estimate
+  (`ListState::reset_with_uniform_height`, vendored patch 0004) or the bar
+  describes the few rows on screen instead of the document; real heights
+  replace the estimate as rows are drawn. The gutter takes the pointer only while there is a
   bar in it, so a press beside the rows never selects one. Wrapping a
   scrolling element to overlay a bar must preserve its flex context — a body
   that grew in a column needs a column — or it silently stops scrolling.

@@ -48,6 +48,16 @@ layout (`crates/gpui/...`) so they apply there with `git apply -p1`.
   `update`/`render` code such as `replace_preview_content`, the reader page
   cache and the thumbnail LRU eviction; never in `prepaint` or `paint`.
 
+- `0004-list-item-height-hints.patch`: `ListItem::Unmeasured` carries an
+  optional `size_hint`, the sum tree counts it, and `ListState` gains
+  `with_uniform_item_height` / `reset_with_uniform_height`. A list measures
+  only what it renders, so `max_offset_for_scrollbar` described the handful
+  of items drawn and a scrollbar built from it claimed a long document was
+  nearly all visible. A hint gives every item a height until it is measured,
+  and real heights replace it as items are drawn, so the estimate converges
+  instead of jumping. This mirrors the same mechanism in Zed's current
+  `list.rs`; `just list-check` runs the list tests, ours included.
+
 ## Regenerating a patch
 
     G=$(ls -d ~/.cargo/registry/src/*/gpui-0.2.2)

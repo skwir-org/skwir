@@ -1,0 +1,168 @@
+--- a/crates/gpui/src/elements/list.rs
++++ b/crates/gpui/src/elements/list.rs
+@@ -155,6 +155,11 @@
+ #[derive(Clone)]
+ enum ListItem {
+     Unmeasured {
++        /// What this item is expected to be, until it is measured. Without it
++        /// an unmeasured item counts as zero height, so the summed height of
++        /// a long list is only what has been rendered and a scrollbar built
++        /// from it claims the list is nearly all visible.
++        size_hint: Option<Size<Pixels>>,
+         focus_handle: Option<FocusHandle>,
+     },
+     Measured {
+@@ -172,9 +177,18 @@
+         }
+     }
+ 
++    /// The best height estimate available: what was measured, or the hint.
++    fn size_hint(&self) -> Option<Size<Pixels>> {
++        match self {
++            ListItem::Measured { size, .. } => Some(*size),
++            ListItem::Unmeasured { size_hint, .. } => *size_hint,
++        }
++    }
++
+     fn focus_handle(&self) -> Option<FocusHandle> {
+         match self {
+-            ListItem::Unmeasured { focus_handle } | ListItem::Measured { focus_handle, .. } => {
++            ListItem::Unmeasured { focus_handle, .. }
++            | ListItem::Measured { focus_handle, .. } => {
+                 focus_handle.clone()
+             }
+         }
+@@ -182,7 +196,8 @@
+ 
+     fn contains_focused(&self, window: &Window, cx: &App) -> bool {
+         match self {
+-            ListItem::Unmeasured { focus_handle } | ListItem::Measured { focus_handle, .. } => {
++            ListItem::Unmeasured { focus_handle, .. }
++            | ListItem::Measured { focus_handle, .. } => {
+                 focus_handle
+                     .as_ref()
+                     .is_some_and(|handle| handle.contains_focused(window, cx))
+@@ -238,6 +253,41 @@
+         self
+     }
+ 
++    /// Pre-populate every unmeasured item with a uniform height hint so the
++    /// scrollbar thumb is correctly sized from the first frame, without
++    /// measuring every item up front. Real heights replace the hint as items
++    /// are rendered, so the estimate converges.
++    pub fn with_uniform_item_height(self, height: Pixels) -> Self {
++        self.apply_uniform_item_height(height);
++        self
++    }
++
++    /// Reset the list to `element_count` items, each with a uniform height
++    /// hint (see [`Self::with_uniform_item_height`]).
++    pub fn reset_with_uniform_height(&self, element_count: usize, height: Pixels) {
++        self.reset(element_count);
++        self.apply_uniform_item_height(height);
++    }
++
++    fn apply_uniform_item_height(&self, height: Pixels) {
++        let size_hint = Size {
++            width: px(0.),
++            height,
++        };
++        let mut state = self.0.borrow_mut();
++        let new_items = state
++            .items
++            .iter()
++            .map(|item| ListItem::Unmeasured {
++                size_hint: Some(item.size_hint().unwrap_or(size_hint)),
++                focus_handle: item.focus_handle(),
++            })
++            .collect::<Vec<_>>();
++        let mut tree = SumTree::default();
++        tree.extend(new_items, ());
++        state.items = tree;
++    }
++
+     /// Reset this instantiation of the list state.
+     ///
+     /// Note that this will cause scroll events to be dropped until the next paint.
+@@ -284,7 +334,10 @@
+         new_items.extend(
+             focus_handles.into_iter().map(|focus_handle| {
+                 spliced_count += 1;
+-                ListItem::Unmeasured { focus_handle }
++                ListItem::Unmeasured {
++                    size_hint: None,
++                    focus_handle,
++                }
+             }),
+             (),
+         );
+@@ -1029,6 +1082,7 @@
+         {
+             let new_items = SumTree::from_iter(
+                 state.items.iter().map(|item| ListItem::Unmeasured {
++                    size_hint: item.size_hint(),
+                     focus_handle: item.focus_handle(),
+                 }),
+                 (),
+@@ -1114,11 +1168,14 @@
+ 
+     fn summary(&self, _: ()) -> Self::Summary {
+         match self {
+-            ListItem::Unmeasured { focus_handle } => ListItemSummary {
++            ListItem::Unmeasured {
++                size_hint,
++                focus_handle,
++            } => ListItemSummary {
+                 count: 1,
+                 rendered_count: 0,
+                 unrendered_count: 1,
+-                height: px(0.),
++                height: size_hint.map_or(px(0.), |size| size.height),
+                 has_focus_handles: focus_handle.is_some(),
+             },
+             ListItem::Measured {
+@@ -1236,6 +1293,44 @@
+     }
+ 
+     #[gpui::test]
++    fn test_uniform_height_hint_sizes_the_whole_list(cx: &mut TestAppContext) {
++        use crate::{
++            AppContext, Context, Element, IntoElement, ListState, Render, Styled, Window, div,
++            list, point, px, size,
++        };
++
++        let cx = cx.add_empty_window();
++        let state = ListState::new(100, crate::ListAlignment::Top, px(0.));
++
++        struct TestView(ListState);
++        impl Render for TestView {
++            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++                list(self.0.clone(), |_, _, _| {
++                    div().h(px(20.)).w_full().into_any()
++                })
++                .w_full()
++                .h_full()
++            }
++        }
++
++        // Only the visible items are measured, so without a hint the list
++        // believes it is barely taller than its viewport.
++        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
++            cx.new(|_| TestView(state.clone()))
++        });
++        let measured_only = state.max_offset_for_scrollbar().height;
++        assert!(measured_only < px(200.), "only what was drawn: {measured_only}");
++
++        // With a hint every item counts, so the list knows it is 100 items
++        // of about 20px inside a 100px viewport.
++        state.reset_with_uniform_height(100, px(20.));
++        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
++            cx.new(|_| TestView(state.clone()))
++        });
++        assert_eq!(state.max_offset_for_scrollbar().height, px(1900.));
++    }
++
++    #[gpui::test]
+     fn test_scroll_by_positive_and_negative_distance(cx: &mut TestAppContext) {
+         use crate::{
+             AppContext, Context, Element, IntoElement, ListState, Render, Styled, Window, div,

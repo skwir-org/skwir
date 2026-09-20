@@ -153,6 +153,9 @@ impl Shell {
         scroll.wanted.clear();
         scroll.errors.clear();
         scroll.list.reset(count);
+        // Forget the laid-out signature so the next build sizes the pages,
+        // and with them the scrollbar, from scratch.
+        scroll.layout.borrow_mut().take();
         scroll.list.scroll_to(ListOffset {
             item_ix: self.preview.page as usize - 1,
             offset_in_item: px(0.),
@@ -431,15 +434,27 @@ pub fn continuous_element(
     let theme = cx.global::<Theme>().clone();
     let viewport = crate::elements::document::DocumentViewport {
         build: Box::new(move |bounds, _, _| {
+            let width = f32::from(bounds.width).max(1.);
+            let height = f32::from(bounds.height).max(1.);
+            // A page that has not been drawn is worth about as much as the
+            // one we know: without that, the scrollbar would measure the
+            // handful of pages on screen and call the book nearly read.
+            let (fw, fh) = fallback;
+            let estimate = zoom.unwrap_or_else(|| {
+                if fit_width {
+                    width / fw.max(1.)
+                } else {
+                    (width / fw.max(1.)).min((height - 12.).max(1.) / fh.max(1.))
+                }
+            }) * fh
+                + 12.;
             let signature = (bounds, zoom, fit_width);
             if layout.borrow().as_ref() != Some(&signature) {
                 let offset = list.logical_scroll_top();
-                list.reset(list.item_count());
+                list.reset_with_uniform_height(list.item_count(), px(estimate.max(1.)));
                 list.scroll_to(offset);
                 *layout.borrow_mut() = Some(signature);
             }
-            let width = f32::from(bounds.width).max(1.);
-            let height = f32::from(bounds.height).max(1.);
             let content_width = zoom.map_or(width, |z| {
                 sizes.values().fold(width, |w, (pw, _)| w.max(pw * z))
             });

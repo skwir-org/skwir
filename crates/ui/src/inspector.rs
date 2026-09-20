@@ -216,10 +216,29 @@ impl State {
         self.request.provider.as_deref() == Some("preview-hex")
             || (kind == InspectionKind::Hex && self.request.target.is_none())
     }
+    /// What a row is worth before it has been drawn. A list only measures
+    /// what it renders, so without an estimate for the rest the scrollbar
+    /// would describe the few blocks on screen instead of the document.
+    /// A code line is one line; anything else is a short paragraph. Measured
+    /// rows replace the estimate as they are drawn.
+    fn row_estimate(&self, data: &Inspection) -> gpui::Pixels {
+        px(match data.kind {
+            InspectionKind::Code => self.font_size + 4.,
+            InspectionKind::Hex
+            | InspectionKind::Archive
+            | InspectionKind::Table
+            | InspectionKind::Tree => 24.,
+            // Prose wraps: call it two and a half lines and the space around
+            // them, between a heading and a long paragraph.
+            _ => self.font_size * 1.5 * 2.5 + 16.,
+        })
+    }
     fn reindex(&mut self, data: &Inspection) {
+        let estimate = self.row_estimate(data);
         if data.kind == InspectionKind::Code {
             self.visible = Arc::new(crate::code_preview::visible(data, &self.collapsed));
-            self.list.reset(self.visible.len() + 1);
+            self.list
+                .reset_with_uniform_height(self.visible.len() + 1, estimate);
             return;
         }
         let mut hidden = None;
@@ -239,7 +258,8 @@ impl State {
                 })
                 .collect(),
         );
-        self.list.reset(data.blocks.len() + self.visible.len() + 1);
+        self.list
+            .reset_with_uniform_height(data.blocks.len() + self.visible.len() + 1, estimate);
     }
 }
 impl Shell {
@@ -374,10 +394,15 @@ impl Shell {
                     return;
                 }
                 "larger" | "smaller" => {
+                    let data = display.data.clone();
                     let state = &mut self.preview.inspection;
                     state.font_size = (state.font_size + if action == "larger" { 2. } else { -2. })
                         .clamp(10., 40.);
-                    state.list.reset(state.list.item_count());
+                    // Every row is a different height now, estimate included.
+                    let estimate = state.row_estimate(&data);
+                    state
+                        .list
+                        .reset_with_uniform_height(state.list.item_count(), estimate);
                     cx.notify();
                     return;
                 }

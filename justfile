@@ -42,6 +42,10 @@ previews-check:
 atlas-check:
     python3 tools/gpui/check-atlas.py
 
+# Run the vendored GPUI list tests, which cover our item height hints.
+list-check:
+    python3 tools/gpui/check-list.py
+
 # Lint: rustfmt check + clippy with warnings as errors (default members).
 lint:
     cargo fmt --all -- --check
