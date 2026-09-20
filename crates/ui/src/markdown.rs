@@ -52,8 +52,13 @@ pub struct MarkdownStyle {
     pub quote_border: Hsla,
     pub list_indent: f32,
     pub marker_color: Hsla,
+    /// The widest the text column may be, when reading asks for a measure.
+    pub measure: Option<f32>,
     pub reading: bool,
 }
+
+/// Characters per line a reading column aims for.
+const MEASURE: f32 = 42.;
 
 impl MarkdownStyle {
     pub fn new(theme: &Theme, body_size: f32, reading: bool) -> Self {
@@ -94,6 +99,7 @@ impl MarkdownStyle {
             } else {
                 theme.text
             },
+            measure: reading.then_some(body_size * MEASURE),
             reading,
         }
     }
@@ -137,7 +143,9 @@ pub fn block(
         row = row.border_l_2().border_color(style.quote_border).pl_4();
     }
     let content = match &block.kind {
-        BlockKind::TableRow { cells, header } => table_row(cells, *header, style),
+        BlockKind::TableRow { cells, header } => {
+            table_row(block, index, cells, *header, selection, style, pane, entity)
+        }
         _ if block.code => code_box(block, index, selection, style, mono, pane, entity),
         _ => text_body(block, index, selection, style, pane, entity),
     };
@@ -193,7 +201,16 @@ fn text_body(
     body.child(text).into_any_element()
 }
 
-fn table_row(cells: &[String], header: bool, style: &MarkdownStyle) -> AnyElement {
+fn table_row(
+    block: &Block,
+    index: usize,
+    cells: &[std::ops::Range<usize>],
+    header: bool,
+    selection: Option<inspector_text::Selection>,
+    style: &MarkdownStyle,
+    pane: PaneId,
+    entity: WeakEntity<crate::shell::Shell>,
+) -> AnyElement {
     let mut row = div()
         .flex_1()
         .min_w_0()
@@ -203,6 +220,9 @@ fn table_row(cells: &[String], header: bool, style: &MarkdownStyle) -> AnyElemen
         .when(header, |d| {
             d.font_weight(FontWeight::BOLD).bg(style.table_header_bg)
         });
+    // The cells are ranges of the row's own text, so each column draws its
+    // stretch of it and keeps the emphasis, code and links written there.
+    let id: SharedString = format!("inspection-cell-{index}").into();
     for (column, cell) in cells.iter().enumerate() {
         row = row.child(
             div()
@@ -214,7 +234,16 @@ fn table_row(cells: &[String], header: bool, style: &MarkdownStyle) -> AnyElemen
                     d.border_r_1().border_color(style.border)
                 })
                 .text_size(px(style.body_size))
-                .child(cell.clone()),
+                .child(inspector_text::part(
+                    block,
+                    index,
+                    (id.clone(), column).into(),
+                    cell.clone(),
+                    selection,
+                    style,
+                    pane,
+                    entity.clone(),
+                )),
         );
     }
     row.into_any_element()

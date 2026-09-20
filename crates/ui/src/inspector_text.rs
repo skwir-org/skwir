@@ -52,10 +52,37 @@ pub fn render(
     pane: PaneId,
     entity: WeakEntity<Shell>,
 ) -> AnyElement {
-    let selection = selection.map_or(0..0, |s| s.range(index, block.text.len()));
-    let mut edges = vec![0, block.text.len(), selection.start, selection.end];
+    let whole = 0..block.text.len();
+    let id = ("inspection-text", index).into();
+    part(block, index, id, whole, selection, style, pane, entity)
+}
+
+/// One stretch of a block's text as its own element: the whole block, or a
+/// single table cell. Runs, links and the selection are clipped to `range`,
+/// and pointer offsets are reported back in the block's own coordinates, so
+/// selecting and copying work the same inside a cell as outside one.
+pub fn part(
+    block: &Block,
+    index: usize,
+    id: gpui::ElementId,
+    range: std::ops::Range<usize>,
+    selection: Option<Selection>,
+    style: &MarkdownStyle,
+    pane: PaneId,
+    entity: WeakEntity<Shell>,
+) -> AnyElement {
+    let selected = selection.map_or(0..0, |s| s.range(index, block.text.len()));
+    let selection = selected.start.max(range.start)..selected.end.min(range.end);
+    let mut edges = vec![range.start, range.end];
+    if selection.start < selection.end {
+        edges.extend([selection.start, selection.end]);
+    }
     for r in &block.runs {
-        edges.extend([r.range.start, r.range.end]);
+        edges.extend(
+            [r.range.start, r.range.end]
+                .into_iter()
+                .filter(|edge| range.contains(edge)),
+        );
     }
     edges.sort_unstable();
     edges.dedup();
@@ -96,22 +123,30 @@ pub fn render(
             if selection.contains(&start) {
                 highlight.background_color = Some(style.selection_bg);
             }
-            (start..end, highlight)
+            (start - range.start..end - range.start, highlight)
         })
         .collect::<Vec<_>>();
-    let text = StyledText::new(block.text.clone()).with_highlights(highlights);
+    let text = StyledText::new(block.text[range.clone()].to_owned()).with_highlights(highlights);
     let down = text.layout().clone();
     let moved = down.clone();
     let links: Vec<_> = block
         .runs
         .iter()
-        .filter_map(|r| r.link.clone().map(|href| (r.range.clone(), href)))
+        .filter_map(|r| {
+            let clipped = r.range.start.max(range.start)..r.range.end.min(range.end);
+            (clipped.start < clipped.end)
+                .then(|| r.link.clone())
+                .flatten()
+                .map(|href| (clipped.start - range.start..clipped.end - range.start, href))
+        })
         .collect();
     let ranges = links.iter().map(|(r, _)| r.clone()).collect();
     let weak = entity.clone();
-    let text = gpui::InteractiveText::new(("inspection-text", index), text).on_click(
-        ranges,
-        move |i, window, cx| {
+    let offset_of = move |position, layout: &gpui::TextLayout| {
+        range.start + layout.index_for_position(position).unwrap_or_else(|i| i)
+    };
+    let text = gpui::InteractiveText::new(gpui::ElementId::from((id.clone(), "text")), text)
+        .on_click(ranges, move |i, window, cx| {
             let _ = weak.update(cx, |s, cx| {
                 s.with_pane(pane, |s| {
                     s.run(
@@ -122,19 +157,16 @@ pub fn render(
                     );
                 });
             });
-        },
-    );
+        });
     let press = entity.clone();
     let motion = entity.clone();
     let release = entity.clone();
     div()
-        .id(("inspection-text-select", index))
+        .id(gpui::ElementId::from((id, "select")))
         .cursor_text()
         .child(text)
         .on_mouse_down(MouseButton::Left, move |event, window, cx| {
-            let offset = down
-                .index_for_position(event.position)
-                .unwrap_or_else(|i| i);
+            let offset = offset_of(event.position, &down);
             let _ = press.update(cx, |s, cx| {
                 s.with_pane(pane, |s| {
                     s.run(
@@ -148,9 +180,7 @@ pub fn render(
         })
         .on_mouse_move(move |event, window, cx| {
             if event.pressed_button == Some(MouseButton::Left) {
-                let offset = moved
-                    .index_for_position(event.position)
-                    .unwrap_or_else(|i| i);
+                let offset = offset_of(event.position, &moved);
                 let _ = motion.update(cx, |s, cx| {
                     s.with_pane(pane, |s| {
                         s.run(
@@ -225,6 +255,25 @@ mod tests {
             .is_none()
         );
     }
+    #[test]
+    fn a_table_row_selects_like_any_other_line() {
+        // Its cells are ranges of one text, so a selection across them needs
+        // no special case and copies with the tabs between the columns.
+        let blocks = vec![Block {
+            kind: bibli_core::inspection::BlockKind::TableRow {
+                cells: vec![0..3, 4..8],
+                header: false,
+            },
+            text: "one\ttwo!".into(),
+            ..Block::default()
+        }];
+        let selection = Selection {
+            start: (0, 1),
+            end: (0, 7),
+        };
+        assert_eq!(selection.text(&blocks).as_deref(), Some("ne\ttwo"));
+    }
+
     #[test]
     fn reverse_selection_crosses_blocks() {
         let blocks = vec![

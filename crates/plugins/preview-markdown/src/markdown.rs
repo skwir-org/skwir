@@ -79,16 +79,47 @@ fn begin(current: &mut Block, quote_depth: u32, lists: &[Option<u64>], marker: O
     };
 }
 
-/// One finished table row, taking the cells collected for it.
-fn row(cells: &mut Vec<String>, header: bool, quote_depth: u32) -> Block {
-    Block {
-        kind: BlockKind::TableRow {
-            cells: std::mem::take(cells),
-            header,
-        },
-        quote: quote_depth > 0,
-        ..Block::default()
+/// The inline state an emphasis, link or strikethrough tag changes. A table
+/// cell is text like any other, so both the block path and the table path
+/// read these through here and keep their runs.
+fn inline_event(inline: &mut Inline, event: &Event) -> bool {
+    match event {
+        Event::Start(Tag::Emphasis) => inline.italic += 1,
+        Event::End(TagEnd::Emphasis) => inline.italic = inline.italic.saturating_sub(1),
+        Event::Start(Tag::Strong) => inline.bold += 1,
+        Event::End(TagEnd::Strong) => inline.bold = inline.bold.saturating_sub(1),
+        Event::Start(Tag::Strikethrough) => inline.strikethrough += 1,
+        Event::End(TagEnd::Strikethrough) => {
+            inline.strikethrough = inline.strikethrough.saturating_sub(1);
+        }
+        Event::Start(Tag::Link { dest_url, .. }) => inline.link = Some(dest_url.to_string()),
+        Event::End(TagEnd::Link) => inline.link = None,
+        _ => return false,
     }
+    true
+}
+
+/// A heading's link target, in the shape readers already type: lowercase,
+/// spaces to hyphens, punctuation dropped, and a counter when a document
+/// repeats a heading. Links like `[see](#the-plan)` resolve against it.
+fn slug(text: &str, used: &mut Vec<String>) -> String {
+    let mut base = String::new();
+    for c in text.chars() {
+        if c.is_alphanumeric() {
+            base.extend(c.to_lowercase());
+        } else if matches!(c, ' ' | '-' | '_' | '\t') && !base.ends_with('-') {
+            base.push('-');
+        }
+    }
+    let base = base.trim_matches('-').to_owned();
+    let mut candidate = base.clone();
+    let mut seen = 0;
+    while used.contains(&candidate) {
+        seen += 1;
+        candidate = format!("{base}-{seen}");
+    }
+    used.push(candidate.clone());
+    candidate
 }
 
 fn level(level: HeadingLevel) -> u8 {
@@ -128,8 +159,14 @@ pub fn parse(
     cancel: &CancelToken,
     mut image: impl FnMut(&str) -> Option<Image>,
 ) -> anyhow::Result<Vec<Block>> {
-    let options =
-        Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH;
+    // Metadata blocks are enabled so that a note's front matter is recognized
+    // and skipped, rather than read as a rule and a large heading.
+    let options = Options::ENABLE_TABLES
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_HEADING_ATTRIBUTES
+        | Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
+        | Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS;
     let mut blocks = Vec::new();
     let mut current = Block::default();
     let mut inline = Inline::default();
@@ -140,10 +177,12 @@ pub fn parse(
     let mut pending: Option<Image> = None;
     let mut in_image = false;
     let mut in_table = false;
+    let mut in_metadata = false;
     let mut table_header = false;
-    let mut cells: Vec<String> = Vec::new();
-    let mut cell = String::new();
+    let mut cells: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut cell_start = 0usize;
     let mut html = String::new();
+    let mut anchors: Vec<String> = Vec::new();
     // One budget for every image in the document, Markdown's and raw HTML's.
     let mut images_seen = 0usize;
     let mut load = |href: &str| -> Option<Image> {
@@ -159,28 +198,64 @@ pub fn parse(
             "Document exceeds {} preview blocks",
             limits::BLOCKS
         );
+        if in_metadata {
+            if matches!(event, Event::End(TagEnd::MetadataBlock(_))) {
+                in_metadata = false;
+            }
+            continue;
+        }
+        // A table row is collected into `current` like any other text, so a
+        // cell keeps its emphasis, code and links; the cells are the ranges
+        // of that text the view draws in columns.
         if in_table {
+            if inline_event(&mut inline, &event) {
+                continue;
+            }
+            let mut finish = |current: &mut Block, cells: &mut Vec<_>, header| {
+                current.kind = BlockKind::TableRow {
+                    cells: std::mem::take(cells),
+                    header,
+                };
+                blocks.push(std::mem::take(current));
+            };
             match event {
-                Event::Start(Tag::TableHead) => table_header = true,
+                Event::Start(Tag::TableHead | Tag::TableRow) => {
+                    table_header = matches!(event, Event::Start(Tag::TableHead));
+                    cells.clear();
+                    begin(&mut current, quote_depth, &lists, None);
+                }
+                // The head row may close without its own `TableRow` event.
                 Event::End(TagEnd::TableHead) => {
-                    table_header = false;
-                    // The head row may close without its own `TableRow` event.
                     if !cells.is_empty() {
-                        blocks.push(row(&mut cells, true, quote_depth));
+                        finish(&mut current, &mut cells, true);
                     }
+                    table_header = false;
                 }
-                Event::Start(Tag::TableRow) => cells.clear(),
-                Event::Start(Tag::TableCell) => cell.clear(),
-                Event::End(TagEnd::TableCell) => cells.push(std::mem::take(&mut cell)),
-                Event::End(TagEnd::TableRow) => {
-                    blocks.push(row(&mut cells, table_header, quote_depth));
+                Event::End(TagEnd::TableRow) => finish(&mut current, &mut cells, table_header),
+                Event::Start(Tag::TableCell) => {
+                    if !cells.is_empty() {
+                        current.text.push('\t');
+                    }
+                    cell_start = current.text.len();
                 }
-                Event::End(TagEnd::Table) => in_table = false,
-                Event::Text(text) | Event::Code(text) => cell.push_str(text.as_ref()),
-                Event::SoftBreak => cell.push(' '),
-                Event::HardBreak => cell.push('\n'),
+                Event::End(TagEnd::TableCell) => cells.push(cell_start..current.text.len()),
+                Event::End(TagEnd::Table) => {
+                    in_table = false;
+                    begin(&mut current, quote_depth, &lists, marker.as_deref());
+                }
+                Event::Text(text) => push(&mut current, text.as_ref(), &inline),
+                Event::Code(text) => {
+                    inline.code += 1;
+                    push(&mut current, text.as_ref(), &inline);
+                    inline.code -= 1;
+                }
+                Event::SoftBreak => push(&mut current, " ", &inline),
+                Event::HardBreak => push(&mut current, "\n", &inline),
                 _ => {}
             }
+            continue;
+        }
+        if inline_event(&mut inline, &event) {
             continue;
         }
         // A run of raw HTML ends here: read it where it stood.
@@ -194,13 +269,20 @@ pub fn parse(
                 flush(&mut blocks, &mut current, &mut marker);
                 begin(&mut current, quote_depth, &lists, marker.as_deref());
             }
-            Event::End(TagEnd::Paragraph | TagEnd::Heading(_)) => {
+            Event::End(TagEnd::Paragraph) => {
                 flush(&mut blocks, &mut current, &mut marker);
             }
-            Event::Start(Tag::Heading { level: tag, .. }) => {
+            Event::End(TagEnd::Heading(_)) => {
+                if current.anchor.is_none() {
+                    current.anchor = Some(slug(&current.text, &mut anchors));
+                }
+                flush(&mut blocks, &mut current, &mut marker);
+            }
+            Event::Start(Tag::Heading { level: tag, id, .. }) => {
                 flush(&mut blocks, &mut current, &mut marker);
                 begin(&mut current, quote_depth, &lists, marker.as_deref());
                 current.heading = level(tag);
+                current.anchor = id.map(|id| slug(id.as_ref(), &mut anchors));
             }
             Event::Start(Tag::BlockQuote(_)) => {
                 flush(&mut blocks, &mut current, &mut marker);
@@ -257,6 +339,10 @@ pub fn parse(
                 flush(&mut blocks, &mut current, &mut marker);
                 in_table = true;
             }
+            Event::Start(Tag::MetadataBlock(_)) => {
+                flush(&mut blocks, &mut current, &mut marker);
+                in_metadata = true;
+            }
             Event::Start(Tag::Image { dest_url, .. }) => {
                 flush(&mut blocks, &mut current, &mut marker);
                 in_image = true;
@@ -278,18 +364,6 @@ pub fn parse(
                     begin(&mut current, quote_depth, &lists, marker.as_deref());
                 }
             }
-            Event::Start(Tag::Emphasis) => inline.italic += 1,
-            Event::End(TagEnd::Emphasis) => inline.italic = inline.italic.saturating_sub(1),
-            Event::Start(Tag::Strong) => inline.bold += 1,
-            Event::End(TagEnd::Strong) => inline.bold = inline.bold.saturating_sub(1),
-            Event::Start(Tag::Strikethrough) => inline.strikethrough += 1,
-            Event::End(TagEnd::Strikethrough) => {
-                inline.strikethrough = inline.strikethrough.saturating_sub(1);
-            }
-            Event::Start(Tag::Link { dest_url, .. }) => {
-                inline.link = Some(dest_url.into_string());
-            }
-            Event::End(TagEnd::Link) => inline.link = None,
             Event::Text(text) => {
                 if in_image {
                     alt.push_str(text.as_ref());
@@ -451,25 +525,59 @@ mod tests {
         assert_eq!(asked, limits::EMBEDDED_IMAGES);
     }
 
+    /// The cells of a row, read back through the ranges the view draws.
+    fn cells_of(block: &Block) -> (Vec<&str>, bool) {
+        let BlockKind::TableRow { cells, header } = &block.kind else {
+            panic!("not a table row");
+        };
+        (
+            cells.iter().map(|r| &block.text[r.clone()]).collect(),
+            *header,
+        )
+    }
+
     #[test]
-    fn table_rows_become_cells() {
+    fn table_rows_are_text_with_the_cells_as_ranges() {
         let blocks = parse("| name | note |\n|---|---|\n| one | two |\n");
-        let rows: Vec<_> = blocks.iter().map(|b| &b.kind).collect();
+        assert_eq!(cells_of(&blocks[0]), (vec!["name", "note"], true));
+        assert_eq!(cells_of(&blocks[1]), (vec!["one", "two"], false));
+        // The row reads as one line, so copying and searching need no case.
+        assert_eq!(blocks[1].text, "one\ttwo");
+    }
+
+    #[test]
+    fn a_cell_keeps_its_emphasis_and_links() {
+        let blocks = parse("| what | where |\n|---|---|\n| **bold** `code` | [doc](d.md) |\n");
+        let row = &blocks[1];
+        assert_eq!(cells_of(row).0, vec!["bold code", "doc"]);
+        let run = |pick: &dyn Fn(&Run) -> bool| {
+            let r = row.runs.iter().find(|r| pick(r)).expect("run");
+            &row.text[r.range.clone()]
+        };
+        assert_eq!(run(&|r| r.bold), "bold");
+        assert_eq!(run(&|r| r.code), "code");
+        assert_eq!(run(&|r| r.link.as_deref() == Some("d.md")), "doc");
+    }
+
+    #[test]
+    fn headings_carry_a_link_target() {
+        let blocks = parse("# The Plan!\n\n## The Plan\n\n### Explicit {#named}\n");
+        let anchors: Vec<_> = blocks.iter().map(|b| b.anchor.as_deref()).collect();
         assert_eq!(
-            rows,
-            [
-                &BlockKind::TableRow {
-                    cells: vec!["name".into(), "note".into()],
-                    header: true
-                },
-                &BlockKind::TableRow {
-                    cells: vec!["one".into(), "two".into()],
-                    header: false
-                },
-            ]
+            anchors,
+            [Some("the-plan"), Some("the-plan-1"), Some("named")],
+            "repeated headings still get distinct targets"
         );
-        assert!(blocks.iter().all(|b| b.text.is_empty()));
-        assert_eq!(blocks[1].plain(), "one\ttwo");
+    }
+
+    #[test]
+    fn front_matter_is_not_read_as_a_heading() {
+        let blocks = parse("---\ntitle: Note\ntags: [a, b]\n---\n\n# Real heading\n\nBody.\n");
+        assert_eq!(
+            blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>(),
+            ["Real heading", "Body."]
+        );
+        assert!(blocks.iter().all(|b| b.kind == BlockKind::Text));
     }
 
     #[test]

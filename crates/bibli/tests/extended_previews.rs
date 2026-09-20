@@ -96,11 +96,21 @@ fn markdown_styles_source_and_plugin_fallback() {
         .find(|b| b.marker.as_deref() == Some("•"))
         .expect("bulleted item");
     assert_eq!(item.list_depth, 1);
-    assert!(rendered.blocks.iter().any(|b| b.kind
-        == BlockKind::TableRow {
-            cells: vec!["a".into(), "b".into()],
-            header: true
-        }));
+    let header = rendered
+        .blocks
+        .iter()
+        .find(|b| matches!(&b.kind, BlockKind::TableRow { header, .. } if *header))
+        .expect("table head");
+    let BlockKind::TableRow { cells, .. } = &header.kind else {
+        unreachable!()
+    };
+    assert_eq!(
+        cells
+            .iter()
+            .map(|r| &header.text[r.clone()])
+            .collect::<Vec<_>>(),
+        ["a", "b"]
+    );
     assert!(rendered.blocks.iter().any(|b| b.kind == BlockKind::Rule));
     // A table row copies as one line, not as one line per cell.
     assert!(rendered.plain_text().contains("a\tb\n1\t2"));

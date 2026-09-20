@@ -90,7 +90,7 @@ impl Display {
         let folded = data
             .blocks
             .iter()
-            .map(|b| b.plain().to_lowercase())
+            .map(|b| b.text.to_lowercase())
             .chain(data.rows.iter().map(|r| r.cells.join("\t").to_lowercase()))
             .collect();
         Self {
@@ -113,6 +113,20 @@ impl Display {
         };
         hit(start.min(self.folded.len())..self.folded.len())
             .or_else(|| wrap.then(|| hit(0..start.min(self.folded.len()))).flatten())
+    }
+}
+/// Bring a list item into view. `ListState::scroll_to_reveal_item` walks the
+/// measured heights to get there, so it can only reach what the list has
+/// already laid out; a heading or a match further down would barely move the
+/// view. Anything unmeasured is jumped to instead, landing at the top.
+fn scroll_into_view(list: &ListState, item: usize) {
+    if list.bounds_for_item(item).is_some() {
+        list.scroll_to_reveal_item(item);
+    } else {
+        list.scroll_to(gpui::ListOffset {
+            item_ix: item,
+            offset_in_item: px(0.),
+        });
     }
 }
 pub struct State {
@@ -170,7 +184,7 @@ impl State {
         self.selected = Some(index);
         self.collapsed.clear();
         self.reindex(data);
-        self.list.scroll_to_reveal_item(index + 1);
+        scroll_into_view(&self.list, index + 1);
     }
     fn toggle_collapsed(&mut self, data: &Inspection, index: usize) {
         if !self.collapsed.remove(&index) {
@@ -317,7 +331,7 @@ impl Shell {
                                 .data
                                 .blocks
                                 .get(i)
-                                .map(bibli_core::inspection::Block::plain)
+                                .map(|b| b.text.clone())
                                 .or_else(|| {
                                     display
                                         .data
@@ -374,10 +388,7 @@ impl Shell {
                 }
                 "block" => {
                     if let Some(i) = args["index"].as_u64() {
-                        self.preview
-                            .inspection
-                            .list
-                            .scroll_to_reveal_item(i as usize + 1);
+                        scroll_into_view(&self.preview.inspection.list, i as usize + 1);
                     }
                     cx.notify();
                     return;
@@ -425,7 +436,7 @@ impl Shell {
                         .iter()
                         .position(|b| b.anchor.as_deref() == Some(anchor))
                 {
-                    self.preview.inspection.list.scroll_to_reveal_item(i + 1);
+                    scroll_into_view(&self.preview.inspection.list, i + 1);
                     cx.notify();
                 }
                 return;
@@ -705,6 +716,7 @@ pub fn content(
         font_size,
         display.data.kind == InspectionKind::Markdown,
     );
+    let measure = list_style.measure;
     let entity = cx.entity().downgrade();
     let list = gpui::list(shell.preview.inspection.list.clone(), move |index, _, _| {
         let theme = &list_theme;
@@ -927,7 +939,19 @@ pub fn content(
         }
         body = body.child(header);
     }
-    let mut body = body.child(div().flex_1().min_h_0().child(list));
+    // A document read at full width is hard to follow: in reading mode the
+    // column stops at a comfortable measure and sits in the middle of the
+    // pane. This is a maximum, not a measurement: a narrow pane keeps all of
+    // its width.
+    let mut body = body.child(
+        div().flex_1().min_h_0().flex().justify_center().child(
+            div()
+                .w_full()
+                .h_full()
+                .when_some(measure, |d, measure| d.max_w(px(measure)))
+                .child(list),
+        ),
+    );
     if display.data.kind == InspectionKind::Archive {
         let total = display
             .data

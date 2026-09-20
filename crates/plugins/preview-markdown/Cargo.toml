@@ -10,7 +10,7 @@ bibli-core.workspace = true
 bibli-platform.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
-pulldown-cmark = "0.13"
+pulldown-cmark = { version = "0.13", default-features = false }
 
 [dev-dependencies]
 tempfile.workspace = true

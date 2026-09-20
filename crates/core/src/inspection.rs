@@ -56,8 +56,14 @@ pub enum BlockKind {
     Text,
     /// A thematic break, drawn as a rule; `text` is empty.
     Rule,
-    /// One row of a table; `text` is empty and the cells hold its content.
-    TableRow { cells: Vec<String>, header: bool },
+    /// One row of a table. Its cells are ranges of `text`, which holds them
+    /// joined by tabs: a row is text like any other block, so its emphasis,
+    /// code and links are ordinary `runs`, and search, selection and copy
+    /// need no special case. The view draws each range in its own column.
+    TableRow {
+        cells: Vec<std::ops::Range<usize>>,
+        header: bool,
+    },
 }
 #[derive(Clone, Debug, Default)]
 pub struct Block {
@@ -75,16 +81,6 @@ pub struct Block {
     pub marker: Option<String>,
     pub runs: Vec<Run>,
     pub image: Option<Image>,
-}
-impl Block {
-    /// What the block says, for copying and searching: a table row's cells
-    /// joined by tabs, every other block's text.
-    pub fn plain(&self) -> String {
-        match &self.kind {
-            BlockKind::TableRow { cells, .. } => cells.join("\t"),
-            _ => self.text.clone(),
-        }
-    }
 }
 #[derive(Clone, Debug, Default)]
 #[allow(clippy::struct_excessive_bools)]
@@ -121,7 +117,7 @@ impl Inspection {
     pub fn plain_text(&self) -> String {
         self.blocks
             .iter()
-            .map(Block::plain)
+            .map(|b| b.text.clone())
             .chain(self.rows.iter().map(|r| r.cells.join("\t")))
             .collect::<Vec<_>>()
             .join("\n")
@@ -136,7 +132,9 @@ pub const LINE_BYTES: usize = 4096;
 pub fn split_blocks(blocks: Vec<Block>) -> Vec<Block> {
     let mut out = Vec::new();
     for mut block in blocks {
-        if block.text.len() <= LINE_BYTES {
+        // A rule has no text and a table row's cells are ranges of its own,
+        // so only running text is ever long enough to split.
+        if block.text.len() <= LINE_BYTES || block.kind != BlockKind::Text {
             out.push(block);
             continue;
         }
@@ -221,12 +219,25 @@ mod tests {
 
     #[test]
     fn a_table_row_copies_as_one_tab_separated_line() {
-        let row = |cells: &[&str], header| Block {
-            kind: BlockKind::TableRow {
-                cells: cells.iter().map(|c| (*c).to_string()).collect(),
-                header,
-            },
-            ..Block::default()
+        let row = |cells: &[&str], header| {
+            let mut text = String::new();
+            let mut ranges = Vec::new();
+            for cell in cells {
+                if !ranges.is_empty() {
+                    text.push('\t');
+                }
+                let start = text.len();
+                text.push_str(cell);
+                ranges.push(start..text.len());
+            }
+            Block {
+                kind: BlockKind::TableRow {
+                    cells: ranges,
+                    header,
+                },
+                text,
+                ..Block::default()
+            }
         };
         let data = Inspection {
             blocks: vec![
