@@ -125,7 +125,11 @@ fn cell(
         .when(selected, |d| {
             d.bg(theme.selection_bg).text_color(theme.selection_text)
         })
-        .when(!selected, |d| d.hover(|s| s.bg(theme.surface)))
+        .when(!selected, |d| d.hover(|s| s.bg(theme.hover)))
+        .when(
+            shell.pending.cut && shell.pending.entries.contains(&id),
+            |d| d.opacity(crate::views::list::CUT_OPACITY),
+        )
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, ev: &MouseDownEvent, window, cx| {

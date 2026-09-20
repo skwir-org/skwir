@@ -115,6 +115,12 @@ current source before assuming a planned crate, command, or API exists.
   only a name in `keymap::context_label`. A command run three times with the
   pointer gets one hint naming its shortcut, once ever; call
   `Shell::note_pointer_use` from any new pointer-only entry point.
+- **What waits for a paste is core data.** The clipboard's owner publishes
+  it in `App::pending` (entry ids and whether a paste will move them); the
+  shell snapshots it once per frame. Every view dims cut entries
+  (`views::list::CUT_OPACITY`) and the status bar shows the count, because
+  the clipboard is invisible once the pane shows another folder. Escape with
+  nothing selected, or a click on that count, forgets it.
 - **Popups own the keyboard.** A menu or popover takes focus when it opens
   and returns it when it closes, with its own key context (see `menu.rs`):
   otherwise keys act on a selection hidden behind it.

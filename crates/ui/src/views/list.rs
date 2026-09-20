@@ -22,6 +22,9 @@ pub const ROW_HEIGHT: f32 = 26.0;
 const ICON_PX: f32 = 18.0;
 /// The name never gets narrower than this; detail columns give way first.
 const NAME_MIN: f32 = 150.0;
+/// How much of a cut entry remains visible until it is pasted.
+pub const CUT_OPACITY: f32 = 0.45;
+
 /// Size, Modified, Type.
 pub const DEFAULT_WIDTHS: [f32; 3] = [80.0, 136.0, 150.0];
 const DETAIL_GAP: f32 = 12.0;
@@ -115,6 +118,8 @@ pub struct RowData {
     pub modified_exact: String,
     pub kind: std::sync::Arc<str>,
     pub selected: bool,
+    /// Cut and waiting for a paste: drawn dimmed, as the file is on its way out.
+    pub cut: bool,
     pub is_cursor: bool,
     pub icon: Option<std::sync::Arc<std::path::Path>>,
     pub hydrated: bool,
@@ -198,6 +203,7 @@ impl Shell {
                 modified_exact,
                 kind,
                 selected: pane.selection.contains(id),
+                cut: self.pending.cut && self.pending.entries.contains(&id),
                 is_cursor: cursor == Some(id),
                 icon: self.icons.for_entry(e, icon_px),
                 hydrated: e.metadata.is_hydrated(),
@@ -257,6 +263,7 @@ pub fn row(
             d.bg(theme.selection_bg).text_color(theme.selection_text)
         })
         .when(!r.selected, |d| d.hover(|s| s.bg(theme.hover)))
+        .when(r.cut, |d| d.opacity(CUT_OPACITY))
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, ev: &MouseDownEvent, window, cx| {

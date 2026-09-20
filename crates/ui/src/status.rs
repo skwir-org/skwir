@@ -106,6 +106,44 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
         bar = bar.child(div().text_color(theme.error).truncate().child(e));
     }
     bar = bar.child(div().flex_1());
+    // The clipboard is invisible once the pane shows another folder: say
+    // what is waiting, and let a click (or Escape) forget it.
+    let waiting = shell.pending.entries.len();
+    if waiting > 0 {
+        let font = shell.font.clone();
+        let (verb, icon) = if shell.pending.cut {
+            ("cut", "cut")
+        } else {
+            ("copied", "copy")
+        };
+        let keys = shell
+            .key_hints
+            .iter()
+            .find(|hint| hint.command == "clipboard_paste")
+            .map_or_else(String::new, |hint| {
+                format!(" Paste with {}.", crate::keymap::display_keys(&hint.keys))
+            });
+        let tip: gpui::SharedString = format!("{keys} Click to forget.").trim().to_owned().into();
+        bar = bar.child(
+            div()
+                .id("status-pending")
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap_1()
+                .px_2()
+                .rounded_md()
+                .cursor_pointer()
+                .text_color(theme.text)
+                .hover(|s| s.bg(theme.hover))
+                .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), font.clone(), cx))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.run("clipboard_clear", serde_json::json!({}), window, cx);
+                }))
+                .child(crate::controls::glyph(icon, theme.text_muted, 13.))
+                .child(format!("{} {verb}", format::count(waiting, "item"))),
+        );
+    }
     if !shell.reviews.is_empty() {
         bar = bar.child(
             div()

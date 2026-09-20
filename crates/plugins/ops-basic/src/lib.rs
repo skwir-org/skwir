@@ -59,6 +59,13 @@ fn take_selection(app: &App, pane: Option<PaneId>) -> anyhow::Result<Vec<EntryRe
     Ok(refs)
 }
 
+/// Let every view show what is waiting for a paste.
+fn publish(app: &App, entries: &[EntryRef], cut: bool) {
+    app.pending
+        .set(ID, entries.iter().map(|entry| entry.id), cut);
+    app.wake();
+}
+
 fn paste(clipboard: &Mutex<Clipboard>, pane: Option<PaneId>, app: &App) -> anyhow::Result<Outcome> {
     let pane = pane_of(app, pane);
     let dest = {
@@ -83,6 +90,8 @@ fn paste(clipboard: &Mutex<Clipboard>, pane: Option<PaneId>, app: &App) -> anyho
         };
         if cut {
             c.cut = false;
+            // Moved away: nothing is waiting any more.
+            app.pending.clear();
         }
         (entries, cut)
     };
@@ -123,6 +132,9 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
     ("ctrl-shift-z", "redo", None),
     ("ctrl-a", "select_all", Some("pane")),
     ("escape", "select_none", Some("pane")),
+    // With nothing selected Escape has one thing left to cancel: a pending
+    // cut or copy. Later bindings win, and `none` holds only then.
+    ("escape", "clipboard_clear", Some("pane none")),
     ("f5", "refresh", None),
     ("ctrl-shift-n", "ui.mkdir_prompt", None),
     ("ctrl-l", "ui.focus_address", None),
@@ -183,6 +195,7 @@ impl Plugin for OpsBasicPlugin {
             "Remember the selection for a later paste (copy)",
             move |a, app| {
                 let entries = take_selection(app, a.pane)?;
+                publish(app, &entries, false);
                 *cb.lock() = Clipboard {
                     entries,
                     cut: false,
@@ -198,7 +211,21 @@ impl Plugin for OpsBasicPlugin {
             "Remember the selection for a later paste (move)",
             move |a, app| {
                 let entries = take_selection(app, a.pane)?;
+                publish(app, &entries, true);
                 *cb.lock() = Clipboard { entries, cut: true };
+                Ok(Outcome::Done)
+            },
+        );
+        let cb = Arc::clone(&self.clipboard);
+        app.commands.register::<PaneArgs, _>(
+            ID,
+            "clipboard_clear",
+            "Forget cut or copied files",
+            "Empty the clipboard; files that were cut stay where they are",
+            move |_, app| {
+                *cb.lock() = Clipboard::default();
+                app.pending.clear();
+                app.wake();
                 Ok(Outcome::Done)
             },
         );
@@ -298,6 +325,11 @@ mod tests {
         ))
         .unwrap();
         app.dispatch(&Invocation::new("clipboard_cut")).unwrap();
+        let pending = app.pending.get();
+        assert!(
+            pending.cut && pending.entries.len() == 1,
+            "views can see what was cut"
+        );
         app.navigate(pane, &Location::from_path(&dst)).unwrap();
         assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
         let Outcome::Plan(plan) = app.dispatch(&Invocation::new("clipboard_paste")).unwrap() else {
@@ -311,6 +343,10 @@ mod tests {
         assert!(
             app.dispatch(&Invocation::new("clipboard_paste")).is_err(),
             "cut clears the clipboard"
+        );
+        assert!(
+            app.pending.get().entries.is_empty(),
+            "nothing is waiting after the move"
         );
     }
 }

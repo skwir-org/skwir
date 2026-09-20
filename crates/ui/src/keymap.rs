@@ -50,6 +50,7 @@ const DEFAULTS: &[(&str, &str, Option<&str>)] = &[
     ("ctrl-shift-z", "redo", None),
     ("ctrl-a", "select_all", Some("pane")),
     ("escape", "select_none", Some("pane")),
+    ("escape", "clipboard_clear", Some("pane none")),
     ("f5", "refresh", None),
     ("ctrl-shift-n", "ui.mkdir_prompt", None),
     ("ctrl-l", "ui.focus_address", None),

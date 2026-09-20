@@ -94,6 +94,9 @@ pub struct Shell {
     pub review_focus: Option<FocusHandle>,
     pub timeline: TimelineState,
     pub toasts: crate::toast::ToastState,
+    /// This frame's snapshot of what waits for a paste; rows and cells test
+    /// membership here instead of taking the lock each.
+    pub pending: Arc<bibli_core::pending::Pending>,
     pub shortcuts: Option<crate::shortcuts::Overview>,
     pub nudges: crate::shortcuts::Nudges,
     pub last_search: String,
@@ -191,6 +194,7 @@ impl Shell {
             review_focus: None,
             timeline: TimelineState::default(),
             toasts: crate::toast::ToastState::default(),
+            pending: Arc::default(),
             shortcuts: None,
             nudges: crate::shortcuts::Nudges::default(),
             last_search: String::new(),
@@ -915,6 +919,7 @@ impl Shell {
                 _ => self.set_status(n.text, error, cx),
             }
         }
+        self.pending = self.app.pending.get();
         let revision = self.app.settings.revision();
         if revision != self.theme_revision {
             self.theme_revision = revision;

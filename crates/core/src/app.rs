@@ -88,6 +88,8 @@ pub struct App {
     pub settings: Settings,
     pub cache: Cache,
     pub workspace: RwLock<Workspace>,
+    /// Entries waiting for a paste, published by the clipboard's owner.
+    pub pending: crate::pending::PendingTransfer,
     pub thumbnails: Arc<crate::thumbs::Thumbnails>,
     pub metadata: Arc<crate::metadata::MetadataProviders>,
     pub previews: Arc<crate::preview::Previews>,
@@ -128,6 +130,7 @@ impl App {
             settings,
             cache: Cache::new(config.cache_root),
             workspace: RwLock::new(Workspace::default()),
+            pending: crate::pending::PendingTransfer::default(),
             providers: RwLock::new(HashMap::new()),
             waker: RwLock::new(None),
             batch_size: config.batch_size,
@@ -189,6 +192,7 @@ impl App {
         self.thumbnails.unregister_owner(owner);
         self.metadata.unregister_owner(owner);
         self.previews.unregister_owner(owner);
+        self.pending.unregister_owner(owner);
         self.registry.remove_owner(owner);
         self.providers.write().retain(|_, (o, _)| &**o != owner);
         for spec in self.settings.schema() {
