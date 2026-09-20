@@ -288,6 +288,34 @@ impl ListState {
         state.items = tree;
     }
 
+    /// Mark the items in `range` as needing to be measured again, keeping
+    /// what they last measured as their estimate and leaving the scroll
+    /// position alone.
+    ///
+    /// Unlike [`Self::splice`] this does not change how many items there are,
+    /// so the summed height does not collapse while items are invalidated:
+    /// use it when an item's content changed and its height may have changed
+    /// with it, but the item is still the same item at the same index.
+    pub fn remeasure_items(&self, range: Range<usize>) {
+        let state = &mut *self.0.borrow_mut();
+        let new_items = {
+            let mut cursor = state.items.cursor::<Count>(());
+            let mut new_items = cursor.slice(&Count(range.start), Bias::Right);
+            let invalidated = cursor.slice(&Count(range.end), Bias::Right);
+            new_items.extend(
+                invalidated.iter().map(|item| ListItem::Unmeasured {
+                    size_hint: item.size_hint(),
+                    focus_handle: item.focus_handle(),
+                }),
+                (),
+            );
+            new_items.append(cursor.suffix(), ());
+            new_items
+        };
+        state.items = new_items;
+        state.measuring_behavior.reset();
+    }
+
     /// Reset this instantiation of the list state.
     ///
     /// Note that this will cause scroll events to be dropped until the next paint.
@@ -1328,6 +1356,48 @@ mod test {
             cx.new(|_| TestView(state.clone()))
         });
         assert_eq!(state.max_offset_for_scrollbar().height, px(1900.));
+    }
+
+    #[gpui::test]
+    fn test_remeasure_keeps_the_height_it_knew(cx: &mut TestAppContext) {
+        use crate::{
+            AppContext, Context, Element, IntoElement, ListState, Render, Styled, Window, div,
+            list, point, px, size,
+        };
+
+        let cx = cx.add_empty_window();
+        let state = ListState::new(100, crate::ListAlignment::Top, px(0.));
+
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |_, _, _| {
+                    div().h(px(20.)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        state.reset_with_uniform_height(100, px(20.));
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
+            cx.new(|_| TestView(state.clone()))
+        });
+        let before = state.max_offset_for_scrollbar().height;
+        assert_eq!(before, px(1900.));
+
+        // Invalidating an item keeps what it was: the list is the same
+        // height, so a scrollbar built from it does not jump.
+        state.remeasure_items(3..4);
+        assert_eq!(state.max_offset_for_scrollbar().height, before);
+
+        // Splicing the same item is a different statement — this item is
+        // new and nothing is known about it — and the height drops.
+        state.splice(3..4, 1);
+        assert!(
+            state.max_offset_for_scrollbar().height < before,
+            "a spliced item knows nothing yet"
+        );
     }
 
     #[gpui::test]

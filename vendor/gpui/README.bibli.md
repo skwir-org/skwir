@@ -55,8 +55,12 @@ layout (`crates/gpui/...`) so they apply there with `git apply -p1`.
   of items drawn and a scrollbar built from it claimed a long document was
   nearly all visible. A hint gives every item a height until it is measured,
   and real heights replace it as items are drawn, so the estimate converges
-  instead of jumping. This mirrors the same mechanism in Zed's current
-  `list.rs`; `just list-check` runs the list tests, ours included.
+  instead of jumping. `ListState::remeasure_items` comes with it: a caller
+  whose item changed height wants that item measured again, not replaced,
+  and `splice` would drop what it knew — a document that loses a page's
+  height every time a page finishes rendering has a scrollbar that jumps
+  under the hand dragging it. This mirrors the same two mechanisms in Zed's
+  current `list.rs`; `just list-check` runs the list tests, ours included.
 
 ## Regenerating a patch
 

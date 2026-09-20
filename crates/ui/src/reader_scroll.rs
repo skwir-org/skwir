@@ -372,18 +372,23 @@ impl Shell {
             scroll.pending = None;
             match reply.result {
                 Ok(page) => {
-                    scroll
-                        .sizes
-                        .insert(reply.number, (page.content.width, page.content.height));
+                    let size = (page.content.width, page.content.height);
+                    let assumed = scroll.sizes.insert(reply.number, size);
                     if let Some(old) = scroll.pages.insert(reply.number, page) {
                         cx.drop_image(old.image, Some(window));
                     }
-                    // Invalidate the placeholder's measured height, keeping the reading anchor.
-                    let offset = scroll.list.logical_scroll_top();
-                    scroll
-                        .list
-                        .splice(reply.number as usize - 1..reply.number as usize, 1);
-                    scroll.list.scroll_to(offset);
+                    // The placeholder stood at the size we assumed for this
+                    // page. If the real page is that size, its row does not
+                    // change and there is nothing to measure again. If it is
+                    // not, remeasure that row alone — never splice it: a
+                    // spliced item forgets its height, and a document whose
+                    // total height drops every time a page arrives has a
+                    // scrollbar that jumps under the hand dragging it.
+                    if assumed != Some(size) {
+                        scroll
+                            .list
+                            .remeasure_items(reply.number as usize - 1..reply.number as usize);
+                    }
                 }
                 Err(error) => {
                     scroll.errors.insert(reply.number, error);
