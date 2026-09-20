@@ -101,7 +101,8 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
         }
         bar = bar.child(div().text_color(theme.text).child(text));
     }
-    if let Some(e) = error {
+    // With nothing listed the pane itself explains the failure.
+    if let Some(e) = error.filter(|_| count > 0) {
         bar = bar.child(div().text_color(theme.error).truncate().child(e));
     }
     bar = bar.child(div().flex_1());
@@ -123,7 +124,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
                 .when(shell.shelf_count > 0, |d| {
                     d.bg(theme.selection_bg).text_color(theme.selection_text)
                 })
-                .hover(|s| s.bg(theme.border))
+                .hover(|s| s.bg(theme.hover))
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.run("ui.shelf_open", serde_json::json!({}), window, cx);
                 }))
@@ -150,7 +151,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
                 .px_2()
                 .rounded_md()
                 .cursor_pointer()
-                .hover(|s| s.bg(theme.border).text_color(theme.text))
+                .hover(|s| s.bg(theme.hover).text_color(theme.text))
                 .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), font.clone(), cx))
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.run("undo", serde_json::json!({}), window, cx);

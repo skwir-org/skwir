@@ -27,6 +27,26 @@ pub struct Mount {
     pub path: PathBuf,
     pub fstype: String,
     pub removable: bool,
+    /// The mounted device (`/dev/sdb1`), as the kernel reports it.
+    pub source: String,
+}
+
+/// Free and total bytes of the filesystem holding `path`. Asks the
+/// filesystem, which can block on a sleeping or unreachable volume: call it
+/// from a worker.
+pub fn space(path: &Path) -> Option<(u64, u64)> {
+    let stat = rustix::fs::statvfs(path).ok()?;
+    let total = stat.f_blocks.checked_mul(stat.f_frsize)?;
+    (total > 0).then(|| (stat.f_bavail.saturating_mul(stat.f_frsize), total))
+}
+
+/// The desktop's own way to unmount a volume the user mounted: udisks, which
+/// needs no privileges for removable media.
+pub fn unmount_command(source: &str) -> (&'static str, Vec<String>) {
+    (
+        "udisksctl",
+        vec!["unmount".into(), "--block-device".into(), source.into()],
+    )
 }
 
 pub fn home() -> Option<PathBuf> {
@@ -127,6 +147,63 @@ pub fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// `file://` URI of a path, escaping what the bookmarks format and URIs
+/// reserve (space, `%`, control and non-ASCII bytes).
+pub fn file_uri(path: &Path) -> String {
+    use std::fmt::Write as _;
+    let mut uri = String::from("file://");
+    for byte in path.as_os_str().as_encoded_bytes() {
+        if byte.is_ascii_alphanumeric() || b"/-._~!$&'()*+,;=:@".contains(byte) {
+            uri.push(*byte as char);
+        } else {
+            let _ = write!(uri, "%{byte:02X}");
+        }
+    }
+    uri
+}
+
+/// The bookmarks text with `path` added, or `None` if it is already there.
+pub fn with_bookmark(text: &str, path: &Path) -> Option<String> {
+    let uri = file_uri(path);
+    if text
+        .lines()
+        .any(|line| line.split(' ').next() == Some(uri.as_str()))
+    {
+        return None;
+    }
+    let mut out = text.to_owned();
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(&uri);
+    out.push('\n');
+    Some(out)
+}
+
+/// Add a folder to the GTK bookmarks every file manager and file dialog on
+/// the desktop shares. Returns false if it was already bookmarked. Writes a
+/// file: call from a worker.
+pub fn add_bookmark(path: &Path) -> anyhow::Result<bool> {
+    use std::io::Write as _;
+    let dir = dirs::config_dir()
+        .ok_or_else(|| anyhow::anyhow!("no configuration directory"))?
+        .join("gtk-3.0");
+    let file = dir.join("bookmarks");
+    let text = match std::fs::read_to_string(&file) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error.into()),
+    };
+    let Some(updated) = with_bookmark(&text, path) else {
+        return Ok(false);
+    };
+    std::fs::create_dir_all(&dir)?;
+    let mut staged = tempfile::NamedTempFile::new_in(&dir)?;
+    staged.write_all(updated.as_bytes())?;
+    staged.persist(&file)?;
+    Ok(true)
+}
+
 /// Mounted volumes the user cares about.
 pub fn mounts() -> Vec<Mount> {
     imp::mounts()
@@ -198,6 +275,7 @@ pub fn parse_mountinfo(text: &str) -> Vec<Mount> {
             path: mountpoint,
             fstype,
             removable,
+            source: rf.get(1).map(|s| unescape_mountinfo(s)).unwrap_or_default(),
         });
     }
     out
@@ -246,6 +324,37 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn bookmarks_are_added_once_as_escaped_uris() {
+        let path = std::path::Path::new("/example/Work files/it's 100% done");
+        let uri = super::file_uri(path);
+        assert_eq!(uri, "file:///example/Work%20files/it's%20100%25%20done");
+        assert_eq!(
+            super::percent_decode(&uri["file://".len()..]),
+            path.to_string_lossy()
+        );
+        let first = super::with_bookmark("file:///example/other Other\n", path).unwrap();
+        assert_eq!(
+            first,
+            format!("file:///example/other Other\n{uri}\n"),
+            "existing bookmarks and their labels are kept"
+        );
+        assert_eq!(super::with_bookmark(&first, path), None);
+        assert_eq!(super::with_bookmark("", path).unwrap(), format!("{uri}\n"));
+    }
+
+    #[test]
+    fn mounts_report_their_device() {
+        let line = "36 35 98:0 / /run/media/example/USB\\040stick rw - vfat /dev/sdb1 rw";
+        let mounts = super::parse_mountinfo(line);
+        assert_eq!(mounts[0].source, "/dev/sdb1");
+        assert!(mounts[0].removable);
+        assert_eq!(
+            super::unmount_command(&mounts[0].source).1,
+            ["unmount", "--block-device", "/dev/sdb1"]
+        );
+    }
+
     use super::*;
 
     #[test]

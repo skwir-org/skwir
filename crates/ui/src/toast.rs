@@ -248,9 +248,9 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
             .occlude()
     };
     let glyph = |tone: Tone| match tone {
-        Tone::Success => controls::glyph("check", theme.accent, 15.),
+        Tone::Success => controls::glyph("check", theme.success, 15.),
         Tone::Error => controls::glyph("warning", theme.error, 15.),
-        Tone::Info => controls::glyph("eye", theme.text_muted, 15.),
+        Tone::Info => controls::glyph("info", theme.text_muted, 15.),
     };
     // A plan with a single step finishes before anyone could read a bar.
     let content = if let Some(running) = shell.toasts.running.as_ref().filter(|r| r.total > 1) {

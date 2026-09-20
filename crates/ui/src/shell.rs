@@ -71,6 +71,8 @@ pub struct Shell {
     /// `ui.date_format`, resolved when the settings revision changes.
     pub friendly_dates: bool,
     /// Size, Modified, Type: which detail columns the list shows.
+    /// Sidebar groups the user folded, for this session.
+    pub sidebar_folded: std::collections::HashSet<String>,
     pub columns: [bool; 3],
     pub column_widths: [f32; 3],
     /// A header edge being dragged: column, pointer x and width at the start.
@@ -92,6 +94,8 @@ pub struct Shell {
     pub review_focus: Option<FocusHandle>,
     pub timeline: TimelineState,
     pub toasts: crate::toast::ToastState,
+    pub shortcuts: Option<crate::shortcuts::Overview>,
+    pub nudges: crate::shortcuts::Nudges,
     pub last_search: String,
     pub shelf_count: usize,
     started: Instant,
@@ -168,6 +172,7 @@ impl Shell {
             icons: IconCache::default(),
             type_names: crate::typenames::TypeNames::default(),
             friendly_dates: true,
+            sidebar_folded: std::collections::HashSet::new(),
             columns: [true; 3],
             column_widths: crate::views::list::DEFAULT_WIDTHS,
             column_drag: None,
@@ -186,6 +191,8 @@ impl Shell {
             review_focus: None,
             timeline: TimelineState::default(),
             toasts: crate::toast::ToastState::default(),
+            shortcuts: None,
+            nudges: crate::shortcuts::Nudges::default(),
             last_search: String::new(),
             shelf_count: 0,
             started,
@@ -487,6 +494,12 @@ impl Shell {
         if self.settings.is_some() && !name.starts_with("ui.settings") {
             return;
         }
+        // The overview is something to read: a key meant for the window
+        // behind it closes it instead of acting unseen.
+        if self.shortcuts.is_some() && !matches!(name, "ui.shortcuts" | "ui.settings") {
+            self.toggle_shortcuts(window, cx);
+            return;
+        }
         // Settings may contain private paths; never trace their values.
         if !name.starts_with("ui.settings") && !name.starts_with("settings.") {
             tracing::debug!(name, %args, "run");
@@ -596,6 +609,7 @@ impl Shell {
             "toolbar_prev" => window.focus_prev(),
             "toolbar_menu" => self.toggle_toolbar_menu(args, window, cx),
             name if name.starts_with("settings_") => self.settings_command(name, args, window, cx),
+            "shortcuts" => self.toggle_shortcuts(window, cx),
             name if name.starts_with("menu_") => self.menu_command(name, window, cx),
             "palette" => self.open_palette(window, cx),
             "palette_up" => self.palette_move(-1, cx),
@@ -1013,7 +1027,13 @@ impl Shell {
         let theme = cx.global::<Theme>().clone();
         let active = self.app.workspace.read().active_id() == id;
         let address_bar = address::render_address(self, window, cx);
-        let body = {
+        // The Usage view draws its own scanning and empty states.
+        let placeholder = (self.ui().view_id != "usage")
+            .then(|| crate::placeholder::of(self, id))
+            .flatten();
+        let body = if let Some(placeholder) = placeholder {
+            crate::placeholder::render(placeholder, cx)
+        } else {
             match self.take_view() {
                 Some(mut v) => {
                     let el = v.render(self, window, cx);
@@ -1107,6 +1127,7 @@ impl Render for Shell {
             .clone()
             .map(gpui::IntoElement::into_any_element);
         let toast = crate::toast::render(self, cx);
+        let shortcuts = crate::shortcuts::render(self, cx);
         let overlays = [
             menu::render(self, cx),
             prompts::render_prompt(self, cx),
@@ -1145,6 +1166,7 @@ impl Render for Shell {
             .children(toast)
             .children(overlays.into_iter().flatten())
             .children(settings)
+            .children(shortcuts)
             .child(div().h(px(0.)));
         self.resize_hook(root, cx)
     }

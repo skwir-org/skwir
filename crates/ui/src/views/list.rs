@@ -75,19 +75,7 @@ impl Shell {
                     .collect(),
             ),
         );
-        let weak = self.app.weak();
-        self.app.scheduler.spawn(
-            bibli_core::scheduler::Priority::Background,
-            "column-widths-save",
-            self.app.lifetime().child(),
-            move || {
-                if let Some(app) = weak.upgrade()
-                    && let Err(error) = app.settings.save()
-                {
-                    tracing::warn!("cannot save column widths: {error:#}");
-                }
-            },
-        );
+        self.save_settings_later();
     }
 }
 

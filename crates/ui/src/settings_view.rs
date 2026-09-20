@@ -75,90 +75,9 @@ fn spec_matches(query: &str, spec: &SettingSpec, owner_title: &str) -> bool {
         .any(|label| label.to_lowercase().contains(query))
 }
 
-/// A GPUI context predicate (`Pane && single`) in plain words.
-fn context_label(context: &str) -> String {
-    let mut place = "Anywhere";
-    let mut conditions = Vec::new();
-    for token in context.split("&&").map(str::trim) {
-        match token {
-            "Shell" | "" => {}
-            "Pane" => place = "File list",
-            "AddressBar" => place = "Address bar",
-            "Palette" => place = "Command palette",
-            "Confirm" => place = "Confirmation dialogs",
-            "Peek" => place = "Peek",
-            "DocumentReader" => place = "Document reader",
-            "DocumentFind" => place = "Document search",
-            "Review" => place = "Plan review",
-            "Jump" => place = "Jump",
-            "BulkRename" => place = "Bulk rename",
-            "MediaPlayer" => place = "Media player",
-            "Inspector" => place = "Structured previews",
-            "ToolbarButton" | "ToolbarPopup" => place = "Toolbars",
-            "ContextMenu" => place = "Context menu",
-            "Settings" | "SettingsNav" | "SettingControl" | "SettingNumber" => place = "Settings",
-            "single" => conditions.push("one item selected"),
-            "selection" => conditions.push("with a selection"),
-            "split" => conditions.push("split view"),
-            "dir" => conditions.push("on a folder"),
-            "file" => conditions.push("on a file"),
-            other => conditions.push(other),
-        }
-    }
-    if conditions.is_empty() {
-        place.to_owned()
-    } else {
-        format!("{place} ({})", conditions.join(", "))
-    }
-}
-
 impl SettingsView {
     fn command_title(&self, hint: &KeyHint) -> String {
-        if let Some((_, _, title)) = crate::palette::UI_COMMANDS.iter().find(|(name, args, _)| {
-            *name == hint.command
-                && serde_json::from_str::<serde_json::Value>(args)
-                    .ok()
-                    .as_ref()
-                    == Some(&hint.args)
-        }) {
-            return (*title).to_owned();
-        }
-        if hint.command == "ui.view"
-            && let Some(id) = hint.args.get("id").and_then(serde_json::Value::as_str)
-        {
-            let title = self
-                .app
-                .registry
-                .views
-                .all()
-                .into_iter()
-                .find(|view| &*view.id == id)
-                .map_or_else(|| id.to_owned(), |view| view.title.clone());
-            return format!("{title} view");
-        }
-        if let Some(spec) = self.app.commands.get(&hint.command) {
-            return spec.title.clone();
-        }
-        let name = hint
-            .command
-            .strip_prefix("ui.")
-            .unwrap_or(&hint.command)
-            .replace(['_', '.'], " ");
-        let mut chars = name.chars();
-        let mut title: String = chars.next().map_or_else(String::new, |first| {
-            first.to_uppercase().chain(chars).collect()
-        });
-        if let Some(args) = hint.args.as_object().filter(|args| !args.is_empty()) {
-            let detail: Vec<String> = args
-                .iter()
-                .map(|(name, value)| match value.as_str() {
-                    Some(text) => format!("{name} {text}"),
-                    None => format!("{name} {value}"),
-                })
-                .collect();
-            title = format!("{title} ({})", detail.join(", "));
-        }
-        title
+        crate::keymap::title_of(&self.app, hint)
     }
 
     fn stop(&mut self, focus: &gpui::FocusHandle, item: Option<usize>, key: Option<&str>) {
@@ -220,7 +139,7 @@ impl SettingsView {
                 .count();
             let title = self.page_title(&page);
             let target = page.clone();
-            let hover = theme.border;
+            let hover = theme.hover;
             list = list.child(
                 div()
                     .id(SharedString::from(format!("settings-page-{title}")))
@@ -447,7 +366,7 @@ impl SettingsView {
                     })),
                 );
                 if open {
-                    let hover = theme.border;
+                    let hover = theme.hover;
                     let mut panel = div()
                         .id(SharedString::from(format!("choices-{key}")))
                         .min_w(px(150.))
@@ -730,10 +649,10 @@ impl SettingsView {
                 } else {
                     (
                         "warning",
-                        if status.required && plugin.enabled {
-                            theme.error
-                        } else {
-                            theme.text_muted
+                        match (plugin.enabled, status.required) {
+                            (true, true) => theme.error,
+                            (true, false) => theme.warning,
+                            (false, _) => theme.text_muted,
                         },
                         format!("{} not found — {}", status.name, status.purpose),
                     )
@@ -931,7 +850,7 @@ impl SettingsView {
         let mut hints: Vec<(String, &KeyHint)> = self
             .key_hints
             .iter()
-            .map(|hint| (context_label(&hint.context), hint))
+            .map(|hint| (crate::keymap::context_label(&hint.context), hint))
             .filter(|(context, hint)| {
                 query.is_empty()
                     || matches(query, &[context, &hint.keys, &self.command_title(hint)])
@@ -1172,25 +1091,11 @@ impl Render for SettingsView {
             .items_center()
             .justify_center()
             .occlude()
-            .bg(gpui::black().opacity(if theme.is_dark { 0.5 } else { 0.25 }))
+            .bg(theme.scrim)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::Close)),
             )
             .child(panel)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::context_label;
-
-    #[test]
-    fn contexts_read_as_places_and_conditions() {
-        assert_eq!(context_label("Shell"), "Anywhere");
-        assert_eq!(
-            context_label("Pane && single"),
-            "File list (one item selected)"
-        );
     }
 }

@@ -57,6 +57,11 @@ pub fn declare(app: &App) {
         &[("friendly", "Friendly"), ("iso", "ISO 8601")],
     ));
     app.settings.declare(SettingSpec::data(
+        crate::shortcuts::HINTS_KEY,
+        "Commands whose shortcut hint was already shown",
+        toml::Value::Array(Vec::new()),
+    ));
+    app.settings.declare(SettingSpec::data(
         COLUMN_WIDTHS_KEY,
         "Widths of the Size, Modified and Type columns, in pixels",
         toml::Value::Array(

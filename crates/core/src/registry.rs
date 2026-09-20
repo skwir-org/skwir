@@ -122,6 +122,10 @@ pub struct Place {
     pub icon: Option<String>,
     /// Sidebar section, e.g. `places`, `devices`, `bookmarks`.
     pub group: String,
+    /// Free and total bytes, for volumes; filled in after a worker asked.
+    pub space: Option<(u64, u64)>,
+    /// A command that detaches the volume (the sidebar shows an eject button).
+    pub eject: Option<Invocation>,
 }
 
 /// A menu contribution. `when` is a space-separated list of tokens that must

@@ -13,10 +13,10 @@ anyhow.workspace = true
 serde.workspace = true
 schemars.workspace = true
 parking_lot.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-serde_json.workspace = true
 
 [lints]
 workspace = true

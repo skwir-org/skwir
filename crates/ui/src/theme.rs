@@ -1,4 +1,18 @@
 //! Theme tokens, chosen from the window appearance and stored as a GPUI global.
+//!
+//! Every surface draws from these and from the scales below, so a menu, a
+//! toast, a dialog and a row agree without anyone comparing hex values:
+//!
+//! - color: the fields of [`Theme`]. State colors are tokens too: `hover` for
+//!   whatever is under the pointer, `selection_*` for what is chosen,
+//!   `success`/`warning`/`error` for outcomes, `scrim` behind a dialog.
+//!   Do not derive a hover from `border` or `surface` locally.
+//! - radius: `rounded_sm` inside controls (segments, menu rows, key caps),
+//!   `rounded_md` for controls and rows, `rounded_lg` for panels (menus,
+//!   toasts, cards, dialogs), `rounded_full` for pills.
+//! - elevation: `shadow_md` for menus and popovers, `shadow_lg` for toasts
+//!   and dialogs; nothing else casts a shadow.
+//! - spacing: multiples of 4 px; rows are 26 px, controls 28 px, bars 42 px.
 
 use gpui::{Global, Hsla, WindowAppearance, rgb};
 
@@ -16,6 +30,10 @@ pub struct Theme {
     pub selection_bg: Hsla,
     pub selection_text: Hsla,
     pub error: Hsla,
+    pub success: Hsla,
+    pub warning: Hsla,
+    /// Dims the window behind a modal dialog.
+    pub scrim: Hsla,
     pub is_dark: bool,
 }
 
@@ -34,6 +52,9 @@ impl Theme {
             selection_bg: rgb(0xd6e4ff).into(),
             selection_text: rgb(0x0b2a6b).into(),
             error: rgb(0xc62828).into(),
+            success: rgb(0x2e7d32).into(),
+            warning: rgb(0xb26a00).into(),
+            scrim: gpui::hsla(0., 0., 0., 0.25),
             is_dark: false,
         }
     }
@@ -50,6 +71,9 @@ impl Theme {
             selection_bg: rgb(0x2c4f8a).into(),
             selection_text: rgb(0xffffff).into(),
             error: rgb(0xff6b6b).into(),
+            success: rgb(0x6fcf7f).into(),
+            warning: rgb(0xf2b84b).into(),
+            scrim: gpui::hsla(0., 0., 0., 0.5),
             is_dark: true,
         }
     }

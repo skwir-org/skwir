@@ -39,9 +39,18 @@ impl AssetSource for FsAssets {
 pub struct IconCache {
     by_mime: HashMap<(String, u16), Option<Arc<Path>>>,
     folder: HashMap<u16, Option<Arc<Path>>>,
+    named: HashMap<(String, u16), Option<Arc<Path>>>,
 }
 
 impl IconCache {
+    /// An icon of the desktop's theme by name (`user-home`, `drive-harddisk`).
+    pub fn named(&mut self, name: &str, size: u16) -> Option<Arc<Path>> {
+        self.named
+            .entry((name.to_owned(), size))
+            .or_insert_with(|| icons::lookup(name, size).map(PathBuf::into))
+            .clone()
+    }
+
     /// Icon path for an entry: the folder icon or the MIME type's icon.
     pub fn for_entry(&mut self, e: &Entry, size: u16) -> Option<Arc<Path>> {
         if e.is_dir() {

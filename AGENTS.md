@@ -97,6 +97,24 @@ current source before assuming a planned crate, command, or API exists.
   view) says `empty` in its `when`: it belongs to the menu opened on the
   background, which first clears the selection. Rarely used items set
   `submenu`; the menu expands that group in place. Give items an `icon`.
+- **Nothing to list is a state, not a blank.** `placeholder.rs` says why a
+  pane is empty (empty folder, no results, empty shelf) or why it failed, in
+  the user's words with the system's message as the detail, and offers the
+  way out. It renders inside the pane container, so drops and the folder's
+  menu still work. The banner above the view is only for an error beside
+  existing entries.
+- **Tokens.** Colors, radii and shadows come from `theme.rs` (its header
+  lists the scales). State colors are tokens: `hover`, `selection_*`,
+  `success`/`warning`/`error`, `scrim`. Do not derive one locally.
+- **Sidebar.** Places carry a theme icon name, optionally `space` (filled in
+  by a worker: asking a volume can block) and an `eject` command. A row is a
+  drop target like any folder; a folder dropped beside the rows is bookmarked
+  through `places.bookmark`, which writes the desktop's shared GTK bookmarks.
+- **Learning the keys.** F1 (`shortcuts.rs`) lists the bindings that apply
+  to the focused element, read from its key contexts, so a new context needs
+  only a name in `keymap::context_label`. A command run three times with the
+  pointer gets one hint naming its shortcut, once ever; call
+  `Shell::note_pointer_use` from any new pointer-only entry point.
 - **Popups own the keyboard.** A menu or popover takes focus when it opens
   and returns it when it closes, with its own key context (see `menu.rs`):
   otherwise keys act on a selection hidden behind it.

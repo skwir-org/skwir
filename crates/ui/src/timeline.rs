@@ -173,7 +173,7 @@ fn chip(
         .when(active, |d| {
             d.bg(theme.selection_bg).text_color(theme.selection_text)
         })
-        .when(!active, |d| d.hover(|s| s.bg(theme.border)))
+        .when(!active, |d| d.hover(|s| s.bg(theme.hover)))
         .on_click(cx.listener(move |this, _, window, cx| on(this, window, cx)))
         .child(label)
         .into_any_element()

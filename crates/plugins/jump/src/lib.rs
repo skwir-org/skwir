@@ -188,6 +188,8 @@ impl Plugin for JumpPlugin {
                 location: Location::parse("recent:"),
                 icon: Some("document-open-recent".into()),
                 group: "places".into(),
+                space: None,
+                eject: None,
             },
         );
         app.registry.keymap.add(

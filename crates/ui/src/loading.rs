@@ -86,8 +86,12 @@ pub fn pending(shell: &Shell, pane: PaneId) -> bool {
 pub fn message(shell: &Shell, pane: PaneId) -> Option<String> {
     let ws = shell.app.workspace.read();
     let pane_state = ws.pane(pane)?;
-    if let Some(error) = pane_state.listing.error() {
-        return Some(format!("Unable to load location: {error}"));
+    // With nothing listed the pane itself explains the failure
+    // (`placeholder.rs`); the banner is for an error beside existing entries.
+    if let Some(error) = pane_state.listing.error()
+        && !pane_state.listing.is_empty()
+    {
+        return Some(format!("Some of this location could not be read: {error}"));
     }
     if !pending(shell, pane) {
         return None;

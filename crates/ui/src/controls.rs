@@ -81,7 +81,7 @@ pub fn segment(
     selected: bool,
     theme: &Theme,
 ) -> Stateful<Div> {
-    let hover = theme.border;
+    let hover = theme.hover;
     div()
         .id(id.into())
         .h_full()
@@ -115,7 +115,7 @@ pub fn button(
     focus: &FocusHandle,
     theme: &Theme,
 ) -> Stateful<Div> {
-    let (accent, hover) = (theme.accent, theme.border);
+    let (accent, hover) = (theme.accent, theme.hover);
     let color = if style == ButtonStyle::Danger {
         theme.error
     } else {
@@ -151,7 +151,7 @@ pub fn icon_button(
     focus: &FocusHandle,
     theme: &Theme,
 ) -> Stateful<Div> {
-    let (accent, hover) = (theme.accent, theme.border);
+    let (accent, hover) = (theme.accent, theme.hover);
     div()
         .id(id.into())
         .track_focus(focus)
@@ -215,7 +215,7 @@ pub fn dropdown(
     focus: &FocusHandle,
     theme: &Theme,
 ) -> Stateful<Div> {
-    let (accent, hover) = (theme.accent, theme.border);
+    let (accent, hover) = (theme.accent, theme.hover);
     div()
         .id(id.into())
         .track_focus(focus)

@@ -67,6 +67,8 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("escape", "ui.toolbar_close", Some("ToolbarPopup")),
     ("escape", "ui.reader_find_close", Some("DocumentFind")),
     ("ctrl-,", "ui.settings", None),
+    ("f1", "ui.shortcuts", None),
+    ("escape", "ui.shortcuts", Some("Shortcuts")),
     ("escape", "ui.menu_close", Some("ContextMenu")),
     ("up", "ui.menu_up", Some("ContextMenu")),
     ("down", "ui.menu_down", Some("ContextMenu")),
@@ -276,6 +278,94 @@ pub fn context_of(when: Option<&str>) -> String {
     }
 }
 
+/// A GPUI context predicate (`Pane && single`) in plain words.
+pub fn context_label(context: &str) -> String {
+    let mut place = "Anywhere";
+    let mut conditions = Vec::new();
+    for token in context.split("&&").map(str::trim) {
+        match token {
+            "Shell" | "" => {}
+            "Pane" => place = "File list",
+            "AddressBar" => place = "Address bar",
+            "Palette" => place = "Command palette",
+            "Confirm" => place = "Confirmation dialogs",
+            "Peek" => place = "Peek",
+            "DocumentReader" => place = "Document reader",
+            "DocumentFind" => place = "Document search",
+            "Review" => place = "Plan review",
+            "Jump" => place = "Jump",
+            "BulkRename" => place = "Bulk rename",
+            "MediaPlayer" => place = "Media player",
+            "Inspector" => place = "Structured previews",
+            "ToolbarButton" | "ToolbarPopup" => place = "Toolbars",
+            "ContextMenu" => place = "Context menu",
+            "Shortcuts" => place = "Shortcut overview",
+            "Settings" | "SettingsNav" | "SettingControl" | "SettingNumber" => place = "Settings",
+            "single" => conditions.push("one item selected"),
+            "selection" => conditions.push("with a selection"),
+            "split" => conditions.push("split view"),
+            "dir" => conditions.push("on a folder"),
+            "file" => conditions.push("on a file"),
+            other => conditions.push(other),
+        }
+    }
+    if conditions.is_empty() {
+        place.to_owned()
+    } else {
+        format!("{place} ({})", conditions.join(", "))
+    }
+}
+
+/// What a binding does, in words: the palette's title for shell commands,
+/// the registered title for core and plugin commands, a readable form of
+/// the name otherwise.
+pub fn title_of(app: &App, hint: &KeyHint) -> String {
+    if let Some((_, _, title)) = crate::palette::UI_COMMANDS.iter().find(|(name, args, _)| {
+        *name == hint.command
+            && serde_json::from_str::<serde_json::Value>(args)
+                .ok()
+                .as_ref()
+                == Some(&hint.args)
+    }) {
+        return (*title).to_owned();
+    }
+    if hint.command == "ui.view"
+        && let Some(id) = hint.args.get("id").and_then(serde_json::Value::as_str)
+    {
+        let title = app
+            .registry
+            .views
+            .all()
+            .into_iter()
+            .find(|view| &*view.id == id)
+            .map_or_else(|| id.to_owned(), |view| view.title.clone());
+        return format!("{title} view");
+    }
+    if let Some(spec) = app.commands.get(&hint.command) {
+        return spec.title.clone();
+    }
+    let name = hint
+        .command
+        .strip_prefix("ui.")
+        .unwrap_or(&hint.command)
+        .replace(['_', '.'], " ");
+    let mut chars = name.chars();
+    let mut title: String = chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    });
+    if let Some(args) = hint.args.as_object().filter(|args| !args.is_empty()) {
+        let detail: Vec<String> = args
+            .iter()
+            .map(|(name, value)| match value.as_str() {
+                Some(text) => format!("{name} {text}"),
+                None => format!("{name} {value}"),
+            })
+            .collect();
+        title = format!("{title} ({})", detail.join(", "));
+    }
+    title
+}
+
 /// `ctrl-shift-p` as key caps; a binding may be a sequence of strokes.
 pub fn key_caps(keys: &str) -> Vec<Vec<String>> {
     keys.split_whitespace()
@@ -396,7 +486,16 @@ pub fn install(app: &App, cx: &mut gpui::App) -> Vec<KeyHint> {
 
 #[cfg(test)]
 mod tests {
-    use super::{context_of, display_keys, key_caps};
+    use super::{context_label, context_of, display_keys, key_caps};
+
+    #[test]
+    fn contexts_read_as_places_and_conditions() {
+        assert_eq!(context_label("Shell"), "Anywhere");
+        assert_eq!(
+            context_label("Pane && single"),
+            "File list (one item selected)"
+        );
+    }
 
     #[test]
     fn keys_become_caps_including_the_minus_key() {

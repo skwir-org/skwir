@@ -109,6 +109,8 @@ fn register_places(app: &App) {
                 },
                 icon: Some("folder-saved-search".into()),
                 group: "queries".into(),
+                space: None,
+                eject: None,
             },
         );
     }

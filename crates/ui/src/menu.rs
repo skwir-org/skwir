@@ -317,6 +317,12 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 }))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |this, _, window, cx| {
+                    if let (Row::Item { index, .. }, Some(menu)) = (&row, this.menu.as_ref())
+                        && let Some(command) =
+                            menu.items.get(*index).map(|item| item.command.clone())
+                    {
+                        this.note_pointer_use(&command.name, &command.args, cx);
+                    }
                     this.menu_activate(&row, window, cx);
                 }))
                 // An icon column, empty where an item has none, keeps titles aligned.

@@ -451,6 +451,8 @@ impl Plugin for ShelfPlugin {
                 location: Location::parse("shelf:"),
                 icon: Some("folder-drag-accept".into()),
                 group: "places".into(),
+                space: None,
+                eject: None,
             },
         );
         for (keys, command, when) in BINDINGS {

@@ -64,7 +64,9 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "paste",
         "trash",
         "tag",
-        "shelf"
+        "shelf",
+        "eject",
+        "info"
     )
 }
 
@@ -194,7 +196,7 @@ impl Button {
             })
             .when(enabled, |d| {
                 d.cursor_pointer()
-                    .hover(|s| s.bg(theme.border).text_color(theme.text))
+                    .hover(|s| s.bg(theme.hover).text_color(theme.text))
                     .focus(|s| s.border_color(theme.accent))
             })
             .when(!enabled, |d| d.opacity(0.35))
@@ -255,6 +257,7 @@ fn invoke(
             popup.restore(window);
         }
     }
+    shell.note_pointer_use(command, &args, cx);
     if !command.starts_with("ui.") {
         args["pane"] = serde_json::json!(pane);
     }
