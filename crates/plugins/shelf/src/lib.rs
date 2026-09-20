@@ -327,8 +327,8 @@ impl LocationProvider for ShelfProvider {
 const BINDINGS: &[(&str, &str, Option<&str>)] =
     &[("ctrl-shift-b", "shelf.add", Some("pane selection"))];
 
-const MENU: &[(&str, &str, Option<&str>, i32)] =
-    &[("Add to Shelf", "shelf.add", Some("selection"), 140)];
+const MENU: &[(&str, &str, Option<&str>, i32, &str)] =
+    &[("Add to Shelf", "shelf.add", Some("selection"), 140, "shelf")];
 
 impl Plugin for ShelfPlugin {
     fn id(&self) -> &'static str {
@@ -463,7 +463,7 @@ impl Plugin for ShelfPlugin {
                 },
             );
         }
-        for (title, command, when, order) in MENU {
+        for (title, command, when, order, icon) in MENU {
             app.registry.menus.add(
                 ID,
                 MenuItem {
@@ -472,6 +472,8 @@ impl Plugin for ShelfPlugin {
                     command: Invocation::new(*command),
                     when: when.map(str::to_owned),
                     order: *order,
+                    icon: Some((*icon).into()),
+                    submenu: None,
                 },
             );
         }

@@ -47,6 +47,7 @@ pub fn when_holds(when: Option<&str>, ctx: SelectionCtx) -> bool {
     let Some(when) = when else { return true };
     when.split_whitespace().all(|t| match t {
         "none" => true,
+        "empty" => ctx.count == 0,
         "selection" => ctx.count > 0,
         "single" => ctx.count == 1,
         "dir" => ctx.count > 0 && ctx.all_dirs,
@@ -61,8 +62,63 @@ pub struct MenuState {
     /// The menu owns the keyboard while it is open: otherwise keys reach the
     /// pane behind it and act on a selection the user can no longer see.
     pub focus: FocusHandle,
-    /// Item under the keyboard cursor; the pointer moves it too.
+    /// Row under the keyboard cursor; the pointer moves it too.
     pub highlighted: Option<usize>,
+    /// The submenu whose items are shown, in place, under its parent row.
+    pub expanded: Option<String>,
+}
+
+/// What the menu shows, top to bottom.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Row {
+    /// Index into `MenuState::items`; `nested` items belong to a submenu.
+    Item { index: usize, nested: bool },
+    /// The parent row of a submenu.
+    Parent(String),
+}
+
+impl MenuState {
+    pub fn rows(&self) -> Vec<Row> {
+        rows_of(&self.items, self.expanded.as_deref())
+    }
+}
+
+/// Top-level items in order, then each submenu's parent row, followed by its
+/// items while it is expanded. Expanding in place keeps one panel and one
+/// linear keyboard order; a second popup would have to be a deferred draw
+/// inside this one, which GPUI cannot nest.
+pub fn rows_of(items: &[MenuItem], expanded: Option<&str>) -> Vec<Row> {
+    let mut rows: Vec<Row> = items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item.submenu.is_none())
+        .map(|(index, _)| Row::Item {
+            index,
+            nested: false,
+        })
+        .collect();
+    let mut parents: Vec<&str> = Vec::new();
+    for name in items.iter().filter_map(|item| item.submenu.as_deref()) {
+        if !parents.contains(&name) {
+            parents.push(name);
+        }
+    }
+    for name in parents {
+        rows.push(Row::Parent(name.to_owned()));
+        if expanded == Some(name) {
+            rows.extend(
+                items
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, item)| item.submenu.as_deref() == Some(name))
+                    .map(|(index, _)| Row::Item {
+                        index,
+                        nested: true,
+                    }),
+            );
+        }
+    }
+    rows
 }
 
 impl Shell {
@@ -103,6 +159,7 @@ impl Shell {
             items,
             focus,
             highlighted: None,
+            expanded: None,
         });
         cx.notify();
     }
@@ -114,12 +171,34 @@ impl Shell {
         }
     }
 
+    /// Run the row, or open and close a submenu's parent.
+    fn menu_activate(&mut self, row: &Row, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(menu) = self.menu.as_mut() else {
+            return;
+        };
+        match row {
+            Row::Parent(name) => {
+                menu.expanded = (menu.expanded.as_ref() != Some(name)).then(|| name.clone());
+                cx.notify();
+            }
+            Row::Item { index, .. } => {
+                let Some(command) = menu.items.get(*index).map(|item| item.command.clone()) else {
+                    return;
+                };
+                self.close_context_menu(window, cx);
+                self.run(&command.name, command.args, window, cx);
+            }
+        }
+    }
+
     /// `ui.menu_*`: keyboard control of the open context menu.
     pub fn menu_command(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(menu) = self.menu.as_mut() else {
             return;
         };
-        let last = menu.items.len().saturating_sub(1);
+        let rows = menu.rows();
+        let last = rows.len().saturating_sub(1);
+        let current = menu.highlighted.and_then(|i| rows.get(i).cloned());
         match name {
             "menu_close" => self.close_context_menu(window, cx),
             "menu_down" => {
@@ -130,16 +209,23 @@ impl Shell {
             }
             "menu_first" => menu.highlighted = Some(0),
             "menu_last" => menu.highlighted = Some(last),
+            "menu_expand" => {
+                if let Some(Row::Parent(name)) = current {
+                    menu.expanded = Some(name);
+                }
+            }
+            "menu_collapse" => {
+                if let Some(name) = menu.expanded.take() {
+                    menu.highlighted = menu
+                        .rows()
+                        .iter()
+                        .position(|row| *row == Row::Parent(name.clone()));
+                }
+            }
             "menu_activate" => {
-                let Some(command) = menu
-                    .highlighted
-                    .and_then(|i| menu.items.get(i))
-                    .map(|item| item.command.clone())
-                else {
-                    return;
-                };
-                self.close_context_menu(window, cx);
-                self.run(&command.name, command.args, window, cx);
+                if let Some(row) = current {
+                    self.menu_activate(&row, window, cx);
+                }
             }
             _ => {}
         }
@@ -164,29 +250,58 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .on_mouse_down_out(cx.listener(|this, _, window, cx| {
             this.close_context_menu(window, cx);
         }));
-    for (i, item) in menu.items.iter().enumerate() {
-        // Separator between order groups (hundreds digit), per the convention
-        // on `bibli_core::registry::MenuItem`.
-        if i > 0 && menu.items[i - 1].order / 100 != item.order / 100 {
+    let mut previous: Option<&MenuItem> = None;
+    for (i, row) in menu.rows().into_iter().enumerate() {
+        let highlighted = menu.highlighted == Some(i);
+        let muted = if highlighted {
+            theme.selection_text
+        } else {
+            theme.text_muted
+        };
+        let (title, icon, keys, nested, separated) = match &row {
+            Row::Item { index, nested } => {
+                let item = &menu.items[*index];
+                // Separator between order groups (hundreds digit), per the
+                // convention on `bibli_core::registry::MenuItem`.
+                let separated = !nested
+                    && previous.is_some_and(|before| before.order / 100 != item.order / 100);
+                if !nested {
+                    previous = Some(item);
+                }
+                let keys = shell
+                    .key_hints
+                    .iter()
+                    .find(|hint| {
+                        *hint.command == *item.command.name && hint.args == item.command.args
+                    })
+                    .map(|hint| crate::keymap::display_keys(&hint.keys));
+                (
+                    item.title.clone(),
+                    item.icon.clone(),
+                    keys,
+                    *nested,
+                    separated,
+                )
+            }
+            Row::Parent(name) => (name.clone(), None, None, false, true),
+        };
+        if separated {
             panel = panel.child(div().my_1().h(px(1.)).bg(theme.border));
         }
-        let inv = item.command.clone();
-        let highlighted = menu.highlighted == Some(i);
-        let keys = shell
-            .key_hints
-            .iter()
-            .find(|hint| *hint.command == *inv.name && hint.args == inv.args)
-            .map(|hint| crate::keymap::display_keys(&hint.keys));
+        let expanded = matches!(&row, Row::Parent(name) if menu.expanded.as_ref() == Some(name));
+        let is_parent = matches!(row, Row::Parent(_));
+        let icon =
+            icon.filter(|name| crate::toolbar::asset(&format!("toolbar/{name}.svg")).is_some());
         panel = panel.child(
             div()
                 .id(("menu", i))
                 .mx_1()
                 .px_2()
                 .py_1()
+                .when(nested, gpui::Styled::pl_6)
                 .flex()
                 .items_center()
-                .justify_between()
-                .gap_6()
+                .gap_2()
                 .rounded_sm()
                 .cursor_pointer()
                 .when(highlighted, |d| {
@@ -202,20 +317,29 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 }))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |this, _, window, cx| {
-                    this.close_context_menu(window, cx);
-                    this.run(&inv.name, inv.args.clone(), window, cx);
+                    this.menu_activate(&row, window, cx);
                 }))
-                .child(item.title.clone())
-                .children(keys.map(|keys| {
-                    div()
-                        .text_xs()
-                        .text_color(if highlighted {
-                            theme.selection_text
-                        } else {
-                            theme.text_muted
-                        })
-                        .child(keys)
-                })),
+                // An icon column, empty where an item has none, keeps titles aligned.
+                .child(div().size(px(15.)).flex_none().children(icon.map(|name| {
+                    gpui::svg()
+                        .path(format!("toolbar/{name}.svg"))
+                        .size(px(15.))
+                        .text_color(muted)
+                })))
+                .child(div().flex_1().child(title))
+                .children(keys.map(|keys| div().pl_6().text_xs().text_color(muted).child(keys)))
+                .when(is_parent, |d| {
+                    d.child(
+                        gpui::svg()
+                            .path(if expanded {
+                                "toolbar/chevron.svg"
+                            } else {
+                                "toolbar/chevron-right.svg"
+                            })
+                            .size(px(13.))
+                            .text_color(muted),
+                    )
+                }),
         );
     }
     Some(
@@ -232,7 +356,53 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SelectionCtx, when_holds};
+    use super::{Row, SelectionCtx, rows_of, when_holds};
+    use bibli_core::command::Invocation;
+    use bibli_core::registry::MenuItem;
+
+    fn item(title: &str, submenu: Option<&str>) -> MenuItem {
+        MenuItem {
+            menu: "context".into(),
+            title: title.into(),
+            command: Invocation::new("noop"),
+            when: None,
+            order: 0,
+            icon: None,
+            submenu: submenu.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn submenu_items_wait_under_their_parent_until_it_is_expanded() {
+        let items = [
+            item("Open", None),
+            item("Copy Paths", Some("More")),
+            item("Rename", None),
+            item("Run Command…", Some("More")),
+        ];
+        let top = |index| Row::Item {
+            index,
+            nested: false,
+        };
+        let nested = |index| Row::Item {
+            index,
+            nested: true,
+        };
+        assert_eq!(
+            rows_of(&items, None),
+            [top(0), top(2), Row::Parent("More".into())]
+        );
+        assert_eq!(
+            rows_of(&items, Some("More")),
+            [
+                top(0),
+                top(2),
+                Row::Parent("More".into()),
+                nested(1),
+                nested(3)
+            ]
+        );
+    }
 
     fn ctx(count: usize, all_dirs: bool, all_files: bool) -> SelectionCtx {
         SelectionCtx {
@@ -253,6 +423,8 @@ mod tests {
         assert!(when_holds(Some("single file"), ctx(1, false, true)));
         assert!(!when_holds(Some("single dir"), ctx(1, false, true)));
         assert!(!when_holds(Some("bogus"), ctx(1, true, true)));
+        assert!(when_holds(Some("empty"), ctx(0, true, true)));
+        assert!(!when_holds(Some("empty"), ctx(1, true, true)));
     }
 
     #[test]

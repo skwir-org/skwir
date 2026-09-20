@@ -1069,6 +1069,11 @@ impl Shell {
     /// Root-level hook so edge drags are tracked anywhere in the window.
     pub fn resize_hook<E: InteractiveElement>(&self, el: E, cx: &mut Context<Self>) -> E {
         el.on_drag_move(cx.listener(Self::on_resize_drag))
+            .on_drag_move(cx.listener(Self::on_column_drag))
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, _| this.finish_column_drag()),
+            )
     }
 }
 

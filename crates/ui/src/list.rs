@@ -377,6 +377,22 @@ impl Shell {
                 cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
                     this.activate_pane(pane, cx);
                     window.focus(&this.ui().focus);
+                    // A row already opened its menu for this click. On the
+                    // background the menu is the folder's: drop the selection
+                    // so the menu, and the commands it runs, are about the
+                    // folder and not about files elsewhere in the list.
+                    let on_row = this
+                        .menu
+                        .as_ref()
+                        .is_some_and(|m| m.position == ev.position);
+                    if !on_row {
+                        this.run(
+                            "select_none",
+                            serde_json::json!({ "pane": pane }),
+                            window,
+                            cx,
+                        );
+                    }
                     this.open_context_menu(ev.position, window, cx);
                 }),
             )

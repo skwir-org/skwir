@@ -22,10 +22,91 @@ pub const ROW_HEIGHT: f32 = 26.0;
 const ICON_PX: f32 = 18.0;
 /// The name never gets narrower than this; detail columns give way first.
 const NAME_MIN: f32 = 150.0;
-const SIZE_W: f32 = 80.0;
-const MODIFIED_W: f32 = 136.0;
-const TYPE_W: f32 = 150.0;
+/// Size, Modified, Type.
+pub const DEFAULT_WIDTHS: [f32; 3] = [80.0, 136.0, 150.0];
 const DETAIL_GAP: f32 = 12.0;
+
+pub fn clamp_width(width: f32) -> f32 {
+    width.clamp(56.0, 360.0)
+}
+
+/// Payload of a header edge drag.
+#[derive(Clone)]
+pub struct ColumnResize(pub usize);
+
+/// Nothing follows the pointer while an edge is dragged.
+struct NoDragPreview;
+impl gpui::Render for NoDragPreview {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+
+impl Shell {
+    /// The columns are right-aligned, so a column grows as its left edge
+    /// moves left; the name takes what is left.
+    pub fn on_column_drag(
+        &mut self,
+        ev: &gpui::DragMoveEvent<ColumnResize>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let x = f32::from(ev.event.position.x);
+        let column = ev.drag(cx).0;
+        let (_, start_x, start_width) =
+            *self
+                .column_drag
+                .get_or_insert((column, x, self.column_widths[column]));
+        self.column_widths[column] = clamp_width(start_width + (start_x - x));
+        cx.notify();
+    }
+
+    /// The drag ended: remember the widths. Saved on a worker.
+    pub fn finish_column_drag(&mut self) {
+        if self.column_drag.take().is_none() {
+            return;
+        }
+        self.app.settings.set(
+            crate::settings::COLUMN_WIDTHS_KEY,
+            toml::Value::Array(
+                self.column_widths
+                    .iter()
+                    .map(|width| toml::Value::Integer(width.round() as i64))
+                    .collect(),
+            ),
+        );
+        let weak = self.app.weak();
+        self.app.scheduler.spawn(
+            bibli_core::scheduler::Priority::Background,
+            "column-widths-save",
+            self.app.lifetime().child(),
+            move || {
+                if let Some(app) = weak.upgrade()
+                    && let Err(error) = app.settings.save()
+                {
+                    tracing::warn!("cannot save column widths: {error:#}");
+                }
+            },
+        );
+    }
+}
+
+/// The draggable left edge of a header cell.
+fn resize_edge(column: usize) -> Stateful<Div> {
+    div()
+        .id(("column-edge", column))
+        .absolute()
+        .top_0()
+        // Inside the cell: the columns' container clips what leaves it.
+        .left_0()
+        .w(px(7.))
+        .h_full()
+        .cursor(gpui::CursorStyle::ResizeLeftRight)
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_drag(ColumnResize(column), |_, _, _, cx| {
+            cx.new(|_| NoDragPreview)
+        })
+}
 
 #[derive(Default)]
 pub struct ListView {
@@ -229,11 +310,11 @@ pub fn row(
         let exact: gpui::SharedString = r.modified_exact.clone().into();
         let [size, modified, kind] = shell.columns;
         el = el.child(
-            details(muted, shell.columns)
+            details(muted, shell.columns, shell.column_widths)
                 .when(size, |d| {
                     d.child(
                         div()
-                            .w(px(SIZE_W))
+                            .w(px(shell.column_widths[0]))
                             .flex_none()
                             .text_right()
                             .child(r.size.clone()),
@@ -243,7 +324,7 @@ pub fn row(
                     d.child(
                         div()
                             .id(("modified", ix))
-                            .w(px(MODIFIED_W))
+                            .w(px(shell.column_widths[1]))
                             .flex_none()
                             .truncate()
                             .when(!exact.is_empty(), |d| {
@@ -257,7 +338,7 @@ pub fn row(
                 .when(kind, |d| {
                     d.child(
                         div()
-                            .w(px(TYPE_W))
+                            .w(px(shell.column_widths[2]))
                             .flex_none()
                             .truncate()
                             .child(gpui::SharedString::from(r.kind.clone())),
@@ -278,8 +359,7 @@ pub fn row(
 /// name keeps `NAME_MIN`. Pure layout: nothing is measured, the header and
 /// every row agree by construction, and a pane of any width is laid out
 /// correctly in the frame it gets that width.
-fn details(color: gpui::Hsla, shown: [bool; 3]) -> Div {
-    let widths = [SIZE_W, MODIFIED_W, TYPE_W];
+fn details(color: gpui::Hsla, shown: [bool; 3], widths: [f32; 3]) -> Div {
     let count = shown.iter().filter(|shown| **shown).count();
     let basis: f32 = widths
         .iter()
@@ -361,24 +441,52 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Div {
             cx,
         )))
         .child(
-            details(theme.text_muted, shell.columns)
+            details(theme.text_muted, shell.columns, shell.column_widths)
                 .when(shell.columns[0], |d| {
-                    d.child(div().w(px(SIZE_W)).flex_none().flex().justify_end().child(
-                        header_cell("h-size", "Size", SortKey::Size, shell, theme, cx),
-                    ))
+                    d.child(
+                        div()
+                            .relative()
+                            .w(px(shell.column_widths[0]))
+                            .flex_none()
+                            .flex()
+                            .justify_end()
+                            .child(header_cell(
+                                "h-size",
+                                "Size",
+                                SortKey::Size,
+                                shell,
+                                theme,
+                                cx,
+                            ))
+                            .child(resize_edge(0)),
+                    )
                 })
                 .when(shell.columns[1], |d| {
-                    d.child(div().w(px(MODIFIED_W)).flex_none().child(header_cell(
-                        "h-mod",
-                        "Modified",
-                        SortKey::Modified,
-                        shell,
-                        theme,
-                        cx,
-                    )))
+                    d.child(
+                        div()
+                            .relative()
+                            .w(px(shell.column_widths[1]))
+                            .flex_none()
+                            .child(header_cell(
+                                "h-mod",
+                                "Modified",
+                                SortKey::Modified,
+                                shell,
+                                theme,
+                                cx,
+                            ))
+                            .child(resize_edge(1)),
+                    )
                 })
                 .when(shell.columns[2], |d| {
-                    d.child(div().w(px(TYPE_W)).flex_none().child("Type"))
+                    d.child(
+                        div()
+                            .relative()
+                            .w(px(shell.column_widths[2]))
+                            .flex_none()
+                            .child("Type")
+                            .child(resize_edge(2)),
+                    )
                 }),
         )
 }

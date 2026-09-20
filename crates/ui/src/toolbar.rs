@@ -53,7 +53,17 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "keyboard",
         "appearance",
         "sliders",
-        "external"
+        "external",
+        "chevron-right",
+        "sort",
+        "folder-plus",
+        "command",
+        "rename",
+        "cut",
+        "paste",
+        "trash",
+        "tag",
+        "shelf"
     )
 }
 
@@ -92,6 +102,9 @@ pub struct Button {
     anchor: Option<crate::elements::popover::PopoverAnchor>,
     pub active: bool,
     pub enabled: bool,
+    /// A row of a popup menu: full width, left-aligned, with an icon slot
+    /// that stays when the icon is empty so labels line up.
+    menu: bool,
 }
 impl Button {
     pub fn new(
@@ -110,6 +123,7 @@ impl Button {
             anchor: None,
             active: false,
             enabled: true,
+            menu: false,
         }
     }
     pub fn args(mut self, args: serde_json::Value) -> Self {
@@ -118,6 +132,10 @@ impl Button {
     }
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = Some(label.into());
+        self
+    }
+    pub fn menu(mut self) -> Self {
+        self.menu = true;
         self
     }
     pub fn active(mut self, active: bool) -> Self {
@@ -155,8 +173,9 @@ impl Button {
             .px(px(6.))
             .flex()
             .items_center()
-            .justify_center()
-            .gap(px(6.))
+            .when(!self.menu, gpui::Styled::justify_center)
+            .when(self.menu, |d| d.w_full().px_2())
+            .gap(px(if self.menu { 10. } else { 6. }))
             .rounded_md()
             .border_1()
             .border_color(gpui::transparent_black())
@@ -179,6 +198,9 @@ impl Button {
             })
             .when(!enabled, |d| d.opacity(0.35))
             .tooltip(move |_, cx| tooltip(title.clone(), font.clone(), cx))
+            .when(self.menu && self.icon.is_empty(), |d| {
+                d.child(div().size(px(16.)).flex_none())
+            })
             .when(!self.icon.is_empty(), |d| {
                 d.child(
                     svg()

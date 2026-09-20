@@ -221,8 +221,10 @@ impl Plugin for QueryPlugin {
                 menu: "context".into(),
                 title: "Search here…".into(),
                 command: Invocation::new("ui.search"),
-                when: None,
+                when: Some("empty".into()),
                 order: 420,
+                icon: Some("search".into()),
+                submenu: None,
             },
         );
     }

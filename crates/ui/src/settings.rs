@@ -33,6 +33,8 @@ pub const UI_OWNER: &str = "ui";
 
 pub const THEME_KEY: &str = "ui.theme";
 pub const DATES_KEY: &str = "ui.date_format";
+/// Widths of the detail columns, set by dragging their header edges.
+pub const COLUMN_WIDTHS_KEY: &str = "ui.column_widths";
 /// Detail columns of the list view, in the order they give way when a pane
 /// gets narrow (the last one first).
 pub const COLUMN_KEYS: [&str; 3] = ["ui.column_size", "ui.column_modified", "ui.column_type"];
@@ -53,6 +55,16 @@ pub fn declare(app: &App) {
         "Friendly dates read as Today 14:02, Tuesday 09:30 or 12 Mar, with the exact time in a tooltip. ISO shows 2026-03-12 14:02 everywhere.",
         "friendly",
         &[("friendly", "Friendly"), ("iso", "ISO 8601")],
+    ));
+    app.settings.declare(SettingSpec::data(
+        COLUMN_WIDTHS_KEY,
+        "Widths of the Size, Modified and Type columns, in pixels",
+        toml::Value::Array(
+            crate::views::list::DEFAULT_WIDTHS
+                .iter()
+                .map(|width| toml::Value::Integer(*width as i64))
+                .collect(),
+        ),
     ));
     for (key, title, description) in [
         (COLUMN_KEYS[0], "Size", "Show the size of files."),

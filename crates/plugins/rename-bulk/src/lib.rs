@@ -524,6 +524,8 @@ impl Plugin for RenameBulkPlugin {
                 command: Invocation::new("ui.rename_bulk_prompt"),
                 when: Some("selection".into()),
                 order: 105,
+                icon: Some("rename".into()),
+                submenu: Some("More".into()),
             },
         );
     }

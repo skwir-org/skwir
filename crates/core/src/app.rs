@@ -501,20 +501,28 @@ mod builtin {
             },
         );
 
-        c.register::<PaneArg, _>(
-            "core",
-            "back",
-            "Back",
-            "Go to the previous location",
-            |a, app| {
+        for (name, title, description, forward) in [
+            ("back", "Back", "Go to the previous location", false),
+            (
+                "forward",
+                "Forward",
+                "Return to the location Back came from",
+                true,
+            ),
+        ] {
+            c.register::<PaneArg, _>("core", name, title, description, move |a, app| {
                 let pane = pane_of(app, a.pane);
                 let target = {
                     let ws = app.workspace.read();
                     let p = ws
                         .pane(pane)
                         .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-                    (p.history_pos > 0)
-                        .then(|| (p.history_pos - 1, p.history[p.history_pos - 1].clone()))
+                    let pos = if forward {
+                        p.history_pos.checked_add(1)
+                    } else {
+                        p.history_pos.checked_sub(1)
+                    };
+                    pos.and_then(|pos| Some((pos, p.history.get(pos)?.clone())))
                 };
                 if let Some((pos, loc)) = target {
                     let open = app.open_location(&loc)?;
@@ -528,8 +536,8 @@ mod builtin {
                     app.wake();
                 }
                 Ok(Outcome::Done)
-            },
-        );
+            });
+        }
 
         c.register::<PaneArg, _>(
             "core",

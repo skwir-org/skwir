@@ -85,6 +85,18 @@ current source before assuming a planned crate, command, or API exists.
   messages. A key whose command needs a selection carries `selection` in its
   `when`, so it does nothing instead of reporting "nothing selected". The only
   animation allowed is a bounded entrance (under 200 ms) that ends by itself.
+- **Application row and pane row.** The application toolbar holds what is
+  about the window: views, the Sort and display menu, New folder, Search, the
+  Preview and Split toggles, and More (everything else, so the narrowest
+  variant loses nothing). Navigation is per pane: Back, Forward, Up and the
+  breadcrumb trail live in each pane's own row (`address.rs`). The trail and
+  the list's detail columns use the same layout-only technique, a wrapping
+  flex line one row tall, so the segments nearest the current folder stay
+  when a pane is narrow. Clicking beside the trail, or Ctrl+L, edits the path.
+- **Context menu.** An item about the folder itself (New Folder, Refresh, a
+  view) says `empty` in its `when`: it belongs to the menu opened on the
+  background, which first clears the selection. Rarely used items set
+  `submenu`; the menu expands that group in place. Give items an `icon`.
 - **Popups own the keyboard.** A menu or popover takes focus when it opens
   and returns it when it closes, with its own key context (see `menu.rs`):
   otherwise keys act on a selection hidden behind it.

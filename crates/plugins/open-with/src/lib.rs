@@ -129,6 +129,8 @@ impl Plugin for OpenWithPlugin {
                 command: Invocation::new("open"),
                 when: Some("selection".into()),
                 order: 0,
+                icon: Some("open".into()),
+                submenu: None,
             },
         );
         app.registry.menus.add(
@@ -139,6 +141,8 @@ impl Plugin for OpenWithPlugin {
                 command: Invocation::new("open_terminal"),
                 when: None,
                 order: 10,
+                icon: Some("command".into()),
+                submenu: None,
             },
         );
     }

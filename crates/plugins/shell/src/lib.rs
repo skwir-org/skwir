@@ -189,6 +189,8 @@ impl Plugin for ShellPlugin {
                 command: Invocation::new("shell.copy_paths"),
                 when: Some("selection".into()),
                 order: 135,
+                icon: Some("copy".into()),
+                submenu: Some("More".into()),
             },
         );
         app.registry.menus.add(
@@ -199,6 +201,8 @@ impl Plugin for ShellPlugin {
                 command: Invocation::new("shell.run"),
                 when: None,
                 order: 410,
+                icon: Some("command".into()),
+                submenu: Some("More".into()),
             },
         );
     }

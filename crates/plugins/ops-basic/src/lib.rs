@@ -112,6 +112,7 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
     ("backspace", "up", Some("pane")),
     ("alt-up", "up", None),
     ("alt-left", "back", None),
+    ("alt-right", "forward", None),
     ("f2", "ui.rename_prompt", Some("pane single")),
     ("delete", "trash", Some("pane selection")),
     ("shift-delete", "ui.confirm_delete", Some("pane selection")),
@@ -136,20 +137,28 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
 // groups (0 open, 100 edit, 200 create, 300 destructive, 400 misc), the UI
 // draws a separator between groups. "Open" and "Open Terminal Here" are
 // contributed by the open-with plugin, which owns those commands.
-const MENU: &[(&str, &str, Option<&str>, i32)] = &[
-    ("Rename", "ui.rename_prompt", Some("single"), 100),
-    ("Cut", "clipboard_cut", Some("selection"), 110),
-    ("Copy", "clipboard_copy", Some("selection"), 120),
-    ("Paste", "clipboard_paste", None, 130),
-    ("New Folder", "ui.mkdir_prompt", None, 200),
-    ("Move to Trash", "trash", Some("selection"), 300),
+const MENU: &[(&str, &str, Option<&str>, i32, &str)] = &[
+    ("Rename", "ui.rename_prompt", Some("single"), 100, "rename"),
+    ("Cut", "clipboard_cut", Some("selection"), 110, "cut"),
+    ("Copy", "clipboard_copy", Some("selection"), 120, "copy"),
+    ("Paste", "clipboard_paste", None, 130, "paste"),
+    // The folder's own menu, on its background.
+    (
+        "New Folder",
+        "ui.mkdir_prompt",
+        Some("empty"),
+        200,
+        "folder-plus",
+    ),
+    ("Move to Trash", "trash", Some("selection"), 300, "trash"),
     (
         "Delete Permanently",
         "ui.confirm_delete",
         Some("selection"),
         310,
+        "close",
     ),
-    ("Refresh", "refresh", None, 400),
+    ("Refresh", "refresh", Some("empty"), 400, "refresh"),
 ];
 
 impl Plugin for OpsBasicPlugin {
@@ -212,7 +221,7 @@ impl Plugin for OpsBasicPlugin {
                 },
             );
         }
-        for (title, command, when, order) in MENU {
+        for (title, command, when, order, icon) in MENU {
             app.registry.menus.add(
                 ID,
                 MenuItem {
@@ -221,6 +230,8 @@ impl Plugin for OpsBasicPlugin {
                     command: Invocation::new(*command),
                     when: when.map(str::to_owned),
                     order: *order,
+                    icon: Some((*icon).into()),
+                    submenu: None,
                 },
             );
         }

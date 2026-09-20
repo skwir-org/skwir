@@ -232,3 +232,59 @@ fn pending_opens_report_errors_asynchronously_and_can_be_replaced() {
             .is_none()
     );
 }
+
+#[test]
+fn forward_returns_where_back_came_from_and_a_new_navigation_forgets_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (first, second, third) = (
+        tmp.path().join("first folder"),
+        tmp.path().join("second folder"),
+        tmp.path().join("third folder"),
+    );
+    for dir in [&first, &second, &third] {
+        std::fs::create_dir(dir).unwrap();
+    }
+    let app = app(tmp.path());
+    let pane = app.workspace.read().active_id();
+    let at = |app: &bibli_core::App| {
+        app.workspace
+            .read()
+            .pane(pane)
+            .unwrap()
+            .location()
+            .unwrap()
+            .path()
+    };
+    let go = |path: &std::path::Path| {
+        app.dispatch(&bibli_core::command::Invocation::with_args(
+            "navigate",
+            &serde_json::json!({ "location": path }),
+        ))
+        .unwrap();
+    };
+    go(&first);
+    go(&second);
+    app.dispatch(&bibli_core::command::Invocation::new("forward"))
+        .unwrap();
+    assert_eq!(
+        at(&app),
+        Some(second.clone()),
+        "nothing ahead: forward stays"
+    );
+    app.dispatch(&bibli_core::command::Invocation::new("back"))
+        .unwrap();
+    assert_eq!(at(&app), Some(first.clone()));
+    app.dispatch(&bibli_core::command::Invocation::new("forward"))
+        .unwrap();
+    assert_eq!(at(&app), Some(second.clone()));
+    app.dispatch(&bibli_core::command::Invocation::new("back"))
+        .unwrap();
+    go(&third);
+    app.dispatch(&bibli_core::command::Invocation::new("forward"))
+        .unwrap();
+    assert_eq!(
+        at(&app),
+        Some(third),
+        "navigating drops the forward history"
+    );
+}

@@ -72,6 +72,9 @@ pub struct Shell {
     pub friendly_dates: bool,
     /// Size, Modified, Type: which detail columns the list shows.
     pub columns: [bool; 3],
+    pub column_widths: [f32; 3],
+    /// A header edge being dragged: column, pointer x and width at the start.
+    pub column_drag: Option<(usize, f32, f32)>,
     pub preview: PreviewState,
     pub palette: Option<PaletteState>,
     pub jump: Option<JumpState>,
@@ -166,6 +169,8 @@ impl Shell {
             type_names: crate::typenames::TypeNames::default(),
             friendly_dates: true,
             columns: [true; 3],
+            column_widths: crate::views::list::DEFAULT_WIDTHS,
+            column_drag: None,
             preview: PreviewState::default(),
             palette: None,
             jump: None,
@@ -907,6 +912,15 @@ impl Shell {
                 .is_none_or(|format| format != "iso");
             self.columns = crate::settings::COLUMN_KEYS
                 .map(|key| self.app.settings.get::<bool>(key).unwrap_or(true));
+            if self.column_drag.is_none()
+                && let Some(widths) = self
+                    .app
+                    .settings
+                    .get::<Vec<f32>>(crate::settings::COLUMN_WIDTHS_KEY)
+                    .and_then(|widths| <[f32; 3]>::try_from(widths).ok())
+            {
+                self.column_widths = widths.map(crate::views::list::clamp_width);
+            }
         }
         if self.type_names.absorb() {
             cx.notify();

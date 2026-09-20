@@ -125,7 +125,13 @@ pub struct Place {
 }
 
 /// A menu contribution. `when` is a space-separated list of tokens that must
-/// all hold (`selection`, `single`, `dir`, `file`); `None` means always.
+/// all hold (`selection`, `single`, `dir`, `file`, and `empty` for the
+/// folder's own menu, opened on its background); `None` means always. An item
+/// about the folder rather than about files (New Folder, Refresh, a view)
+/// says `empty`, so the menu of a file stays about that file.
+///
+/// `submenu` moves a rarely used item under a parent row of that name,
+/// after the other groups. `icon` names a bundled symbolic icon.
 ///
 /// `order` sorts items and groups them: the hundreds digit is the group and
 /// the UI draws a separator between groups. Convention for `context`:
@@ -139,6 +145,8 @@ pub struct MenuItem {
     pub command: Invocation,
     pub when: Option<String>,
     pub order: i32,
+    pub icon: Option<String>,
+    pub submenu: Option<String>,
 }
 
 /// A key binding. `keys` uses the `ctrl-shift-n` notation; chords are space-separated.

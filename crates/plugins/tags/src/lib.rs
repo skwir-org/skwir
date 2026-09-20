@@ -310,6 +310,8 @@ impl Plugin for TagsPlugin {
                 command: Invocation::new("ui.tags_prompt"),
                 when: Some("selection".into()),
                 order: 150,
+                icon: Some("tag".into()),
+                submenu: None,
             },
         );
     }

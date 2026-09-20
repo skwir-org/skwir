@@ -427,8 +427,10 @@ impl Plugin for EditAsBufferPlugin {
                 menu: "context".into(),
                 title: "Edit as Text…".into(),
                 command: Invocation::new("edit_as_buffer"),
-                when: None,
+                when: Some("empty".into()),
                 order: 108,
+                icon: Some("rename".into()),
+                submenu: None,
             },
         );
     }
