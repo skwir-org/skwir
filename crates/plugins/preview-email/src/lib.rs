@@ -20,6 +20,9 @@ impl Plugin for PreviewPlugin {
     fn title(&self) -> &'static str {
         "Preview: email"
     }
+    fn description(&self) -> &'static str {
+        "Read EML messages: headers, body and attachments, with remote content blocked"
+    }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
     }

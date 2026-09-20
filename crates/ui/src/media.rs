@@ -162,7 +162,7 @@ impl Shell {
                     None => window.focus(&self.ui().focus),
                 }
             }
-            self.set_status(error, true, cx);
+            self.set_status_about(error, "preview-media.backend", cx);
         }
         self.arm_media_hide(window, cx);
     }

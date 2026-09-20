@@ -9,6 +9,9 @@ impl Plugin for PreviewPlugin {
     fn title(&self) -> &'static str {
         "Preview: audio"
     }
+    fn description(&self) -> &'static str {
+        "Play audio files with their cover and a spectrum"
+    }
     fn register(&self, app: &App) {
         app.previews.register(
             self.id(),

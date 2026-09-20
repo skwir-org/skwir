@@ -15,6 +15,9 @@ impl Plugin for PreviewPlugin {
     fn title(&self) -> &'static str {
         "Preview: structured data"
     }
+    fn description(&self) -> &'static str {
+        "Show JSON, YAML and TOML with syntax colors and foldable blocks"
+    }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
     }

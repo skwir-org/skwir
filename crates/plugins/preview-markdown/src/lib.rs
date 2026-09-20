@@ -15,6 +15,9 @@ impl Plugin for PreviewPlugin {
     fn title(&self) -> &'static str {
         "Preview: Markdown"
     }
+    fn description(&self) -> &'static str {
+        "Render Markdown with headings, tables and code; switch to the source at any time"
+    }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
     }

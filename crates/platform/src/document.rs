@@ -42,13 +42,7 @@ pub(crate) fn worker_path(engine: Engine) -> Option<PathBuf> {
         Engine::Pdfium => ("BIBLI_PDF_WORKER", "bibli-pdf-worker"),
         Engine::Poppler => ("BIBLI_POPPLER_WORKER", "bibli-poppler-worker"),
     };
-    std::env::var_os(variable)
-        .map(PathBuf::from)
-        .or_else(|| {
-            let sibling = std::env::current_exe().ok()?.parent()?.join(executable);
-            sibling.is_file().then_some(sibling)
-        })
-        .or_else(|| crate::process::find(executable))
+    crate::process::find_worker(variable, executable)
 }
 
 impl WorkerSession {

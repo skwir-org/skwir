@@ -13,38 +13,46 @@ impl Plugin for PreviewPlugin {
     fn title(&self) -> &'static str {
         "Preview: documents"
     }
+    fn description(&self) -> &'static str {
+        "Read PDF and office documents: continuous scrolling, search, text selection, links and contents"
+    }
     fn on_settings_changed(&self, app: &App, _keys: &[String]) {
         app.previews.unregister_owner(self.id());
         self.register(app);
     }
 
+    fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
+        use bibli_core::plugin::Requirement;
+        use bibli_platform::process::find_worker;
+        vec![
+            Requirement::new("bibli-pdf-worker", "PDF reading with PDFium", || {
+                find_worker("BIBLI_PDF_WORKER", "bibli-pdf-worker").is_some()
+            }),
+            Requirement::new("bibli-poppler-worker", "PDF reading with Poppler", || {
+                find_worker("BIBLI_POPPLER_WORKER", "bibli-poppler-worker").is_some()
+            }),
+        ]
+    }
+
     fn register(&self, app: &App) {
-        for (name, description, default) in [
-            (
-                "backend",
-                "Document engine: auto (PDFium with Poppler fallback), pdfium, or poppler",
-                "auto",
-            ),
-            (
-                "pdfium_library",
-                "Optional path to the PDFium shared library",
-                "",
-            ),
-        ] {
-            app.settings.declare(bibli_core::settings::SettingSpec {
-                constraints: bibli_core::settings::SettingConstraints {
-                    choices: if name == "backend" {
-                        ["auto", "pdfium", "poppler"].map(str::to_owned).to_vec()
-                    } else {
-                        Vec::new()
-                    },
-                    integer_range: None,
-                },
-                key: format!("{}.{}", self.id(), name),
-                description: description.into(),
-                default: toml::Value::String(default.into()),
-            });
-        }
+        use bibli_core::settings::SettingSpec;
+        app.settings.declare(SettingSpec::choice(
+            "preview-documents.backend",
+            "Document engine",
+            "Automatic prefers PDFium and falls back to Poppler.",
+            "auto",
+            &[
+                ("auto", "Automatic"),
+                ("pdfium", "PDFium"),
+                ("poppler", "Poppler"),
+            ],
+        ));
+        app.settings.declare(SettingSpec::path(
+            "preview-documents.pdfium_library",
+            "PDFium library",
+            "Path to the PDFium shared library. Leave empty to search the usual locations.",
+            "",
+        ));
         let backend = app
             .settings
             .get::<String>("preview-documents.backend")

@@ -76,7 +76,10 @@ pub struct Shell {
     pub confirm: Option<ConfirmState>,
     pub menu: Option<MenuState>,
     pub toolbar_menu: Option<crate::toolbar::Popup>,
-    pub settings: Option<crate::settings::SettingsState>,
+    pub settings: Option<Entity<crate::settings::SettingsView>>,
+    pub(crate) settings_subscription: Option<Subscription>,
+    /// Settings revision the theme was last resolved against.
+    theme_revision: u64,
     /// Plans proposed by background work, oldest first; the front is shown.
     pub reviews: VecDeque<Plan>,
     pub review_focus: Option<FocusHandle>,
@@ -101,10 +104,11 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.set_global(Theme::for_appearance(window.appearance()));
+        crate::settings::declare(&app);
+        cx.set_global(Theme::resolve(&app, window.appearance()));
         let mut subs = Vec::new();
-        subs.push(cx.observe_window_appearance(window, |_, window, cx| {
-            cx.set_global(Theme::for_appearance(window.appearance()));
+        subs.push(cx.observe_window_appearance(window, |this, window, cx| {
+            cx.set_global(Theme::resolve(&this.app, window.appearance()));
             cx.notify();
         }));
 
@@ -142,6 +146,8 @@ impl Shell {
             menu: None,
             toolbar_menu: None,
             settings: None,
+            settings_subscription: None,
+            theme_revision: 0,
             reviews: VecDeque::new(),
             review_focus: None,
             timeline: TimelineState::default(),
@@ -551,7 +557,7 @@ impl Shell {
                 });
             }
             "focus_pane" => window.focus(&self.ui().focus),
-            "settings" => self.open_settings(window, cx),
+            "settings" => self.open_settings(args, window, cx),
             "toolbar_next" => window.focus_next(),
             "toolbar_prev" => window.focus_prev(),
             "toolbar_menu" => self.toggle_toolbar_menu(args, window, cx),
@@ -856,6 +862,17 @@ impl Shell {
         for n in self.app.take_notifications() {
             let error = matches!(n.level, NotifyLevel::Error | NotifyLevel::Warning);
             self.set_status_for(n.text, error, if error { 8 } else { 4 }, cx);
+            if let Some(message) = &mut self.status.message {
+                message.setting = n.setting;
+            }
+        }
+        let revision = self.app.settings.revision();
+        if revision != self.theme_revision {
+            self.theme_revision = revision;
+            cx.set_global(Theme::resolve(&self.app, window.appearance()));
+        }
+        if let Some(settings) = self.settings.clone() {
+            settings.update(cx, |settings, cx| settings.sync(window, cx));
         }
         let proposals = self.app.take_proposals();
         if !proposals.is_empty() {
@@ -1025,9 +1042,13 @@ impl Render for Shell {
         }
         let panel = preview::render_panel(self, cx);
         let status_bar = status::render(self, cx);
-        self.sync_settings(cx);
+        // Not deferred: GPUI cannot nest deferred draws and the dialog's own
+        // dropdowns are. It is the last overlay, so it paints above the rest.
+        let settings = self
+            .settings
+            .clone()
+            .map(gpui::IntoElement::into_any_element);
         let overlays = [
-            crate::settings::render(self, window, cx),
             menu::render(self, cx),
             prompts::render_prompt(self, cx),
             prompts::render_confirm(self, cx),
@@ -1063,6 +1084,7 @@ impl Render for Shell {
             )
             .child(status_bar)
             .children(overlays.into_iter().flatten())
+            .children(settings)
             .child(div().h(px(0.)));
         self.resize_hook(root, cx)
     }

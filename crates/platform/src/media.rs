@@ -31,16 +31,7 @@ use std::{
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 
 pub fn worker_path() -> Option<PathBuf> {
-    std::env::var_os("BIBLI_MEDIA_WORKER")
-        .map(PathBuf::from)
-        .or_else(|| {
-            let path = std::env::current_exe()
-                .ok()?
-                .parent()?
-                .join("bibli-media-worker");
-            path.is_file().then_some(path)
-        })
-        .or_else(|| crate::process::find("bibli-media-worker"))
+    crate::process::find_worker("BIBLI_MEDIA_WORKER", "bibli-media-worker")
 }
 
 struct Shared {

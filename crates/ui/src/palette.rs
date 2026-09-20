@@ -160,7 +160,7 @@ impl Shell {
             .list()
             .into_iter()
             // Structured preference batches are edited by the Settings dialog.
-            .filter(|c| &*c.name != "settings.apply")
+            .filter(|c| !matches!(&*c.name, "settings.apply" | "plugins.set_enabled"))
             .map(|c| PaletteItem {
                 keys: key_of(&c.name),
                 name: c.name.to_string(),
@@ -175,6 +175,37 @@ impl Shell {
                 args: serde_json::json!({"id": spec.id}),
                 title: format!("{} view", spec.title),
                 keys: self.view_shortcut(&spec.id),
+                required: Vec::new(),
+            });
+        }
+        // Every setting is reachable by name, like a command.
+        let plugins = self.app.plugins.list();
+        for spec in self.app.settings.schema() {
+            if !spec.editable() {
+                continue;
+            }
+            let owner = match spec.owner() {
+                crate::settings::CORE_OWNER => "General".to_owned(),
+                crate::settings::UI_OWNER => "Appearance".to_owned(),
+                id => plugins
+                    .iter()
+                    .find(|plugin| plugin.id == id)
+                    .map_or_else(|| id.to_owned(), |plugin| plugin.title.clone()),
+            };
+            items.push(PaletteItem {
+                name: "ui.settings".into(),
+                args: serde_json::json!({ "key": spec.key }),
+                title: format!("Settings: {owner} › {}", spec.title),
+                keys: None,
+                required: Vec::new(),
+            });
+        }
+        for (page, title) in [("plugins", "Plugins"), ("keyboard", "Keyboard shortcuts")] {
+            items.push(PaletteItem {
+                name: "ui.settings".into(),
+                args: serde_json::json!({ "page": page }),
+                title: format!("Settings: {title}"),
+                keys: None,
                 required: Vec::new(),
             });
         }

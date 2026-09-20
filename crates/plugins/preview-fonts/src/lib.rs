@@ -16,6 +16,9 @@ impl Plugin for PreviewPlugin {
     fn title(&self) -> &'static str {
         "Preview: fonts"
     }
+    fn description(&self) -> &'static str {
+        "Show a specimen of font files without installing them"
+    }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
     }

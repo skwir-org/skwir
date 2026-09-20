@@ -15,6 +15,9 @@ impl Plugin for PreviewPlugin {
     fn title(&self) -> &'static str {
         "Preview: CSV and TSV"
     }
+    fn description(&self) -> &'static str {
+        "Show CSV and TSV files as aligned tables"
+    }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
     }

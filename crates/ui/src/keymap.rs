@@ -31,6 +31,8 @@ pub struct KeyHint {
     pub keys: String,
     pub command: String,
     pub args: serde_json::Value,
+    /// The GPUI context predicate the binding is active in.
+    pub context: String,
 }
 
 /// Defaults used when no plugin contributed bindings (`keys, command, when`).
@@ -64,11 +66,11 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("escape", "ui.reader_find_close", Some("DocumentFind")),
     ("ctrl-,", "ui.settings", None),
     ("escape", "ui.settings_close", Some("Settings")),
-    ("ctrl-s", "ui.settings_save", Some("Settings")),
-    ("enter", "ui.settings_save", Some("Settings")),
     ("tab", "ui.settings_next", Some("Settings")),
     ("shift-tab", "ui.settings_prev", Some("Settings")),
-    ("space", "ui.settings_cycle", Some("SettingChoice")),
+    ("ctrl-f", "ui.settings_search", Some("Settings")),
+    ("enter", "ui.settings_enter", Some("SettingsNav")),
+    ("right", "ui.settings_enter", Some("SettingsNav")),
     ("ctrl-c", "ui.reader_copy", Some("reader")),
     ("ctrl-a", "ui.reader_select_all", Some("reader")),
     ("ctrl-f", "ui.reader_find", Some("reader")),
@@ -188,6 +190,42 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         r#"{"delta":5}"#,
         Some("peek"),
     ),
+    (
+        "up",
+        "ui.settings_page",
+        r#"{"delta":-1}"#,
+        Some("SettingsNav"),
+    ),
+    (
+        "down",
+        "ui.settings_page",
+        r#"{"delta":1}"#,
+        Some("SettingsNav"),
+    ),
+    (
+        "left",
+        "ui.settings_adjust",
+        r#"{"delta":-1}"#,
+        Some("SettingControl"),
+    ),
+    (
+        "right",
+        "ui.settings_adjust",
+        r#"{"delta":1}"#,
+        Some("SettingControl"),
+    ),
+    (
+        "down",
+        "ui.settings_adjust",
+        r#"{"delta":-1}"#,
+        Some("SettingNumber"),
+    ),
+    (
+        "up",
+        "ui.settings_adjust",
+        r#"{"delta":1}"#,
+        Some("SettingNumber"),
+    ),
     ("ctrl-1", "ui.view", r#"{"id":"list"}"#, None),
     ("ctrl-2", "ui.view", r#"{"id":"grid"}"#, None),
     ("ctrl-3", "ui.view", r#"{"id":"columns"}"#, None),
@@ -284,6 +322,7 @@ pub fn install(app: &App, cx: &mut gpui::App) -> Vec<KeyHint> {
             keys: keys.clone(),
             command: name.clone(),
             args: args.clone(),
+            context: context.clone(),
         });
         bindings.push(KeyBinding::new(
             &keys,

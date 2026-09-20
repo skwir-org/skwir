@@ -10,7 +10,7 @@ use bibli_core::{
     app::AppConfig,
     command::{Invocation, Outcome},
     plugin::Plugin,
-    settings::{SaveState, SettingConstraints, SettingSpec, Settings},
+    settings::{SaveState, SettingSpec, Settings},
 };
 
 struct Preferences(AtomicUsize);
@@ -22,41 +22,27 @@ impl Plugin for Preferences {
         "Sample"
     }
     fn register(&self, app: &App) {
-        for (key, default, constraints) in [
-            (
+        for spec in [
+            SettingSpec::choice(
+                "sample.engine",
+                "Engine",
                 "engine",
-                toml::Value::String("first".into()),
-                SettingConstraints {
-                    choices: vec!["first".into(), "second".into()],
-                    integer_range: None,
-                },
+                "first",
+                &[("first", "First"), ("second", "Second")],
             ),
-            (
-                "budget",
-                toml::Value::Integer(64),
-                SettingConstraints {
-                    choices: vec![],
-                    integer_range: Some((4, 4096)),
-                },
-            ),
-            (
-                "enabled",
-                toml::Value::Boolean(true),
-                SettingConstraints::default(),
-            ),
-            (
-                "path",
-                toml::Value::String(String::new()),
-                SettingConstraints::default(),
-            ),
+            SettingSpec::integer("sample.budget", "Budget", "budget", 64, (4, 4096)),
+            SettingSpec::toggle("sample.enabled", "Enabled", "enabled", true),
+            SettingSpec::path("sample.path", "Path", "path", ""),
         ] {
-            app.settings.declare(SettingSpec {
-                key: format!("sample.{key}"),
-                description: key.into(),
-                default,
-                constraints,
-            });
+            app.settings.declare(spec);
         }
+    }
+    fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
+        use bibli_core::plugin::Requirement;
+        vec![
+            Requirement::new("present", "always there", || true).required(),
+            Requirement::program("bibli-test-no-such-tool", "never installed"),
+        ]
     }
     fn on_settings_changed(&self, app: &App, keys: &[String]) {
         assert!(keys.iter().all(|key| key.starts_with("sample.")));
@@ -268,4 +254,128 @@ fn queued_save_is_exclusive_and_revalidates_after_plugin_disable() {
         Some(true)
     );
     assert_eq!(app.settings.get::<String>("sample.engine"), None);
+}
+
+#[test]
+fn builders_describe_controls_and_the_schema_serializes_for_agents() {
+    let budget = SettingSpec::integer("sample.budget", "Budget", "d", 64, (4, 4096))
+        .unit("MB")
+        .step(16)
+        .section("Memory");
+    assert_eq!(budget.kind, bibli_core::settings::SettingKind::Integer);
+    assert_eq!(budget.owner(), "sample");
+    assert_eq!((budget.unit.as_str(), budget.constraints.step), ("MB", 16));
+    let engine = SettingSpec::choice(
+        "sample.engine",
+        "Engine",
+        "d",
+        "first",
+        &[("first", "First"), ("second", "The second")],
+    );
+    assert_eq!(engine.choice_label("second"), "The second");
+    assert_eq!(engine.choice_label("unknown"), "unknown");
+    let saved = SettingSpec::data("sample.saved", "d", toml::Value::Array(vec![]));
+    assert!(!saved.editable());
+    assert!(saved.parse("[]").is_err());
+    let json = serde_json::to_value(&budget).unwrap();
+    assert_eq!(json["kind"], "integer");
+    assert_eq!(json["title"], "Budget");
+}
+
+#[test]
+fn the_revision_advances_on_declare_apply_and_undeclare_only() {
+    let (_tmp, app, _) = fixture(None);
+    let declared = app.settings.revision();
+    assert_eq!(app.settings.text("sample.budget").as_deref(), Some("64"));
+    assert_eq!(app.settings.revision(), declared, "reads do not advance it");
+    assert_eq!(
+        apply(&app, &serde_json::json!({"sample.budget": "128"})),
+        SaveState::Saved
+    );
+    let applied = app.settings.revision();
+    assert!(applied > declared);
+    assert_eq!(
+        apply(&app, &serde_json::json!({"sample.budget": "128"})),
+        SaveState::Saved
+    );
+    assert_eq!(
+        app.settings.revision(),
+        applied,
+        "an unchanged value is not a change"
+    );
+    app.settings.undeclare("sample.budget");
+    assert!(app.settings.revision() > applied);
+}
+
+#[test]
+fn plugins_toggle_through_the_command_and_the_choice_is_persisted() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.toml");
+    let (_tmp, app, _) = fixture(Some(path.clone()));
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.set_waker(Some(Arc::new(move || {
+        let _ = tx.send(());
+    })));
+    assert!(
+        app.dispatch(&Invocation::with_args(
+            "plugins.set_enabled",
+            &serde_json::json!({"id": "missing", "enabled": false}),
+        ))
+        .is_err()
+    );
+    let before = app.plugins.revision();
+    app.dispatch(&Invocation::with_args(
+        "plugins.set_enabled",
+        &serde_json::json!({"id": "sample", "enabled": false}),
+    ))
+    .unwrap();
+    // The job wakes the UI after saving; tolerate earlier, unrelated wakes.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !path.is_file() {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        rx.recv_timeout(left).expect("the toggle completes");
+    }
+    assert!(!app.plugins.is_enabled("sample"));
+    assert!(app.plugins.revision() > before);
+    assert!(
+        app.settings.spec("sample.engine").is_none(),
+        "a disabled plugin withdraws its settings"
+    );
+    let loaded = Settings::load(&path).unwrap();
+    assert_eq!(loaded.get::<bool>("plugins.sample.enabled"), Some(false));
+    let Outcome::Value(list) = app
+        .dispatch(&Invocation::with_args(
+            "plugins.list",
+            &serde_json::json!({}),
+        ))
+        .unwrap()
+    else {
+        panic!("expected a list")
+    };
+    assert_eq!(list[0]["id"], "sample");
+    assert_eq!(list[0]["enabled"], false);
+}
+
+#[test]
+fn requirements_are_probed_on_demand_and_notifications_can_name_a_setting() {
+    let (_tmp, app, _) = fixture(None);
+    let found = app.plugins.probe_requirements();
+    assert_eq!(found.len(), 2);
+    assert!(
+        found
+            .iter()
+            .any(|r| r.name == "present" && r.found && r.required)
+    );
+    assert!(
+        found
+            .iter()
+            .any(|r| r.name == "bibli-test-no-such-tool" && !r.found)
+    );
+    app.notify_about_setting(
+        bibli_core::app::NotifyLevel::Warning,
+        "needs a tool",
+        "sample.engine",
+    );
+    let notes = app.take_notifications();
+    assert_eq!(notes[0].setting.as_deref(), Some("sample.engine"));
 }

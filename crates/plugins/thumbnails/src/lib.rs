@@ -37,21 +37,23 @@ impl Plugin for ThumbnailsPlugin {
     }
 
     fn register(&self, app: &App) {
-        app.settings.declare(SettingSpec {
-            constraints: bibli_core::settings::SettingConstraints::default(),
-            key: "thumbnails.write_cache".into(),
-            description: "Store generated thumbnails in the freedesktop cache so other applications reuse them".into(),
-            default: toml::Value::Boolean(true),
-        });
-        app.settings.declare(SettingSpec {
-            constraints: bibli_core::settings::SettingConstraints {
-                choices: Vec::new(),
-                integer_range: Some((4, 4096)),
-            },
-            key: "thumbnails.budget_mb".into(),
-            description: "Megabytes of decoded thumbnails kept in memory".into(),
-            default: toml::Value::Integer(64),
-        });
+        app.settings.declare(SettingSpec::toggle(
+            "thumbnails.write_cache",
+            "Share generated thumbnails",
+            "Store new thumbnails in the desktop's thumbnail cache so other applications reuse them.",
+            true,
+        ));
+        app.settings.declare(
+            SettingSpec::integer(
+                "thumbnails.budget_mb",
+                "Memory budget",
+                "Decoded thumbnails kept in memory. Higher values scroll large image folders more smoothly.",
+                64,
+                (4, 4096),
+            )
+            .unit("MB")
+            .step(16),
+        );
         let write_back = app
             .settings
             .get::<bool>("thumbnails.write_cache")

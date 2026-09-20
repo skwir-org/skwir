@@ -1,105 +1,860 @@
-//! Schema-driven preferences dialog. Drafts stay local until settings.apply;
-//! disk writes and provider refreshes run on the core scheduler.
+//! The Settings dialog: a self-contained view over the core's settings schema,
+//! plugin host and key hints. It holds no reference to the shell, so it can be
+//! hosted in an overlay or in a window of its own.
+//!
+//! Changes apply immediately. Switches and choices submit on click; text and
+//! number fields submit on Enter or when they lose focus. Every change goes
+//! through `settings.apply`, which saves atomically on a worker; while one save
+//! is in flight later changes wait in `queue` and leave as one batch. A failed
+//! save restores the live value next to the control and says why.
+//!
+//! Rendering lives in `settings_view.rs`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
+use bibli_core::App;
 use bibli_core::command::{Invocation, Outcome};
-use bibli_core::settings::{SaveState, SettingSpec};
+use bibli_core::plugin::{PluginInfo, RequirementStatus};
+use bibli_core::settings::{SaveState, SettingKind, SettingSpec};
 use gpui::{
-    AnyElement, Context, Entity, FocusHandle, MouseButton, Subscription, Window, deferred, div,
-    prelude::*, px, relative,
+    AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
+    Subscription, Window,
 };
+use std::sync::Mutex;
 
+use crate::elements::popover::PopoverAnchor;
 use crate::input::{InputEvent, TextInput};
-use crate::shell::Shell;
-use crate::theme::Theme;
+use crate::keymap::KeyHint;
 
-struct Field {
-    spec: SettingSpec,
-    initial: String,
-    input: Entity<TextInput>,
-    focus: FocusHandle,
+/// Settings namespaces that are not plugins.
+pub const CORE_OWNER: &str = "core";
+pub const UI_OWNER: &str = "ui";
+
+pub const THEME_KEY: &str = "ui.theme";
+
+/// Declare the shell's own preferences. They live in the `ui` namespace and
+/// exist only while a shell does, so headless tools never see them.
+pub fn declare(app: &App) {
+    app.settings.declare(SettingSpec::choice(
+        THEME_KEY,
+        "Theme",
+        "Follow the desktop's light or dark preference, or always use one.",
+        "auto",
+        &[("auto", "Automatic"), ("light", "Light"), ("dark", "Dark")],
+    ));
 }
 
-pub struct SettingsState {
-    fields: Vec<Field>,
-    titles: BTreeMap<&'static str, String>,
-    focus: FocusHandle,
-    pending: Option<u64>,
-    scroll: gpui::ScrollHandle,
-    message: String,
-    error: bool,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Page {
+    General,
+    Appearance,
+    Plugins,
+    Keyboard,
+    Plugin(String),
+}
+
+impl Page {
+    pub fn of_owner(owner: &str) -> Page {
+        match owner {
+            CORE_OWNER => Page::General,
+            UI_OWNER => Page::Appearance,
+            other => Page::Plugin(other.to_owned()),
+        }
+    }
+
+    fn parse(name: &str) -> Page {
+        match name {
+            "general" => Page::General,
+            "appearance" => Page::Appearance,
+            "plugins" => Page::Plugins,
+            "keyboard" => Page::Keyboard,
+            other => Page::Plugin(other.to_owned()),
+        }
+    }
+}
+
+pub enum SettingsEvent {
+    Close,
+}
+
+pub(crate) struct Row {
+    pub spec: SettingSpec,
+    /// What the control shows: the live value, or an optimistic one whose
+    /// save is queued or in flight.
+    pub value: String,
+    /// Present for kinds edited as text.
+    pub input: Option<Entity<TextInput>>,
+    pub anchor: PopoverAnchor,
     _subscriptions: Vec<Subscription>,
 }
 
-impl Shell {
-    pub fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.settings.is_some() {
-            return;
+impl Row {
+    pub fn default_text(&self) -> String {
+        SettingSpec::format_value(&self.spec.default)
+    }
+
+    pub fn modified(&self) -> bool {
+        self.value != self.default_text()
+    }
+
+    pub fn page(&self) -> Page {
+        Page::of_owner(self.spec.owner())
+    }
+}
+
+/// One keyboard stop of the current frame, in traversal order.
+pub(crate) struct Stop {
+    pub focus: FocusHandle,
+    /// Child index inside the scrolling page, to bring it into view.
+    pub item: Option<usize>,
+    /// The setting a left/right adjustment applies to.
+    pub key: Option<String>,
+}
+
+pub struct SettingsView {
+    pub(crate) app: Arc<App>,
+    pub(crate) font: SharedString,
+    pub(crate) key_hints: Vec<KeyHint>,
+    pub(crate) page: Page,
+    pub(crate) search: Entity<TextInput>,
+    pub(crate) rows: Vec<Row>,
+    pub(crate) plugins: Vec<PluginInfo>,
+    /// `None` until the first probe finishes.
+    pub(crate) requirements: Option<Vec<RequirementStatus>>,
+    probe: Arc<Mutex<Option<Vec<RequirementStatus>>>>,
+    pub(crate) root: FocusHandle,
+    pub(crate) nav: FocusHandle,
+    handles: HashMap<String, FocusHandle>,
+    pub(crate) stops: Vec<Stop>,
+    /// Child index of each setting row in the current frame.
+    pub(crate) row_items: BTreeMap<String, usize>,
+    pub(crate) scroll: gpui::ScrollHandle,
+    pub(crate) errors: BTreeMap<String, String>,
+    queue: BTreeMap<String, String>,
+    inflight: Option<(u64, BTreeMap<String, String>)>,
+    pub(crate) saved_flash: bool,
+    flash_generation: u64,
+    settings_revision: u64,
+    plugins_revision: u64,
+    /// Plugins whose toggle was requested and has not been observed yet.
+    pub(crate) toggling: BTreeMap<String, bool>,
+    pub(crate) reset_armed: bool,
+    pub(crate) dropdown: Option<String>,
+    /// Setting to point out after `ui.settings {key}`.
+    pub(crate) highlight: Option<String>,
+    scroll_to: Option<String>,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl EventEmitter<SettingsEvent> for SettingsView {}
+
+impl SettingsView {
+    pub fn new(
+        app: Arc<App>,
+        font: SharedString,
+        key_hints: Vec<KeyHint>,
+        target: &serde_json::Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let search = cx.new(|cx| TextInput::new("Search settings", cx));
+        let subscriptions = vec![cx.subscribe_in(
+            &search,
+            window,
+            |this, input, event: &InputEvent, window, cx| match event {
+                InputEvent::Changed => {
+                    this.scroll.set_offset(gpui::Point::default());
+                    cx.notify();
+                }
+                InputEvent::Cancel => {
+                    if input.read(cx).text().is_empty() {
+                        cx.emit(SettingsEvent::Close);
+                    } else {
+                        input.update(cx, |input, cx| input.set_text("", cx));
+                        cx.notify();
+                    }
+                }
+                InputEvent::Submit => this.step_focus(1, window, cx),
+            },
+        )];
+        let mut view = SettingsView {
+            plugins: app.plugins.list(),
+            settings_revision: app.settings.revision(),
+            plugins_revision: app.plugins.revision(),
+            app,
+            font,
+            key_hints,
+            page: Page::General,
+            search,
+            rows: Vec::new(),
+            requirements: None,
+            probe: Arc::new(Mutex::new(None)),
+            root: cx.focus_handle(),
+            nav: cx.focus_handle(),
+            handles: HashMap::new(),
+            stops: Vec::new(),
+            row_items: BTreeMap::new(),
+            scroll: gpui::ScrollHandle::new(),
+            errors: BTreeMap::new(),
+            queue: BTreeMap::new(),
+            inflight: None,
+            saved_flash: false,
+            flash_generation: 0,
+            toggling: BTreeMap::new(),
+            reset_armed: false,
+            dropdown: None,
+            highlight: None,
+            scroll_to: None,
+            _subscriptions: subscriptions,
+        };
+        view.rebuild(window, cx);
+        view.probe_requirements();
+        window.focus(&view.nav);
+        view.open_target(target, window, cx);
+        view
+    }
+
+    /// A stable focus handle for a control that has no state of its own.
+    pub(crate) fn handle(&mut self, id: &str, cx: &mut Context<Self>) -> FocusHandle {
+        if let Some(handle) = self.handles.get(id) {
+            return handle.clone();
         }
-        self.palette = None;
-        self.menu = None;
-        let mut subscriptions = Vec::new();
-        let fields = self
+        let handle = cx.focus_handle();
+        self.handles.insert(id.to_owned(), handle.clone());
+        handle
+    }
+
+    pub(crate) fn query(&self, cx: &gpui::App) -> String {
+        self.search.read(cx).text().trim().to_lowercase()
+    }
+
+    pub(crate) fn plugin_title(&self, id: &str) -> String {
+        self.plugins
+            .iter()
+            .find(|plugin| plugin.id == id)
+            .map_or_else(|| id.to_owned(), |plugin| plugin.title.clone())
+    }
+
+    pub(crate) fn page_title(&self, page: &Page) -> String {
+        match page {
+            Page::General => "General".into(),
+            Page::Appearance => "Appearance".into(),
+            Page::Plugins => "Plugins".into(),
+            Page::Keyboard => "Keyboard".into(),
+            Page::Plugin(id) => self.plugin_title(id),
+        }
+    }
+
+    /// Sidebar entries: the fixed pages, then every plugin that has settings.
+    pub(crate) fn pages(&self) -> Vec<Page> {
+        let mut pages = vec![
+            Page::General,
+            Page::Appearance,
+            Page::Plugins,
+            Page::Keyboard,
+        ];
+        let mut owners: Vec<Page> = self
+            .rows
+            .iter()
+            .map(Row::page)
+            .filter(|page| matches!(page, Page::Plugin(_)))
+            .collect();
+        owners.dedup();
+        owners.sort_by_key(|page| self.page_title(page).to_lowercase());
+        pages.extend(owners);
+        pages
+    }
+
+    // ------------------------------------------------------------ live state
+
+    fn live(&self, spec: &SettingSpec) -> String {
+        self.app
+            .settings
+            .text(&spec.key)
+            .unwrap_or_else(|| SettingSpec::format_value(&spec.default))
+    }
+
+    fn pending(&self, key: &str) -> bool {
+        self.queue.contains_key(key)
+            || self
+                .inflight
+                .as_ref()
+                .is_some_and(|(_, changes)| changes.contains_key(key))
+    }
+
+    /// Reconcile rows with the schema: plugins declare and withdraw settings
+    /// as they are toggled, and another surface may have changed a value.
+    fn rebuild(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut previous: HashMap<String, Row> = std::mem::take(&mut self.rows)
+            .into_iter()
+            .map(|row| (row.spec.key.clone(), row))
+            .collect();
+        let mut specs: Vec<SettingSpec> = self
             .app
             .settings
             .schema()
             .into_iter()
             .filter(SettingSpec::editable)
-            .map(|spec| {
-                let value = self
-                    .app
-                    .settings
-                    .get(&spec.key)
-                    .unwrap_or_else(|| spec.default.clone());
-                let initial = SettingSpec::format_value(&value);
-                let input = cx.new(|cx| TextInput::new("", cx));
-                input.update(cx, |input, cx| input.set_text(initial.clone(), cx));
-                subscriptions.push(cx.subscribe_in(
-                    &input,
-                    window,
-                    |this, _, event, window, cx| {
-                        let command = match event {
-                            InputEvent::Submit => "ui.settings_save",
-                            InputEvent::Cancel => "ui.settings_close",
-                            InputEvent::Changed => {
-                                if let Some(state) = this.settings.as_mut() {
-                                    state.message.clear();
-                                    state.error = false;
-                                }
-                                cx.notify();
-                                return;
-                            }
-                        };
-                        this.run(command, serde_json::json!({}), window, cx);
-                    },
-                ));
-                Field {
-                    spec,
-                    initial,
-                    input,
-                    focus: cx.focus_handle(),
+            .collect();
+        // Declaration order is alphabetical by key; group sections together
+        // while keeping that order inside each.
+        specs.sort_by(|a, b| (a.owner(), &a.section).cmp(&(b.owner(), &b.section)));
+        for spec in specs {
+            let live = self.live(&spec);
+            let row = match previous.remove(&spec.key) {
+                Some(mut row) if row.spec.kind == spec.kind => {
+                    if !self.pending(&spec.key) {
+                        row.value.clone_from(&live);
+                        if let Some(input) = &row.input
+                            && !input.read(cx).is_focused(window)
+                        {
+                            input.update(cx, |input, cx| input.set_text(live.clone(), cx));
+                        }
+                    }
+                    row.spec = spec;
+                    row
+                }
+                _ => self.new_row(spec, live, window, cx),
+            };
+            self.rows.push(row);
+        }
+        self.errors
+            .retain(|key, _| self.rows.iter().any(|row| &row.spec.key == key));
+    }
+
+    fn new_row(
+        &self,
+        spec: SettingSpec,
+        value: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Row {
+        let textual = matches!(
+            spec.kind,
+            SettingKind::Integer
+                | SettingKind::Number
+                | SettingKind::Text
+                | SettingKind::Path
+                | SettingKind::Command
+        );
+        let mut subscriptions = Vec::new();
+        let input = textual.then(|| {
+            let placeholder = if spec.kind == SettingKind::Path {
+                "Not set"
+            } else {
+                ""
+            };
+            let input = cx.new(|cx| TextInput::new(placeholder, cx));
+            input.update(cx, |input, cx| input.set_text(value.clone(), cx));
+            let key = spec.key.clone();
+            subscriptions.push(cx.subscribe_in(
+                &input,
+                window,
+                move |this, input, event: &InputEvent, window, cx| match event {
+                    InputEvent::Changed => {
+                        this.errors.remove(&key);
+                        this.highlight = None;
+                        cx.notify();
+                    }
+                    InputEvent::Submit => this.commit(&key, cx),
+                    InputEvent::Cancel => {
+                        let shown = this.row(&key).map(|row| row.value.clone());
+                        if shown.as_deref() == Some(input.read(cx).text()) {
+                            cx.emit(SettingsEvent::Close);
+                        } else if let Some(shown) = shown {
+                            input.update(cx, |input, cx| input.set_text(shown, cx));
+                            this.errors.remove(&key);
+                            let _ = window;
+                            cx.notify();
+                        }
+                    }
+                },
+            ));
+            let key = spec.key.clone();
+            subscriptions.push(
+                cx.on_blur(&input.focus_handle(cx), window, move |this, _, cx| {
+                    this.commit(&key, cx);
+                }),
+            );
+            input
+        });
+        Row {
+            spec,
+            value,
+            input,
+            anchor: PopoverAnchor::default(),
+            _subscriptions: subscriptions,
+        }
+    }
+
+    pub(crate) fn row(&self, key: &str) -> Option<&Row> {
+        self.rows.iter().find(|row| row.spec.key == key)
+    }
+
+    /// Called by the host whenever the core woke the UI.
+    pub fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut changed = false;
+        if let Some((id, _)) = &self.inflight {
+            let (current, state) = self.app.settings.save_status();
+            if current == *id && state != SaveState::Saving {
+                let (_, sent) = self.inflight.take().expect("checked above");
+                match state {
+                    SaveState::Failed(error) => {
+                        for key in sent.keys() {
+                            self.errors.insert(key.clone(), error.clone());
+                        }
+                        self.saved_flash = false;
+                    }
+                    _ => self.flash(cx),
+                }
+                // Values of a failed save fall back to the live ones.
+                self.settings_revision = u64::MAX;
+                changed = true;
+            }
+        }
+        let (settings, plugins) = (self.app.settings.revision(), self.app.plugins.revision());
+        if plugins != self.plugins_revision {
+            self.plugins_revision = plugins;
+            self.plugins = self.app.plugins.list();
+            let plugins = &self.plugins;
+            self.toggling.retain(|id, wanted| {
+                plugins
+                    .iter()
+                    .any(|plugin| plugin.id == id && plugin.enabled != *wanted)
+            });
+            changed = true;
+        }
+        if settings != self.settings_revision {
+            self.settings_revision = settings;
+            self.rebuild(window, cx);
+            changed = true;
+        }
+        if let Some(found) = self.probe.lock().ok().and_then(|mut slot| slot.take()) {
+            self.requirements = Some(found);
+            changed = true;
+        }
+        self.flush(cx);
+        if changed {
+            cx.notify();
+        }
+    }
+
+    fn flash(&mut self, cx: &mut Context<Self>) {
+        self.saved_flash = true;
+        self.flash_generation += 1;
+        let generation = self.flash_generation;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(1800))
+                .await;
+            this.update(cx, |this, cx| {
+                if this.flash_generation == generation {
+                    this.saved_flash = false;
+                    cx.notify();
                 }
             })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub(crate) fn saving(&self) -> bool {
+        self.inflight.is_some() || !self.queue.is_empty()
+    }
+
+    // ------------------------------------------------------------ changes
+
+    /// Validate and submit one change. Invalid text stays in its field with
+    /// the reason below it; nothing is sent.
+    pub(crate) fn change(&mut self, key: &str, text: String, cx: &mut Context<Self>) {
+        self.highlight = None;
+        self.reset_armed = false;
+        let Some(row) = self.rows.iter_mut().find(|row| row.spec.key == key) else {
+            return;
+        };
+        if let Err(error) = row.spec.parse(&text) {
+            self.errors.insert(key.to_owned(), format!("{error:#}"));
+            cx.notify();
+            return;
+        }
+        self.errors.remove(key);
+        if let Some(input) = &row.input
+            && input.read(cx).text() != text
+        {
+            input.update(cx, |input, cx| input.set_text(text.clone(), cx));
+        }
+        if row.value == text {
+            cx.notify();
+            return;
+        }
+        row.value.clone_from(&text);
+        self.queue.insert(key.to_owned(), text);
+        self.flush(cx);
+        cx.notify();
+    }
+
+    fn commit(&mut self, key: &str, cx: &mut Context<Self>) {
+        let Some(text) = self
+            .row(key)
+            .and_then(|row| row.input.as_ref())
+            .map(|input| input.read(cx).text().to_owned())
+        else {
+            return;
+        };
+        if self.row(key).is_some_and(|row| row.value != text) {
+            self.change(key, text, cx);
+        }
+    }
+
+    /// Submit the queue unless a save is running; `sync` calls again when it
+    /// ends. Another surface (CLI, agent) may hold the save: we wait for it
+    /// the same way instead of reporting an error.
+    fn flush(&mut self, cx: &mut Context<Self>) {
+        if self.inflight.is_some()
+            || self.queue.is_empty()
+            || self.app.settings.save_status().1 == SaveState::Saving
+        {
+            return;
+        }
+        let changes = std::mem::take(&mut self.queue);
+        match self.app.commands.dispatch(
+            &Invocation::with_args("settings.apply", &serde_json::json!({ "changes": changes })),
+            &self.app,
+        ) {
+            Ok(Outcome::Value(id)) => self.inflight = Some((id.as_u64().unwrap_or(0), changes)),
+            Ok(_) => {}
+            Err(error) => {
+                for key in changes.keys() {
+                    self.errors.insert(key.clone(), format!("{error:#}"));
+                }
+                self.settings_revision = u64::MAX;
+            }
+        }
+        cx.notify();
+    }
+
+    /// Left/right on a focused choice or number.
+    fn adjust(&mut self, delta: i64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(key) = self
+            .stops
+            .iter()
+            .find(|stop| stop.focus.contains_focused(window, cx))
+            .and_then(|stop| stop.key.clone())
+        else {
+            return;
+        };
+        self.adjust_key(&key, delta, cx);
+    }
+
+    pub(crate) fn adjust_key(&mut self, key: &str, delta: i64, cx: &mut Context<Self>) {
+        let Some(row) = self.row(key) else { return };
+        let text = match row.spec.kind {
+            SettingKind::Toggle => (delta > 0).to_string(),
+            SettingKind::Choice => {
+                let choices = &row.spec.constraints.choices;
+                let Some(len) = i64::try_from(choices.len()).ok().filter(|len| *len > 0) else {
+                    return;
+                };
+                let current = choices
+                    .iter()
+                    .position(|choice| *choice == row.value)
+                    .and_then(|index| i64::try_from(index).ok())
+                    .unwrap_or(0);
+                let next = (current + delta).clamp(0, len - 1);
+                choices[usize::try_from(next).unwrap_or(0)].clone()
+            }
+            SettingKind::Integer => {
+                let shown = row
+                    .input
+                    .as_ref()
+                    .and_then(|input| input.read(cx).text().trim().parse::<i64>().ok())
+                    .or_else(|| row.value.parse().ok())
+                    .or_else(|| row.spec.default.as_integer())
+                    .unwrap_or(0);
+                let (min, max) = row
+                    .spec
+                    .constraints
+                    .integer_range
+                    .unwrap_or((i64::MIN, i64::MAX));
+                shown
+                    .saturating_add(delta.saturating_mul(row.spec.constraints.step.max(1)))
+                    .clamp(min, max)
+                    .to_string()
+            }
+            _ => return,
+        };
+        self.change(key, text, cx);
+    }
+
+    pub(crate) fn reset(&mut self, key: &str, cx: &mut Context<Self>) {
+        if let Some(text) = self.row(key).map(Row::default_text) {
+            self.change(key, text, cx);
+        }
+    }
+
+    pub(crate) fn reset_all(&mut self, cx: &mut Context<Self>) {
+        if !self.reset_armed {
+            self.reset_armed = true;
+            cx.notify();
+            return;
+        }
+        let keys: Vec<String> = self
+            .rows
+            .iter()
+            .filter(|row| row.modified())
+            .map(|row| row.spec.key.clone())
             .collect();
-        let focus = cx.focus_handle();
-        window.focus(&focus);
-        self.settings = Some(SettingsState {
-            fields,
-            titles: self
-                .app
-                .plugins
-                .list()
-                .into_iter()
-                .map(|plugin| (plugin.id, plugin.title))
-                .collect(),
-            focus,
-            pending: None,
-            scroll: gpui::ScrollHandle::new(),
-            message: String::new(),
-            error: false,
-            _subscriptions: subscriptions,
+        for key in keys {
+            self.reset(&key, cx);
+        }
+        self.reset_armed = false;
+    }
+
+    pub(crate) fn browse(&mut self, key: &str, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Choose".into()),
         });
+        let key = key.to_owned();
+        cx.spawn(async move |this, cx| {
+            let picked = paths.await;
+            this.update(cx, |this, cx| match picked {
+                Ok(Ok(Some(paths))) => {
+                    if let Some(path) = paths.first() {
+                        this.change(&key, path.to_string_lossy().into_owned(), cx);
+                    }
+                }
+                Ok(Err(error)) => {
+                    this.errors.insert(key.clone(), format!("{error:#}"));
+                    cx.notify();
+                }
+                _ => {}
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub(crate) fn set_plugin(&mut self, id: &str, enabled: bool, cx: &mut Context<Self>) {
+        match self.app.commands.dispatch(
+            &Invocation::with_args(
+                "plugins.set_enabled",
+                &serde_json::json!({ "id": id, "enabled": enabled }),
+            ),
+            &self.app,
+        ) {
+            Ok(_) => {
+                self.toggling.insert(id.to_owned(), enabled);
+            }
+            Err(error) => self
+                .app
+                .notify(bibli_core::app::NotifyLevel::Error, format!("{error:#}")),
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn probe_requirements(&mut self) {
+        let slot = Arc::clone(&self.probe);
+        let weak = self.app.weak();
+        self.app.scheduler.spawn(
+            bibli_core::scheduler::Priority::Normal,
+            "settings-requirements",
+            self.app.lifetime().child(),
+            move || {
+                let Some(app) = weak.upgrade() else { return };
+                let found = app.plugins.probe_requirements();
+                if let Ok(mut slot) = slot.lock() {
+                    *slot = Some(found);
+                }
+                app.wake();
+            },
+        );
+    }
+
+    /// Open the settings file in the user's editor. The file exists only
+    /// once something differs from the defaults.
+    pub(crate) fn open_file(&self) {
+        let Some(path) = self.app.settings.path().map(std::path::Path::to_path_buf) else {
+            return;
+        };
+        let weak = self.app.weak();
+        self.app.scheduler.spawn(
+            bibli_core::scheduler::Priority::Normal,
+            "settings-open-file",
+            self.app.lifetime().child(),
+            move || {
+                use bibli_core::app::NotifyLevel;
+                let Some(app) = weak.upgrade() else { return };
+                if !path.is_file() {
+                    app.notify(
+                        NotifyLevel::Info,
+                        "There is no settings file yet: every setting has its default value",
+                    );
+                } else if let Err(error) = bibli_platform::open::open_path(&path) {
+                    app.notify(NotifyLevel::Error, format!("{error:#}"));
+                }
+            },
+        );
+    }
+
+    // ------------------------------------------------------------ navigation
+
+    pub(crate) fn go(&mut self, page: Page, cx: &mut Context<Self>) {
+        self.search.update(cx, |input, cx| input.set_text("", cx));
+        self.page = page;
+        self.dropdown = None;
+        self.reset_armed = false;
+        self.scroll.set_offset(gpui::Point::default());
+        cx.notify();
+    }
+
+    /// `{ "key": "plugin.option" }` or `{ "page": "plugins" }`.
+    pub fn open_target(
+        &mut self,
+        target: &serde_json::Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let text = |name: &str| target.get(name).and_then(serde_json::Value::as_str);
+        if let Some(key) = text("key") {
+            let owner = key.split('.').next().unwrap_or_default();
+            self.go(Page::of_owner(owner), cx);
+            if self.row(key).is_some() {
+                self.highlight = Some(key.to_owned());
+                self.scroll_to = Some(key.to_owned());
+            }
+        } else if let Some(page) = text("page") {
+            self.go(Page::parse(page), cx);
+        }
+        window.focus(&self.nav);
+    }
+
+    /// The row to scroll to once it has been laid out, consumed by render.
+    pub(crate) fn take_scroll_target(&mut self) -> Option<String> {
+        self.scroll_to.take()
+    }
+
+    fn step_page(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let pages = self.pages();
+        let current = pages
+            .iter()
+            .position(|page| *page == self.page)
+            .unwrap_or(0);
+        let next = current
+            .saturating_add_signed(delta)
+            .min(pages.len().saturating_sub(1));
+        self.go(pages[next].clone(), cx);
+    }
+
+    fn step_focus(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.stops.is_empty() {
+            return;
+        }
+        let len = self.stops.len();
+        let next = match self
+            .stops
+            .iter()
+            .position(|stop| stop.focus.contains_focused(window, cx))
+        {
+            Some(current) => (current + len).saturating_add_signed(delta) % len,
+            None if delta > 0 => 0,
+            None => len - 1,
+        };
+        let stop = &self.stops[next];
+        if let Some(item) = stop.item {
+            self.scroll.scroll_to_item(item);
+        }
+        window.focus(&stop.focus);
+        cx.notify();
+    }
+
+    /// `ui.settings_*` commands, from key bindings and other surfaces.
+    pub fn command(
+        &mut self,
+        name: &str,
+        args: &serde_json::Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let delta = args
+            .get("delta")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(1);
+        match name {
+            "settings_close" => {
+                if self.dropdown.take().is_some() {
+                    cx.notify();
+                } else {
+                    cx.emit(SettingsEvent::Close);
+                }
+            }
+            "settings_next" => self.step_focus(1, window, cx),
+            "settings_prev" => self.step_focus(-1, window, cx),
+            "settings_search" => {
+                self.search.update(cx, |input, cx| {
+                    input.select_all_now(cx);
+                    input.focus(window);
+                });
+            }
+            "settings_page" => self.step_page(isize::try_from(delta).unwrap_or(1), cx),
+            "settings_enter" => {
+                // From the category list into the page: the stop after it.
+                window.focus(&self.nav);
+                self.step_focus(1, window, cx);
+            }
+            "settings_adjust" => self.adjust(delta, window, cx),
+            _ => {}
+        }
+    }
+}
+
+impl Focusable for SettingsView {
+    fn focus_handle(&self, _: &gpui::App) -> FocusHandle {
+        self.root.clone()
+    }
+}
+
+// ------------------------------------------------------------ hosting
+
+impl crate::shell::Shell {
+    /// Open the dialog, or point the open one at `{ key }` / `{ page }`.
+    pub fn open_settings(
+        &mut self,
+        target: &serde_json::Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(settings) = &self.settings {
+            settings.update(cx, |settings, cx| settings.open_target(target, window, cx));
+            return;
+        }
+        self.palette = None;
+        self.menu = None;
+        if let Some(popup) = self.toolbar_menu.take() {
+            popup.restore(window);
+        }
+        let (app, font, hints) = (
+            Arc::clone(&self.app),
+            self.font.clone(),
+            self.key_hints.clone(),
+        );
+        let settings = cx.new(|cx| SettingsView::new(app, font, hints, target, window, cx));
+        self.settings_subscription = Some(cx.subscribe_in(
+            &settings,
+            window,
+            |this, _, event: &SettingsEvent, window, cx| match event {
+                SettingsEvent::Close => {
+                    this.settings = None;
+                    this.settings_subscription = None;
+                    window.focus(&this.ui().focus);
+                    cx.notify();
+                }
+            },
+        ));
+        self.settings = Some(settings);
     }
 
     pub fn settings_command(
@@ -109,376 +864,8 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(state) = self.settings.as_mut() else {
-            return;
-        };
-        if state.pending.is_some() {
-            return;
-        }
-        match name {
-            "settings_close" => {
-                self.settings = None;
-                window.focus(&self.ui().focus);
-            }
-            "settings_save" => {
-                let changes: BTreeMap<_, _> = state
-                    .fields
-                    .iter()
-                    .filter_map(|field| {
-                        let text = field.input.read(cx).text();
-                        (text != field.initial).then(|| (field.spec.key.clone(), text.to_owned()))
-                    })
-                    .collect();
-                if changes.is_empty() {
-                    state.message = "No changes to save".into();
-                    state.error = false;
-                    return;
-                }
-                match self.app.commands.dispatch(
-                    &Invocation::with_args(
-                        "settings.apply",
-                        &serde_json::json!({ "changes": changes }),
-                    ),
-                    &self.app,
-                ) {
-                    Ok(Outcome::Value(id)) => {
-                        state.pending = id.as_u64();
-                        state.message = "Saving…".into();
-                        state.error = false;
-                        window.focus(&state.focus);
-                    }
-                    Err(error) => {
-                        state.message = format!("{error:#}");
-                        state.error = true;
-                    }
-                    _ => {}
-                }
-            }
-            "settings_next" | "settings_prev" => {
-                let len = state.fields.len();
-                if len == 0 {
-                    return;
-                }
-                let current = state.fields.iter().position(|field| {
-                    field.focus.is_focused(window) || field.input.read(cx).is_focused(window)
-                });
-                let index = match (current, name == "settings_prev") {
-                    (Some(index), false) => (index + 1) % len,
-                    (Some(index), true) => (index + len - 1) % len,
-                    (None, false) => 0,
-                    (None, true) => len - 1,
-                };
-                state.scroll.scroll_to_item(index);
-                let field = &state.fields[index];
-                if options(&field.spec).is_empty() {
-                    field.input.read(cx).focus(window);
-                } else {
-                    window.focus(&field.focus);
-                }
-            }
-            "settings_cycle" | "settings_set" | "settings_reset" => {
-                let key = args.get("key").and_then(serde_json::Value::as_str);
-                let Some(field) = state.fields.iter().find(|field| {
-                    key.map_or_else(
-                        || field.focus.is_focused(window),
-                        |key| field.spec.key == key,
-                    )
-                }) else {
-                    return;
-                };
-                let value = if name == "settings_reset" {
-                    SettingSpec::format_value(&field.spec.default)
-                } else if name == "settings_cycle" {
-                    let choices = options(&field.spec);
-                    if choices.is_empty() {
-                        return;
-                    }
-                    let index = choices
-                        .iter()
-                        .position(|s| s == field.input.read(cx).text())
-                        .map_or(0, |i| (i + 1) % choices.len());
-                    choices[index].clone()
-                } else {
-                    args.get("value")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or_default()
-                        .into()
-                };
-                field
-                    .input
-                    .update(cx, |input, cx| input.set_text(value, cx));
-                window.focus(&field.focus);
-                state.message.clear();
-            }
-            _ => {}
+        if let Some(settings) = self.settings.clone() {
+            settings.update(cx, |settings, cx| settings.command(name, args, window, cx));
         }
     }
-
-    pub fn sync_settings(&mut self, cx: &mut Context<Self>) {
-        let Some(state) = self.settings.as_mut() else {
-            return;
-        };
-        let Some(pending) = state.pending else { return };
-        let (id, status) = self.app.settings.save_status();
-        if id != pending {
-            return;
-        }
-        match status {
-            SaveState::Saved => {
-                state.pending = None;
-                state.message = "Saved — changes are active".into();
-                state.error = false;
-                for field in &mut state.fields {
-                    field.initial = field.input.read(cx).text().into();
-                }
-            }
-            SaveState::Failed(error) => {
-                state.pending = None;
-                state.message = error;
-                state.error = true;
-            }
-            _ => {}
-        }
-    }
-}
-
-fn options(spec: &SettingSpec) -> Vec<String> {
-    if spec.default.is_bool() {
-        vec!["false".into(), "true".into()]
-    } else {
-        spec.constraints.choices.clone()
-    }
-}
-
-fn button(
-    id: String,
-    label: String,
-    command: &'static str,
-    args: serde_json::Value,
-    theme: &Theme,
-    cx: &mut Context<Shell>,
-) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(gpui::SharedString::from(id))
-        .px_3()
-        .py_1()
-        .rounded_md()
-        .border_1()
-        .border_color(theme.border)
-        .cursor_pointer()
-        .hover(|s| s.bg(theme.border))
-        .on_click(
-            cx.listener(move |this, _, window, cx| this.run(command, args.clone(), window, cx)),
-        )
-        .child(label)
-}
-
-pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    let state = shell.settings.as_ref()?;
-    let theme = cx.global::<Theme>().clone();
-    let saving = state.pending.is_some();
-    let dirty = state
-        .fields
-        .iter()
-        .any(|field| field.input.read(cx).text() != field.initial);
-    let mut rows = div()
-        .id("settings-rows")
-        .flex_1()
-        .min_h_0()
-        .overflow_y_scroll()
-        .track_scroll(&state.scroll)
-        .flex()
-        .flex_col()
-        .gap_4()
-        .p_4();
-    let mut owner = "";
-    for field in &state.fields {
-        let mut row = div().flex().flex_col().gap_4().flex_shrink_0();
-        let namespace = field.spec.key.split('.').next().unwrap_or_default();
-        if namespace != owner {
-            owner = namespace;
-            let title = state
-                .titles
-                .get(namespace)
-                .cloned()
-                .unwrap_or_else(|| namespace.to_owned());
-            row = row.child(div().text_color(theme.accent).child(title));
-        }
-        let value = field.input.read(cx).text().to_owned();
-        let choices = options(&field.spec);
-        let label = field
-            .spec
-            .key
-            .split_once('.')
-            .map_or(field.spec.key.as_str(), |(_, label)| label)
-            .replace('_', " ");
-        let mut controls = div()
-            .flex()
-            .gap_2()
-            .items_center()
-            .track_focus(&field.focus)
-            .when(!choices.is_empty(), |d| d.key_context("SettingChoice"))
-            .when(
-                field.focus.is_focused(window) || field.input.read(cx).is_focused(window),
-                |d| d.border_b_1().border_color(theme.accent),
-            );
-        if saving {
-            controls = controls.child(value.clone());
-        } else if choices.is_empty() {
-            controls = controls.child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .h(px(30.))
-                    .px_2()
-                    .flex()
-                    .items_center()
-                    .bg(theme.bg)
-                    .border_1()
-                    .border_color(theme.border)
-                    .rounded_md()
-                    .child(field.input.clone()),
-            );
-        } else {
-            for choice in choices {
-                let text = match choice.as_str() {
-                    "true" => "On".into(),
-                    "false" => "Off".into(),
-                    _ => choice.clone(),
-                };
-                controls = controls.child(
-                    button(
-                        format!("{}-{choice}", field.spec.key),
-                        text,
-                        "ui.settings_set",
-                        serde_json::json!({ "key": field.spec.key, "value": choice }),
-                        &theme,
-                        cx,
-                    )
-                    .when(value == choice, |d| {
-                        d.bg(theme.selection_bg).text_color(theme.selection_text)
-                    }),
-                );
-            }
-        }
-        if !saving {
-            controls = controls.child(button(
-                format!("{}-reset", field.spec.key),
-                "Default".into(),
-                "ui.settings_reset",
-                serde_json::json!({ "key": field.spec.key }),
-                &theme,
-                cx,
-            ));
-        }
-        row = row.child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .flex_shrink_0()
-                .child(div().child(label))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.text_muted)
-                        .child(field.spec.description.clone()),
-                )
-                .child(controls),
-        );
-        rows = rows.child(row);
-    }
-    let footer = div()
-        .p_4()
-        .border_t_1()
-        .border_color(theme.border)
-        .flex()
-        .flex_col()
-        .gap_2()
-        .child(
-            div()
-                .text_xs()
-                .text_color(if state.error {
-                    theme.error
-                } else {
-                    theme.text_muted
-                })
-                .child(state.message.clone()),
-        )
-        .child(
-            div()
-                .flex()
-                .gap_2()
-                .justify_end()
-                .child(
-                    button(
-                        "settings-close".into(),
-                        if dirty { "Cancel (Esc)" } else { "Close (Esc)" }.into(),
-                        "ui.settings_close",
-                        serde_json::json!({}),
-                        &theme,
-                        cx,
-                    )
-                    .when(saving, |d| d.opacity(0.5)),
-                )
-                .child(
-                    button(
-                        "settings-save".into(),
-                        "Save (Ctrl+S)".into(),
-                        "ui.settings_save",
-                        serde_json::json!({}),
-                        &theme,
-                        cx,
-                    )
-                    .bg(theme.selection_bg)
-                    .when(saving, |d| d.opacity(0.5)),
-                ),
-        );
-    let panel = div()
-        .w(relative(0.9))
-        .max_w(px(720.))
-        .h(relative(0.85))
-        .max_h(px(720.))
-        .flex()
-        .flex_col()
-        .rounded_lg()
-        .border_1()
-        .border_color(theme.border)
-        .bg(theme.surface)
-        .shadow_lg()
-        .track_focus(&state.focus)
-        .key_context("Settings")
-        .child(
-            div()
-                .p_4()
-                .border_b_1()
-                .border_color(theme.border)
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(div().text_lg().child("Settings"))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.text_muted)
-                        .child("App and plugin preferences. Save to apply changes."),
-                ),
-        )
-        .child(rows)
-        .child(footer);
-    Some(
-        deferred(
-            div()
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .occlude()
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(panel),
-        )
-        .with_priority(5)
-        .into_any_element(),
-    )
 }

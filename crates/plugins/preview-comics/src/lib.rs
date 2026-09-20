@@ -15,6 +15,9 @@ impl Plugin for PreviewPlugin {
     fn title(&self) -> &'static str {
         "Preview: comics"
     }
+    fn description(&self) -> &'static str {
+        "Read CBZ and CBR comic books page by page"
+    }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
     }

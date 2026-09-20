@@ -16,17 +16,8 @@ pub struct Member {
     pub encrypted: bool,
 }
 fn worker() -> anyhow::Result<std::path::PathBuf> {
-    if let Some(path) = std::env::var_os("BIBLI_ARCHIVE_WORKER") {
-        return Ok(path.into());
-    }
-    if let Some(path) = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.join("bibli-archive-worker")))
-        .filter(|p| p.is_file())
-    {
-        return Ok(path);
-    }
-    crate::process::required("bibli-archive-worker")
+    crate::process::find_worker("BIBLI_ARCHIVE_WORKER", "bibli-archive-worker")
+        .map_or_else(|| crate::process::required("bibli-archive-worker"), Ok)
 }
 pub fn list(path: &Path, cancel: &CancelToken) -> anyhow::Result<Vec<Member>> {
     let bytes = crate::process::run(

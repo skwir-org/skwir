@@ -17,6 +17,7 @@
 pub mod address;
 mod archive_preview;
 mod code_preview;
+pub mod controls;
 pub mod dnd;
 mod dragicon;
 pub mod elements;
@@ -40,6 +41,7 @@ mod reader_scroll;
 pub mod renamebulk;
 pub mod review;
 pub mod settings;
+mod settings_view;
 pub mod shell;
 pub mod sidebar;
 pub mod status;

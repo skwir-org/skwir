@@ -18,6 +18,25 @@ impl Plugin for PreviewPlugin {
     fn title(&self) -> &'static str {
         "Preview: archives"
     }
+    fn description(&self) -> &'static str {
+        "List the contents of ZIP, tar, 7z and other archives and preview their members without extracting"
+    }
+    fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
+        vec![
+            bibli_core::plugin::Requirement::new(
+                "bibli-archive-worker",
+                "Listing and reading archive members",
+                || {
+                    bibli_platform::process::find_worker(
+                        "BIBLI_ARCHIVE_WORKER",
+                        "bibli-archive-worker",
+                    )
+                    .is_some()
+                },
+            )
+            .required(),
+        ]
+    }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
     }

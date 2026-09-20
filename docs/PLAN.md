@@ -15,11 +15,13 @@ Principles (non-negotiable, every phase is checked against them):
 Durations are relative sizes for one developer working with an AI assistant, not commitments.
 Each phase has a **Done when** gate. Do not start the next phase before the gate passes.
 
-Status (2026-09-19): Phases 0 to 4 are built; Phase 2's gate (one week of daily use) is
+Status (2026-09-20): Phases 0 to 4 are built; Phase 2's gate (one week of daily use) is
 still yours to run. Phase 4's gate holds: every plugin (now 25, including ten structured
 preview plugins) is proven by `crates/bibli/tests/plugins_toggle.rs` to disable at runtime
-with no trace and to re-enable. Beyond the plan, the tree now has: settings UI (schema-driven
-dialog, atomic batch save, per-plugin change hooks); two native PDF readers (PDFium and
+with no trace and to re-enable. Beyond the plan, the tree now has: a settings dialog
+(ADR-010: category column, search, controls chosen by the schema, changes applied
+immediately through the atomic save, plugin toggles with tool requirements, a read-only
+shortcut list); two native PDF readers (PDFium and
 Poppler, ADR-004/005) with continuous scrolling; embedded video and audio playback through
 a GStreamer worker (ADR-008) with a vendored atlas fix (patch 0003); ten structured preview
 plugins (ADR-009); tag-preserving copies (ADR-006); and Usage as a persistent plugin pane

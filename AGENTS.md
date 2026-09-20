@@ -210,13 +210,35 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
 
 ## Settings
 
-- Declare preferences in `SettingSpec`; the settings dialog derives controls
-  from their types and constraints. Choices and numeric limits belong to the
-  owning plugin, not UI key-specific branches. Collections such as saved queries
-  remain application data managed by their existing commands.
-- UI drafts stay local until `settings.apply`. Submit only edited keys; validate
-  the whole batch, save atomically on a worker, then publish live values. A failed
-  write must retain both the previous configuration and the editable draft.
+- Declare preferences with the `SettingSpec` constructors (`toggle`, `choice`,
+  `integer`, `number`, `text`, `path`, `command`; `data` for collections such
+  as saved queries, which stay application data managed by their commands).
+  The owner states the title, description, unit, step, choice labels and
+  section, so the dialog, the palette and agents need no key-specific
+  branches. Titles are sentence case without the plugin's name; descriptions
+  say what changes for the user, not what the key is called.
+- The dialog (`crates/ui/src/settings.rs`, rendering in `settings_view.rs`,
+  controls in `controls.rs`) is a self-contained entity: it holds the `App`,
+  never the shell, and closes through an event. Keep it that way so it can
+  move to a window of its own.
+- Changes apply immediately, each through `settings.apply`: switches and
+  choices on click, text and numbers on Enter or blur. The core accepts one
+  save at a time, so the view queues later changes and sends them as one
+  batch when the running save ends; it waits the same way for a save started
+  by another surface. A failed save restores the live value and shows the
+  reason on the row. Invalid text never leaves its field.
+- The view reconciles against `Settings::revision` and `PluginHost::revision`
+  when the core wakes the UI; it never reads the schema per frame. Plugins
+  are toggled with `plugins.set_enabled`, which runs the lifecycle callbacks
+  on a worker and persists the choice.
+- `Plugin::requirements` lists external tools with a probe. Probes touch the
+  filesystem: the dialog runs them on a worker when it opens, never during
+  registration or rendering.
+- `ui.settings` takes `{ "key": "plugin.option" }` or `{ "page": "plugins" }`.
+  Report a problem whose remedy is a setting with `App::notify_about_setting`
+  (or `Shell::set_status_about`); the status bar links to it.
+- The dialog is not a deferred draw, because its dropdowns are and GPUI cannot
+  nest them. It stays the last overlay child of the shell root.
 - Plugins that capture preferences at registration implement
   `on_settings_changed`; refresh only their affected providers. Read-through
   preferences need no hook. Lifecycle callbacks are serialized and must not
@@ -313,6 +335,14 @@ Tests that need a real filesystem feature (trash, xattrs) use a temp dir under
   layout). For drags, a virtual pointer on the wlr protocol is the only way
   (the dragtool used in Phase 3 lives in the session scratchpad; recreate it
   from `wayland-protocols-wlr` if needed).
+- Or drive it on a display of its own, which never touches the session:
+  `Xvfb :97 -screen 0 1280x860x24`, then run the app with `WAYLAND_DISPLAY`
+  unset, `DISPLAY=:97` and
+  `VK_ICD_FILENAMES=/run/opengl-driver/share/vulkan/icd.d/lvp_icd.x86_64.json`
+  (the NVIDIA driver cannot create a surface on Xvfb; lavapipe can). Send
+  input with `xdotool` (`nix build --print-out-paths nixpkgs#xdotool`) and
+  capture with `import -window root`. Anything that saves settings runs with
+  `XDG_CONFIG_HOME` pointing at a scratch directory.
 - Measure: first frame from the shell's log line, memory from
   `/proc/<pid>/smaps_rollup` (PSS), corrections/traces from `RUST_LOG=bibli_ui=trace`.
 

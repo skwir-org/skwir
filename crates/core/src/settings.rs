@@ -10,34 +10,183 @@ use std::io::Write;
 
 pub const PRESERVE_TAGS_ON_COPY: &str = "core.preserve_tags_on_copy";
 
-/// One setting's declaration.
-#[derive(Clone, Debug)]
+/// How an editor should present a setting. The value's type is still the
+/// type of `default`; the kind only picks the control.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SettingKind {
+    Toggle,
+    /// One of `constraints.choices`.
+    Choice,
+    Integer,
+    Number,
+    Text,
+    /// A filesystem path; editors offer completion or a picker.
+    Path,
+    /// A program or command line.
+    Command,
+    /// Application data managed by its owning commands, not by editors.
+    Data,
+}
+
+/// One setting's declaration. Build it with the constructors below: the
+/// owning plugin states the title, unit, choices and limits, so no editor
+/// needs key-specific knowledge.
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct SettingSpec {
     /// Dotted key, e.g. `view.list.row_height` or `plugin_id.option`.
     pub key: String,
+    /// Short human label ("Memory budget").
+    pub title: String,
     pub description: String,
+    /// Optional group heading within the owner's page.
+    pub section: String,
+    /// Unit shown after a numeric value ("MB").
+    pub unit: String,
     pub default: toml::Value,
+    pub kind: SettingKind,
     pub constraints: SettingConstraints,
+    /// The change takes effect at the next start.
+    pub restart_required: bool,
 }
 
 /// Optional restrictions shared by editors and command validation.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct SettingConstraints {
     pub choices: Vec<String>,
+    /// Human labels parallel to `choices` (empty: show the values).
+    pub choice_labels: Vec<String>,
     pub integer_range: Option<(i64, i64)>,
+    /// Increment of a numeric stepper.
+    pub step: i64,
 }
 
 impl SettingSpec {
+    fn new(key: &str, title: &str, description: &str, default: toml::Value) -> Self {
+        let kind = match default {
+            toml::Value::Boolean(_) => SettingKind::Toggle,
+            toml::Value::Integer(_) => SettingKind::Integer,
+            toml::Value::Float(_) => SettingKind::Number,
+            toml::Value::String(_) => SettingKind::Text,
+            _ => SettingKind::Data,
+        };
+        SettingSpec {
+            key: key.into(),
+            title: title.into(),
+            description: description.into(),
+            section: String::new(),
+            unit: String::new(),
+            default,
+            kind,
+            constraints: SettingConstraints {
+                step: 1,
+                ..SettingConstraints::default()
+            },
+            restart_required: false,
+        }
+    }
+
+    pub fn toggle(key: &str, title: &str, description: &str, default: bool) -> Self {
+        Self::new(key, title, description, toml::Value::Boolean(default))
+    }
+
+    /// `choices` are `(stored value, label)` pairs.
+    pub fn choice(
+        key: &str,
+        title: &str,
+        description: &str,
+        default: &str,
+        choices: &[(&str, &str)],
+    ) -> Self {
+        let mut spec = Self::new(key, title, description, toml::Value::String(default.into()));
+        spec.kind = SettingKind::Choice;
+        spec.constraints.choices = choices.iter().map(|(v, _)| (*v).to_owned()).collect();
+        spec.constraints.choice_labels = choices.iter().map(|(_, l)| (*l).to_owned()).collect();
+        spec
+    }
+
+    pub fn integer(
+        key: &str,
+        title: &str,
+        description: &str,
+        default: i64,
+        range: (i64, i64),
+    ) -> Self {
+        let mut spec = Self::new(key, title, description, toml::Value::Integer(default));
+        spec.constraints.integer_range = Some(range);
+        spec
+    }
+
+    pub fn number(key: &str, title: &str, description: &str, default: f64) -> Self {
+        Self::new(key, title, description, toml::Value::Float(default))
+    }
+
+    pub fn text(key: &str, title: &str, description: &str, default: &str) -> Self {
+        Self::new(key, title, description, toml::Value::String(default.into()))
+    }
+
+    pub fn path(key: &str, title: &str, description: &str, default: &str) -> Self {
+        let mut spec = Self::text(key, title, description, default);
+        spec.kind = SettingKind::Path;
+        spec
+    }
+
+    pub fn command(key: &str, title: &str, description: &str, default: &str) -> Self {
+        let mut spec = Self::text(key, title, description, default);
+        spec.kind = SettingKind::Command;
+        spec
+    }
+
+    /// Application data (e.g. saved queries) stored with the settings.
+    pub fn data(key: &str, description: &str, default: toml::Value) -> Self {
+        let mut spec = Self::new(key, key, description, default);
+        spec.kind = SettingKind::Data;
+        spec
+    }
+
+    #[must_use]
+    pub fn section(mut self, section: &str) -> Self {
+        section.clone_into(&mut self.section);
+        self
+    }
+
+    #[must_use]
+    pub fn unit(mut self, unit: &str) -> Self {
+        unit.clone_into(&mut self.unit);
+        self
+    }
+
+    #[must_use]
+    pub fn step(mut self, step: i64) -> Self {
+        self.constraints.step = step.max(1);
+        self
+    }
+
+    #[must_use]
+    pub fn restart_required(mut self) -> Self {
+        self.restart_required = true;
+        self
+    }
+
+    /// The settings namespace, which is the owning plugin's id (or `core`/`ui`).
+    pub fn owner(&self) -> &str {
+        self.key.split('.').next().unwrap_or_default()
+    }
+
+    /// The label of a choice value, falling back to the value itself.
+    pub fn choice_label<'a>(&'a self, value: &'a str) -> &'a str {
+        self.constraints
+            .choices
+            .iter()
+            .position(|choice| choice == value)
+            .and_then(|index| self.constraints.choice_labels.get(index))
+            .map_or(value, String::as_str)
+    }
+
     /// Collections are application data (e.g. saved queries), managed by their
     /// owning commands rather than the preferences editor.
     pub fn editable(&self) -> bool {
-        matches!(
-            self.default,
-            toml::Value::String(_)
-                | toml::Value::Boolean(_)
-                | toml::Value::Integer(_)
-                | toml::Value::Float(_)
-        )
+        self.kind != SettingKind::Data
     }
 
     pub fn format_value(value: &toml::Value) -> String {
@@ -55,13 +204,20 @@ impl SettingSpec {
         let value = match self.default {
             toml::Value::String(_) => toml::Value::String(text.into()),
             toml::Value::Boolean(_) => toml::Value::Boolean(text.parse()?),
-            toml::Value::Integer(_) => toml::Value::Integer(text.trim().parse()?),
+            toml::Value::Integer(_) => toml::Value::Integer(
+                text.trim()
+                    .parse()
+                    .map_err(|_| anyhow::anyhow!("expected a whole number"))?,
+            ),
             toml::Value::Float(_) => {
-                let number: f64 = text.trim().parse()?;
+                let number: f64 = text
+                    .trim()
+                    .parse()
+                    .map_err(|_| anyhow::anyhow!("expected a number"))?;
                 anyhow::ensure!(number.is_finite(), "expected a finite number");
                 toml::Value::Float(number)
             }
-            _ => unreachable!(),
+            _ => anyhow::bail!("{} is managed by its owning commands", self.key),
         };
         anyhow::ensure!(
             self.constraints.choices.is_empty()
@@ -76,7 +232,7 @@ impl SettingSpec {
         if let Some((min, max)) = self.constraints.integer_range {
             anyhow::ensure!(
                 value.as_integer().is_some_and(|n| (min..=max).contains(&n)),
-                "expected {min}–{max}"
+                "enter a whole number from {min} to {max}"
             );
         }
         Ok(value)
@@ -101,12 +257,15 @@ struct ApplyArgs {
 /// Register the nonblocking settings command. Validation is repeated on the
 /// worker in case a plugin was disabled after the command was queued.
 pub(crate) fn register(app: &crate::App) {
-    app.settings.declare(SettingSpec {
-        key: PRESERVE_TAGS_ON_COPY.into(),
-        description: "Preserve file and folder tags when copying. If tags cannot be preserved, the copy fails; disable to copy without tags.".into(),
-        default: toml::Value::Boolean(true),
-        constraints: SettingConstraints::default(),
-    });
+    app.settings.declare(
+        SettingSpec::toggle(
+            PRESERVE_TAGS_ON_COPY,
+            "Keep tags when copying",
+            "Copies carry the tags of their source. If the destination cannot store tags the copy fails; turn this off to copy without them.",
+            true,
+        )
+        .section("Files"),
+    );
     app.commands.register::<ApplyArgs, _>(
         "core",
         "settings.apply",
@@ -188,6 +347,9 @@ pub struct Settings {
     /// Serializes writers; readers never wait for file I/O.
     writer: Mutex<()>,
     status: Mutex<(u64, SaveState)>,
+    /// Advances when the schema or a live value changes, so editors compare
+    /// one atomic instead of re-reading the schema on every frame.
+    revision: std::sync::atomic::AtomicU64,
 }
 
 impl Settings {
@@ -207,6 +369,7 @@ impl Settings {
             schema: RwLock::new(BTreeMap::new()),
             writer: Mutex::new(()),
             status: Mutex::new((0, SaveState::Idle)),
+            revision: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -224,6 +387,7 @@ impl Settings {
             schema: RwLock::new(BTreeMap::new()),
             writer: Mutex::new(()),
             status: Mutex::new((0, SaveState::Idle)),
+            revision: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -234,10 +398,25 @@ impl Settings {
     /// Declare a setting. Registered by plugins and the core.
     pub fn declare(&self, spec: SettingSpec) {
         self.schema.write().insert(spec.key.clone(), spec);
+        self.bump();
     }
 
     pub fn undeclare(&self, key: &str) {
         self.schema.write().remove(key);
+        self.bump();
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    fn bump(&self) {
+        self.revision
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    }
+
+    pub fn spec(&self, key: &str) -> Option<SettingSpec> {
+        self.schema.read().get(key).cloned()
     }
 
     pub fn schema(&self) -> Vec<SettingSpec> {
@@ -262,6 +441,12 @@ impl Settings {
         v.try_into().ok()
     }
 
+    /// The live value as an editor shows it (strings without TOML quotes).
+    pub fn text(&self, key: &str) -> Option<String> {
+        self.get::<toml::Value>(key)
+            .map(|value| SettingSpec::format_value(&value))
+    }
+
     fn insert(table: &mut toml::Table, key: &str, value: toml::Value) -> anyhow::Result<()> {
         let parts: Vec<_> = key.split('.').collect();
         anyhow::ensure!(parts.iter().all(|p| !p.is_empty()), "invalid setting key");
@@ -284,6 +469,7 @@ impl Settings {
         if let Err(error) = Self::insert(&mut self.values.write(), key, value) {
             tracing::warn!(%error, "cannot set setting");
         }
+        self.bump();
     }
 
     pub fn save_status(&self) -> (u64, SaveState) {
@@ -340,6 +526,7 @@ impl Settings {
         if !keys.is_empty() {
             self.persist(&values)?;
             *self.values.write() = values;
+            self.bump();
         }
         Ok(keys)
     }

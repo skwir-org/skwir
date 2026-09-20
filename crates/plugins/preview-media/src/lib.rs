@@ -13,20 +13,35 @@ impl Plugin for PreviewPlugin {
     fn title(&self) -> &'static str {
         "Preview: media"
     }
+    fn description(&self) -> &'static str {
+        "Play videos in the preview panel, or show a still frame when playback is unavailable"
+    }
     fn on_settings_changed(&self, app: &App, _keys: &[String]) {
         app.previews.unregister_owner(self.id());
         self.register(app);
     }
+    fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
+        use bibli_core::plugin::Requirement;
+        vec![
+            Requirement::new("bibli-media-worker", "Video and audio playback", || {
+                bibli_platform::process::find_worker("BIBLI_MEDIA_WORKER", "bibli-media-worker")
+                    .is_some()
+            }),
+            Requirement::program("ffmpeg", "Still frames when playback is unavailable"),
+        ]
+    }
     fn register(&self, app: &App) {
-        app.settings.declare(bibli_core::settings::SettingSpec {
-            key: "preview-media.backend".into(),
-            description: "Video engine: auto (GStreamer player with FFmpeg still fallback), gstreamer, or stills. Playback requires bibli-media-worker and GStreamer plugins.".into(),
-            default: toml::Value::String("auto".into()),
-            constraints: bibli_core::settings::SettingConstraints {
-                choices: ["auto", "gstreamer", "stills"].map(str::to_owned).to_vec(),
-                integer_range: None,
-            },
-        });
+        app.settings.declare(bibli_core::settings::SettingSpec::choice(
+            "preview-media.backend",
+            "Video engine",
+            "Automatic plays with GStreamer and falls back to a still frame from FFmpeg. Playback needs the media worker and GStreamer plugins.",
+            "auto",
+            &[
+                ("auto", "Automatic"),
+                ("gstreamer", "GStreamer"),
+                ("stills", "Still frames"),
+            ],
+        ));
         let backend = app
             .settings
             .get::<String>("preview-media.backend")

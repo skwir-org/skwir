@@ -127,14 +127,20 @@ impl Plugin for QueryPlugin {
         "Search as a location: name, size, date, tag, MIME, and content queries; saved queries as smart folders"
     }
 
+    fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
+        vec![bibli_core::plugin::Requirement::program(
+            "plocate",
+            "Instant name searches over whole disks (a directory walk is used otherwise)",
+        )]
+    }
+
     fn register(&self, app: &App) {
         app.register_provider(ID, Arc::new(QueryProvider));
-        app.settings.declare(SettingSpec {
-            constraints: bibli_core::settings::SettingConstraints::default(),
-            key: SAVED_KEY.into(),
-            description: "Saved queries shown in the sidebar: [{ name, expr }]".into(),
-            default: toml::Value::Array(Vec::new()),
-        });
+        app.settings.declare(SettingSpec::data(
+            SAVED_KEY,
+            "Saved queries shown in the sidebar: [{ name, expr }]",
+            toml::Value::Array(Vec::new()),
+        ));
         register_places(app);
 
         app.commands.register::<SearchArgs, _>(

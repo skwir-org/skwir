@@ -50,6 +50,19 @@ impl Theme {
         }
     }
 
+    /// The `ui.theme` preference, falling back to the desktop's appearance.
+    pub fn resolve(app: &bibli_core::App, appearance: WindowAppearance) -> Self {
+        match app
+            .settings
+            .get::<String>(crate::settings::THEME_KEY)
+            .as_deref()
+        {
+            Some("light") => Theme::light(),
+            Some("dark") => Theme::dark(),
+            _ => Theme::for_appearance(appearance),
+        }
+    }
+
     pub fn for_appearance(appearance: WindowAppearance) -> Self {
         match appearance {
             WindowAppearance::Light | WindowAppearance::VibrantLight => Theme::light(),

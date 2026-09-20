@@ -137,12 +137,12 @@ impl Plugin for ShellPlugin {
         "Copy selected paths for a shell; run a command on the selection in a terminal"
     }
     fn register(&self, app: &App) {
-        app.settings.declare(SettingSpec {
-            constraints: bibli_core::settings::SettingConstraints::default(),
-            key: PROGRAM_KEY.into(),
-            description: "Shell used by shell.run ($SHELL by default)".into(),
-            default: toml::Value::String(default_program()),
-        });
+        app.settings.declare(SettingSpec::command(
+            PROGRAM_KEY,
+            "Shell",
+            "Program that runs commands on the selection. Defaults to $SHELL.",
+            &default_program(),
+        ));
         app.commands.register::<PaneArgs, _>(
             ID,
             "shell.copy_paths",

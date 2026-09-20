@@ -14,6 +14,8 @@ use crate::theme::Theme;
 pub struct Message {
     pub text: String,
     pub error: bool,
+    /// A setting that resolves the message; the bar offers to open it.
+    pub setting: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -50,7 +52,11 @@ impl Shell {
         if error {
             tracing::warn!(%text, "status");
         }
-        self.status.message = Some(Message { text, error });
+        self.status.message = Some(Message {
+            text,
+            error,
+            setting: None,
+        });
         self.status.generation += 1;
         let generation = self.status.generation;
         cx.spawn(async move |this, cx| {
@@ -67,6 +73,19 @@ impl Shell {
         })
         .detach();
         cx.notify();
+    }
+
+    /// An error whose remedy is a setting: the bar links to it.
+    pub fn set_status_about(
+        &mut self,
+        text: impl Into<String>,
+        setting: &str,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_status_for(text, true, 12, cx);
+        if let Some(message) = &mut self.status.message {
+            message.setting = Some(setting.to_owned());
+        }
     }
 
     /// Apply pending executor events to the progress state.
@@ -177,6 +196,22 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
     if let Some(m) = &shell.status.message {
         let color = if m.error { theme.error } else { theme.text };
         bar = bar.child(div().text_color(color).truncate().child(m.text.clone()));
+        if let Some(key) = m.setting.clone() {
+            bar = bar.child(
+                div()
+                    .id("status-setting")
+                    .flex_none()
+                    .px_2()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .text_color(theme.accent)
+                    .hover(|s| s.bg(theme.border))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.run("ui.settings", serde_json::json!({ "key": key }), window, cx);
+                    }))
+                    .child("Open setting"),
+            );
+        }
     }
     bar = bar.child(div().flex_1());
     if !shell.reviews.is_empty() {

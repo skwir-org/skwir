@@ -23,6 +23,9 @@ impl Plugin for PreviewPlugin {
     fn title(&self) -> &'static str {
         "Preview: EPUB"
     }
+    fn description(&self) -> &'static str {
+        "Read EPUB books with their table of contents"
+    }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
     }

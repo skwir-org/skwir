@@ -37,6 +37,10 @@ pub enum NotifyLevel {
 pub struct Notification {
     pub level: NotifyLevel,
     pub text: String,
+    /// Key of the setting that resolves this message, if one does; the UI
+    /// offers to open it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setting: Option<String>,
 }
 
 /// Construction options.
@@ -133,6 +137,7 @@ impl App {
         op::register_builtin(&app.ops);
         builtin::register(&app);
         crate::settings::register(&app);
+        crate::plugin::register(&app);
         Ok(app)
     }
 
@@ -297,6 +302,17 @@ impl App {
         self.notifications.lock().push(Notification {
             level,
             text: text.into(),
+            setting: None,
+        });
+        self.wake();
+    }
+
+    /// Like [`App::notify`], pointing at the setting that fixes the problem.
+    pub fn notify_about_setting(&self, level: NotifyLevel, text: impl Into<String>, key: &str) {
+        self.notifications.lock().push(Notification {
+            level,
+            text: text.into(),
+            setting: Some(key.into()),
         });
         self.wake();
     }

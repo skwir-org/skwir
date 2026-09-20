@@ -15,6 +15,9 @@ impl Plugin for PreviewPlugin {
     fn title(&self) -> &'static str {
         "Preview: hexadecimal"
     }
+    fn description(&self) -> &'static str {
+        "Inspect any file as hexadecimal bytes"
+    }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
     }

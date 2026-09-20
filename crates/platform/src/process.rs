@@ -9,6 +9,18 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use bibli_core::CancelToken;
 
+/// Locate one of our optional worker executables: an explicit override in
+/// `variable`, then next to the running binary, then `PATH`.
+pub fn find_worker(variable: &str, executable: &str) -> Option<PathBuf> {
+    std::env::var_os(variable)
+        .map(PathBuf::from)
+        .or_else(|| {
+            let sibling = std::env::current_exe().ok()?.parent()?.join(executable);
+            sibling.is_file().then_some(sibling)
+        })
+        .or_else(|| find(executable))
+}
+
 pub fn find(program: &str) -> Option<PathBuf> {
     std::env::var_os("PATH").and_then(|paths| {
         std::env::split_paths(&paths).find_map(|dir| {

@@ -45,7 +45,15 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "pause",
         "volume",
         "muted",
-        "fullscreen"
+        "fullscreen",
+        "revert",
+        "check",
+        "warning",
+        "plugin",
+        "keyboard",
+        "appearance",
+        "sliders",
+        "external"
     )
 }
 
@@ -70,7 +78,7 @@ impl Render for Tip {
             .child(self.text.clone())
     }
 }
-fn tooltip(text: SharedString, font: SharedString, cx: &mut App) -> AnyView {
+pub(crate) fn tooltip(text: SharedString, font: SharedString, cx: &mut App) -> AnyView {
     cx.new(|_| Tip { text, font }).into()
 }
 
