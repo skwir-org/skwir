@@ -17,9 +17,17 @@ Read this before touching `crates/pdf-worker`, `crates/poppler-worker`, `crates/
 - `RenderImage` reference counts do not release uploaded GPUI atlas entries.
   Explicitly call `cx.drop_image(image, Some(window))` when replacing/closing
   a preview, as the thumbnail LRU does on eviction.
+- Continuous reading is how a document opens, unless the reader's own button
+  was last used to say otherwise: the choice is the user's and outlives the
+  document, so it is the `ui.reader_continuous` preference, written through
+  `settings.apply` like any other, and read when a session arrives.
 - Continuous reading virtualizes pages with a logical page/offset anchor. Size
   changes and fit/zoom are resolved in prepaint; invalidate measured row heights
-  without resetting that anchor. Render only demanded pages and neighbours,
+  (`ListState::remeasure_items`) without resetting that anchor and without
+  splicing: a spliced row forgets its height, and a document that loses a page
+  every time one finishes rendering has a scrollbar that jumps while it is
+  being dragged. A page that arrives at the size its placeholder assumed needs
+  no invalidation at all. Render only demanded pages and neighbours,
   serialize requests, reject cancelled generations, and evict offscreen pixel
   buffers and their atlas entries together. Page interactions carry a page
   number; never apply an adjacent page's selection or links to the opening page.

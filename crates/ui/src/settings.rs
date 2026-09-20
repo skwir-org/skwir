@@ -38,6 +38,8 @@ pub const COLUMN_WIDTHS_KEY: &str = "ui.column_widths";
 /// Detail columns of the list view, in the order they give way when a pane
 /// gets narrow (the last one first).
 pub const COLUMN_KEYS: [&str; 3] = ["ui.column_size", "ui.column_modified", "ui.column_type"];
+/// How documents are read: one scrolling column, or a page at a time.
+pub const READER_CONTINUOUS_KEY: &str = "ui.reader_continuous";
 
 /// Declare the shell's own preferences. They live in the `ui` namespace and
 /// exist only while a shell does, so headless tools never see them.
@@ -56,6 +58,15 @@ pub fn declare(app: &App) {
         "friendly",
         &[("friendly", "Friendly"), ("iso", "ISO 8601")],
     ));
+    app.settings.declare(
+        SettingSpec::toggle(
+            READER_CONTINUOUS_KEY,
+            "Continuous scrolling",
+            "Read a document as one scrolling column. Off shows one page at a time, and the reader's own button still changes it for the document in front of you.",
+            true,
+        )
+        .section("Documents"),
+    );
     app.settings.declare(SettingSpec::data(
         crate::shortcuts::HINTS_KEY,
         "Commands whose shortcut hint was already shown",
@@ -86,6 +97,30 @@ pub fn declare(app: &App) {
     ] {
         app.settings
             .declare(SettingSpec::toggle(key, title, description, true).section("List columns"));
+    }
+}
+
+/// Record how the user chose to read documents. The reader's button is the
+/// same choice as the one in the dialog, so it goes the same way: through
+/// `settings.apply`, which saves on a worker and tells everyone else.
+pub fn remember_reader_mode(
+    shell: &mut crate::shell::Shell,
+    continuous: bool,
+    cx: &mut gpui::Context<crate::shell::Shell>,
+) {
+    if shell
+        .app
+        .settings
+        .get::<bool>(READER_CONTINUOUS_KEY)
+        .is_some_and(|stored| stored == continuous)
+    {
+        return;
+    }
+    if let Err(error) = shell.app.dispatch(&Invocation::with_args(
+        "settings.apply",
+        &serde_json::json!({ "changes": { READER_CONTINUOUS_KEY: continuous.to_string() } }),
+    )) {
+        shell.set_status(format!("{error:#}"), true, cx);
     }
 }
 

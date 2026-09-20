@@ -142,13 +142,31 @@ fn lands_at_bottom(turn: i32, before: u32, after: u32) -> bool {
 }
 
 impl Shell {
+    /// `ui.reader_continuous`: the reader's own toggle. The choice is the
+    /// user's, not this document's, so it is remembered and the next
+    /// document opens the same way.
     pub fn reader_continuous(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let continuous = !self.preview.reader.scroll.continuous;
+        self.set_reader_continuous(continuous, window, cx);
+        crate::settings::remember_reader_mode(self, continuous, cx);
+    }
+
+    /// Read this document as one scrolling column, or a page at a time.
+    pub fn set_reader_continuous(
+        &mut self,
+        continuous: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(session) = &self.preview.reader.session else {
             return;
         };
+        if self.preview.reader.scroll.continuous == continuous {
+            return;
+        }
         let count = session.info().pages as usize;
         let scroll = &mut self.preview.reader.scroll;
-        scroll.continuous = !scroll.continuous;
+        scroll.continuous = continuous;
         scroll.cancel();
         scroll.wanted.clear();
         scroll.errors.clear();

@@ -469,6 +469,13 @@ impl Shell {
                             .reader
                             .focus
                             .get_or_insert_with(|| cx.focus_handle());
+                        // A document opens the way the last one was read.
+                        let continuous = self
+                            .app
+                            .settings
+                            .get::<bool>(crate::settings::READER_CONTINUOUS_KEY)
+                            .unwrap_or(true);
+                        self.set_reader_continuous(continuous, window, cx);
                     }
                     self.preview.reader.selection = None;
                     self.preview.reader.selection_page = None;
