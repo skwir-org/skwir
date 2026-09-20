@@ -15,23 +15,47 @@ use crate::location::Location;
 /// A list of contributions, each tagged with its owner (plugin id or `core`).
 pub struct Contributions<T> {
     items: RwLock<Vec<(Arc<str>, T)>>,
+    /// Bumped on every add or removal, so per-frame consumers compare one
+    /// atomic instead of taking the read lock and walking the items.
+    revision: AtomicU64,
 }
 
 impl<T> Default for Contributions<T> {
     fn default() -> Self {
         Contributions {
             items: RwLock::new(Vec::new()),
+            revision: AtomicU64::new(0),
         }
+    }
+}
+
+impl<T> Contributions<T> {
+    /// Changes whenever the set of contributions changes (including a
+    /// remove followed by an add of the same id).
+    pub fn revision(&self) -> u64 {
+        self.revision.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    fn bump(&self) {
+        self.revision
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
     }
 }
 
 impl<T: Clone> Contributions<T> {
     pub fn add(&self, owner: &str, item: T) {
         self.items.write().push((owner.into(), item));
+        self.bump();
     }
 
     pub fn remove_owner(&self, owner: &str) {
-        self.items.write().retain(|(o, _)| &**o != owner);
+        let mut items = self.items.write();
+        let before = items.len();
+        items.retain(|(o, _)| &**o != owner);
+        if items.len() != before {
+            drop(items);
+            self.bump();
+        }
     }
 
     pub fn all(&self) -> Vec<T> {
@@ -142,5 +166,23 @@ impl Registry {
         self.places.remove_owner(owner);
         self.menus.remove_owner(owner);
         self.keymap.remove_owner(owner);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn revision_changes_on_add_and_effective_removal_only() {
+        let c = Contributions::<u32>::default();
+        let r0 = c.revision();
+        c.add("a", 1);
+        let r1 = c.revision();
+        assert_ne!(r0, r1);
+        c.remove_owner("nobody");
+        assert_eq!(c.revision(), r1);
+        c.remove_owner("a");
+        assert_ne!(c.revision(), r1);
     }
 }

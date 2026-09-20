@@ -3,12 +3,24 @@
 default:
     @just --list
 
-# Build everything in the main workspace.
+# Build the default members (no native workers; see the root Cargo.toml).
 build:
+    cargo build
+
+# Build the optional native workers (Poppler, GStreamer, libarchive).
+workers:
+    cargo build -p bibli-poppler-worker -p bibli-media-worker -p bibli-archive-worker
+
+# Build everything, native workers included.
+build-all:
     cargo build --workspace
 
-# Run all tests.
+# Run the tests of the default members.
 test:
+    cargo nextest run --no-tests=pass
+
+# Run every test, native workers included (what CI runs).
+test-all:
     cargo nextest run --workspace --no-tests=pass
 
 # Exercise real Poppler with synthetic text, geometry and navigation fixtures.
@@ -30,8 +42,13 @@ previews-check:
 atlas-check:
     python3 tools/gpui/check-atlas.py
 
-# Lint: rustfmt check + clippy with warnings as errors.
+# Lint: rustfmt check + clippy with warnings as errors (default members).
 lint:
+    cargo fmt --all -- --check
+    cargo clippy --all-targets -- -D warnings
+
+# Lint everything, native workers included (what CI runs).
+lint-all:
     cargo fmt --all -- --check
     cargo clippy --workspace --all-targets -- -D warnings
 

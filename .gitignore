@@ -5,6 +5,7 @@
 /result
 /result-*
 /.direnv/
+/.envrc.local
 # Editors
 /.idea/
 /.vscode/

@@ -158,7 +158,9 @@ impl Operation for Move {
         match rename_noreplace(&src, &target) {
             Ok(()) => {}
             Err(e) if is_cross_device(&e) => {
-                copy_recursive(&src, &target)?;
+                // A move must never lose metadata, whatever the copy preference
+                // says, and a failed transfer must not leave a partial target.
+                copy_staged(&src, &target, &self.dest_dir, true)?;
                 remove_recursive(&src)?;
             }
             Err(e) => return Err(e),
@@ -266,27 +268,39 @@ impl Operation for Copy {
     fn apply(&self) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let src = self.entry.resolve()?;
         let target = self.target(&src);
-        // Publish only after content and tags are complete. A failed tag write
-        // must not leave a partial destination that check() calls AlreadyDone.
-        let staging = tempfile::Builder::new()
-            .prefix(".bibli-copy-")
-            .permissions(std::fs::Permissions::from_mode(0o700))
-            .tempdir_in(&self.dest_dir)?;
-        let staged = staging.path().join("entry");
-        let result = copy_recursive_with_tags(&src, &staged, self.preserve_tags)
-            .and_then(|()| rename_noreplace(&staged, &target));
-        if let Err(error) = result {
-            // Completed subdirectories may already have read-only permissions.
-            // Only relax permissions inside our private, newly-created staging tree.
-            if let Err(cleanup) = remove_staged_copy(staging.path()) {
-                return Err(error).context(format!("copy staging cleanup failed: {cleanup}"));
-            }
-            return Err(error);
-        }
+        copy_staged(&src, &target, &self.dest_dir, self.preserve_tags)?;
         let r = EntryRef::from_path(&target)
             .ok_or_else(|| anyhow::anyhow!("copy vanished: {}", target.display()))?;
         Ok(Some(Box::new(Delete { entry: r })))
     }
+}
+
+/// Copy `src` to `target` through a private staging directory inside
+/// `dest_dir`, publishing with a no-replace rename only after content and
+/// tags are complete. A failed tag write must not leave a partial destination
+/// that `check()` would call already done. Shared by Copy and cross-device Move.
+fn copy_staged(
+    src: &Path,
+    target: &Path,
+    dest_dir: &Path,
+    preserve_tags: bool,
+) -> anyhow::Result<()> {
+    let staging = tempfile::Builder::new()
+        .prefix(".bibli-copy-")
+        .permissions(std::fs::Permissions::from_mode(0o700))
+        .tempdir_in(dest_dir)?;
+    let staged = staging.path().join("entry");
+    let result = copy_recursive_with_tags(src, &staged, preserve_tags)
+        .and_then(|()| rename_noreplace(&staged, target));
+    if let Err(error) = result {
+        // Completed subdirectories may already have read-only permissions.
+        // Only relax permissions inside our private, newly-created staging tree.
+        if let Err(cleanup) = remove_staged_copy(staging.path()) {
+            return Err(error).context(format!("copy staging cleanup failed: {cleanup}"));
+        }
+        return Err(error);
+    }
+    Ok(())
 }
 
 fn remove_staged_copy(path: &Path) -> std::io::Result<()> {
@@ -323,10 +337,6 @@ fn copy_file(src: &Path, dst: &Path, preserve_tags: bool) -> anyhow::Result<()> 
     df.set_permissions(m.permissions())?;
     let _ = df.set_modified(m.modified()?);
     Ok(())
-}
-
-fn copy_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
-    copy_recursive_with_tags(src, dst, false)
 }
 
 fn copy_recursive_with_tags(src: &Path, dst: &Path, preserve_tags: bool) -> anyhow::Result<()> {

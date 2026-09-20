@@ -12,9 +12,9 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@v16
       - uses: DeterminateSystems/magic-nix-cache-action@v9
       - name: Lint
-        run: nix develop --command just lint
+        run: nix develop --command just lint-all
       - name: Test
-        run: nix develop --command just test
+        run: nix develop --command just test-all
       - name: Native Poppler reader
         run: nix develop --command just poppler-check
       - name: Performance budgets

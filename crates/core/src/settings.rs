@@ -123,28 +123,61 @@ pub(crate) fn register(app: &crate::App) {
             status.1 = SaveState::Saving;
             let id = status.0;
             drop(status);
-            let weak = app.weak();
+            // The guard owns the Saving state: whether the job runs, panics, or
+            // is dropped unexecuted (cancelled lifetime), the state machine
+            // always leaves Saving, so a later apply is never rejected forever.
+            let mut guard = SaveGuard {
+                weak: app.weak(),
+                id,
+                state: None,
+            };
             app.scheduler.spawn(
                 crate::scheduler::Priority::Normal,
                 "settings-save",
                 app.lifetime().child(),
                 move || {
-                    let Some(app) = weak.upgrade() else { return };
+                    let Some(app) = guard.weak.upgrade() else {
+                        return;
+                    };
                     let result = app.settings.apply(&args.changes);
-                    let state = match result {
+                    guard.state = Some(match result {
                         Ok(keys) => {
                             app.plugins.settings_changed(&keys, &app);
                             SaveState::Saved
                         }
                         Err(error) => SaveState::Failed(format!("{error:#}")),
-                    };
-                    *app.settings.status.lock() = (id, state);
-                    app.wake();
+                    });
+                    drop(guard);
                 },
             );
             Ok(crate::command::Outcome::Value(serde_json::json!(id)))
         },
     );
+}
+
+/// Publishes the outcome of one save, or a failure if the job never completed.
+struct SaveGuard {
+    weak: std::sync::Weak<crate::App>,
+    id: u64,
+    state: Option<SaveState>,
+}
+
+impl Drop for SaveGuard {
+    fn drop(&mut self) {
+        let Some(app) = self.weak.upgrade() else {
+            return;
+        };
+        let state = self
+            .state
+            .take()
+            .unwrap_or_else(|| SaveState::Failed("settings save did not run".into()));
+        let mut status = app.settings.status.lock();
+        if status.0 == self.id {
+            status.1 = state;
+        }
+        drop(status);
+        app.wake();
+    }
 }
 
 /// Loaded settings plus declared schema.
@@ -285,6 +318,8 @@ impl Settings {
             file.write_all(toml::to_string_pretty(values)?.as_bytes())?;
             file.as_file().sync_all()?;
             file.persist(path)?;
+            // The rename is durable only once the directory entry is flushed.
+            std::fs::File::open(parent)?.sync_all()?;
         }
         Ok(())
     }

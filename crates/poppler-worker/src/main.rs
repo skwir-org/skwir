@@ -118,14 +118,14 @@ fn render(
     let mut output = BufWriter::new(std::fs::File::create(scratch.join(PIXELS_FILE))?);
     for row in surface.data()?.chunks_exact_mut(stride) {
         let row = &mut row[..usize::try_from(width)? * 4];
-        for pixel in row.chunks_exact_mut(4) {
-            let argb = u32::from_ne_bytes(pixel.try_into()?);
-            pixel.copy_from_slice(&[
+        for pixel in row.as_chunks_mut::<4>().0 {
+            let argb = u32::from_ne_bytes(*pixel);
+            *pixel = [
                 (argb >> 16) as u8,
                 (argb >> 8) as u8,
                 argb as u8,
                 (argb >> 24) as u8,
-            ]);
+            ];
         }
         output.write_all(row)?;
     }

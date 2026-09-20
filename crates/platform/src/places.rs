@@ -112,14 +112,14 @@ pub fn percent_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'%' && i + 2 < b.len() {
-            if let Ok(v) =
+        if b[i] == b'%'
+            && i + 2 < b.len()
+            && let Ok(v) =
                 u8::from_str_radix(std::str::from_utf8(&b[i + 1..i + 3]).unwrap_or("zz"), 16)
-            {
-                out.push(v);
-                i += 3;
-                continue;
-            }
+        {
+            out.push(v);
+            i += 3;
+            continue;
         }
         out.push(b[i]);
         i += 1;
@@ -209,14 +209,14 @@ fn unescape_mountinfo(s: &str) -> String {
     let b = s.as_bytes();
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'\\' && i + 3 < b.len() {
-            if let Ok(v) =
+        if b[i] == b'\\'
+            && i + 3 < b.len()
+            && let Ok(v) =
                 u8::from_str_radix(std::str::from_utf8(&b[i + 1..i + 4]).unwrap_or("zzz"), 8)
-            {
-                out.push(v as char);
-                i += 4;
-                continue;
-            }
+        {
+            out.push(v as char);
+            i += 4;
+            continue;
         }
         out.push(b[i] as char);
         i += 1;

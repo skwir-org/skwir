@@ -58,3 +58,24 @@ non-blocking`. Our own window open and first render take about 40 ms.
 - ADR-000's table is superseded for those two rows by this record.
 - `bibli-bench` gains no new check for these: they are measured manually at
   each phase gate until the UI has an automated startup harness (Phase 8).
+
+## Addendum, 2026-09-19: the idle memory gate
+
+Measured on the reference machine (NVIDIA plus Intel, Wayland), release
+build, a four-file synthetic directory, idle for seven seconds:
+
+| Build                                   | PSS     | PSS anon |
+|-----------------------------------------|---------|----------|
+| d8420b3 (before the 2026-09-19 work)    | 118 MB  | 43 MB    |
+| a557925 (after: readers, media, previews, usage) | 120 MB | 43 MB |
+
+The gate is 100 MB PSS and stays at 100 MB: nothing here loosens it. The
+2026-09-19 work added about 1.5 MB. The excess over the budget predates it:
+anonymous memory grew from about 25 MB at the time of this ADR to 43 MB, and
+the mapped-file share includes the nouveau and Intel ICDs, which the vendor
+filter keeps on a hybrid machine. Owning the gate means a heap profile
+(`heaptrack` is in the dev shell) of the 18 MB of anonymous growth and a
+decision per contributor: shrink it, or budget it in a new ADR with the reason.
+Until then the status line in `docs/PLAN.md` reports the gate as open, and
+per-change status notes must not restate the number without a comparison
+against the previous commit under identical conditions.

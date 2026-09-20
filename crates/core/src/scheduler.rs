@@ -67,6 +67,8 @@ pub struct LabelStats {
     pub runs: u64,
     pub total: Duration,
     pub max: Duration,
+    /// Jobs that unwound; the worker survived and the caller saw no result.
+    pub panics: u64,
 }
 
 struct Inner {
@@ -173,8 +175,20 @@ fn worker(inner: &Inner) {
             continue;
         }
         let t = Instant::now();
-        (task.job)();
+        // A job that panics (a malformed file in a third-party parser, for
+        // instance) must not take the worker thread with it: the pool is
+        // never respawned, and the caller would wait forever for a result.
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(task.job));
         let took = t.elapsed();
+        if let Err(payload) = outcome {
+            let message = payload
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_owned())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "non-string panic payload".into());
+            tracing::error!(label = task.label, "job panicked: {message}");
+            inner.stats.lock().entry(task.label).or_default().panics += 1;
+        }
         let mut stats = inner.stats.lock();
         let s = stats.entry(task.label).or_default();
         s.runs += 1;

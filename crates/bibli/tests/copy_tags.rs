@@ -217,3 +217,78 @@ fn old_serialized_copy_plans_default_to_preserving_tags() {
     .unwrap();
     assert!(copy.preserve_tags);
 }
+
+/// A tmpfs mount on another device that supports user xattrs, if any.
+fn other_device(reference: &Path) -> Option<std::path::PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    let here = std::fs::metadata(reference).ok()?.dev();
+    for candidate in ["/dev/shm", "/tmp"] {
+        let Ok(meta) = std::fs::metadata(candidate) else {
+            continue;
+        };
+        if meta.dev() == here {
+            continue;
+        }
+        let Ok(dir) = tempfile::Builder::new()
+            .prefix("bibli-xdev-")
+            .tempdir_in(candidate)
+        else {
+            continue;
+        };
+        let probe = dir.path().join("probe");
+        std::fs::write(&probe, b"x").unwrap();
+        if xattr::set(&probe, "user.bibli-probe", b"1").is_ok() {
+            return Some(dir.keep());
+        }
+    }
+    None
+}
+
+#[test]
+fn cross_device_move_keeps_tags_regardless_of_the_copy_preference() {
+    let tmp = tempdir();
+    let Some(remote) = other_device(tmp.path()) else {
+        eprintln!("skipped: no second filesystem with user xattrs available");
+        return;
+    };
+    let source = tmp.path().join("Album d'été");
+    std::fs::create_dir_all(source.join("nested")).unwrap();
+    std::fs::write(source.join("nested/track.txt"), "synthetic content").unwrap();
+    for path in [&source, &source.join("nested/track.txt")] {
+        write_tags(path, &["keep".into()]).unwrap();
+    }
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins.add(
+        Arc::new(bibli_plugin_ops_basic::OpsBasicPlugin::default()),
+        &app,
+    );
+    // The copy preference is off: a move must still carry the tags across.
+    preference(&app, false);
+    navigate(&app, tmp.path());
+    dispatch(
+        &app,
+        "select",
+        &json!({"names": [source.file_name().unwrap().to_str().unwrap()]}),
+    );
+    let Outcome::Plan(plan) = dispatch(&app, "move", &json!({"dest": remote})) else {
+        panic!("expected move plan")
+    };
+    assert_eq!(plan.steps[0].kind(), "move");
+    let result = app.executor.execute_blocking(&plan, app.lifetime());
+    assert!(result.error.is_none(), "{:?}", result.error);
+    let moved = remote.join(source.file_name().unwrap());
+    assert!(!source.exists());
+    assert_eq!(read_tags(&moved), ["keep"]);
+    assert_eq!(read_tags(&moved.join("nested/track.txt")), ["keep"]);
+    assert_eq!(
+        std::fs::read(moved.join("nested/track.txt")).unwrap(),
+        b"synthetic content"
+    );
+    // No staging directory is left behind on either side.
+    assert_eq!(std::fs::read_dir(&remote).unwrap().count(), 2);
+    let undo = app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert!(undo.error.is_none(), "{:?}", undo.error);
+    assert!(!moved.exists());
+    assert_eq!(read_tags(&source), ["keep"]);
+    std::fs::remove_dir_all(&remote).unwrap();
+}

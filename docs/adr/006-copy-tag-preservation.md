@@ -20,7 +20,13 @@ read errors or destination tag-write failures fail the copy with an actionable
 error. A copy is staged on the destination filesystem and published with a
 no-replace rename only after content and metadata succeed. Failure cleanup may
 relax permissions only inside the newly created staging tree. Untagged copying
-remains available by disabling the preference. Move semantics are unchanged.
+remains available by disabling the preference.
+
+A move that crosses a filesystem boundary is a copy followed by a delete. It
+always preserves tags, whatever the copy preference says, and uses the same
+staged transfer: a move must never lose metadata, and a failed transfer must
+not leave a partial target while the source still exists. (Amended 2026-09-19;
+the first version left cross-device moves untagged and unstaged.)
 
 ## Consequences
 

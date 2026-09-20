@@ -300,11 +300,11 @@ pub fn parse_at(text: &str, now: SystemTime) -> Result<Query, ParseError> {
 }
 
 fn expand_root(v: &str) -> PathBuf {
-    if v == "~" || v.starts_with("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
-            let home = PathBuf::from(home);
-            return if v == "~" { home } else { home.join(&v[2..]) };
-        }
+    if (v == "~" || v.starts_with("~/"))
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        let home = PathBuf::from(home);
+        return if v == "~" { home } else { home.join(&v[2..]) };
     }
     PathBuf::from(v)
 }

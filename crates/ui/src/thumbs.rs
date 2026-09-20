@@ -98,7 +98,7 @@ pub fn to_render_image(img: &Image) -> Option<Arc<RenderImage>> {
 
 /// Document pages have one consumer: swizzle the transferred buffer in place.
 pub fn owned_render_image(width: u32, height: u32, mut buf: Vec<u8>) -> Option<Arc<RenderImage>> {
-    for p in buf.chunks_exact_mut(4) {
+    for p in buf.as_chunks_mut::<4>().0 {
         p.swap(0, 2);
     }
     let buffer = image::RgbaImage::from_raw(width, height, buf)?;

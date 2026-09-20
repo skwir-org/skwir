@@ -96,17 +96,21 @@ impl Inspection {
     }
 }
 
+/// Longest logical line (in bytes) a block may hold; longer text is split
+/// so a single huge line cannot stall layout. Platform's `limits` re-exports it.
+pub const LINE_BYTES: usize = 4096;
+
 /// Bound text shaping per virtualized row while preserving UTF-8 and inline spans.
 pub fn split_blocks(blocks: Vec<Block>) -> Vec<Block> {
     let mut out = Vec::new();
     for mut block in blocks {
-        if block.text.len() <= 4096 {
+        if block.text.len() <= LINE_BYTES {
             out.push(block);
             continue;
         }
         let mut start = 0;
         while start < block.text.len() {
-            let mut end = (start + 4096).min(block.text.len());
+            let mut end = (start + LINE_BYTES).min(block.text.len());
             while !block.text.is_char_boundary(end) {
                 end -= 1;
             }
@@ -174,7 +178,7 @@ mod tests {
         assert!(
             blocks
                 .iter()
-                .all(|b| b.text.len() <= 4096 && b.runs[0].range.end == b.text.len())
+                .all(|b| b.text.len() <= LINE_BYTES && b.runs[0].range.end == b.text.len())
         );
     }
 }

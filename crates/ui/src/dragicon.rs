@@ -267,11 +267,11 @@ mod tests {
             badge(&mut c, 12);
             assert_eq!(c.rgba.len(), (ICON_PX * ICON_PX * 4) as usize);
             assert!(
-                c.rgba.chunks_exact(4).any(|p| p[3] == 255),
+                c.rgba.as_chunks::<4>().0.iter().any(|p| p[3] == 255),
                 "something was drawn"
             );
             assert!(
-                c.rgba.chunks_exact(4).any(|p| p[3] == 0),
+                c.rgba.as_chunks::<4>().0.iter().any(|p| p[3] == 0),
                 "corners stay transparent"
             );
         }
@@ -285,7 +285,13 @@ mod tests {
         assert_eq!(Canvas::digits_width("42", 2), 14);
         let mut c2 = Canvas::new(8, 8);
         c2.digits(0, 0, "8", 1, WHITE);
-        let lit = c2.rgba.chunks_exact(4).filter(|p| p[3] > 0).count();
+        let lit = c2
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|p| p[3] > 0)
+            .count();
         assert_eq!(lit, 13, "an 8 lights 13 of the 15 cells");
     }
 
