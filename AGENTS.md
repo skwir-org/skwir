@@ -127,6 +127,20 @@ current source before assuming a planned crate, command, or API exists.
   entries a rectangle covers. A view that wants it supplies a `Geometry`.
   The release listener is registered every frame: a quick click presses and
   releases before the repaint that would register it.
+- **Grid.** A tile is what the pointer can hit: the picture standing on the
+  bottom of its box, so the name is always right under it, and two lines of
+  name. Tiles sit in slots (`elements/uniform_grid.rs::math::Slots`): a slot
+  is a tile plus the least gutter, and the width no whole column could use is
+  shared between the slots in prepaint, so the grid fills its pane and the
+  gutters only grow. The grid places tiles with `Slots` and the rubber band
+  hit-tests with the same value, so a press in a gutter always starts a band.
+  Icons grow with the zoom (`GridView::icon`); "Fill thumbnails"
+  (`ui.grid_fill`, in Sort and display) crops pictures to the box. Ctrl+wheel
+  zooms through a capture-phase listener over the grid, which keeps the first
+  visible item in place; the keys follow the cursor instead. A wheel listener
+  asks `Hitbox::should_handle_scroll`, not `is_hovered`, and an absolute
+  overlay states its `top`/`left`: without them it is laid out after its
+  siblings, below the area it was meant to cover.
 - **Scrolling.** Every view that scrolls carries a scrollbar
   (`elements/scrollbar.rs`) over its right edge: the view hands it whichever
   handle it already scrolls with, and the thumb is placed in prepaint from

@@ -38,6 +38,8 @@ pub const COLUMN_WIDTHS_KEY: &str = "ui.column_widths";
 /// Detail columns of the list view, in the order they give way when a pane
 /// gets narrow (the last one first).
 pub const COLUMN_KEYS: [&str; 3] = ["ui.column_size", "ui.column_modified", "ui.column_type"];
+/// Whether the grid crops thumbnails to fill their box.
+pub const GRID_FILL_KEY: &str = "ui.grid_fill";
 /// How documents are read: one scrolling column, or a page at a time.
 pub const READER_CONTINUOUS_KEY: &str = "ui.reader_continuous";
 
@@ -58,6 +60,15 @@ pub fn declare(app: &App) {
         "friendly",
         &[("friendly", "Friendly"), ("iso", "ISO 8601")],
     ));
+    app.settings.declare(
+        SettingSpec::toggle(
+            GRID_FILL_KEY,
+            "Fill thumbnails",
+            "Crop each thumbnail in the grid to a square, so a folder of pictures reads as a gallery. Off shows every picture whole.",
+            false,
+        )
+        .section("Grid"),
+    );
     app.settings.declare(
         SettingSpec::toggle(
             READER_CONTINUOUS_KEY,

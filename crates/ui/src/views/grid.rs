@@ -1,12 +1,18 @@
-//! The grid (gallery) view: thumbnail cells in a `UniformGrid`, whose
-//! column count is decided in prepaint from the element's real width.
+//! The grid (gallery) view: thumbnail tiles in a `UniformGrid`, whose
+//! column count and gutters are decided in prepaint from the element's real
+//! width.
+//!
+//! A tile is what the pointer can hit: the picture, standing on the bottom of
+//! its box so the name is always right under it, and two lines of name. The
+//! gutters between tiles belong to the rubber band.
 
 use std::ops::Range;
 
 use bibli_core::EntryId;
 use bibli_core::thumbs::ThumbSize;
 use gpui::{
-    AnyElement, Context, MouseButton, MouseDownEvent, Window, div, img, prelude::*, px, size,
+    AnyElement, Context, MouseButton, MouseDownEvent, ScrollWheelEvent, Window, div, img,
+    prelude::*, px, size,
 };
 
 use crate::dnd;
@@ -25,13 +31,34 @@ pub struct GridView {
     scroll: UniformGridScrollHandle,
 }
 
+/// Border and padding around a tile's content, on each side.
+const FRAME: f32 = 5.;
+/// Between the picture and the name.
+const LABEL_GAP: f32 = 2.;
+/// Two lines of name: the tile's height is fixed, so the line height is too.
+const LABEL_LINE: f32 = 15.;
+/// The least space between tiles; the grid shares spare width between them.
+const GUTTER: (f32, f32) = (12., 8.);
+
 impl GridView {
-    pub fn cell_w(zoom: u32) -> f32 {
-        zoom as f32 + 24.0
+    pub fn tile(zoom: u32) -> gpui::Size<gpui::Pixels> {
+        let zoom = zoom as f32;
+        size(
+            px(zoom + 2. * FRAME + 2.),
+            px(zoom + 2. * FRAME + LABEL_GAP + 2. * LABEL_LINE),
+        )
     }
 
-    pub fn cell_h(zoom: u32) -> f32 {
-        zoom as f32 + 44.0
+    /// An icon grows with the zoom but leaves the box to thumbnails: the size
+    /// to draw at, and the theme size to ask for (never smaller, so a raster
+    /// theme is scaled down, not up).
+    fn icon(zoom: u32) -> (f32, u16) {
+        match zoom {
+            0..=96 => (64., 64),
+            97..=128 => (96., 96),
+            129..=192 => (128., 128),
+            _ => (192., 256),
+        }
     }
 }
 
@@ -58,7 +85,7 @@ fn cell(
             e.is_dir(),
             pane.selection.contains(id),
             pane.selection.cursor == Some(id),
-            shell.icons.for_entry(e, if zoom > 128 { 64 } else { 48 }),
+            shell.icons.for_entry(e, GridView::icon(zoom).1),
             if e.is_dir() {
                 pane.open.as_ref().and_then(|o| o.path_of(id))
             } else {
@@ -70,7 +97,9 @@ fn cell(
     if !hydrated {
         shell.request_hydrate(vec![id]);
     }
-    let size = if zoom > 128 {
+    // A filled box shows the short side of the thumbnail at full size.
+    let fill = shell.grid_fill;
+    let size = if zoom > 128 || (fill && zoom > 96) {
         ThumbSize::Large
     } else {
         ThumbSize::Normal
@@ -80,8 +109,14 @@ fn cell(
     } else {
         shell.thumb(id, size, window, cx)
     };
-    let icon_px = if zoom > 128 { 64.0 } else { 48.0 };
+    let icon_px = GridView::icon(zoom).0;
     let picture: AnyElement = match thumb {
+        // Cover scales the picture past its box and leaves the clipping to us.
+        ThumbView::Ready(ri) if fill => div()
+            .size(px(zoom as f32))
+            .overflow_hidden()
+            .child(img(ri).size_full().object_fit(gpui::ObjectFit::Cover))
+            .into_any_element(),
         ThumbView::Ready(ri) => img(ri)
             .max_w(px(zoom as f32))
             .max_h(px(zoom as f32))
@@ -108,13 +143,12 @@ fn cell(
     };
     let mut el = div()
         .id(ix)
-        .w(px(GridView::cell_w(zoom)))
-        .h(px(GridView::cell_h(zoom)))
+        .size_full()
         .flex()
         .flex_col()
         .items_center()
-        .p_1()
-        .gap_1()
+        .p(px(FRAME - 1.))
+        .gap(px(LABEL_GAP))
         .rounded_md()
         .border_1()
         .border_color(if is_cursor {
@@ -145,8 +179,9 @@ fn cell(
         .child(
             div()
                 .size(px(zoom as f32))
+                .flex_none()
                 .flex()
-                .items_center()
+                .items_end()
                 .justify_center()
                 .child(picture),
         )
@@ -154,7 +189,10 @@ fn cell(
             div()
                 .w_full()
                 .text_xs()
+                .line_height(px(LABEL_LINE))
                 .text_center()
+                .overflow_hidden()
+                .text_ellipsis()
                 .line_clamp(2)
                 .child(name),
         );
@@ -195,9 +233,10 @@ impl PaneView for GridView {
         let grid = uniform_grid(
             ("grid", pane.0 as usize),
             count,
-            size(px(GridView::cell_w(zoom)), px(GridView::cell_h(zoom))),
+            GridView::tile(zoom),
             move |range, cols, window, cx| render((range, cols), window, cx),
         )
+        .gap(size(px(GUTTER.0), px(GUTTER.1)))
         .track_scroll(self.scroll.clone())
         .size_full()
         .px_1();
@@ -205,22 +244,49 @@ impl PaneView for GridView {
             pane,
             shell: cx.weak_entity(),
             geometry: crate::elements::marquee::Geometry::Cells {
-                width: GridView::cell_w(zoom),
-                height: GridView::cell_h(zoom),
-                // The column count of the last prepaint: a band dragged in the
-                // frame a resize lands is off by that frame only.
-                cols: self.scroll.cols(),
+                // Where the last prepaint put the tiles: a band dragged in
+                // the frame a resize lands is off by that frame only.
+                slots: self.scroll.slots(),
                 pad_x: 4.,
             },
             count,
             offset: self.scroll.0.borrow().base_handle.offset(),
             drag: shell.marquee.clone(),
         };
+        // Ctrl and the wheel resize the tiles. Taken in the capture phase, so
+        // the grid under it does not also scroll.
+        let shell_handle = cx.weak_entity();
+        let wheel = gpui::canvas(
+            |bounds, window, _| window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal),
+            move |_, hitbox, window, _| {
+                window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+                    if !phase.capture()
+                        || !event.modifiers.control
+                        || !hitbox.should_handle_scroll(window)
+                    {
+                        return;
+                    }
+                    let delta = event.delta.pixel_delta(window.line_height()).y;
+                    let lines = matches!(event.delta, gpui::ScrollDelta::Lines(_));
+                    shell_handle
+                        .update(cx, |shell, cx| {
+                            shell.zoom_wheel(f32::from(delta), lines, cx);
+                        })
+                        .ok();
+                    cx.stop_propagation();
+                });
+            },
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full();
         div()
             .relative()
             .size_full()
             .child(grid)
             .child(marquee)
+            .child(wheel)
             .child(crate::elements::scrollbar::vertical(
                 ("grid-scrollbar", pane.0 as usize),
                 crate::elements::scrollbar::Scrolls::Offset(

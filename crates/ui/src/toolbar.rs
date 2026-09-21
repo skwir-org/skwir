@@ -66,7 +66,8 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "tag",
         "shelf",
         "eject",
-        "info"
+        "info",
+        "crop"
     )
 }
 

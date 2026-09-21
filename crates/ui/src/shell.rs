@@ -82,6 +82,10 @@ pub struct Shell {
     /// Sidebar groups the user folded, for this session.
     pub sidebar_folded: std::collections::HashSet<String>,
     pub columns: [bool; 3],
+    /// `ui.grid_fill`: thumbnails cropped to their box.
+    pub grid_fill: bool,
+    /// Ctrl and the wheel over the grid: a trackpad must mean it.
+    pub zoom_wheel: crate::reader_scroll::WheelTurn,
     pub column_widths: [f32; 3],
     /// A header edge being dragged: column, pointer x and width at the start.
     pub column_drag: Option<(usize, f32, f32)>,
@@ -201,6 +205,8 @@ impl Shell {
             friendly_dates: true,
             sidebar_folded: std::collections::HashSet::new(),
             columns: [true; 3],
+            grid_fill: false,
+            zoom_wheel: crate::reader_scroll::WheelTurn::default(),
             column_widths: crate::views::list::DEFAULT_WIDTHS,
             column_drag: None,
             preview: PreviewState::default(),
@@ -604,21 +610,49 @@ impl Shell {
         }
     }
 
-    fn zoom_step(&mut self, dir: &str, cx: &mut Context<Self>) {
+    /// `ui.grid_fill`: a preference, so it goes through `settings.apply` like
+    /// the switch in the dialog.
+    fn toggle_grid_fill(&mut self, cx: &mut Context<Self>) {
+        self.grid_fill = !self.grid_fill;
+        cx.notify();
+        if let Err(error) = self.app.dispatch(&Invocation::with_args(
+            "settings.apply",
+            &serde_json::json!({
+                "changes": { crate::settings::GRID_FILL_KEY: self.grid_fill.to_string() }
+            }),
+        )) {
+            self.set_status(format!("{error:#}"), true, cx);
+        }
+    }
+
+    /// Ctrl and the wheel over the grid. The view stays where it is (the grid
+    /// keeps its first visible item); only the keys follow the cursor.
+    pub fn zoom_wheel(&mut self, delta: f32, lines: bool, cx: &mut Context<Self>) {
+        match self.zoom_wheel.turn(delta, lines, false) {
+            0 => {}
+            turn => self.zoom_to(if turn < 0 { "in" } else { "out" }, cx),
+        }
+    }
+
+    fn zoom_to(&mut self, dir: &str, cx: &mut Context<Self>) {
         let pos = ZOOMS.iter().position(|z| *z == self.zoom).unwrap_or(1);
         self.zoom = match dir {
             "in" => ZOOMS[(pos + 1).min(ZOOMS.len() - 1)],
             "out" => ZOOMS[pos.saturating_sub(1)],
             _ => 128,
         };
+        self.remember_session();
+        cx.notify();
+    }
+
+    fn zoom_step(&mut self, dir: &str, cx: &mut Context<Self>) {
+        self.zoom_to(dir, cx);
         let ix = self.cursor_index();
         self.with_view(|v, _| {
             if let Some(ix) = ix {
                 v.scroll_to(ix);
             }
         });
-        self.remember_session();
-        cx.notify();
     }
 
     fn on_run_command(&mut self, a: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
@@ -898,6 +932,7 @@ impl Shell {
                 }
             }
             "columns_reset" => self.reset_column_widths(cx),
+            "grid_fill" => self.toggle_grid_fill(cx),
             "zoom" => {
                 let dir = arg("dir").unwrap_or_else(|| "reset".into());
                 self.zoom_step(&dir, cx);
@@ -1098,6 +1133,11 @@ impl Shell {
                 .settings
                 .get::<String>(crate::settings::DATES_KEY)
                 .is_none_or(|format| format != "iso");
+            self.grid_fill = self
+                .app
+                .settings
+                .get::<bool>(crate::settings::GRID_FILL_KEY)
+                .unwrap_or(false);
             self.columns = crate::settings::COLUMN_KEYS
                 .map(|key| self.app.settings.get::<bool>(key).unwrap_or(true));
             if self.column_drag.is_none()

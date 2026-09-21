@@ -109,13 +109,14 @@ impl DocumentScroll {
 /// detents bypass the pixel threshold. The invariant that prevents racing
 /// turns is that no turn starts while a page request is pending: a gesture
 /// arriving then is refused and its accumulated intent discarded, so the
-/// next gesture starts fresh once the page has arrived.
+/// next gesture starts fresh once the page has arrived. The grid's
+/// Ctrl+wheel zoom counts steps the same way, with nothing ever pending.
 #[derive(Default)]
-struct WheelTurn {
+pub struct WheelTurn {
     accumulated: f32,
 }
 impl WheelTurn {
-    fn turn(&mut self, delta: f32, lines: bool, pending: bool) -> i32 {
+    pub fn turn(&mut self, delta: f32, lines: bool, pending: bool) -> i32 {
         if !delta.is_finite() || delta == 0. {
             return 0;
         }

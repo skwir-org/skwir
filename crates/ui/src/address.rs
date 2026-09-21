@@ -220,9 +220,19 @@ fn sort_items(shell: &Shell) -> Vec<Button> {
         .active(spec.show_hidden),
         "Hidden files",
     ));
+    items.push(menu_item(
+        Button::new(
+            "menu-grid-fill",
+            "crop",
+            "Crop thumbnails in the grid to fill their box",
+            "ui.grid_fill",
+        )
+        .active(shell.grid_fill),
+        "Fill thumbnails",
+    ));
     for (dir, icon, label, keys) in [
-        ("in", "plus", "Larger", "Ctrl+="),
-        ("out", "minus", "Smaller", "Ctrl+-"),
+        ("in", "plus", "Larger", "Ctrl+= or Ctrl+wheel up"),
+        ("out", "minus", "Smaller", "Ctrl+- or Ctrl+wheel down"),
         ("reset", "fit", "Default size", "Ctrl+0"),
     ] {
         items.push(menu_item(
@@ -375,7 +385,7 @@ pub fn render_toolbar(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
             let title = match index {
                 0 => Some("Sort by"),
                 3 => Some("Show"),
-                4 => Some("Icon size"),
+                5 => Some("Icon size"),
                 _ => None,
             };
             if let Some(title) = title {

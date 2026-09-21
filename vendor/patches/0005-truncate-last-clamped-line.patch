@@ -1,0 +1,109 @@
+--- a/crates/gpui/src/elements/text.rs
++++ b/crates/gpui/src/elements/text.rs
+@@ -378,7 +378,19 @@
+                 }
+ 
+                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
+-                let text = if let Some(truncate_width) = truncate_width {
++                let clamp = text_style
++                    .line_clamp
++                    .zip(wrap_width)
++                    .filter(|_| truncate_width.is_some() && !text.contains('\n'));
++                let text = if let Some((max_lines, wrap_width)) = clamp {
++                    line_wrapper.truncate_clamped_line(
++                        text.clone(),
++                        wrap_width,
++                        max_lines,
++                        &truncation_suffix,
++                        &mut runs,
++                    )
++                } else if let Some(truncate_width) = truncate_width {
+                     line_wrapper.truncate_line(
+                         text.clone(),
+                         truncate_width,
+--- a/crates/gpui/src/text_system/line_wrapper.rs
++++ b/crates/gpui/src/text_system/line_wrapper.rs
+@@ -136,14 +136,55 @@
+         truncation_suffix: &str,
+         runs: &mut Vec<TextRun>,
+     ) -> SharedString {
++        self.truncate_line_from(line, 0, truncate_width, truncation_suffix, runs)
++    }
++
++    /// Truncate the last of `max_lines` wrapped lines, so that a clamped text ends with the
++    /// suffix inside its width. Truncating the whole text to `max_lines` widths instead lets
++    /// the last line overflow by whatever the earlier lines left unused at a word boundary.
++    pub fn truncate_clamped_line(
++        &mut self,
++        line: SharedString,
++        wrap_width: Pixels,
++        max_lines: usize,
++        truncation_suffix: &str,
++        runs: &mut Vec<TextRun>,
++    ) -> SharedString {
++        let last_line_start = if max_lines <= 1 {
++            Some(0)
++        } else {
++            self.wrap_line(&[LineFragment::text(&line)], wrap_width)
++                .nth(max_lines - 2)
++                .map(|boundary| boundary.ix)
++        };
++        match last_line_start {
++            Some(start) => {
++                self.truncate_line_from(line, start, wrap_width, truncation_suffix, runs)
++            }
++            // Fewer lines than allowed: nothing to cut.
++            None => line,
++        }
++    }
++
++    fn truncate_line_from(
++        &mut self,
++        line: SharedString,
++        start: usize,
++        truncate_width: Pixels,
++        truncation_suffix: &str,
++        runs: &mut Vec<TextRun>,
++    ) -> SharedString {
+         let mut width = px(0.);
+         let mut suffix_width = truncation_suffix
+             .chars()
+             .map(|c| self.width_for_char(c))
+             .fold(px(0.0), |a, x| a + x);
+         let mut char_indices = line.char_indices();
+-        let mut truncate_ix = 0;
++        let mut truncate_ix = start;
+         for (ix, c) in char_indices {
++            if ix < start {
++                continue;
++            }
+             if width + suffix_width < truncate_width {
+                 truncate_ix = ix;
+             }
+@@ -487,6 +528,26 @@
+     }
+ 
+     #[test]
++    fn test_truncate_clamped_line() {
++        let mut wrapper = build_wrapper();
++        let mut clamp = |text: &'static str, lines: usize| {
++            let mut runs = generate_test_runs(&[text.len()]);
++            let result =
++                wrapper.truncate_clamped_line(text.into(), px(72.), lines, "…", &mut runs);
++            assert_eq!(runs.first().unwrap().len, result.len());
++            result
++        };
++        // Wrapped at 72 px this is "aa bbb ", "cccc ", "ddddd ", "eeee": the first line
++        // leaves room unused, which the last line must not inherit.
++        assert_eq!(clamp("aa bbb cccc ddddd eeee", 2), "aa bbb cccc d…");
++        assert_eq!(clamp("aa bbb cccc ddddd eeee", 1), "aa bbb…");
++        // It fits in the lines it is allowed: untouched.
++        assert_eq!(clamp("aa bbb cccc ddddd eeee", 4), "aa bbb cccc ddddd eeee");
++        assert_eq!(clamp("aa bbb cccc", 2), "aa bbb cccc");
++        assert_eq!(clamp("aa", 2), "aa");
++    }
++
++    #[test]
+     fn test_truncate_line() {
+         let mut wrapper = build_wrapper();
+ 

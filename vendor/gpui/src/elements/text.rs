@@ -378,7 +378,19 @@ impl TextLayout {
                 }
 
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
-                let text = if let Some(truncate_width) = truncate_width {
+                let clamp = text_style
+                    .line_clamp
+                    .zip(wrap_width)
+                    .filter(|_| truncate_width.is_some() && !text.contains('\n'));
+                let text = if let Some((max_lines, wrap_width)) = clamp {
+                    line_wrapper.truncate_clamped_line(
+                        text.clone(),
+                        wrap_width,
+                        max_lines,
+                        &truncation_suffix,
+                        &mut runs,
+                    )
+                } else if let Some(truncate_width) = truncate_width {
                     line_wrapper.truncate_line(
                         text.clone(),
                         truncate_width,

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Run the vendored GPUI list tests without adding GPUI dev dependencies to bibli.
+"""Run the vendored GPUI list and line wrapper tests without adding GPUI dev
+dependencies to bibli.
 
-Covers our list patch (item height hints) alongside the upstream list tests.
-Needs no GPU.
+Covers our patches (item height hints, truncating the last clamped line)
+alongside the upstream tests of those modules. Needs no GPU.
 """
 from pathlib import Path
 import shutil
@@ -21,5 +22,6 @@ with tempfile.TemporaryDirectory(prefix="bibli-list-tests-") as temporary:
     subprocess.run([
         "cargo", "test", "--manifest-path", str(manifest),
         "--target-dir", str(root / "target"), "--no-default-features",
-        "--features", "wayland", "--lib", "elements::list",
+        "--features", "wayland", "--lib", "--",
+        "elements::list", "text_system::line_wrapper",
     ], check=True)

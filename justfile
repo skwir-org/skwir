@@ -42,7 +42,7 @@ previews-check:
 atlas-check:
     python3 tools/gpui/check-atlas.py
 
-# Run the vendored GPUI list tests, which cover our item height hints.
+# Run the vendored GPUI tests that cover our list and text patches.
 list-check:
     python3 tools/gpui/check-list.py
 

@@ -62,6 +62,15 @@ layout (`crates/gpui/...`) so they apply there with `git apply -p1`.
   under the hand dragging it. This mirrors the same two mechanisms in Zed's
   current `list.rs`; `just list-check` runs the list tests, ours included.
 
+- `0005-truncate-last-clamped-line.patch`: a text with `line_clamp(n)` and an
+  ellipsis was truncated to `n` line widths *before* wrapping. Wrapping ends
+  each line at a word, so the earlier lines never use their whole width and
+  the last one overflows by what they left: no ellipsis in sight, and clipped
+  at both ends when the text is centred (every two-line name in the grid).
+  `LineWrapper::truncate_clamped_line` finds where the last allowed line
+  begins and truncates that line to one width; text with hard line breaks
+  keeps the old behaviour. `just list-check` runs the line wrapper tests too.
+
 ## Regenerating a patch
 
     G=$(ls -d ~/.cargo/registry/src/*/gpui-0.2.2)

@@ -15,6 +15,7 @@ use gpui::{
 
 use bibli_core::workspace::PaneId;
 
+use crate::elements::uniform_grid::math::Slots;
 use crate::shell::Shell;
 use crate::theme::Theme;
 
@@ -24,13 +25,9 @@ use crate::theme::Theme;
 pub enum Geometry {
     /// Full-width rows of one height.
     Rows { height: f32 },
-    /// Cells of one size, `cols` per row, after `pad_x` of left padding.
-    Cells {
-        width: f32,
-        height: f32,
-        cols: usize,
-        pad_x: f32,
-    },
+    /// A grid's tiles, after `pad_x` of left padding. The gutters between
+    /// them are empty: a band can begin there.
+    Cells { slots: Slots, pad_x: f32 },
 }
 
 impl Geometry {
@@ -42,18 +39,7 @@ impl Geometry {
         }
         let index = match *self {
             Geometry::Rows { height } => (y / height) as usize,
-            Geometry::Cells {
-                width,
-                height,
-                cols,
-                pad_x,
-            } => {
-                let col = ((x - pad_x) / width).floor();
-                if col < 0. || col as usize >= cols {
-                    return None;
-                }
-                (y / height) as usize * cols + col as usize
-            }
+            Geometry::Cells { slots, pad_x } => slots.tile_at(x - pad_x, y)?,
         };
         (index < count).then_some(index)
     }
@@ -71,25 +57,11 @@ impl Geometry {
                 let last = ((y1 / height) as usize).min(count - 1);
                 (first..=last).filter(|index| *index < count).collect()
             }
-            Geometry::Cells {
-                width,
-                height,
-                cols,
-                pad_x,
-            } => {
-                let cols = cols.max(1);
-                let first_col = (((x0 - pad_x) / width).floor().max(0.)) as usize;
-                let last_col = ((x1 - pad_x) / width).floor();
-                if last_col < 0. || first_col >= cols {
-                    return Vec::new();
-                }
-                let last_col = (last_col as usize).min(cols - 1);
-                let (first_row, last_row) = ((y0 / height) as usize, (y1 / height) as usize);
-                (first_row..=last_row)
-                    .flat_map(|row| (first_col..=last_col).map(move |col| row * cols + col))
-                    .filter(|index| *index < count)
-                    .collect()
-            }
+            Geometry::Cells { slots, pad_x } => slots
+                .covered((x0 - pad_x, x1 - pad_x), (y0, y1))
+                .into_iter()
+                .filter(|index| *index < count)
+                .collect(),
         }
     }
 }
@@ -261,7 +233,7 @@ impl Element for Marquee {
 
 #[cfg(test)]
 mod tests {
-    use super::Geometry;
+    use super::{Geometry, Slots};
 
     #[test]
     fn rows_are_hit_across_their_width_and_the_space_below_is_empty() {
@@ -278,19 +250,19 @@ mod tests {
     }
 
     #[test]
-    fn cells_are_hit_by_column_and_the_band_selects_a_block() {
+    fn tiles_are_hit_inside_their_gutters_and_the_band_selects_a_block() {
+        // Four 100 by 120 tiles a row, each 8 px from the edge of its slot.
         let cells = Geometry::Cells {
-            width: 100.,
-            height: 120.,
-            cols: 4,
+            slots: Slots::fit(464., (100., 120.), (16., 16.)),
             pad_x: 4.,
         };
-        assert_eq!(cells.item_at(104., 130., 10), Some(5));
-        assert_eq!(cells.item_at(350., 250., 10), None, "past the last entry");
-        assert_eq!(cells.item_at(450., 10., 10), None, "beside the last column");
-        assert_eq!(cells.covered((110., 10.), (290., 130.), 10), [1, 2, 5, 6]);
+        assert_eq!(cells.item_at(130., 150., 10), Some(5));
+        assert_eq!(cells.item_at(124., 150., 10), None, "in the gutter");
+        assert_eq!(cells.item_at(370., 290., 10), None, "past the last entry");
+        assert_eq!(cells.item_at(480., 10., 10), None, "beside the last column");
+        assert_eq!(cells.covered((130., 10.), (300., 150.), 10), [1, 2, 5, 6]);
         assert_eq!(
-            cells.covered((310., 130.), (900., 300.), 10),
+            cells.covered((360., 150.), (900., 400.), 10),
             [7],
             "the rest are past the end"
         );
