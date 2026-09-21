@@ -115,6 +115,65 @@ attachments share that function.
   never extraction paths; nothing opens a member externally from the temporary
   path, only an explicit Extract.
 
+## Extensibility: capabilities, not kinds
+
+Adding a format today means fitting one of eleven `InspectionKind`s or editing
+core and the UI: `inspector.rs` switches on the kind forty times (which tools
+exist, which style, which row estimate), the toolbar's actions are a fixed list
+inside `ui.inspect`, and the only alternatives to a provider's presentation are
+the hard-coded Hex and Source buttons. The first provider that accepts a file
+owns it. Images, plain text, folders and "no preview" are not providers at all:
+they live in `preview::compute` and nothing can replace them. Plugins stay free
+of GPUI (ADR-001, ADR-007); the way to open the panel up is to let them say more
+as data, and to make the UI ask what a preview can do rather than what it is.
+
+1. **Layouts and features instead of kinds.** An inspection names the layout
+   that draws it, from the small set the UI owns (prose, code, rows, table,
+   bytes, image), and the features it supports: find, folds, outline, text
+   size, sections, source. The toolbar builder and the key context read the
+   features. A new format picks a layout and needs no UI change; a new layout
+   is one registration in `bibli-ui`, resolved like `views::named_renderer`,
+   not a match arm in five files.
+2. **Actions are contributed.** A provider lists actions for the file it
+   shows: id, title, icon, toolbar slot and a command invocation that receives
+   the preview's context (entry, target, selection). The frame's builder places
+   them; what has no room goes to More. Archives offer "Extract here", fonts
+   "Install", images "Rotate" or "Set as wallpaper", JSON "Copy path to value".
+   They are commands, so the palette, the CLI and agents get them too.
+3. **Presentations, chosen by the user.** Every provider that accepts a file
+   offers its presentations (SVG: picture, source, bytes; HTML: reading,
+   source; JSON: tree, code; CSV: table, source). One "View as" control in the
+   view slot replaces the Hex, Source and Default buttons. The highest priority
+   is the default, and the last choice is remembered per type.
+4. **Providers declare what they handle** as data (types, extensions,
+   priority, presentations) beside `accepts`, so Settings can show which plugin
+   previews what and let the user settle a conflict, and the type is sniffed
+   from content when the name says nothing.
+5. **A source, not a path.** The request says where the bytes are: a file, or
+   a member extracted from a parent, with its display name. This is the nested
+   preview of the previous section, stated once for every provider.
+6. **The fallbacks become providers.** Image, text, folder and generic move
+   out of `preview::compute` into a built-in plugin with the lowest priority.
+   Everything then takes one path, and a plugin can replace the folder card (a
+   repository summary, a contact sheet for an album).
+7. **Anyone can add to Details,** not only the plugin that draws the preview:
+   fields with a group, a label, a value and their provenance, produced in
+   batches on workers. Some are on demand ("Compute SHA-256"): a field may be
+   an action until it has a value.
+8. **Several entries, and virtual ones.** The request carries the selection,
+   so a provider can summarize many files, and entries of a query or a shelf
+   resolve through `OpenLocation::path_of`.
+9. **Readable without a window.** `preview.describe` returns the inspection as
+   JSON through the same providers and bounds, for the CLI, the MCP server and
+   tests. A conformance test in `crates/bibli/tests/` runs every provider over
+   fixtures and checks the contract: bounds, fold nesting, actions that resolve
+   to registered commands, no trace after disable.
+
+Custom GPUI content from a plugin stays out, as ADR-007 decided for views, until
+a third party needs it; items 1 and 2 are the seam it would use. This changes
+the provider contract of ADR-003 and ADR-009, so it needs an ADR of its own
+before the first phase that touches core.
+
 ## More
 
 - **Tables:** sticky header, grid lines, numbers right-aligned, horizontal
@@ -129,9 +188,13 @@ attachments share that function.
 ## Order
 
 1. The frame contract in `docs/invariants/previews.md`; surfaces and tokens.
-2. The toolbar builder and the menu rule; one find, one outline, one key
-   context.
-3. One text path; HTML reading mode.
-4. Details: core fields first, then plugin-contributed fields.
-5. Nested previews for archive members and mail attachments.
-6. Tables, hex, fonts, the folder card.
+2. The ADR for the provider contract. Layouts and features replace the kind
+   switches; the toolbar builder and the menu rule consume declared features
+   and contributed actions; one find, one outline, one key context.
+3. The fallbacks become providers; one text path; HTML reading mode;
+   presentations and "View as".
+4. Details: core fields first, then fields contributed by any plugin.
+5. Sources: nested previews for archive members and mail attachments; several
+   entries and virtual ones.
+6. `preview.describe`, the conformance test, declared formats in Settings.
+7. Tables, hex, fonts, the folder card.
