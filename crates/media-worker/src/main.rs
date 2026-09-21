@@ -89,9 +89,10 @@ impl Player {
                 pipeline.set_property_from_value("flags", &flags);
             }
         }
-        // Optional spectrum filter: compact bins, no visualization video frames.
-        let spectrum = audio_only.then(spectrum_filter).flatten();
-        if let Some(filter) = &spectrum {
+        // The audio filter keeps the pitch when the speed changes, and for
+        // audio measures the spectrum: compact bins, no visualization frames.
+        let (filter, spectrum) = audio_filter(audio_only);
+        if let Some(filter) = &filter {
             pipeline.set_property("audio-filter", filter);
         }
         // Decoder parallelism is a preview resource policy: libav's automatic
@@ -213,7 +214,9 @@ impl Player {
             Control::Seek(seconds) => self.seek(seconds, self.state.rate)?,
             Control::Rate(rate) => self.seek(self.state.position, rate)?,
             Control::Volume(volume) => {
-                self.pipeline.set_property("volume", volume);
+                // The control is perceptual; the pipeline wants an amplitude.
+                self.pipeline
+                    .set_property("volume", bibli_core::media::amplitude(volume));
                 self.state.volume = volume;
             }
             Control::Mute(muted) => {
@@ -355,13 +358,52 @@ impl Events {
     }
 }
 
-fn spectrum_filter() -> Option<gst::Element> {
-    gst::ElementFactory::make("spectrum")
-        .property("bands", 32u32)
-        .property("interval", 50_000_000u64)
-        .property("post-messages", false)
-        .build()
-        .ok()
+/// What sits between the decoder and the sink, and the spectrum element in
+/// it when there is one. `scaletempo` keeps the pitch when the speed changes:
+/// without it 1.25× raises every voice by four semitones. Either element may
+/// be missing from an installation; playback does without.
+fn audio_filter(measure: bool) -> (Option<gst::Element>, Option<gst::Element>) {
+    let tempo = gst::ElementFactory::make("scaletempo").build().ok();
+    let spectrum = measure
+        .then(|| {
+            gst::ElementFactory::make("spectrum")
+                // Many linear bins, folded into a few logarithmic bands
+                // (`media::log_bands`): music is heard in octaves.
+                .property("bands", bibli_core::media::SPECTRUM_BINS)
+                .property("interval", 50_000_000u64)
+                .property("threshold", -80i32)
+                .property("post-messages", false)
+                .build()
+                .ok()
+        })
+        .flatten();
+    let filter = match (tempo, spectrum.clone()) {
+        (Some(tempo), Some(spectrum)) => {
+            let bin = gst::Bin::new();
+            let linked = bin.add_many([&tempo, &spectrum]).is_ok()
+                && tempo.link(&spectrum).is_ok()
+                && ghost(&bin, &tempo, "sink")
+                && ghost(&bin, &spectrum, "src");
+            linked.then(|| bin.upcast::<gst::Element>())
+        }
+        (tempo, spectrum) => tempo.or(spectrum),
+    };
+    let spectrum = spectrum.filter(|_| filter.is_some());
+    (filter, spectrum)
+}
+
+fn ghost(bin: &gst::Bin, element: &gst::Element, pad: &str) -> bool {
+    element
+        .static_pad(pad)
+        .and_then(|target| gst::GhostPad::with_target(&target).ok())
+        .is_some_and(|ghost| bin.add_pad(&ghost).is_ok())
+}
+
+/// Sample rate the spectrum is measured at, from its negotiated caps.
+fn spectrum_rate(spectrum: &gst::Element) -> Option<u32> {
+    let caps = spectrum.static_pad("sink")?.current_caps()?;
+    let rate = caps.structure(0)?.get::<i32>("rate").ok()?;
+    u32::try_from(rate).ok()
 }
 
 fn run() -> anyhow::Result<()> {
@@ -573,6 +615,80 @@ fn handle_message(
             if let Some(v) = tags.get::<gst::tags::Album>() {
                 player.state.album = v.get().chars().take(512).collect();
             }
+            // The rest of what the stream says, for the panel's Details.
+            let mut note = |label: &str, value: Option<String>| {
+                let Some(value) = value.filter(|value| !value.trim().is_empty()) else {
+                    return;
+                };
+                let value: String = value.trim().chars().take(128).collect();
+                let details = &mut player.state.details;
+                match details.iter().position(|(known, _)| known == label) {
+                    Some(index) => details[index].1 = value,
+                    None if details.len() < 16 => details.push((label.to_owned(), value)),
+                    None => {}
+                }
+            };
+            note(
+                "Track",
+                tags.get::<gst::tags::TrackNumber>().map(|n| {
+                    match tags.get::<gst::tags::TrackCount>() {
+                        Some(count) => format!("{} of {}", n.get(), count.get()),
+                        None => n.get().to_string(),
+                    }
+                }),
+            );
+            note(
+                "Year",
+                tags.get::<gst::tags::DateTime>()
+                    .map(|date| date.get().year().to_string()),
+            );
+            note(
+                "Genre",
+                tags.get::<gst::tags::Genre>().map(|v| v.get().to_owned()),
+            );
+            note(
+                "Album artist",
+                tags.get::<gst::tags::AlbumArtist>()
+                    .map(|v| v.get().to_owned()),
+            );
+            note(
+                "Composer",
+                tags.get::<gst::tags::Composer>()
+                    .map(|v| v.get().to_owned()),
+            );
+            note(
+                "Codec",
+                tags.get::<gst::tags::AudioCodec>()
+                    .map(|v| v.get().to_owned()),
+            );
+            note(
+                "Bitrate",
+                tags.get::<gst::tags::Bitrate>()
+                    .or_else(|| tags.get::<gst::tags::NominalBitrate>())
+                    .map(|v| format!("{} kbit/s", v.get() / 1000)),
+            );
+            if let Some(caps) = player
+                .spectrum
+                .as_ref()
+                .and_then(|spectrum| spectrum.static_pad("sink")?.current_caps())
+                && let Some(format) = caps.structure(0)
+            {
+                note(
+                    "Sample rate",
+                    format
+                        .get::<i32>("rate")
+                        .ok()
+                        .map(|rate| format!("{rate} Hz")),
+                );
+                note(
+                    "Channels",
+                    format.get::<i32>("channels").ok().map(|n| match n {
+                        1 => "Mono".to_owned(),
+                        2 => "Stereo".to_owned(),
+                        n => n.to_string(),
+                    }),
+                );
+            }
             *dirty = true;
         }
         gst::MessageView::Element(message) => {
@@ -581,18 +697,17 @@ fn handle_message(
                 && s.name() == "spectrum"
                 && let Ok(values) = s.get::<gst::List>("magnitude")
             {
-                player.state.spectrum = values
+                let bins: Vec<f32> = values
                     .iter()
-                    .take(32)
+                    .take(bibli_core::media::SPECTRUM_BINS as usize)
                     .filter_map(|v| v.get::<f32>().ok())
-                    .map(|v| {
-                        if v.is_finite() {
-                            ((v + 60.) / 60.).clamp(0., 1.)
-                        } else {
-                            0.
-                        }
-                    })
                     .collect();
+                let rate = player
+                    .spectrum
+                    .as_ref()
+                    .and_then(spectrum_rate)
+                    .unwrap_or(44_100);
+                player.state.spectrum = bibli_core::media::log_bands(&bins, rate);
                 *dirty = true;
             }
         }
@@ -611,10 +726,10 @@ fn handle_message(
             // after stream discovery. Video pipelines retain no FFT filter.
             if player.state.audio_only
                 && player.spectrum.is_none()
-                && let Some(filter) = spectrum_filter()
+                && let (Some(filter), Some(spectrum)) = audio_filter(true)
             {
                 player.pipeline.set_property("audio-filter", &filter);
-                player.spectrum = Some(filter);
+                player.spectrum = Some(spectrum);
             }
             if let Some(filter) = &player.spectrum {
                 filter.set_property("post-messages", player.state.audio_only);

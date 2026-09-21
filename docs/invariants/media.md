@@ -60,3 +60,14 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
   pass costs a frame of its own. The cover's colour is worked out once per
   cover (`halo::tint`, weighted by how colourful a pixel is, so a border does
   not wash it out), never per frame. Everything is sized in `paint`.
+- Sound. The volume control is perceptual: `Control::Volume` is where the
+  control stands and the worker sets `media::amplitude` (its cube) on the
+  pipeline, so half the control sounds like half the volume. The audio filter
+  is `scaletempo`, which keeps the pitch when the speed changes, followed for
+  audio by `spectrum`; either may be missing from an installation and playback
+  does without. The spectrum is measured in `SPECTRUM_BINS` linear bins and
+  folded by `media::log_bands` into `SPECTRUM_BANDS` logarithmic ones with the
+  analysers' usual tilt: music is heard in octaves, and in linear bands nearly
+  all of it sits in the first five. What the stream says beyond title, artist
+  and album (track, year, genre, codec, bitrate, rate, channels) travels in
+  `Playback::details`, bounded by the worker, to the panel's Details.

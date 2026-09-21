@@ -728,6 +728,7 @@ pub fn audio_content(shell: &Shell, theme: &Theme) -> AnyElement {
         .unwrap_or(theme.accent);
     let line = |text: &str, muted: bool| {
         div()
+            .flex_none()
             .max_w_full()
             .truncate()
             .when(muted, |d| d.text_color(theme.text_muted))
@@ -765,17 +766,13 @@ pub fn audio_content(shell: &Shell, theme: &Theme) -> AnyElement {
                     border: theme.border,
                 }),
         )
-        .child(
-            div()
-                .max_w_full()
-                .truncate()
-                .text_lg()
-                .child(if state.title.is_empty() {
-                    p.info.name.clone()
-                } else {
-                    state.title.clone()
-                }),
-        )
+        .child(div().flex_none().max_w_full().truncate().text_lg().child(
+            if state.title.is_empty() {
+                p.info.name.clone()
+            } else {
+                state.title.clone()
+            },
+        ))
         .child(line(&state.artist, true))
         .child(line(&state.album, true))
         .into_any_element()

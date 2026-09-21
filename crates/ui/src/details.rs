@@ -251,6 +251,12 @@ fn preview_group(shell: &Shell) -> Option<Group> {
         if let Some(duration) = state.duration {
             rows.push(Row::new("Duration", crate::media::time(duration)));
         }
+        rows.extend(
+            state
+                .details
+                .iter()
+                .map(|(label, value)| Row::new(label.clone(), value.clone())),
+        );
         if state.audio_tracks.len() > 1 {
             rows.push(Row::new("Audio tracks", state.audio_tracks.join(", ")));
         }
