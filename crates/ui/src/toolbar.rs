@@ -96,6 +96,7 @@ pub(crate) fn tooltip(text: SharedString, font: SharedString, cx: &mut App) -> A
     cx.new(|_| Tip { text, font }).into()
 }
 
+#[derive(Clone)]
 pub struct Button {
     id: SharedString,
     icon: SharedString,
@@ -129,6 +130,9 @@ impl Button {
             enabled: true,
             menu: false,
         }
+    }
+    pub fn title(&self) -> SharedString {
+        self.title.clone()
     }
     pub fn args(mut self, args: serde_json::Value) -> Self {
         self.args = args;

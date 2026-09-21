@@ -70,6 +70,29 @@ still to come are in `docs/preview-frame.md`.
   decides). `code_bg` sets a code block, an inline span or a table header
   apart on paper; `zebra` tints alternate rows; hover is `theme.hover`. No
   preview derives a colour locally or hard-codes one.
+- **One toolbar.** A preview never builds a row: it lists its tools in
+  `preview_bar::Bar`, each in a slot, and the bar lays them out. Left to right:
+  navigate (parent, previous and next, page) · view (zoom or text size, fit,
+  the ways to show the same content) · spacer · find · copy · contents · More.
+  `zoom_tools` is the one zoom group, for a picture and a page alike. Shared
+  actions take their words from `preview_bar::label`. An item says the
+  narrowest of the three variants that still shows it (`keep`).
+- **The menu rule** is the application toolbar's: More holds the buttons the
+  chosen variant dropped (`PopoverAnchor::popup_for`), a kind's settings that
+  never have a button (volume, speed, tracks), and what no kind has a button
+  for (open externally, copy the path). Nothing is both a button and a menu
+  row, and More is always last, so it never moves. A popup of another tool
+  (the zoom picker, the find field) is anchored to that tool, or to More when
+  the variant dropped it (`Item::opens`, `preview::active_popup`).
+- **One of each.** Find is a field under its button with Enter and F3, in the
+  reader and in structured previews alike (`DocumentFind`, `InspectorFind`).
+  Contents is one drawer (`outline.rs`) for a document's outline, a file's
+  headings and a book's chapters. What a preview says about itself (how it is
+  shown, what was left out) is one strip under the toolbar, never a grey
+  sentence inside the content. The keys are the same everywhere they mean
+  something: Ctrl+F, Ctrl+C, Ctrl++ / Ctrl+- (zoom what is looked at, size what
+  is read), Ctrl+0, `[` and `]` for the previous and next section or page; a
+  picture takes them, and Ctrl+wheel, once clicked.
 - **Muted is for secondary facts** (line numbers, captions, column headers),
   never for the data: offsets, sizes and values are `theme.text`. The only
   dimmed data is what stands for nothing: a zero byte, the dot of an

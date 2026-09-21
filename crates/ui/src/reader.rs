@@ -78,6 +78,10 @@ impl Drop for ReaderState {
 }
 
 impl ReaderState {
+    /// Whether the find field is open.
+    pub fn finding(&self) -> bool {
+        self.find.is_some()
+    }
     pub fn cancel_search(&mut self) {
         if let Some(cancel) = self.search_cancel.take() {
             cancel.cancel();
@@ -554,37 +558,18 @@ fn document_pages(shell: &Shell) -> u32 {
         .unwrap_or(1)
 }
 
-fn reader_row(
-    shell: &Shell,
-    mode: usize,
-    anchor: &crate::elements::popover::PopoverAnchor,
-    cx: &mut Context<Shell>,
-) -> AnyElement {
-    use crate::toolbar::{self, Button};
-    let theme = cx.global::<Theme>().clone();
+pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
+    use crate::preview_bar::{Bar, Item, Slot, label};
+    use crate::toolbar::Button;
     let reader = &shell.preview.reader;
     let native = reader.session.is_some();
     let current = shell.preview.page;
     let pages = document_pages(shell);
-    // One id for every variant, so a focused button keeps its focus handle
-    // (gpui element state keyed by the id path) across a responsive reflow.
-    let mut bar = toolbar::row(&theme).id("reader-tools");
-    if mode == 0 {
-        bar = bar
-            .child(
-                Button::new(
-                    "reader-outline",
-                    "contents",
-                    "Document contents",
-                    "ui.reader_outline",
-                )
-                .active(reader.outlines)
-                .enabled(native)
-                .render(shell, cx),
-            )
-            .child(toolbar::separator(&theme));
-    }
-    bar = bar.child(
+    let mut bar = Bar::new("reader-tools");
+
+    bar.push(Item::button(
+        Slot::Navigate,
+        2,
         Button::new(
             "preview-prev",
             "left",
@@ -592,240 +577,131 @@ fn reader_row(
             "ui.preview_page",
         )
         .args(serde_json::json!({"delta":-1}))
-        .enabled(current > 1)
-        .render(shell, cx),
-    );
-    if let Some(editor) = &reader.page_input {
-        bar = bar.child(
-            div()
+        .enabled(current > 1),
+    ));
+    let (accent, border, paper, muted) = (theme.accent, theme.border, theme.bg, theme.text_muted);
+    bar.push(Item::widget(
+        Slot::Navigate,
+        2,
+        move |shell, cx| match &shell.preview.reader.page_input {
+            Some(editor) => div()
                 .w(px(44.))
                 .flex_none()
                 .h(px(28.))
                 .px_1()
                 .border_1()
-                .border_color(theme.accent)
+                .border_color(accent)
                 .rounded_md()
-                .bg(theme.bg)
-                .child(editor.input.clone()),
-        );
-    } else {
-        bar = bar.child(
-            Button::new(
+                .bg(paper)
+                .child(editor.input.clone())
+                .into_any_element(),
+            None => Button::new(
                 "reader-page-number",
                 "",
                 "Go to page",
                 "ui.reader_page_edit",
             )
-            .label(current.to_string())
+            .label(shell.preview.page.to_string())
             .render(shell, cx)
-            .bg(theme.bg)
-            .border_color(theme.border),
-        );
-    }
-    bar = bar
-        .child(
-            div()
-                .flex_none()
-                .text_xs()
-                .text_color(theme.text_muted)
-                .whitespace_nowrap()
-                .child(format!("/ {pages}")),
+            .bg(paper)
+            .border_color(border)
+            .into_any_element(),
+        },
+    ));
+    bar.push(Item::widget(Slot::Navigate, 1, move |_, _| {
+        div()
+            .flex_none()
+            .text_xs()
+            .text_color(muted)
+            .whitespace_nowrap()
+            .child(format!("/ {pages}"))
+            .into_any_element()
+    }));
+    bar.push(Item::button(
+        Slot::Navigate,
+        2,
+        Button::new(
+            "preview-next",
+            "right",
+            "Next page · Alt+Page Down",
+            "ui.preview_page",
         )
-        .child(
-            Button::new(
-                "preview-next",
-                "right",
-                "Next page · Alt+Page Down",
-                "ui.preview_page",
-            )
-            .args(serde_json::json!({"delta":1}))
-            .enabled(current < pages)
-            .render(shell, cx),
-        );
-    if mode == 0 {
-        bar = bar
-            .child(toolbar::separator(&theme))
-            .child(
-                Button::new("preview-zoom-out", "minus", "Zoom out", "ui.preview_zoom")
-                    .args(serde_json::json!({"dir":"out"}))
-                    .render(shell, cx),
-            )
-            .child(
-                Button::new(
-                    "reader-zoom-menu",
-                    "chevron",
-                    "Zoom and fit options",
-                    "ui.preview_menu",
-                )
-                .args(serde_json::json!({"kind":"zoom"}))
-                .label(crate::preview_toolbar::zoom_label(shell))
-                .anchor_if(anchor, shell.preview.menu.is_some())
-                .render(shell, cx),
-            )
-            .child(
-                Button::new("preview-zoom-in", "plus", "Zoom in", "ui.preview_zoom")
-                    .args(serde_json::json!({"dir":"in"}))
-                    .render(shell, cx),
-            );
-    }
-    bar = bar.child(
+        .args(serde_json::json!({"delta":1}))
+        .enabled(current < pages),
+    ));
+
+    crate::preview_toolbar::zoom_tools(&mut bar, shell);
+    bar.push(Item::button(
+        Slot::View,
+        1,
         Button::new(
             "reader-continuous",
             "continuous",
-            "Continuous document scrolling",
+            "Continuous scrolling",
             "ui.reader_continuous",
         )
         .active(reader.scroll.continuous)
-        .enabled(native)
-        .render(shell, cx),
+        .enabled(native),
+    ));
+
+    bar.push(
+        Item::button(
+            Slot::Tools,
+            1,
+            Button::new("reader-find", "search", label::FIND, "ui.reader_find")
+                .enabled(native)
+                .active(reader.find.is_some()),
+        )
+        .opens("find"),
     );
-    bar = bar.child(
-        Button::new("preview-fit", "fit", "Fit whole page", "ui.preview_zoom")
-            .args(serde_json::json!({"dir":"reset"}))
-            .active(shell.preview.zoom.is_none() && !shell.preview.fit_width)
-            .render(shell, cx),
-    );
-    if mode == 0 {
-        bar = bar
-            .child(
-                Button::new(
-                    "preview-width",
-                    "width",
-                    "Fit page width",
-                    "ui.preview_zoom",
-                )
-                .args(serde_json::json!({"dir":"width"}))
-                .active(shell.preview.fit_width)
-                .render(shell, cx),
-            )
-            .child(toolbar::separator(&theme));
-    }
-    if mode < 2 {
-        bar = bar.child(
-            Button::new(
-                "reader-find",
-                "search",
-                "Find in document · Ctrl+F",
-                "ui.reader_find",
-            )
-            .enabled(native)
-            .active(reader.find.is_some())
-            .anchor_if(anchor, shell.preview.menu.is_none())
-            .render(shell, cx),
-        );
-    }
-    if mode == 0 {
-        bar = bar
-            .child(
-                Button::new(
-                    "reader-copy",
-                    "copy",
-                    "Copy selected text · Ctrl+C",
-                    "ui.reader_copy",
-                )
-                .enabled(reader.selection.is_some())
-                .render(shell, cx),
-            )
-            .child(
-                Button::new(
-                    "reader-external",
-                    "open",
-                    "Open in default application",
-                    "ui.preview_open_external",
-                )
-                .render(shell, cx),
-            );
-    } else {
-        bar = bar.child(
-            Button::new(
-                "reader-more",
-                "more",
-                "More document controls",
-                "ui.preview_menu",
-            )
-            .active(shell.preview.menu.is_some())
-            .anchor_if(anchor, shell.preview.menu.is_some() || mode == 2)
-            .render(shell, cx),
-        );
-    }
-    bar.into_any_element()
+    bar.push(Item::button(
+        Slot::Tools,
+        0,
+        Button::new("reader-copy", "copy", label::COPY, "ui.reader_copy")
+            .enabled(reader.selection.is_some()),
+    ));
+    bar.push(Item::button(
+        Slot::Tools,
+        0,
+        Button::new(
+            "reader-outline",
+            "contents",
+            label::CONTENTS,
+            "ui.reader_outline",
+        )
+        .active(reader.outlines)
+        .enabled(native),
+    ));
+    bar.popups.push(("find", std::rc::Rc::new(find_panel)));
+    crate::preview_bar::render(&bar, crate::preview::active_popup(shell), shell, theme, cx)
 }
 
-pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
-    use crate::toolbar::{self, Button};
+/// The find field: its own keys and focus, anchored like a menu.
+fn find_panel(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
+    use crate::toolbar::Button;
     let reader = &shell.preview.reader;
-    let anchor = crate::elements::popover::PopoverAnchor::default();
-    let mut root = div()
-        .relative()
-        .flex_none()
-        .child(crate::elements::adaptive::AdaptiveRow {
-            variants: (0..3)
-                .map(|mode| reader_row(shell, mode, &anchor, cx))
-                .collect(),
-            height: 42.,
-            chosen: None,
-        });
-    if let Some(popup) = &shell.preview.menu {
-        let mut panel = toolbar::popup_panel(popup, "ui.preview_menu", theme, cx);
-        if popup.kind == "preview" {
-            for (id, icon, title, command, enabled) in [
-                (
-                    "menu-contents",
-                    "contents",
-                    "Contents",
-                    "ui.reader_outline",
-                    reader.session.is_some(),
-                ),
-                (
-                    "menu-find",
-                    "search",
-                    "Find in document",
-                    "ui.reader_find",
-                    reader.session.is_some(),
-                ),
-                (
-                    "menu-copy",
-                    "copy",
-                    "Copy selected text",
-                    "ui.reader_copy",
-                    reader.selection.is_some(),
-                ),
-                (
-                    "menu-open",
-                    "open",
-                    "Open externally",
-                    "ui.preview_open_external",
-                    true,
-                ),
-            ] {
-                panel = panel.child(
-                    Button::new(id, icon, title, command)
-                        .label(title)
-                        .enabled(enabled)
-                        .render(shell, cx)
-                        .justify_start(),
-                );
+    let find = reader.find.as_ref()?;
+    let count = if reader.searching {
+        "Searching…".to_owned()
+    } else {
+        format!(
+            "{} / {}{}",
+            reader.active_hit.map_or(0, |i| i + 1),
+            reader.hits.len(),
+            if reader.hits.len() == bibli_core::document::MAX_HITS {
+                "+"
+            } else {
+                ""
             }
-            panel = panel.child(div().h(px(1.)).my_1().bg(theme.border));
-        }
-        panel = panel.child(crate::preview_toolbar::zoom_menu(shell, "Fit page", cx));
-        root = root.child(anchor.popup(panel));
-    } else if let Some(find) = &reader.find {
-        let count = if reader.searching {
-            "Searching…".to_owned()
-        } else {
-            format!(
-                "{} / {}{}",
-                reader.active_hit.map_or(0, |i| i + 1),
-                reader.hits.len(),
-                if reader.hits.len() == bibli_core::document::MAX_HITS {
-                    "+"
-                } else {
-                    ""
-                }
-            )
-        };
-        let panel = div()
+        )
+    };
+    let matches = |id, icon, title, delta: i32| {
+        Button::new(id, icon, title, "ui.reader_match")
+            .args(serde_json::json!({"delta":delta}))
+            .enabled(!reader.hits.is_empty())
+    };
+    Some(
+        div()
             .tab_group()
             .key_context("DocumentFind")
             .w(px(280.))
@@ -856,26 +732,12 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
                     .text_xs()
                     .child(div().flex_1().text_color(theme.text_muted).child(count))
                     .child(
-                        Button::new(
-                            "reader-prev-match",
-                            "left",
-                            "Previous match · Shift+F3",
-                            "ui.reader_match",
-                        )
-                        .args(serde_json::json!({"delta":-1}))
-                        .enabled(!reader.hits.is_empty())
-                        .render(shell, cx),
+                        matches("reader-prev-match", "left", "Previous match · Shift+F3", -1)
+                            .render(shell, cx),
                     )
                     .child(
-                        Button::new(
-                            "reader-next-match",
-                            "right",
-                            "Next match · F3",
-                            "ui.reader_match",
-                        )
-                        .args(serde_json::json!({"delta":1}))
-                        .enabled(!reader.hits.is_empty())
-                        .render(shell, cx),
+                        matches("reader-next-match", "right", "Next match · F3", 1)
+                            .render(shell, cx),
                     )
                     .child(
                         Button::new(
@@ -886,104 +748,37 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
                         )
                         .render(shell, cx),
                     ),
-            );
-        root = root.child(anchor.popup(panel));
-    }
-    root.into_any_element()
+            )
+            .into_any_element(),
+    )
 }
 
 pub fn outline_drawer(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    use crate::toolbar::Button;
     let reader = &shell.preview.reader;
     if !reader.outlines {
         return None;
     }
-    let entries = &reader.session.as_ref()?.info().outlines;
-    let mut list = div()
-        .id("reader-outline-list")
-        .tab_group()
-        .flex_1()
-        .min_h_0()
-        .overflow_y_scroll()
-        .p_2();
-    if entries.is_empty() {
-        list = list.child("No document outline");
-    }
-    for (index, entry) in entries.iter().enumerate() {
-        let page = entry.page;
-        list = list.child(
-            div()
-                .id(("outline-entry", index))
-                .pl(px(entry.depth.min(12) as f32 * 10. + 8.))
-                .py_1()
-                .rounded_md()
-                .truncate()
-                .when(page.is_some(), |d| {
-                    d.cursor_pointer()
-                        .tab_index(0)
-                        .key_context("ToolbarButton")
-                        .hover(|s| s.bg(theme.selection_bg))
-                        .focus(|s| s.bg(theme.selection_bg))
-                })
-                .child(entry.title.clone())
-                .on_click(cx.listener(move |shell, _, window, cx| {
-                    if let Some(page) = page {
-                        shell.run(
-                            "ui.reader_page",
-                            serde_json::json!({"page":page}),
-                            window,
-                            cx,
-                        );
-                        shell.run("ui.reader_outline", serde_json::json!({}), window, cx);
-                    }
-                }))
-                .on_action(cx.listener(|_, action: &crate::keymap::RunCommand, _, cx| {
-                    // Activation comes from GPUI's key-up click, as in toolbar::Button.
-                    if action.name != "ui.toolbar_activate" {
-                        cx.propagate();
-                    }
-                })),
-        );
-    }
-    Some(
-        gpui::deferred(
-            div()
-                .absolute()
-                .top_0()
-                .bottom_0()
-                .left_0()
-                .w(px(220.))
-                .max_w_full()
-                .flex()
-                .flex_col()
-                .bg(theme.bg)
-                .border_r_1()
-                .border_color(theme.border)
-                .shadow_md()
-                .occlude()
-                .text_xs()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .px_2()
-                        .py_1()
-                        .child(div().flex_1().child("Contents"))
-                        .child(
-                            Button::new(
-                                "outline-close",
-                                "close",
-                                "Close contents",
-                                "ui.reader_outline",
-                            )
-                            .render(shell, cx),
-                        ),
-                )
-                .child(list),
-        )
-        .with_priority(1)
-        .into_any_element(),
-    )
+    let entries = reader
+        .session
+        .as_ref()?
+        .info()
+        .outlines
+        .iter()
+        .map(|entry| crate::outline::Entry {
+            depth: entry.depth as usize,
+            title: entry.title.clone().into(),
+            command: entry
+                .page
+                .map(|page| ("ui.reader_page", serde_json::json!({"page":page}))),
+        })
+        .collect();
+    Some(crate::outline::drawer(
+        entries,
+        ("ui.reader_outline", serde_json::json!({})),
+        shell,
+        theme,
+        cx,
+    ))
 }
 
 #[cfg(test)]

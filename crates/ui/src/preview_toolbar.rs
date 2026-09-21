@@ -1,13 +1,13 @@
 //! Common preview controls; document-only tools remain in the reader.
 use crate::{
-    elements::adaptive::AdaptiveRow,
     preview::PreviewContent,
+    preview_bar::{Bar, Item, Slot, label},
     shell::Shell,
     theme::Theme,
     toolbar::{self, Button},
 };
 use bibli_core::preview::PreviewInfo;
-use gpui::{AnyElement, Context, Div, div, prelude::*, px};
+use gpui::{AnyElement, Context, Div, div, prelude::*};
 
 pub fn zoom_label(shell: &Shell) -> String {
     shell.preview.zoom.map_or_else(
@@ -22,11 +22,12 @@ pub fn zoom_label(shell: &Shell) -> String {
     )
 }
 
-pub fn zoom_menu(shell: &Shell, fit_label: &'static str, cx: &mut Context<Shell>) -> Div {
+/// The zoom button's own popup: a picker of values, like a combo box.
+fn zoom_menu(shell: &Shell, cx: &mut Context<Shell>) -> Div {
     let mut menu = div().flex().flex_col().gap_1();
     for (id, icon, label, value) in [
-        ("menu-fit", "fit", fit_label, "reset"),
-        ("menu-width", "width", "Fit width", "width"),
+        ("menu-fit", "fit", label::FIT, "reset"),
+        ("menu-width", "width", label::FIT_WIDTH, "width"),
     ] {
         menu = menu.child(
             Button::new(id, icon, label, "ui.preview_zoom")
@@ -37,8 +38,8 @@ pub fn zoom_menu(shell: &Shell, fit_label: &'static str, cx: &mut Context<Shell>
                 } else {
                     shell.preview.zoom.is_none() && !shell.preview.fit_width
                 })
-                .render(shell, cx)
-                .justify_start(),
+                .menu()
+                .render(shell, cx),
         );
     }
     let mut presets = div().flex().flex_wrap().gap_1();
@@ -57,22 +58,62 @@ pub fn zoom_menu(shell: &Shell, fit_label: &'static str, cx: &mut Context<Shell>
                 .render(shell, cx),
         );
     }
-    menu.child(presets).child(
-        div()
-            .flex()
-            .gap_1()
-            .child(zoom_step(false).render(shell, cx))
-            .child(zoom_step(true).render(shell, cx)),
-    )
+    menu.child(presets)
 }
 
-fn zoom_step(increase: bool) -> Button {
-    let (id, icon, title, value) = if increase {
-        ("preview-zoom-in", "plus", "Zoom in", "in")
-    } else {
-        ("preview-zoom-out", "minus", "Zoom out", "out")
+/// Zoom, for whatever is looked at rather than read: a picture or a page.
+/// The same five tools in the same order in both.
+pub fn zoom_tools(bar: &mut Bar, shell: &Shell) {
+    let fit = shell.preview.zoom.is_none() && !shell.preview.fit_width;
+    let step = |id, icon, title, dir| {
+        Button::new(id, icon, title, "ui.preview_zoom").args(serde_json::json!({"dir":dir}))
     };
-    Button::new(id, icon, title, "ui.preview_zoom").args(serde_json::json!({"dir":value}))
+    bar.push(Item::button(
+        Slot::View,
+        1,
+        step("preview-zoom-out", "minus", "Zoom out · Ctrl+-", "out"),
+    ));
+    bar.push(
+        Item::button(
+            Slot::View,
+            2,
+            Button::new(
+                "preview-zoom-menu",
+                "chevron",
+                label::ZOOM,
+                "ui.preview_menu",
+            )
+            .args(serde_json::json!({"kind":"zoom"}))
+            .label(zoom_label(shell)),
+        )
+        .opens("zoom"),
+    );
+    bar.push(Item::button(
+        Slot::View,
+        1,
+        step("preview-zoom-in", "plus", "Zoom in · Ctrl++", "in"),
+    ));
+    bar.push(Item::button(
+        Slot::View,
+        1,
+        step("preview-fit", "fit", label::FIT, "reset").active(fit),
+    ));
+    bar.push(Item::button(
+        Slot::View,
+        0,
+        step("preview-width", "width", label::FIT_WIDTH, "width").active(shell.preview.fit_width),
+    ));
+    bar.popups.push((
+        "zoom",
+        std::rc::Rc::new(|shell, theme, cx| {
+            let popup = shell.preview.menu.as_ref()?;
+            Some(
+                toolbar::popup_panel(popup, "ui.preview_menu", theme, cx)
+                    .child(zoom_menu(shell, cx))
+                    .into_any_element(),
+            )
+        }),
+    ));
 }
 
 /// Whether the hexadecimal inspection provider is registered. The registry
@@ -89,15 +130,6 @@ pub(crate) fn hex_available(shell: &Shell) -> bool {
     let hex = shell.app.previews.ids().contains(&"preview-hex");
     cache.set(Some((revision, hex)));
     hex
-}
-
-fn open_button() -> Button {
-    Button::new(
-        "preview-external",
-        "open",
-        "Open in default application",
-        "ui.preview_open_external",
-    )
 }
 
 fn caption(shell: &Shell) -> String {
@@ -122,182 +154,76 @@ fn caption(shell: &Shell) -> String {
     }
 }
 
-fn row(
-    shell: &Shell,
-    mode: usize,
-    anchor: &crate::elements::popover::PopoverAnchor,
-    cx: &mut Context<Shell>,
-) -> AnyElement {
-    let theme = cx.global::<Theme>().clone();
+pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
     let image = matches!(shell.preview.content, Some(PreviewContent::Image { .. }));
-    let video = match &shell.preview.content {
-        Some(PreviewContent::Image {
-            detail: Some(PreviewInfo::Video { seconds, duration }),
-            ..
-        }) => Some((*seconds, *duration)),
-        _ => None,
-    };
-    // One id for every variant: a button's focus handle lives in element
-    // state keyed by its id path, so focus survives a responsive reflow.
-    let mut row = toolbar::row(&theme).id("preview-tools");
-    if let Some((seconds, duration)) = video {
-        let current = shell.preview.seconds.unwrap_or(seconds);
-        let time = if mode < 2 {
-            duration.map_or_else(
-                || format!("{current:.1}s"),
-                |total| format!("{current:.1}s / {total:.1}s"),
-            )
-        } else {
-            format!("{current:.1}s")
-        };
-        row = row
-            .child(
-                Button::new(
-                    "preview-back",
-                    "left",
-                    "Back five seconds",
-                    "ui.preview_seek",
-                )
-                .args(serde_json::json!({"delta":-5}))
-                .enabled(current > 0.)
-                .render(shell, cx),
-            )
-            .child(div().flex_none().text_xs().whitespace_nowrap().child(time))
-            .child(
-                Button::new(
-                    "preview-forward",
-                    "right",
-                    "Forward five seconds",
-                    "ui.preview_seek",
-                )
-                .args(serde_json::json!({"delta":5}))
-                .enabled(duration.is_none_or(|d| current < (d - 0.1).max(0.)))
-                .render(shell, cx),
-            );
-    } else if mode == 0 || !image {
-        row = row.child(
-            div()
-                .when(image, |d| d.flex_none().whitespace_nowrap())
-                .text_xs()
-                .text_color(theme.text_muted)
-                .when(!image, |d| d.min_w_0().flex_1().truncate())
-                .child(caption(shell)),
+    let mut bar = Bar::new("preview-tools");
+    if let Some(PreviewContent::Image {
+        detail: Some(PreviewInfo::Video { seconds, duration }),
+        ..
+    }) = &shell.preview.content
+    {
+        let current = shell.preview.seconds.unwrap_or(*seconds);
+        let time = duration.map_or_else(
+            || format!("{current:.1}s"),
+            |total| format!("{current:.1}s / {total:.1}s"),
         );
-    }
-    if image && (mode == 0 || video.is_none()) {
-        if mode < 2 {
-            row = row.child(zoom_step(false).render(shell, cx));
-        }
-        row = row.child(
+        bar.push(Item::button(
+            Slot::Navigate,
+            2,
             Button::new(
-                "preview-zoom-menu",
-                "chevron",
-                "Zoom and fit options",
-                "ui.preview_menu",
+                "preview-back",
+                "left",
+                "Back five seconds",
+                "ui.preview_seek",
             )
-            .args(serde_json::json!({"kind":"zoom"}))
-            .label(zoom_label(shell))
-            .anchor_if(
-                anchor,
-                mode == 0
-                    || shell
-                        .preview
-                        .menu
-                        .as_ref()
-                        .is_some_and(|p| p.kind == "zoom"),
+            .args(serde_json::json!({"delta":-5}))
+            .enabled(current > 0.),
+        ));
+        bar.push(Item::widget(Slot::Navigate, 1, move |_, _| {
+            div()
+                .flex_none()
+                .text_xs()
+                .whitespace_nowrap()
+                .child(time.clone())
+                .into_any_element()
+        }));
+        bar.push(Item::button(
+            Slot::Navigate,
+            2,
+            Button::new(
+                "preview-forward",
+                "right",
+                "Forward five seconds",
+                "ui.preview_seek",
             )
-            .render(shell, cx),
-        );
-        if mode < 2 {
-            row = row.child(zoom_step(true).render(shell, cx));
-        }
-    }
-    if image && mode < 2 {
-        row = row.child(
-            Button::new("preview-fit", "fit", "Fit whole image", "ui.preview_zoom")
-                .args(serde_json::json!({"dir":"reset"}))
-                .active(shell.preview.zoom.is_none() && !shell.preview.fit_width)
-                .render(shell, cx),
-        );
-        if mode == 0 {
-            row = row.child(
-                Button::new(
-                    "preview-width",
-                    "width",
-                    "Fit image width",
-                    "ui.preview_zoom",
-                )
-                .args(serde_json::json!({"dir":"width"}))
-                .active(shell.preview.fit_width)
-                .render(shell, cx),
-            );
-        }
+            .args(serde_json::json!({"delta":5}))
+            .enabled(duration.is_none_or(|d| current < (d - 0.1).max(0.))),
+        ));
     }
     if image {
-        row = row.child(div().flex_1().min_w_0());
+        zoom_tools(&mut bar, shell);
     }
-    if mode == 0 || !image {
-        if hex_available(shell) {
-            row = row.child(
-                Button::new("preview-hex", "list", "View as hexadecimal", "ui.inspect")
-                    .args(serde_json::json!({"action":"hex"}))
-                    .render(shell, cx),
-            );
-        }
-        row = row.child(open_button().render(shell, cx));
-    } else {
-        row = row.child(
-            Button::new(
-                "preview-more",
-                "more",
-                "More preview controls",
-                "ui.preview_menu",
-            )
-            .active(shell.preview.menu.is_some())
-            .anchor_if(
-                anchor,
-                video.is_some()
-                    || shell
-                        .preview
-                        .menu
-                        .as_ref()
-                        .is_some_and(|p| p.kind != "zoom"),
-            )
-            .render(shell, cx),
-        );
+    if hex_available(shell) {
+        bar.push(Item::button(
+            Slot::View,
+            0,
+            Button::new("preview-hex", "grid", label::HEX, "ui.inspect")
+                .args(serde_json::json!({"action":"hex"})),
+        ));
     }
-    row.into_any_element()
-}
-
-pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
-    let anchor = crate::elements::popover::PopoverAnchor::default();
-    let mut root = div().relative().flex_none().child(AdaptiveRow {
-        variants: (0..3).map(|mode| row(shell, mode, &anchor, cx)).collect(),
-        height: 42.,
-        chosen: None,
-    });
-    if let Some(popup) = &shell.preview.menu {
-        let mut panel = toolbar::popup_panel(popup, "ui.preview_menu", theme, cx);
-        if matches!(shell.preview.content, Some(PreviewContent::Image { .. })) {
-            panel = panel.child(zoom_menu(shell, "Fit image", cx));
-        }
-        if popup.kind != "zoom" {
-            panel = panel
-                .child(div().h(px(1.)).my_1().bg(theme.border))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.text_muted)
-                        .child(caption(shell)),
-                )
-                .child(
-                    open_button()
-                        .label("Open externally")
-                        .render(shell, cx)
-                        .justify_start(),
-                );
-        }
-        root = root.child(anchor.popup(panel));
-    }
-    root.into_any_element()
+    let (text, muted) = (caption(shell), theme.text_muted);
+    bar.push(Item::widget(
+        Slot::View,
+        if image { 0 } else { 2 },
+        move |_, _| {
+            div()
+                .min_w_0()
+                .text_xs()
+                .text_color(muted)
+                .truncate()
+                .child(text.clone())
+                .into_any_element()
+        },
+    ));
+    crate::preview_bar::render(&bar, crate::preview::active_popup(shell), shell, theme, cx)
 }

@@ -1,10 +1,5 @@
 //! Embedded playback controls. Only the session manager touches media I/O.
-use crate::{
-    preview::PreviewContent,
-    shell::Shell,
-    theme::Theme,
-    toolbar::{self, Button},
-};
+use crate::{preview::PreviewContent, shell::Shell, theme::Theme, toolbar::Button};
 use bibli_core::media::{Control, Frame, MediaSession, Playback};
 use gpui::{
     AnyElement, Bounds, Context, FocusHandle, MouseButton, Pixels, RenderImage, Window, div,
@@ -529,207 +524,174 @@ fn seek_bar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement
         })).into_any_element()
 }
 
-fn row(
-    shell: &Shell,
-    theme: &Theme,
-    mode: usize,
-    anchor: &crate::elements::popover::PopoverAnchor,
-    cx: &mut Context<Shell>,
-) -> AnyElement {
+pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
+    use crate::preview_bar::{Bar, Item, Slot};
     let state = &shell.preview.media.state;
-    // One element id for every variant: gpui keys a button's focus handle by
-    // its id path, so focus survives a responsive reflow (see elements/adaptive.rs).
-    let mut row = toolbar::row(theme).id("video-tools").child(
+    let mut bar = Bar::new("video-tools");
+    bar.push(Item::button(
+        Slot::Navigate,
+        2,
         control(
             "video-play",
             if state.playing() { "pause" } else { "play" },
-            "Play / pause (Space)",
+            "Play / pause · Space",
             "play",
             serde_json::Value::Null,
-        )
-        .render(shell, cx),
+        ),
+    ));
+    bar.push(Item::widget(Slot::Navigate, 1, |shell, _| {
+        let media = &shell.preview.media;
+        div()
+            .text_xs()
+            .flex_none()
+            .child(time(media.scrub.unwrap_or(media.state.position)))
+            .into_any_element()
+    }));
+    let seek_theme = theme.clone();
+    bar.push(
+        Item::widget(Slot::Navigate, 2, move |shell, cx| {
+            seek_bar(shell, &seek_theme, cx)
+        })
+        .fills(),
     );
-    if mode < 2 {
-        row = row.child(
-            div()
-                .text_xs()
-                .flex_none()
-                .child(time(shell.preview.media.scrub.unwrap_or(state.position))),
-        );
-    }
-    row = row.child(seek_bar(shell, theme, cx));
-    if mode == 0 {
-        row = row
+    let muted = theme.text_muted;
+    bar.push(Item::widget(Slot::Navigate, 0, move |shell, _| {
+        div()
+            .text_xs()
+            .flex_none()
+            .text_color(muted)
             .child(
-                div()
-                    .text_xs()
-                    .flex_none()
-                    .text_color(theme.text_muted)
-                    .child(state.duration.map_or_else(|| "—".into(), time)),
+                shell
+                    .preview
+                    .media
+                    .state
+                    .duration
+                    .map_or_else(|| "—".into(), time),
             )
-            .child(
-                control(
-                    "video-mute",
-                    if state.muted { "muted" } else { "volume" },
-                    "Mute / unmute (M)",
-                    "mute",
-                    serde_json::Value::Null,
-                )
-                .render(shell, cx),
-            );
-    }
-    if mode < 2 {
-        row = row.child(
-            Button::new(
-                "video-fullscreen",
-                "fullscreen",
-                "Fullscreen (F)",
-                "ui.media_fullscreen",
-            )
-            .active(shell.preview.media.fullscreen.is_some())
-            .render(shell, cx),
-        );
-    }
-    row.child(
+            .into_any_element()
+    }));
+    bar.push(Item::button(
+        Slot::View,
+        0,
+        control(
+            "video-mute",
+            if state.muted { "muted" } else { "volume" },
+            if state.muted {
+                "Unmute · M"
+            } else {
+                "Mute · M"
+            },
+            "mute",
+            serde_json::Value::Null,
+        ),
+    ));
+    bar.push(Item::button(
+        Slot::View,
+        1,
         Button::new(
-            "video-options",
-            "more",
-            "Playback options",
-            "ui.preview_menu",
+            "video-fullscreen",
+            "fullscreen",
+            "Fullscreen · F",
+            "ui.media_fullscreen",
         )
-        .anchor_if(anchor, true)
-        .active(shell.preview.menu.is_some())
-        .render(shell, cx),
-    )
-    .into_any_element()
+        .active(shell.preview.media.fullscreen.is_some()),
+    ));
+    bar.settings = Some(std::rc::Rc::new(settings));
+    crate::preview_bar::render(&bar, crate::preview::active_popup(shell), shell, theme, cx)
 }
 
-pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
+/// What playback has no button for: volume, speed and the tracks.
+fn settings(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyElement> {
     let state = &shell.preview.media.state;
-    let anchor = crate::elements::popover::PopoverAnchor::default();
-    let mut root = div()
-        .relative()
-        .flex_none()
-        .child(crate::elements::adaptive::AdaptiveRow {
-            variants: (0..3)
-                .map(|mode| row(shell, theme, mode, &anchor, cx))
-                .collect(),
-            height: 42.,
-            chosen: None,
-        });
-    if let Some(popup) = &shell.preview.menu {
-        let mut panel = toolbar::popup_panel(popup, "ui.preview_menu", theme, cx)
-            .max_h(px(480.))
-            .overflow_y_scroll();
-        panel = panel
-            .child(div().text_xs().child(format!(
+    let heading = |title: &'static str| {
+        div()
+            .text_xs()
+            .text_color(theme.text_muted)
+            .child(title)
+            .into_any_element()
+    };
+    let mut rows = vec![
+        div()
+            .text_xs()
+            .child(format!(
                 "{} / {}",
                 time(state.position),
                 state.duration.map_or_else(|| "—".into(), time)
-            )))
-            .child(
-                control(
-                    "video-menu-mute",
-                    if state.muted { "muted" } else { "volume" },
-                    "Mute / unmute",
-                    "mute",
-                    serde_json::Value::Null,
-                )
-                .label(if state.muted { "Unmute" } else { "Mute" })
-                .render(shell, cx),
+            ))
+            .into_any_element(),
+        heading("Volume"),
+    ];
+    let mut row = div().flex().gap_1();
+    for value in [0., 0.25, 0.5, 0.75, 1.] {
+        let label = format!("{:.0}%", value * 100.);
+        row = row.child(
+            control(
+                format!("volume-{label}"),
+                "",
+                label.clone(),
+                "volume",
+                value.into(),
             )
-            .child(
-                Button::new(
-                    "video-menu-fullscreen",
-                    "fullscreen",
-                    "Fullscreen",
-                    "ui.media_fullscreen",
-                )
-                .label("Fullscreen")
-                .render(shell, cx),
-            );
-        panel = panel.child(div().text_xs().text_color(theme.text_muted).child("Volume"));
-        let mut row = div().flex().gap_1();
-        for value in [0., 0.25, 0.5, 0.75, 1.] {
-            let label = format!("{:.0}%", value * 100.);
-            row = row.child(
-                control(
-                    format!("volume-{label}"),
-                    "",
-                    label.clone(),
-                    "volume",
-                    value.into(),
-                )
-                .label(label)
-                .active((state.volume - value).abs() < 0.01)
-                .render(shell, cx),
-            );
-        }
-        panel = panel.child(row).child(
-            div()
-                .text_xs()
-                .text_color(theme.text_muted)
-                .child("Playback speed"),
-        );
-        let mut row = div().flex().gap_1();
-        for value in [0.5, 1., 1.25, 1.5, 2.] {
-            let label = format!("{value}×");
-            row = row.child(
-                control(
-                    format!("rate-{label}"),
-                    "",
-                    label.clone(),
-                    "rate",
-                    value.into(),
-                )
-                .label(label)
-                .active((state.rate - value).abs() < 0.01)
-                .enabled(state.seekable)
-                .render(shell, cx),
-            );
-        }
-        panel = panel.child(row);
-        for (title, action, tracks, selected) in [
-            ("Audio", "audio", &state.audio_tracks, state.audio),
-            (
-                "Subtitles",
-                "subtitle",
-                &state.subtitle_tracks,
-                state.subtitle,
-            ),
-        ] {
-            panel = panel.child(div().text_xs().text_color(theme.text_muted).child(title));
-            if action == "subtitle" {
-                panel = panel.child(
-                    control("subtitles-off", "", "Off", action, (-1).into())
-                        .label("Off")
-                        .active(selected == -1)
-                        .render(shell, cx),
-                );
-            }
-            for (i, label) in tracks.iter().enumerate() {
-                panel = panel.child(
-                    control(format!("{action}-{i}"), "", label.clone(), action, i.into())
-                        .label(label.clone())
-                        .active(i as i32 == selected)
-                        .render(shell, cx)
-                        .justify_start(),
-                );
-            }
-        }
-        panel = panel.child(
-            Button::new(
-                "video-external",
-                "open",
-                "Open externally",
-                "ui.preview_open_external",
-            )
-            .label("Open externally")
+            .label(label)
+            .active((state.volume - value).abs() < 0.01)
             .render(shell, cx),
         );
-        root = root.child(anchor.popup(panel));
     }
-    root.into_any_element()
+    rows.push(row.into_any_element());
+    rows.push(heading("Playback speed"));
+    let mut row = div().flex().gap_1();
+    for value in [0.5, 1., 1.25, 1.5, 2.] {
+        let label = format!("{value}×");
+        row = row.child(
+            control(
+                format!("rate-{label}"),
+                "",
+                label.clone(),
+                "rate",
+                value.into(),
+            )
+            .label(label)
+            .active((state.rate - value).abs() < 0.01)
+            .enabled(state.seekable)
+            .render(shell, cx),
+        );
+    }
+    rows.push(row.into_any_element());
+    for (title, action, tracks, selected) in [
+        ("Audio", "audio", &state.audio_tracks, state.audio),
+        (
+            "Subtitles",
+            "subtitle",
+            &state.subtitle_tracks,
+            state.subtitle,
+        ),
+    ] {
+        if tracks.is_empty() {
+            continue;
+        }
+        rows.push(heading(title));
+        if action == "subtitle" {
+            rows.push(
+                control("subtitles-off", "", "Off", action, (-1).into())
+                    .label("Off")
+                    .active(selected == -1)
+                    .menu()
+                    .render(shell, cx)
+                    .into_any_element(),
+            );
+        }
+        for (i, label) in tracks.iter().enumerate() {
+            rows.push(
+                control(format!("{action}-{i}"), "", label.clone(), action, i.into())
+                    .label(label.clone())
+                    .active(i as i32 == selected)
+                    .menu()
+                    .render(shell, cx)
+                    .into_any_element(),
+            );
+        }
+    }
+    rows
 }
 
 /// Cover and metadata remain visible during playback; spectrum has no UI timer.

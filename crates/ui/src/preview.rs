@@ -125,6 +125,8 @@ pub struct PreviewState {
     rx: flume::Receiver<PreviewResult>,
     text_scroll: UniformListScrollHandle,
     pub peek_focus: Option<FocusHandle>,
+    /// Focus of a picture, so the zoom keys reach it once it is clicked.
+    pub image_focus: Option<FocusHandle>,
     /// Whether the hexadecimal provider is registered, keyed by the preview
     /// registry revision it was read at (see `preview_toolbar::hex_available`).
     pub(crate) hex_provider: std::cell::Cell<Option<(u64, bool)>>,
@@ -155,6 +157,7 @@ impl Default for PreviewState {
             rx,
             text_scroll: UniformListScrollHandle::new(),
             peek_focus: None,
+            image_focus: None,
             hex_provider: std::cell::Cell::new(None),
         }
     }
@@ -476,6 +479,11 @@ impl Shell {
                             .get::<bool>(crate::settings::READER_CONTINUOUS_KEY)
                             .unwrap_or(true);
                         self.set_reader_continuous(continuous, window, cx);
+                    }
+                    if matches!(result.content, PreviewContent::Image { .. }) {
+                        self.preview
+                            .image_focus
+                            .get_or_insert_with(|| cx.focus_handle());
                     }
                     self.preview.reader.selection = None;
                     self.preview.reader.selection_page = None;
@@ -986,6 +994,16 @@ impl Shell {
         );
     }
 
+    /// `ui.preview_copy_path`: the path of what is shown, as text.
+    pub fn preview_copy_path(&mut self, cx: &mut Context<Self>) {
+        let Some(key) = &self.preview.key else {
+            return;
+        };
+        let path = key.path.to_string_lossy().into_owned();
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(path));
+        self.set_status("Copied the path", false, cx);
+    }
+
     pub fn preview_zoom(&mut self, direction: &str, cx: &mut Context<Self>) {
         self.preview.fit_width = direction == "width";
         self.preview.zoom = match direction {
@@ -1174,6 +1192,32 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
         .into_any_element()
 }
 
+/// The popup of the preview's bar that is open: More, the zoom menu, or the
+/// reader's find field, which is no menu but is anchored like one.
+pub fn active_popup(shell: &Shell) -> Option<&'static str> {
+    match &shell.preview.menu {
+        Some(popup) => Some(popup.kind),
+        None => {
+            (shell.preview.reader.finding() || shell.preview.inspection.finding()).then_some("find")
+        }
+    }
+}
+
+/// One line under the toolbar for what a preview has to say about itself:
+/// how the content is shown, what was left out, why there is none.
+fn notice_strip(text: String, theme: &Theme) -> gpui::Div {
+    div()
+        .flex_none()
+        .px_2()
+        .py_1()
+        .text_xs()
+        .text_color(theme.text_muted)
+        .bg(theme.surface)
+        .border_b_1()
+        .border_color(theme.border)
+        .child(text)
+}
+
 /// Whether the content is something to read rather than something to look at.
 fn on_paper(shell: &Shell) -> bool {
     let preview = &shell.preview;
@@ -1189,9 +1233,20 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
         return crate::media::audio_content(shell, theme);
     }
     match &p.content {
-        Some(PreviewContent::Inspection(display)) => {
-            crate::inspector::content(shell, display, theme, cx)
-        }
+        Some(PreviewContent::Inspection(display)) => div()
+            .relative()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .children(crate::inspector::notice(display).map(|text| notice_strip(text, theme)))
+            .child(crate::inspector::content(shell, display, theme, cx))
+            .children(
+                Some(())
+                    .filter(|()| interactive)
+                    .and_then(|()| crate::inspector::outline_drawer(shell, display, theme, cx)),
+            )
+            .into_any_element(),
         None if p.phase != PreviewPhase::Idle => div()
             .flex_1()
             .flex()
@@ -1275,6 +1330,29 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                 .when(document.is_some() && interactive, |d| {
                     d.key_context(keymap::READER)
                 })
+                .when_some(
+                    p.image_focus
+                        .as_ref()
+                        .filter(|_| document.is_none() && interactive),
+                    |d, focus| {
+                        let clicked = focus.clone();
+                        d.track_focus(focus)
+                            .key_context(keymap::IMAGE)
+                            .on_mouse_down(MouseButton::Left, move |_, window, _| {
+                                window.focus(&clicked);
+                            })
+                            .on_scroll_wheel(cx.listener(
+                                |this, event: &gpui::ScrollWheelEvent, window, cx| {
+                                    if event.modifiers.control {
+                                        let up = event.delta.pixel_delta(window.line_height()).y
+                                            > px(0.);
+                                        this.preview_zoom(if up { "in" } else { "out" }, cx);
+                                        cx.stop_propagation();
+                                    }
+                                },
+                            ))
+                    },
+                )
                 .child(
                     div()
                         .relative()
@@ -1289,7 +1367,7 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                 )
                 .into_any_element()
         }
-        Some(PreviewContent::Text { lines, truncated }) => {
+        Some(PreviewContent::Text { lines, .. }) => {
             let lines = lines.clone();
             let n = lines.len();
             let mono = shell.mono_font.clone();
@@ -1334,13 +1412,6 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                         .child(list)
                         .child(bar),
                 )
-                .when(*truncated, |d| {
-                    d.child(
-                        div()
-                            .text_color(theme.text_muted)
-                            .child("first 64 KB shown"),
-                    )
-                })
                 .into_any_element()
         }
         Some(PreviewContent::Dir { items }) => div()

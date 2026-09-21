@@ -20,10 +20,6 @@ pub enum PromptKind {
     Mkdir,
     Search,
     Tags,
-    InspectSearch {
-        pane: bibli_core::workspace::PaneId,
-        generation: u64,
-    },
     InspectJump {
         pane: bibli_core::workspace::PaneId,
         generation: u64,
@@ -54,9 +50,6 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let placeholder = match kind {
-            PromptKind::InspectSearch { .. } => {
-                "Text, or hex: followed by byte pairs in the hex viewer"
-            }
             PromptKind::InspectJump { .. } => "Offset (decimal or 0x hexadecimal)",
             PromptKind::Passphrase => "Passphrase",
             PromptKind::Rename => "New name",
@@ -119,18 +112,12 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         match kind {
-            PromptKind::InspectSearch { pane, generation }
-            | PromptKind::InspectJump { pane, generation } => {
+            PromptKind::InspectJump { pane, generation } => {
                 self.with_pane(pane, |this| {
                     if this.preview.generation == generation {
-                        let action = if matches!(kind, PromptKind::InspectSearch { .. }) {
-                            "find"
-                        } else {
-                            "jump"
-                        };
                         this.run(
                             "ui.inspect",
-                            serde_json::json!({"action":action,"value":text}),
+                            serde_json::json!({"action":"jump","value":text}),
                             window,
                             cx,
                         );

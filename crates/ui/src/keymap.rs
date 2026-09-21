@@ -21,6 +21,7 @@ pub const PALETTE: &str = "Palette";
 pub const CONFIRM: &str = "Confirm";
 pub const PEEK: &str = "Peek";
 pub const READER: &str = "DocumentReader";
+pub const IMAGE: &str = "ImagePreview";
 pub const REVIEW: &str = "Review";
 pub const JUMP: &str = "Jump";
 pub const BULK: &str = "BulkRename";
@@ -193,6 +194,90 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         r#"{"delta":-1}"#,
         Some("reader"),
     ),
+    // The same keys in every preview: zoom what is looked at, size what is
+    // read, step through sections or pages.
+    (
+        "ctrl-=",
+        "ui.preview_zoom",
+        r#"{"dir":"in"}"#,
+        Some("reader"),
+    ),
+    (
+        "ctrl-+",
+        "ui.preview_zoom",
+        r#"{"dir":"in"}"#,
+        Some("reader"),
+    ),
+    (
+        "ctrl--",
+        "ui.preview_zoom",
+        r#"{"dir":"out"}"#,
+        Some("reader"),
+    ),
+    (
+        "ctrl-0",
+        "ui.preview_zoom",
+        r#"{"dir":"reset"}"#,
+        Some("reader"),
+    ),
+    (
+        "ctrl-=",
+        "ui.preview_zoom",
+        r#"{"dir":"in"}"#,
+        Some("ImagePreview"),
+    ),
+    (
+        "ctrl-+",
+        "ui.preview_zoom",
+        r#"{"dir":"in"}"#,
+        Some("ImagePreview"),
+    ),
+    (
+        "ctrl--",
+        "ui.preview_zoom",
+        r#"{"dir":"out"}"#,
+        Some("ImagePreview"),
+    ),
+    (
+        "ctrl-0",
+        "ui.preview_zoom",
+        r#"{"dir":"reset"}"#,
+        Some("ImagePreview"),
+    ),
+    (
+        "ctrl-=",
+        "ui.inspect",
+        r#"{"action":"larger"}"#,
+        Some("Inspector"),
+    ),
+    (
+        "ctrl-+",
+        "ui.inspect",
+        r#"{"action":"larger"}"#,
+        Some("Inspector"),
+    ),
+    (
+        "ctrl--",
+        "ui.inspect",
+        r#"{"action":"smaller"}"#,
+        Some("Inspector"),
+    ),
+    (
+        "f3",
+        "ui.inspect",
+        r#"{"action":"find_next"}"#,
+        Some("Inspector"),
+    ),
+    (
+        "f3",
+        "ui.inspect",
+        r#"{"action":"find_next"}"#,
+        Some("InspectorFind"),
+    ),
+    ("[", "ui.preview_page", r#"{"delta":-1}"#, Some("Inspector")),
+    ("]", "ui.preview_page", r#"{"delta":1}"#, Some("Inspector")),
+    ("[", "ui.preview_page", r#"{"delta":-1}"#, Some("reader")),
+    ("]", "ui.preview_page", r#"{"delta":1}"#, Some("reader")),
     ("alt-pageup", "ui.preview_page", r#"{"delta":-1}"#, None),
     ("alt-pagedown", "ui.preview_page", r#"{"delta":1}"#, None),
     (
@@ -295,7 +380,9 @@ pub fn context_label(context: &str) -> String {
             "Confirm" => place = "Confirmation dialogs",
             "Peek" => place = "Peek",
             "DocumentReader" => place = "Document reader",
+            "ImagePreview" => place = "Picture preview",
             "DocumentFind" => place = "Document search",
+            "InspectorFind" => place = "Preview search",
             "Review" => place = "Plan review",
             "Jump" => place = "Jump",
             "BulkRename" => place = "Bulk rename",

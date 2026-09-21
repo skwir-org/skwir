@@ -67,8 +67,9 @@ current source before assuming a planned crate, command, or API exists.
   when dismissed; retain a focused button's handle when it becomes disabled.
   GPUI already emits Enter/Space clicks on key-up: do not dispatch again on
   key-down.
-  Preview types share their frame in `preview.rs` and zoom controls in
-  `preview_toolbar.rs`; keep document-only tools in `reader.rs`. Preview menus
+  Preview types share their frame in `preview.rs` and one toolbar,
+  `preview_bar.rs`: a kind lists its tools in slots and never builds a row
+  (`docs/invariants/previews.md`, "The preview frame"). Preview menus
   belong to the selected preview and close when its content is replaced by a
   different file or its presentation closes.
   Anchor popovers to their visible trigger through `elements/popover.rs`;

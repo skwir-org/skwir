@@ -3,7 +3,7 @@ use crate::{
     preview::{PreviewContent, PreviewPhase},
     shell::Shell,
     theme::Theme,
-    toolbar::{self, Button},
+    toolbar::Button,
 };
 use bibli_core::inspection::{InspectRequest, Inspection, InspectionKind};
 use gpui::{
@@ -140,6 +140,12 @@ pub struct State {
     dragging: bool,
     font_size: f32,
     outline: bool,
+    /// The find field, open under its button like the document reader's.
+    find: Option<FindInput>,
+}
+struct FindInput {
+    input: gpui::Entity<crate::input::TextInput>,
+    _subscription: gpui::Subscription,
 }
 impl Default for State {
     fn default() -> Self {
@@ -154,10 +160,15 @@ impl Default for State {
             dragging: false,
             font_size: 16.,
             outline: false,
+            find: None,
         }
     }
 }
 impl State {
+    /// Whether the find field is open.
+    pub fn finding(&self) -> bool {
+        self.find.is_some()
+    }
     pub fn reset(&mut self, data: &Inspection) {
         self.collapsed.clear();
         self.selected = None;
@@ -270,27 +281,39 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let action = args["action"].as_str().unwrap_or("auto");
-        if action == "search" || action == "offset" {
-            let pane = self.pane;
-            let generation = self.preview.generation;
-            let kind = if action == "search" {
-                crate::prompts::PromptKind::InspectSearch { pane, generation }
-            } else {
-                crate::prompts::PromptKind::InspectJump { pane, generation }
-            };
-            self.open_prompt(
-                kind,
-                if action == "search" {
-                    "Find in preview"
-                } else {
-                    "Jump to byte offset"
-                },
-                "",
-                None,
-                window,
-                cx,
-            );
-            return;
+        match action {
+            "search" => return self.inspect_find_open(window, cx),
+            "find_next" => {
+                let Some(find) = &self.preview.inspection.find else {
+                    return self.inspect_find_open(window, cx);
+                };
+                let value = find.input.read(cx).text().to_owned();
+                if !value.is_empty() {
+                    let args = serde_json::json!({"action":"find","value":value});
+                    self.inspect_command(&args, window, cx);
+                }
+                return;
+            }
+            "find_close" => {
+                self.preview.inspection.find = None;
+                if let Some(focus) = &self.preview.inspection.focus {
+                    window.focus(focus);
+                }
+                return cx.notify();
+            }
+            "offset" => {
+                let (pane, generation) = (self.pane, self.preview.generation);
+                self.open_prompt(
+                    crate::prompts::PromptKind::InspectJump { pane, generation },
+                    "Jump to byte offset",
+                    "",
+                    None,
+                    window,
+                    cx,
+                );
+                return;
+            }
+            _ => {}
         }
         let kind = match &self.preview.content {
             Some(PreviewContent::Inspection(display)) => Some(display.data.kind),
@@ -574,6 +597,55 @@ impl Shell {
         cx.notify();
     }
 }
+impl Shell {
+    fn inspect_find_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::input::{InputEvent, TextInput};
+        if self.preview.inspection.find.is_none() {
+            let hex = matches!(
+                &self.preview.content,
+                Some(PreviewContent::Inspection(display)) if display.data.kind == InspectionKind::Hex
+            );
+            let placeholder = if hex {
+                "Text, or hex: 00 ff 7a"
+            } else {
+                "Find…"
+            };
+            let input = cx.new(|cx| TextInput::new(placeholder, cx));
+            let subscription =
+                cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
+                    match event {
+                        InputEvent::Submit => {
+                            this.run(
+                                "ui.inspect",
+                                serde_json::json!({"action":"find_next"}),
+                                window,
+                                cx,
+                            );
+                        }
+                        InputEvent::Cancel => {
+                            this.run(
+                                "ui.inspect",
+                                serde_json::json!({"action":"find_close"}),
+                                window,
+                                cx,
+                            );
+                        }
+                        InputEvent::Changed => cx.notify(),
+                    }
+                });
+            self.preview.inspection.find = Some(FindInput {
+                input,
+                _subscription: subscription,
+            });
+        }
+        if let Some(find) = &self.preview.inspection.find {
+            find.input.read(cx).focus(window);
+        }
+        self.preview.menu = None;
+        cx.notify();
+    }
+}
+
 /// Whether the link names a URI scheme (`mailto:`, `irc:`, `https:`) rather
 /// than a path. A colon after a slash belongs to a file name, not a scheme.
 fn has_scheme(href: &str) -> bool {
@@ -627,159 +699,255 @@ fn button(id: &'static str, icon: &'static str, title: &'static str, action: &st
     Button::new(id, icon, title, "ui.inspect").args(serde_json::json!({"action":action}))
 }
 pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
+    use crate::preview_bar::{Bar, Item, Slot, label};
     let Some(PreviewContent::Inspection(display)) = &shell.preview.content else {
         return div().into_any_element();
     };
-    let anchor = crate::elements::popover::PopoverAnchor::default();
-    let variants = (0..3)
-        .map(|mode| toolbar_row(shell, &display.data, theme, mode, &anchor, cx))
-        .collect();
-    let mut root = div()
-        .relative()
-        .flex_none()
-        .child(crate::elements::adaptive::AdaptiveRow {
-            variants,
-            height: 42.,
-            chosen: None,
-        });
-    if let Some(popup) = &shell.preview.menu {
-        let mut panel = toolbar::popup_panel(popup, "ui.preview_menu", theme, cx);
-        let hex = crate::preview_toolbar::hex_available(shell);
-        for (id, icon, title, action) in tools(&display.data) {
-            if action == "hex" && !hex {
-                continue;
-            }
-            panel = panel.child(
-                button(id, icon, title, action)
-                    .label(title)
-                    .render(shell, cx)
-                    .justify_start(),
-            );
-        }
-        panel = panel.child(
-            Button::new(
-                "inspect-external",
-                "open",
-                "Open externally",
-                "ui.preview_open_external",
-            )
-            .label("Open externally")
-            .render(shell, cx),
-        );
-        root = root.child(anchor.popup(panel));
-    }
-    root.into_any_element()
-}
-fn tools(data: &Inspection) -> Vec<(&'static str, &'static str, &'static str, &'static str)> {
-    let mut tools = vec![
-        ("inspect-auto", "back", "Default presentation", "auto"),
-        ("inspect-hex", "grid", "View as hexadecimal", "hex"),
-        ("inspect-search", "search", "Find in preview", "search"),
-        ("inspect-copy", "copy", "Copy selection or section", "copy"),
-    ];
-    if data.source_available {
-        tools.push(("inspect-source", "list", "Source / rendered", "source"));
-    }
-    if data.kind == InspectionKind::Hex {
-        tools.push(("inspect-offset", "move", "Jump to byte offset", "offset"));
-    }
-    if matches!(data.kind, InspectionKind::Archive | InspectionKind::Code) {
-        tools.extend([
-            (
-                "inspect-expand-all",
-                "plus",
-                "Expand all sections",
-                "expand_all",
-            ),
-            (
-                "inspect-collapse-all",
-                "minus",
-                "Collapse all sections",
-                "collapse_all",
-            ),
-        ]);
-    }
-    if !data.blocks.is_empty() {
-        tools.extend([
-            ("inspect-smaller", "minus", "Smaller text", "smaller"),
-            ("inspect-larger", "plus", "Larger text", "larger"),
-        ]);
-    }
-    if data.blocks.iter().any(|block| block.heading > 0) || data.kind == InspectionKind::Book {
-        tools.push((
-            "inspect-outline",
-            "contents",
-            "Headings and contents",
-            "outline",
+    let data = &display.data;
+    let request = &shell.preview.inspection.request;
+    let mut bar = Bar::new("inspect-tools");
+
+    if request.target.is_some() {
+        bar.push(Item::button(
+            Slot::Navigate,
+            2,
+            button("inspect-parent", "up", "Back to the container", "back"),
         ));
     }
-    tools
-}
-fn toolbar_row(
-    shell: &Shell,
-    data: &Inspection,
-    theme: &Theme,
-    mode: usize,
-    anchor: &crate::elements::popover::PopoverAnchor,
-    cx: &mut Context<Shell>,
-) -> AnyElement {
-    // One id for every variant keeps a button's focus handle across reflows.
-    let mut row = toolbar::row(theme).id("inspect-tools");
-    let hex = crate::preview_toolbar::hex_available(shell);
-    if shell.preview.inspection.request.target.is_some() {
-        row = row
-            .child(button("inspect-parent", "up", "Container contents", "back").render(shell, cx));
-    }
     for (id, icon, title, offset) in [
-        ("inspect-prev", "left", "Previous section", data.previous),
-        ("inspect-next", "right", "Next section", data.next),
+        (
+            "inspect-prev",
+            "left",
+            "Previous section · [",
+            data.previous,
+        ),
+        ("inspect-next", "right", "Next section · ]", data.next),
     ] {
         if let Some(offset) = offset {
-            row = row.child(
+            bar.push(Item::button(
+                Slot::Navigate,
+                2,
                 Button::new(id, icon, title, "ui.inspect")
-                    .args(serde_json::json!({"action":"page","offset":offset}))
-                    .render(shell, cx),
-            );
+                    .args(serde_json::json!({"action":"page","offset":offset})),
+            ));
         }
     }
-    for (id, icon, title, action) in tools(data) {
-        if (mode == 1 && !matches!(action, "source" | "search" | "copy" | "outline"))
-            || (mode == 2 && action != "search")
-        {
-            continue;
-        }
-        if action == "hex" && !hex {
-            continue;
-        }
-        row = row.child(
-            button(id, icon, title, action)
-                .active(action == "source" && shell.preview.inspection.request.source)
-                .render(shell, cx),
-        );
+
+    // The ways to show the same file: back to the default only once it was left.
+    if request.provider.is_some() {
+        bar.push(Item::button(
+            Slot::View,
+            1,
+            button("inspect-auto", "back", "Default presentation", "auto"),
+        ));
     }
-    if mode == 0 {
-        row = row.child(
+    if data.source_available {
+        bar.push(Item::button(
+            Slot::View,
+            1,
+            button("inspect-source", "list", "Source / rendered", "source").active(request.source),
+        ));
+    }
+    if data.kind == InspectionKind::Hex {
+        bar.push(Item::button(
+            Slot::View,
+            1,
+            button("inspect-offset", "move", "Jump to byte offset", "offset"),
+        ));
+    } else if crate::preview_toolbar::hex_available(shell) {
+        bar.push(Item::button(
+            Slot::View,
+            0,
+            button("inspect-hex", "grid", label::HEX, "hex"),
+        ));
+    }
+    if matches!(data.kind, InspectionKind::Archive | InspectionKind::Code) {
+        bar.push(Item::button(
+            Slot::View,
+            0,
+            button("inspect-expand-all", "plus", "Expand all", "expand_all"),
+        ));
+        bar.push(Item::button(
+            Slot::View,
+            0,
+            button(
+                "inspect-collapse-all",
+                "minus",
+                "Collapse all",
+                "collapse_all",
+            ),
+        ));
+    } else if !data.blocks.is_empty() {
+        bar.push(Item::button(
+            Slot::View,
+            0,
+            button(
+                "inspect-smaller",
+                "minus",
+                "Smaller text · Ctrl+-",
+                "smaller",
+            ),
+        ));
+        bar.push(Item::button(
+            Slot::View,
+            0,
+            button("inspect-larger", "plus", "Larger text · Ctrl++", "larger"),
+        ));
+    }
+    if !data.title.is_empty() {
+        let (title, muted) = (data.title.clone(), theme.text_muted);
+        bar.push(Item::widget(Slot::View, 0, move |_, _| {
             div()
                 .text_xs()
                 .whitespace_nowrap()
-                .child(data.title.clone()),
-        );
+                .text_color(muted)
+                .child(title.clone())
+                .into_any_element()
+        }));
     }
-    row.child(div().flex_1().min_w_0())
-        .child(
-            Button::new(
-                "inspect-more",
-                "more",
-                "More preview controls",
-                "ui.preview_menu",
-            )
-            .args(serde_json::json!({"kind":"inspection"}))
-            .active(shell.preview.menu.is_some())
-            .anchor_if(anchor, true)
-            .render(shell, cx),
+
+    bar.push(
+        Item::button(
+            Slot::Tools,
+            2,
+            button("inspect-search", "search", label::FIND, "search")
+                .active(shell.preview.inspection.finding()),
         )
-        .into_any_element()
+        .opens("find"),
+    );
+    bar.popups.push(("find", std::rc::Rc::new(find_panel)));
+    bar.push(Item::button(
+        Slot::Tools,
+        1,
+        button("inspect-copy", "copy", label::COPY, "copy"),
+    ));
+    if data.blocks.iter().any(|block| block.heading > 0) || data.kind == InspectionKind::Book {
+        bar.push(Item::button(
+            Slot::Tools,
+            1,
+            button("inspect-outline", "contents", label::CONTENTS, "outline"),
+        ));
+    }
+    crate::preview_bar::render(&bar, crate::preview::active_popup(shell), shell, theme, cx)
 }
+/// The find field: the same popup, keys and place as the document reader's.
+/// A structured preview searches as it goes, so there is no count: Enter and
+/// F3 move to the next match and wrap.
+pub fn find_panel(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
+    let find = shell.preview.inspection.find.as_ref()?;
+    Some(
+        div()
+            .tab_group()
+            .key_context("InspectorFind")
+            .w(px(280.))
+            .p_2()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .rounded_lg()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.bg)
+            .shadow_lg()
+            .occlude()
+            .child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .border_1()
+                    .border_color(theme.accent)
+                    .rounded_md()
+                    .child(find.input.clone()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .text_xs()
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_color(theme.text_muted)
+                            .child("Enter for the next match"),
+                    )
+                    .child(
+                        button(
+                            "inspect-next-match",
+                            "right",
+                            "Next match · F3",
+                            "find_next",
+                        )
+                        .render(shell, cx),
+                    )
+                    .child(
+                        button(
+                            "inspect-close-find",
+                            "close",
+                            "Close find · Escape",
+                            "find_close",
+                        )
+                        .render(shell, cx),
+                    ),
+            )
+            .into_any_element(),
+    )
+}
+
+/// What the frame's notice strip says about this inspection: how it is shown
+/// and what was left out. An archive says it in its footer instead.
+pub fn notice(display: &Display) -> Option<String> {
+    let data = &display.data;
+    (!data.notice.is_empty() && data.kind != InspectionKind::Archive).then(|| data.notice.clone())
+}
+
+/// Headings of what is shown, and a book's chapters, in the shared drawer.
+pub fn outline_drawer(
+    shell: &Shell,
+    display: &Display,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> Option<AnyElement> {
+    if !shell.preview.inspection.outline {
+        return None;
+    }
+    let data = &display.data;
+    let mut entries: Vec<crate::outline::Entry> = data
+        .blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, block)| block.heading > 0)
+        .map(|(index, block)| crate::outline::Entry {
+            depth: usize::from(block.heading).saturating_sub(1),
+            title: block.text.clone().into(),
+            command: Some((
+                "ui.inspect",
+                serde_json::json!({"action":"block","index":index}),
+            )),
+        })
+        .collect();
+    if data.kind == InspectionKind::Book {
+        entries.extend(data.rows.iter().filter_map(|row| {
+            let target = row.target.as_ref()?;
+            Some(crate::outline::Entry {
+                depth: 0,
+                title: row.cells.join(" ").into(),
+                command: Some((
+                    "ui.inspect",
+                    serde_json::json!({"action":"target","target":target}),
+                )),
+            })
+        }));
+    }
+    Some(crate::outline::drawer(
+        entries,
+        ("ui.inspect", serde_json::json!({"action":"outline"})),
+        shell,
+        theme,
+        cx,
+    ))
+}
+
 pub fn content(
     shell: &Shell,
     display: &Display,
@@ -815,21 +983,15 @@ pub fn content(
     let list = gpui::list(shell.preview.inspection.list.clone(), move |index, _, _| {
         let theme = &list_theme;
         if index == 0 {
-            if matches!(data.kind, InspectionKind::Archive | InspectionKind::Code)
-                || (data.kind == InspectionKind::Hex
-                    && data.notice.is_empty()
-                    && images[0].is_none())
-            {
-                return div().into_any_element();
-            }
-            return div()
-                .p_2()
-                .text_color(theme.text_muted)
-                .child(data.notice.clone())
-                .when_some(images[0].as_ref(), |d, image| {
-                    d.child(gpui::img(image.clone()).max_w_full())
-                })
-                .into_any_element();
+            // The notice is the frame's strip (`notice`); the first item is
+            // only the picture an inspection may carry.
+            return match images[0].as_ref() {
+                Some(image) => div()
+                    .p_2()
+                    .child(gpui::img(image.clone()).max_w_full())
+                    .into_any_element(),
+                None => div().into_any_element(),
+            };
         }
         let i = index - 1;
         if data.kind == InspectionKind::Code {
@@ -961,52 +1123,6 @@ pub fn content(
         .when_some(shell.preview.inspection.focus.as_ref(), |d, focus| {
             d.track_focus(focus)
         });
-    if shell.preview.inspection.outline {
-        let mut outline = div().flex().flex_wrap().gap_1();
-        for (i, b) in display
-            .data
-            .blocks
-            .iter()
-            .enumerate()
-            .filter(|(_, b)| b.heading > 0)
-        {
-            outline = outline.child(
-                Button::new(
-                    format!("inspect-heading-{i}"),
-                    "",
-                    b.text.clone(),
-                    "ui.inspect",
-                )
-                .label(b.text.clone())
-                .args(serde_json::json!({"action":"block","index":i}))
-                .render(shell, cx),
-            );
-        }
-        if display.data.kind == InspectionKind::Book {
-            for (i, row) in display.data.rows.iter().enumerate() {
-                if let Some(target) = &row.target {
-                    outline = outline.child(
-                        Button::new(
-                            format!("inspect-chapter-{i}"),
-                            "",
-                            row.cells.join(" "),
-                            "ui.inspect",
-                        )
-                        .label(row.cells.join(" "))
-                        .args(serde_json::json!({"action":"target","target":target}))
-                        .render(shell, cx),
-                    );
-                }
-            }
-        }
-        body = body.child(
-            div()
-                .id("inspect-contents")
-                .max_h(px(200.))
-                .overflow_y_scroll()
-                .child(outline),
-        );
-    }
     if display.data.kind == InspectionKind::Archive {
         body = body.child(crate::archive_preview::header(theme));
     } else if !display.data.columns.is_empty() {
