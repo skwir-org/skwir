@@ -142,11 +142,6 @@ fn caption(shell: &Shell) -> String {
             ..
         }) => format!("Video still · {width} × {height}"),
         Some(PreviewContent::Image { width, height, .. }) => format!("{width} × {height}"),
-        Some(PreviewContent::Text { lines, truncated }) => format!(
-            "{} lines{}",
-            lines.len(),
-            if *truncated { " · partial" } else { "" }
-        ),
         Some(PreviewContent::Dir { items }) => crate::format::count(*items, "item"),
         Some(PreviewContent::Error(_)) => "Preview unavailable".into(),
         Some(PreviewContent::Generic) => "No preview".into(),

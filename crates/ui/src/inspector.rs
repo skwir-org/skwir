@@ -761,7 +761,8 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
             button("inspect-hex", "grid", label::HEX, "hex"),
         ));
     }
-    if matches!(data.kind, InspectionKind::Archive | InspectionKind::Code) {
+    // Folding is offered where there is something to fold.
+    if data.kind == InspectionKind::Archive || !data.folds.is_empty() {
         bar.push(Item::button(
             Slot::View,
             0,
@@ -777,7 +778,8 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
                 "collapse_all",
             ),
         ));
-    } else if !data.blocks.is_empty() {
+    }
+    if !data.blocks.is_empty() {
         bar.push(Item::button(
             Slot::View,
             0,

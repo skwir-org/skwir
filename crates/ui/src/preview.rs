@@ -15,9 +15,8 @@ use bibli_core::entry::keys;
 use bibli_core::scheduler::Priority;
 use bibli_core::{CancelToken, EntryId};
 use gpui::{
-    AnyElement, Context, CursorStyle, DragMoveEvent, FocusHandle, Hsla, MouseButton, ObjectFit,
-    Render, RenderImage, ScrollStrategy, UniformListScrollHandle, Window, div, img, prelude::*, px,
-    rgb,
+    AnyElement, Context, CursorStyle, DragMoveEvent, FocusHandle, MouseButton, ObjectFit, Render,
+    RenderImage, Window, div, img, prelude::*, px,
 };
 use smallvec::SmallVec;
 use syntect::highlighting::ThemeSet;
@@ -30,7 +29,6 @@ use crate::shell::Shell;
 use crate::theme::Theme;
 
 const TEXT_LIMIT: usize = 64 * 1024;
-const MAX_LINES: usize = 4000;
 const IMAGE_MAX_SIDE: u32 = 2048;
 
 pub enum PreviewContent {
@@ -41,10 +39,6 @@ pub enum PreviewContent {
         height: u32,
         detail: Option<PreviewInfo>,
         document: Option<Arc<bibli_core::document::PageContent>>,
-    },
-    Text {
-        lines: Vec<Vec<(Hsla, String)>>,
-        truncated: bool,
     },
     Dir {
         items: usize,
@@ -123,7 +117,6 @@ pub struct PreviewState {
     pub(crate) fit_width: bool,
     tx: flume::Sender<PreviewResult>,
     rx: flume::Receiver<PreviewResult>,
-    text_scroll: UniformListScrollHandle,
     pub peek_focus: Option<FocusHandle>,
     /// Focus of a picture, so the zoom keys reach it once it is clicked.
     pub image_focus: Option<FocusHandle>,
@@ -155,7 +148,6 @@ impl Default for PreviewState {
             fit_width: false,
             tx,
             rx,
-            text_scroll: UniformListScrollHandle::new(),
             peek_focus: None,
             image_focus: None,
             hex_provider: std::cell::Cell::new(None),
@@ -251,54 +243,12 @@ fn decode_image(path: &Path, cancel: &CancelToken) -> anyhow::Result<PreviewCont
     })
 }
 
-fn highlight(path: &Path, bytes: &[u8], dark: bool) -> PreviewContent {
-    let truncated = bytes.len() >= TEXT_LIMIT;
-    let text = String::from_utf8_lossy(bytes);
-    let ss = syntaxes(path.extension().and_then(|extension| extension.to_str()));
-    let syntax = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .and_then(|e| ss.find_syntax_by_extension(e))
-        .or_else(|| {
-            text.lines()
-                .next()
-                .and_then(|l| ss.find_syntax_by_first_line(l))
-        })
-        .unwrap_or_else(|| ss.find_syntax_plain_text());
-    let theme = &themes().themes[if dark {
-        "base16-ocean.dark"
-    } else {
-        "base16-ocean.light"
-    }];
-    let mut h = syntect::easy::HighlightLines::new(syntax, theme);
-    let mut lines = Vec::new();
-    for line in syntect::util::LinesWithEndings::from(&text).take(MAX_LINES) {
-        let spans = match h.highlight_line(line, ss) {
-            Ok(regions) => regions
-                .into_iter()
-                .map(|(style, s)| {
-                    let c = style.foreground;
-                    let color: Hsla =
-                        rgb(u32::from(c.r) << 16 | u32::from(c.g) << 8 | u32::from(c.b)).into();
-                    (
-                        color,
-                        s.trim_end_matches(['\n', '\r']).replace('\t', "    "),
-                    )
-                })
-                .filter(|(_, s)| !s.is_empty())
-                .collect(),
-            Err(_) => vec![(gpui::white(), line.trim_end().to_owned())],
-        };
-        lines.push(spans);
-    }
-    PreviewContent::Text { lines, truncated }
-}
-
 fn compute(
     path: &Path,
     is_dir: bool,
     mime: Option<&str>,
     dark: bool,
+    offset: u64,
     cancel: &CancelToken,
 ) -> PreviewContent {
     if is_dir {
@@ -333,7 +283,12 @@ fn compute(
         )
         || (!head.contains(&0) && std::str::from_utf8(&head).is_ok());
     if textual && !head.contains(&0) {
-        return highlight(path, &head, dark);
+        // Every text file is read the way structured code is: a gutter,
+        // selection, find and copy. There is no second, poorer text view.
+        return match bibli_platform::inspection::plain(path, offset, cancel) {
+            Ok(data) => PreviewContent::Inspection(crate::inspector::Display::new(data, dark)),
+            Err(error) => PreviewContent::Error(format!("{error:#}")),
+        };
     }
     PreviewContent::Generic
 }
@@ -775,6 +730,7 @@ impl Shell {
                         is_dir,
                         request.mime.as_deref(),
                         key.dark,
+                        inspection.offset,
                         &cancel,
                     ),
                     Err(e) => PreviewContent::Error(format!("{e:#}")),
@@ -852,9 +808,6 @@ impl Shell {
         self.preview.seconds = None;
         self.preview.zoom = None;
         self.preview.fit_width = false;
-        self.preview
-            .text_scroll
-            .scroll_to_item_strict(0, ScrollStrategy::Top);
     }
 
     pub fn preview_page(&mut self, delta: i32, cx: &mut Context<Self>) {
@@ -1364,53 +1317,6 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                         .when(document.is_some() && interactive, |d| {
                             d.children(crate::reader::outline_drawer(shell, theme, cx))
                         }),
-                )
-                .into_any_element()
-        }
-        Some(PreviewContent::Text { lines, .. }) => {
-            let lines = lines.clone();
-            let n = lines.len();
-            let mono = shell.mono_font.clone();
-            let list = gpui::uniform_list(
-                "preview-text",
-                n,
-                move |range: std::ops::Range<usize>, _window: &mut Window, _cx: &mut gpui::App| {
-                    range
-                        .map(|i| {
-                            let mut row = div().h(px(18.)).flex().flex_row().whitespace_nowrap();
-                            for (color, text) in &lines[i] {
-                                row = row.child(div().text_color(*color).child(text.clone()));
-                            }
-                            row
-                        })
-                        .collect::<Vec<_>>()
-                },
-            )
-            .track_scroll(p.text_scroll.clone())
-            .size_full();
-            let bar = crate::elements::scrollbar::vertical(
-                "preview-text-scrollbar",
-                crate::elements::scrollbar::Scrolls::Offset(
-                    p.text_scroll.0.borrow().base_handle.clone(),
-                ),
-            );
-            div()
-                .relative()
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .flex_col()
-                .font_family(mono)
-                .text_xs()
-                .px_2()
-                .child(
-                    div()
-                        .relative()
-                        .flex_1()
-                        .min_h_0()
-                        .w_full()
-                        .child(list)
-                        .child(bar),
                 )
                 .into_any_element()
         }

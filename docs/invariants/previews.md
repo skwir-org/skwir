@@ -93,6 +93,14 @@ still to come are in `docs/preview-frame.md`.
   something: Ctrl+F, Ctrl+C, Ctrl++ / Ctrl+- (zoom what is looked at, size what
   is read), Ctrl+0, `[` and `]` for the previous and next section or page; a
   picture takes them, and Ctrl+wheel, once clicked.
+- **One text path.** Any text file without a presentation of its own is the
+  code view (`inspection::plain`): a block per line, the language from the
+  name, a gutter, selection, find and copy. A rendered format's source is the
+  same view (`inspection::source`). Both are paged and a page ends on a line;
+  text the code view's bounds do not hold (one endless line) stays a single
+  block of plain text. There is no second, poorer text renderer in the UI.
+  HTML files open in the inert reading mode, like Markdown, with their source
+  one toggle away.
 - **Muted is for secondary facts** (line numbers, captions, column headers),
   never for the data: offsets, sizes and values are `theme.text`. The only
   dimmed data is what stands for nothing: a zero byte, the dot of an

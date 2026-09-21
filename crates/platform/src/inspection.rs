@@ -35,6 +35,8 @@ pub mod limits {
     pub const HELPER_TIMEOUT: Duration = Duration::from_secs(15);
     /// One source page and one hexadecimal page.
     pub const SOURCE_PAGE: usize = 32 * 1024;
+    /// One page of a text file that has no presentation of its own.
+    pub const TEXT_PAGE: usize = 256 * 1024;
     pub const HEX_PAGE: u64 = 4096;
     pub const HEX_NEEDLE: usize = 4096;
     /// Text prefix shown for a container member or attachment.
@@ -145,22 +147,82 @@ pub fn text(path: &Path, cancel: &CancelToken) -> anyhow::Result<String> {
     );
     Ok(String::from_utf8(bytes)?)
 }
+/// A file's own text behind a rendered presentation, one page at a time.
 pub fn source(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<Inspection> {
-    let page = limits::SOURCE_PAGE;
+    let mut data = lines(path, offset, limits::SOURCE_PAGE, cancel)?;
+    data.title = format!("Source · byte {offset}");
+    data.source_available = true;
+    Ok(data)
+}
+
+/// Any text file that has no presentation of its own. It is the same view as
+/// `source`, so every text file is read, searched and copied the same way.
+pub fn plain(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<Inspection> {
+    let mut data = lines(path, offset, limits::TEXT_PAGE, cancel)?;
+    let count = data.blocks.len();
+    data.title = match (offset, count) {
+        (0, 1) => "1 line".into(),
+        (0, _) => format!("{count} lines"),
+        _ => format!("{count} lines from byte {offset}"),
+    };
+    if data.next.is_some() || offset > 0 {
+        data.notice = format!(
+            "Shown {} at a time · [ and ] move through the file",
+            limits::describe(limits::TEXT_PAGE)
+        );
+    }
+    Ok(data)
+}
+
+/// One page of a text file as the code view wants it: a block per line, the
+/// language taken from the name. A page ends on a line where it can. Text the
+/// code view's bounds do not hold (a minified file is one endless line) stays
+/// one block of plain text.
+fn lines(
+    path: &Path,
+    offset: u64,
+    page: usize,
+    cancel: &CancelToken,
+) -> anyhow::Result<Inspection> {
     let bytes = read(path, offset, page + 1, cancel)?;
     let more = bytes.len() > page;
-    let end = bytes.len().min(page);
-    Ok(Inspection {
-        title: format!("Source · byte {offset}"),
-        blocks: vec![Block {
-            text: String::from_utf8_lossy(&bytes[..end]).into_owned(),
+    let mut end = bytes.len().min(page);
+    if more && let Some(newline) = bytes[..end].iter().rposition(|byte| *byte == b'\n') {
+        end = newline + 1;
+    }
+    let text = String::from_utf8_lossy(&bytes[..end]);
+    let language = path
+        .extension()
+        .or_else(|| path.file_name())
+        .map(|name| name.to_string_lossy().into_owned());
+    let bounded = text.lines().count() <= limits::CODE_LINES
+        && text.lines().all(|line| line.len() <= limits::LINE_BYTES);
+    let (kind, blocks) = if bounded {
+        let blocks = text
+            .lines()
+            .map(|line| Block {
+                text: line.to_owned(),
+                code: true,
+                language: language.clone(),
+                ..Block::default()
+            })
+            .collect();
+        (bibli_core::inspection::InspectionKind::Code, blocks)
+    } else {
+        let block = Block {
+            text: text.into_owned(),
             code: true,
+            language,
             ..Block::default()
-        }],
+        };
+        (bibli_core::inspection::InspectionKind::Text, vec![block])
+    };
+    Ok(Inspection {
+        kind,
+        blocks,
         position: offset,
         previous: (offset > 0).then(|| offset.saturating_sub(page as u64)),
         next: more.then_some(offset + end as u64),
-        source_available: true,
         ..Inspection::default()
     })
 }
@@ -304,6 +366,45 @@ mod tests {
         assert_eq!(rows[0].cells[2], "................");
         assert_eq!(hex_columns()[1], rows[0].cells[1]);
         assert_eq!(hex_rows(b"Hi there!\0\xff", 0)[0].cells[2], "Hi there!..");
+    }
+
+    #[test]
+    fn text_is_a_line_per_block_and_pages_end_on_a_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = CancelToken::new();
+        let path = dir.path().join("it's a café.rs");
+        std::fs::write(&path, "fn main() {\r\n    let x = 1;\n}\n").unwrap();
+        let data = plain(&path, 0, &cancel).unwrap();
+        assert_eq!(data.kind, InspectionKind::Code);
+        assert_eq!(data.title, "3 lines");
+        assert_eq!(data.blocks[0].text, "fn main() {");
+        assert_eq!(data.blocks[1].language.as_deref(), Some("rs"));
+        assert!(data.notice.is_empty() && !data.source_available);
+        assert!(source(&path, 0, &cancel).unwrap().source_available);
+
+        // A file of several pages: every page ends on a line, none is lost.
+        let long = dir.path().join("Makefile");
+        let line = "target: dependency # comment\n";
+        std::fs::write(&long, line.repeat(limits::TEXT_PAGE / line.len() + 50)).unwrap();
+        let first = plain(&long, 0, &cancel).unwrap();
+        assert_eq!(first.blocks[0].language.as_deref(), Some("Makefile"));
+        let next = first.next.unwrap();
+        assert_eq!(next as usize % line.len(), 0, "cut between two lines");
+        let second = plain(&long, next, &cancel).unwrap();
+        assert_eq!(second.blocks.len(), 50);
+        assert!(
+            second
+                .blocks
+                .iter()
+                .all(|block| block.text == line.trim_end())
+        );
+        assert!(!first.notice.is_empty());
+
+        // One endless line is not code: it stays a block of plain text.
+        let minified = dir.path().join("app.min.js");
+        std::fs::write(&minified, "x".repeat(limits::LINE_BYTES + 1)).unwrap();
+        let data = plain(&minified, 0, &cancel).unwrap();
+        assert_eq!((data.kind, data.blocks.len()), (InspectionKind::Text, 1));
     }
 
     #[test]

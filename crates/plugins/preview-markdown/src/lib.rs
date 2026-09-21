@@ -1,4 +1,6 @@
-//! Markdown reading mode; all parsing and embedded image reads run on workers.
+//! Reading mode for Markdown and HTML files; all parsing and embedded image
+//! reads run on workers. Both end as the same semantic blocks, so they read
+//! alike, and both keep their source one toggle away.
 mod markdown;
 use bibli_core::{
     App, CancelToken,
@@ -14,10 +16,10 @@ impl Plugin for PreviewPlugin {
         "preview-markdown"
     }
     fn title(&self) -> &'static str {
-        "Preview: Markdown"
+        "Preview: Markdown and HTML"
     }
     fn description(&self) -> &'static str {
-        "Render Markdown with headings, tables and code; switch to the source at any time"
+        "Read Markdown and HTML files as documents, with headings, tables, code and local images; switch to the source at any time. HTML is inert: no scripts, styles or remote content"
     }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
@@ -31,7 +33,7 @@ impl PreviewProvider for Provider {
     fn accepts(&self, req: &PreviewRequest) -> bool {
         matches!(
             inspection::extension(&req.entry.path).as_str(),
-            "md" | "markdown" | "mdown"
+            "md" | "markdown" | "mdown" | "html" | "htm" | "xhtml"
         )
     }
     fn inspect(
@@ -46,6 +48,21 @@ impl PreviewProvider for Provider {
         }
         let source = inspection::text(&path, cancel)?;
         let base = path.parent().unwrap_or(std::path::Path::new("."));
+        if !matches!(
+            inspection::extension(&path).as_str(),
+            "md" | "markdown" | "mdown"
+        ) {
+            return Ok(Some(Inspection {
+                kind: InspectionKind::Markdown,
+                title: "HTML".into(),
+                blocks: rich_preview::html(&source, cancel, |href| {
+                    rich_preview::local_image(base, href, cancel)
+                })?,
+                source_available: true,
+                notice: "Reading mode · scripts, styles and remote content are not loaded".into(),
+                ..Inspection::default()
+            }));
+        }
         Ok(Some(Inspection {
             kind: InspectionKind::Markdown,
             title: "Markdown".into(),
