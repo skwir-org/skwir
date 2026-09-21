@@ -172,6 +172,18 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         r#"{"action":"mute"}"#,
         Some("MediaPlayer"),
     ),
+    (
+        "shift-left",
+        "ui.media_step",
+        r#"{"delta":-1}"#,
+        Some("MediaPlayer"),
+    ),
+    (
+        "shift-right",
+        "ui.media_step",
+        r#"{"delta":1}"#,
+        Some("MediaPlayer"),
+    ),
     ("f", "ui.media_fullscreen", "{}", Some("MediaPlayer")),
     ("c", "ui.media_controls", "{}", Some("MediaPlayer")),
     ("escape", "ui.media_escape", "{}", Some("MediaPlayer")),

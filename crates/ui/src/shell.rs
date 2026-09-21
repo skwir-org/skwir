@@ -957,6 +957,13 @@ impl Shell {
             }
             "inspect" => self.inspect_command(args, window, cx),
             "media_control" => self.media_control(args, cx),
+            "media_step" => {
+                let delta = args
+                    .get("delta")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(1);
+                self.media_step(delta, window, cx);
+            }
             "media_scrub" => self.media_scrub(args, cx),
             "media_fullscreen" => self.media_fullscreen(window, cx),
             "media_controls" => self.media_toggle_controls(window, cx),

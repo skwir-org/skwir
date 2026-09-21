@@ -66,13 +66,69 @@ impl Shell {
                 .is_some_and(|m| m.starts_with("audio/"))
     }
 
+    /// How far a search for the neighbouring audio file looks: a folder of a
+    /// hundred thousand documents with two songs in it is not scanned whole.
+    const NEIGHBOUR_REACH: usize = 4000;
+
+    /// The audio files around entry `id` in the pane's order.
+    pub(crate) fn audio_neighbours(
+        &self,
+        id: bibli_core::EntryId,
+    ) -> (Option<usize>, Option<usize>) {
+        let sorted = self.ui().list.sorted.clone();
+        let Some(here) = sorted.iter().position(|entry| *entry == id) else {
+            return (None, None);
+        };
+        let ws = self.app.workspace.read();
+        let Some(pane) = ws.pane(self.pane) else {
+            return (None, None);
+        };
+        let audio = |index: &usize| {
+            pane.listing.get(sorted[*index]).is_some_and(|entry| {
+                !entry.is_dir()
+                    && bibli_platform::mime::by_name(&entry.name)
+                        .is_some_and(|mime| mime.as_str().starts_with("audio/"))
+            })
+        };
+        (
+            (here.saturating_sub(Self::NEIGHBOUR_REACH)..here)
+                .rev()
+                .find(audio),
+            (here + 1..sorted.len().min(here + 1 + Self::NEIGHBOUR_REACH)).find(audio),
+        )
+    }
+
+    /// `ui.media_step { delta }`: the audio file after or before this one. It
+    /// is the pane's selection that moves; the preview follows it as always,
+    /// and keeps playing if it was.
+    pub fn media_step(&mut self, delta: i64, window: &mut Window, cx: &mut Context<Self>) {
+        let (previous, next) = self.preview.audio_neighbours;
+        let Some(target) = (if delta < 0 { previous } else { next }) else {
+            return;
+        };
+        let Some(pane) = self.preview.pane() else {
+            return;
+        };
+        self.preview.autoplay =
+            self.preview.media.state.playing() || self.preview.media.state.ended();
+        self.with_pane(pane, |this| {
+            this.cursor_to(target as isize, false, window, cx);
+        });
+    }
+
     pub fn sync_media(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(session) = &self.preview.media.session else {
             return;
         };
         let update = session.take_update();
         if let Some(state) = update.state {
+            // A track that plays to its end hands over to the next one.
+            let finished = state.ended() && !self.preview.media.state.ended();
             self.preview.media.state = state;
+            if finished && self.media_is_audio() && self.preview.audio_neighbours.1.is_some() {
+                self.media_step(1, window, cx);
+                return;
+            }
         }
         let mut frame = update.frame;
         if !matches!(self.preview.media.poster, Poster::Dismissed) {
@@ -534,6 +590,27 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     let state = &shell.preview.media.state;
     let mut bar = Bar::new("video-tools");
     crate::preview_bar::parent_tool(&mut bar, shell);
+    // Other audio files in the folder: the track before and the one after.
+    let (previous, next) = shell.preview.audio_neighbours;
+    let step = |id, icon, title, delta: i64, there: bool| {
+        Button::new(id, icon, title, "ui.media_step")
+            .args(serde_json::json!({"delta":delta}))
+            .enabled(there)
+    };
+    let tracks = previous.is_some() || next.is_some();
+    if tracks {
+        bar.push(Item::button(
+            Slot::Navigate,
+            1,
+            step(
+                "audio-previous",
+                "skip-previous",
+                "Previous track · Shift+Left",
+                -1,
+                previous.is_some(),
+            ),
+        ));
+    }
     bar.push(Item::button(
         Slot::Navigate,
         2,
@@ -545,6 +622,19 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
             serde_json::Value::Null,
         ),
     ));
+    if tracks {
+        bar.push(Item::button(
+            Slot::Navigate,
+            1,
+            step(
+                "audio-next",
+                "skip-next",
+                "Next track · Shift+Right",
+                1,
+                next.is_some(),
+            ),
+        ));
+    }
     bar.push(Item::widget(Slot::Navigate, 1, |shell, _| {
         let media = &shell.preview.media;
         div()

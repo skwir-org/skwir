@@ -139,6 +139,13 @@ pub struct PreviewState {
     tx: flume::Sender<PreviewResult>,
     rx: flume::Receiver<PreviewResult>,
     pub peek_focus: Option<FocusHandle>,
+    /// The audio files before and after this one in the pane's order, as
+    /// indices of its sorted list; found when the listing or the entry
+    /// changes (`details_at`), never while painting.
+    pub audio_neighbours: (Option<usize>, Option<usize>),
+    /// The next media session starts playing: the track before it ended, or
+    /// the user stepped to it while listening.
+    pub autoplay: bool,
     /// The members the panel went down into, outermost first.
     pub nested: Vec<Arc<Nested>>,
     /// A member asked for and not extracted yet: the worker's next job.
@@ -186,6 +193,8 @@ impl Default for PreviewState {
             tx,
             rx,
             peek_focus: None,
+            audio_neighbours: (None, None),
+            autoplay: false,
             nested: Vec::new(),
             descend: None,
             nested_tx,
@@ -206,6 +215,11 @@ impl PreviewState {
     /// a document are relative to it.
     pub fn path(&self) -> Option<&Path> {
         self.key.as_ref().map(|key| key.path.as_path())
+    }
+
+    /// The pane whose entry the panel is showing.
+    pub fn pane(&self) -> Option<bibli_core::workspace::PaneId> {
+        self.key.as_ref().map(|key| key.pane)
     }
 }
 
@@ -545,6 +559,11 @@ impl Shell {
                 }
             });
             self.preview.details = crate::details::entry_groups(&entry, &key.path, kind);
+            self.preview.audio_neighbours = if self.media_is_audio() {
+                self.audio_neighbours(id)
+            } else {
+                (None, None)
+            };
             let selection = self.selection_ctx();
             self.preview.selection_summary = (selection.count > 1).then(|| crate::details::Group {
                 title: "Selection".into(),
@@ -567,6 +586,9 @@ impl Shell {
                 if result.complete {
                     self.preview.reader.tried = true;
                     if let Some(session) = result.media {
+                        if std::mem::take(&mut self.preview.autoplay) {
+                            let _ = session.control(bibli_core::media::Control::Play(true));
+                        }
                         self.preview.media.session = Some(session);
                         let focus = cx.focus_handle();
                         if self.preview.peek

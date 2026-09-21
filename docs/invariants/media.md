@@ -71,3 +71,10 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
   all of it sits in the first five. What the stream says beyond title, artist
   and album (track, year, genre, codec, bitrate, rate, channels) travels in
   `Playback::details`, bounded by the worker, to the panel's Details.
+- Tracks. The audio files before and after the one shown, in the pane's own
+  order, are found when the listing or the entry changes
+  (`Shell::audio_neighbours`, bounded in reach), never while painting; the
+  player shows Previous and Next only when there are any. Stepping moves the
+  pane's selection and the preview follows it as always (`ui.media_step`), so
+  the list shows what is playing; it keeps playing if it was, and a track that
+  plays to its end hands over to the next (`PreviewState::autoplay`).
