@@ -332,6 +332,9 @@ pub enum TextOverflow {
     /// Truncate the text when it doesn't fit, and represent this truncation by displaying the
     /// provided string.
     Truncate(SharedString),
+    /// Keep both ends of a text that doesn't fit and replace the middle with the provided
+    /// string, so that a file name keeps its extension: `a very long na…ame.zip`.
+    TruncateMiddle(SharedString),
 }
 
 /// How to align text within the element

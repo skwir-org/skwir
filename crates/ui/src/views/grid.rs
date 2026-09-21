@@ -3,10 +3,19 @@
 //! width.
 //!
 //! A tile is what the pointer can hit: the picture, standing on the bottom of
-//! its box so the name is always right under it, and two lines of name. The
-//! gutters between tiles belong to the rubber band.
+//! its box so the name is always right under it, and up to three lines of
+//! name. The gutters between tiles belong to the rubber band.
+//!
+//! A row is as tall as its longest name needs, so a row of short names gives
+//! its space back. That takes knowing how many lines each name wraps to
+//! before anything is drawn: `GridView::measure` counts them with the text
+//! system's line wrapper, once per change of the listing, the order or the
+//! zoom, never per frame. The label is then clamped to that count, so a
+//! wrapper that disagrees with the shaper by a word costs an ellipsis, not a
+//! name drawn over the next row.
 
 use std::ops::Range;
+use std::rc::Rc;
 
 use bibli_core::EntryId;
 use bibli_core::thumbs::ThumbSize;
@@ -16,7 +25,7 @@ use gpui::{
 };
 
 use crate::dnd;
-use crate::elements::uniform_grid::{UniformGridScrollHandle, uniform_grid};
+use crate::elements::uniform_grid::{TileHeights, UniformGridScrollHandle, uniform_grid};
 use crate::icons;
 use crate::shell::Shell;
 use crate::theme::Theme;
@@ -29,24 +38,81 @@ pub const ZOOMS: [u32; 4] = [96, 128, 192, 256];
 #[derive(Default)]
 pub struct GridView {
     scroll: UniformGridScrollHandle,
+    /// Lines each name needs, in sorted order.
+    lines: Rc<[u8]>,
+    /// What `lines` was counted for: the names, their order and the zoom.
+    /// Not the listing's version, which hydration advances with every batch.
+    lines_for: Option<(u64, std::sync::Arc<[EntryId]>, u32)>,
+    /// Advances with `lines`, so the grid sums its rows again.
+    revision: u64,
 }
 
 /// Border and padding around a tile's content, on each side.
 const FRAME: f32 = 5.;
 /// Between the picture and the name.
 const LABEL_GAP: f32 = 2.;
-/// Two lines of name: the tile's height is fixed, so the line height is too.
+/// A tile's height is counted in lines of name, so the line height is fixed.
 const LABEL_LINE: f32 = 15.;
-/// The least space between tiles; the grid shares spare width between them.
+/// A name takes what it needs up to this, then ends with an ellipsis.
+const MAX_LINES: u8 = 3;
+/// The least space between tiles. Spare width widens the gutters between
+/// columns up to `MAX_GUTTER`; the rest becomes the margins.
 const GUTTER: (f32, f32) = (12., 8.);
+const MAX_GUTTER: f32 = 24.;
 
 impl GridView {
-    pub fn tile(zoom: u32) -> gpui::Size<gpui::Pixels> {
-        let zoom = zoom as f32;
-        size(
-            px(zoom + 2. * FRAME + 2.),
-            px(zoom + 2. * FRAME + LABEL_GAP + 2. * LABEL_LINE),
-        )
+    fn label_width(zoom: u32) -> f32 {
+        zoom as f32 + 2.
+    }
+
+    fn tile_width(zoom: u32) -> f32 {
+        Self::label_width(zoom) + 2. * FRAME
+    }
+
+    fn tile_height(zoom: u32, lines: u8) -> f32 {
+        zoom as f32 + 2. * FRAME + LABEL_GAP + f32::from(lines) * LABEL_LINE
+    }
+
+    /// Count the lines every name wraps to, when what they depend on changed.
+    fn measure(&mut self, shell: &Shell, window: &Window, cx: &gpui::App) {
+        let list = &shell.ui().list;
+        let ws = shell.app.workspace.read();
+        let listing = ws.pane(shell.pane).map(|pane| &pane.listing);
+        let names = listing.map_or(0, bibli_core::Listing::names_version);
+        if let Some((counted, order, zoom)) = &self.lines_for
+            && (*counted, *zoom) == (names, shell.zoom)
+            && (std::sync::Arc::ptr_eq(order, &list.sorted) || **order == *list.sorted)
+        {
+            return;
+        }
+        let started = std::time::Instant::now();
+        let font_size = window.rem_size() * 0.75; // text_xs
+        let mut wrapper = cx
+            .text_system()
+            .line_wrapper(gpui::font(shell.font.clone()), font_size);
+        let width = px(Self::label_width(shell.zoom));
+        self.lines = list
+            .sorted
+            .iter()
+            .map(|id| {
+                let Some(entry) = listing.and_then(|listing| listing.get(*id)) else {
+                    return 1;
+                };
+                let name = entry.name_str();
+                let breaks = wrapper
+                    .wrap_line(&[gpui::LineFragment::text(&name)], width)
+                    .take(usize::from(MAX_LINES) - 1)
+                    .count();
+                breaks as u8 + 1
+            })
+            .collect();
+        self.lines_for = Some((names, list.sorted.clone(), shell.zoom));
+        self.revision += 1;
+        tracing::debug!(
+            names = self.lines.len(),
+            took_us = started.elapsed().as_micros() as u64,
+            "grid names measured"
+        );
     }
 
     /// An icon grows with the zoom but leaves the box to thumbnails: the size
@@ -67,6 +133,7 @@ fn cell(
     theme: &Theme,
     ix: usize,
     id: EntryId,
+    lines: u8,
     window: &mut Window,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
@@ -192,8 +259,8 @@ fn cell(
                 .line_height(px(LABEL_LINE))
                 .text_center()
                 .overflow_hidden()
-                .text_ellipsis()
-                .line_clamp(2)
+                .text_ellipsis_middle()
+                .line_clamp(usize::from(lines))
                 .child(name),
         );
     el = dnd::draggable(el, shell);
@@ -212,7 +279,14 @@ impl PaneView for GridView {
         "Grid"
     }
 
-    fn render(&mut self, shell: &mut Shell, _: &mut Window, cx: &mut Context<Shell>) -> AnyElement {
+    fn render(
+        &mut self,
+        shell: &mut Shell,
+        window: &mut Window,
+        cx: &mut Context<Shell>,
+    ) -> AnyElement {
+        self.measure(shell, window, cx);
+        let lines = self.lines.clone();
         let count = shell.ui().list.sorted.len();
         let zoom = shell.zoom;
         let pane = shell.pane;
@@ -225,7 +299,10 @@ impl PaneView for GridView {
                         .filter_map(|ix| this.ui().list.sorted.get(ix).map(|id| (ix, *id)))
                         .collect();
                     ids.into_iter()
-                        .map(|(ix, id)| cell(this, &theme, ix, id, window, cx))
+                        .map(|(ix, id)| {
+                            let lines = lines.get(ix).copied().unwrap_or(1);
+                            cell(this, &theme, ix, id, lines, window, cx)
+                        })
                         .collect::<Vec<_>>()
                 })
             },
@@ -233,10 +310,20 @@ impl PaneView for GridView {
         let grid = uniform_grid(
             ("grid", pane.0 as usize),
             count,
-            GridView::tile(zoom),
+            px(GridView::tile_width(zoom)),
+            TileHeights {
+                revision: self.revision,
+                of: {
+                    let lines = self.lines.clone();
+                    Rc::new(move |ix| {
+                        GridView::tile_height(zoom, lines.get(ix).copied().unwrap_or(1))
+                    })
+                },
+            },
             move |range, cols, window, cx| render((range, cols), window, cx),
         )
         .gap(size(px(GUTTER.0), px(GUTTER.1)))
+        .max_gap(px(MAX_GUTTER))
         .track_scroll(self.scroll.clone())
         .size_full()
         .px_1();

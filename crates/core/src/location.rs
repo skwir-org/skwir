@@ -223,6 +223,10 @@ pub struct Listing {
     error: Option<String>,
     /// Incremented on every change, so views know when to recompute.
     version: u64,
+    /// Incremented when a name appears, disappears or changes. Hydration
+    /// leaves it alone, so work that depends only on names (a grid counting
+    /// the lines each one wraps to) is not redone for every metadata batch.
+    names_version: u64,
     sort_cache: parking_lot::Mutex<Option<SortCache>>,
 }
 
@@ -230,14 +234,27 @@ impl Listing {
     pub fn apply(&mut self, event: ListingEvent) {
         match event {
             ListingEvent::Added(batch) | ListingEvent::Updated(batch) => {
+                let mut names_changed = false;
                 for e in batch {
-                    self.entries.insert(e.id, e);
+                    match self.entries.entry(e.id) {
+                        indexmap::map::Entry::Occupied(mut slot) => {
+                            names_changed |= slot.get().name != e.name;
+                            slot.insert(e);
+                        }
+                        indexmap::map::Entry::Vacant(slot) => {
+                            names_changed = true;
+                            slot.insert(e);
+                        }
+                    }
                 }
+                self.names_version += u64::from(names_changed);
             }
             ListingEvent::Removed(ids) => {
+                let mut names_changed = false;
                 for id in ids {
-                    self.entries.shift_remove(&id);
+                    names_changed |= self.entries.shift_remove(&id).is_some();
                 }
+                self.names_version += u64::from(names_changed);
             }
             ListingEvent::Complete => {
                 self.complete = true;
@@ -251,6 +268,11 @@ impl Listing {
     /// Changes so far; equal versions mean identical contents.
     pub fn version(&self) -> u64 {
         self.version
+    }
+
+    /// Changes to the set of names so far; see the field.
+    pub fn names_version(&self) -> u64 {
+        self.names_version
     }
 
     /// The ids in `spec` order, directories first. Cached until the listing
@@ -355,5 +377,36 @@ impl Listing {
 
     pub fn find_by_name(&self, name: &OsStr) -> Option<&Entry> {
         self.entries.values().find(|e| e.name == name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::entry::EntryKind;
+
+    #[test]
+    fn names_version_ignores_hydration() {
+        let file = |ino, name: &str| Entry::new(EntryId { dev: 1, ino }, name, EntryKind::File);
+        let mut listing = Listing::default();
+        listing.apply(ListingEvent::Added(vec![
+            file(1, "a.txt"),
+            file(2, "b.txt"),
+        ]));
+        let (names, version) = (listing.names_version(), listing.version());
+
+        // The same entries again, as a metadata batch sends them.
+        listing.apply(ListingEvent::Updated(vec![file(1, "a.txt")]));
+        listing.apply(ListingEvent::Complete);
+        assert_eq!(listing.names_version(), names);
+        assert!(listing.version() > version);
+
+        // A rename keeps the inode, so the id: only the name tells.
+        listing.apply(ListingEvent::Updated(vec![file(1, "renamed.txt")]));
+        assert_eq!(listing.names_version(), names + 1);
+        listing.apply(ListingEvent::Removed(vec![EntryId { dev: 1, ino: 9 }]));
+        assert_eq!(listing.names_version(), names + 1, "nothing was removed");
+        listing.apply(ListingEvent::Removed(vec![EntryId { dev: 1, ino: 2 }]));
+        assert_eq!(listing.names_version(), names + 2);
     }
 }

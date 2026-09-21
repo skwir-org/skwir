@@ -139,15 +139,28 @@ impl LineWrapper {
         self.truncate_line_from(line, 0, truncate_width, truncation_suffix, runs)
     }
 
+    /// Replace the middle of a line that does not fit with `ellipsis`, keeping both ends.
+    pub fn truncate_line_middle(
+        &mut self,
+        line: SharedString,
+        truncate_width: Pixels,
+        ellipsis: &str,
+        runs: &mut Vec<TextRun>,
+    ) -> SharedString {
+        self.truncate_middle_from(line, 0, truncate_width, ellipsis, runs)
+    }
+
     /// Truncate the last of `max_lines` wrapped lines, so that a clamped text ends with the
     /// suffix inside its width. Truncating the whole text to `max_lines` widths instead lets
     /// the last line overflow by whatever the earlier lines left unused at a word boundary.
+    /// With `keep_end` the suffix replaces the middle of that last line instead of its end.
     pub fn truncate_clamped_line(
         &mut self,
         line: SharedString,
         wrap_width: Pixels,
         max_lines: usize,
         truncation_suffix: &str,
+        keep_end: bool,
         runs: &mut Vec<TextRun>,
     ) -> SharedString {
         let last_line_start = if max_lines <= 1 {
@@ -158,12 +171,66 @@ impl LineWrapper {
                 .map(|boundary| boundary.ix)
         };
         match last_line_start {
+            Some(start) if keep_end => {
+                self.truncate_middle_from(line, start, wrap_width, truncation_suffix, runs)
+            }
             Some(start) => {
                 self.truncate_line_from(line, start, wrap_width, truncation_suffix, runs)
             }
             // Fewer lines than allowed: nothing to cut.
             None => line,
         }
+    }
+
+    /// Elide the middle of `line[start..]`: the space left by the ellipsis is shared evenly
+    /// between the two ends, and neither end keeps whitespace next to the ellipsis.
+    fn truncate_middle_from(
+        &mut self,
+        line: SharedString,
+        start: usize,
+        truncate_width: Pixels,
+        ellipsis: &str,
+        runs: &mut Vec<TextRun>,
+    ) -> SharedString {
+        let widths: Vec<(usize, char, Pixels)> = line[start..]
+            .char_indices()
+            .map(|(ix, c)| (start + ix, c, self.width_for_char(c)))
+            .collect();
+        let total = widths.iter().fold(px(0.), |sum, (.., width)| sum + *width);
+        if total.floor() <= truncate_width {
+            return line;
+        }
+        let ellipsis_width = ellipsis
+            .chars()
+            .map(|c| self.width_for_char(c))
+            .fold(px(0.), |a, x| a + x);
+        let budget = (truncate_width - ellipsis_width).max(px(0.));
+
+        let mut tail_width = px(0.);
+        let mut tail_start = line.len();
+        for (ix, _, width) in widths.iter().rev() {
+            if tail_width + *width > budget / 2. {
+                break;
+            }
+            tail_width += *width;
+            tail_start = *ix;
+        }
+        let mut head_width = px(0.);
+        let mut head_end = start;
+        for (ix, c, width) in &widths {
+            if *ix >= tail_start || head_width + *width > budget - tail_width {
+                break;
+            }
+            head_width += *width;
+            head_end = ix + c.len_utf8();
+        }
+
+        let head = line[..head_end].trim_end();
+        let tail = line[tail_start..].trim_start();
+        let removed = head.len()..line.len() - tail.len();
+        let result = SharedString::from(format!("{head}{ellipsis}{tail}"));
+        update_runs_after_elision(removed, ellipsis.len(), runs);
+        result
     }
 
     fn truncate_line_from(
@@ -193,8 +260,9 @@ impl LineWrapper {
             width += char_width;
 
             if width.floor() > truncate_width {
-                let result =
-                    SharedString::from(format!("{}{}", &line[..truncate_ix], truncation_suffix));
+                // No space before the suffix: "three …" reads as three full stops.
+                let kept = line[..truncate_ix].trim_end();
+                let result = SharedString::from(format!("{kept}{truncation_suffix}"));
                 update_runs_after_truncation(&result, truncation_suffix, runs);
 
                 return result;
@@ -276,6 +344,30 @@ fn update_runs_after_truncation(result: &str, ellipsis: &str, runs: &mut Vec<Tex
             break;
         }
     }
+}
+
+/// `removed` bytes of the text became `inserted` bytes: shrink the runs over them, and give the
+/// inserted bytes to the run the removal began in.
+fn update_runs_after_elision(
+    removed: std::ops::Range<usize>,
+    inserted: usize,
+    runs: &mut Vec<TextRun>,
+) {
+    let mut offset = 0;
+    let mut inserted = Some(inserted);
+    for run in runs.iter_mut() {
+        let end = offset + run.len;
+        let overlap = end.min(removed.end).saturating_sub(offset.max(removed.start));
+        if removed.start < end || removed.start == offset {
+            run.len += inserted.take().unwrap_or(0);
+        }
+        run.len -= overlap;
+        offset = end;
+    }
+    if let (Some(inserted), Some(last)) = (inserted, runs.last_mut()) {
+        last.len += inserted;
+    }
+    runs.retain(|run| run.len > 0);
 }
 
 /// A fragment of a line that can be wrapped.
@@ -528,12 +620,41 @@ mod tests {
     }
 
     #[test]
+    fn test_truncate_middle() {
+        let mut wrapper = build_wrapper();
+        let mut elide = |text: &'static str, run_lens: &[usize], lines: usize| {
+            let mut runs = generate_test_runs(run_lens);
+            let result =
+                wrapper.truncate_clamped_line(text.into(), px(72.), lines, "…", true, &mut runs);
+            assert_eq!(runs.iter().map(|run| run.len).sum::<usize>(), result.len());
+            (result, runs.iter().map(|run| run.len).collect::<Vec<_>>())
+        };
+        // One line of 72 px holds seven characters: three, the ellipsis, three.
+        assert_eq!(elide("aaaaaaaaaaaa.zip", &[16], 1).0, "aaa…zip");
+        // Two lines: the first is untouched and the second keeps the end.
+        assert_eq!(elide("aa bbb cccc ddddd.zip", &[21], 2).0, "aa bbb ccc…zip");
+        // No whitespace beside the ellipsis.
+        assert_eq!(elide("aa bbb cc  ddddd e.zip", &[22], 2).0, "aa bbb cc…zip");
+        // It fits: untouched, and so are its runs.
+        assert_eq!(elide("aa bbb cccc", &[3, 8], 2), ("aa bbb cccc".into(), vec![3, 8]));
+        // The runs lose what was removed; the ellipsis joins the run it began in.
+        assert_eq!(
+            elide("aa bbb cccc ddddd.zip", &[7, 6, 8], 2),
+            ("aa bbb ccc…zip".into(), vec![7, 3 + "…".len(), 3])
+        );
+        assert_eq!(
+            wrapper.truncate_line_middle("aaaaaaaaaaaa.zip".into(), px(72.), "…", &mut vec![]),
+            "aaa…zip"
+        );
+    }
+
+    #[test]
     fn test_truncate_clamped_line() {
         let mut wrapper = build_wrapper();
         let mut clamp = |text: &'static str, lines: usize| {
             let mut runs = generate_test_runs(&[text.len()]);
-            let result =
-                wrapper.truncate_clamped_line(text.into(), px(72.), lines, "…", &mut runs);
+            let result = wrapper
+                .truncate_clamped_line(text.into(), px(72.), lines, "…", false, &mut runs);
             assert_eq!(runs.first().unwrap().len, result.len());
             result
         };
@@ -541,6 +662,8 @@ mod tests {
         // leaves room unused, which the last line must not inherit.
         assert_eq!(clamp("aa bbb cccc ddddd eeee", 2), "aa bbb cccc d…");
         assert_eq!(clamp("aa bbb cccc ddddd eeee", 1), "aa bbb…");
+        // Cut right after a space: the suffix follows the word, not the space.
+        assert_eq!(clamp("aa bbb ccccc dd", 2), "aa bbb ccccc…");
         // It fits in the lines it is allowed: untouched.
         assert_eq!(clamp("aa bbb cccc ddddd eeee", 4), "aa bbb cccc ddddd eeee");
         assert_eq!(clamp("aa bbb cccc", 2), "aa bbb cccc");

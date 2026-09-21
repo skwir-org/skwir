@@ -3,10 +3,12 @@
 //! element's real width, so a reflow never lags a frame behind a resize,
 //! split, or panel toggle.
 //!
-//! Tiles sit in slots. A slot is at least a tile plus the gutter, and the
-//! width no whole column could use is shared between the slots, so the grid
-//! fills its pane and the gutters only ever grow. `math::Slots` is that
-//! arithmetic, shared with whatever hit-tests the grid (the rubber band).
+//! Tiles sit in slots. A slot is at least a tile plus the gutter; the width
+//! no whole column could use widens the gutters up to a cap, and the rest
+//! becomes the margins. Columns are uniform, rows are not: a row is as tall
+//! as its tallest tile (a name on three lines beside names on one), so rows
+//! of short names give their space back. `math::Slots` is that arithmetic,
+//! shared with whatever hit-tests the grid (the rubber band).
 //!
 //! What `uniform_list` uses that is `pub(crate)` in gpui, and the public
 //! substitute here: the shared scroll offset (`Interactivity::scroll_offset`)
@@ -14,7 +16,7 @@
 //! handle's offset the element's offset; the wheel listeners and offset
 //! clamping come with `overflow.y = Scroll` through `Interactivity::paint`.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -29,172 +31,268 @@ use smallvec::SmallVec;
 /// Pure layout math, testable without a window.
 pub mod math {
     use std::ops::Range;
+    use std::rc::Rc;
 
-    /// Where the tiles are, in content coordinates (origin at the top left
-    /// of the scrolled content, inside the padding). The grid places tiles
-    /// with it and the rubber band hit-tests with it, so they cannot disagree.
+    /// How the columns share a width.
     #[derive(Clone, Copy, Debug, Default, PartialEq)]
-    pub struct Slots {
+    pub struct Columns {
         pub cols: usize,
-        /// Slot size: a tile, its gutter, and its share of the spare width.
-        pub pitch: (f32, f32),
-        pub tile: (f32, f32),
+        /// Before the first slot: what the capped gutters could not absorb,
+        /// halved, so the block of tiles sits in the middle.
+        pub left: f32,
+        /// Slot width: a tile, its gutter, and its share of the spare width.
+        pub pitch: f32,
+        pub tile: f32,
     }
 
-    impl Slots {
-        /// Whole pixels throughout, so no tile is drawn between two.
-        pub fn fit(width: f32, tile: (f32, f32), gap: (f32, f32)) -> Self {
-            let cols = cols_for(width, tile.0 + gap.0);
-            Slots {
+    impl Columns {
+        /// As many columns as fit with at least `gap` between tiles. Spare
+        /// width widens the gutters up to `max_gap`; beyond that it becomes
+        /// the margins. Whole pixels throughout, so no tile is drawn between
+        /// two.
+        pub fn fit(width: f32, tile: f32, gap: f32, max_gap: f32) -> Self {
+            let least = tile + gap;
+            let cols = if least > 0. {
+                ((width / least).floor() as usize).max(1)
+            } else {
+                1
+            };
+            let pitch = (width / cols as f32)
+                .floor()
+                .clamp(least, tile + max_gap.max(gap));
+            Columns {
                 cols,
-                pitch: (
-                    (width / cols as f32).floor().max(tile.0 + gap.0),
-                    tile.1 + gap.1,
-                ),
+                left: ((width - cols as f32 * pitch) / 2.).floor().max(0.),
+                pitch,
                 tile,
             }
         }
 
         /// A tile is centred in its slot.
-        fn inset(&self) -> (f32, f32) {
-            (
-                ((self.pitch.0 - self.tile.0) / 2.).floor(),
-                ((self.pitch.1 - self.tile.1) / 2.).floor(),
-            )
+        fn inset(&self) -> f32 {
+            ((self.pitch - self.tile) / 2.).floor()
+        }
+
+        /// The column whose tile holds `x`. The gutters belong to no tile.
+        fn at(&self, x: f32) -> Option<usize> {
+            let x = x - self.left;
+            if self.pitch <= 0. || x < 0. {
+                return None;
+            }
+            let col = (x / self.pitch) as usize;
+            let dx = x - col as f32 * self.pitch - self.inset();
+            (col < self.cols && (0. ..self.tile).contains(&dx)).then_some(col)
+        }
+
+        /// Columns whose tiles a span touches.
+        fn touched(&self, lo: f32, hi: f32) -> Option<(usize, usize)> {
+            let (lo, hi) = (lo - self.left, hi - self.left);
+            if self.pitch <= 0. || self.cols == 0 || hi < self.inset() {
+                return None;
+            }
+            // The first slot whose tile ends after `lo`, the last whose tile
+            // starts before `hi`.
+            let first = (((lo - self.inset() - self.tile) / self.pitch).floor() + 1.).max(0.);
+            let last = ((hi - self.inset()) / self.pitch).floor();
+            let (first, last) = (first as usize, (last as usize).min(self.cols - 1));
+            (first <= last).then_some((first, last))
+        }
+    }
+
+    /// Where the tiles are, in content coordinates (origin at the top left
+    /// of the scrolled content, inside the padding). The grid places tiles
+    /// with it and the rubber band hit-tests with it, so they cannot disagree.
+    ///
+    /// A row is as tall as its tallest tile, so rows differ: `tops` holds
+    /// where each slot row begins, and one more entry for the end.
+    #[derive(Clone, Debug, Default, PartialEq)]
+    pub struct Slots {
+        pub columns: Columns,
+        /// Between the tiles of two rows.
+        pub gap: f32,
+        tops: Rc<[f32]>,
+    }
+
+    impl Slots {
+        /// `height_of` is the height tile `ix` needs; its row takes the most
+        /// any of its tiles needs.
+        pub fn new(
+            columns: Columns,
+            gap: f32,
+            count: usize,
+            height_of: impl Fn(usize) -> f32,
+        ) -> Self {
+            let cols = columns.cols.max(1);
+            let mut tops = Vec::with_capacity(count.div_ceil(cols) + 1);
+            let mut top = 0.;
+            tops.push(top);
+            for first in (0..count).step_by(cols) {
+                let tallest = (first..count.min(first + cols))
+                    .map(&height_of)
+                    .fold(0., f32::max);
+                top += tallest + gap;
+                tops.push(top);
+            }
+            Slots {
+                columns,
+                gap,
+                tops: tops.into(),
+            }
+        }
+
+        pub fn rows(&self) -> usize {
+            self.tops.len().saturating_sub(1)
+        }
+
+        pub fn height(&self) -> f32 {
+            self.tops.last().copied().unwrap_or(0.)
+        }
+
+        fn inset(&self) -> f32 {
+            (self.gap / 2.).floor()
+        }
+
+        /// The slot row holding `y`; the last one for anything below.
+        fn row_at(&self, y: f32) -> usize {
+            self.tops
+                .partition_point(|top| *top <= y)
+                .saturating_sub(1)
+                .min(self.rows().saturating_sub(1))
+        }
+
+        /// Height of the tiles of `row`: every tile of a row is as tall as
+        /// the row, so a row highlights evenly.
+        pub fn tile_height(&self, row: usize) -> f32 {
+            match (self.tops.get(row), self.tops.get(row + 1)) {
+                (Some(top), Some(next)) => next - top - self.gap,
+                _ => 0.,
+            }
         }
 
         /// Top left corner of tile `ix`.
         pub fn origin(&self, ix: usize) -> (f32, f32) {
-            let cols = self.cols.max(1);
-            let inset = self.inset();
+            let cols = self.columns.cols.max(1);
             (
-                (ix % cols) as f32 * self.pitch.0 + inset.0,
-                (ix / cols) as f32 * self.pitch.1 + inset.1,
+                self.columns.left + (ix % cols) as f32 * self.columns.pitch + self.columns.inset(),
+                self.tops.get(ix / cols).copied().unwrap_or(0.) + self.inset(),
             )
         }
 
         /// The tile under a point. The gutters belong to no tile.
         pub fn tile_at(&self, x: f32, y: f32) -> Option<usize> {
-            if self.pitch.0 <= 0. || self.pitch.1 <= 0. || x < 0. || y < 0. {
+            if y < 0. || y >= self.height() {
                 return None;
             }
-            let (col, row) = ((x / self.pitch.0) as usize, (y / self.pitch.1) as usize);
-            let inset = self.inset();
-            let (dx, dy) = (
-                x - col as f32 * self.pitch.0 - inset.0,
-                y - row as f32 * self.pitch.1 - inset.1,
-            );
-            let inside = (0. ..self.tile.0).contains(&dx) && (0. ..self.tile.1).contains(&dy);
-            (col < self.cols && inside).then(|| row * self.cols + col)
-        }
-
-        /// Columns (or rows) whose tiles a span touches, on one axis.
-        fn touched(lo: f32, hi: f32, pitch: f32, inset: f32, tile: f32) -> Option<(usize, usize)> {
-            if pitch <= 0. || hi < inset {
-                return None;
-            }
-            // The first slot whose tile ends after `lo`, the last whose tile
-            // starts before `hi`.
-            let first = ((lo - inset - tile) / pitch).floor() + 1.;
-            let last = ((hi - inset) / pitch).floor();
-            let first = first.max(0.);
-            (first <= last).then_some((first as usize, last as usize))
+            let row = self.row_at(y);
+            let dy = y - self.tops[row] - self.inset();
+            let col = self.columns.at(x)?;
+            (0. ..self.tile_height(row))
+                .contains(&dy)
+                .then(|| row * self.columns.cols + col)
         }
 
         /// Tiles a rectangle touches, given by its two extremes on each axis.
         pub fn covered(&self, x: (f32, f32), y: (f32, f32)) -> Vec<usize> {
-            let inset = self.inset();
-            let (Some((c0, c1)), Some((r0, r1))) = (
-                Self::touched(x.0, x.1, self.pitch.0, inset.0, self.tile.0),
-                Self::touched(y.0, y.1, self.pitch.1, inset.1, self.tile.1),
-            ) else {
+            let Some((c0, c1)) = self.columns.touched(x.0, x.1) else {
                 return Vec::new();
             };
-            let cols = self.cols.max(1);
-            let c1 = c1.min(cols - 1);
-            (r0..=r1)
+            if self.rows() == 0 || y.1 < 0. || y.0 >= self.height() {
+                return Vec::new();
+            }
+            let touches = |row: usize| {
+                let top = self.tops[row] + self.inset();
+                top <= y.1 && top + self.tile_height(row) > y.0
+            };
+            let cols = self.columns.cols;
+            (self.row_at(y.0.max(0.))..=self.row_at(y.1))
+                .filter(|row| touches(*row))
                 .flat_map(|row| (c0..=c1).map(move |col| row * cols + col))
                 .collect()
         }
-    }
 
-    /// Columns that fit in `width`; at least one.
-    pub fn cols_for(width: f32, cell_w: f32) -> usize {
-        if cell_w <= 0.0 {
-            return 1;
+        /// Rows intersecting the viewport. `offset_y` is the (negative)
+        /// scroll offset.
+        pub fn visible_rows(&self, offset_y: f32, viewport_h: f32) -> Range<usize> {
+            if self.rows() == 0 {
+                return 0..0;
+            }
+            let top = (-offset_y).max(0.);
+            let last = self.tops.partition_point(|t| *t < top + viewport_h);
+            self.row_at(top)..last.min(self.rows())
         }
-        ((width / cell_w).floor() as usize).max(1)
-    }
 
-    /// Rows needed for `n` items at `cols` per row.
-    pub fn rows_for(n: usize, cols: usize) -> usize {
-        n.div_ceil(cols.max(1))
-    }
-
-    /// Rows intersecting the viewport. `offset_y` is the (negative) scroll offset.
-    pub fn visible_rows(offset_y: f32, viewport_h: f32, cell_h: f32, rows: usize) -> Range<usize> {
-        if cell_h <= 0.0 || rows == 0 {
-            return 0..0;
+        /// The first item of the row at the top of the viewport, and how far
+        /// into that row the viewport begins: what a reflow must keep.
+        pub fn anchor(&self, offset_y: f32) -> (usize, f32) {
+            if self.rows() == 0 {
+                return (0, 0.);
+            }
+            let top = (-offset_y).max(0.);
+            let row = self.row_at(top);
+            (row * self.columns.cols.max(1), top - self.tops[row])
         }
-        let first = ((-offset_y) / cell_h).floor().max(0.0) as usize;
-        let last = ((-offset_y + viewport_h) / cell_h).ceil().max(0.0) as usize;
-        first.min(rows)..last.min(rows)
-    }
 
-    /// The item at the top-left of the viewport for a given offset and column count.
-    pub fn top_item(offset_y: f32, cell_h: f32, cols: usize) -> usize {
-        if cell_h <= 0.0 {
-            return 0;
+        /// Scroll offset that shows `anchor` again after the rows changed: a
+        /// resize regroups them, a zoom or a rename changes their heights.
+        pub fn offset_for_anchor(&self, (item, within): (usize, f32)) -> f32 {
+            if self.rows() == 0 {
+                return 0.;
+            }
+            let row = (item / self.columns.cols.max(1)).min(self.rows() - 1);
+            let room = (self.tops[row + 1] - self.tops[row] - 1.).max(0.);
+            -(self.tops[row] + within.clamp(0., room))
         }
-        (((-offset_y) / cell_h).floor().max(0.0) as usize) * cols.max(1)
-    }
 
-    /// New scroll offset that keeps the same first visible item after the
-    /// rows changed from `old` to `new`, each a column count and a row height:
-    /// a resize changes the first, a zoom both.
-    pub fn preserve_top_item(offset_y: f32, old: (usize, f32), new: (usize, f32)) -> f32 {
-        let item = top_item(offset_y, old.1, old.0);
-        -((item / new.0.max(1)) as f32 * new.1)
-    }
-
-    /// Offset that shows item `ix` (row at the top), or the current offset
-    /// when the item is already fully visible and `strict` is false. Clamped
-    /// to the content.
-    pub fn offset_for_item(
-        ix: usize,
-        cols: usize,
-        cell_h: f32,
-        viewport_h: f32,
-        content_h: f32,
-        current: f32,
-        strict: bool,
-    ) -> f32 {
-        let row = ix / cols.max(1);
-        let top = row as f32 * cell_h;
-        let bottom = top + cell_h;
-        let scroll_top = -current;
-        let visible = top >= scroll_top && bottom <= scroll_top + viewport_h;
-        let max_scroll = (content_h - viewport_h).max(0.0);
-        if !strict && visible {
-            return current;
+        /// Offset that shows item `ix` (row at the top), or the current
+        /// offset when the item is already fully visible and `strict` is
+        /// false. Clamped to the content.
+        pub fn offset_for_item(
+            &self,
+            ix: usize,
+            viewport_h: f32,
+            content_h: f32,
+            current: f32,
+            strict: bool,
+        ) -> f32 {
+            if self.rows() == 0 {
+                return current;
+            }
+            let row = (ix / self.columns.cols.max(1)).min(self.rows() - 1);
+            let (top, bottom) = (self.tops[row], self.tops[row + 1]);
+            let scroll_top = -current;
+            let visible = top >= scroll_top && bottom <= scroll_top + viewport_h;
+            let max_scroll = (content_h - viewport_h).max(0.0);
+            if !strict && visible {
+                return current;
+            }
+            let target = if !strict && bottom > scroll_top + viewport_h && top >= scroll_top {
+                // Scroll the minimum: put the row at the bottom.
+                bottom - viewport_h
+            } else {
+                top
+            };
+            -target.clamp(0.0, max_scroll)
         }
-        let target = if !strict && bottom > scroll_top + viewport_h && top >= scroll_top {
-            // Scroll the minimum: put the row at the bottom.
-            bottom - viewport_h
-        } else {
-            top
-        };
-        -target.clamp(0.0, max_scroll)
     }
 }
 
-/// Create a grid of `item_count` tiles of size `cell`. `f` renders the items
-/// in a range given the column count.
+/// The height each tile needs. Row tops are summed once per `revision`, not
+/// per frame, so it must change whenever an answer of `of` does.
+#[derive(Clone)]
+pub struct TileHeights {
+    pub revision: u64,
+    pub of: Rc<dyn Fn(usize) -> f32>,
+}
+
+/// Create a grid of `item_count` tiles `tile_width` wide. `f` renders the
+/// items in a range given the column count; each is laid out at the height
+/// of its row.
 #[track_caller]
 pub fn uniform_grid<R>(
     id: impl Into<ElementId>,
     item_count: usize,
-    cell: Size<Pixels>,
+    tile_width: Pixels,
+    heights: TileHeights,
     f: impl 'static + Fn(Range<usize>, usize, &mut Window, &mut App) -> Vec<R>,
 ) -> UniformGrid
 where
@@ -216,8 +314,10 @@ where
     interactivity.base_style = Box::new(base_style);
     UniformGrid {
         item_count,
-        cell,
+        tile_width,
+        heights,
         gap: Size::default(),
+        max_gap: None,
         render_items: Box::new(render_items),
         interactivity,
         scroll_handle: None,
@@ -230,8 +330,10 @@ type RenderItems = Box<
 
 pub struct UniformGrid {
     item_count: usize,
-    cell: Size<Pixels>,
+    tile_width: Pixels,
+    heights: TileHeights,
     gap: Size<Pixels>,
+    max_gap: Option<Pixels>,
     render_items: RenderItems,
     interactivity: Interactivity,
     scroll_handle: Option<UniformGridScrollHandle>,
@@ -242,7 +344,7 @@ pub struct UniformGridFrameState {
 }
 
 /// What the last prepaint decided; keyboard navigation reads this.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct GridLayout {
     pub slots: math::Slots,
     pub rows_visible: usize,
@@ -253,9 +355,9 @@ pub struct GridLayout {
 pub struct GridScrollState {
     pub base_handle: ScrollHandle,
     deferred: Option<(usize, bool)>,
-    layout: Cell<GridLayout>,
-    /// Column count and row height of the last prepaint.
-    last_rows: Option<(usize, f32)>,
+    layout: GridLayout,
+    /// What `layout.slots` was built from: rebuilt only when this changes.
+    built_from: Option<(usize, math::Columns, f32, u64)>,
 }
 
 /// Scroll handle for a [`UniformGrid`]; keep it in the view and pass it each frame.
@@ -279,22 +381,22 @@ impl UniformGridScrollHandle {
 
     /// Column count of the last prepaint (1 before the first).
     pub fn cols(&self) -> usize {
-        self.0.borrow().layout.get().slots.cols.max(1)
+        self.0.borrow().layout.slots.columns.cols.max(1)
     }
 
     /// Where the last prepaint put the tiles.
     pub fn slots(&self) -> math::Slots {
-        self.0.borrow().layout.get().slots
+        self.0.borrow().layout.slots.clone()
     }
 
     /// Fully or partly visible rows in the last prepaint.
     pub fn rows_visible(&self) -> usize {
-        self.0.borrow().layout.get().rows_visible.max(1)
+        self.0.borrow().layout.rows_visible.max(1)
     }
 
     /// Index of the item at the top-left of the viewport in the last prepaint.
     pub fn top_item(&self) -> usize {
-        self.0.borrow().layout.get().top_item
+        self.0.borrow().layout.top_item
     }
 }
 
@@ -316,6 +418,12 @@ impl UniformGrid {
     /// The least space between two tiles; spare width widens it.
     pub fn gap(mut self, gap: Size<Pixels>) -> Self {
         self.gap = gap;
+        self
+    }
+
+    /// How wide spare width may make a gutter; the rest becomes margins.
+    pub fn max_gap(mut self, max_gap: Pixels) -> Self {
+        self.max_gap = Some(max_gap);
         self
     }
 
@@ -390,27 +498,39 @@ impl Element for UniformGrid {
             bounds.bottom_right()
                 - point(border.right + padding.right, border.bottom + padding.bottom),
         );
-        let tile = (f32::from(self.cell.width), f32::from(self.cell.height));
         let gap = (f32::from(self.gap.width), f32::from(self.gap.height));
         let viewport_w = f32::from(padded_bounds.size.width);
         let viewport_h = f32::from(padded_bounds.size.height);
 
         // Everything size-dependent is decided here, from the real bounds.
-        let slots = math::Slots::fit(viewport_w, tile, gap);
-        let (cols, cell_h) = (slots.cols, slots.pitch.1);
-        let rows = math::rows_for(self.item_count, cols);
-        let content_h = rows as f32 * cell_h + f32::from(padding.top + padding.bottom);
-        let content_size = size(padded_bounds.size.width, px(content_h));
-
-        let (deferred, last_rows) = match &self.scroll_handle {
+        let columns = math::Columns::fit(
+            viewport_w,
+            f32::from(self.tile_width),
+            gap.0,
+            self.max_gap.map_or(f32::INFINITY, f32::from),
+        );
+        let built_from = (self.item_count, columns, gap.1, self.heights.revision);
+        // The rows before this frame, to find again what was at the top.
+        let (deferred, before) = match &self.scroll_handle {
             Some(h) => {
                 let mut s = h.0.borrow_mut();
-                let last = s.last_rows;
-                s.last_rows = Some((cols, cell_h));
-                (s.deferred.take(), last)
+                let changed = s.built_from.is_some() && s.built_from != Some(built_from);
+                (s.deferred.take(), changed.then(|| s.layout.slots.clone()))
             }
             None => (None, None),
         };
+        let reuse = self
+            .scroll_handle
+            .as_ref()
+            .filter(|h| h.0.borrow().built_from == Some(built_from))
+            .map(|h| h.0.borrow().layout.slots.clone());
+        let slots = reuse.unwrap_or_else(|| {
+            math::Slots::new(columns, gap.1, self.item_count, &*self.heights.of)
+        });
+        let cols = columns.cols;
+        let content_h = slots.height() + f32::from(padding.top + padding.bottom);
+        let content_size = size(padded_bounds.size.width, px(content_h));
+
         let base = self
             .scroll_handle
             .as_ref()
@@ -428,14 +548,12 @@ impl Element for UniformGrid {
             cx,
             |_style, mut scroll_offset, hitbox, window, cx| {
                 let mut y = f32::from(scroll_offset.y);
-                if let Some(old) = last_rows
-                    && old != (cols, cell_h)
-                {
-                    y = math::preserve_top_item(y, old, (cols, cell_h));
+                if let Some(before) = &before {
+                    y = slots.offset_for_anchor(before.anchor(y));
                 }
                 if let Some((ix, strict)) = deferred {
                     let ix = ix.min(item_count.saturating_sub(1));
-                    y = math::offset_for_item(ix, cols, cell_h, viewport_h, content_h, y, strict);
+                    y = slots.offset_for_item(ix, viewport_h, content_h, y, strict);
                 }
                 let max_scroll = (content_h - viewport_h).max(0.0);
                 y = y.clamp(-max_scroll, 0.0);
@@ -446,13 +564,15 @@ impl Element for UniformGrid {
                     }
                 }
 
-                let visible = math::visible_rows(y, viewport_h, cell_h, rows);
+                let visible = slots.visible_rows(y, viewport_h);
                 if let Some(h) = &handle {
-                    h.0.borrow().layout.set(GridLayout {
-                        slots,
+                    let mut state = h.0.borrow_mut();
+                    state.built_from = Some(built_from);
+                    state.layout = GridLayout {
+                        slots: slots.clone(),
                         rows_visible: visible.len(),
-                        top_item: math::top_item(y, cell_h, cols),
-                    });
+                        top_item: slots.anchor(y).0,
+                    };
                 }
                 if item_count == 0 || visible.is_empty() {
                     return hitbox;
@@ -469,8 +589,8 @@ impl Element for UniformGrid {
                                 px(y) + scroll_offset.y + padding.top,
                             );
                         let available = size(
-                            AvailableSpace::Definite(px(tile.0)),
-                            AvailableSpace::Definite(px(tile.1)),
+                            AvailableSpace::Definite(px(columns.tile)),
+                            AvailableSpace::Definite(px(slots.tile_height(ix / cols))),
                         );
                         item.layout_as_root(available, window, cx);
                         item.prepaint_at(origin, window, cx);
@@ -512,109 +632,134 @@ impl Element for UniformGrid {
 mod tests {
     use super::math::*;
 
-    #[test]
-    fn columns_and_rows() {
-        assert_eq!(cols_for(800.0, 152.0), 5);
-        assert_eq!(cols_for(100.0, 152.0), 1, "never zero columns");
-        assert_eq!(cols_for(0.0, 152.0), 1);
-        assert_eq!(rows_for(0, 5), 0);
-        assert_eq!(rows_for(10, 5), 2);
-        assert_eq!(rows_for(11, 5), 3);
+    /// Five 100 px tiles a row; every fourth name needs a taller tile.
+    fn slots(count: usize) -> Slots {
+        let columns = Columns::fit(600., 100., 12., 40.);
+        Slots::new(
+            columns,
+            8.,
+            count,
+            |ix| if ix % 4 == 0 { 170. } else { 140. },
+        )
     }
 
     #[test]
-    fn spare_width_goes_to_the_gutters() {
-        // Five 100 px tiles with 12 px gutters need 560; the other 40 are shared.
-        let slots = Slots::fit(600., (100., 140.), (12., 8.));
-        assert_eq!((slots.cols, slots.pitch), (5, (120., 148.)));
-        assert_eq!(slots.origin(0), (10., 4.));
-        assert_eq!(slots.origin(6), (130., 152.));
+    fn spare_width_goes_to_the_gutters_up_to_a_cap() {
+        // Five tiles with 12 px gutters need 560; the other 40 are shared.
+        let columns = Columns::fit(600., 100., 12., 40.);
+        assert_eq!((columns.cols, columns.pitch, columns.left), (5, 120., 0.));
+        // Capped at 16 px, the slots take 580 and the margins the rest.
+        let capped = Columns::fit(600., 100., 12., 16.);
+        assert_eq!((capped.cols, capped.pitch, capped.left), (5, 116., 10.));
         // A pane narrower than one slot still holds a column.
-        let narrow = Slots::fit(50., (100., 140.), (12., 8.));
-        assert_eq!((narrow.cols, narrow.pitch), (1, (112., 148.)));
+        let narrow = Columns::fit(50., 100., 12., 40.);
+        assert_eq!((narrow.cols, narrow.pitch, narrow.left), (1, 112., 0.));
+    }
+
+    #[test]
+    fn a_row_is_as_tall_as_its_tallest_tile() {
+        // Items 0 and 4 are tall: both are in the first row. The second row
+        // (5..10) holds item 8, the third (10..12) only short ones.
+        let slots = slots(12);
+        assert_eq!(
+            (
+                slots.tile_height(0),
+                slots.tile_height(1),
+                slots.tile_height(2)
+            ),
+            (170., 170., 140.)
+        );
+        assert_eq!((slots.rows(), slots.height()), (3, 178. + 178. + 148.));
+        assert_eq!(slots.origin(0), (10., 4.));
+        assert_eq!(slots.origin(6), (130., 182.));
+        assert_eq!(slots.origin(10), (10., 360.));
+        let empty = Slots::new(Columns::fit(600., 100., 12., 40.), 8., 0, |_| 140.);
+        assert_eq!((empty.rows(), empty.height()), (0, 0.));
     }
 
     #[test]
     fn gutters_belong_to_no_tile() {
-        let slots = Slots::fit(600., (100., 140.), (12., 8.));
+        let slots = slots(12);
         assert_eq!(slots.tile_at(10., 4.), Some(0));
-        assert_eq!(slots.tile_at(109., 143.), Some(0));
+        assert_eq!(slots.tile_at(109., 173.), Some(0));
         assert_eq!(slots.tile_at(9., 50.), None, "left of the tile");
         assert_eq!(slots.tile_at(115., 50.), None, "between two tiles");
-        assert_eq!(slots.tile_at(50., 146.), None, "between two rows");
-        assert_eq!(slots.tile_at(130., 152.), Some(6));
+        assert_eq!(slots.tile_at(50., 176.), None, "between two rows");
+        assert_eq!(slots.tile_at(130., 182.), Some(6));
+        assert_eq!(slots.tile_at(50., 499.), Some(10), "the short last row");
+        assert_eq!(slots.tile_at(50., 501.), None);
+        assert_eq!(slots.tile_at(50., 5000.), None, "below the content");
         assert_eq!(slots.tile_at(601., 50.), None, "beside the last column");
         assert_eq!(Slots::default().tile_at(5., 5.), None, "before any layout");
+        // Capped gutters leave a margin, which is no tile either.
+        let capped = Slots::new(Columns::fit(600., 100., 12., 16.), 8., 12, |_| 140.);
+        assert_eq!(capped.tile_at(12., 50.), None);
+        assert_eq!(capped.tile_at(18., 50.), Some(0));
     }
 
     #[test]
     fn a_band_selects_the_tiles_it_touches() {
-        let slots = Slots::fit(600., (100., 140.), (12., 8.));
+        let slots = slots(12);
         assert!(
             slots.covered((111., 128.), (0., 300.)).is_empty(),
             "in a gutter"
         );
-        assert_eq!(slots.covered((105., 135.), (100., 146.)), vec![0, 1]);
-        assert_eq!(slots.covered((105., 135.), (100., 152.)), vec![0, 1, 5, 6]);
+        assert_eq!(slots.covered((105., 135.), (100., 176.)), vec![0, 1]);
+        assert_eq!(slots.covered((105., 135.), (100., 182.)), vec![0, 1, 5, 6]);
         assert_eq!(slots.covered((-50., 5000.), (0., 10.)), vec![0, 1, 2, 3, 4]);
+        assert_eq!(slots.covered((0., 50.), (175., 9000.)), vec![5, 10]);
         assert!(
             slots.covered((0., 9.), (0., 300.)).is_empty(),
             "the left margin"
         );
+        assert!(slots.covered((0., 50.), (9000., 9900.)).is_empty(), "below");
         assert!(Slots::default().covered((0., 9.), (0., 9.)).is_empty());
     }
 
     #[test]
     fn visible_rows_follow_the_offset() {
-        assert_eq!(visible_rows(0.0, 400.0, 100.0, 50), 0..4);
-        assert_eq!(visible_rows(-250.0, 400.0, 100.0, 50), 2..7);
-        assert_eq!(
-            visible_rows(-4900.0, 400.0, 100.0, 50),
-            49..50,
-            "clamped to rows"
-        );
-        assert_eq!(visible_rows(0.0, 400.0, 100.0, 0), 0..0);
+        let slots = slots(50); // ten rows of 178
+        assert_eq!(slots.visible_rows(0.0, 400.0), 0..3);
+        assert_eq!(slots.visible_rows(-178.0, 356.0), 1..3);
+        assert_eq!(slots.visible_rows(-400.0, 400.0), 2..5);
+        assert_eq!(slots.visible_rows(-1700.0, 400.0), 9..10, "clamped to rows");
+        assert_eq!(Slots::default().visible_rows(0.0, 400.0), 0..0);
     }
 
     #[test]
     fn reflow_keeps_the_first_visible_item() {
-        // 6 columns, scrolled to row 4: item 24 is at the top.
-        assert_eq!(top_item(-400.0, 100.0, 6), 24);
-        // Now 4 columns: item 24 is row 6.
-        let y = preserve_top_item(-400.0, (6, 100.0), (4, 100.0));
-        assert!((y - -600.0).abs() < 1e-6);
-        assert_eq!(top_item(y, 100.0, 4), 24);
-        // And 8 columns: item 24 is row 3.
-        assert!((preserve_top_item(-400.0, (6, 100.0), (8, 100.0)) - -300.0).abs() < 1e-6);
-        // Zoomed in: three taller columns, and item 24 is still at the top.
-        assert!((preserve_top_item(-400.0, (6, 100.0), (3, 180.0)) - -1440.0).abs() < 1e-6);
-        // Partial rows floor to the row start.
-        assert_eq!(top_item(-450.0, 100.0, 6), 24);
+        let wide = slots(50);
+        // Scrolled 30 px into the third row: item 10 is at the top.
+        let anchor = wide.anchor(-(2. * 178. + 30.));
+        assert_eq!(anchor, (10, 30.));
+        // Three columns now: item 10 is in the fourth row (9..12).
+        let narrow = Slots::new(Columns::fit(340., 100., 12., 40.), 8., 50, |_| 140.);
+        assert_eq!(narrow.columns.cols, 3);
+        let y = narrow.offset_for_anchor(anchor);
+        assert!((y - -(3. * 148. + 30.)).abs() < 1e-3);
+        assert_eq!(narrow.anchor(y).0, 9);
+        // Nothing changed: the offset is what it was.
+        assert!((wide.offset_for_anchor(anchor) - -(2. * 178. + 30.)).abs() < 1e-3);
+        // The list shrank under the view: the last row, not past it.
+        let short = slots(7);
+        assert_eq!(short.anchor(short.offset_for_anchor((40, 0.))).0, 5);
     }
 
     #[test]
     fn scroll_to_item_is_minimal_unless_strict() {
-        // viewport 400, cell 100, 4 cols, 100 items -> 25 rows, content 2500
-        let cur = -200.0; // rows 2..6 visible
-        assert!(
-            (offset_for_item(12, 4, 100.0, 400.0, 2500.0, cur, false) - cur).abs() < 1e-6,
-            "visible: unchanged"
-        );
-        assert!(
-            (offset_for_item(12, 4, 100.0, 400.0, 2500.0, cur, true) - -300.0).abs() < 1e-6,
-            "strict: row 3 at top"
-        );
-        assert!(
-            (offset_for_item(28, 4, 100.0, 400.0, 2500.0, cur, false) - -400.0).abs() < 1e-6,
-            "below: row 7 at bottom"
-        );
-        assert!(
-            (offset_for_item(0, 4, 100.0, 400.0, 2500.0, cur, false) - 0.0).abs() < 1e-6,
-            "above: row at top"
-        );
-        assert!(
-            (offset_for_item(99, 4, 100.0, 400.0, 2500.0, cur, true) - -2100.0).abs() < 1e-6,
-            "clamped to content"
-        );
+        // viewport 400, 4 columns, 100 items -> 25 rows of 100
+        let slots = Slots::new(Columns::fit(448., 100., 12., 40.), 0., 100, |_| 100.);
+        assert_eq!(slots.columns.cols, 4);
+        let at = |ix, current, strict| slots.offset_for_item(ix, 400., 2500., current, strict);
+        // Already visible: unchanged.
+        assert!((at(5, 0., false) - 0.).abs() < 1e-6);
+        // Below the viewport: the row lands at the bottom.
+        assert!((at(20, 0., false) - -200.).abs() < 1e-6);
+        // Above the viewport: the row lands at the top.
+        assert!((at(4, -500., false) - -100.).abs() < 1e-6);
+        // Strict: always the top.
+        assert!((at(20, 0., true) - -500.).abs() < 1e-6);
+        // Clamped to the content.
+        assert!((at(99, 0., true) - -2100.).abs() < 1e-6);
     }
 }

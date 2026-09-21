@@ -69,7 +69,13 @@ layout (`crates/gpui/...`) so they apply there with `git apply -p1`.
   at both ends when the text is centred (every two-line name in the grid).
   `LineWrapper::truncate_clamped_line` finds where the last allowed line
   begins and truncates that line to one width; text with hard line breaks
-  keeps the old behaviour. `just list-check` runs the line wrapper tests too.
+  keeps the old behaviour. The suffix follows the last word, not the space
+  after it. The same patch adds `TextOverflow::TruncateMiddle` and
+  `Styled::text_ellipsis_middle`: the ellipsis replaces the middle of the
+  line (the last allowed line, when clamped) and both ends share what is
+  left, so a file name keeps its extension. Runs shrink over the removed
+  bytes and the ellipsis joins the run it began in. `just list-check` runs
+  the line wrapper tests too.
 
 ## Regenerating a patch
 

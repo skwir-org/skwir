@@ -21,7 +21,7 @@ use crate::theme::Theme;
 
 /// Where a view puts its entries, in content coordinates (origin at the top
 /// left of the scrolled content).
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Geometry {
     /// Full-width rows of one height.
     Rows { height: f32 },
@@ -37,9 +37,9 @@ impl Geometry {
         if x < 0. || y < 0. {
             return None;
         }
-        let index = match *self {
-            Geometry::Rows { height } => (y / height) as usize,
-            Geometry::Cells { slots, pad_x } => slots.tile_at(x - pad_x, y)?,
+        let index = match self {
+            Geometry::Rows { height } => (y / *height) as usize,
+            Geometry::Cells { slots, pad_x } => slots.tile_at(x - *pad_x, y)?,
         };
         (index < count).then_some(index)
     }
@@ -51,14 +51,14 @@ impl Geometry {
         if count == 0 || y1 < 0. {
             return Vec::new();
         }
-        match *self {
+        match self {
             Geometry::Rows { height } => {
                 let first = (y0 / height) as usize;
                 let last = ((y1 / height) as usize).min(count - 1);
                 (first..=last).filter(|index| *index < count).collect()
             }
             Geometry::Cells { slots, pad_x } => slots
-                .covered((x0 - pad_x, x1 - pad_x), (y0, y1))
+                .covered((x0 - *pad_x, x1 - *pad_x), (y0, y1))
                 .into_iter()
                 .filter(|index| *index < count)
                 .collect(),
@@ -147,7 +147,8 @@ impl Element for Marquee {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let (geometry, count, offset, pane) = (self.geometry, self.count, self.offset, self.pane);
+        let (geometry, count, offset, pane) =
+            (self.geometry.clone(), self.count, self.offset, self.pane);
         let to_content = move |position: Point<Pixels>| {
             (
                 f32::from(position.x - bounds.origin.x - offset.x),
@@ -179,12 +180,13 @@ impl Element for Marquee {
 
         let shell = self.shell.clone();
         let hitbox = hitbox.clone();
+        let pressed = geometry.clone();
         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
             if !phase.bubble() || event.button != MouseButton::Left || !hitbox.is_hovered(window) {
                 return;
             }
             let (x, y) = to_content(event.position);
-            if geometry.item_at(x, y, count).is_some() {
+            if pressed.item_at(x, y, count).is_some() {
                 return;
             }
             let keep = event.modifiers.control || event.modifiers.shift;
@@ -234,6 +236,7 @@ impl Element for Marquee {
 #[cfg(test)]
 mod tests {
     use super::{Geometry, Slots};
+    use crate::elements::uniform_grid::math::Columns;
 
     #[test]
     fn rows_are_hit_across_their_width_and_the_space_below_is_empty() {
@@ -253,7 +256,7 @@ mod tests {
     fn tiles_are_hit_inside_their_gutters_and_the_band_selects_a_block() {
         // Four 100 by 120 tiles a row, each 8 px from the edge of its slot.
         let cells = Geometry::Cells {
-            slots: Slots::fit(464., (100., 120.), (16., 16.)),
+            slots: Slots::new(Columns::fit(464., 100., 16., 40.), 16., 10, |_| 120.),
             pad_x: 4.,
         };
         assert_eq!(cells.item_at(130., 150., 10), Some(5));

@@ -353,7 +353,7 @@ impl TextLayout {
                     None
                 };
 
-                let (truncate_width, truncation_suffix) =
+                let (truncate_width, truncation_suffix, keep_end) =
                     if let Some(text_overflow) = text_style.text_overflow.clone() {
                         let width = known_dimensions.width.or(match available_space.width {
                             crate::AvailableSpace::Definite(x) => match text_style.line_clamp {
@@ -364,10 +364,11 @@ impl TextLayout {
                         });
 
                         match text_overflow {
-                            TextOverflow::Truncate(s) => (width, s),
+                            TextOverflow::Truncate(s) => (width, s, false),
+                            TextOverflow::TruncateMiddle(s) => (width, s, true),
                         }
                     } else {
-                        (None, "".into())
+                        (None, "".into(), false)
                     };
 
                 if let Some(text_layout) = element_state.0.borrow().as_ref()
@@ -388,15 +389,25 @@ impl TextLayout {
                         wrap_width,
                         max_lines,
                         &truncation_suffix,
+                        keep_end,
                         &mut runs,
                     )
                 } else if let Some(truncate_width) = truncate_width {
-                    line_wrapper.truncate_line(
-                        text.clone(),
-                        truncate_width,
-                        &truncation_suffix,
-                        &mut runs,
-                    )
+                    if keep_end {
+                        line_wrapper.truncate_line_middle(
+                            text.clone(),
+                            truncate_width,
+                            &truncation_suffix,
+                            &mut runs,
+                        )
+                    } else {
+                        line_wrapper.truncate_line(
+                            text.clone(),
+                            truncate_width,
+                            &truncation_suffix,
+                            &mut runs,
+                        )
+                    }
                 } else {
                     text.clone()
                 };
