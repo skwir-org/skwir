@@ -149,6 +149,12 @@ pub struct State {
     find: Option<FindInput>,
     /// The column a table is ordered by, and whether ascending.
     sort: Option<(usize, bool)>,
+    /// Scrolling past the end of a section goes to the next one: the wheel
+    /// must already rest on the edge (`at_edge`) and then mean it (`turn`).
+    turn: crate::reader_scroll::WheelTurn,
+    at_edge: i8,
+    /// The section before was asked for by scrolling up: show its end.
+    land_at_end: bool,
 }
 struct FindInput {
     input: gpui::Entity<crate::input::TextInput>,
@@ -169,6 +175,9 @@ impl Default for State {
             outline: false,
             find: None,
             sort: None,
+            turn: crate::reader_scroll::WheelTurn::default(),
+            at_edge: 0,
+            land_at_end: false,
         }
     }
 }
@@ -191,6 +200,14 @@ impl State {
     pub fn arrived(&mut self, display: &Display) {
         self.reset(&display.data);
         self.request.offset = display.data.position;
+        (self.at_edge, self.turn) = (0, crate::reader_scroll::WheelTurn::default());
+        if std::mem::take(&mut self.land_at_end) {
+            // Scrolled up out of the next section: read on from this one's end.
+            self.list.scroll_to(gpui::ListOffset {
+                item_ix: display.data.blocks.len() + self.visible.len(),
+                offset_in_item: px(0.),
+            });
+        }
         if display.data.kind == InspectionKind::Book
             && let Some(query) = self.request.query.as_deref()
             && let Some(i) = display.find(&query.to_lowercase(), None, false)
@@ -657,6 +674,58 @@ impl Shell {
     }
 }
 impl Shell {
+    /// Scrolling on past the end of a section goes to the next one, and back
+    /// past its start to the one before. The wheel must first come to rest on
+    /// the edge and then be pushed again: arriving at the end of a chapter
+    /// does not leave it. A trackpad has to mean it (`WheelTurn`).
+    pub fn inspect_wheel(
+        &mut self,
+        event: &gpui::ScrollWheelEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(PreviewContent::Inspection(display)) = &self.preview.content else {
+            return;
+        };
+        let (previous, next) = (display.data.previous, display.data.next);
+        let delta = f32::from(event.delta.pixel_delta(window.line_height()).y);
+        if delta == 0. || event.modifiers.control {
+            return;
+        }
+        let pending = self.preview.phase != PreviewPhase::Idle;
+        let state = &mut self.preview.inspection;
+        let bottom = state.list.max_offset_for_scrollbar().height;
+        let offset = -state.list.scroll_px_offset_for_scrollbar().y;
+        let toward: i8 = if delta < 0. { 1 } else { -1 };
+        let here = if toward == 1 {
+            offset >= bottom - px(0.5)
+        } else {
+            offset <= px(0.5)
+        };
+        let target = if toward == 1 { next } else { previous };
+        let (at_edge, pushing) = edge_step(state.at_edge, toward, here && target.is_some());
+        if at_edge != state.at_edge {
+            state.turn = crate::reader_scroll::WheelTurn::default();
+        }
+        state.at_edge = at_edge;
+        if !pushing {
+            return;
+        }
+        let lines = matches!(event.delta, gpui::ScrollDelta::Lines(_));
+        if state.turn.turn(delta, lines, pending) != 0
+            && let Some(offset) = target
+        {
+            state.at_edge = 0;
+            state.land_at_end = toward == -1;
+            self.run(
+                "ui.inspect",
+                serde_json::json!({"action":"page","offset":offset}),
+                window,
+                cx,
+            );
+        }
+    }
+
     fn inspect_find_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         use crate::input::{InputEvent, TextInput};
         if self.preview.inspection.find.is_none() {
@@ -702,6 +771,19 @@ impl Shell {
         }
         self.preview.menu = None;
         cx.notify();
+    }
+}
+
+/// One wheel event at a section's edge. `resting` is the edge the wheel had
+/// come to rest on (-1 top, 1 bottom, 0 neither), `toward` the way it is going
+/// now, `here` whether it is on that edge with a section beyond. Returns the
+/// edge it rests on afterwards, and whether this event pushes against it:
+/// arriving at the end of a chapter does not leave it, pushing on does.
+fn edge_step(resting: i8, toward: i8, here: bool) -> (i8, bool) {
+    match (here, resting == toward) {
+        (false, _) => (0, false),
+        (true, false) => (toward, false),
+        (true, true) => (toward, true),
     }
 }
 
@@ -1049,7 +1131,11 @@ pub fn content(
     let list_style = crate::markdown::MarkdownStyle::new(
         theme,
         font_size,
-        display.data.kind == InspectionKind::Markdown,
+        // A book is read like a document: the same measure, spacing and rules.
+        matches!(
+            display.data.kind,
+            InspectionKind::Markdown | InspectionKind::Book
+        ),
     );
     let measure = list_style.measure;
     let entity = cx.entity().downgrade();
@@ -1217,6 +1303,11 @@ pub fn content(
         .flex()
         .flex_col()
         .key_context("Inspector")
+        // After the list has scrolled: what is left of the gesture at an edge
+        // turns the section, so a book reads on from chapter to chapter.
+        .on_scroll_wheel(cx.listener(|this, event, window, cx| {
+            this.inspect_wheel(event, window, cx);
+        }))
         .when_some(shell.preview.inspection.focus.as_ref(), |d, focus| {
             d.track_focus(focus)
         });
@@ -1461,6 +1552,22 @@ fn hex_cell(text: &str, column: usize, theme: &Theme) -> AnyElement {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_section_turns_only_when_the_wheel_pushes_on_from_its_edge() {
+        use super::edge_step;
+        // Scrolling down inside the chapter, then arriving at its end: no push.
+        assert_eq!(edge_step(0, 1, false), (0, false));
+        assert_eq!(edge_step(0, 1, true), (1, false));
+        // The next notch pushes against the end.
+        assert_eq!(edge_step(1, 1, true), (1, true));
+        // Turning back up from the end is ordinary scrolling again.
+        assert_eq!(edge_step(1, -1, false), (0, false));
+        // Resting on the bottom does not arm the top: a short chapter that is
+        // both at once still needs two notches the same way.
+        assert_eq!(edge_step(1, -1, true), (-1, false));
+        assert_eq!(edge_step(-1, -1, true), (-1, true));
+    }
+
     use super::*;
     use bibli_core::inspection::{Block, Row};
 

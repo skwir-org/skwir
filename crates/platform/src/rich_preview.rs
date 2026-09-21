@@ -18,6 +18,11 @@ pub fn html(
     let mut current = Block::default();
     let mut group = None;
     let mut images = 0;
+    // Whether the block being filled is a table row, and a header row.
+    let mut row: Option<bool> = None;
+    // List items that already got their bullet: it belongs to the first block
+    // of an item, not to every paragraph inside it.
+    let mut marked = std::collections::HashSet::new();
     for node in doc.tree.root().descendants() {
         check(cancel)?;
         anyhow::ensure!(
@@ -58,7 +63,10 @@ pub fn html(
         });
         let id = block.map(|(id, _)| *id);
         if group != id && (!current.text.is_empty() || current.image.is_some()) {
-            blocks.push(std::mem::take(&mut current));
+            blocks.push(finish(std::mem::take(&mut current), row.take()));
+        }
+        if group != id {
+            row = block.filter(|(_, e)| e.name() == "tr").map(|_| false);
         }
         group = id;
         if current.anchor.is_none() {
@@ -82,10 +90,45 @@ pub fn html(
                 "h6" => 6,
                 _ => 0,
             };
-            if e.name() == "li" && current.text.is_empty() {
-                current.text.push_str("• ");
-            }
         }
+        // A list item is structure, as in Markdown: a depth and a marker drawn
+        // beside the text, not a bullet typed into it.
+        let lists = ancestors
+            .iter()
+            .filter(|(_, e)| matches!(e.name(), "ul" | "ol"))
+            .count();
+        if let Some((item, _)) = ancestors.iter().find(|(_, e)| e.name() == "li") {
+            current.list_depth = lists.max(1) as u32;
+            if current.text.is_empty() && current.marker.is_none() && marked.insert(*item) {
+                let ordered = ancestors
+                    .iter()
+                    .find(|(_, e)| matches!(e.name(), "ul" | "ol"))
+                    .filter(|(_, e)| e.name() == "ol");
+                current.marker = Some(match (ordered, doc.tree.get(*item)) {
+                    (Some((_, list)), Some(node)) => {
+                        let before = node
+                            .prev_siblings()
+                            .filter(|n| n.value().as_element().is_some_and(|e| e.name() == "li"))
+                            .count();
+                        let start = list
+                            .attr("start")
+                            .and_then(|start| start.parse::<usize>().ok())
+                            .unwrap_or(1);
+                        format!("{}.", start + before)
+                    }
+                    _ => "•".into(),
+                });
+            }
+        } else {
+            current.list_depth = 0;
+        }
+        // The one piece of a page's own styling kept: what is centred stays so.
+        current.centered = ancestors.iter().any(|(_, e)| {
+            e.name() == "center"
+                || e.attr("align")
+                    .is_some_and(|a| a.eq_ignore_ascii_case("center"))
+                || styled(e, "text-align", &["center"])
+        });
         match node.value() {
             Node::Text(text) => {
                 let text = if current.code {
@@ -111,12 +154,18 @@ pub fn html(
                 current.runs.push(Run {
                     color: None,
                     range: start..current.text.len(),
-                    bold: ancestors
-                        .iter()
-                        .any(|(_, e)| matches!(e.name(), "b" | "strong" | "th")),
-                    italic: ancestors
-                        .iter()
-                        .any(|(_, e)| matches!(e.name(), "i" | "em")),
+                    bold: ancestors.iter().any(|(_, e)| {
+                        matches!(e.name(), "b" | "strong" | "th")
+                            || styled(
+                                e,
+                                "font-weight",
+                                &["bold", "bolder", "600", "700", "800", "900"],
+                            )
+                    }),
+                    italic: ancestors.iter().any(|(_, e)| {
+                        matches!(e.name(), "i" | "em" | "cite" | "figcaption")
+                            || styled(e, "font-style", &["italic", "oblique"])
+                    }),
                     strikethrough: ancestors
                         .iter()
                         .any(|(_, e)| matches!(e.name(), "del" | "s" | "strike")),
@@ -131,8 +180,24 @@ pub fn html(
                 });
             }
             Node::Element(e) if e.name() == "br" => current.text.push('\n'),
-            Node::Element(e) if matches!(e.name(), "td" | "th") && !current.text.is_empty() => {
-                current.text.push_str("    │    ");
+            // Cells are ranges of the row's text, joined by tabs, as Markdown's
+            // are: emphasis and links inside a cell stay ordinary runs.
+            Node::Element(e) if matches!(e.name(), "td" | "th") => {
+                if let Some(header) = row.as_mut() {
+                    *header |= e.name() == "th";
+                }
+                if !current.text.is_empty() {
+                    current.text.push('\t');
+                }
+            }
+            Node::Element(e) if e.name() == "hr" => {
+                if !current.text.is_empty() {
+                    blocks.push(finish(std::mem::take(&mut current), row.take()));
+                }
+                blocks.push(Block {
+                    kind: bibli_core::inspection::BlockKind::Rule,
+                    ..Block::default()
+                });
             }
             Node::Element(e) if e.name() == "input" && e.attr("type") == Some("checkbox") => {
                 current.text.push_str(if e.attr("checked").is_some() {
@@ -143,7 +208,7 @@ pub fn html(
             }
             Node::Element(e) if e.name() == "img" => {
                 if !current.text.is_empty() {
-                    blocks.push(std::mem::take(&mut current));
+                    blocks.push(finish(std::mem::take(&mut current), row.take()));
                 }
                 let bitmap = if images < limits::EMBEDDED_IMAGES {
                     e.attr("src").and_then(&mut image)
@@ -154,6 +219,7 @@ pub fn html(
                 blocks.push(Block {
                     text: e.attr("alt").unwrap_or_default().into(),
                     image: bitmap,
+                    centered: current.centered,
                     ..Block::default()
                 });
             }
@@ -161,9 +227,39 @@ pub fn html(
         }
     }
     if !current.text.is_empty() {
-        blocks.push(current);
+        blocks.push(finish(current, row));
     }
     Ok(blocks)
+}
+
+/// Close a block: a table row gets its cells, the ranges between its tabs.
+fn finish(mut block: Block, row: Option<bool>) -> Block {
+    if let Some(header) = row {
+        let mut cells = Vec::new();
+        let mut start = 0;
+        for (index, _) in block.text.match_indices('\t') {
+            cells.push(start..index);
+            start = index + 1;
+        }
+        cells.push(start..block.text.len());
+        block.kind = bibli_core::inspection::BlockKind::TableRow { cells, header };
+    }
+    block
+}
+
+/// Whether the element's own `style` sets `property` to one of `values`. Only
+/// the inline attribute: a publisher's stylesheet is not applied.
+fn styled(element: &scraper::node::Element, property: &str, values: &[&str]) -> bool {
+    element.attr("style").is_some_and(|style| {
+        style.split(';').any(|declaration| {
+            declaration.split_once(':').is_some_and(|(name, value)| {
+                name.trim().eq_ignore_ascii_case(property)
+                    && values
+                        .iter()
+                        .any(|wanted| value.trim().eq_ignore_ascii_case(wanted))
+            })
+        })
+    })
 }
 /// Resolve only local descendants of the document directory, including symlinks.
 pub fn local_image(base: &std::path::Path, href: &str, cancel: &CancelToken) -> Option<Image> {
@@ -193,6 +289,61 @@ mod tests {
         assert_eq!(blocks[0].heading, 1);
         assert!(blocks.iter().any(|b| b.runs.iter().any(|r| r.bold)));
         assert!(!blocks.iter().any(|b| b.text.contains("secret")));
+    }
+
+    #[test]
+    fn lists_tables_rules_and_centring_are_structure_not_typed_characters() {
+        use bibli_core::inspection::BlockKind;
+        let source = r#"<h1 style="text-align: center">A Title</h1>
+            <p><span style="font-style:italic">said</span> and <span style="font-weight: 700">done</span></p>
+            <ol start="3"><li>three</li><li><p>four</p><p>still four</p><ul><li>inner</li></ul></li></ol>
+            <hr/>
+            <table><tr><th>Name</th><th>Qty</th></tr><tr><td><em>pear</em></td><td>12</td></tr></table>
+            <center><img src="cover.png" alt="Cover"/></center>"#;
+        let blocks = html(source, &CancelToken::new(), |_| None).unwrap();
+        let text: Vec<_> = blocks.iter().map(|b| b.text.as_str()).collect();
+        assert_eq!(
+            text,
+            [
+                "A Title",
+                "said and done",
+                "three",
+                "four",
+                "still four",
+                "inner",
+                "",
+                "Name\tQty",
+                "pear\t12",
+                "Cover"
+            ]
+        );
+        assert!(blocks[0].centered && !blocks[1].centered && blocks[9].centered);
+        assert!(blocks[1].runs[0].italic && blocks[1].runs.iter().any(|run| run.bold));
+        let list: Vec<_> = blocks[2..6]
+            .iter()
+            .map(|b| (b.list_depth, b.marker.as_deref()))
+            .collect();
+        assert_eq!(
+            list,
+            [(1, Some("3.")), (1, Some("4.")), (1, None), (2, Some("•"))],
+            "numbered from `start`; a second paragraph of an item has no marker"
+        );
+        assert_eq!(blocks[6].kind, BlockKind::Rule);
+        assert_eq!(
+            blocks[7].kind,
+            BlockKind::TableRow {
+                cells: vec![0..4, 5..8],
+                header: true
+            }
+        );
+        assert_eq!(
+            blocks[8].kind,
+            BlockKind::TableRow {
+                cells: vec![0..4, 5..7],
+                header: false
+            }
+        );
+        assert!(blocks[8].runs[0].italic, "a cell keeps its emphasis");
     }
 
     #[test]

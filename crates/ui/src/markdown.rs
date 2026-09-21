@@ -170,7 +170,15 @@ pub fn block(
     }
     row.child(line.child(content))
         .when_some(image, |d, image| {
-            d.child(gpui::img(image.clone()).max_w_full())
+            // A picture the page centred (a cover, a logo) stays in the middle;
+            // its caption, the block's text, follows it there.
+            d.child(
+                div()
+                    .w_full()
+                    .flex()
+                    .when(block.centered, gpui::Styled::justify_center)
+                    .child(gpui::img(image.clone()).max_w_full()),
+            )
         })
         .into_any_element()
 }
@@ -198,6 +206,9 @@ fn text_body(
         body = body
             .text_size(px(style.body_size))
             .line_height(px(style.body_size * style.line_height));
+    }
+    if block.centered {
+        body = body.text_center();
     }
     if block.quote {
         body = body.text_color(style.quote_text);

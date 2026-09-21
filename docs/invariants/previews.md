@@ -151,6 +151,21 @@ still to come are in `docs/preview-frame.md`.
   ways round, a float, the text), outside the sideways scroller. A font's
   sheet is drawn for the width the panel shows it at, and its blocks are
   stacked, so a long specimen text pushes the rest down.
+- **HTML is read for its structure** (`rich_preview::html`, shared by HTML
+  files, EPUB and mail): headings, paragraphs, quotes and code; lists as a
+  depth and a marker beside the text, numbered from `start`, the marker on an
+  item's first block only; table rows as cells that are ranges of the row's
+  text, like Markdown's; rules; and the one piece of a page's own styling that
+  is structure enough to keep, what is centred (`Block::centered`: a title
+  page, a logo), plus bold and italic from an element's inline `style`. A
+  publisher's stylesheet is not applied and nothing is executed or fetched. A
+  book reads in the same typography as a document (the reading profile).
+- **Sections follow each other under the wheel.** Any preview with a previous
+  and a next section (a book's chapters, pages of text, of bytes, of rows)
+  turns when the wheel pushes on past its edge: it must first come to rest
+  there, so arriving at the end of a chapter does not leave it
+  (`inspector::edge_step`, tested), and a trackpad has to mean it
+  (`WheelTurn`). Going back lands at the end of the section before.
 - **Muted is for secondary facts** (line numbers, captions, column headers),
   never for the data: offsets, sizes and values are `theme.text`. The only
   dimmed data is what stands for nothing: a zero byte, the dot of an

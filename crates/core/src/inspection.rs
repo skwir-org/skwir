@@ -98,6 +98,10 @@ pub struct Block {
     pub list_depth: u32,
     /// The bullet or number that introduces a list item, drawn beside it.
     pub marker: Option<String>,
+    /// Set in the middle of the column: a book's title page, a README's logo
+    /// line. The one piece of a document's own styling that is structure
+    /// enough to keep.
+    pub centered: bool,
     pub runs: Vec<Run>,
     pub image: Option<Image>,
 }
@@ -197,6 +201,7 @@ pub fn split_blocks(blocks: Vec<Block>) -> Vec<Block> {
                 } else {
                     None
                 },
+                centered: block.centered,
                 // Only text can exceed the limit, so the kind carries over.
                 kind: block.kind.clone(),
                 language: block.language.clone(),
