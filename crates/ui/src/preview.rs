@@ -231,6 +231,15 @@ impl PreviewState {
         self.key.as_ref().map(|key| key.path.as_path())
     }
 
+    /// The file that plays when the panel plays: the track of a playlist it
+    /// went into, otherwise the entry itself.
+    pub fn playing_path(&self) -> Option<PathBuf> {
+        match self.nested.last() {
+            Some(member) => Some(member.path.clone()),
+            None => self.path().map(Path::to_owned),
+        }
+    }
+
     /// The pane whose entry the panel is showing.
     pub fn pane(&self) -> Option<bibli_core::workspace::PaneId> {
         self.key.as_ref().map(|key| key.pane)
@@ -602,6 +611,15 @@ impl Shell {
                 if result.complete {
                     self.preview.reader.tried = true;
                     if let Some(session) = result.media {
+                        // The pinned track selected again: the panel shows the
+                        // session that is playing, not a second one beside it.
+                        let playing = self.preview.playing_path();
+                        let session = match &self.player.pinned {
+                            Some(pinned) if Some(&pinned.path) == playing.as_ref() => {
+                                Arc::clone(&pinned.session)
+                            }
+                            _ => session,
+                        };
                         if std::mem::take(&mut self.preview.autoplay) {
                             let _ = session.control(bibli_core::media::Control::Play(true));
                         }
@@ -714,6 +732,7 @@ impl Shell {
         let session = self.preview.reader.session.clone();
         let open_document = !is_dir && !self.preview.reader.tried;
         let lifetime = self.preview.reader.lifetime.clone();
+        let media_lifetime = self.preview.media.lifetime();
         // A desktop thumbnail represents the file, not the requested page or
         // timestamp. Only use it before this file has any preview content.
         let show_thumbnail = !is_dir && self.preview.content.is_none();
@@ -836,7 +855,7 @@ impl Shell {
                     }
                 }
                 // Provider registration owns media recognition, including container MIME types.
-                match previews.open_media(&request, &lifetime, wake.clone()) {
+                match previews.open_media(&request, &media_lifetime, wake.clone()) {
                     Ok(Some(media)) => {
                         if !cancel.is_cancelled() {
                             let _ = tx.send(PreviewResult {

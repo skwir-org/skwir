@@ -70,7 +70,8 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "crop",
         "code",
         "skip-next",
-        "skip-previous"
+        "skip-previous",
+        "pin"
     )
 }
 

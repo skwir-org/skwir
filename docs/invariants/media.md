@@ -84,3 +84,21 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
   is written and nothing removed. Opening one from the list remembers the rows
   as shown (`preview::Queue`), and the player's Previous, Next and hand-over
   then walk that queue instead of the folder; leaving the playlist forgets it.
+- Keep playing (`player.rs`). A preview dies with the selection and its media
+  session with it; pinned (`ui.media_pin`, audio only), the session belongs to
+  the window. A media session has a lifetime of its own (`MediaState`), not
+  the reader's, which the pin takes with it and gives back when unpinned, so
+  neither going away ends the other's session. The panel shows the pinned
+  session again whenever its file is selected: never a second player for one
+  file. Starting another track while one is pinned moves the pin: never two
+  playing at once. One reader pulls a session's updates, the panel when it
+  shows the session, otherwise the pin. The pin walks a queue of paths, the
+  folder's audio files in the pane's order or the playlist's tracks (resolved
+  on a worker), opens the next on a worker, and hands over at the end of a
+  track. The status bar holds its controls; its title shows the track.
+- What plays is core data. `App::player` holds `playing::NowPlaying`, which
+  the shell publishes once per wake for the pin or, without one, the audio
+  preview; listeners hear of changes, not of time passing, and work out the
+  position themselves. What others want of the player is a `PlayerRequest`
+  left there (`ui.player` for the UI's own surfaces) and taken when the shell
+  next wakes: nothing calls into the UI from another thread.

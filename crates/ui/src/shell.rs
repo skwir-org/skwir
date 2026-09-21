@@ -90,6 +90,8 @@ pub struct Shell {
     /// A header edge being dragged: column, pointer x and width at the start.
     pub column_drag: Option<(usize, f32, f32)>,
     pub preview: PreviewState,
+    /// A track kept playing while the selection moves (`player.rs`).
+    pub player: crate::player::PlayerState,
     pub palette: Option<PaletteState>,
     pub jump: Option<JumpState>,
     pub bulk: Option<BulkState>,
@@ -227,6 +229,7 @@ impl Shell {
             column_widths: crate::views::list::DEFAULT_WIDTHS,
             column_drag: None,
             preview: PreviewState::default(),
+            player: crate::player::PlayerState::default(),
             palette: None,
             jump: None,
             bulk: None,
@@ -957,6 +960,14 @@ impl Shell {
             }
             "inspect" => self.inspect_command(args, window, cx),
             "media_control" => self.media_control(args, cx),
+            "media_pin" => self.media_pin(cx),
+            "player" => {
+                let request = args.get("request").cloned().unwrap_or_default();
+                match serde_json::from_value(request) {
+                    Ok(request) => self.player_request(request, window, cx),
+                    Err(error) => self.set_status(error.to_string(), true, cx),
+                }
+            }
             "media_step" => {
                 let delta = args
                     .get("delta")
@@ -1236,6 +1247,7 @@ impl Shell {
         self.sync_reader(cx);
         self.sync_document_scroll(window, cx);
         self.sync_media(window, cx);
+        self.sync_player(window, cx);
         for id in self.panes.iter().map(|p| p.id).collect::<Vec<_>>() {
             self.with_pane(id, |shell| shell.sync_usage(cx));
         }

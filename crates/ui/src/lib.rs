@@ -38,6 +38,7 @@ pub mod menu;
 mod outline;
 pub mod palette;
 pub mod placeholder;
+mod player;
 pub mod preview;
 mod preview_bar;
 mod preview_toolbar;

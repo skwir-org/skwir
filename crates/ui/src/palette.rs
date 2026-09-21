@@ -67,6 +67,21 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.reader_page_edit", "{}", "Document: go to page…"),
     ("ui.preview_open_external", "{}", "Preview: open externally"),
     ("ui.preview_copy_path", "{}", "Preview: copy path"),
+    (
+        "ui.media_pin",
+        "{}",
+        "Player: keep playing while you browse",
+    ),
+    (
+        "ui.player",
+        r#"{"request":"play_pause"}"#,
+        "Player: play or pause",
+    ),
+    (
+        "ui.player",
+        r#"{"request":"stop"}"#,
+        "Player: stop and let go",
+    ),
     ("ui.media_step", r#"{"delta":1}"#, "Player: next track"),
     ("ui.media_step", r#"{"delta":-1}"#, "Player: previous track"),
     ("ui.preview_details", "{}", "Preview: show or hide details"),

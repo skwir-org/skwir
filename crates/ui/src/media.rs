@@ -50,9 +50,37 @@ pub struct MediaState {
     poster: Poster,
     initial_frame: Option<Frame>,
     scrub: Option<f64>,
+    /// Ends this preview's media worker. A reader's lifetime ends with the
+    /// preview; a session that is pinned must not, so it has its own, which
+    /// the pin takes with it (`release_lifetime`).
+    lifetime: bibli_core::CancelToken,
     /// The colour of the cover shown, by image: worked out once, when the
     /// cover changes, not per frame.
     tint: std::cell::Cell<Option<(gpui::ImageId, Option<gpui::Hsla>)>>,
+}
+
+impl Drop for MediaState {
+    fn drop(&mut self) {
+        self.lifetime.cancel();
+    }
+}
+
+impl MediaState {
+    /// The lifetime the next session of this preview is opened with.
+    pub(crate) fn lifetime(&self) -> bibli_core::CancelToken {
+        self.lifetime.clone()
+    }
+
+    /// Hand the session's lifetime to the pin: this preview going away no
+    /// longer ends it.
+    pub(crate) fn release_lifetime(&mut self) -> bibli_core::CancelToken {
+        std::mem::take(&mut self.lifetime)
+    }
+
+    /// Take a lifetime back from the pin: the session is this preview's again.
+    pub(crate) fn adopt_lifetime(&mut self, lifetime: bibli_core::CancelToken) {
+        self.lifetime = lifetime;
+    }
 }
 
 impl Shell {
@@ -293,7 +321,15 @@ impl Shell {
             _ => None,
         };
         if let Some(command) = command {
+            // One player at a time: starting another track while one is
+            // pinned moves the pin to it.
+            let takes_over = matches!(command, Control::Play(true))
+                && self.player.pinned.is_some()
+                && !self.preview_is_pinned();
             self.media_send(command, cx);
+            if takes_over {
+                self.media_pin(cx);
+            }
         }
     }
     pub fn media_scrub(&mut self, args: &serde_json::Value, cx: &mut Context<Self>) {
@@ -720,6 +756,19 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         )
         .active(shell.preview.media.fullscreen.is_some()),
     ));
+    if shell.media_is_audio() {
+        bar.push(Item::button(
+            Slot::View,
+            1,
+            Button::new(
+                "audio-pin",
+                "pin",
+                "Keep playing while you browse",
+                "ui.media_pin",
+            )
+            .active(shell.preview_is_pinned()),
+        ));
+    }
     bar.settings = Some(std::rc::Rc::new(settings));
     crate::preview_bar::render(&bar, crate::preview::active_popup(shell), shell, theme, cx)
 }

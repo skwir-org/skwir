@@ -90,6 +90,8 @@ pub struct App {
     pub workspace: RwLock<Workspace>,
     /// Entries waiting for a paste, published by the clipboard's owner.
     pub pending: crate::pending::PendingTransfer,
+    /// What is playing, published by the player, and what is asked of it.
+    pub player: crate::playing::Player,
     pub thumbnails: Arc<crate::thumbs::Thumbnails>,
     pub metadata: Arc<crate::metadata::MetadataProviders>,
     pub previews: Arc<crate::preview::Previews>,
@@ -131,6 +133,7 @@ impl App {
             cache: Cache::new(config.cache_root),
             workspace: RwLock::new(Workspace::default()),
             pending: crate::pending::PendingTransfer::default(),
+            player: crate::playing::Player::default(),
             providers: RwLock::new(HashMap::new()),
             waker: RwLock::new(None),
             batch_size: config.batch_size,

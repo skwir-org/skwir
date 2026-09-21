@@ -1,0 +1,527 @@
+//! Keep playing: an audio preview pinned so that it outlives the selection.
+//!
+//! A preview dies with the selection, and its media session with it. Pinned,
+//! the session belongs to the window instead: browsing goes on, the music
+//! too, and the status bar holds what is needed to steer it. The panel shows
+//! the same session again whenever its file is selected; there is never a
+//! second player for one file, and never two playing at once.
+//!
+//! Whichever plays, pinned or previewed, is published as core's
+//! `playing::NowPlaying`, and what others ask of it (`PlayerRequest`: the
+//! desktop's media keys through a plugin, a script, an agent) is taken here
+//! when the shell wakes. Nothing calls into the UI from another thread.
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Instant;
+
+use bibli_core::media::{Control, MediaSession, Playback};
+use bibli_core::playing::{NowPlaying, PlayerRequest};
+use bibli_core::preview::PreviewRequest;
+use bibli_core::{CancelToken, op::EntryRef, scheduler::Priority};
+use gpui::{AnyElement, Context, Window, div, prelude::*, px};
+
+use crate::shell::Shell;
+use crate::theme::Theme;
+use crate::toolbar::Button;
+
+pub struct Pinned {
+    pub session: Arc<dyn MediaSession>,
+    /// Ends the worker when the pin goes.
+    lifetime: CancelToken,
+    pub state: Playback,
+    pub path: PathBuf,
+    /// The tracks Next and Previous walk: the folder's, or the playlist's.
+    pub queue: Vec<PathBuf>,
+    pub index: usize,
+}
+
+impl Drop for Pinned {
+    fn drop(&mut self) {
+        self.lifetime.cancel();
+    }
+}
+
+/// A track opened for the pin, back from its worker.
+pub struct Opened {
+    generation: u64,
+    index: usize,
+    lifetime: CancelToken,
+    session: anyhow::Result<Option<Arc<dyn MediaSession>>>,
+}
+
+/// The shell's part of the pin that is not the pin itself.
+pub struct PlayerState {
+    pub pinned: Option<Pinned>,
+    generation: u64,
+    tx: flume::Sender<Opened>,
+    rx: flume::Receiver<Opened>,
+    /// A playlist's tracks, resolved on a worker after the pin.
+    queue_tx: flume::Sender<(PathBuf, Vec<PathBuf>)>,
+    queue_rx: flume::Receiver<(PathBuf, Vec<PathBuf>)>,
+    /// Whether anything was published, to say once that nothing plays.
+    published: bool,
+}
+
+impl Default for PlayerState {
+    fn default() -> Self {
+        let (tx, rx) = flume::unbounded();
+        let (queue_tx, queue_rx) = flume::unbounded();
+        PlayerState {
+            pinned: None,
+            generation: 0,
+            tx,
+            rx,
+            queue_tx,
+            queue_rx,
+            published: false,
+        }
+    }
+}
+
+fn same(a: &Arc<dyn MediaSession>, b: &Arc<dyn MediaSession>) -> bool {
+    std::ptr::addr_eq(Arc::as_ptr(a), Arc::as_ptr(b))
+}
+
+impl Shell {
+    /// Whether the panel shows the pinned session itself.
+    pub fn preview_is_pinned(&self) -> bool {
+        match (&self.player.pinned, &self.preview.media.session) {
+            (Some(pinned), Some(session)) => same(&pinned.session, session),
+            _ => false,
+        }
+    }
+
+    /// `ui.media_pin`: keep the track in the panel playing when the selection
+    /// moves, or let go of it again.
+    pub fn media_pin(&mut self, cx: &mut Context<Self>) {
+        if self.preview_is_pinned() {
+            // The panel keeps its session; it is a preview again.
+            if let Some(mut pinned) = self.player.pinned.take() {
+                self.preview
+                    .media
+                    .adopt_lifetime(std::mem::take(&mut pinned.lifetime));
+            }
+            return cx.notify();
+        }
+        let Some(session) = self.preview.media.session.clone() else {
+            return;
+        };
+        if !self.media_is_audio() {
+            return self.set_status("Only audio keeps playing", false, cx);
+        }
+        let Some(path) = self.preview.playing_path() else {
+            return;
+        };
+        let (queue, index) = self.pin_queue(&path);
+        self.player.pinned = Some(Pinned {
+            session,
+            lifetime: self.preview.media.release_lifetime(),
+            state: self.preview.media.state.clone(),
+            path,
+            queue,
+            index,
+        });
+        cx.notify();
+    }
+
+    /// The tracks a pin walks. A folder's are known at once; a playlist's
+    /// are resolved by its provider on a worker and arrive later.
+    fn pin_queue(&mut self, path: &std::path::Path) -> (Vec<PathBuf>, usize) {
+        if let (Some(queue), Some(key)) = (&self.preview.queue, self.preview.path()) {
+            let (previews, tx, wake) = (
+                Arc::clone(&self.app.previews),
+                self.player.queue_tx.clone(),
+                self.app.waker_handle(),
+            );
+            let (playlist, targets, current) =
+                (key.to_owned(), queue.targets.clone(), path.to_owned());
+            self.app.scheduler.spawn(
+                Priority::Normal,
+                "player-queue",
+                self.app.lifetime().child(),
+                move || {
+                    let Some(entry) = EntryRef::from_path(&playlist) else {
+                        return;
+                    };
+                    let request = PreviewRequest {
+                        entry,
+                        mime: None,
+                        page: 1,
+                        seconds: None,
+                        max_side: 0,
+                    };
+                    let cancel = CancelToken::new();
+                    let scratch = std::env::temp_dir();
+                    let paths = targets
+                        .iter()
+                        .filter_map(|target| {
+                            let member = previews
+                                .extract(&request, target, &scratch, &cancel)
+                                .ok()??;
+                            // Only files of their own: nothing is extracted for a queue.
+                            member.own_file.then_some(member.path)
+                        })
+                        .collect();
+                    let _ = tx.send((current, paths));
+                    wake();
+                },
+            );
+            return (vec![path.to_owned()], 0);
+        }
+        let sorted = self.ui().list.sorted.clone();
+        let ws = self.app.workspace.read();
+        let Some(pane) = self.preview.pane().and_then(|pane| ws.pane(pane)) else {
+            return (vec![path.to_owned()], 0);
+        };
+        let queue: Vec<PathBuf> = sorted
+            .iter()
+            .filter_map(|id| {
+                let entry = pane.listing.get(*id)?;
+                let audio = !entry.is_dir()
+                    && bibli_platform::mime::by_name(&entry.name)
+                        .is_some_and(|mime| mime.as_str().starts_with("audio/"));
+                audio.then(|| pane.open.as_ref()?.path_of(*id)).flatten()
+            })
+            .take(Self::QUEUE_TRACKS)
+            .collect();
+        match queue.iter().position(|track| track == path) {
+            Some(index) => (queue, index),
+            None => (vec![path.to_owned()], 0),
+        }
+    }
+
+    /// A queue is a folder's worth of music, not a disk's.
+    const QUEUE_TRACKS: usize = 5000;
+
+    /// Open track `index` of the pin's queue on a worker.
+    fn pinned_open(&mut self, index: usize) {
+        let Some(path) = self
+            .player
+            .pinned
+            .as_ref()
+            .and_then(|pinned| pinned.queue.get(index).cloned())
+        else {
+            return;
+        };
+        self.player.generation += 1;
+        let generation = self.player.generation;
+        let (previews, tx, wake) = (
+            Arc::clone(&self.app.previews),
+            self.player.tx.clone(),
+            self.app.waker_handle(),
+        );
+        self.app.scheduler.spawn(
+            Priority::Visible,
+            "player-open",
+            self.app.lifetime().child(),
+            move || {
+                let lifetime = CancelToken::new();
+                let session = EntryRef::from_path(&path)
+                    .ok_or_else(|| anyhow::anyhow!("{} is missing", path.display()))
+                    .and_then(|entry| {
+                        let request = PreviewRequest {
+                            entry,
+                            mime: bibli_platform::mime::by_name(path.as_os_str())
+                                .map(|mime| mime.to_string()),
+                            page: 1,
+                            seconds: None,
+                            max_side: 0,
+                        };
+                        previews.open_media(&request, &lifetime, wake.clone())
+                    });
+                let _ = tx.send(Opened {
+                    generation,
+                    index,
+                    lifetime,
+                    session,
+                });
+                wake();
+            },
+        );
+    }
+
+    /// Step the pin's queue. Without a pin the preview steps the selection.
+    pub fn player_step(&mut self, delta: i64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pinned) = &self.player.pinned else {
+            return self.media_step(delta, window, cx);
+        };
+        let target = pinned
+            .index
+            .checked_add_signed(delta.signum() as isize)
+            .filter(|index| *index < pinned.queue.len());
+        if let Some(index) = target {
+            self.pinned_open(index);
+        }
+    }
+
+    /// Once per wake: tracks that finished opening, the pin's state, what
+    /// others asked for, and the record of what plays.
+    pub fn sync_player(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        while let Ok((current, paths)) = self.player.queue_rx.try_recv() {
+            if let Some(pinned) = &mut self.player.pinned
+                && pinned.path == current
+                && let Some(index) = paths.iter().position(|path| *path == current)
+            {
+                (pinned.queue, pinned.index) = (paths, index);
+                cx.notify();
+            }
+        }
+        while let Ok(opened) = self.player.rx.try_recv() {
+            if opened.generation != self.player.generation {
+                opened.lifetime.cancel();
+                continue;
+            }
+            let Some(pinned) = &mut self.player.pinned else {
+                opened.lifetime.cancel();
+                continue;
+            };
+            match opened.session {
+                Ok(Some(session)) => {
+                    let _ = session.control(Control::Volume(pinned.state.volume));
+                    let _ = session.control(Control::Play(true));
+                    let old = std::mem::replace(&mut pinned.lifetime, opened.lifetime);
+                    old.cancel();
+                    pinned.session = session;
+                    pinned.index = opened.index;
+                    pinned.path.clone_from(&pinned.queue[opened.index]);
+                    pinned.state = Playback {
+                        volume: pinned.state.volume,
+                        ..Playback::default()
+                    };
+                }
+                Ok(None) => {
+                    opened.lifetime.cancel();
+                    self.set_status("This track cannot be played here", true, cx);
+                }
+                Err(error) => {
+                    opened.lifetime.cancel();
+                    self.set_status(format!("{error:#}"), true, cx);
+                }
+            }
+            cx.notify();
+        }
+
+        // The panel pulls the updates of a session it shows; otherwise the
+        // pin does. One reader, so no update is split between two.
+        let shown = self.preview_is_pinned();
+        let mut finished = false;
+        let mut failed = None;
+        if let Some(pinned) = &mut self.player.pinned {
+            if shown {
+                pinned.state = self.preview.media.state.clone();
+            } else {
+                let update = pinned.session.take_update();
+                if let Some(state) = update.state {
+                    finished = state.ended() && !pinned.state.ended();
+                    pinned.state = state;
+                    cx.notify();
+                }
+                failed = update.error;
+            }
+        }
+        if let Some(error) = failed {
+            self.player.pinned = None;
+            self.set_status(error, true, cx);
+        } else if finished {
+            self.player_step(1, window, cx);
+        }
+
+        for request in self.app.player.take_requests() {
+            self.player_request(request, window, cx);
+        }
+        self.publish_now_playing();
+    }
+
+    /// The session requests go to, and its state: the pin's, else the panel's
+    /// when it plays audio.
+    fn playing(&self) -> Option<(Arc<dyn MediaSession>, &Playback)> {
+        if let Some(pinned) = &self.player.pinned {
+            return Some((Arc::clone(&pinned.session), &pinned.state));
+        }
+        let session = self.preview.media.session.as_ref()?;
+        self.media_is_audio()
+            .then(|| (Arc::clone(session), &self.preview.media.state))
+    }
+
+    pub fn player_request(
+        &mut self,
+        request: PlayerRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((session, state)) = self.playing() else {
+            return;
+        };
+        let (position, playing, seekable) = (state.position, state.playing(), state.seekable);
+        let control = match request {
+            PlayerRequest::Play => Some(Control::Play(true)),
+            PlayerRequest::Pause => Some(Control::Play(false)),
+            PlayerRequest::PlayPause => Some(Control::Play(!playing)),
+            PlayerRequest::SeekBy(seconds) if seekable => {
+                Some(Control::Seek((position + seconds).max(0.)))
+            }
+            PlayerRequest::SeekTo(seconds) if seekable => Some(Control::Seek(seconds)),
+            PlayerRequest::Volume(volume) => Some(Control::Volume(volume)),
+            PlayerRequest::SeekBy(_) | PlayerRequest::SeekTo(_) => None,
+            PlayerRequest::Next => return self.player_step(1, window, cx),
+            PlayerRequest::Previous => return self.player_step(-1, window, cx),
+            PlayerRequest::Stop => {
+                let _ = session.control(Control::Play(false));
+                if self.preview_is_pinned() {
+                    // The panel shows this very session: it goes back to
+                    // being a preview rather than ending under the user.
+                    return self.media_pin(cx);
+                }
+                self.player.pinned = None;
+                return cx.notify();
+            }
+            PlayerRequest::Raise => {
+                window.activate_window();
+                return self.player_reveal(window, cx);
+            }
+        };
+        if let Some(control) = control.filter(Control::valid) {
+            if let Err(error) = session.control(control) {
+                self.set_status(error.to_string(), true, cx);
+            }
+            cx.notify();
+        }
+    }
+
+    /// Show the playing track in the pane: its folder, and the file selected.
+    pub fn player_reveal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(path) = self
+            .player
+            .pinned
+            .as_ref()
+            .map(|pinned| pinned.path.clone())
+        {
+            self.reveal_path(self.pane, &path, window, cx);
+        }
+    }
+
+    fn publish_now_playing(&mut self) {
+        let pinned = self.player.pinned.is_some();
+        let now = self.playing().map(|(_, state)| {
+            let (path, can_previous, can_next) = if let Some(pin) = &self.player.pinned {
+                (
+                    pin.path.clone(),
+                    pin.index > 0,
+                    pin.index + 1 < pin.queue.len(),
+                )
+            } else {
+                let (previous, next) = self.track_neighbours();
+                (
+                    self.preview.playing_path().unwrap_or_default(),
+                    previous,
+                    next,
+                )
+            };
+            NowPlaying {
+                title: if state.title.is_empty() {
+                    path.file_stem()
+                        .map(|stem| stem.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                } else {
+                    state.title.clone()
+                },
+                path,
+                artist: state.artist.clone(),
+                album: state.album.clone(),
+                status: state.status,
+                position: state.position,
+                at: Instant::now(),
+                rate: state.rate,
+                duration: state.duration,
+                volume: state.volume,
+                can_next,
+                can_previous,
+                can_seek: state.seekable,
+                cover: None,
+                pinned,
+            }
+        });
+        if now.is_some() || self.player.published {
+            self.player.published = now.is_some();
+            self.app.player.publish(now);
+        }
+    }
+}
+
+/// The pin in the status bar: what plays, and the three controls that matter
+/// when the panel shows something else.
+pub fn render_status(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
+    let pinned = shell.player.pinned.as_ref()?;
+    let state = &pinned.state;
+    let title = if state.title.is_empty() {
+        pinned
+            .path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    } else if state.artist.is_empty() {
+        state.title.clone()
+    } else {
+        format!("{} · {}", state.title, state.artist)
+    };
+    let request = |id: &'static str, icon: &'static str, tip: &'static str, what: &str| {
+        Button::new(id, icon, tip, "ui.player").args(serde_json::json!({"request": what}))
+    };
+    let font = shell.font.clone();
+    Some(
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap_1()
+            .max_w(px(420.))
+            .text_color(theme.text)
+            .child(
+                request(
+                    "pin-previous",
+                    "skip-previous",
+                    "Previous track",
+                    "previous",
+                )
+                .enabled(pinned.index > 0)
+                .render(shell, cx),
+            )
+            .child(
+                request(
+                    "pin-play",
+                    if state.playing() { "pause" } else { "play" },
+                    "Play / pause",
+                    "play_pause",
+                )
+                .render(shell, cx),
+            )
+            .child(
+                request("pin-next", "skip-next", "Next track", "next")
+                    .enabled(pinned.index + 1 < pinned.queue.len())
+                    .render(shell, cx),
+            )
+            .child(
+                div()
+                    .id("pin-title")
+                    .min_w_0()
+                    .px_1()
+                    .rounded_md()
+                    .truncate()
+                    .cursor_pointer()
+                    .hover(|d| d.bg(theme.hover))
+                    .tooltip(move |_, cx| {
+                        crate::toolbar::tooltip("Show this track".into(), font.clone(), cx)
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| this.player_reveal(window, cx)))
+                    .child(title),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .text_color(theme.text_muted)
+                    .child(crate::media::time(state.position)),
+            )
+            .child(request("pin-stop", "close", "Stop and let go", "stop").render(shell, cx))
+            .into_any_element(),
+    )
+}

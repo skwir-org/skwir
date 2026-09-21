@@ -31,6 +31,7 @@ pub mod media;
 pub mod metadata;
 pub mod op;
 pub mod pending;
+pub mod playing;
 pub mod plugin;
 pub mod preview;
 pub mod registry;

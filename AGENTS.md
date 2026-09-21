@@ -173,6 +173,14 @@ current source before assuming a planned crate, command, or API exists.
 - **A menu that depends on a toolbar variant** is built once per variant and
   chosen in the popover's deferred prepaint from `AdaptiveRow::chosen`, in the
   same frame (`PopoverAnchor::popup_for`). More holds what has no button.
+- **What plays is core data,** like what waits for a paste. The player
+  publishes `playing::NowPlaying` in `App::player`; whoever shows or steers it
+  (the desktop's media controls through a plugin, a script, an agent) reads it
+  and leaves a `PlayerRequest`, which the shell takes when it next wakes.
+  Audio can be pinned to keep playing while the selection moves
+  (`crates/ui/src/player.rs`); the status bar then holds its controls, an
+  exception to "state, never messages" only in that a player is state.
+  See `docs/invariants/media.md`.
 - **Volumes.** The places plugin lists mounted volumes from mountinfo and
   present-but-unmounted ones from `lsblk` (on a worker). A place with
   `activate` runs that command instead of navigating: `places.mount`, or
