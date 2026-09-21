@@ -579,6 +579,18 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     let current = shell.preview.page;
     let pages = document_pages(shell);
     let mut bar = Bar::new("reader-tools");
+    bar.push(Item::button(
+        Slot::Lead,
+        1,
+        Button::new(
+            "reader-outline",
+            "contents",
+            label::CONTENTS,
+            "ui.reader_outline",
+        )
+        .active(reader.outlines)
+        .enabled(native),
+    ));
     crate::preview_bar::parent_tool(&mut bar, shell);
 
     bar.push(Item::button(
@@ -668,24 +680,6 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         )
         .opens("find"),
     );
-    bar.push(Item::button(
-        Slot::Tools,
-        0,
-        Button::new("reader-copy", "copy", label::COPY, "ui.reader_copy")
-            .enabled(reader.selection.is_some()),
-    ));
-    bar.push(Item::button(
-        Slot::Tools,
-        0,
-        Button::new(
-            "reader-outline",
-            "contents",
-            label::CONTENTS,
-            "ui.reader_outline",
-        )
-        .active(reader.outlines)
-        .enabled(native),
-    ));
     bar.popups.push(("find", std::rc::Rc::new(find_panel)));
     crate::preview_bar::render(&bar, crate::preview::active_popup(shell), shell, theme, cx)
 }

@@ -200,9 +200,7 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
         zoom_tools(&mut bar, shell);
     }
     if hex_available(shell) {
-        bar.push(Item::button(
-            Slot::View,
-            0,
+        bar.push(Item::menu_only(
             Button::new("preview-hex", "grid", label::HEX, "ui.inspect")
                 .args(serde_json::json!({"action":"hex"})),
         ));

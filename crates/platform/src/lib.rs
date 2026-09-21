@@ -12,6 +12,7 @@
 //! - [`open`]: open with the default application, open a terminal.
 
 pub mod document;
+pub mod exif;
 pub mod icons;
 pub mod media;
 pub mod mime;

@@ -39,6 +39,9 @@ pub enum PreviewContent {
         height: u32,
         detail: Option<PreviewInfo>,
         document: Option<Arc<bibli_core::document::PageContent>>,
+        /// What the file says about the picture (EXIF), read on the worker
+        /// that decoded it, for the panel's Details.
+        facts: Vec<bibli_core::inspection::Detail>,
     },
     Dir {
         items: usize,
@@ -283,6 +286,7 @@ fn decode_image(path: &Path, cancel: &CancelToken) -> anyhow::Result<PreviewCont
         height,
         detail: None,
         document: None,
+        facts: bibli_platform::exif::details(path),
     })
 }
 
@@ -787,6 +791,7 @@ impl Shell {
                                 height: image.height,
                                 detail: None,
                                 document: None,
+                                facts: Vec::new(),
                             },
                         });
                         wake();
@@ -822,6 +827,7 @@ impl Shell {
                                     height: preview.image.height,
                                     detail: Some(preview.info),
                                     document: None,
+                                    facts: Vec::new(),
                                 },
                                 complete: true,
                                 session: None,
@@ -873,6 +879,7 @@ impl Shell {
                                         pages: session.info().pages,
                                     }),
                                     document: Some(page.content),
+                                    facts: Vec::new(),
                                 })
                             })
                             .unwrap_or_else(|e| PreviewContent::Error(format!("{e:#}")));
@@ -916,6 +923,7 @@ impl Shell {
                             height: preview.image.height,
                             detail: Some(preview.info),
                             document: None,
+                            facts: Vec::new(),
                         },
                         None => PreviewContent::Error("Invalid preview image".into()),
                     },
@@ -1355,6 +1363,14 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
                 // What is read is on paper; a picture, a page or a film keeps
                 // the panel's own surface as its letterbox.
                 .when(on_paper(shell), |d| d.bg(theme.bg))
+                .when(interactive, |d| {
+                    d.on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
+                            this.open_preview_menu(event.position, window, cx);
+                        }),
+                    )
+                })
                 .when_some(
                     shell.preview.media.focus.as_ref().filter(|_| interactive),
                     |d, focus| {

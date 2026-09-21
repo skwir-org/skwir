@@ -786,7 +786,21 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         }
     }
 
-    // The ways to show the same file: back to the default only once it was left.
+    if data.blocks.iter().any(|block| block.heading > 0) || data.kind == InspectionKind::Book {
+        bar.push(Item::button(
+            Slot::Lead,
+            1,
+            button("inspect-outline", "contents", label::CONTENTS, "outline")
+                .active(shell.preview.inspection.outline),
+        ));
+    }
+
+    // How the file is shown. The name of the presentation is the switch to the
+    // other one: "Markdown" shows the source, "Source" the document again.
+    let (name, rest) = data
+        .title
+        .split_once(" · ")
+        .map_or((data.title.as_str(), ""), |(name, rest)| (name, rest));
     if request.provider.is_some() {
         bar.push(Item::button(
             Slot::View,
@@ -797,9 +811,33 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     if data.source_available {
         bar.push(Item::button(
             Slot::View,
-            1,
-            button("inspect-source", "list", "Source / rendered", "source").active(request.source),
+            2,
+            button(
+                "inspect-source",
+                "code",
+                // One wording for both states: a tooltip outlives the click.
+                "Switch between rendered and source",
+                "source",
+            )
+            .label(if request.source { "Source" } else { name }.to_owned())
+            .active(request.source),
         ));
+    }
+    let caption = if data.source_available {
+        rest
+    } else {
+        data.title.as_str()
+    };
+    if !caption.is_empty() {
+        let (caption, muted) = (caption.to_owned(), theme.text_muted);
+        bar.push(Item::widget(Slot::View, 0, move |_, _| {
+            div()
+                .text_xs()
+                .whitespace_nowrap()
+                .text_color(muted)
+                .child(caption.clone())
+                .into_any_element()
+        }));
     }
     if data.kind == InspectionKind::Hex {
         bar.push(Item::button(
@@ -808,11 +846,13 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
             button("inspect-offset", "move", "Jump to byte offset", "offset"),
         ));
     } else if crate::preview_toolbar::hex_available(shell) {
-        bar.push(Item::button(
-            Slot::View,
-            0,
-            button("inspect-hex", "grid", label::HEX, "hex"),
-        ));
+        // Rare enough to live in More, in every preview that has it.
+        bar.push(Item::menu_only(button(
+            "inspect-hex",
+            "grid",
+            label::HEX,
+            "hex",
+        )));
     }
     // Folding is offered where there is something to fold.
     if data.kind == InspectionKind::Archive || !data.folds.is_empty() {
@@ -849,17 +889,6 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
             button("inspect-larger", "plus", "Larger text · Ctrl++", "larger"),
         ));
     }
-    if !data.title.is_empty() {
-        let (title, muted) = (data.title.clone(), theme.text_muted);
-        bar.push(Item::widget(Slot::View, 0, move |_, _| {
-            div()
-                .text_xs()
-                .whitespace_nowrap()
-                .text_color(muted)
-                .child(title.clone())
-                .into_any_element()
-        }));
-    }
 
     bar.push(
         Item::button(
@@ -871,18 +900,6 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         .opens("find"),
     );
     bar.popups.push(("find", std::rc::Rc::new(find_panel)));
-    bar.push(Item::button(
-        Slot::Tools,
-        1,
-        button("inspect-copy", "copy", label::COPY, "copy"),
-    ));
-    if data.blocks.iter().any(|block| block.heading > 0) || data.kind == InspectionKind::Book {
-        bar.push(Item::button(
-            Slot::Tools,
-            1,
-            button("inspect-outline", "contents", label::CONTENTS, "outline"),
-        ));
-    }
     crate::preview_bar::render(&bar, crate::preview::active_popup(shell), shell, theme, cx)
 }
 /// The find field: the same popup, keys and place as the document reader's.
@@ -1230,10 +1247,6 @@ pub fn content(
                 .border_color(theme.border);
         }
         for (index, column) in display.data.columns.iter().enumerate() {
-            let numeric = display
-                .table
-                .as_ref()
-                .is_some_and(|shape| shape.numeric.get(index) == Some(&true));
             let arrow = match sort {
                 Some((sorted, ascending)) if sorted == index => {
                     if ascending {
@@ -1260,8 +1273,10 @@ pub fn content(
                             .border_color(theme.border)
                             .truncate()
                             .cursor_pointer()
-                            .hover(|d| d.text_color(theme.accent))
-                            .when(numeric, gpui::Styled::text_right)
+                            // A header names its column: always on the left,
+                            // whatever the cells do. The hover is a tint, not a
+                            // text style, which would replace the cell's own.
+                            .hover(|d| d.bg(theme.hover))
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.run(
                                     "ui.inspect",

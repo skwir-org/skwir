@@ -218,6 +218,73 @@ impl Shell {
         cx.notify();
     }
 
+    /// The preview's own menu: what people right-click a text for. Copy has
+    /// no toolbar button; it lives here and on Ctrl+C.
+    pub fn open_preview_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::preview::PreviewContent;
+        let item = |order, title: &str, icon: &str, name: &str, args: serde_json::Value| MenuItem {
+            menu: "preview".into(),
+            title: title.into(),
+            command: bibli_core::command::Invocation::with_args(name, &args),
+            when: None,
+            order,
+            icon: Some(icon.into()),
+            submenu: None,
+        };
+        let none = serde_json::json!({});
+        let items = match &self.preview.content {
+            Some(PreviewContent::Inspection(_)) => vec![
+                item(
+                    0,
+                    "Copy",
+                    "copy",
+                    "ui.inspect",
+                    serde_json::json!({"action":"copy"}),
+                ),
+                item(
+                    1,
+                    "Find…",
+                    "search",
+                    "ui.inspect",
+                    serde_json::json!({"action":"search"}),
+                ),
+                item(100, "Copy path", "copy", "ui.preview_copy_path", none),
+            ],
+            Some(PreviewContent::Image {
+                document: Some(_), ..
+            }) => vec![
+                item(0, "Copy", "copy", "ui.reader_copy", none.clone()),
+                item(
+                    1,
+                    "Select all",
+                    "check",
+                    "ui.reader_select_all",
+                    none.clone(),
+                ),
+                item(2, "Find…", "search", "ui.reader_find", none.clone()),
+                item(100, "Copy path", "copy", "ui.preview_copy_path", none),
+            ],
+            Some(_) => vec![item(100, "Copy path", "copy", "ui.preview_copy_path", none)],
+            None => return,
+        };
+        let focus = cx.focus_handle();
+        window.focus(&focus);
+        window.prevent_default();
+        self.menu = Some(MenuState {
+            position,
+            items,
+            focus,
+            highlighted: None,
+            expanded: None,
+        });
+        cx.notify();
+    }
+
     pub fn close_context_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.menu.take().is_some() {
             window.focus(&self.ui().focus);

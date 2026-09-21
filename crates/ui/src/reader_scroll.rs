@@ -196,6 +196,7 @@ impl Shell {
                             pages: count as u32,
                         }),
                         document: Some(page.content),
+                        facts: Vec::new(),
                     }),
                     window,
                     cx,

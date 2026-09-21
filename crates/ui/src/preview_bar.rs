@@ -2,9 +2,11 @@
 //!
 //! A preview never builds a row: it lists its tools, each in a slot, and this
 //! module lays them out, so the same action is in the same place whatever is
-//! shown. Slots, left to right: navigate (parent, previous and next, page),
-//! view (zoom or text size, fit, the ways to show the same content), a spacer,
-//! then find, copy and contents, then More.
+//! shown. Slots, left to right: contents (its drawer opens on that side),
+//! navigate (parent, previous and next, page), view (how the content is shown:
+//! rendered or source, zoom or text size, fit), a spacer, find, then More.
+//! Copy has no button: it is Ctrl+C and the content's own right-click menu,
+//! where people look for it.
 //!
 //! The menu rule is the application toolbar's: More holds what has no button
 //! in the variant the row chose this frame (`PopoverAnchor::popup_for`), plus
@@ -29,20 +31,24 @@ pub mod label {
     pub const FIT_WIDTH: &str = "Fit width";
     pub const CONTENTS: &str = "Contents";
     pub const FIND: &str = "Find · Ctrl+F";
-    pub const COPY: &str = "Copy · Ctrl+C";
     pub const HEX: &str = "View as hex";
     pub const ZOOM: &str = "Zoom and fit";
     pub const MORE: &str = "More";
 }
+
+/// `keep` of an item no variant shows.
+const NEVER: usize = usize::MAX;
 
 /// The popup More opens; a tool names another with [`Item::opens`].
 pub const MORE: &str = "preview";
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Slot {
+    /// Contents, first: the drawer it opens is on the left too.
+    Lead,
     Navigate,
     View,
-    /// Find, copy, contents: after the spacer, in the order given.
+    /// After the spacer, in the order given.
     Tools,
 }
 
@@ -89,6 +95,27 @@ impl Item {
             opens: None,
             fills: false,
         }
+    }
+
+    /// An action too rare for a button in any variant: always a row of More.
+    pub fn menu_only(button: Button) -> Self {
+        Item {
+            slot: Slot::Tools,
+            keep: 0,
+            tool: Tool::Button(button),
+            opens: None,
+            fills: false,
+        }
+        .never()
+    }
+
+    fn never(mut self) -> Self {
+        self.keep = NEVER;
+        self
+    }
+
+    fn shown(&self, mode: usize) -> bool {
+        self.keep != NEVER && self.keep >= mode
     }
 
     pub fn opens(mut self, popup: &'static str) -> Self {
@@ -201,14 +228,14 @@ fn row(
     let mut row = toolbar::row(theme).id(bar.id);
     let mut anchored = false;
     let mut last = None;
-    let filled = bar.items.iter().any(|item| item.fills && item.keep >= mode);
-    let mut items: Vec<&Item> = bar.items.iter().filter(|item| item.keep >= mode).collect();
+    let filled = bar.items.iter().any(|item| item.fills && item.shown(mode));
+    let mut items: Vec<&Item> = bar.items.iter().filter(|item| item.shown(mode)).collect();
     items.sort_by_key(|item| item.slot);
     for item in items {
         if last.is_some_and(|slot| slot != item.slot) {
             row = if item.slot == Slot::Tools && !filled {
                 row.child(div().flex_1().min_w_0())
-            } else if item.slot == Slot::View {
+            } else if item.slot != Slot::Tools {
                 row.child(toolbar::separator(theme))
             } else {
                 row
@@ -271,7 +298,7 @@ pub fn render(
                     .max_h(px(480.))
                     .overflow_y_scroll();
                 let mut dropped = false;
-                for item in bar.items.iter().filter(|item| item.keep < mode) {
+                for item in bar.items.iter().filter(|item| !item.shown(mode)) {
                     if let Tool::Button(button) = &item.tool {
                         panel = panel.child(menu_row(button.clone(), shell, cx));
                         dropped = true;

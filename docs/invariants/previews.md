@@ -72,8 +72,13 @@ still to come are in `docs/preview-frame.md`.
   preview derives a colour locally or hard-codes one.
 - **One toolbar.** A preview never builds a row: it lists its tools in
   `preview_bar::Bar`, each in a slot, and the bar lays them out. Left to right:
-  navigate (parent, previous and next, page) · view (zoom or text size, fit,
-  the ways to show the same content) · spacer · find · copy · contents · More.
+  contents (first, because its drawer opens on that side) · navigate (parent,
+  previous and next, page) · view (how the content is shown: the format's own
+  name is the switch between rendered and source, then zoom or text size, fit)
+  · spacer · find · More. Copy has no button: it is Ctrl+C and the content's
+  right-click menu (`Shell::open_preview_menu`), where people look for it. An
+  action too rare for a button in any variant, like View as hex, is
+  `Item::menu_only`.
   `zoom_tools` is the one zoom group, for a picture and a page alike. Shared
   actions take their words from `preview_bar::label`. An item says the
   narrowest of the three variants that still shows it (`keep`).
@@ -110,7 +115,8 @@ still to come are in `docs/preview-frame.md`.
   metadata with its provenance, collected when the entry, its listing or the
   selection changes (`entry_groups`, pure and tested); what the preview
   already holds in memory (a picture's size, a document's pages, a film's
-  length and tags); and what the format told us, `Inspection::details`, which
+  length and tags, what the camera wrote: `bibli_platform::exif`, pure Rust,
+  read on the worker that decodes the picture); and what the format told us, `Inspection::details`, which
   a provider fills from the parse it already did (`inspection::detail` bounds
   each fact). Any field a plugin or the user attached to the entry shows under
   More with who said it; a model's suggestion says so. Owner and group names

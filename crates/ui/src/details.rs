@@ -202,9 +202,15 @@ fn preview_group(shell: &Shell) -> Option<Group> {
             width,
             height,
             document,
+            facts,
             ..
         }) if document.is_none() && preview.media.session.is_none() => {
             rows.push(Row::new("Dimensions", format!("{width} × {height} px")));
+            rows.extend(
+                facts
+                    .iter()
+                    .map(|fact| Row::new(fact.label.clone(), fact.value.clone())),
+            );
         }
         Some(PreviewContent::Dir { items, folders }) => {
             rows.push(Row::new("Contains", format::count(*items, "item")));
