@@ -42,6 +42,7 @@ pub enum PreviewContent {
     },
     Dir {
         items: usize,
+        folders: usize,
     },
     Generic,
     Error(String),
@@ -97,6 +98,8 @@ pub(crate) enum PreviewPhase {
     Loading,
 }
 
+// Independent switches of one panel, not a state machine in disguise.
+#[allow(clippy::struct_excessive_bools)]
 pub struct PreviewState {
     pub reader: crate::reader::ReaderState,
     pub inspection: crate::inspector::State,
@@ -118,6 +121,15 @@ pub struct PreviewState {
     tx: flume::Sender<PreviewResult>,
     rx: flume::Receiver<PreviewResult>,
     pub peek_focus: Option<FocusHandle>,
+    /// What the entry says about itself, collected when it or its listing
+    /// changes (`details_at`), never while painting.
+    pub details: Vec<crate::details::Group>,
+    details_at: Option<u64>,
+    /// Several entries selected: how many, and what they weigh together.
+    pub selection_summary: Option<crate::details::Group>,
+    /// Whether Details is open under a preview; part of the window's shape.
+    pub details_open: bool,
+    pub details_scroll: gpui::ScrollHandle,
     /// Focus of a picture, so the zoom keys reach it once it is clicked.
     pub image_focus: Option<FocusHandle>,
     /// Whether the hexadecimal provider is registered, keyed by the preview
@@ -149,6 +161,11 @@ impl Default for PreviewState {
             tx,
             rx,
             peek_focus: None,
+            details: Vec::new(),
+            details_at: None,
+            selection_summary: None,
+            details_open: false,
+            details_scroll: gpui::ScrollHandle::new(),
             image_focus: None,
             hex_provider: std::cell::Cell::new(None),
         }
@@ -253,7 +270,17 @@ fn compute(
 ) -> PreviewContent {
     if is_dir {
         return match std::fs::read_dir(path) {
-            Ok(rd) => PreviewContent::Dir { items: rd.count() },
+            Ok(entries) => {
+                let (mut items, mut folders) = (0, 0);
+                for entry in entries.flatten() {
+                    if cancel.is_cancelled() {
+                        break;
+                    }
+                    items += 1;
+                    folders += usize::from(entry.file_type().is_ok_and(|kind| kind.is_dir()));
+                }
+                PreviewContent::Dir { items, folders }
+            }
             Err(e) => PreviewContent::Error(e.to_string()),
         };
     }
@@ -350,7 +377,17 @@ impl Shell {
             ws.pane(self.pane).and_then(|pane| {
                 let e = pane.listing.get(id)?;
                 let path = pane.open.as_ref()?.path_of(id)?;
+                // What Details was collected for: the listing as it is, and
+                // how much of it is selected.
+                let seen = pane
+                    .listing
+                    .version()
+                    .wrapping_mul(31)
+                    .wrapping_add(pane.selection.len() as u64)
+                    .wrapping_mul(2)
+                    .wrapping_add(u64::from(bibli_platform::users::loaded()));
                 Some((
+                    seen,
                     PreviewKey {
                         pane: self.pane,
                         id,
@@ -370,7 +407,7 @@ impl Shell {
                 ))
             })
         };
-        let Some((key, entry)) = current else {
+        let Some((seen, key, entry)) = current else {
             self.cancel_preview(window, cx);
             return;
         };
@@ -389,6 +426,7 @@ impl Shell {
                     m.to_string()
                 })
             };
+            self.preview.details_at = None;
             let app = Arc::clone(&self.app);
             self.type_names.request(&app);
             self.preview.info = Info {
@@ -402,6 +440,30 @@ impl Shell {
             if !entry.metadata.is_hydrated() {
                 self.request_hydrate(vec![id]);
             }
+        }
+        if self.preview.details_at != Some(seen) {
+            self.preview.details_at = Some(seen);
+            let kind = type_label(self, &self.preview.info).map(|label| {
+                match self
+                    .preview
+                    .info
+                    .mime
+                    .as_deref()
+                    .filter(|_| !entry.is_dir())
+                {
+                    Some(mime) => format!("{label} ({mime})"),
+                    None => label,
+                }
+            });
+            self.preview.details = crate::details::entry_groups(&entry, &key.path, kind);
+            let selection = self.selection_ctx();
+            self.preview.selection_summary = (selection.count > 1).then(|| crate::details::Group {
+                title: "Selection".into(),
+                rows: vec![
+                    crate::details::Row::new("Selected", format::count(selection.count, "item")),
+                    crate::details::Row::new("Total size", format::size(selection.bytes)),
+                ],
+            });
         }
         while let Ok(result) = self.preview.rx.try_recv() {
             if result.generation == self.preview.generation {
@@ -947,6 +1009,13 @@ impl Shell {
         );
     }
 
+    /// `ui.preview_details`: open or close Details under the preview.
+    pub fn preview_details(&mut self, cx: &mut Context<Self>) {
+        self.preview.details_open = !self.preview.details_open;
+        self.remember_session();
+        cx.notify();
+    }
+
     /// `ui.preview_copy_path`: the path of what is shown, as text.
     pub fn preview_copy_path(&mut self, cx: &mut Context<Self>) {
         let Some(key) = &self.preview.key else {
@@ -1128,7 +1197,7 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
             div()
                 .flex()
                 .flex_col()
-                .flex_1()
+                .when(!crate::details::alone(shell), gpui::Styled::flex_1)
                 .min_h_0()
                 // What is read is on paper; a picture, a page or a film keeps
                 // the panel's own surface as its letterbox.
@@ -1141,6 +1210,11 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
                     },
                 )
                 .child(content(shell, theme, interactive, cx)),
+        )
+        .children(
+            Some(())
+                .filter(|()| interactive || crate::details::alone(shell))
+                .and_then(|()| crate::details::render(shell, theme, cx)),
         )
         .into_any_element()
 }
@@ -1208,7 +1282,9 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
             .text_color(theme.text_muted)
             .child("Loading…")
             .into_any_element(),
-        None | Some(PreviewContent::Generic) => generic(shell, &p.info),
+        None | Some(PreviewContent::Generic | PreviewContent::Dir { .. }) => {
+            hero(&p.info, None, theme)
+        }
         Some(PreviewContent::Image {
             image,
             width,
@@ -1320,45 +1396,33 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                 )
                 .into_any_element()
         }
-        Some(PreviewContent::Dir { items }) => div()
-            .flex_1()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .gap_2()
-            .children(p.info.icon.as_ref().map(|i| icons::element(i, 64.)))
-            .child(format::count(*items, "item"))
-            .into_any_element(),
-        Some(PreviewContent::Error(e)) => div()
-            .flex_1()
-            .p_2()
-            .text_color(theme.error)
-            .child(e.clone())
-            .into_any_element(),
+        Some(PreviewContent::Error(error)) => hero(&p.info, Some(error), theme),
     }
 }
 
-fn generic(shell: &Shell, info: &Info) -> AnyElement {
-    let mut card = div()
-        .flex_1()
+/// What stands for an entry that has no preview: its icon and, when there
+/// should have been one, why there is none. Details says the rest.
+fn hero(info: &Info, error: Option<&String>, theme: &Theme) -> AnyElement {
+    div()
+        .flex_none()
         .flex()
         .flex_col()
         .items_center()
-        .justify_center()
-        .gap_1()
-        .children(info.icon.as_ref().map(|i| icons::element(i, 64.)))
-        .child(info.name.clone());
-    if let Some(kind) = type_label(shell, info) {
-        card = card.child(kind);
-    }
-    if let Some(s) = &info.size {
-        card = card.child(s.clone());
-    }
-    if let Some(m) = &info.modified {
-        card = card.child(m.clone());
-    }
-    card.into_any_element()
+        .gap_2()
+        .pt_6()
+        .pb_2()
+        .px_3()
+        .children(info.icon.as_ref().map(|icon| icons::element(icon, 64.)))
+        .when_some(error, |d, error| {
+            d.child(
+                div()
+                    .text_xs()
+                    .text_center()
+                    .text_color(theme.error)
+                    .child(error.clone()),
+            )
+        })
+        .into_any_element()
 }
 
 fn header(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>) -> AnyElement {

@@ -25,6 +25,21 @@ impl Plugin for PreviewPlugin {
         app.previews.register(self.id(), Arc::new(Provider));
     }
 }
+/// What reading a document tells us for free: how long it is.
+fn measured(mut data: Inspection) -> Inspection {
+    let words: usize = data
+        .blocks
+        .iter()
+        .map(|block| block.text.split_whitespace().count())
+        .sum();
+    let headings = data.blocks.iter().filter(|block| block.heading > 0).count();
+    data.details = [("Words", words), ("Headings", headings)]
+        .into_iter()
+        .filter(|(_, count)| *count > 0)
+        .filter_map(|(label, count)| inspection::detail(label, count.to_string()))
+        .collect();
+    data
+}
 struct Provider;
 impl PreviewProvider for Provider {
     fn id(&self) -> &'static str {
@@ -52,7 +67,7 @@ impl PreviewProvider for Provider {
             inspection::extension(&path).as_str(),
             "md" | "markdown" | "mdown"
         ) {
-            return Ok(Some(Inspection {
+            return Ok(Some(measured(Inspection {
                 kind: InspectionKind::Markdown,
                 title: "HTML".into(),
                 blocks: rich_preview::html(&source, cancel, |href| {
@@ -61,9 +76,9 @@ impl PreviewProvider for Provider {
                 source_available: true,
                 notice: "Reading mode · scripts, styles and remote content are not loaded".into(),
                 ..Inspection::default()
-            }));
+            })));
         }
-        Ok(Some(Inspection {
+        Ok(Some(measured(Inspection {
             kind: InspectionKind::Markdown,
             title: "Markdown".into(),
             blocks: markdown::parse(&source, cancel, |href| {
@@ -71,6 +86,6 @@ impl PreviewProvider for Provider {
             })?,
             source_available: true,
             ..Inspection::default()
-        }))
+        })))
     }
 }

@@ -16,6 +16,8 @@ pub const SESSION_KEY: &str = "ui.session";
 
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+// Each is one independent toggle of the window.
+#[allow(clippy::struct_excessive_bools)]
 pub struct Session {
     /// Id of the view the panes showed, e.g. `list` or `grid`.
     pub view: String,
@@ -24,6 +26,8 @@ pub struct Session {
     pub split: bool,
     pub preview: bool,
     pub preview_width: f32,
+    /// Whether Details is open under the preview.
+    pub details: bool,
     pub timeline: bool,
 }
 
@@ -36,6 +40,7 @@ impl Shell {
             split: self.is_split(),
             preview: self.preview.open,
             preview_width: self.preview.width,
+            details: self.preview.details_open,
             timeline: self.timeline.open,
         }
     }

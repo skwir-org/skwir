@@ -55,7 +55,7 @@ impl PreviewProvider for Provider {
             .flexible(true)
             .from_reader(source.as_bytes());
         let mut truncated = 0usize;
-        let columns = reader
+        let columns: Vec<String> = reader
             .headers()?
             .iter()
             .take(limits::TABLE_COLUMNS)
@@ -87,7 +87,22 @@ impl PreviewProvider for Provider {
             });
         }
         let page = limits::TABLE_ROWS as u64;
+        let details = [
+            ("Columns", columns.len().to_string()),
+            (
+                "Rows",
+                if more || view.offset > 0 {
+                    format!("more than {}", view.offset + rows.len() as u64)
+                } else {
+                    rows.len().to_string()
+                },
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(label, value)| inspection::detail(label, value))
+        .collect();
         Ok(Some(Inspection {
+            details,
             kind: bibli_core::inspection::InspectionKind::Table,
             title: format!(
                 "Table · rows {}–{}",

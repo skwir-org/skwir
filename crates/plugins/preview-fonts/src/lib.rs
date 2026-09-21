@@ -62,13 +62,41 @@ fn specimen(
 ) -> anyhow::Result<Inspection> {
     let face = ttf_parser::Face::parse(&bytes, 0)?;
     check_metrics(&face)?;
-    let name = face
-        .names()
-        .into_iter()
-        .find(|n| n.name_id == ttf_parser::name_id::FULL_NAME)
-        .and_then(|n| n.to_string())
-        .unwrap_or_else(|| "Font specimen".into());
+    // A name has one record per platform and language, and only the Unicode
+    // ones decode: take the first that does, not the first with the id.
+    let named = |id| {
+        face.names()
+            .into_iter()
+            .filter(|n| n.name_id == id)
+            .find_map(|n| n.to_string())
+    };
+    let name = named(ttf_parser::name_id::FULL_NAME).unwrap_or_else(|| "Font specimen".into());
     let glyphs = face.number_of_glyphs();
+    // What the name table says, for the panel's Details.
+    let mut details: Vec<_> = [
+        ("Family", named(ttf_parser::name_id::FAMILY)),
+        ("Style", named(ttf_parser::name_id::SUBFAMILY)),
+        ("Version", named(ttf_parser::name_id::VERSION)),
+        ("Designer", named(ttf_parser::name_id::DESIGNER)),
+        ("License", named(ttf_parser::name_id::LICENSE)),
+    ]
+    .into_iter()
+    .filter_map(|(label, value)| inspection::detail(label, value?))
+    .collect();
+    details.extend(inspection::detail("Glyphs", glyphs.to_string()));
+    details.extend(inspection::detail(
+        "Outlines",
+        if face.tables().glyf.is_some() {
+            "TrueType"
+        } else {
+            "PostScript (CFF)"
+        },
+    ));
+    details.extend(
+        face.is_variable()
+            .then(|| inspection::detail("Variable", "Yes"))
+            .flatten(),
+    );
     let font = fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default())
         .map_err(anyhow::Error::msg)?;
     let mut chars: Vec<_> = font
@@ -103,6 +131,7 @@ fn specimen(
         notice = format!("{skipped} oversized glyphs were not drawn · {notice}");
     }
     Ok(Inspection {
+        details,
         kind: bibli_core::inspection::InspectionKind::Font,
         title: format!("Font · {name}"),
         image: Some(Image {

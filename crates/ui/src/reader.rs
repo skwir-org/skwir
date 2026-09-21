@@ -537,6 +537,19 @@ pub(crate) fn surface(
     .into_any_element()
 }
 
+/// Pages of the document shown, when it is one.
+pub(crate) fn pages(shell: &Shell) -> Option<u32> {
+    let document = shell.preview.reader.session.is_some()
+        || matches!(
+            &shell.preview.content,
+            Some(PreviewContent::Image {
+                detail: Some(bibli_core::preview::PreviewInfo::Document { .. }),
+                ..
+            })
+        );
+    document.then(|| document_pages(shell))
+}
+
 fn document_pages(shell: &Shell) -> u32 {
     shell
         .preview

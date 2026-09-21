@@ -138,7 +138,35 @@ impl PreviewProvider for Provider {
                 })
                 .collect();
         }
+        // What the package says about the book, for the panel's Details.
+        let metadata = book.metadata();
+        let people = |names: Vec<&str>| names.join(", ");
+        let details = [
+            (
+                "Title",
+                metadata.title().map(|title| title.value().to_owned()),
+            ),
+            (
+                "Author",
+                Some(people(metadata.creators().map(|c| c.value()).collect())),
+            ),
+            (
+                "Publisher",
+                Some(people(metadata.publishers().map(|p| p.value()).collect())),
+            ),
+            (
+                "Language",
+                metadata
+                    .language()
+                    .map(|language| language.value().to_owned()),
+            ),
+            ("Chapters", Some(chapters.len().to_string())),
+        ]
+        .into_iter()
+        .filter_map(|(label, value)| inspection::detail(label, value?))
+        .collect();
         Ok(Some(Inspection {
+            details,
             kind: bibli_core::inspection::InspectionKind::Book,
             title: format!("EPUB · chapter {} / {}", index + 1, chapters.len()),
             blocks,
@@ -382,6 +410,20 @@ mod tests {
                 .map(|r| (r.cells[0].as_str(), r.depth))
                 .collect::<Vec<_>>(),
             [("Start", 0), ("Middle", 1), ("End", 0)]
+        );
+        // What the package says about the book reaches the panel's Details;
+        // a field the book leaves blank (no author here) is not a row.
+        assert_eq!(
+            first
+                .details
+                .iter()
+                .map(|detail| (detail.label.as_str(), detail.value.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("Title", "Synthetic book"),
+                ("Language", "en"),
+                ("Chapters", "3")
+            ]
         );
         let third = inspect(
             &path,

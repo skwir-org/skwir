@@ -462,7 +462,7 @@ pub fn fullscreen(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
         .into_any_element()
 }
 
-fn time(seconds: f64) -> String {
+pub(crate) fn time(seconds: f64) -> String {
     let total = seconds.max(0.) as u64;
     if total >= 3600 {
         format!("{}:{:02}:{:02}", total / 3600, total / 60 % 60, total % 60)

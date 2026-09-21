@@ -4,6 +4,12 @@ Open the preview panel with **F11**, or press **Space** for peek. New formats us
 the shared toolbar, whose less frequent actions move into **More** in a narrow
 panel. **Alt+Page Up / Page Down** changes sections, chapters or comic pages.
 
+**Details**, at the bottom of the panel, lists what is known about the entry:
+type, exact size, folder, owner and access, times, tags, and what the format
+says (a book's author, a font's family, an archive's unpacked size, a
+picture's dimensions). It fills the panel when there is nothing to preview.
+Click a value to copy it.
+
 Each format is enabled by an independent plugin in **Settings → Plugins**:
 
 | Plugin | Formats and controls |

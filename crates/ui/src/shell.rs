@@ -147,6 +147,18 @@ impl Shell {
     ) -> Self {
         crate::settings::declare(&app);
         crate::session::declare(&app);
+        // Owner and group names for Details: two small files, but a read can
+        // block, so not here.
+        let wake = app.waker_handle();
+        app.scheduler.spawn(
+            bibli_core::scheduler::Priority::Background,
+            "user-names",
+            app.lifetime().child(),
+            move || {
+                bibli_platform::users::load();
+                wake();
+            },
+        );
         cx.set_global(Theme::resolve(&app, window.appearance()));
         let mut subs = Vec::new();
         subs.push(cx.observe_window_appearance(window, |this, window, cx| {
@@ -261,6 +273,7 @@ impl Shell {
             self.zoom = session.zoom;
         }
         self.preview.open = session.preview;
+        self.preview.details_open = session.details;
         if session.preview_width > 0. {
             self.preview.width = session.preview_width;
         }
@@ -997,6 +1010,7 @@ impl Shell {
             "reader_page_cancel" => self.reader_page_cancel(window, cx),
             "reader_open_external" | "preview_open_external" => self.preview_open_external(cx),
             "preview_copy_path" => self.preview_copy_path(cx),
+            "preview_details" => self.preview_details(cx),
             "reader_copy" => self.reader_copy(cx),
             "reader_select_all" => self.reader_select_all(cx),
             "reader_outline" => self.reader_outline(window, cx),

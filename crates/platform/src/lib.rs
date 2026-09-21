@@ -21,6 +21,7 @@ pub mod preview;
 pub mod process;
 pub mod thumb_providers;
 pub mod thumbnails;
+pub mod users;
 
 pub mod inspection;
 /// Every preview bound in one place (see `inspection::limits`).

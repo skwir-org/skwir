@@ -61,6 +61,8 @@ pub mod limits {
     pub const TABLE_COLUMNS: usize = 64;
     /// Characters kept per table cell; longer cells are marked truncated.
     pub const TABLE_CELL: usize = 1024;
+    /// Characters of one fact in the panel's Details.
+    pub const DETAIL_CHARS: usize = 256;
     pub const ATTACHMENTS: usize = 100;
     pub const ADDRESSES: usize = 50;
     /// Font specimen text and characters per character-sheet section.
@@ -250,6 +252,18 @@ pub fn image(bytes: &[u8]) -> anyhow::Result<Image> {
         width: img.width(),
         height: img.height(),
         rgba: img.into_raw().into(),
+    })
+}
+/// One fact for the panel's Details, or nothing when the format left it
+/// blank. Bounded: a title can be a whole abstract.
+pub fn detail(label: &str, value: impl AsRef<str>) -> Option<bibli_core::inspection::Detail> {
+    let value = value.as_ref().trim();
+    (!value.is_empty()).then(|| {
+        let mut text: String = value.chars().take(limits::DETAIL_CHARS).collect();
+        if text.len() < value.len() {
+            text.push('…');
+        }
+        bibli_core::inspection::Detail::new(label, text)
     })
 }
 pub fn extension(path: &Path) -> String {

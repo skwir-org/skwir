@@ -95,7 +95,29 @@ impl PreviewProvider for Provider {
         }
         let rows = member_rows(&members, cancel)?;
         let folders = rows.iter().filter(|r| r.branch).count();
+        let unpacked: u64 = members
+            .iter()
+            .filter(|member| !member.directory)
+            .map(|member| u64::try_from(member.size).unwrap_or(0))
+            .sum();
+        let encrypted = members.iter().filter(|member| member.encrypted).count();
+        let details = [
+            ("Files", (rows.len() - folders).to_string()),
+            ("Folders", folders.to_string()),
+            ("Unpacked", format!("{unpacked} bytes")),
+            (
+                "Encrypted",
+                match encrypted {
+                    0 => String::new(),
+                    count => format!("{count} members"),
+                },
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(label, value)| inspection::detail(label, value))
+        .collect();
         Ok(Some(Inspection {
+            details,
             kind: bibli_core::inspection::InspectionKind::Archive,
             title: format!("Archive · {} members", members.len()),
             notice: format!("{} files · {folders} folders", rows.len() - folders),

@@ -67,6 +67,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.reader_page_edit", "{}", "Document: go to page…"),
     ("ui.preview_open_external", "{}", "Preview: open externally"),
     ("ui.preview_copy_path", "{}", "Preview: copy path"),
+    ("ui.preview_details", "{}", "Preview: show or hide details"),
     ("ui.inspect", r#"{"action":"hex"}"#, "Preview: hexadecimal"),
     (
         "ui.inspect",

@@ -45,6 +45,26 @@ pub struct Inspection {
     pub position: u64,
     pub source_available: bool,
     pub notice: String,
+    /// What the format knows about the file, for the panel's Details: a
+    /// book's author, a font's family, an archive's unpacked size. Facts read
+    /// from the content, in the order they should be shown, bounded like the
+    /// rest: a provider already parsed the file to build this inspection, so
+    /// they cost nothing more.
+    pub details: Vec<Detail>,
+}
+/// One fact of [`Inspection::details`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Detail {
+    pub label: String,
+    pub value: String,
+}
+impl Detail {
+    pub fn new(label: impl Into<String>, value: impl Into<String>) -> Self {
+        Detail {
+            label: label.into(),
+            value: value.into(),
+        }
+    }
 }
 /// What a block draws. A block is text, a thematic break or one row of a
 /// table, never two of those at once: the shape decides which fields mean

@@ -92,6 +92,28 @@ impl PreviewProvider for Provider {
                 ..Block::default()
             });
         }
+        let details = [
+            ("Subject", message.subject().unwrap_or_default().to_owned()),
+            ("From", addresses(message.from())),
+            ("To", addresses(message.to())),
+            ("Cc", addresses(message.cc())),
+            (
+                "Sent",
+                message
+                    .date()
+                    .map_or_else(String::new, mail_parser::DateTime::to_rfc3339),
+            ),
+            (
+                "Attachments",
+                match message.attachments().count() {
+                    0 => String::new(),
+                    count => count.to_string(),
+                },
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(label, value)| inspection::detail(label, value))
+        .collect();
         let rows = message
             .attachments()
             .enumerate()
@@ -107,6 +129,7 @@ impl PreviewProvider for Provider {
             })
             .collect();
         Ok(Some(Inspection {
+            details,
             kind: bibli_core::inspection::InspectionKind::Mail,
             title: "Email".into(),
             blocks,

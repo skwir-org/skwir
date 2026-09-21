@@ -101,6 +101,22 @@ still to come are in `docs/preview-frame.md`.
   block of plain text. There is no second, poorer text renderer in the UI.
   HTML files open in the inert reading mode, like Markdown, with their source
   one toggle away.
+- **Details** (`details.rs`) is a section of the frame, not a kind of
+  preview: everything known about what the panel shows. With nothing to
+  preview (a folder, an unknown file, an error) it fills the panel under the
+  entry's icon; under a preview it is one bar at the bottom that opens on
+  demand, and whether it is open belongs to the window's shape (`session.rs`).
+  Facts come from three places and none is read while painting: the entry's
+  metadata with its provenance, collected when the entry, its listing or the
+  selection changes (`entry_groups`, pure and tested); what the preview
+  already holds in memory (a picture's size, a document's pages, a film's
+  length and tags); and what the format told us, `Inspection::details`, which
+  a provider fills from the parse it already did (`inspection::detail` bounds
+  each fact). Any field a plugin or the user attached to the entry shows under
+  More with who said it; a model's suggestion says so. Owner and group names
+  come from `bibli_platform::users`, loaded once on a worker and never read on
+  the UI thread. Details never starts a scan: a folder says what its listing
+  already counted. A click copies a value.
 - **Muted is for secondary facts** (line numbers, captions, column headers),
   never for the data: offsets, sizes and values are `theme.text`. The only
   dimmed data is what stands for nothing: a zero byte, the dot of an

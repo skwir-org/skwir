@@ -18,6 +18,7 @@ pub mod address;
 mod archive_preview;
 mod code_preview;
 pub mod controls;
+mod details;
 pub mod dnd;
 mod dragicon;
 pub mod elements;
