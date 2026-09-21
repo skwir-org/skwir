@@ -1313,8 +1313,9 @@ impl Render for Shell {
         // The window's own width is known before layout, unlike an element's.
         // Below it the panes keep the room: places stay reachable through the
         // address bar, the palette and Jump.
-        let needed = px(520. + 300. * self.panes.len().saturating_sub(1) as f32);
-        let side = (window.viewport_size().width >= needed).then(|| sidebar::render(self, cx));
+        let side = self
+            .sidebar_fits(f32::from(window.viewport_size().width))
+            .then(|| sidebar::render(self, cx));
         let pane_ids: Vec<PaneId> = self.panes.iter().map(|p| p.id).collect();
         let mut columns = Vec::new();
         for id in pane_ids {
@@ -1333,7 +1334,7 @@ impl Render for Shell {
             }
             _ => {}
         }
-        let panel = preview::render_panel(self, cx);
+        let panel = preview::render_panel(self, self.preview_width_limit(window), cx);
         let status_bar = status::render(self, cx);
         // Not deferred: GPUI cannot nest deferred draws and the dialog's own
         // dropdowns are. It is the last overlay, so it paints above the rest.

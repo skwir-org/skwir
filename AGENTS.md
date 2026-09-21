@@ -164,7 +164,11 @@ current source before assuming a planned crate, command, or API exists.
   preview and its width, timeline, zoom) is application data, not preference:
   `session.rs` keeps it under one key, restores it at startup and writes it
   only when it changes, never per frame. A new pane opens in the view the
-  current one shows.
+  current one shows. The preview panel is as wide as the user drags it, up to
+  what the panes and the sidebar do not need (`preview::max_width`, from the
+  window's width, never a fixed cap); a window too small draws it narrower
+  without rewriting the remembered width, and a double click on its edge
+  returns it to the default.
 - **A menu that depends on a toolbar variant** is built once per variant and
   chosen in the popover's deferred prepaint from `AdaptiveRow::chosen`, in the
   same frame (`PopoverAnchor::popup_for`). More holds what has no button.

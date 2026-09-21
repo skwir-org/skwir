@@ -115,7 +115,11 @@ attachments share that function.
   never extraction paths; nothing opens a member externally from the temporary
   path, only an explicit Extract.
 
-## Extensibility: capabilities, not kinds
+## Proposed, not agreed: capabilities instead of kinds
+
+This part was written from a misreading of a request about the panel's width.
+It is kept as an idea, is not part of the agreed plan or of the order below,
+and needs a decision of its own before anyone builds it.
 
 Adding a format today means fitting one of eleven `InspectionKind`s or editing
 core and the UI: `inspector.rs` switches on the kind forty times (which tools
@@ -188,13 +192,9 @@ before the first phase that touches core.
 ## Order
 
 1. The frame contract in `docs/invariants/previews.md`; surfaces and tokens.
-2. The ADR for the provider contract. Layouts and features replace the kind
-   switches; the toolbar builder and the menu rule consume declared features
-   and contributed actions; one find, one outline, one key context.
-3. The fallbacks become providers; one text path; HTML reading mode;
-   presentations and "View as".
-4. Details: core fields first, then fields contributed by any plugin.
-5. Sources: nested previews for archive members and mail attachments; several
-   entries and virtual ones.
-6. `preview.describe`, the conformance test, declared formats in Settings.
-7. Tables, hex, fonts, the folder card.
+2. The toolbar builder and the menu rule; one find, one outline, one key
+   context.
+3. One text path; HTML reading mode.
+4. Details: core fields first, then plugin-contributed fields.
+5. Nested previews for archive members and mail attachments.
+6. Tables, hex, fonts, the folder card.

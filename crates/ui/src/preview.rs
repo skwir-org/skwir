@@ -140,7 +140,7 @@ impl Default for PreviewState {
             menu: None,
             open: false,
             peek: false,
-            width: 320.0,
+            width: DEFAULT_WIDTH,
             info: Info::default(),
             content: None,
             phase: PreviewPhase::Idle,
@@ -1071,6 +1071,18 @@ impl Shell {
         }
     }
 
+    /// The widest the panel may be in this window: everything the panes and
+    /// the sidebar do not need. The window's width is known before layout.
+    pub fn preview_width_limit(&self, window: &Window) -> f32 {
+        let window = f32::from(window.viewport_size().width);
+        max_width(window, self.panes.len(), self.sidebar_fits(window))
+    }
+
+    /// Whether this window has room for the sidebar beside the panes.
+    pub fn sidebar_fits(&self, window: f32) -> bool {
+        window >= 520. + 300. * self.panes.len().saturating_sub(1) as f32
+    }
+
     fn on_resize_drag(
         &mut self,
         ev: &DragMoveEvent<ResizeHandle>,
@@ -1079,7 +1091,7 @@ impl Shell {
     ) {
         let total = f32::from(window.viewport_size().width);
         let x = f32::from(ev.event.position.x);
-        self.preview.width = (total - x).clamp(200.0, 900.0);
+        self.preview.width = (total - x).clamp(MIN_WIDTH, self.preview_width_limit(window));
         cx.notify();
     }
 
@@ -1433,7 +1445,23 @@ fn type_label(shell: &Shell, info: &Info) -> Option<String> {
 }
 
 /// The side panel, or `None` when closed.
-pub fn render_panel(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
+/// The narrowest the panel gets, and the width a double click returns it to.
+const MIN_WIDTH: f32 = 200.;
+const DEFAULT_WIDTH: f32 = 320.;
+/// What each pane keeps when the panel is dragged wide, and the sidebar.
+const PANE_KEEP: f32 = 240.;
+const SIDEBAR_WIDTH: f32 = 200.;
+
+/// The widest the panel may be: the window less what the panes and the
+/// sidebar keep. Never a fixed number: a wide window has room for a wide page.
+pub fn max_width(window: f32, panes: usize, sidebar: bool) -> f32 {
+    let kept = PANE_KEEP * panes.max(1) as f32 + if sidebar { SIDEBAR_WIDTH } else { 0. };
+    (window - kept).max(MIN_WIDTH)
+}
+
+/// `limit` is `Shell::preview_width_limit`: the remembered width is kept as
+/// the user left it and only drawn narrower while the window is too small.
+pub fn render_panel(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyElement> {
     if !shell.preview.open {
         return None;
     }
@@ -1446,12 +1474,20 @@ pub fn render_panel(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement
         .h_full()
         .w(px(6.))
         .cursor(CursorStyle::ResizeLeftRight)
-        .on_drag(ResizeHandle, |_, _, _, cx| cx.new(|_| NoPreview));
+        .hover(|style| style.bg(theme.accent.opacity(0.35)))
+        .on_drag(ResizeHandle, |_, _, _, cx| cx.new(|_| NoPreview))
+        .on_click(cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
+            if event.click_count() == 2 {
+                this.preview.width = DEFAULT_WIDTH;
+                this.remember_session();
+                cx.notify();
+            }
+        }));
     Some(
         div()
             .id("preview-panel")
             .relative()
-            .w(px(shell.preview.width))
+            .w(px(shell.preview.width.min(limit)))
             .h_full()
             .flex_none()
             .flex()
@@ -1523,4 +1559,20 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
             )
             .into_any_element(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::max_width;
+
+    #[test]
+    fn the_panel_may_take_what_the_panes_do_not_need() {
+        // One pane and the sidebar keep 440 px of a wide window.
+        assert!((max_width(2560., 1, true) - 2120.).abs() < 1e-3);
+        // Two panes keep twice a pane; without the sidebar, only the panes.
+        assert!((max_width(1600., 2, true) - 920.).abs() < 1e-3);
+        assert!((max_width(1600., 2, false) - 1120.).abs() < 1e-3);
+        // A small window still leaves the panel its minimum.
+        assert!((max_width(500., 2, false) - 200.).abs() < 1e-3);
+    }
 }
