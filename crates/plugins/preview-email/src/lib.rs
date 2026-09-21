@@ -36,6 +36,30 @@ impl PreviewProvider for Provider {
         inspection::extension(&req.entry.path) == "eml"
             || req.mime.as_deref() == Some("message/rfc822")
     }
+    fn extract(
+        &self,
+        req: &PreviewRequest,
+        target: &str,
+        into: &std::path::Path,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Option<bibli_core::preview::Member>> {
+        let path = req.entry.resolve()?;
+        let bytes = inspection::read_bounded(&path, limits::BINARY_INPUT, "Email", cancel)?;
+        let message = mail_parser::MessageParser::default()
+            .parse(&bytes)
+            .ok_or_else(|| anyhow::anyhow!("Invalid email"))?;
+        inspection::check(cancel)?;
+        let attachment = message
+            .attachment(target.parse()?)
+            .ok_or_else(|| anyhow::anyhow!("Missing attachment"))?;
+        let name = attachment.attachment_name().unwrap_or("Attachment");
+        let file = archive::member_file(into, name);
+        std::fs::write(&file, attachment.contents())?;
+        Ok(Some(bibli_core::preview::Member {
+            name: name.to_owned(),
+            path: file,
+        }))
+    }
     fn inspect(
         &self,
         req: &PreviewRequest,

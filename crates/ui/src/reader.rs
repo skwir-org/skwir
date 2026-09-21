@@ -579,6 +579,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     let current = shell.preview.page;
     let pages = document_pages(shell);
     let mut bar = Bar::new("reader-tools");
+    crate::preview_bar::parent_tool(&mut bar, shell);
 
     bar.push(Item::button(
         Slot::Navigate,

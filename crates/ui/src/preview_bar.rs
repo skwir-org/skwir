@@ -133,6 +133,26 @@ impl Bar {
     }
 }
 
+/// Back to the container, first in every bar while the panel shows one of
+/// its members: whatever the member turned out to be, the way out is the same.
+pub fn parent_tool(bar: &mut Bar, shell: &Shell) {
+    let inside =
+        !shell.preview.nested.is_empty() || shell.preview.inspection.request.target.is_some();
+    if inside {
+        bar.push(Item::button(
+            Slot::Navigate,
+            2,
+            Button::new(
+                "inspect-parent",
+                "up",
+                "Back to the container",
+                "ui.inspect",
+            )
+            .args(serde_json::json!({"action":"back"})),
+        ));
+    }
+}
+
 /// What never has a button, for every kind.
 fn always(shell: &Shell, cx: &mut Context<Shell>) -> Vec<AnyElement> {
     [

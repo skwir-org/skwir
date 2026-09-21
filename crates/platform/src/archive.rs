@@ -32,6 +32,46 @@ pub fn list(path: &Path, cancel: &CancelToken) -> anyhow::Result<Vec<Member>> {
     )?;
     Ok(serde_json::from_slice(&bytes)?)
 }
+/// Where a member named `name` is written inside `into`: a fixed file name,
+/// plus an extension reduced to letters and digits so that previews, which
+/// tell formats by extension, recognise it. Nothing else of a member's name
+/// ever reaches the filesystem.
+pub fn member_file(into: &Path, name: &str) -> std::path::PathBuf {
+    let extension: String = Path::new(name)
+        .extension()
+        .map(|extension| extension.to_string_lossy().to_ascii_lowercase())
+        .filter(|extension| {
+            (1..=16).contains(&extension.len())
+                && extension.chars().all(|c| c.is_ascii_alphanumeric())
+        })
+        .unwrap_or_default();
+    let mut file = into.join("member");
+    if !extension.is_empty() {
+        file.set_extension(extension);
+    }
+    file
+}
+/// Write one member of an archive as a file of its own; bounded like `read`.
+pub fn extract(
+    path: &Path,
+    index: u64,
+    name: &str,
+    into: &Path,
+    cancel: &CancelToken,
+) -> anyhow::Result<std::path::PathBuf> {
+    let output = member_file(into, name);
+    crate::process::run(
+        Command::new(worker()?)
+            .arg(path)
+            .arg(index.to_string())
+            .arg(&output)
+            .arg("--bytes")
+            .arg(limits::BINARY_INPUT.to_string()),
+        cancel,
+        limits::HELPER_TIMEOUT,
+    )?;
+    Ok(output)
+}
 /// The worker enforces the same member bound it is given here, so a member
 /// larger than the preview limit fails inside the helper before any read.
 pub fn read(path: &Path, index: u64, cancel: &CancelToken) -> anyhow::Result<Vec<u8>> {
@@ -94,6 +134,20 @@ pub fn member_preview(name: &str, bytes: &[u8], offset: u64) -> anyhow::Result<I
 mod tests {
     use super::*;
     use bibli_core::inspection::InspectionKind;
+
+    #[test]
+    fn a_member_is_written_under_our_name_never_its_own() {
+        let into = Path::new("/scratch/preview");
+        let file = |name| member_file(into, name);
+        assert_eq!(file("Report final.PDF"), into.join("member.pdf"));
+        assert_eq!(file("sub/it's a café.tar.gz"), into.join("member.gz"));
+        assert_eq!(file("Makefile"), into.join("member"));
+        // Nothing of a hostile name survives: no separators, no dots, no length.
+        assert_eq!(file("../../etc/passwd"), into.join("member"));
+        assert_eq!(file("x./../y"), into.join("member"));
+        assert_eq!(file("a.sh;rm -rf"), into.join("member"));
+        assert_eq!(file(&format!("a.{}", "x".repeat(40))), into.join("member"));
+    }
 
     #[test]
     fn member_preview_detects_image_text_and_bytes() {

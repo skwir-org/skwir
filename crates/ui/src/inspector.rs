@@ -522,10 +522,43 @@ impl Shell {
                 return;
             }
         }
+        // A member of a container is previewed as the file it is: the panel
+        // goes down into it and the header's trail is the way back up.
+        let container = matches!(kind, Some(InspectionKind::Archive | InspectionKind::Mail));
+        match action {
+            "target" if container => {
+                if self.preview.nested.len() >= crate::preview::NESTING {
+                    self.set_status("Open that file itself to look deeper", false, cx);
+                    return;
+                }
+                self.preview.descend = args["target"].as_str().map(str::to_owned);
+                self.preview.inspection.request = InspectRequest::default();
+            }
+            "back"
+                if !self.preview.nested.is_empty()
+                    && self.preview.inspection.request.target.is_none() =>
+            {
+                let depth = self.preview.nested.len() - 1;
+                self.preview_ascend(depth);
+            }
+            "ascend" => {
+                let depth = args["depth"].as_u64().unwrap_or(0) as usize;
+                self.preview_ascend(depth);
+            }
+            _ => {}
+        }
+        let nested = (action == "target" && container)
+            || action == "ascend"
+            || (action == "back" && self.preview.inspection.request.target.is_none());
+        if action == "back" && nested && self.preview.descend.is_none() {
+            // Nothing above a file that is not inside anything.
+            self.preview.inspection.request = InspectRequest::default();
+        }
         let hex = crate::preview_toolbar::hex_available(self);
         let state = &mut self.preview.inspection;
         let previous_query = state.request.query.take();
         match action {
+            _ if nested => {}
             "hex" => {
                 if !hex {
                     return;
@@ -707,13 +740,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     let request = &shell.preview.inspection.request;
     let mut bar = Bar::new("inspect-tools");
 
-    if request.target.is_some() {
-        bar.push(Item::button(
-            Slot::Navigate,
-            2,
-            button("inspect-parent", "up", "Back to the container", "back"),
-        ));
-    }
+    crate::preview_bar::parent_tool(&mut bar, shell);
     for (id, icon, title, offset) in [
         (
             "inspect-prev",

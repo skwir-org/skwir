@@ -67,6 +67,21 @@ pub struct Info {
     pub icon: Option<Arc<Path>>,
 }
 
+/// How deep the panel follows containers: a file in an archive in an archive.
+pub const NESTING: usize = 2;
+
+/// A member of a container, extracted so that it is previewed as the file it
+/// is. The directory is private to this preview and goes with it; it is only
+/// ever dropped on a worker (`Shell::preview_ascend`), never while painting.
+pub struct Nested {
+    /// The member's own name, for the header's trail: a label, not a path.
+    pub name: String,
+    entry: EntryRef,
+    mime: Option<String>,
+    path: std::path::PathBuf,
+    _directory: tempfile::TempDir,
+}
+
 /// Marker type for dragging the panel's edge.
 #[derive(Clone)]
 pub struct ResizeHandle;
@@ -121,6 +136,12 @@ pub struct PreviewState {
     tx: flume::Sender<PreviewResult>,
     rx: flume::Receiver<PreviewResult>,
     pub peek_focus: Option<FocusHandle>,
+    /// The members the panel went down into, outermost first.
+    pub nested: Vec<Arc<Nested>>,
+    /// A member asked for and not extracted yet: the worker's next job.
+    pub descend: Option<String>,
+    nested_tx: flume::Sender<(u64, Arc<Nested>)>,
+    nested_rx: flume::Receiver<(u64, Arc<Nested>)>,
     /// What the entry says about itself, collected when it or its listing
     /// changes (`details_at`), never while painting.
     pub details: Vec<crate::details::Group>,
@@ -140,6 +161,7 @@ pub struct PreviewState {
 impl Default for PreviewState {
     fn default() -> Self {
         let (tx, rx) = flume::unbounded();
+        let (nested_tx, nested_rx) = flume::unbounded();
         PreviewState {
             reader: crate::reader::ReaderState::default(),
             inspection: crate::inspector::State::default(),
@@ -161,6 +183,10 @@ impl Default for PreviewState {
             tx,
             rx,
             peek_focus: None,
+            nested: Vec::new(),
+            descend: None,
+            nested_tx,
+            nested_rx,
             details: Vec::new(),
             details_at: None,
             selection_summary: None,
@@ -258,6 +284,65 @@ fn decode_image(path: &Path, cancel: &CancelToken) -> anyhow::Result<PreviewCont
         detail: None,
         document: None,
     })
+}
+
+/// Where this process keeps the members it extracted: in the one deletable
+/// cache, under its own pid, so that what a killed process left behind can be
+/// told from what a running one still shows.
+fn members_dir(cache: &Path) -> PathBuf {
+    cache
+        .join("preview-members")
+        .join(std::process::id().to_string())
+}
+
+/// Remove what processes that no longer run left in `preview-members`.
+/// Filesystem work: call it from a worker.
+pub fn sweep_members(cache: &Path) {
+    let Ok(entries) = std::fs::read_dir(cache.join("preview-members")) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let alive = entry
+            .file_name()
+            .to_str()
+            .and_then(|pid| pid.parse::<u32>().ok())
+            .is_some_and(|pid| Path::new("/proc").join(pid.to_string()).exists());
+        if !alive {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
+/// Have the container write `target` out as a file of its own, in a private
+/// directory that lives as long as the panel shows it.
+fn extract_member(
+    previews: &bibli_core::preview::Previews,
+    request: &PreviewRequest,
+    target: &str,
+    members: &Path,
+    cancel: &CancelToken,
+) -> anyhow::Result<Option<Arc<Nested>>> {
+    std::fs::create_dir_all(members)?;
+    let directory = tempfile::Builder::new()
+        .prefix("member-")
+        .tempdir_in(members)?;
+    let Some(member) = previews.extract(request, target, directory.path(), cancel)? else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        member.path.starts_with(directory.path()),
+        "A member was written outside its directory"
+    );
+    let entry = EntryRef::from_path(&member.path)
+        .ok_or_else(|| anyhow::anyhow!("The extracted member is missing"))?;
+    Ok(Some(Arc::new(Nested {
+        mime: bibli_platform::mime::by_name(std::ffi::OsStr::new(&member.name))
+            .map(|mime| mime.to_string()),
+        name: member.name,
+        entry,
+        path: member.path,
+        _directory: directory,
+    })))
 }
 
 fn compute(
@@ -465,6 +550,14 @@ impl Shell {
                 ],
             });
         }
+        while let Ok((generation, member)) = self.preview.nested_rx.try_recv() {
+            if generation == self.preview.generation && self.preview.nested.len() < NESTING {
+                self.preview.nested.push(member);
+                self.preview.descend = None;
+            } else {
+                self.discard_nested(vec![member]);
+            }
+        }
         while let Ok(result) = self.preview.rx.try_recv() {
             if result.generation == self.preview.generation {
                 if result.complete {
@@ -567,8 +660,12 @@ impl Shell {
             seconds: self.preview.seconds,
             max_side: IMAGE_MAX_SIDE,
         };
-        let inspection = self.preview.inspection.request.clone();
+        let mut inspection = self.preview.inspection.request.clone();
         let tx = self.preview.tx.clone();
+        let nested = self.preview.nested.last().cloned();
+        let descend = self.preview.descend.clone();
+        let nested_tx = self.preview.nested_tx.clone();
+        let members = members_dir(self.app.cache.root());
         let previews = Arc::clone(&self.app.previews);
         let wake = self.app.waker_handle();
         let is_dir = entry.is_dir();
@@ -581,6 +678,41 @@ impl Shell {
         self.app
             .scheduler
             .spawn(Priority::Visible, "preview", cancel.clone(), move || {
+                // What is previewed: the entry, or the member of it the panel
+                // went down into. Everything below treats it as any file.
+                let mut request = request;
+                let mut path = key.path.clone();
+                let source = |member: &Nested, request: &mut PreviewRequest, path: &mut PathBuf| {
+                    request.entry = member.entry.clone();
+                    request.mime.clone_from(&member.mime);
+                    path.clone_from(&member.path);
+                };
+                if let Some(member) = &nested {
+                    source(member, &mut request, &mut path);
+                }
+                if let Some(target) = descend {
+                    match extract_member(&previews, &request, &target, &members, &cancel) {
+                        Ok(Some(member)) => {
+                            source(&member, &mut request, &mut path);
+                            let _ = nested_tx.send((generation, member));
+                        }
+                        // Not a file here: the provider shows the target itself.
+                        Ok(None) => inspection.target = Some(target),
+                        Err(error) => {
+                            if !cancel.is_cancelled() {
+                                let _ = tx.send(PreviewResult {
+                                    generation,
+                                    content: PreviewContent::Error(format!("{error:#}")),
+                                    complete: true,
+                                    session: None,
+                                    media: None,
+                                });
+                                wake();
+                            }
+                            return;
+                        }
+                    }
+                }
                 if !is_dir {
                     let result =
                         previews
@@ -588,7 +720,7 @@ impl Shell {
                             .and_then(|result| {
                                 if result.is_none() && inspection.source {
                                     bibli_platform::inspection::source(
-                                        &key.path,
+                                        &path,
                                         inspection.offset,
                                         &cancel,
                                     )
@@ -788,7 +920,7 @@ impl Shell {
                         None => PreviewContent::Error("Invalid preview image".into()),
                     },
                     Ok(None) => compute(
-                        &key.path,
+                        &path,
                         is_dir,
                         request.mime.as_deref(),
                         key.dark,
@@ -864,6 +996,7 @@ impl Shell {
         self.clear_document_pages(window, cx);
         self.preview.reader = crate::reader::ReaderState::default();
         self.preview.inspection = crate::inspector::State::default();
+        self.preview_ascend(0);
         self.preview.phase = PreviewPhase::Idle;
 
         self.preview.page = 1;
@@ -1007,6 +1140,26 @@ impl Shell {
                 }
             },
         );
+    }
+
+    /// Go back up to `depth` members deep; 0 is the entry itself.
+    pub(crate) fn preview_ascend(&mut self, depth: usize) {
+        let depth = depth.min(self.preview.nested.len());
+        let left = self.preview.nested.split_off(depth);
+        self.discard_nested(left);
+        self.preview.descend = None;
+    }
+
+    /// Removing an extracted member is filesystem work: hand it to a worker.
+    fn discard_nested(&mut self, members: Vec<Arc<Nested>>) {
+        if !members.is_empty() {
+            self.app.scheduler.spawn(
+                Priority::Background,
+                "preview-cleanup",
+                self.app.lifetime().child(),
+                move || drop(members),
+            );
+        }
     }
 
     /// `ui.preview_details`: open or close Details under the preview.
@@ -1425,6 +1578,47 @@ fn hero(info: &Info, error: Option<&String>, theme: &Theme) -> AnyElement {
         .into_any_element()
 }
 
+/// The name of what is shown. Inside a container it is a trail,
+/// `bundle.zip › notes.md`, and every step before the last leads back to it.
+fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
+    let preview = &shell.preview;
+    let mut line = div().min_w_0().flex_1().flex().items_center().gap_1();
+    if preview.nested.is_empty() {
+        return line.child(div().min_w_0().truncate().child(preview.info.name.clone()));
+    }
+    let names = std::iter::once(preview.info.name.clone())
+        .chain(preview.nested.iter().map(|member| member.name.clone()));
+    let last = preview.nested.len();
+    for (depth, name) in names.enumerate() {
+        if depth > 0 {
+            line = line.child(div().flex_none().text_color(theme.text_muted).child("›"));
+        }
+        line = line.child(if depth == last {
+            div().min_w_0().truncate().child(name).into_any_element()
+        } else {
+            div()
+                .id(("preview-trail", depth))
+                .min_w_0()
+                .flex_shrink()
+                .truncate()
+                .text_color(theme.text_muted)
+                .cursor_pointer()
+                .hover(|d| d.text_color(theme.accent))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.run(
+                        "ui.inspect",
+                        serde_json::json!({"action":"ascend","depth":depth}),
+                        window,
+                        cx,
+                    );
+                }))
+                .child(name)
+                .into_any_element()
+        });
+    }
+    line
+}
+
 fn header(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>) -> AnyElement {
     let info = &shell.preview.info;
     div()
@@ -1439,7 +1633,7 @@ fn header(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shel
                 .flex()
                 .items_center()
                 .gap_1()
-                .child(div().min_w_0().flex_1().truncate().child(info.name.clone()))
+                .child(trail(shell, theme, cx))
                 .when(interactive, |d| {
                     d.child(
                         crate::toolbar::Button::new(

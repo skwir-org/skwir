@@ -152,6 +152,7 @@ fn caption(shell: &Shell) -> String {
 pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
     let image = matches!(shell.preview.content, Some(PreviewContent::Image { .. }));
     let mut bar = Bar::new("preview-tools");
+    crate::preview_bar::parent_tool(&mut bar, shell);
     if let Some(PreviewContent::Image {
         detail: Some(PreviewInfo::Video { seconds, duration }),
         ..

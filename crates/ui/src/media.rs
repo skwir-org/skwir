@@ -528,6 +528,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     use crate::preview_bar::{Bar, Item, Slot};
     let state = &shell.preview.media.state;
     let mut bar = Bar::new("video-tools");
+    crate::preview_bar::parent_tool(&mut bar, shell);
     bar.push(Item::button(
         Slot::Navigate,
         2,

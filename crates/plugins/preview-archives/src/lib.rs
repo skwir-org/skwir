@@ -68,6 +68,30 @@ impl PreviewProvider for Provider {
                 | "rpm"
         )
     }
+    fn extract(
+        &self,
+        req: &PreviewRequest,
+        target: &str,
+        into: &std::path::Path,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Option<bibli_core::preview::Member>> {
+        let path = req.entry.resolve()?;
+        let index = target.parse::<u64>()?;
+        let members = archive::list(&path, cancel)?;
+        let member = members
+            .iter()
+            .find(|m| m.index == index)
+            .ok_or_else(|| anyhow::anyhow!("Missing archive member"))?;
+        anyhow::ensure!(
+            member.regular && !member.encrypted,
+            "This member cannot be previewed (directory, link or encrypted file)"
+        );
+        let name = member.name.rsplit('/').next().unwrap_or(&member.name);
+        Ok(Some(bibli_core::preview::Member {
+            name: name.to_owned(),
+            path: archive::extract(&path, index, name, into, cancel)?,
+        }))
+    }
     fn inspect(
         &self,
         req: &PreviewRequest,

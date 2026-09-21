@@ -265,6 +265,35 @@ fn email_decodes_headers_body_and_attachment_without_fetching() {
         },
     );
     assert!(member.plain_text().contains("hello"));
+
+    // The panel's way: the attachment becomes a file of its own, in the
+    // directory it was given and under a name of ours, and is then previewed
+    // as what it is, here by whichever provider reads text files.
+    let into = tmp.path().join("members");
+    std::fs::create_dir(&into).unwrap();
+    let extracted = app
+        .previews
+        .extract(&request(&path), "0", &into, &CancelToken::new())
+        .unwrap()
+        .unwrap();
+    assert_eq!(extracted.name, "sample.txt");
+    assert_eq!(extracted.path, into.join("member.txt"));
+    assert_eq!(std::fs::read(&extracted.path).unwrap(), b"hello");
+    assert!(
+        app.previews
+            .extract(&request(&path), "7", &into, &CancelToken::new())
+            .is_err(),
+        "no such attachment"
+    );
+    // A provider whose targets are not files says so; nothing is written.
+    let notes = tmp.path().join("notes.md");
+    std::fs::write(&notes, "# Title\n").unwrap();
+    assert!(
+        app.previews
+            .extract(&request(&notes), "0", &into, &CancelToken::new())
+            .unwrap()
+            .is_none()
+    );
 }
 #[test]
 fn epub_chapters_source_navigation_and_disable() {
@@ -616,6 +645,28 @@ fn archive_members_preview_as_image_text_or_paged_bytes() {
             ..InspectRequest::default()
         }
     };
+    // A member written out for the panel lands under our name in the
+    // directory given, whatever its own name tries to say.
+    let into = tmp.path().join("members");
+    std::fs::create_dir(&into).unwrap();
+    for (name, file) in [("cover.png", "member.png"), ("outside.txt", "member.txt")] {
+        let member = app
+            .previews
+            .extract(
+                &request(&path),
+                target(name).target.as_deref().unwrap(),
+                &into,
+                &CancelToken::new(),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (member.name.as_str(), &member.path),
+            (name, &into.join(file))
+        );
+    }
+    assert_eq!(std::fs::read(into.join("member.png")).unwrap(), png);
+    assert!(!tmp.path().join("outside.txt").exists());
     let image = inspect(&app, &path, &target("cover.png"));
     assert_eq!(image.image.map(|i| (i.width, i.height)), Some((3, 2)));
     let notes = inspect(&app, &path, &target("notes.txt"));

@@ -154,9 +154,14 @@ impl Shell {
             bibli_core::scheduler::Priority::Background,
             "user-names",
             app.lifetime().child(),
-            move || {
-                bibli_platform::users::load();
-                wake();
+            {
+                let cache = app.cache.root().to_owned();
+                move || {
+                    bibli_platform::users::load();
+                    // Members a killed process extracted for its previews.
+                    crate::preview::sweep_members(&cache);
+                    wake();
+                }
             },
         );
         cx.set_global(Theme::resolve(&app, window.appearance()));

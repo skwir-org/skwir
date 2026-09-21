@@ -4,6 +4,11 @@ Open the preview panel with **F11**, or press **Space** for peek. New formats us
 the shared toolbar, whose less frequent actions move into **More** in a narrow
 panel. **Alt+Page Up / Page Down** changes sections, chapters or comic pages.
 
+A file inside an archive, or attached to a message, opens as what it is: a
+picture zooms, a PDF opens in the reader, JSON folds, Markdown reads. The name
+in the header becomes a trail (`bundle.zip › notes.md`); click a step, or Back,
+to return. The panel follows an archive inside an archive, and no deeper.
+
 **Details**, at the bottom of the panel, lists what is known about the entry:
 type, exact size, folder, owner and access, times, tags, and what the format
 says (a book's author, a font's family, an archive's unpacked size, a

@@ -12,6 +12,7 @@ gpui.workspace = true
 flume.workspace = true
 nucleo-matcher.workspace = true
 anyhow.workspace = true
+tempfile.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

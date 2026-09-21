@@ -117,6 +117,22 @@ still to come are in `docs/preview-frame.md`.
   come from `bibli_platform::users`, loaded once on a worker and never read on
   the UI thread. Details never starts a scan: a folder says what its listing
   already counted. A click copies a value.
+- **A member is previewed as the file it is.** Providers take a path, so a
+  container writes the member out: `PreviewProvider::extract` puts it in a
+  private directory the panel owns, under a fixed name plus an extension
+  reduced to letters and digits (`archive::member_file`), because previews
+  tell formats by extension and nothing else of a member's name may reach the
+  filesystem. The worker pipeline then runs on that file like on any other:
+  an archived picture zooms, an attached PDF opens in the reader, a JSON
+  member folds. Sessions may hold the file open; it lives as long as the panel
+  shows it (`preview::Nested`). The panel follows containers `NESTING` deep;
+  the header's trail and the Back button, first in every bar, lead out.
+  Directories live in the one deletable cache under the process id, are only
+  ever removed on a worker, and what a killed process left is swept at the
+  next start. The entry's own commands (open externally, copy the path) stay
+  about the container: nothing opens a member from its temporary path. A
+  provider whose targets are not files (a book's chapters) returns `None` and
+  shows them itself.
 - **Muted is for secondary facts** (line numbers, captions, column headers),
   never for the data: offsets, sizes and values are `theme.text`. The only
   dimmed data is what stands for nothing: a zero byte, the dot of an

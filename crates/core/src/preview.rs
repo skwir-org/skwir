@@ -33,6 +33,16 @@ pub struct Preview {
     pub info: PreviewInfo,
 }
 
+/// A member of a container, written out as a file of its own so that it can
+/// be previewed as what it is.
+#[derive(Clone, Debug)]
+pub struct Member {
+    /// The member's own name: a label for the panel, never a path.
+    pub name: String,
+    /// Where the provider wrote it, inside the directory it was given.
+    pub path: std::path::PathBuf,
+}
+
 pub trait PreviewProvider: Send + Sync {
     fn id(&self) -> &'static str;
     /// Fallback providers sort after format-specific providers, including on re-enable.
@@ -49,6 +59,21 @@ pub trait PreviewProvider: Send + Sync {
         _view: &crate::inspection::InspectRequest,
         _cancel: &CancelToken,
     ) -> anyhow::Result<Option<crate::inspection::Inspection>> {
+        Ok(None)
+    }
+    /// A container writes the member its rows call `target` into `into`, a
+    /// private directory the caller owns and removes, under a name of the
+    /// provider's choosing: a member's own name is a label, never a path.
+    /// The caller previews the file like any other, so an archived picture
+    /// zooms and an attached PDF opens in the reader. `None` means targets are
+    /// not files here (a book's chapters) and `inspect` handles them.
+    fn extract(
+        &self,
+        _request: &PreviewRequest,
+        _target: &str,
+        _into: &std::path::Path,
+        _cancel: &CancelToken,
+    ) -> anyhow::Result<Option<Member>> {
         Ok(None)
     }
     fn open_media(
@@ -108,6 +133,25 @@ impl Previews {
         Ok(None)
     }
 
+    /// The first provider that accepts the container extracts from it, like
+    /// every other call here.
+    pub fn extract(
+        &self,
+        request: &PreviewRequest,
+        target: &str,
+        into: &std::path::Path,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Option<Member>> {
+        let providers = self.providers.read().clone();
+        for p in providers {
+            if p.provider.accepts(request) {
+                let cancel = cancel.linked(&p.lifetime);
+                anyhow::ensure!(!cancel.is_cancelled(), "preview cancelled");
+                return p.provider.extract(request, target, into, &cancel);
+            }
+        }
+        Ok(None)
+    }
     /// Blocking startup on a scheduler worker; subsequent controls are nonblocking.
     pub fn open_media(
         &self,
