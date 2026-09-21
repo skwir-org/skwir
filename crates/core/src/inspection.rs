@@ -22,7 +22,6 @@ pub enum InspectionKind {
     Code,
     Hex,
     Table,
-    Tree,
     Font,
     Archive,
     Book,

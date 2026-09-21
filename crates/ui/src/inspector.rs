@@ -17,6 +17,8 @@ pub struct Display {
     /// Case-folded search text per block, then per row, prepared on the
     /// worker so Find never lowercases a document on the UI thread.
     folded: Arc<Vec<String>>,
+    /// Column widths and kinds of a table, worked out on the worker.
+    table: Option<Arc<crate::inspector_rows::Shape>>,
 }
 impl Display {
     pub fn new(mut data: Inspection, dark: bool) -> Self {
@@ -93,7 +95,10 @@ impl Display {
             .map(|b| b.text.to_lowercase())
             .chain(data.rows.iter().map(|r| r.cells.join("\t").to_lowercase()))
             .collect();
+        let table = (data.kind == InspectionKind::Table)
+            .then(|| Arc::new(crate::inspector_rows::shape(&data.columns, &data.rows)));
         Self {
+            table,
             data: Arc::new(data),
             images,
             row_icons: Arc::new(row_icons),
@@ -142,6 +147,8 @@ pub struct State {
     outline: bool,
     /// The find field, open under its button like the document reader's.
     find: Option<FindInput>,
+    /// The column a table is ordered by, and whether ascending.
+    sort: Option<(usize, bool)>,
 }
 struct FindInput {
     input: gpui::Entity<crate::input::TextInput>,
@@ -161,6 +168,7 @@ impl Default for State {
             font_size: 16.,
             outline: false,
             find: None,
+            sort: None,
         }
     }
 }
@@ -235,10 +243,7 @@ impl State {
     fn row_estimate(&self, data: &Inspection) -> gpui::Pixels {
         px(match data.kind {
             InspectionKind::Code => self.font_size + 4.,
-            InspectionKind::Hex
-            | InspectionKind::Archive
-            | InspectionKind::Table
-            | InspectionKind::Tree => 24.,
+            InspectionKind::Hex | InspectionKind::Archive | InspectionKind::Table => 24.,
             // Prose wraps: call it two and a half lines and the space around
             // them, between a heading and a long paragraph.
             _ => self.font_size * 1.5 * 2.5 + 16.,
@@ -269,6 +274,12 @@ impl State {
                 })
                 .collect(),
         );
+        if let Some((column, ascending)) = self.sort.filter(|_| data.kind == InspectionKind::Table)
+        {
+            let mut visible = (*self.visible).clone();
+            crate::inspector_rows::sort(&data.rows, &mut visible, column, ascending);
+            self.visible = Arc::new(visible);
+        }
         self.list
             .reset_with_uniform_height(data.blocks.len() + self.visible.len() + 1, estimate);
     }
@@ -385,6 +396,21 @@ impl Shell {
                         })
                         .unwrap_or_else(|| display.data.plain_text());
                     cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                    return;
+                }
+                "sort" => {
+                    // First click ascending, second descending, third the file's order.
+                    let column = args["column"].as_u64().unwrap_or(0) as usize;
+                    let state = &mut self.preview.inspection;
+                    state.sort = match state.sort {
+                        Some((current, true)) if current == column => Some((column, false)),
+                        Some((current, false)) if current == column => None,
+                        _ => Some((column, true)),
+                    };
+                    state.selected = None;
+                    let data = display.data.clone();
+                    state.reindex(&data);
+                    cx.notify();
                     return;
                 }
                 "select" => {
@@ -984,6 +1010,7 @@ pub fn content(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let data = display.data.clone();
+    let shape = display.table.clone();
     let images = display.images.clone();
     let row_icons = display.row_icons.clone();
     let visible = shell.preview.inspection.visible.clone();
@@ -1052,7 +1079,9 @@ pub fn content(
             );
         }
         {
-            let ri = visible[i - data.blocks.len()];
+            // Where the row is drawn, which a sort makes differ from `ri`.
+            let position = i - data.blocks.len();
+            let ri = visible[position];
             let r = &data.rows[ri];
             let weak = entity.clone();
             let target = r.target.clone();
@@ -1075,6 +1104,17 @@ pub fn content(
                     .gap_3()
                     .text_sm()
                     .pl(px(8. + r.depth.min(32) as f32 * 14.))
+                    .when(data.kind == InspectionKind::Table, |d| {
+                        // A grid: cells touch, rules between them, numbers
+                        // on the right, every other row tinted.
+                        d.p_0()
+                            .gap_0()
+                            .text_size(px(13.))
+                            .when(position % 2 == 1, |d| d.bg(theme.zebra))
+                            .when(selected != Some(data.blocks.len() + ri), |d| {
+                                d.hover(|d| d.bg(theme.hover))
+                            })
+                    })
                     .when(data.kind == InspectionKind::Hex, |d| {
                         d.font(hex_font.clone())
                             .text_size(px(13.))
@@ -1098,12 +1138,23 @@ pub fn content(
                 if data.kind == InspectionKind::Archive {
                     break;
                 }
+                let numeric = shape
+                    .as_ref()
+                    .is_some_and(|shape| shape.numeric.get(column) == Some(&true));
                 row = row.child(
                     div()
-                        .w(px(column_width(data.kind, column)))
+                        .w(px(column_width(shape.as_deref(), data.kind, column)))
                         .flex_none()
                         .when(data.kind == InspectionKind::Hex && column < 2, |d| {
                             d.border_r_1().border_color(theme.border)
+                        })
+                        .when(data.kind == InspectionKind::Table, |d| {
+                            d.px_2()
+                                .py(px(3.))
+                                .border_r_1()
+                                .border_color(theme.border)
+                                .truncate()
+                                .when(numeric, gpui::Styled::text_right)
                         })
                         .child(if data.kind == InspectionKind::Hex {
                             hex_cell(cell, column, theme)
@@ -1168,12 +1219,59 @@ pub fn content(
                     .border_color(theme.border)
             },
         );
+        let table = display.data.kind == InspectionKind::Table;
+        let sort = shell.preview.inspection.sort;
+        if table {
+            header = header
+                .p_0()
+                .gap_0()
+                .bg(theme.code_bg)
+                .border_b_1()
+                .border_color(theme.border);
+        }
         for (index, column) in display.data.columns.iter().enumerate() {
+            let numeric = display
+                .table
+                .as_ref()
+                .is_some_and(|shape| shape.numeric.get(index) == Some(&true));
+            let arrow = match sort {
+                Some((sorted, ascending)) if sorted == index => {
+                    if ascending {
+                        " ▲"
+                    } else {
+                        " ▼"
+                    }
+                }
+                _ => "",
+            };
             header = header.child(
                 div()
-                    .w(px(column_width(display.data.kind, index)))
+                    .id(("inspect-column", index))
+                    .w(px(column_width(
+                        display.table.as_deref(),
+                        display.data.kind,
+                        index,
+                    )))
                     .flex_none()
-                    .child(column.clone()),
+                    .when(table, |d| {
+                        d.px_2()
+                            .py(px(4.))
+                            .border_r_1()
+                            .border_color(theme.border)
+                            .truncate()
+                            .cursor_pointer()
+                            .hover(|d| d.text_color(theme.accent))
+                            .when(numeric, gpui::Styled::text_right)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.run(
+                                    "ui.inspect",
+                                    serde_json::json!({"action":"sort","column":index}),
+                                    window,
+                                    cx,
+                                );
+                            }))
+                    })
+                    .child(format!("{column}{arrow}")),
             );
         }
         body = body.child(header);
@@ -1224,33 +1322,86 @@ pub fn content(
                 )),
         );
     }
+    let mut decoded = None;
+    if display.data.kind == InspectionKind::Hex
+        && let Some(row) = shell
+            .preview
+            .inspection
+            .selected
+            .and_then(|selected| selected.checked_sub(display.data.blocks.len()))
+            .and_then(|index| display.data.rows.get(index))
+    {
+        // What the bytes of the selected row mean: the questions a byte view
+        // is opened to answer.
+        let bytes = crate::inspector_rows::bytes_of(row.cells.get(1).map_or("", String::as_str));
+        let mut strip = div()
+            .flex_none()
+            .px_2()
+            .py_1()
+            .flex()
+            .flex_wrap()
+            .gap_x_3()
+            .text_xs()
+            .bg(theme.surface)
+            .border_t_1()
+            .border_color(theme.border);
+        for (label, value) in crate::inspector_rows::decode(&bytes) {
+            strip = strip.child(
+                div()
+                    .flex()
+                    .gap_1()
+                    .child(div().text_color(theme.text_muted).child(label))
+                    .child(value),
+            );
+        }
+        decoded = Some(strip);
+    }
     if matches!(
         display.data.kind,
         InspectionKind::Table | InspectionKind::Hex
     ) {
+        let gap = if display.data.kind == InspectionKind::Table {
+            0.
+        } else {
+            12.
+        };
         let width = (0..display.data.columns.len())
-            .map(|i| column_width(display.data.kind, i) + 12.)
+            .map(|i| column_width(display.table.as_deref(), display.data.kind, i) + gap)
             .sum::<f32>()
             + 16.;
+        // The strip is about the panel, not the table: it stays put while
+        // the rows scroll sideways.
         div()
-            .id("inspection-horizontal")
             .flex_1()
             .min_h_0()
-            .overflow_x_scroll()
-            .child(body.w(px(width)).min_w_full().h_full())
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .id("inspection-horizontal")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_x_scroll()
+                    .child(body.w(px(width)).min_w_full().h_full()),
+            )
+            .children(decoded)
             .into_any_element()
     } else {
         body.into_any_element()
     }
 }
 
-fn column_width(kind: InspectionKind, index: usize) -> f32 {
+fn column_width(
+    shape: Option<&crate::inspector_rows::Shape>,
+    kind: InspectionKind,
+    index: usize,
+) -> f32 {
     if kind == InspectionKind::Hex {
         [140., 400., 148.].get(index).copied().unwrap_or(140.)
-    } else if kind == InspectionKind::Table {
-        160.
     } else {
-        140.
+        shape
+            .and_then(|shape| shape.widths.get(index).copied())
+            .unwrap_or(140.)
     }
 }
 

@@ -133,6 +133,18 @@ still to come are in `docs/preview-frame.md`.
   about the container: nothing opens a member from its temporary path. A
   provider whose targets are not files (a book's chapters) returns `None` and
   shows them itself.
+- **Rows.** What the inspector works out about rows is pure and tested
+  (`inspector_rows.rs`) and never computed while painting. A table's column
+  widths come from its content, as an estimate from character counts made on
+  the worker that builds the `Display` (a cell that is wider after all is
+  truncated); a column whose filled cells are all numbers is right-aligned.
+  A click on a header orders the rows shown by value or by text, blanks last,
+  then descending, then back to the file's order; it reorders the index of
+  visible rows, never the data, so selection, find and copy keep working. A
+  selected row of the byte view is decoded in a strip under it (integers both
+  ways round, a float, the text), outside the sideways scroller. A font's
+  sheet is drawn for the width the panel shows it at, and its blocks are
+  stacked, so a long specimen text pushes the rest down.
 - **Muted is for secondary facts** (line numbers, captions, column headers),
   never for the data: offsets, sizes and values are `theme.text`. The only
   dimmed data is what stands for nothing: a zero byte, the dot of an

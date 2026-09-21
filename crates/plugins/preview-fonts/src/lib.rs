@@ -26,8 +26,13 @@ impl Plugin for PreviewPlugin {
 /// Specimen canvas. Every rasterization bound derives from it: no glyph may
 /// exceed the canvas and one drawing pass may not paint more than a few
 /// canvases' worth of pixels, whatever the outline bounds claim.
-const WIDTH: usize = 1000;
-const HEIGHT: usize = 650;
+// The sheet is drawn for the panel, which shows it at about half this width:
+// a narrower sheet with larger type reads at the sizes it names.
+const WIDTH: usize = 640;
+const HEIGHT: usize = 900;
+/// Sizes of the specimen lines, then of the character sheet.
+const SIZES: [f32; 3] = [22., 34., 52.];
+const SHEET_SIZE: f32 = 28.;
 const GLYPH_PIXELS: usize = WIDTH * HEIGHT;
 const PASS_PIXELS: usize = 16 * GLYPH_PIXELS;
 /// Outline bounds are legitimate up to a few ems; beyond that a font is
@@ -115,8 +120,13 @@ fn specimen(
     let sample: String = sample.chars().take(limits::SPECIMEN_CHARS).collect();
     let mut rgba = vec![255; WIDTH * HEIGHT * 4];
     let mut skipped = 0;
-    for (y, size) in [(16., 20.), (86., 32.), (196., 48.)] {
-        skipped += draw(&font, &sample, size, y, &mut rgba, cancel)?;
+    // Each block starts where the one before ended: a long specimen text
+    // pushes the rest down instead of being drawn over.
+    let mut y = 16.;
+    for size in SIZES {
+        let (missed, bottom) = draw(&font, &sample, size, y, &mut rgba, cancel)?;
+        skipped += missed;
+        y = bottom + size * 0.6;
     }
     let glyph_text: String = chars
         .iter()
@@ -124,7 +134,7 @@ fn specimen(
         .take(sheet)
         .flat_map(|c| [*c, ' '])
         .collect();
-    skipped += draw(&font, &glyph_text, 24., 360., &mut rgba, cancel)?;
+    skipped += draw(&font, &glyph_text, SHEET_SIZE, y + 8., &mut rgba, cancel)?.0;
     let mut notice =
         String::from("Search sets the specimen text · font collections show their first face");
     if skipped > 0 {
@@ -141,7 +151,7 @@ fn specimen(
         }),
         blocks: vec![Block {
             text: format!(
-                "{glyphs} glyphs · {} mapped characters\nSpecimen: 20, 32 and 48 px\nCharacter sheet starts at {offset}",
+                "{glyphs} glyphs · {} mapped characters\nCharacter sheet starts at {offset}",
                 chars.len()
             ),
             ..Block::default()
@@ -188,7 +198,7 @@ fn draw(
     y: f32,
     pixels: &mut [u8],
     cancel: &CancelToken,
-) -> anyhow::Result<usize> {
+) -> anyhow::Result<(usize, f32)> {
     use fontdue::layout::{CoordinateSystem, Layout, LayoutSettings, TextStyle};
     let mut layout = Layout::new(CoordinateSystem::PositiveYDown);
     layout.reset(&LayoutSettings {
@@ -227,7 +237,7 @@ fn draw(
             }
         }
     }
-    Ok(skipped)
+    Ok((skipped, y + layout.height()))
 }
 
 #[cfg(test)]

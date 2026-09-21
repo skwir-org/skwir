@@ -1,8 +1,22 @@
 # One preview frame
 
-Status: **design agreed 2026-09-21, not implemented.** Each phase below ships
-on its own. When a phase lands, move its rules into
-`docs/invariants/previews.md` and say so in `docs/PLAN.md`.
+Status: **the six agreed phases are implemented** (2026-09-21). Their rules
+are in `docs/invariants/previews.md`, "The preview frame", which is the binding
+text; this document keeps the reasoning, what was left out, and the proposal
+at the end, which is still only a proposal.
+
+Left out, deliberately or for want of means:
+
+- EXIF for pictures: no metadata crate is in the dependency tree; Details shows
+  a picture's dimensions.
+- A folder's total size from the Usage cache: the cache belongs to a plugin the
+  UI cannot depend on. Details shows what the listing counted.
+- A hit counter in the structured previews' find field: providers search as
+  they go and do not know the total. The field, Enter and F3 are the reader's.
+- A text-size slider for fonts and a selection mirrored between a byte view's
+  two columns. The sheet is drawn larger instead, and the selected row is
+  decoded.
+- `InspectionKind::Tree`, which nothing produced, is removed.
 
 The PDF reader, the media player and the image viewer are good. The structured
 previews (hex, archives, code, tables, Markdown, EPUB, mail, fonts) and the

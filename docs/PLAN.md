@@ -96,6 +96,22 @@ playing video, movement resetting the deadline, hover protection, menu focus
 and dismissal, and fullscreen exit. Lint, 148 default tests, two explicit native
 video tests and the benchmark gate pass.
 
+One preview frame (2026-09-21, `docs/preview-frame.md`): the structured
+previews were built apart from the reader, the player and the picture viewer,
+and it showed. What is read is now on paper rather than the panel's grey; one
+toolbar builder places every kind's tools in the same slots, with a More menu
+that holds only what has no button; find, the contents drawer and the keys are
+one each; every text file is the code view and HTML opens in reading mode;
+Details lists everything known about an entry, filling the panel when there is
+nothing to preview; a member of an archive or an attachment opens as the file
+it is, two containers deep, which lifts the "nested sessions in containers"
+limit noted below; tables have a grid, sized columns and sorting, the byte view
+decodes the selected row. Deviations: no EXIF (no metadata crate in the tree),
+no folder total from the Usage cache (a plugin the UI cannot depend on), no hit
+count in the structured find field (providers search as they go). 283 default
+tests and the bench budgets pass; every kind was checked in a window on an
+isolated display.
+
 Extended previews: ten independent runtime plugins add audio,
 hexadecimal, Markdown reading mode, archives, EPUB reading mode, CSV/TSV tables,
 JSON/YAML/TOML trees, font specimens, email and comics. Audio reuses GStreamer;
