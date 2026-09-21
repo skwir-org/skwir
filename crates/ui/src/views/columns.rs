@@ -175,7 +175,15 @@ fn ancestor_column(
                         }),
                     )
                     .child(icon)
-                    .child(div().flex_1().min_w_0().truncate().child(name.clone()))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis_middle()
+                            .child(name.clone()),
+                    )
                     .when(*is_dir, |d| {
                         d.child(div().text_color(theme.text_muted).child("›"))
                     });

@@ -76,6 +76,17 @@ layout (`crates/gpui/...`) so they apply there with `git apply -p1`.
   left, so a file name keeps its extension. Runs shrink over the removed
   bytes and the ellipsis joins the run it began in. `just list-check` runs
   the line wrapper tests too.
+  It also fixes which text layouts are reused. Flexbox probes a text without
+  a width before it gives it one; 0.2.2 answered the later measure from that
+  probe, so a `truncate()`d text in a flex row was never truncated, only
+  clipped by its parent (every long name in the list view). A layout is now
+  reused only between two unconstrained measures, each measure starts from
+  the runs of the whole text, and a text whose shaped width fits is left
+  alone even when its summed character advances do not.
+  Zed's main branch has since grown the same three things
+  (`TextOverflow::TruncateMiddle`, `truncate_wrapped_line`, the cache rule);
+  this patch keeps their public names so callers survive an upgrade, and
+  should be dropped, not upstreamed, when gpui is updated.
 
 ## Regenerating a patch
 

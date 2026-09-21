@@ -181,10 +181,13 @@ current source before assuming a planned crate, command, or API exists.
 - **Popups own the keyboard.** A menu or popover takes focus when it opens
   and returns it when it closes, with its own key context (see `menu.rs`):
   otherwise keys act on a selection hidden behind it.
-- **List columns** give way by layout alone: the detail columns sit in a
-  wrapping flex line one row tall (`views/list.rs::details`), so they drop
-  whole, last first, and the name keeps its minimum width in a pane of any
-  width. Header and rows share that one function. Which columns show is
+- **List columns** give way by layout alone: the name and the detail columns
+  sit in one wrapping flex line one row tall (`views/list.rs::line`), so the
+  columns drop whole, last first, and the name — the only child that grows —
+  takes what they leave instead of sitting at its minimum beside the blank of
+  a column that went. Header and rows share that one function. A name too
+  long keeps both ends (`text_ellipsis_middle`) in every view: the extension
+  tells files apart. Which columns show is
   chosen where they are — the header's own menu (`Shell::open_column_menu`),
   not the Settings dialog — and still through `settings.apply`, so the
   dialog and the header never disagree. The sidebar gives way to

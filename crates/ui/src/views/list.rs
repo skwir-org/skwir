@@ -276,7 +276,7 @@ pub fn row(
             .flex_none()
             .into_any_element(),
     };
-    let mut el = div()
+    let el = div()
         .id(ix)
         .h(px(ROW_HEIGHT))
         .w_full()
@@ -308,71 +308,69 @@ pub fn row(
                 this.on_entry_mouse_down(pane, ix, ev, window, cx);
             }),
         )
-        .child(icon)
+        .child(icon);
+    let name = div()
+        .flex()
+        .items_center()
+        .gap_1()
         .child(
+            // A name keeps its end: the extension tells files apart.
             div()
-                .flex_1()
-                .min_w(px(if compact { 0. } else { NAME_MIN }))
-                .flex()
-                .items_center()
-                .gap_1()
-                .child(div().min_w_0().truncate().child(r.name.clone()))
-                .children(r.tags.iter().take(4).map(|t| {
-                    div()
-                        .flex_none()
-                        .px_1()
-                        .rounded_sm()
-                        .text_xs()
-                        .bg(theme.accent.opacity(0.18))
-                        .text_color(if r.selected {
-                            theme.selection_text
-                        } else {
-                            theme.text
-                        })
-                        .child(t.clone())
-                })),
-        );
+                .min_w_0()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis_middle()
+                .child(r.name.clone()),
+        )
+        .children(r.tags.iter().take(4).map(|t| {
+            div()
+                .flex_none()
+                .px_1()
+                .rounded_sm()
+                .text_xs()
+                .bg(theme.accent.opacity(0.18))
+                .text_color(if r.selected {
+                    theme.selection_text
+                } else {
+                    theme.text
+                })
+                .child(t.clone())
+        }));
+    let mut line = line(name, if compact { 0. } else { NAME_MIN });
     if !compact {
         let font = shell.font.clone();
         let exact: gpui::SharedString = r.modified_exact.clone().into();
         let [size, modified, kind] = shell.columns;
-        el = el.child(
-            details(muted, shell.columns, shell.column_widths)
-                .when(size, |d| {
-                    d.child(
-                        div()
-                            .w(px(shell.column_widths[0]))
-                            .flex_none()
-                            .text_right()
-                            .child(r.size.clone()),
-                    )
-                })
-                .when(modified, |d| {
-                    d.child(
-                        div()
-                            .id(("modified", ix))
-                            .w(px(shell.column_widths[1]))
-                            .flex_none()
-                            .truncate()
-                            .when(!exact.is_empty(), |d| {
-                                d.tooltip(move |_, cx| {
-                                    crate::toolbar::tooltip(exact.clone(), font.clone(), cx)
-                                })
+        line = line
+            .when(size, |d| {
+                d.child(
+                    column(shell.column_widths[0], muted)
+                        .text_right()
+                        .child(r.size.clone()),
+                )
+            })
+            .when(modified, |d| {
+                d.child(
+                    column(shell.column_widths[1], muted)
+                        .id(("modified", ix))
+                        .truncate()
+                        .when(!exact.is_empty(), |d| {
+                            d.tooltip(move |_, cx| {
+                                crate::toolbar::tooltip(exact.clone(), font.clone(), cx)
                             })
-                            .child(r.modified.clone()),
-                    )
-                })
-                .when(kind, |d| {
-                    d.child(
-                        div()
-                            .w(px(shell.column_widths[2]))
-                            .flex_none()
-                            .truncate()
-                            .child(gpui::SharedString::from(r.kind.clone())),
-                    )
-                }),
-        );
+                        })
+                        .child(r.modified.clone()),
+                )
+            })
+            .when(kind, |d| {
+                d.child(
+                    column(shell.column_widths[2], muted)
+                        .truncate()
+                        .child(gpui::SharedString::from(r.kind.clone())),
+                )
+            });
     }
+    let mut el = el.child(line);
     el = dnd::draggable(el, shell);
     if let Some(p) = &r.path {
         el = dnd::droppable_dir(el, p.clone(), cx);
@@ -380,32 +378,39 @@ pub fn row(
     el
 }
 
-/// The detail columns of a row or of the header. A wrapping flex line one
-/// row tall: a column that no longer fits wraps below and is clipped, so
-/// columns drop whole, last first (Type, then Modified, then Size), while the
-/// name keeps `NAME_MIN`. Pure layout: nothing is measured, the header and
-/// every row agree by construction, and a pane of any width is laid out
-/// correctly in the frame it gets that width.
-fn details(color: gpui::Hsla, shown: [bool; 3], widths: [f32; 3]) -> Div {
-    let count = shown.iter().filter(|shown| **shown).count();
-    let basis: f32 = widths
-        .iter()
-        .zip(shown)
-        .filter_map(|(width, shown)| shown.then_some(*width))
-        .sum::<f32>()
-        + DETAIL_GAP * count.saturating_sub(1) as f32;
+/// The name and the detail columns of a row, or of the header. A wrapping
+/// flex line one row tall: a column that no longer fits wraps below and is
+/// clipped, so columns drop whole, last first (Type, then Modified, then
+/// Size), and the name, the only child that grows, takes what they leave: it
+/// never sits at `NAME_MIN` beside the blank of a column that went. Pure
+/// layout: nothing is measured, the header and every row agree by
+/// construction, and a pane of any width is laid out correctly in the frame
+/// it gets that width.
+fn line(name: Div, name_min: f32) -> Div {
     div()
         .h(px(ROW_HEIGHT - 2.))
-        .flex_shrink()
-        .flex_basis(px(basis))
+        .flex_1()
         .min_w_0()
         .overflow_hidden()
         .flex()
         .flex_row()
         .flex_wrap()
-        .justify_end()
-        .items_center()
+        .content_start()
         .gap_x(px(DETAIL_GAP))
+        .child(
+            name.h(px(ROW_HEIGHT - 2.))
+                .flex()
+                .items_center()
+                .flex_1()
+                .min_w(px(name_min)),
+        )
+}
+
+/// One detail column of `line`.
+fn column(width: f32, color: gpui::Hsla) -> Div {
+    div()
+        .w(px(width))
+        .flex_none()
         .line_height(px(ROW_HEIGHT - 2.))
         .text_color(color)
 }
@@ -454,62 +459,58 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Div {
             }),
         )
         .child(div().size(px(ICON_PX)).flex_none())
-        .child(div().flex_1().min_w(px(NAME_MIN)).child(header_cell(
-            "h-name",
-            "Name",
-            SortKey::Name,
-            shell,
-            theme,
-            cx,
-        )))
         .child(
-            details(theme.text_muted, shell.columns, shell.column_widths)
-                .when(shell.columns[0], |d| {
-                    d.child(
-                        div()
-                            .relative()
-                            .w(px(shell.column_widths[0]))
-                            .flex_none()
-                            .flex()
-                            .justify_end()
-                            .child(header_cell(
-                                "h-size",
-                                "Size",
-                                SortKey::Size,
-                                shell,
-                                theme,
-                                cx,
-                            ))
-                            .child(resize_edge(0)),
-                    )
-                })
-                .when(shell.columns[1], |d| {
-                    d.child(
-                        div()
-                            .relative()
-                            .w(px(shell.column_widths[1]))
-                            .flex_none()
-                            .child(header_cell(
-                                "h-mod",
-                                "Modified",
-                                SortKey::Modified,
-                                shell,
-                                theme,
-                                cx,
-                            ))
-                            .child(resize_edge(1)),
-                    )
-                })
-                .when(shell.columns[2], |d| {
-                    d.child(
-                        div()
-                            .relative()
-                            .w(px(shell.column_widths[2]))
-                            .flex_none()
-                            .child("Type")
-                            .child(resize_edge(2)),
-                    )
-                }),
+            line(
+                div().child(header_cell(
+                    "h-name",
+                    "Name",
+                    SortKey::Name,
+                    shell,
+                    theme,
+                    cx,
+                )),
+                NAME_MIN,
+            )
+            .when(shell.columns[0], |d| {
+                d.child(
+                    column(shell.column_widths[0], theme.text_muted)
+                        .relative()
+                        .flex()
+                        .justify_end()
+                        .child(header_cell(
+                            "h-size",
+                            "Size",
+                            SortKey::Size,
+                            shell,
+                            theme,
+                            cx,
+                        ))
+                        .child(resize_edge(0)),
+                )
+            })
+            .when(shell.columns[1], |d| {
+                d.child(
+                    column(shell.column_widths[1], theme.text_muted)
+                        .relative()
+                        .child(header_cell(
+                            "h-mod",
+                            "Modified",
+                            SortKey::Modified,
+                            shell,
+                            theme,
+                            cx,
+                        ))
+                        .child(resize_edge(1)),
+                )
+            })
+            .when(shell.columns[2], |d| {
+                d.child(
+                    column(shell.column_widths[2], theme.text_muted)
+                        .relative()
+                        .child("Type")
+                        .child(resize_edge(2)),
+                )
+            }),
         )
 }
 

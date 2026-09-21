@@ -316,6 +316,7 @@ struct TextLayoutInner {
     lines: SmallVec<[WrappedLine; 1]>,
     line_height: Pixels,
     wrap_width: Option<Pixels>,
+    truncate_width: Option<Pixels>,
     size: Option<Size<Pixels>>,
     bounds: Option<Bounds<Pixels>>,
 }
@@ -371,12 +372,22 @@ impl TextLayout {
                         (None, "".into(), false)
                     };
 
+                // A layout is only reused between two unconstrained measures. Flexbox probes
+                // a text without a width before it gives it one: answering the later measure
+                // from that probe leaves the text untruncated, clipped by its parent with no
+                // ellipsis; answering a probe from a truncated layout poisons intrinsic sizing.
                 if let Some(text_layout) = element_state.0.borrow().as_ref()
                     && text_layout.size.is_some()
                     && (wrap_width.is_none() || wrap_width == text_layout.wrap_width)
+                    && truncate_width.is_none()
+                    && text_layout.truncate_width.is_none()
                 {
                     return text_layout.size.unwrap();
                 }
+
+                // Truncation shortens the runs with the text: every measure starts from the
+                // runs of the whole text, not from what an earlier measure left.
+                let mut runs = runs.clone();
 
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
                 let clamp = text_style
@@ -392,7 +403,21 @@ impl TextLayout {
                         keep_end,
                         &mut runs,
                     )
-                } else if let Some(truncate_width) = truncate_width {
+                } else if let Some(truncate_width) = truncate_width
+                    // Truncation sums per-character advances, which overestimates the shaped
+                    // width (no kerning) and would cut a text that fits exactly in the width
+                    // it was measured at. The shaping comes from the line layout cache when
+                    // the same text was measured untruncated this frame.
+                    && !window
+                        .text_system()
+                        .shape_text(text.clone(), font_size, &runs, None, None)
+                        .log_err()
+                        .is_some_and(|unclipped| {
+                            unclipped
+                                .iter()
+                                .all(|line| line.size(line_height).width <= truncate_width)
+                        })
+                {
                     if keep_end {
                         line_wrapper.truncate_line_middle(
                             text.clone(),
@@ -429,6 +454,7 @@ impl TextLayout {
                         len: 0,
                         line_height,
                         wrap_width,
+                        truncate_width,
                         size: Some(Size::default()),
                         bounds: None,
                     });
@@ -447,6 +473,7 @@ impl TextLayout {
                     len,
                     line_height,
                     wrap_width,
+                    truncate_width,
                     size: Some(size),
                     bounds: None,
                 });
