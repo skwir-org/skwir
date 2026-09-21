@@ -567,6 +567,7 @@ dependencies = [
  "bibli-core",
  "bibli-plugin-edit-as-buffer",
  "bibli-plugin-jump",
+ "bibli-plugin-mpris",
  "bibli-plugin-open-with",
  "bibli-plugin-ops-basic",
  "bibli-plugin-places",
@@ -733,6 +734,18 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tracing",
+]
+
+[[package]]
+name = "bibli-plugin-mpris"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "bibli-core",
+ "parking_lot",
+ "percent-encoding",
+ "tracing",
+ "zbus",
 ]
 
 [[package]]

@@ -96,6 +96,18 @@ playing video, movement resetting the deadline, hover protection, menu focus
 and dismissal, and fullscreen exit. Lint, 148 default tests, two explicit native
 video tests and the benchmark gate pass.
 
+Music (2026-09-22): the audio preview became a small player. Sound: a
+perceptual volume, `scaletempo` so speed keeps the pitch, a spectrum folded
+into logarithmic bands. Tracks: Previous and Next through the folder's audio
+files with hand-over at the end of a track; playlists (M3U, PLS, XSPF, CUE) as
+a plugin whose tracks open in the player, which then walks the playlist. Keep
+playing: a pin that lets playback outlive the selection, steered from the
+status bar. What plays is core data (`playing::NowPlaying`, `PlayerRequest`),
+which an `mpris` plugin mirrors onto the session bus: media keys, the
+desktop's widget, `playerctl`. Not done: ReplayGain, and gapless hand-over (a
+new worker starts per track, so there is a short gap). Verified in a window on
+an isolated display and, for MPRIS, on a private session bus with `playerctl`.
+
 One preview frame (2026-09-21, `docs/preview-frame.md`): the structured
 previews were built apart from the reader, the player and the picture viewer,
 and it showed. What is read is now on paper rather than the panel's grey; one

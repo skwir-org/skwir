@@ -123,12 +123,66 @@ impl PlayerRequest {
     }
 }
 
+#[derive(Deserialize, schemars::JsonSchema)]
+struct RequestArgs {
+    request: PlayerRequest,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct NoArgs {}
+
+/// The player as commands, so a key binding, a script and an agent steer it
+/// the way the desktop's media keys do.
+pub(crate) fn register(app: &crate::App) {
+    app.commands.register::<RequestArgs, _>(
+        "core",
+        "player.request",
+        "Steer the player",
+        "Ask whatever is playing to play, pause, stop, step to the next or previous track, seek or change its volume; it is carried out when the player next wakes",
+        |args, app| {
+            anyhow::ensure!(args.request.valid(), "this request makes no sense");
+            anyhow::ensure!(app.player.get().is_some(), "nothing is playing");
+            anyhow::ensure!(app.player.request(args.request), "the player is not answering");
+            app.wake();
+            Ok(crate::command::Outcome::Done)
+        },
+    );
+    app.commands.register::<NoArgs, _>(
+        "core",
+        "player.now",
+        "What is playing",
+        "The track that plays, its state and where it stands, or null",
+        |_, app| {
+            Ok(crate::command::Outcome::Value(app.player.get().map_or(
+                serde_json::Value::Null,
+                |now| {
+                    serde_json::json!({
+                        "path": now.path,
+                        "title": now.title,
+                        "artist": now.artist,
+                        "album": now.album,
+                        "status": now.status,
+                        "position": now.position_now(),
+                        "duration": now.duration,
+                        "volume": now.volume,
+                        "can_next": now.can_next,
+                        "can_previous": now.can_previous,
+                        "pinned": now.pinned,
+                    })
+                },
+            )))
+        },
+    );
+}
+
 #[derive(Default)]
 pub struct Player {
     now: RwLock<Option<Arc<NowPlaying>>>,
     revision: AtomicU64,
     requests: Mutex<Vec<PlayerRequest>>,
-    listeners: Mutex<Vec<mpsc::Sender<()>>>,
+    /// Who listens, by owner: a contribution like any other, withdrawn when
+    /// its plugin is disabled.
+    listeners: Mutex<Vec<(String, mpsc::Sender<()>)>>,
 }
 
 /// Requests kept for a player that does not wake: more is a flood, not intent.
@@ -162,15 +216,30 @@ impl Player {
             self.revision.fetch_add(1, Ordering::Release);
             self.listeners
                 .lock()
-                .retain(|listener| listener.send(()).is_ok());
+                .retain(|(_, listener)| listener.send(()).is_ok());
         }
     }
 
-    /// A message each time the revision advances, until the receiver is dropped.
-    pub fn subscribe(&self) -> mpsc::Receiver<()> {
+    /// A message each time the revision advances, until the receiver is
+    /// dropped or `owner` is withdrawn.
+    pub fn subscribe(&self, owner: &str) -> mpsc::Receiver<()> {
         let (tx, rx) = mpsc::channel();
-        self.listeners.lock().push(tx);
+        self.listeners.lock().push((owner.to_owned(), tx));
         rx
+    }
+
+    /// The owners listening, for whoever checks that a plugin left no trace.
+    pub fn listeners(&self) -> Vec<String> {
+        self.listeners
+            .lock()
+            .iter()
+            .map(|(owner, _)| owner.clone())
+            .collect()
+    }
+
+    /// Their receivers see the channel close, which ends their wait.
+    pub fn unregister_owner(&self, owner: &str) {
+        self.listeners.lock().retain(|(known, _)| known != owner);
     }
 
     /// Leave a request for the player; wake it (`App::wake`) afterwards.
@@ -216,7 +285,7 @@ mod tests {
     #[test]
     fn listeners_hear_of_changes_not_of_time_passing() {
         let player = Player::default();
-        let heard = player.subscribe();
+        let heard = player.subscribe("test");
         player.publish(Some(track(0., PlaybackStatus::Playing)));
         assert_eq!((player.revision(), heard.try_iter().count()), (1, 1));
         // The position running on is not news; the record still says it.
@@ -235,7 +304,12 @@ mod tests {
         // A listener that went away is forgotten, not an error.
         drop(heard);
         player.publish(Some(track(0., PlaybackStatus::Paused)));
-        assert!(player.listeners.lock().is_empty());
+        assert!(player.listeners().is_empty());
+        // A withdrawn owner's receiver sees the channel close.
+        let plugin = player.subscribe("a-plugin");
+        assert_eq!(player.listeners(), ["a-plugin"]);
+        player.unregister_owner("a-plugin");
+        assert!(player.listeners().is_empty() && plugin.recv().is_err());
     }
 
     #[test]

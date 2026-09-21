@@ -144,6 +144,7 @@ impl App {
         builtin::register(&app);
         crate::settings::register(&app);
         crate::plugin::register(&app);
+        crate::playing::register(&app);
         Ok(app)
     }
 
@@ -196,6 +197,7 @@ impl App {
         self.metadata.unregister_owner(owner);
         self.previews.unregister_owner(owner);
         self.pending.unregister_owner(owner);
+        self.player.unregister_owner(owner);
         self.registry.remove_owner(owner);
         self.providers.write().retain(|_, (o, _)| &**o != owner);
         for spec in self.settings.schema() {

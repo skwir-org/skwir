@@ -21,6 +21,8 @@ struct Snapshot {
     previews: Vec<&'static str>,
     thumbs: Vec<&'static str>,
     settings: BTreeSet<String>,
+    /// Who listens to what plays (the desktop's media controls).
+    player: Vec<String>,
 }
 
 fn snapshot(app: &App) -> Snapshot {
@@ -44,6 +46,7 @@ fn snapshot(app: &App) -> Snapshot {
         previews: app.previews.ids(),
         thumbs: app.thumbnails.provider_ids(),
         settings: app.settings.schema().into_iter().map(|s| s.key).collect(),
+        player: app.player.listeners(),
     }
 }
 
@@ -60,6 +63,7 @@ fn all_plugins() -> Vec<Arc<dyn Plugin>> {
         Arc::new(bibli_plugin_preview_epub::PreviewPlugin),
         Arc::new(bibli_plugin_preview_tables::PreviewPlugin),
         Arc::new(bibli_plugin_preview_playlists::PreviewPlugin),
+        Arc::new(bibli_plugin_mpris::MprisPlugin::default()),
         Arc::new(bibli_plugin_preview_structured::PreviewPlugin),
         Arc::new(bibli_plugin_preview_fonts::PreviewPlugin),
         Arc::new(bibli_plugin_preview_email::PreviewPlugin),
@@ -129,5 +133,5 @@ fn all_plugins_coexist_and_every_command_has_a_schema() {
             c.name
         );
     }
-    assert_eq!(app.plugins.list().len(), 26);
+    assert_eq!(app.plugins.list().len(), 27);
 }

@@ -10,6 +10,7 @@
 //! `playing::NowPlaying`, and what others ask of it (`PlayerRequest`: the
 //! desktop's media keys through a plugin, a script, an agent) is taken here
 //! when the shell wakes. Nothing calls into the UI from another thread.
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -23,6 +24,10 @@ use gpui::{AnyElement, Context, Window, div, prelude::*, px};
 use crate::shell::Shell;
 use crate::theme::Theme;
 use crate::toolbar::Button;
+
+/// Where, under the cache and this process's id, the covers of what plays
+/// are written for others to show (the desktop's media widget).
+pub const COVERS: &str = "player-covers";
 
 pub struct Pinned {
     pub session: Arc<dyn MediaSession>,
@@ -58,15 +63,31 @@ pub struct PlayerState {
     /// A playlist's tracks, resolved on a worker after the pin.
     queue_tx: flume::Sender<(PathBuf, Vec<PathBuf>)>,
     queue_rx: flume::Receiver<(PathBuf, Vec<PathBuf>)>,
+    /// The track whose cover was asked for, and the file it was written to
+    /// once a worker has done so.
+    cover: Option<(PathBuf, Option<PathBuf>)>,
+    cover_tx: flume::Sender<(PathBuf, PathBuf)>,
+    cover_rx: flume::Receiver<(PathBuf, PathBuf)>,
     /// Whether anything was published, to say once that nothing plays.
     published: bool,
+    /// The previewed track that has actually played. Selecting a song is not
+    /// playing it: a file manager announces itself as a player only once it
+    /// is one, and stops being one when told to stop.
+    engaged: Option<PathBuf>,
+    /// Whether the preview was playing when last looked at: it is starting to
+    /// play that engages, so a Stop still being carried out does not undo itself.
+    was_playing: bool,
 }
 
 impl Default for PlayerState {
     fn default() -> Self {
         let (tx, rx) = flume::unbounded();
         let (queue_tx, queue_rx) = flume::unbounded();
+        let (cover_tx, cover_rx) = flume::unbounded();
         PlayerState {
+            cover: None,
+            cover_tx,
+            cover_rx,
             pinned: None,
             generation: 0,
             tx,
@@ -74,6 +95,8 @@ impl Default for PlayerState {
             queue_tx,
             queue_rx,
             published: false,
+            engaged: None,
+            was_playing: false,
         }
     }
 }
@@ -256,7 +279,62 @@ impl Shell {
 
     /// Once per wake: tracks that finished opening, the pin's state, what
     /// others asked for, and the record of what plays.
+    /// Write the cover of `track` where others can read it, on a worker.
+    fn request_cover(&mut self, track: PathBuf) {
+        self.player.cover = Some((track.clone(), None));
+        let (previews, tx, wake) = (
+            Arc::clone(&self.app.previews),
+            self.player.cover_tx.clone(),
+            self.app.waker_handle(),
+        );
+        let directory = self
+            .app
+            .cache
+            .root()
+            .join(COVERS)
+            .join(std::process::id().to_string());
+        self.app.scheduler.spawn(
+            Priority::Background,
+            "player-cover",
+            self.app.lifetime().child(),
+            move || {
+                let cover = || -> Option<PathBuf> {
+                    let request = PreviewRequest {
+                        entry: EntryRef::from_path(&track)?,
+                        mime: bibli_platform::mime::by_name(track.as_os_str())
+                            .map(|mime| mime.to_string()),
+                        page: 1,
+                        seconds: None,
+                        max_side: 512,
+                    };
+                    let image = previews.render(&request, &CancelToken::new()).ok()??.image;
+                    let picture =
+                        image::RgbaImage::from_raw(image.width, image.height, image.rgba.to_vec())?;
+                    std::fs::create_dir_all(&directory).ok()?;
+                    // One file per track: a widget that caches by location
+                    // must see a new one when the track changes.
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    track.hash(&mut hasher);
+                    let file = directory.join(format!("{:016x}.png", hasher.finish()));
+                    picture.save(&file).ok()?;
+                    Some(file)
+                };
+                if let Some(file) = cover() {
+                    let _ = tx.send((track, file));
+                    wake();
+                }
+            },
+        );
+    }
+
     pub fn sync_player(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        while let Ok((track, file)) = self.player.cover_rx.try_recv() {
+            if let Some((wanted, cover)) = &mut self.player.cover
+                && *wanted == track
+            {
+                *cover = Some(file);
+            }
+        }
         while let Ok((current, paths)) = self.player.queue_rx.try_recv() {
             if let Some(pinned) = &mut self.player.pinned
                 && pinned.path == current
@@ -367,6 +445,7 @@ impl Shell {
             PlayerRequest::Previous => return self.player_step(-1, window, cx),
             PlayerRequest::Stop => {
                 let _ = session.control(Control::Play(false));
+                self.player.engaged = None;
                 if self.preview_is_pinned() {
                     // The panel shows this very session: it goes back to
                     // being a preview rather than ending under the user.
@@ -402,7 +481,32 @@ impl Shell {
 
     fn publish_now_playing(&mut self) {
         let pinned = self.player.pinned.is_some();
-        let now = self.playing().map(|(_, state)| {
+        if !pinned {
+            let path = self.preview.playing_path();
+            let playing = self.preview.media.state.playing() && self.media_is_audio();
+            if playing && !self.player.was_playing {
+                self.player.engaged = path;
+            } else if self.player.engaged != path {
+                self.player.engaged = None;
+            }
+            self.player.was_playing = playing;
+        }
+        let announced = pinned || self.player.engaged.is_some();
+        let track = match &self.player.pinned {
+            Some(pin) => Some(pin.path.clone()),
+            None => self.player.engaged.clone(),
+        };
+        match (&track, &self.player.cover) {
+            (Some(track), Some((known, _))) if track == known => {}
+            (Some(track), _) => self.request_cover(track.clone()),
+            (None, _) => self.player.cover = None,
+        }
+        let cover = self
+            .player
+            .cover
+            .as_ref()
+            .and_then(|(_, file)| file.clone());
+        let now = self.playing().filter(|_| announced).map(|(_, state)| {
             let (path, can_previous, can_next) = if let Some(pin) = &self.player.pinned {
                 (
                     pin.path.clone(),
@@ -437,7 +541,7 @@ impl Shell {
                 can_next,
                 can_previous,
                 can_seek: state.seekable,
-                cover: None,
+                cover: cover.clone(),
                 pinned,
             }
         });

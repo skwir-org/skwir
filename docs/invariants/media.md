@@ -102,3 +102,17 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
   position themselves. What others want of the player is a `PlayerRequest`
   left there (`ui.player` for the UI's own surfaces) and taken when the shell
   next wakes: nothing calls into the UI from another thread.
+- A file manager is a player only while it is one. Selecting a song is not
+  playing it: the preview's track is announced (`NowPlaying`) once it starts
+  to play, on that transition, and no longer after Stop or when the selection
+  moves on; a pin is announced as long as it lasts. The cover of what is
+  announced is written on a worker under the cache, per process
+  (`player::COVERS`, swept at start like extracted members), one file per
+  track so that a widget caching by location sees it change.
+- The desktop's media controls are a plugin (`mpris`) that mirrors
+  `App::player` onto the session bus and knows nothing else: properties are
+  read from the record, calls become `PlayerRequest`s, the bus name is
+  per process and held only while something is announced, and a run without
+  a session bus logs once and does without. `player.request` and `player.now`
+  are the same surface for scripts and agents. Test it on a private bus
+  (`dbus-run-session`), never on the user's.

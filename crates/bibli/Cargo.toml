@@ -32,6 +32,7 @@ bibli-plugin-preview-archives.workspace = true
 bibli-plugin-preview-epub.workspace = true
 bibli-plugin-preview-tables.workspace = true
 bibli-plugin-preview-playlists.workspace = true
+bibli-plugin-mpris.workspace = true
 bibli-plugin-preview-structured.workspace = true
 bibli-plugin-preview-fonts.workspace = true
 bibli-plugin-preview-email.workspace = true

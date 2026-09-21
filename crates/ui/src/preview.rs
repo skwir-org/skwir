@@ -336,10 +336,17 @@ fn members_dir(cache: &Path) -> PathBuf {
         .join(std::process::id().to_string())
 }
 
-/// Remove what processes that no longer run left in `preview-members`.
+/// Remove what processes that no longer run left in the cache's per-process
+/// directories: extracted members, and the covers of what they played.
 /// Filesystem work: call it from a worker.
 pub fn sweep_members(cache: &Path) {
-    let Ok(entries) = std::fs::read_dir(cache.join("preview-members")) else {
+    for directory in ["preview-members", crate::player::COVERS] {
+        sweep(&cache.join(directory));
+    }
+}
+
+fn sweep(directory: &Path) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
         return;
     };
     for entry in entries.flatten() {

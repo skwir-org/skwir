@@ -106,6 +106,10 @@ fn main() -> anyhow::Result<()> {
         &app,
     );
     app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_mpris::MprisPlugin::default()),
+        &app,
+    );
+    app.plugins.add(
         std::sync::Arc::new(bibli_plugin_preview_structured::PreviewPlugin),
         &app,
     );
