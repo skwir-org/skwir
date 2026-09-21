@@ -95,7 +95,7 @@ pub fn row(row: &Row, icon: Option<&Path>, collapsed: bool, selected: bool, them
                 .rounded_sm()
                 .text_xs()
                 .text_color(theme.text_muted)
-                .bg(theme.surface)
+                .bg(theme.code_bg)
                 .child(status.clone()),
         );
     }
@@ -107,7 +107,7 @@ pub fn row(row: &Row, icon: Option<&Path>, collapsed: bool, selected: bool, them
         .gap_2()
         .px_2()
         .text_sm()
-        .when(!selected, |d| d.hover(|d| d.bg(theme.surface)))
+        .when(!selected, |d| d.hover(|d| d.bg(theme.hover)))
         .when(selected, |d| d.text_color(theme.selection_text))
         .child(name)
         .child(
@@ -118,7 +118,7 @@ pub fn row(row: &Row, icon: Option<&Path>, collapsed: bool, selected: bool, them
                 .text_color(if selected {
                     theme.selection_text
                 } else {
-                    theme.text_muted
+                    theme.text
                 })
                 .child(row.bytes.map_or_else(|| "—".into(), format::size)),
         )

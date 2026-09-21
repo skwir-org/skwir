@@ -1159,6 +1159,9 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
                 .flex_col()
                 .flex_1()
                 .min_h_0()
+                // What is read is on paper; a picture, a page or a film keeps
+                // the panel's own surface as its letterbox.
+                .when(on_paper(shell), |d| d.bg(theme.bg))
                 .when_some(
                     shell.preview.media.focus.as_ref().filter(|_| interactive),
                     |d, focus| {
@@ -1169,6 +1172,15 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
                 .child(content(shell, theme, interactive, cx)),
         )
         .into_any_element()
+}
+
+/// Whether the content is something to read rather than something to look at.
+fn on_paper(shell: &Shell) -> bool {
+    let preview = &shell.preview;
+    if preview.media.session.is_some() {
+        return shell.media_is_audio();
+    }
+    !matches!(preview.content, Some(PreviewContent::Image { .. }))
 }
 
 fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>) -> AnyElement {
@@ -1188,7 +1200,7 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
             .text_color(theme.text_muted)
             .child("Loading…")
             .into_any_element(),
-        None | Some(PreviewContent::Generic) => generic(shell, &p.info, theme),
+        None | Some(PreviewContent::Generic) => generic(shell, &p.info),
         Some(PreviewContent::Image {
             image,
             width,
@@ -1313,11 +1325,6 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                 .font_family(mono)
                 .text_xs()
                 .px_2()
-                .bg(if theme.is_dark {
-                    rgb(0x2b303b)
-                } else {
-                    rgb(0xeff1f5)
-                })
                 .child(
                     div()
                         .relative()
@@ -1355,7 +1362,7 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
     }
 }
 
-fn generic(shell: &Shell, info: &Info, theme: &Theme) -> AnyElement {
+fn generic(shell: &Shell, info: &Info) -> AnyElement {
     let mut card = div()
         .flex_1()
         .flex()
@@ -1363,9 +1370,8 @@ fn generic(shell: &Shell, info: &Info, theme: &Theme) -> AnyElement {
         .items_center()
         .justify_center()
         .gap_1()
-        .text_color(theme.text_muted)
         .children(info.icon.as_ref().map(|i| icons::element(i, 64.)))
-        .child(div().text_color(theme.text).child(info.name.clone()));
+        .child(info.name.clone());
     if let Some(kind) = type_label(shell, info) {
         card = card.child(kind);
     }

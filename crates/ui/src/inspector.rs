@@ -890,9 +890,9 @@ pub fn content(
                             .line_height(px(18.))
                             .py(px(1.))
                             .whitespace_nowrap()
-                            .when(ri % 2 == 1, |d| d.bg(theme.surface.opacity(0.5)))
+                            .when(ri % 2 == 1, |d| d.bg(theme.zebra))
                             .when(selected != Some(data.blocks.len() + ri), |d| {
-                                d.hover(|d| d.bg(theme.surface))
+                                d.hover(|d| d.bg(theme.hover))
                             })
                     })
             };
@@ -1110,14 +1110,10 @@ fn column_width(kind: InspectionKind, index: usize) -> f32 {
 }
 
 fn hex_cell(text: &str, column: usize, theme: &Theme) -> AnyElement {
+    // Offsets and bytes are the data; only what stands for nothing is dimmed:
+    // zero bytes, and the dot of an unprintable one.
     let highlights = match column {
-        0 => vec![(
-            0..text.len(),
-            gpui::HighlightStyle {
-                color: Some(theme.text_muted),
-                ..Default::default()
-            },
-        )],
+        0 => Vec::new(),
         1 => text
             .match_indices("00")
             .map(|(start, value)| {

@@ -85,9 +85,9 @@ impl MarkdownStyle {
             heading_rule: reading,
             code_size: (body_size - 2.).max(8.),
             code_padding: if reading { 12. } else { 8. },
-            code_bg: theme.surface,
-            inline_code_bg: theme.surface,
-            table_header_bg: theme.surface,
+            code_bg: theme.code_bg,
+            inline_code_bg: theme.code_bg,
+            table_header_bg: theme.code_bg,
             link_underline: reading,
             quote_text: if reading {
                 theme.text_muted

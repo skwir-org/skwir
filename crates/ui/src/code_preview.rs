@@ -115,7 +115,7 @@ impl CodeRow<'_> {
             let weak = entity.clone();
             gutter = gutter
                 .cursor_pointer()
-                .hover(|d| d.bg(theme.surface))
+                .hover(|d| d.bg(theme.hover))
                 .on_click(move |_, window, cx| {
                     let _ = weak.update(cx, |s, cx| {
                         s.with_pane(pane, |s| {
@@ -161,7 +161,7 @@ impl CodeRow<'_> {
                         .flex_none()
                         .px_2()
                         .rounded_sm()
-                        .bg(theme.surface)
+                        .bg(theme.code_bg)
                         .text_color(theme.text_muted)
                         .child(format!(
                             "… {} lines",

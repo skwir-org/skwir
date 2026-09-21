@@ -3,6 +3,11 @@
 //! Every surface draws from these and from the scales below, so a menu, a
 //! toast, a dialog and a row agree without anyone comparing hex values:
 //!
+//! - surfaces: what is read (lists, text, code, tables, bytes, prose) is on
+//!   `bg` in `text`; `surface` is chrome (bars, headers, the sidebar, the
+//!   letterbox around a picture or a page). `code_bg` sets a code block or a
+//!   table header apart on `bg`, `zebra` tints alternate rows. `text_muted`
+//!   is for secondary facts (line numbers, captions), never for the data.
 //! - color: the fields of [`Theme`]. State colors are tokens too: `hover` for
 //!   whatever is under the pointer, `selection_*` for what is chosen,
 //!   `success`/`warning`/`error` for outcomes, `scrim` behind a dialog.
@@ -21,6 +26,10 @@ use gpui::{Global, Hsla, WindowAppearance, rgb};
 pub struct Theme {
     pub bg: Hsla,
     pub surface: Hsla,
+    /// A code block, an inline code span or a table header, on `bg`.
+    pub code_bg: Hsla,
+    /// Alternate rows of a table or of a byte dump, on `bg`.
+    pub zebra: Hsla,
     /// Background of the row or control under the pointer.
     pub hover: Hsla,
     pub border: Hsla,
@@ -44,6 +53,8 @@ impl Theme {
         Theme {
             bg: rgb(0xfafafa).into(),
             surface: rgb(0xf0f0f0).into(),
+            code_bg: rgb(0xf0f1f3).into(),
+            zebra: rgb(0xf4f5f6).into(),
             hover: rgb(0xe9eef7).into(),
             border: rgb(0xd8d8d8).into(),
             text: rgb(0x1f1f1f).into(),
@@ -63,6 +74,8 @@ impl Theme {
         Theme {
             bg: rgb(0x1e1e1e).into(),
             surface: rgb(0x262626).into(),
+            code_bg: rgb(0x292b2f).into(),
+            zebra: rgb(0x232323).into(),
             hover: rgb(0x2b3038).into(),
             border: rgb(0x3a3a3a).into(),
             text: rgb(0xe6e6e6).into(),

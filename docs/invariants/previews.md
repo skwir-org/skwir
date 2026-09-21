@@ -58,6 +58,23 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   never extraction paths. Read only selected regular members, bound the actual
   decompressed bytes and keep temporary cleanup off the UI thread.
 
+## The preview frame
+
+Every preview fills one frame; none builds its own. The design and what is
+still to come are in `docs/preview-frame.md`.
+
+- **Surfaces.** What is read (text, code, tables, bytes, trees, prose, the
+  facts about an entry) is on `theme.bg` in `theme.text`, like the file list
+  beside it. `theme.surface` is chrome: the header, the toolbar, and the
+  letterbox around a picture, a film or a document page (`preview::on_paper`
+  decides). `code_bg` sets a code block, an inline span or a table header
+  apart on paper; `zebra` tints alternate rows; hover is `theme.hover`. No
+  preview derives a colour locally or hard-codes one.
+- **Muted is for secondary facts** (line numbers, captions, column headers),
+  never for the data: offsets, sizes and values are `theme.text`. The only
+  dimmed data is what stands for nothing: a zero byte, the dot of an
+  unprintable one.
+
 ## Structured code previews
 
 - Code inspections contain one bounded logical line per block. Fold ranges refer
