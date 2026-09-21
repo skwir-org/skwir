@@ -50,6 +50,9 @@ pub struct MediaState {
     poster: Poster,
     initial_frame: Option<Frame>,
     scrub: Option<f64>,
+    /// The colour of the cover shown, by image: worked out once, when the
+    /// cover changes, not per frame.
+    tint: std::cell::Cell<Option<(gpui::ImageId, Option<gpui::Hsla>)>>,
 }
 
 impl Shell {
@@ -701,7 +704,36 @@ fn settings(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
 pub fn audio_content(shell: &Shell, theme: &Theme) -> AnyElement {
     let p = &shell.preview;
     let state = &p.media.state;
-    let mut body = div()
+    let cover = match &p.content {
+        Some(PreviewContent::Image { image, .. }) => Some(image.clone()),
+        _ => None,
+    };
+    // The cover's colour, worked out once per cover, not per frame.
+    let tint = cover
+        .as_ref()
+        .and_then(|cover| {
+            let cached = p.media.tint.get();
+            if let Some((id, colour)) = cached
+                && id == cover.id
+            {
+                return colour;
+            }
+            let colour = cover
+                .as_bytes(0)
+                .and_then(crate::elements::halo::tint)
+                .map(crate::elements::halo::vivid);
+            p.media.tint.set(Some((cover.id, colour)));
+            colour
+        })
+        .unwrap_or(theme.accent);
+    let line = |text: &str, muted: bool| {
+        div()
+            .max_w_full()
+            .truncate()
+            .when(muted, |d| d.text_color(theme.text_muted))
+            .child(text.to_owned())
+    };
+    div()
         .flex_1()
         .min_h_0()
         .p_4()
@@ -709,39 +741,42 @@ pub fn audio_content(shell: &Shell, theme: &Theme) -> AnyElement {
         .flex_col()
         .items_center()
         .justify_center()
-        .gap_3();
-    if let Some(PreviewContent::Image { image, .. }) = &p.content {
-        body = body.child(
-            gpui::img(image.clone())
-                .max_w_full()
-                .max_h(px(260.))
-                .object_fit(gpui::ObjectFit::Contain),
-        );
-    }
-    let mut bars = div().h(px(64.)).w_full().flex().items_end().gap_1();
-    for v in &state.spectrum {
-        bars = bars.child(
+        .gap_1()
+        .child(
+            // A square as wide as the panel allows, which gives way in height
+            // when the panel is short: the halo draws in the smaller of the two.
             div()
-                .flex_1()
-                .h(px(if state.playing() { v * 64. } else { 2. }))
-                .bg(theme.accent),
-        );
-    }
-    body.child(div().text_lg().child(if state.title.is_empty() {
-        p.info.name.clone()
-    } else {
-        state.title.clone()
-    }))
-    .child(
-        div()
-            .text_color(theme.text_muted)
-            .child(state.artist.clone()),
-    )
-    .child(
-        div()
-            .text_color(theme.text_muted)
-            .child(state.album.clone()),
-    )
-    .child(bars)
-    .into_any_element()
+                .w_full()
+                .max_w(px(420.))
+                .min_h_0()
+                .flex_shrink()
+                .map(|mut d| {
+                    d.style().aspect_ratio = Some(1.);
+                    d
+                })
+                .mb_2()
+                .child(crate::elements::halo::Halo {
+                    spectrum: state.spectrum.clone(),
+                    playing: state.playing(),
+                    cover,
+                    tint,
+                    accent: theme.accent,
+                    surface: theme.code_bg,
+                    border: theme.border,
+                }),
+        )
+        .child(
+            div()
+                .max_w_full()
+                .truncate()
+                .text_lg()
+                .child(if state.title.is_empty() {
+                    p.info.name.clone()
+                } else {
+                    state.title.clone()
+                }),
+        )
+        .child(line(&state.artist, true))
+        .child(line(&state.album, true))
+        .into_any_element()
 }

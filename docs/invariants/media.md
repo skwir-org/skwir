@@ -51,3 +51,12 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
 - GPUI `drop_image` calls run in update/render code, never in prepaint or
   paint: the Blade atlas patch frees retired textures after waiting for the
   previous submission only (see `vendor/gpui/README.bibli.md`).
+- The audio picture is `elements/halo.rs`: the cover in a disc, the spectrum
+  as rays of dots round it (bass under the cover, treble above, mirrored), a
+  glow that swells with the level, in the cover's own colour running to the
+  accent. It has no timer: a published spectrum is a frame, and a paused player
+  is still (measured: 1 tick of CPU in 4 s). Rays are dots because a circle
+  looks the same at any angle, so they are quads in one batch; gpui's path
+  pass costs a frame of its own. The cover's colour is worked out once per
+  cover (`halo::tint`, weighted by how colourful a pixel is, so a border does
+  not wash it out), never per frame. Everything is sized in `paint`.

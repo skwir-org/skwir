@@ -6,6 +6,7 @@ pub mod treemap;
 pub mod uniform_grid;
 
 pub mod adaptive;
+pub mod halo;
 pub mod marquee;
 pub mod popover;
 pub mod scrollbar;
