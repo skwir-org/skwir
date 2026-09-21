@@ -567,13 +567,47 @@ impl Shell {
         }
         // A member of a container is previewed as the file it is: the panel
         // goes down into it and the header's trail is the way back up.
-        let container = matches!(kind, Some(InspectionKind::Archive | InspectionKind::Mail));
+        // A table's rows lead somewhere only in a playlist: a CSV has no targets.
+        let container = matches!(
+            kind,
+            Some(InspectionKind::Archive | InspectionKind::Mail | InspectionKind::Table)
+        );
         match action {
             "target" if container => {
                 if self.preview.nested.len() >= crate::preview::NESTING {
                     self.set_status("Open that file itself to look deeper", false, cx);
                     return;
                 }
+                self.preview.descend = args["target"].as_str().map(str::to_owned);
+                // A playlist's rows, as shown, are what Previous and Next walk.
+                if kind == Some(InspectionKind::Table)
+                    && let Some(PreviewContent::Inspection(display)) = &self.preview.content
+                {
+                    let targets: Vec<String> = self
+                        .preview
+                        .inspection
+                        .visible
+                        .iter()
+                        .filter_map(|row| display.data.rows.get(*row)?.target.clone())
+                        .collect();
+                    self.preview.queue = targets
+                        .iter()
+                        .position(|target| Some(target) == self.preview.descend.as_ref())
+                        .map(|index| crate::preview::Queue {
+                            depth: self.preview.nested.len(),
+                            targets,
+                            index,
+                        });
+                }
+                self.preview.inspection.request = InspectRequest::default();
+            }
+            // The player stepping through a playlist: back up to it, down
+            // into another of its tracks.
+            "member" => {
+                let depth = args["depth"].as_u64().unwrap_or(0) as usize;
+                let queue = self.preview.queue.take();
+                self.preview_ascend(depth);
+                self.preview.queue = queue;
                 self.preview.descend = args["target"].as_str().map(str::to_owned);
                 self.preview.inspection.request = InspectRequest::default();
             }
@@ -592,6 +626,7 @@ impl Shell {
         }
         let nested = (action == "target" && container)
             || action == "ascend"
+            || action == "member"
             || (action == "back" && self.preview.inspection.request.target.is_none());
         if action == "back" && nested && self.preview.descend.is_none() {
             // Nothing above a file that is not inside anything.

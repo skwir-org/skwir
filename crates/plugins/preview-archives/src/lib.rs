@@ -88,6 +88,7 @@ impl PreviewProvider for Provider {
         );
         let name = member.name.rsplit('/').next().unwrap_or(&member.name);
         Ok(Some(bibli_core::preview::Member {
+            own_file: false,
             name: name.to_owned(),
             path: archive::extract(&path, index, name, into, cancel)?,
         }))

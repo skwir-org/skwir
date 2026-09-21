@@ -39,8 +39,12 @@ pub struct Preview {
 pub struct Member {
     /// The member's own name: a label for the panel, never a path.
     pub name: String,
-    /// Where the provider wrote it, inside the directory it was given.
+    /// Where the provider wrote it, inside the directory it was given; or,
+    /// with `own_file`, where it already is.
     pub path: std::path::PathBuf,
+    /// The member is a file of its own that the container only names (a
+    /// playlist's track): nothing was written, and nothing is removed.
+    pub own_file: bool,
 }
 
 pub trait PreviewProvider: Send + Sync {

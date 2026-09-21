@@ -101,7 +101,36 @@ impl Shell {
     /// `ui.media_step { delta }`: the audio file after or before this one. It
     /// is the pane's selection that moves; the preview follows it as always,
     /// and keeps playing if it was.
+    /// Whether there is a track before this one, and one after: in the
+    /// playlist the panel went into, otherwise in the folder.
+    pub(crate) fn track_neighbours(&self) -> (bool, bool) {
+        if let Some(queue) = &self.preview.queue {
+            return (queue.index > 0, queue.index + 1 < queue.targets.len());
+        }
+        let (previous, next) = self.preview.audio_neighbours;
+        (previous.is_some(), next.is_some())
+    }
+
     pub fn media_step(&mut self, delta: i64, window: &mut Window, cx: &mut Context<Self>) {
+        let playing = self.preview.media.state.playing() || self.preview.media.state.ended();
+        if let Some(queue) = &mut self.preview.queue {
+            let Some(index) = queue
+                .index
+                .checked_add_signed(delta.signum() as isize)
+                .filter(|index| *index < queue.targets.len())
+            else {
+                return;
+            };
+            queue.index = index;
+            let args = serde_json::json!({
+                "action": "member",
+                "depth": queue.depth,
+                "target": queue.targets[index],
+            });
+            self.preview.autoplay = playing;
+            self.run("ui.inspect", args, window, cx);
+            return;
+        }
         let (previous, next) = self.preview.audio_neighbours;
         let Some(target) = (if delta < 0 { previous } else { next }) else {
             return;
@@ -109,8 +138,7 @@ impl Shell {
         let Some(pane) = self.preview.pane() else {
             return;
         };
-        self.preview.autoplay =
-            self.preview.media.state.playing() || self.preview.media.state.ended();
+        self.preview.autoplay = playing;
         self.with_pane(pane, |this| {
             this.cursor_to(target as isize, false, window, cx);
         });
@@ -125,7 +153,7 @@ impl Shell {
             // A track that plays to its end hands over to the next one.
             let finished = state.ended() && !self.preview.media.state.ended();
             self.preview.media.state = state;
-            if finished && self.media_is_audio() && self.preview.audio_neighbours.1.is_some() {
+            if finished && self.media_is_audio() && self.track_neighbours().1 {
                 self.media_step(1, window, cx);
                 return;
             }
@@ -591,13 +619,13 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     let mut bar = Bar::new("video-tools");
     crate::preview_bar::parent_tool(&mut bar, shell);
     // Other audio files in the folder: the track before and the one after.
-    let (previous, next) = shell.preview.audio_neighbours;
+    let (previous, next) = shell.track_neighbours();
     let step = |id, icon, title, delta: i64, there: bool| {
         Button::new(id, icon, title, "ui.media_step")
             .args(serde_json::json!({"delta":delta}))
             .enabled(there)
     };
-    let tracks = previous.is_some() || next.is_some();
+    let tracks = previous || next;
     if tracks {
         bar.push(Item::button(
             Slot::Navigate,
@@ -607,7 +635,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
                 "skip-previous",
                 "Previous track · Shift+Left",
                 -1,
-                previous.is_some(),
+                previous,
             ),
         ));
     }
@@ -631,7 +659,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
                 "skip-next",
                 "Next track · Shift+Right",
                 1,
-                next.is_some(),
+                next,
             ),
         ));
     }

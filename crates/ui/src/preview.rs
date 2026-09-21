@@ -82,7 +82,18 @@ pub struct Nested {
     entry: EntryRef,
     mime: Option<String>,
     path: std::path::PathBuf,
-    _directory: tempfile::TempDir,
+    /// The private directory an extracted member lives in; none for a file of
+    /// its own that the container only names (a playlist's track).
+    _directory: Option<tempfile::TempDir>,
+}
+
+/// The tracks the player walks instead of the folder's: the rows of the
+/// playlist the panel went into, in the order it showed them.
+pub struct Queue {
+    /// How deep the playlist itself is: 0 when it is the entry.
+    pub depth: usize,
+    pub targets: Vec<String>,
+    pub index: usize,
 }
 
 /// Marker type for dragging the panel's edge.
@@ -146,6 +157,8 @@ pub struct PreviewState {
     /// The next media session starts playing: the track before it ended, or
     /// the user stepped to it while listening.
     pub autoplay: bool,
+    /// Set while the panel plays a track of a playlist.
+    pub queue: Option<Queue>,
     /// The members the panel went down into, outermost first.
     pub nested: Vec<Arc<Nested>>,
     /// A member asked for and not extracted yet: the worker's next job.
@@ -194,6 +207,7 @@ impl Default for PreviewState {
             rx,
             peek_focus: None,
             audio_neighbours: (None, None),
+            queue: None,
             autoplay: false,
             nested: Vec::new(),
             descend: None,
@@ -348,7 +362,7 @@ fn extract_member(
         return Ok(None);
     };
     anyhow::ensure!(
-        member.path.starts_with(directory.path()),
+        member.own_file || member.path.starts_with(directory.path()),
         "A member was written outside its directory"
     );
     let entry = EntryRef::from_path(&member.path)
@@ -359,7 +373,9 @@ fn extract_member(
         name: member.name,
         entry,
         path: member.path,
-        _directory: directory,
+        // Nothing was written for a file of its own: the empty directory goes
+        // now, here on the worker.
+        _directory: (!member.own_file).then_some(directory),
     })))
 }
 
@@ -1175,6 +1191,14 @@ impl Shell {
     /// Go back up to `depth` members deep; 0 is the entry itself.
     pub(crate) fn preview_ascend(&mut self, depth: usize) {
         let depth = depth.min(self.preview.nested.len());
+        if self
+            .preview
+            .queue
+            .as_ref()
+            .is_some_and(|queue| depth <= queue.depth)
+        {
+            self.preview.queue = None;
+        }
         let left = self.preview.nested.split_off(depth);
         self.discard_nested(left);
         self.preview.descend = None;

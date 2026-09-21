@@ -56,6 +56,7 @@ impl PreviewProvider for Provider {
         let file = archive::member_file(into, name);
         std::fs::write(&file, attachment.contents())?;
         Ok(Some(bibli_core::preview::Member {
+            own_file: false,
             name: name.to_owned(),
             path: file,
         }))

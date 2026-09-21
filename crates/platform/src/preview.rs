@@ -199,9 +199,17 @@ impl PreviewProvider for MediaPreviews {
         }
     }
     fn accepts(&self, req: &PreviewRequest) -> bool {
-        req.mime
-            .as_deref()
-            .is_some_and(|m| m.starts_with(if self.audio { "audio/" } else { "video/" }))
+        // A playlist has an `audio/` type and is not a recording: it is a list
+        // of them, and the playlist preview's to read.
+        let playlist = matches!(
+            extension(&req.entry.path).as_str(),
+            "m3u" | "m3u8" | "pls" | "xspf" | "cue"
+        );
+        (!playlist
+            && req
+                .mime
+                .as_deref()
+                .is_some_and(|m| m.starts_with(if self.audio { "audio/" } else { "video/" })))
             || (!self.audio
                 && (matches!(
                     req.mime.as_deref(),

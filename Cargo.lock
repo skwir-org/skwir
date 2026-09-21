@@ -580,6 +580,7 @@ dependencies = [
  "bibli-plugin-preview-hex",
  "bibli-plugin-preview-markdown",
  "bibli-plugin-preview-media",
+ "bibli-plugin-preview-playlists",
  "bibli-plugin-preview-structured",
  "bibli-plugin-preview-tables",
  "bibli-plugin-query",
@@ -886,6 +887,18 @@ dependencies = [
  "bibli-core",
  "bibli-platform",
  "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "bibli-plugin-preview-playlists"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "bibli-core",
+ "bibli-platform",
+ "percent-encoding",
+ "roxmltree 0.21.1",
+ "tempfile",
 ]
 
 [[package]]

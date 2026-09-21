@@ -78,3 +78,9 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
   pane's selection and the preview follows it as always (`ui.media_step`), so
   the list shows what is playing; it keeps playing if it was, and a track that
   plays to its end hands over to the next (`PreviewState::autoplay`).
+- Playlists (`preview-playlists`) are read, not obeyed: tracks are listed,
+  nothing is fetched, a remote entry is only named and a missing one marked.
+  A track is a member that is a file of its own (`Member::own_file`): nothing
+  is written and nothing removed. Opening one from the list remembers the rows
+  as shown (`preview::Queue`), and the player's Previous, Next and hand-over
+  then walk that queue instead of the folder; leaving the playlist forgets it.

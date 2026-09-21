@@ -102,6 +102,10 @@ fn main() -> anyhow::Result<()> {
         &app,
     );
     app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_preview_playlists::PreviewPlugin),
+        &app,
+    );
+    app.plugins.add(
         std::sync::Arc::new(bibli_plugin_preview_structured::PreviewPlugin),
         &app,
     );

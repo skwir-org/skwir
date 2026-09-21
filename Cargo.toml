@@ -59,6 +59,7 @@ bibli-plugin-preview-markdown = { path = "crates/plugins/preview-markdown" }
 bibli-plugin-preview-archives = { path = "crates/plugins/preview-archives" }
 bibli-plugin-preview-epub = { path = "crates/plugins/preview-epub" }
 bibli-plugin-preview-tables = { path = "crates/plugins/preview-tables" }
+bibli-plugin-preview-playlists = { path = "crates/plugins/preview-playlists" }
 bibli-plugin-preview-structured = { path = "crates/plugins/preview-structured" }
 bibli-plugin-preview-fonts = { path = "crates/plugins/preview-fonts" }
 bibli-plugin-preview-email = { path = "crates/plugins/preview-email" }

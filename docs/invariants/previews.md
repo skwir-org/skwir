@@ -138,7 +138,9 @@ still to come are in `docs/preview-frame.md`.
   next start. The entry's own commands (open externally, copy the path) stay
   about the container: nothing opens a member from its temporary path. A
   provider whose targets are not files (a book's chapters) returns `None` and
-  shows them itself.
+  shows them itself. A container that only names files that exist on their
+  own (a playlist) returns them with `own_file`: nothing is written or
+  removed, and a location that is not on this machine is refused.
 - **Rows.** What the inspector works out about rows is pure and tested
   (`inspector_rows.rs`) and never computed while painting. A table's column
   widths come from its content, as an estimate from character counts made on

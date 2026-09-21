@@ -59,6 +59,7 @@ fn all_plugins() -> Vec<Arc<dyn Plugin>> {
         Arc::new(bibli_plugin_preview_archives::PreviewPlugin),
         Arc::new(bibli_plugin_preview_epub::PreviewPlugin),
         Arc::new(bibli_plugin_preview_tables::PreviewPlugin),
+        Arc::new(bibli_plugin_preview_playlists::PreviewPlugin),
         Arc::new(bibli_plugin_preview_structured::PreviewPlugin),
         Arc::new(bibli_plugin_preview_fonts::PreviewPlugin),
         Arc::new(bibli_plugin_preview_email::PreviewPlugin),
@@ -128,5 +129,5 @@ fn all_plugins_coexist_and_every_command_has_a_schema() {
             c.name
         );
     }
-    assert_eq!(app.plugins.list().len(), 25);
+    assert_eq!(app.plugins.list().len(), 26);
 }

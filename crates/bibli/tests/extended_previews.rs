@@ -409,6 +409,10 @@ fn all_preview_plugins() -> Vec<(&'static str, Arc<dyn Plugin>)> {
             Arc::new(bibli_plugin_preview_tables::PreviewPlugin),
         ),
         (
+            "preview-playlists",
+            Arc::new(bibli_plugin_preview_playlists::PreviewPlugin),
+        ),
+        (
             "preview-structured",
             Arc::new(bibli_plugin_preview_structured::PreviewPlugin),
         ),
@@ -458,6 +462,11 @@ fn format_providers_never_compete_for_the_same_file() {
         ("clip.asf", Some("application/vnd.ms-asf")),
         ("clip.mp4", Some("video/mp4")),
         ("song.mp3", Some("audio/mpeg")),
+        ("mix.m3u", Some("audio/x-mpegurl")),
+        ("mix.m3u8", None),
+        ("mix.pls", Some("audio/x-scpls")),
+        ("mix.xspf", Some("application/xspf+xml")),
+        ("album.cue", Some("application/x-cue")),
         ("paper.pdf", Some("application/pdf")),
         ("text.odt", Some("application/vnd.oasis.opendocument.text")),
         ("blob.bin", Some("application/octet-stream")),
