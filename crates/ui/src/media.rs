@@ -640,21 +640,16 @@ pub enum Flash {
     Dock,
 }
 
-/// The picture with the click behaviour of a player on it: `inner` is the
-/// film or the audio figure, laid out as it was, and the flash sits over its
-/// middle while it lasts.
-pub fn surface(
-    id: &'static str,
-    inner: AnyElement,
-    on: Flash,
-    shell: &Shell,
-    cx: &mut Context<Shell>,
-) -> AnyElement {
+/// The play/pause flash while it lasts, to lay over a picture: it sits in
+/// the middle of whatever `relative` box it is given, so it goes on the
+/// cover's disc for music (`halo_square`) and over the whole film, at
+/// `scale` of its size for a small picture such as the dock's cover.
+pub fn flash(on: Flash, shell: &Shell, scale: f32) -> Option<AnyElement> {
     let flash = match on {
         Flash::Preview => shell.preview.media.flash,
         Flash::Dock => shell.player.flash,
     };
-    let flash = flash.map(|(seq, playing)| {
+    flash.map(|(seq, playing)| {
         div()
             .absolute()
             .inset_0()
@@ -675,34 +670,64 @@ pub fn surface(
                             } else {
                                 "toolbar/pause.svg"
                             })
-                            .size(px(28.))
+                            .size(px(28. * scale))
                             .text_color(gpui::white()),
                     )
                     .with_animation(
                         ("media-flash", seq),
                         gpui::Animation::new(Duration::from_millis(FLASH_MS)),
-                        |disc, delta| {
+                        move |disc, delta| {
                             let (opacity, side) = flash_at(delta);
-                            disc.w(px(side)).h(px(side)).opacity(opacity)
+                            let side = px(side * scale);
+                            disc.w(side).h(side).opacity(opacity)
                         },
                     ),
             )
-    });
-    div()
-        .id(id)
-        .relative()
-        .flex_1()
-        .min_h_0()
-        .flex()
-        .flex_col()
-        .child(inner)
-        .children(flash)
-        .on_click(
-            cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
-                this.media_clicked(on, event, window, cx);
-            }),
-        )
-        .into_any_element()
+            .into_any_element()
+    })
+}
+
+/// The click behaviour of a player on `inner`: one click toggles playback,
+/// two go fullscreen (`Shell::media_clicked`). The click ends here: what
+/// is around the picture may answer a click of its own (the dock reveals
+/// the track), and a press on the picture is not one of those.
+pub fn clickable(
+    id: &'static str,
+    inner: gpui::Div,
+    on: Flash,
+    cx: &mut Context<Shell>,
+) -> gpui::Stateful<gpui::Div> {
+    inner.id(id).cursor_pointer().on_click(cx.listener(
+        move |this, event: &gpui::ClickEvent, window, cx| {
+            cx.stop_propagation();
+            this.media_clicked(on, event, window, cx);
+        },
+    ))
+}
+
+/// A film with the click behaviour of a player on it: `inner` is laid out
+/// as it was, and the flash sits over its middle while it lasts.
+pub fn surface(
+    id: &'static str,
+    inner: AnyElement,
+    on: Flash,
+    shell: &Shell,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    clickable(
+        id,
+        div()
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .child(inner)
+            .children(flash(on, shell, 1.)),
+        on,
+        cx,
+    )
+    .into_any_element()
 }
 
 pub fn fullscreen(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
@@ -1142,15 +1167,46 @@ pub(crate) fn cover_tint(
         .unwrap_or(theme.accent)
 }
 
-/// The audio player's figure: the halo round the cover, the title and the
-/// artist and album under it. Drawn for the panel and, pinned, for the dock.
-pub(crate) fn audio_figure(
+/// The square the halo draws in, as wide as the panel allows, giving way in
+/// height when the panel is short: the halo draws in the smaller of the two,
+/// centred, so a flash laid in this box lands on the cover's disc.
+pub(crate) fn halo_square(
     state: &Playback,
-    name: &str,
     cover: Option<Arc<RenderImage>>,
     tint: gpui::Hsla,
     theme: &Theme,
-) -> AnyElement {
+) -> gpui::Div {
+    div()
+        .relative()
+        .w_full()
+        .max_w(px(420.))
+        .min_h_0()
+        .flex_shrink()
+        .map(|mut d| {
+            d.style().aspect_ratio = Some(1.);
+            d
+        })
+        .mb_2()
+        .child(crate::elements::halo::Halo {
+            spectrum: state.spectrum.clone(),
+            playing: state.playing(),
+            cover,
+            tint,
+            accent: theme.accent,
+            surface: theme.code_bg,
+            border: theme.border,
+        })
+}
+
+/// The audio player's figure: `picture` (a `halo_square`, with whatever
+/// the caller laid over it) with the title and the artist and album under
+/// it. Drawn for the panel and, pinned, for a tall dock.
+pub(crate) fn audio_figure(
+    state: &Playback,
+    name: &str,
+    picture: AnyElement,
+    theme: &Theme,
+) -> gpui::Div {
     let line = |text: &str, muted: bool| {
         div()
             .flex_none()
@@ -1168,29 +1224,7 @@ pub(crate) fn audio_figure(
         .items_center()
         .justify_center()
         .gap_1()
-        .child(
-            // A square as wide as the panel allows, which gives way in height
-            // when the panel is short: the halo draws in the smaller of the two.
-            div()
-                .w_full()
-                .max_w(px(420.))
-                .min_h_0()
-                .flex_shrink()
-                .map(|mut d| {
-                    d.style().aspect_ratio = Some(1.);
-                    d
-                })
-                .mb_2()
-                .child(crate::elements::halo::Halo {
-                    spectrum: state.spectrum.clone(),
-                    playing: state.playing(),
-                    cover,
-                    tint,
-                    accent: theme.accent,
-                    surface: theme.code_bg,
-                    border: theme.border,
-                }),
-        )
+        .child(picture)
         .child(div().flex_none().max_w_full().truncate().text_lg().child(
             if state.title.is_empty() {
                 name.to_owned()
@@ -1200,18 +1234,33 @@ pub(crate) fn audio_figure(
         ))
         .child(line(&state.artist, true))
         .child(line(&state.album, true))
-        .into_any_element()
 }
 
-/// Cover and metadata remain visible during playback; spectrum has no UI timer.
-pub fn audio_content(shell: &Shell, theme: &Theme) -> AnyElement {
+/// The panel's audio player: the figure, with a click anywhere on it
+/// answered as a player's when it is interactive (the flash lands on the
+/// disc). Cover and metadata remain visible during playback; the spectrum
+/// has no UI timer.
+pub fn audio_content(
+    shell: &Shell,
+    theme: &Theme,
+    interactive: bool,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
     let p = &shell.preview;
     let cover = match &p.content {
         Some(PreviewContent::Image { image, .. }) => Some(image.clone()),
         _ => None,
     };
     let tint = cover_tint(cover.as_ref(), &p.media.tint, theme);
-    audio_figure(&p.media.state, &p.info.name, cover, tint, theme)
+    let square = halo_square(&p.media.state, cover, tint, theme)
+        .children(flash(Flash::Preview, shell, 1.))
+        .into_any_element();
+    let figure = audio_figure(&p.media.state, &p.info.name, square, theme);
+    if interactive {
+        clickable("audio-surface", figure, Flash::Preview, cx).into_any_element()
+    } else {
+        figure.into_any_element()
+    }
 }
 
 #[cfg(test)]

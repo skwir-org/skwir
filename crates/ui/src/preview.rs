@@ -1552,18 +1552,7 @@ fn on_paper(shell: &Shell) -> bool {
 fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>) -> AnyElement {
     let p = &shell.preview;
     if p.media.session.is_some() && shell.media_is_audio() {
-        let figure = crate::media::audio_content(shell, theme);
-        return if interactive {
-            crate::media::surface(
-                "audio-surface",
-                figure,
-                crate::media::Flash::Preview,
-                shell,
-                cx,
-            )
-        } else {
-            figure
-        };
+        return crate::media::audio_content(shell, theme, interactive, cx);
     }
     match &p.content {
         Some(PreviewContent::Inspection(display)) => div()

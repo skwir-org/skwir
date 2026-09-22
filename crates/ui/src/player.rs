@@ -53,6 +53,9 @@ pub struct Pinned {
     pub frame: Option<(Arc<RenderImage>, u32, u32)>,
     /// Where the seek bar's knob is being dragged to, in seconds.
     pub scrub: Option<f64>,
+    /// The track's file icon, in the place of a cover it has none of: the
+    /// icon of the track it was looked up for, so it follows the track.
+    pub icon: Option<(PathBuf, Option<Arc<std::path::Path>>)>,
 }
 
 impl Drop for Pinned {
@@ -199,6 +202,7 @@ impl Shell {
                 .map(|(image, ..)| Arc::clone(image)),
             frame: picture.filter(|_| video),
             scrub: None,
+            icon: None,
         });
         // A film needs room to be seen; music is fine in a row.
         if video && self.player.height < crate::dock::TALL_FROM {
@@ -504,6 +508,19 @@ impl Shell {
                 }
                 failed = update.error;
             }
+        }
+        // The icon follows the track, whichever way the track changed.
+        if let Some(pinned) = &mut self.player.pinned
+            && pinned
+                .icon
+                .as_ref()
+                .is_none_or(|(of, _)| *of != pinned.path)
+        {
+            let icon = pinned
+                .path
+                .file_name()
+                .and_then(|name| self.icons.for_name(name, 48));
+            pinned.icon = Some((pinned.path.clone(), icon));
         }
         if shown && std::mem::take(&mut self.player.fullscreen_wanted) {
             self.media_fullscreen(window, cx);

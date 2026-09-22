@@ -60,7 +60,12 @@ impl IconCache {
                 .or_insert_with(|| icons::folder(size).map(PathBuf::into))
                 .clone();
         }
-        let m = mime::by_name(&e.name)?;
+        self.for_name(&e.name, size)
+    }
+
+    /// The icon of a file's MIME type, by its name.
+    pub fn for_name(&mut self, name: &std::ffi::OsStr, size: u16) -> Option<Arc<Path>> {
+        let m = mime::by_name(name)?;
         self.by_mime
             .entry((m.as_str().to_owned(), size))
             .or_insert_with(|| icons::for_mime(&m, size).map(PathBuf::into))

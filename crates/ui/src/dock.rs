@@ -3,12 +3,17 @@
 //!
 //! It has two sizes, chosen by the height the user dragged it to, which is
 //! remembered with the window's shape: compact, a row with the cover, the
-//! title, a bar meter of the spectrum and the transport; tall, the same
+//! title, a bar meter of the spectrum (beside the text when the text has
+//! room, under it otherwise: `Form`) and the transport; tall, the same
 //! figure the panel shows (the halo round the cover) with the transport
 //! under it. A pinned film shows its frames in the place of the cover, at
-//! whatever height was dragged, and answers clicks like the panel's player
-//! (`media::surface`): one toggles playback, two reveal the film in the panel
-//! and go fullscreen there.
+//! whatever height was dragged.
+//!
+//! Only the picture (the film, the cover, the file's icon without one)
+//! answers clicks like the panel's player (`media::clickable`): one toggles
+//! playback, two reveal a film in the panel and go fullscreen there. A
+//! click anywhere else but the transport shows the track in the panel, as
+//! it plays.
 //!
 //! The height is a remembered preference, not a measured size, so the form
 //! is chosen here in render, as the panel's width is. The dock steps aside
@@ -32,6 +37,13 @@ pub const TALL_FROM: f32 = 200.;
 pub const VIDEO_HEIGHT: f32 = 240.;
 /// The transport row.
 const TRANSPORT: f32 = 36.;
+/// The compact row's cover.
+const COVER: f32 = 64.;
+/// The width the compact row's text gets beside the meter when it does
+/// not fit whole: enough for a title to be read.
+const TEXT_LEAST: f32 = 200.;
+/// The meter beside the text.
+const METER_W: f32 = 80.;
 /// What the panel keeps above the dock at the least: its header, its toolbar
 /// and something of its content.
 const PANEL_KEEP: f32 = 220.;
@@ -136,6 +148,8 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
         }));
 
     // What is shown above the transport: the film, the figure, or the row.
+    // The picture answers clicks as a player (`media::clickable`); the rest
+    // of the dock, transport aside, shows the track.
     let picture: AnyElement = if pinned.video {
         let frame = pinned.frame.as_ref().map(|(image, ..)| {
             gpui::img(Arc::clone(image))
@@ -155,56 +169,28 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
             .into_any_element();
         crate::media::surface("dock-film", film, Flash::Dock, shell, cx)
     } else if tall {
-        let figure = crate::media::audio_figure(state, &name, pinned.cover.clone(), tint, &theme);
-        crate::media::surface("dock-figure", figure, Flash::Dock, shell, cx)
+        let square = crate::media::halo_square(state, pinned.cover.clone(), tint, &theme)
+            .children(crate::media::flash(Flash::Dock, shell, 1.));
+        let square =
+            crate::media::clickable("dock-cover", square, Flash::Dock, cx).tooltip(play_tip(shell));
+        let figure = crate::media::audio_figure(state, &name, square.into_any_element(), &theme);
+        reveal(shell, "dock-figure", figure, cx).into_any_element()
     } else {
-        let cover: AnyElement = match &pinned.cover {
-            Some(cover) => gpui::img(Arc::clone(cover))
-                .size(px(64.))
-                .rounded_md()
-                .object_fit(gpui::ObjectFit::Cover)
-                .into_any_element(),
-            None => div()
-                .size(px(64.))
-                .rounded_md()
-                .bg(theme.code_bg)
-                .border_1()
-                .border_color(theme.border)
-                .into_any_element(),
+        let row = crate::elements::adaptive::AdaptiveRow {
+            variants: [Form::Whole, Form::Least, Form::Stacked]
+                .into_iter()
+                .map(|form| compact_row(shell, pinned, &title, &by, tint, &theme, form, cx))
+                .collect(),
+            height: height - 6. - TRANSPORT,
+            chosen: None,
         };
-        let row = div()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .items_center()
-            .gap_3()
-            .px_3()
-            .child(
-                div()
-                    .flex_none()
-                    .overflow_hidden()
-                    .rounded_md()
-                    .child(cover),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(2.))
-                    .child(reveal_line(shell, &theme, &title, "", cx))
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.text_muted)
-                            .truncate()
-                            .child(by.clone()),
-                    )
-                    .child(meter(&state.spectrum, state.playing(), tint, 14.)),
-            )
-            .into_any_element();
-        crate::media::surface("dock-row", row, Flash::Dock, shell, cx)
+        reveal(
+            shell,
+            "dock-row",
+            div().flex_1().min_h_0().flex().child(row),
+            cx,
+        )
+        .into_any_element()
     };
 
     // The transport: the same requests the status bar and the desktop send.
@@ -290,15 +276,25 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
 
     // A film's title goes under its picture; the figure carries its own.
     let caption = pinned.video.then(|| {
-        div()
+        let line = div()
             .flex_none()
             .px_3()
-            .pt_1()
+            .py_1()
             .flex()
             .items_center()
             .gap_2()
             .text_xs()
-            .child(reveal_line(shell, &theme, &title, &by, cx))
+            .child(div().min_w_0().truncate().child(title.clone()))
+            .when(!by.is_empty(), |d| {
+                d.child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(theme.text_muted)
+                        .child(by.clone()),
+                )
+            });
+        reveal(shell, "dock-caption", line, cx)
     });
     let mut dock = div()
         .id("player-dock")
@@ -329,43 +325,132 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
     )
 }
 
-/// The title, clickable to show the track, and who made it, in one line.
-fn reveal_line(
+/// Something of the dock that shows the track when clicked: what is not
+/// the picture and not the transport.
+fn reveal(
     shell: &Shell,
-    theme: &Theme,
+    id: &'static str,
+    inner: gpui::Div,
+    cx: &mut Context<Shell>,
+) -> gpui::Stateful<gpui::Div> {
+    let font = shell.font.clone();
+    let theme = cx.global::<Theme>().clone();
+    inner
+        .id(id)
+        .cursor_pointer()
+        .hover(move |d| d.bg(theme.hover))
+        .tooltip(move |_, cx| crate::toolbar::tooltip("Show this track".into(), font.clone(), cx))
+        .on_click(cx.listener(|this, _, window, cx| this.player_reveal(window, cx)))
+}
+
+/// The forms of the compact row, richest first: the meter beside the text
+/// with the text whole, beside it with the text at least `TEXT_LEAST` wide,
+/// and under the text. `AdaptiveRow` measures them and takes the first
+/// that fits, so a short title gets the meter beside it in a narrow panel,
+/// a long one in a wide panel, and neither is cut short for the meter.
+#[derive(Clone, Copy)]
+enum Form {
+    Whole,
+    Least,
+    Stacked,
+}
+
+/// What the cover says: it is the one place a click plays or pauses.
+fn play_tip(shell: &Shell) -> impl Fn(&mut Window, &mut gpui::App) -> gpui::AnyView + 'static {
+    let font = shell.font.clone();
+    move |_, cx| crate::toolbar::tooltip("Play / pause · Space".into(), font.clone(), cx)
+}
+
+/// The compact dock's row in one of its forms: the cover, the title and
+/// who made it, and the meter.
+#[allow(clippy::too_many_arguments)] // the row's parts, all of one render
+fn compact_row(
+    shell: &Shell,
+    pinned: &crate::player::Pinned,
     title: &str,
     by: &str,
+    tint: gpui::Hsla,
+    theme: &Theme,
+    form: Form,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
-    let font = shell.font.clone();
-    div()
+    let state = &pinned.state;
+    let cover: AnyElement = match &pinned.cover {
+        Some(cover) => gpui::img(Arc::clone(cover))
+            .size(px(COVER))
+            .object_fit(gpui::ObjectFit::Cover)
+            .into_any_element(),
+        None => div()
+            .size(px(COVER))
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(theme.code_bg)
+            .border_1()
+            .border_color(theme.border)
+            .children(
+                pinned
+                    .icon
+                    .as_ref()
+                    .and_then(|(_, icon)| icon.as_ref())
+                    .map(|icon| crate::icons::element(icon, 48.)),
+            )
+            .into_any_element(),
+    };
+    let cover = crate::media::clickable(
+        "dock-cover",
+        div()
+            .relative()
+            .flex_none()
+            .size(px(COVER))
+            .overflow_hidden()
+            .rounded_md()
+            .child(cover)
+            .children(crate::media::flash(Flash::Dock, shell, 0.6)),
+        Flash::Dock,
+        cx,
+    )
+    .tooltip(play_tip(shell));
+    let line = |text: &str, muted: bool| {
+        div()
+            .when(muted, |d| d.text_xs().text_color(theme.text_muted))
+            .truncate()
+            .child(text.to_owned())
+    };
+    let text = div()
+        .flex_1()
+        .min_w_0()
+        .overflow_hidden()
+        .flex()
+        .flex_col()
+        .gap(px(2.))
+        .child(line(title, false))
+        .child(line(by, true));
+    let row = div()
         .flex_1()
         .min_w_0()
         .flex()
         .items_center()
-        .gap_2()
-        .child(
-            div()
-                .id("dock-caption")
-                .min_w_0()
-                .truncate()
-                .cursor_pointer()
-                .rounded_sm()
-                .hover(|d| d.bg(theme.hover))
-                .tooltip(move |_, cx| {
-                    crate::toolbar::tooltip("Show this track".into(), font.clone(), cx)
-                })
-                .on_click(cx.listener(|this, _, window, cx| this.player_reveal(window, cx)))
-                .child(title.to_owned()),
-        )
-        .when(!by.is_empty(), |d| {
-            d.child(
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .text_color(theme.text_muted)
-                    .child(by.to_owned()),
-            )
-        })
-        .into_any_element()
+        .gap_3()
+        .px_3()
+        .child(cover);
+    // Measured, the text column is as wide as its lines (an overflow box
+    // contributes its flex basis, which is its content without one), or
+    // as wide as `TEXT_LEAST`; laid out, it grows to what the meter leaves.
+    match form {
+        Form::Whole | Form::Least => row
+            .child(text.when(matches!(form, Form::Least), |d| {
+                d.flex_basis(px(TEXT_LEAST))
+            }))
+            .child(div().flex_none().w(px(METER_W)).child(meter(
+                &state.spectrum,
+                state.playing(),
+                tint,
+                40.,
+            )))
+            .into_any_element(),
+        Form::Stacked => row
+            .child(text.child(meter(&state.spectrum, state.playing(), tint, 14.)))
+            .into_any_element(),
+    }
 }
