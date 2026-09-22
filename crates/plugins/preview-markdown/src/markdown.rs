@@ -147,7 +147,7 @@ fn emit_html(
     if source.trim().is_empty() {
         return Ok(());
     }
-    for mut block in rich_preview::html(&source, cancel, image)? {
+    for mut block in rich_preview::html(&source, cancel, image)?.blocks {
         block.quote |= quote_depth > 0;
         blocks.push(block);
     }

@@ -6,7 +6,7 @@
 use std::ffi::CStr;
 use std::ptr;
 
-use bibli_core::document::{Destination, Link, Outline, TextChar};
+use bibli_core::document::{Destination, Link, MAX_PAGE_CHARS, Outline, TextChar};
 use glib::translate::ToGlibPtr;
 use poppler::{Document, Page, ffi};
 
@@ -139,9 +139,15 @@ pub fn links(document: &Document, page: &Page, size: (f64, f64)) -> Vec<Link> {
     result
 }
 
-pub fn chars(page: &Page, size: (f64, f64)) -> anyhow::Result<Vec<TextChar>> {
+/// The page's text with its layout, or none when either cannot be trusted:
+/// more characters than the protocol carries, or a layout that does not
+/// match the text. The page is then shown without selectable text; its
+/// pixels are already rendered.
+pub fn chars(page: &Page, size: (f64, f64)) -> Vec<TextChar> {
     let text = page.text().unwrap_or_default();
-    anyhow::ensure!(text.chars().count() <= 200_000, "page text exceeds limit");
+    if text.is_empty() || text.chars().count() > MAX_PAGE_CHARS {
+        return Vec::new();
+    }
     // SAFETY: Poppler allocates count contiguous rectangles. Copy the bounded
     // geometry while alive, then free the array even on invalid/oversize layout.
     let bounds = unsafe {
@@ -152,7 +158,7 @@ pub fn chars(page: &Page, size: (f64, f64)) -> anyhow::Result<Vec<TextChar>> {
             &raw mut rectangles,
             &raw mut count,
         );
-        let bounds = if rectangles.is_null() || count > 200_000 {
+        let bounds = if rectangles.is_null() || count as usize > MAX_PAGE_CHARS {
             None
         } else {
             Some(
@@ -165,20 +171,15 @@ pub fn chars(page: &Page, size: (f64, f64)) -> anyhow::Result<Vec<TextChar>> {
         glib::ffi::g_free(rectangles.cast());
         bounds
     };
-    if text.is_empty() {
-        return Ok(Vec::new());
+    match bounds {
+        Some(bounds) if bounds.len() == text.chars().count() => text
+            .chars()
+            .zip(bounds)
+            .map(|(ch, bounds)| TextChar {
+                text: ch.to_string(),
+                bounds,
+            })
+            .collect(),
+        _ => Vec::new(),
     }
-    let bounds = bounds.ok_or_else(|| anyhow::anyhow!("invalid page text layout"))?;
-    anyhow::ensure!(
-        bounds.len() == text.chars().count(),
-        "page text/layout mismatch"
-    );
-    Ok(text
-        .chars()
-        .zip(bounds)
-        .map(|(ch, bounds)| TextChar {
-            text: ch.to_string(),
-            bounds,
-        })
-        .collect())
 }

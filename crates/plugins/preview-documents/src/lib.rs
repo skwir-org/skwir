@@ -23,13 +23,13 @@ impl Plugin for PreviewPlugin {
 
     fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
         use bibli_core::plugin::Requirement;
-        use bibli_platform::process::find_worker;
+        use bibli_platform::document::{Engine, worker_path};
         vec![
             Requirement::new("bibli-pdf-worker", "PDF reading with PDFium", || {
-                find_worker("BIBLI_PDF_WORKER", "bibli-pdf-worker").is_some()
+                worker_path(Engine::Pdfium).is_some()
             }),
             Requirement::new("bibli-poppler-worker", "PDF reading with Poppler", || {
-                find_worker("BIBLI_POPPLER_WORKER", "bibli-poppler-worker").is_some()
+                worker_path(Engine::Poppler).is_some()
             }),
         ]
     }

@@ -12,6 +12,7 @@ use bibli_core::preview::{Preview, PreviewInfo, PreviewProvider, PreviewRequest}
 use bibli_core::{CancelToken, thumbs::Image};
 use parking_lot::{Mutex, MutexGuard};
 
+use crate::inspection::{check, extension};
 use crate::process;
 
 const MAX_SIDE: u32 = 2048;
@@ -20,23 +21,15 @@ const MAX_ARTIFACT: u64 = 64 * 1024 * 1024;
 const RENDER_TIMEOUT: Duration = Duration::from_secs(15);
 const CONVERT_TIMEOUT: Duration = Duration::from_secs(45);
 
-fn check(cancel: &CancelToken) -> anyhow::Result<()> {
-    anyhow::ensure!(!cancel.is_cancelled(), "preview cancelled");
-    Ok(())
-}
-
+/// Wait for a gate until it is free or the request is cancelled. There is no
+/// deadline of its own: whoever holds a gate is bounded by the timeouts of
+/// the tools it runs, so a waiter gives up only when its request does.
 fn acquire<'a, T>(gate: &'a Mutex<T>, cancel: &CancelToken) -> anyhow::Result<MutexGuard<'a, T>> {
-    let started = Instant::now();
     loop {
         check(cancel)?;
-        if let Some(guard) = gate.try_lock() {
+        if let Some(guard) = gate.try_lock_for(Duration::from_millis(50)) {
             return Ok(guard);
         }
-        anyhow::ensure!(
-            started.elapsed() < CONVERT_TIMEOUT,
-            "preview queue timed out"
-        );
-        std::thread::sleep(Duration::from_millis(10));
     }
 }
 
@@ -56,15 +49,9 @@ fn decode_preview(bytes: &[u8], max_side: u32) -> anyhow::Result<Image> {
         w > 0 && h > 0 && w <= side && h <= side,
         "preview dimensions exceed limit"
     );
-    let image = reader()?.decode()?;
-    // Renderers already size their output. Avoid resampling every pixel again,
-    // including on cache hits, when it already fits the requested bounds.
-    let image = if w > side || h > side {
-        image.thumbnail(side, side)
-    } else {
-        image
-    }
-    .to_rgba8();
+    // Renderers already size their output, so the image is taken as it is:
+    // nothing is resampled again, not even on cache hits.
+    let image = reader()?.decode()?.to_rgba8();
     Ok(Image {
         width: image.width(),
         height: image.height(),
@@ -97,20 +84,10 @@ fn tool_stamp(path: &Path) -> anyhow::Result<(PathBuf, u64, u128)> {
 }
 
 fn fingerprint(request: &PreviewRequest, path: &Path) -> anyhow::Result<Vec<u8>> {
-    let m = path.metadata()?;
-    #[cfg(unix)]
-    let changed = {
-        use std::os::unix::fs::MetadataExt;
-        (m.ctime(), m.ctime_nsec())
-    };
-    #[cfg(not(unix))]
-    let changed = (0i64, 0i64);
     Ok(serde_json::to_vec(&(
         request.entry.id,
         path,
-        m.len(),
-        m.modified()?,
-        changed,
+        crate::document::file_version(path)?,
     ))?)
 }
 
@@ -383,12 +360,6 @@ impl DocumentPreviews {
 fn is_pdf(req: &PreviewRequest) -> bool {
     req.mime.as_deref() == Some("application/pdf") || extension(&req.entry.path) == "pdf"
 }
-fn extension(path: &Path) -> String {
-    path.extension()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_ascii_lowercase()
-}
 
 impl PreviewProvider for DocumentPreviews {
     fn open_document(
@@ -406,7 +377,6 @@ impl PreviewProvider for DocumentPreviews {
             "poppler" => &[Engine::Poppler],
             _ => &[Engine::Pdfium, Engine::Poppler],
         };
-        let _gate = acquire(&self.gate, lifetime)?;
         let source = req.entry.resolve()?;
         let base = fingerprint(req, &source)?;
         let available: Vec<Engine> = engines
@@ -416,18 +386,16 @@ impl PreviewProvider for DocumentPreviews {
             .collect();
         // An Office document converts once, however many engines `auto` tries
         // before one greets ready. Each session still owns its own scratch
-        // directory, so the converted PDF is linked or copied into it.
+        // directory, so the converted PDF is linked or copied into it. The
+        // gate is held for the conversion only, as `render` holds it: never
+        // through a worker's startup, which is bounded on its own.
         let converted = if is_pdf(req) || available.is_empty() {
             None
         } else {
+            let office = process::required("libreoffice")?;
             let dir = tempfile::tempdir()?;
-            let pdf = self.office_pdf(
-                req,
-                &source,
-                &process::required("libreoffice")?,
-                dir.path(),
-                lifetime,
-            )?;
+            let _gate = acquire(&self.gate, lifetime)?;
+            let pdf = self.office_pdf(req, &source, &office, dir.path(), lifetime)?;
             Some((dir, pdf))
         };
         for engine in available {

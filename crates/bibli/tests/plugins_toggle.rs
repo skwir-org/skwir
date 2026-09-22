@@ -50,36 +50,9 @@ fn snapshot(app: &App) -> Snapshot {
     }
 }
 
+/// The binary's own list: a plugin it registers is a plugin tested here.
 fn all_plugins() -> Vec<Arc<dyn Plugin>> {
-    vec![
-        Arc::new(bibli_plugin_ops_basic::OpsBasicPlugin::default()),
-        Arc::new(bibli_plugin_open_with::OpenWithPlugin),
-        Arc::new(bibli_plugin_places::PlacesPlugin::default()),
-        Arc::new(bibli_plugin_thumbnails::ThumbnailsPlugin),
-        Arc::new(bibli_plugin_preview_media::PreviewPlugin),
-        Arc::new(bibli_plugin_preview_audio::PreviewPlugin),
-        Arc::new(bibli_plugin_preview_markdown::PreviewPlugin),
-        Arc::new(bibli_plugin_preview_archives::PreviewPlugin),
-        Arc::new(bibli_plugin_preview_epub::PreviewPlugin),
-        Arc::new(bibli_plugin_preview_tables::PreviewPlugin),
-        Arc::new(bibli_plugin_preview_playlists::PreviewPlugin),
-        Arc::new(bibli_plugin_mpris::MprisPlugin::default()),
-        Arc::new(bibli_plugin_preview_structured::PreviewPlugin),
-        Arc::new(bibli_plugin_preview_fonts::PreviewPlugin),
-        Arc::new(bibli_plugin_preview_email::PreviewPlugin),
-        Arc::new(bibli_plugin_preview_comics::PreviewPlugin),
-        Arc::new(bibli_plugin_preview_hex::PreviewPlugin),
-        Arc::new(bibli_plugin_preview_documents::PreviewPlugin),
-        Arc::new(bibli_plugin_query::QueryPlugin),
-        Arc::new(bibli_plugin_shelf::ShelfPlugin::default()),
-        Arc::new(bibli_plugin_rename_bulk::RenameBulkPlugin),
-        Arc::new(bibli_plugin_edit_as_buffer::EditAsBufferPlugin),
-        Arc::new(bibli_plugin_jump::JumpPlugin::default()),
-        Arc::new(bibli_plugin_tags::TagsPlugin),
-        Arc::new(bibli_plugin_shell::ShellPlugin),
-        Arc::new(bibli_plugin_usage::UsagePlugin::default()),
-        Arc::new(bibli_plugin_timeline::TimelinePlugin::default()),
-    ]
+    bibli::plugins()
 }
 
 #[test]
@@ -133,5 +106,7 @@ fn all_plugins_coexist_and_every_command_has_a_schema() {
             c.name
         );
     }
-    assert_eq!(app.plugins.list().len(), 27);
+    let ids: BTreeSet<&str> = all_plugins().iter().map(|p| p.id()).collect();
+    assert_eq!(ids.len(), all_plugins().len(), "duplicate plugin ids");
+    assert_eq!(app.plugins.list().len(), ids.len());
 }

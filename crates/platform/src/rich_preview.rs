@@ -8,11 +8,21 @@ use bibli_core::{
 };
 use scraper::{Html, Node};
 
+/// A page read for its structure.
+#[derive(Debug, Default)]
+pub struct Page {
+    pub blocks: Vec<Block>,
+    /// The page went on past `limits::BLOCKS` and the rest was left out: the
+    /// caller says so in its notice (`inspection::blocks_notice`), and the
+    /// page's source shows it whole.
+    pub truncated: bool,
+}
+
 pub fn html(
     source: &str,
     cancel: &CancelToken,
     mut image: impl FnMut(&str) -> Option<Image>,
-) -> anyhow::Result<Vec<Block>> {
+) -> anyhow::Result<Page> {
     let doc = Html::parse_document(source);
     let mut blocks = Vec::new();
     let mut current = Block::default();
@@ -25,11 +35,13 @@ pub fn html(
     let mut marked = std::collections::HashSet::new();
     for node in doc.tree.root().descendants() {
         check(cancel)?;
-        anyhow::ensure!(
-            blocks.len() < limits::BLOCKS,
-            "Document exceeds {} preview blocks",
-            limits::BLOCKS
-        );
+        if blocks.len() > limits::BLOCKS {
+            blocks.truncate(limits::BLOCKS);
+            return Ok(Page {
+                blocks,
+                truncated: true,
+            });
+        }
         let ancestors: Vec<_> = node
             .ancestors()
             .filter_map(|n| n.value().as_element().map(|e| (n.id(), e)))
@@ -229,7 +241,9 @@ pub fn html(
     if !current.text.is_empty() {
         blocks.push(finish(current, row));
     }
-    Ok(blocks)
+    let truncated = blocks.len() > limits::BLOCKS;
+    blocks.truncate(limits::BLOCKS);
+    Ok(Page { blocks, truncated })
 }
 
 /// Close a block: a table row gets its cells, the ranges between its tabs.
@@ -285,7 +299,7 @@ mod tests {
     use super::*;
     #[test]
     fn semantic_text_does_not_include_active_content() {
-        let blocks=html("<h1>Title</h1><p>A <strong>bold</strong> <a href='https://example.invalid'>link</a></p><script>secret()</script>",&CancelToken::new(), |_|None).unwrap();
+        let blocks=html("<h1>Title</h1><p>A <strong>bold</strong> <a href='https://example.invalid'>link</a></p><script>secret()</script>",&CancelToken::new(), |_|None).unwrap().blocks;
         assert_eq!(blocks[0].heading, 1);
         assert!(blocks.iter().any(|b| b.runs.iter().any(|r| r.bold)));
         assert!(!blocks.iter().any(|b| b.text.contains("secret")));
@@ -300,7 +314,7 @@ mod tests {
             <hr/>
             <table><tr><th>Name</th><th>Qty</th></tr><tr><td><em>pear</em></td><td>12</td></tr></table>
             <center><img src="cover.png" alt="Cover"/></center>"#;
-        let blocks = html(source, &CancelToken::new(), |_| None).unwrap();
+        let blocks = html(source, &CancelToken::new(), |_| None).unwrap().blocks;
         let text: Vec<_> = blocks.iter().map(|b| b.text.as_str()).collect();
         assert_eq!(
             text,
@@ -358,9 +372,25 @@ mod tests {
             requested.push(src.to_owned());
             None
         })
-        .unwrap();
+        .unwrap()
+        .blocks;
         assert_eq!(requested.len(), limits::EMBEDDED_IMAGES);
         assert_eq!(blocks.len(), limits::EMBEDDED_IMAGES + 3);
+    }
+
+    #[test]
+    fn a_long_page_is_cut_short_not_refused() {
+        let paragraphs = |n: usize| "<p>line</p>".repeat(n);
+        let whole = html(&paragraphs(limits::BLOCKS), &CancelToken::new(), |_| None).unwrap();
+        assert_eq!(
+            (whole.blocks.len(), whole.truncated),
+            (limits::BLOCKS, false)
+        );
+        let long = html(&paragraphs(limits::BLOCKS + 5), &CancelToken::new(), |_| {
+            None
+        })
+        .unwrap();
+        assert_eq!((long.blocks.len(), long.truncated), (limits::BLOCKS, true));
     }
 
     fn png(dir: &std::path::Path, name: &str) -> std::path::PathBuf {

@@ -70,26 +70,25 @@ pub fn present_vendors(sys_class_drm: &Path) -> BTreeSet<String> {
 }
 
 /// Set `VK_LOADER_DRIVERS_DISABLE` unless the user already did. Call before
-/// any Vulkan initialization.
+/// any Vulkan initialization. Returns what it set, for the caller to log once
+/// logging exists: this runs before the subscriber is installed.
 ///
 /// Setting an environment variable is unsafe in edition 2024 because other
 /// threads may be reading the environment; this runs first thing in `main`,
 /// before any thread exists, which is the one situation where it is sound.
 #[allow(unsafe_code)]
-pub fn restrict_vulkan_drivers() {
+pub fn restrict_vulkan_drivers() -> Option<String> {
     if std::env::var_os("VK_LOADER_DRIVERS_DISABLE").is_some()
         || std::env::var_os("VK_DRIVER_FILES").is_some()
         || std::env::var_os("VK_ICD_FILENAMES").is_some()
     {
-        return;
+        return None;
     }
     let vendors = present_vendors(Path::new("/sys/class/drm"));
-    if let Some(list) = drivers_to_disable(&vendors) {
-        let value = list.join(",");
-        tracing::debug!(vendors = ?vendors, disable = %value, "restricting Vulkan drivers");
-        // SAFETY: called from `main` before any thread is spawned.
-        unsafe { std::env::set_var("VK_LOADER_DRIVERS_DISABLE", value) };
-    }
+    let value = drivers_to_disable(&vendors)?.join(",");
+    // SAFETY: called from `main` before any thread is spawned.
+    unsafe { std::env::set_var("VK_LOADER_DRIVERS_DISABLE", &value) };
+    Some(value)
 }
 
 #[cfg(test)]

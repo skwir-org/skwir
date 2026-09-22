@@ -1,25 +1,42 @@
 //! On-demand native PDF sessions. A manager thread owns every child and temporary
 //! file, so closing a preview never waits or removes files on the UI thread.
+//!
+//! The manager sleeps in one `select!` over jobs, worker replies and
+//! cancellation, like the media session's. Every request carries an id and
+//! the worker answers each one once, in order, so a request that was given
+//! up on is answered too: its reply is drained, not a reason to restart the
+//! worker. A cancelled request tells the worker to stop (`Cancel`, which a
+//! search notices at its next page); only a worker that stays busy past a
+//! short grace, times out or breaks the protocol is killed and reopened.
 
-use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{ChildStdin, Command, Stdio};
-use std::sync::{Arc, mpsc};
+use std::process::Command;
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Context;
 use bibli_core::CancelToken;
 use bibli_core::document::{
     DocumentInfo, DocumentPage, DocumentSession, MAX_REPLY, MAX_SIDE, PIXELS_FILE, SearchHit,
-    WorkerReply, WorkerRequest,
+    Tagged, WorkerReply, WorkerRequest,
 };
+use crossbeam_channel::{Receiver, Sender};
 
-use crate::process::ChildGuard;
+use crate::line_channel::LineChannel;
+
+/// Worker spawn, library load and the document's first parse.
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
+/// One page render or one whole-document search.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long an abandoned request may keep the worker busy once it has been
+/// told to stop: a page that is being rendered finishes, a search stops at
+/// its next page. Longer than that, the worker is restarted.
+const ABANDONED_GRACE: Duration = Duration::from_secs(2);
 
 struct Job {
     request: WorkerRequest,
     cancel: CancelToken,
-    reply: mpsc::Sender<anyhow::Result<Response>>,
+    reply: Sender<anyhow::Result<Response>>,
 }
 enum Response {
     Page(DocumentPage),
@@ -28,21 +45,31 @@ enum Response {
 
 pub struct WorkerSession {
     info: DocumentInfo,
-    jobs: mpsc::Sender<Job>,
+    jobs: Sender<Job>,
 }
 
-#[derive(Clone, Copy)]
-pub(crate) enum Engine {
+#[derive(Clone, Copy, Debug)]
+pub enum Engine {
     Pdfium,
     Poppler,
 }
 
-pub(crate) fn worker_path(engine: Engine) -> Option<PathBuf> {
+/// The engine's worker executable: its environment override, beside our
+/// binary, or on `PATH`. Plugins that require it name this, not the literals.
+pub fn worker_path(engine: Engine) -> Option<PathBuf> {
     let (variable, executable) = match engine {
         Engine::Pdfium => ("BIBLI_PDF_WORKER", "bibli-pdf-worker"),
         Engine::Poppler => ("BIBLI_POPPLER_WORKER", "bibli-poppler-worker"),
     };
     crate::process::find_worker(variable, executable)
+}
+
+/// What the manager starts a worker with.
+struct Launch {
+    executable: PathBuf,
+    pdf: PathBuf,
+    scratch: PathBuf,
+    library: Option<PathBuf>,
 }
 
 impl WorkerSession {
@@ -70,142 +97,63 @@ impl WorkerSession {
         library: Option<PathBuf>,
         lifetime: CancelToken,
     ) -> anyhow::Result<Option<Arc<dyn DocumentSession>>> {
-        let (jobs, rx) = mpsc::channel::<Job>();
-        let (ready, startup) = mpsc::channel();
-        let cancel = lifetime.clone();
+        let (jobs, rx) = crossbeam_channel::unbounded::<Job>();
+        let (ready, startup) = crossbeam_channel::bounded(1);
+        let cancelled = lifetime.subscribe();
         std::thread::Builder::new()
             .name("bibli-pdf-session".into())
             .spawn(move || {
+                let launch = Launch {
+                    executable,
+                    pdf,
+                    scratch: scratch.path().to_owned(),
+                    library,
+                };
                 let setup = || -> anyhow::Result<(Worker, DocumentInfo, FileVersion)> {
                     let version = file_version(&source)?;
-                    let (worker, reply) = Worker::start(
-                        &executable,
-                        &pdf,
-                        scratch.path(),
-                        library.as_deref(),
-                        &lifetime,
-                    )?;
-                    match reply {
+                    let (worker, greeting) = Worker::start(&launch, &lifetime)?;
+                    match greeting {
                         WorkerReply::Ready(info) if info.pages > 0 => Ok((worker, info, version)),
-                        WorkerReply::Unavailable(message) => {
-                            anyhow::bail!("unavailable: {message}");
-                        }
+                        WorkerReply::Unavailable(message) => Err(Unavailable(message).into()),
                         WorkerReply::Error(message) => anyhow::bail!("{message}"),
                         _ => anyhow::bail!("invalid document worker greeting"),
                     }
                 };
-                let (worker, info, version) = match setup() {
-                    Ok(value) => value,
+                match setup() {
+                    Ok((worker, info, version)) => {
+                        if ready.send(Ok(info)).is_ok() {
+                            Manager {
+                                launch,
+                                source,
+                                version,
+                                lifetime,
+                                worker: Some(worker),
+                            }
+                            .run(&rx);
+                        }
+                    }
                     Err(error) => {
                         let _ = ready.send(Err(error));
-                        return;
                     }
-                };
-                if ready.send(Ok(info)).is_err() {
-                    return;
                 }
-                let mut worker = Some(worker);
-                while !lifetime.is_cancelled() {
-                    let job = match rx.recv_timeout(Duration::from_millis(100)) {
-                        Ok(job) => job,
-                        Err(mpsc::RecvTimeoutError::Timeout) => continue,
-                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                    };
-                    let cancel = job.cancel.linked(&lifetime);
-                    if cancel.is_cancelled() {
-                        let _ = job
-                            .reply
-                            .send(Err(anyhow::anyhow!("document request cancelled")));
-                        continue;
-                    }
-                    let result = (|| {
-                        anyhow::ensure!(
-                            file_version(&source)? == version,
-                            "document changed; reopen the preview"
-                        );
-                        if worker.is_none() {
-                            let (replacement, greeting) = Worker::start(
-                                &executable,
-                                &pdf,
-                                scratch.path(),
-                                library.as_deref(),
-                                &cancel,
-                            )?;
-                            anyhow::ensure!(
-                                matches!(greeting, WorkerReply::Ready(_)),
-                                "could not reopen document worker"
-                            );
-                            worker = Some(replacement);
-                        }
-                        let reply = worker
-                            .as_mut()
-                            .context("document worker unavailable")?
-                            .request(&job.request, &cancel)?;
-                        anyhow::ensure!(
-                            file_version(&source)? == version,
-                            "document changed; reopen the preview"
-                        );
-                        match reply {
-                            WorkerReply::Page {
-                                content,
-                                width,
-                                height,
-                            } => {
-                                anyhow::ensure!(
-                                    width > 0
-                                        && height > 0
-                                        && width <= MAX_SIDE
-                                        && height <= MAX_SIDE,
-                                    "invalid document bitmap size"
-                                );
-                                let bytes = u64::from(width) * u64::from(height) * 4;
-                                let path = scratch.path().join(PIXELS_FILE);
-                                anyhow::ensure!(
-                                    path.metadata()?.len() == bytes,
-                                    "invalid document bitmap length"
-                                );
-                                let rgba = std::fs::read(path)?;
-                                Ok(Response::Page(DocumentPage {
-                                    width,
-                                    height,
-                                    rgba,
-                                    content: Arc::new(content),
-                                }))
-                            }
-                            WorkerReply::Matches(hits) => Ok(Response::Matches(hits)),
-                            WorkerReply::Error(message) | WorkerReply::Unavailable(message) => {
-                                anyhow::bail!("{message}")
-                            }
-                            WorkerReply::Ready(_) => anyhow::bail!("unexpected document greeting"),
-                        }
-                    })();
-                    if result.is_err() {
-                        worker = None;
-                    }
-                    let _ = job.reply.send(result);
-                }
-                // Kill/reap happens on this thread before scratch is removed.
-                drop(worker);
+                // The manager dropped its worker (kill and reap) on this
+                // thread; only now is the scratch directory removed.
                 drop(scratch);
             })?;
-        let info = loop {
-            anyhow::ensure!(!cancel.is_cancelled(), "document open cancelled");
-            match startup.recv_timeout(Duration::from_millis(10)) {
-                Ok(Ok(info)) => break info,
-                Ok(Err(error)) if error.to_string().starts_with("unavailable:") => return Ok(None),
-                Ok(Err(error)) => return Err(error),
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    anyhow::bail!("document worker stopped during startup")
-                }
-            }
-        };
-        Ok(Some(Arc::new(Self { info, jobs })))
+        crossbeam_channel::select! {
+            recv(startup) -> verdict => match verdict {
+                Ok(Ok(info)) => Ok(Some(Arc::new(Self { info, jobs }))),
+                Ok(Err(error)) if error.is::<Unavailable>() => Ok(None),
+                Ok(Err(error)) => Err(error),
+                Err(_) => anyhow::bail!("document worker stopped during startup"),
+            },
+            recv(cancelled.receiver()) -> _ => anyhow::bail!("document open cancelled"),
+        }
     }
 
     fn request(&self, request: WorkerRequest, cancel: &CancelToken) -> anyhow::Result<Response> {
         anyhow::ensure!(!cancel.is_cancelled(), "document request cancelled");
-        let (reply, rx) = mpsc::channel();
+        let (reply, rx) = crossbeam_channel::bounded(1);
         self.jobs
             .send(Job {
                 request,
@@ -213,18 +161,23 @@ impl WorkerSession {
                 reply,
             })
             .context("document session closed")?;
-        loop {
-            anyhow::ensure!(!cancel.is_cancelled(), "document request cancelled");
-            match rx.recv_timeout(Duration::from_millis(10)) {
-                Ok(result) => return result,
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    anyhow::bail!("document session closed")
-                }
-            }
+        let cancelled = cancel.subscribe();
+        crossbeam_channel::select! {
+            recv(rx) -> result => result.unwrap_or_else(|_| anyhow::bail!("document session closed")),
+            recv(cancelled.receiver()) -> _ => anyhow::bail!("document request cancelled"),
         }
     }
 }
+
+/// The worker says its library is missing: `auto` tries the next engine.
+#[derive(Debug)]
+struct Unavailable(String);
+impl std::fmt::Display for Unavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unavailable: {}", self.0)
+    }
+}
+impl std::error::Error for Unavailable {}
 
 impl DocumentSession for WorkerSession {
     fn info(&self) -> &DocumentInfo {
@@ -250,8 +203,10 @@ impl DocumentSession for WorkerSession {
     }
 }
 
-type FileVersion = (u64, SystemTime, (i64, i64));
-fn file_version(path: &Path) -> anyhow::Result<FileVersion> {
+pub(crate) type FileVersion = (u64, SystemTime, (i64, i64));
+/// Size, modification and change time: what tells a file was rewritten,
+/// for sessions and for preview cache keys alike.
+pub(crate) fn file_version(path: &Path) -> anyhow::Result<FileVersion> {
     let m = path.metadata()?;
     #[cfg(unix)]
     let changed = {
@@ -263,103 +218,240 @@ fn file_version(path: &Path) -> anyhow::Result<FileVersion> {
     Ok((m.len(), m.modified()?, changed))
 }
 
-struct Worker {
-    _child: ChildGuard,
-    input: ChildStdin,
-    replies: mpsc::Receiver<anyhow::Result<WorkerReply>>,
-    errors: std::fs::File,
+/// The session's manager thread: the one owner of the worker process.
+struct Manager {
+    launch: Launch,
+    source: PathBuf,
+    version: FileVersion,
+    lifetime: CancelToken,
+    worker: Option<Worker>,
 }
-impl Worker {
-    fn start(
-        executable: &Path,
-        pdf: &Path,
-        scratch: &Path,
-        library: Option<&Path>,
-        cancel: &CancelToken,
-    ) -> anyhow::Result<(Self, WorkerReply)> {
-        anyhow::ensure!(!cancel.is_cancelled(), "document open cancelled");
-        let errors = tempfile::tempfile()?;
-        let mut command = Command::new(executable);
-        command
-            .arg(pdf)
-            .arg(scratch)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(errors.try_clone()?);
-        if let Some(library) = library {
-            command.env("BIBLI_PDFIUM_LIBRARY", library);
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            command.process_group(0);
-        }
-        let mut child = ChildGuard(command.spawn().context("start document worker")?);
-        let input = child.0.stdin.take().context("worker stdin")?;
-        let output = child.0.stdout.take().context("worker stdout")?;
-        let (tx, replies) = mpsc::sync_channel(1);
-        std::thread::Builder::new()
-            .name("bibli-pdf-replies".into())
-            .spawn(move || {
-                let mut reader = BufReader::new(output);
-                loop {
-                    let mut bytes = Vec::new();
-                    let read = Read::by_ref(&mut reader)
-                        .take((MAX_REPLY + 1) as u64)
-                        .read_until(b'\n', &mut bytes);
-                    if matches!(read, Ok(0)) {
-                        break;
-                    }
-                    let result = (|| {
-                        read?;
-                        anyhow::ensure!(
-                            bytes.len() <= MAX_REPLY && bytes.last() == Some(&b'\n'),
-                            "document reply exceeds limit"
-                        );
-                        Ok(serde_json::from_slice(&bytes)?)
-                    })();
-                    let failed = result.is_err();
-                    if tx.send(result).is_err() || failed {
-                        break;
+
+impl Manager {
+    fn run(mut self, jobs: &Receiver<Job>) {
+        let cancelled = self.lifetime.subscribe();
+        loop {
+            // Replies to requests given up on arrive while idle too: take
+            // them as they come, so the worker is never stuck writing one.
+            let idle = self
+                .worker
+                .as_ref()
+                .map_or_else(crossbeam_channel::never, |w| w.channel.replies().clone());
+            crossbeam_channel::select! {
+                recv(jobs) -> job => {
+                    let Ok(job) = job else { break };
+                    let result = self.handle(&job);
+                    let _ = job.reply.send(result);
+                }
+                recv(idle) -> reply => {
+                    if let Some(worker) = &mut self.worker && worker.accept(reply).is_err() {
+                        self.worker = None;
                     }
                 }
-            })?;
-        let worker = Self {
-            _child: child,
-            input,
-            replies,
-            errors,
-        };
-        let reply = worker.receive(cancel, Duration::from_secs(15))?;
-        Ok((worker, reply))
+                recv(cancelled.receiver()) -> _ => break,
+            }
+        }
     }
-    fn request(
+
+    fn handle(&mut self, job: &Job) -> anyhow::Result<Response> {
+        let cancel = job.cancel.linked(&self.lifetime);
+        anyhow::ensure!(!cancel.is_cancelled(), "document request cancelled");
+        self.unchanged()?;
+        let reply = match self.exchange(&job.request, &cancel) {
+            Ok(reply) => reply,
+            Err(Failure::Cancelled) => anyhow::bail!("document request cancelled"),
+            Err(Failure::Broken(error)) => {
+                // Timed out, exited or broke the protocol: a new one serves
+                // the next request.
+                self.worker = None;
+                return Err(error);
+            }
+        };
+        self.unchanged()?;
+        match reply {
+            WorkerReply::Page {
+                content,
+                width,
+                height,
+            } => {
+                anyhow::ensure!(
+                    width > 0 && height > 0 && width <= MAX_SIDE && height <= MAX_SIDE,
+                    "invalid document bitmap size"
+                );
+                let bytes = u64::from(width) * u64::from(height) * 4;
+                let path = self.launch.scratch.join(PIXELS_FILE);
+                anyhow::ensure!(
+                    path.metadata()?.len() == bytes,
+                    "invalid document bitmap length"
+                );
+                let rgba = std::fs::read(path)?;
+                Ok(Response::Page(DocumentPage {
+                    width,
+                    height,
+                    rgba,
+                    content: Arc::new(content),
+                }))
+            }
+            WorkerReply::Matches(hits) => Ok(Response::Matches(hits)),
+            // A page the worker could not render is that page's error; the
+            // worker itself is fine and keeps the document open.
+            WorkerReply::Error(message) | WorkerReply::Unavailable(message) => {
+                anyhow::bail!("{message}")
+            }
+            WorkerReply::Ready(_) => anyhow::bail!("unexpected document greeting"),
+        }
+    }
+
+    fn unchanged(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            file_version(&self.source)? == self.version,
+            "document changed; reopen the preview"
+        );
+        Ok(())
+    }
+
+    /// Send `request` and wait for its reply, starting a worker if there is
+    /// none and replacing one that stays busy with an abandoned request.
+    fn exchange(
         &mut self,
         request: &WorkerRequest,
         cancel: &CancelToken,
-    ) -> anyhow::Result<WorkerReply> {
-        serde_json::to_writer(&mut self.input, request)?;
-        self.input.write_all(b"\n")?;
-        self.input.flush()?;
-        self.receive(cancel, Duration::from_secs(30))
+    ) -> Result<WorkerReply, Failure> {
+        let cancelled = cancel.subscribe();
+        if let Some(worker) = &mut self.worker
+            && worker.busy()
+        {
+            let grace = crossbeam_channel::after(ABANDONED_GRACE);
+            match worker.settle(&cancelled, &grace) {
+                Ok(()) => {}
+                Err(Failure::Cancelled) => return Err(Failure::Cancelled),
+                Err(Failure::Broken(_)) => self.worker = None,
+            }
+        }
+        if self.worker.is_none() {
+            let (worker, greeting) = Worker::start(&self.launch, cancel).map_err(|error| {
+                if cancel.is_cancelled() {
+                    Failure::Cancelled
+                } else {
+                    Failure::Broken(error)
+                }
+            })?;
+            if !matches!(greeting, WorkerReply::Ready(_)) {
+                return Err(Failure::Broken(anyhow::anyhow!(
+                    "could not reopen document worker"
+                )));
+            }
+            self.worker = Some(worker);
+        }
+        let worker = self.worker.as_mut().expect("started above");
+        let id = worker.send(request).map_err(Failure::Broken)?;
+        let deadline = crossbeam_channel::after(REQUEST_TIMEOUT);
+        match worker.wait(id, &cancelled, &deadline) {
+            Err(Failure::Cancelled) => {
+                // Tell the worker to stop; its answers are drained later.
+                if worker.send(&WorkerRequest::Cancel).is_err() {
+                    self.worker = None;
+                }
+                Err(Failure::Cancelled)
+            }
+            other => other,
+        }
     }
-    fn receive(&self, cancel: &CancelToken, timeout: Duration) -> anyhow::Result<WorkerReply> {
-        let start = Instant::now();
+}
+
+enum Failure {
+    Cancelled,
+    /// The worker cannot be trusted with another request.
+    Broken(anyhow::Error),
+}
+
+struct Worker {
+    channel: LineChannel<Tagged<WorkerReply>>,
+    /// Id of the last request sent, and of the next reply due: replies come
+    /// once per request, in order, starting with the greeting as 0.
+    sent: u64,
+    due: u64,
+}
+impl Worker {
+    fn start(launch: &Launch, cancel: &CancelToken) -> anyhow::Result<(Self, WorkerReply)> {
+        anyhow::ensure!(!cancel.is_cancelled(), "document open cancelled");
+        let mut command = Command::new(&launch.executable);
+        command.arg(&launch.pdf).arg(&launch.scratch);
+        if let Some(library) = &launch.library {
+            command.env("BIBLI_PDFIUM_LIBRARY", library);
+        }
+        let mut worker = Self {
+            channel: LineChannel::spawn(&mut command, MAX_REPLY, "bibli-pdf")?,
+            sent: 0,
+            due: 0,
+        };
+        let cancelled = cancel.subscribe();
+        let deadline = crossbeam_channel::after(STARTUP_TIMEOUT);
+        match worker.wait(0, &cancelled, &deadline) {
+            Ok(greeting) => Ok((worker, greeting)),
+            Err(Failure::Cancelled) => anyhow::bail!("document open cancelled"),
+            Err(Failure::Broken(error)) => Err(error),
+        }
+    }
+
+    fn busy(&self) -> bool {
+        self.due <= self.sent
+    }
+
+    fn send(&mut self, request: &WorkerRequest) -> anyhow::Result<u64> {
+        let id = self.sent + 1;
+        self.channel.send(&Tagged { id, body: request })?;
+        self.sent = id;
+        Ok(id)
+    }
+
+    /// Take one reply off the channel, in order.
+    fn accept(
+        &mut self,
+        reply: Result<anyhow::Result<Tagged<WorkerReply>>, crossbeam_channel::RecvError>,
+    ) -> anyhow::Result<Tagged<WorkerReply>> {
+        let reply = reply.map_err(|_| anyhow::anyhow!("document worker exited unexpectedly"))??;
+        anyhow::ensure!(
+            reply.id == self.due && reply.id <= self.sent,
+            "document worker answered out of order"
+        );
+        self.due += 1;
+        Ok(reply)
+    }
+
+    /// Wait for the reply to `id`, dropping the answers to earlier requests.
+    fn wait(
+        &mut self,
+        id: u64,
+        cancelled: &bibli_core::cancel::CancelSignal,
+        deadline: &Receiver<Instant>,
+    ) -> Result<WorkerReply, Failure> {
         loop {
-            anyhow::ensure!(!cancel.is_cancelled(), "document request cancelled");
-            anyhow::ensure!(start.elapsed() < timeout, "document worker timed out");
-            anyhow::ensure!(
-                self.errors.metadata()?.len() <= 1024 * 1024,
-                "document worker excessive diagnostics"
-            );
-            match self.replies.recv_timeout(Duration::from_millis(10)) {
-                Ok(result) => return result,
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    anyhow::bail!("document worker exited unexpectedly")
+            crossbeam_channel::select! {
+                recv(self.channel.replies()) -> reply => {
+                    let reply = self.accept(reply).map_err(Failure::Broken)?;
+                    if reply.id == id {
+                        return Ok(reply.body);
+                    }
+                }
+                recv(cancelled.receiver()) -> _ => return Err(Failure::Cancelled),
+                recv(deadline) -> _ => {
+                    return Err(Failure::Broken(anyhow::anyhow!("document worker timed out")));
                 }
             }
         }
+    }
+
+    /// Wait until every request sent has been answered.
+    fn settle(
+        &mut self,
+        cancelled: &bibli_core::cancel::CancelSignal,
+        deadline: &Receiver<Instant>,
+    ) -> Result<(), Failure> {
+        if self.busy() {
+            self.wait(self.sent, cancelled, deadline)?;
+        }
+        Ok(())
     }
 }
 
@@ -390,8 +482,23 @@ mod tests {
             std::fs::write(&source, b"synthetic").unwrap();
             let executable = root.path().join("worker");
             let shell = crate::process::required("sh").unwrap();
+            // Answers every request once, in order, with the request's id;
+            // "slow" takes a moment, "hang" never finishes.
             let script = format!(
-                "#!{}\nprintf '%s' \"$$\" > \"$2/pid\"\nprintf '%s\\n' '{{\"Ready\":{{\"pages\":3,\"outlines\":[]}}}}'\nwhile IFS= read -r line; do\n case \"$line\" in\n *hang*) touch \"$2/requested\"; sleep 30;;\n *) printf '%s\\n' '{{\"Matches\":[]}}';;\n esac\ndone\n",
+                concat!(
+                    "#!{}\n",
+                    "printf '%s' \"$$\" > \"$2/pid\"\n",
+                    "printf '%s\\n' '{{\"id\":0,\"body\":{{\"Ready\":{{\"pages\":3,\"outlines\":[]}}}}}}'\n",
+                    "while IFS= read -r line; do\n",
+                    " id=${{line#*\\\"id\\\":}}; id=${{id%%,*}}\n",
+                    " case \"$line\" in\n",
+                    " *hang*) touch \"$2/requested\"; sleep 30;;\n",
+                    " *slow*) touch \"$2/requested\"; sleep 0.3; printf '{{\"id\":%s,\"body\":{{\"Matches\":[]}}}}\\n' \"$id\";;\n",
+                    " *Cancel*) printf '{{\"id\":%s,\"body\":{{\"Error\":\"cancelled\"}}}}\\n' \"$id\";;\n",
+                    " *) printf '{{\"id\":%s,\"body\":{{\"Matches\":[]}}}}\\n' \"$id\";;\n",
+                    " esac\n",
+                    "done\n"
+                ),
                 shell.display()
             );
             std::fs::write(&executable, script).unwrap();
@@ -444,25 +551,39 @@ mod tests {
         }
     }
 
-    #[test]
-    fn cancelled_search_reaps_worker_and_next_request_reopens_document() {
-        let fixture = Fixture::new();
-        let original_pid = fixture.pid();
+    /// Cancel `query` once the worker has it, and return the error.
+    fn cancel_search(fixture: &Fixture, query: &'static str) -> String {
         let session = fixture.session.as_ref().unwrap().clone();
         let token = CancelToken::new();
         let cancelled = token.clone();
-        let request = std::thread::spawn(move || session.search("hang", &cancelled));
+        let request = std::thread::spawn(move || session.search(query, &cancelled));
         wait_until(|| fixture.scratch.join("requested").exists());
         token.cancel();
-        assert!(
-            request
-                .join()
-                .unwrap()
-                .unwrap_err()
-                .to_string()
-                .contains("cancelled")
-        );
-        wait_until(|| !Path::new(&format!("/proc/{original_pid}")).exists());
+        request.join().unwrap().unwrap_err().to_string()
+    }
+
+    #[test]
+    fn a_cancelled_request_is_drained_and_the_worker_kept() {
+        let fixture = Fixture::new();
+        let pid = fixture.pid();
+        assert!(cancel_search(&fixture, "slow").contains("cancelled"));
+        let session = fixture.session.as_ref().unwrap();
+        for _ in 0..3 {
+            assert!(
+                session
+                    .search("needle", &CancelToken::new())
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+        assert_eq!(fixture.pid(), pid, "the document stayed open");
+    }
+
+    #[test]
+    fn a_worker_stuck_on_an_abandoned_request_is_replaced() {
+        let fixture = Fixture::new();
+        let original_pid = fixture.pid();
+        assert!(cancel_search(&fixture, "hang").contains("cancelled"));
         assert!(
             fixture
                 .session
@@ -472,6 +593,7 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+        wait_until(|| !Path::new(&format!("/proc/{original_pid}")).exists());
         assert_ne!(fixture.pid(), original_pid);
     }
 

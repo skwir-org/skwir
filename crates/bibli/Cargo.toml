@@ -4,7 +4,7 @@ description = "bibli: the file manager binary, wiring core, plugins, and the UI 
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-rust-version = "1.88"
+rust-version.workspace = true
 
 [[bin]]
 name = "bibli"

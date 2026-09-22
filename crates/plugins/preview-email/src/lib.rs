@@ -106,11 +106,14 @@ impl PreviewProvider for Provider {
             },
         ];
         if let Some(html) = message.body_html(0) {
-            blocks.extend(rich_preview::html(&html, cancel, |src| {
-                let id = src.strip_prefix("cid:")?;
-                let part = message.parts.iter().find(|p| p.content_id() == Some(id))?;
-                inspection::image(part.contents()).ok()
-            })?);
+            blocks.extend(
+                rich_preview::html(&html, cancel, |src| {
+                    let id = src.strip_prefix("cid:")?;
+                    let part = message.parts.iter().find(|p| p.content_id() == Some(id))?;
+                    inspection::image(part.contents()).ok()
+                })?
+                .blocks,
+            );
         } else if let Some(text) = message.body_text(0) {
             blocks.push(Block {
                 text: text.into_owned(),

@@ -9,10 +9,19 @@ import tempfile
 from fixtures import reader, write_pdf
 
 
+def reply(process, expected):
+    """The next reply, which must answer request `expected` (0 is the greeting)."""
+    line = json.loads(process.stdout.readline())
+    assert line["id"] == expected, line
+    return line["body"]
+
+
 def send(process, request):
-    process.stdin.write(json.dumps(request) + "\n")
+    """Requests are numbered from 1 and answered once each, in order."""
+    process.sent = getattr(process, "sent", 0) + 1
+    process.stdin.write(json.dumps({"id": process.sent, "body": request}) + "\n")
     process.stdin.flush()
-    return json.loads(process.stdout.readline())
+    return reply(process, process.sent)
 
 
 def has_ink(pixels, width, height, bounds):
@@ -40,7 +49,7 @@ def main():
             command = [str(args.worker.resolve()), str(pdf), str(root)]
             with subprocess.Popen(command, env=environment, stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, text=True) as process:
-                info = json.loads(process.stdout.readline())["Ready"]
+                info = reply(process, 0)["Ready"]
                 assert info["pages"] == 3
                 assert [entry["page"] for entry in info["outlines"]] == [1, 2]
                 hits = send(process, {"Search": {"query": "needle"}})["Matches"]
@@ -68,6 +77,8 @@ def main():
                     for link in page["links"]:
                         assert has_ink(pixels, width, height, link["bounds"]), "link misses text"
                 assert "Error" in send(process, {"Search": {"query": "x" * 5000}})
+                assert send(process, "Cancel") == {"Error": "cancelled"}
+                assert send(process, {"Search": {"query": "absent"}}) == {"Matches": []}
                 process.stdin.close()
                 assert process.wait(timeout=5) == 0
         # Empty pages and absent outlines exercise nullable native allocations.
@@ -78,7 +89,7 @@ def main():
         ])
         with subprocess.Popen(command, env=environment, stdin=subprocess.PIPE,
                               stdout=subprocess.PIPE, text=True) as process:
-            assert json.loads(process.stdout.readline()) == {"Ready": {"pages": 1, "outlines": []}}
+            assert reply(process, 0) == {"Ready": {"pages": 1, "outlines": []}}
             for side, expected in [(0, 64), (10000, 2048)]:
                 page = send(process, {"Render": {"page": 100, "side": side}})["Page"]
                 assert max(page["width"], page["height"]) == expected
@@ -89,9 +100,9 @@ def main():
             assert process.wait(timeout=5) == 0
         if args.engine == "pdfium":
             missing = dict(environment, BIBLI_PDFIUM_LIBRARY=str(root / "missing-library"))
-            assert "Unavailable" in json.loads(subprocess.check_output(command, env=missing, text=True))
+            assert "Unavailable" in json.loads(subprocess.check_output(command, env=missing, text=True))["body"]
         pdf.write_bytes(b"not a PDF")
-        assert "Error" in json.loads(subprocess.check_output(command, env=environment, text=True))
+        assert "Error" in json.loads(subprocess.check_output(command, env=environment, text=True))["body"]
     print(f"PASS ({args.engine}): pages, rotation/crop, text geometry, links, outlines, search, limits, corrupt PDF")
 
 

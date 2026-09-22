@@ -26,13 +26,7 @@ impl Plugin for PreviewPlugin {
             bibli_core::plugin::Requirement::new(
                 "bibli-archive-worker",
                 "Listing and reading archive members",
-                || {
-                    bibli_platform::process::find_worker(
-                        "BIBLI_ARCHIVE_WORKER",
-                        "bibli-archive-worker",
-                    )
-                    .is_some()
-                },
+                || archive::worker_path().is_some(),
             )
             .required(),
         ]
@@ -86,11 +80,10 @@ impl PreviewProvider for Provider {
             member.regular && !member.encrypted,
             "This member cannot be previewed (directory, link or encrypted file)"
         );
-        let name = member.name.rsplit('/').next().unwrap_or(&member.name);
         Ok(Some(bibli_core::preview::Member {
             own_file: false,
-            name: name.to_owned(),
-            path: archive::extract(&path, index, name, into, cancel)?,
+            name: member.file_name().to_owned(),
+            path: archive::extract(&path, member, into, cancel)?,
         }))
     }
     fn inspect(
@@ -113,7 +106,7 @@ impl PreviewProvider for Provider {
             );
             return archive::member_preview(
                 &member.name,
-                &archive::read(&path, index, cancel)?,
+                &archive::read(&path, member, cancel)?,
                 view.offset,
             )
             .map(Some);

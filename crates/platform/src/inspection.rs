@@ -5,6 +5,7 @@ use bibli_core::{
     thumbs::Image,
 };
 use std::{
+    borrow::Cow,
     io::{Read, Seek, SeekFrom},
     path::Path,
 };
@@ -85,6 +86,8 @@ pub fn check(cancel: &CancelToken) -> anyhow::Result<()> {
     anyhow::ensure!(!cancel.is_cancelled(), "preview cancelled");
     Ok(())
 }
+/// Up to `limit` bytes of a regular file from `offset`. Opened through
+/// `file::open_regular`, so a named pipe fails instead of blocking the worker.
 pub fn read(
     path: &Path,
     offset: u64,
@@ -92,8 +95,13 @@ pub fn read(
     cancel: &CancelToken,
 ) -> anyhow::Result<Vec<u8>> {
     check(cancel)?;
-    let mut file = std::fs::File::open(path)?;
-    anyhow::ensure!(file.metadata()?.is_file(), "preview needs a regular file");
+    let mut file = crate::file::open_regular(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::InvalidInput {
+            anyhow::anyhow!("preview needs a regular file")
+        } else {
+            error.into()
+        }
+    })?;
     file.seek(SeekFrom::Start(offset))?;
     let mut out = Vec::new();
     file.take(limit as u64).read_to_end(&mut out)?;
@@ -140,19 +148,80 @@ pub fn copy_bounded(
     }
     Ok(out)
 }
-pub fn text(path: &Path, cancel: &CancelToken) -> anyhow::Result<String> {
+
+/// How the bytes of a text were read. Anything but UTF-8 was an assumption,
+/// and the preview says so (`notice`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Encoding {
+    /// UTF-8, with or without a byte order mark (which is dropped).
+    Utf8,
+    /// UTF-16, as its byte order mark said.
+    Utf16Le,
+    Utf16Be,
+    /// Not UTF-8 and no mark: the Western legacy code page, which reads any
+    /// byte (spreadsheet exports, old playlists and subtitles are written so).
+    Windows1252,
+}
+impl Encoding {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Utf8 => "UTF-8",
+            Self::Utf16Le => "UTF-16LE",
+            Self::Utf16Be => "UTF-16BE",
+            Self::Windows1252 => "Windows-1252",
+        }
+    }
+    /// What a preview says about the encoding, or nothing for UTF-8.
+    pub fn notice(self) -> Option<String> {
+        (self != Self::Utf8).then(|| format!("Read as {}", self.name()))
+    }
+}
+
+/// Text from bytes: a byte order mark (UTF-8 or UTF-16) decides, else UTF-8,
+/// else Windows-1252. Never fails: every byte means something in the last.
+pub fn decode(bytes: &[u8]) -> (Cow<'_, str>, Encoding) {
+    if let Some((encoding, _)) = encoding_rs::Encoding::for_bom(bytes) {
+        let (text, _) = encoding.decode_with_bom_removal(bytes);
+        let which = if encoding == encoding_rs::UTF_16LE {
+            Encoding::Utf16Le
+        } else if encoding == encoding_rs::UTF_16BE {
+            Encoding::Utf16Be
+        } else {
+            Encoding::Utf8
+        };
+        return (text, which);
+    }
+    match std::str::from_utf8(bytes) {
+        Ok(text) => (Cow::Borrowed(text), Encoding::Utf8),
+        Err(_) => (
+            encoding_rs::WINDOWS_1252
+                .decode_without_bom_handling(bytes)
+                .0,
+            Encoding::Windows1252,
+        ),
+    }
+}
+
+/// A whole text file parsed by a format (Markdown, tables, structured data),
+/// decoded by `decode`, with the encoding it was read in.
+pub fn read_text(path: &Path, cancel: &CancelToken) -> anyhow::Result<(String, Encoding)> {
     let bytes = read(path, 0, limits::TEXT_INPUT + 1, cancel)?;
     anyhow::ensure!(
         bytes.len() <= limits::TEXT_INPUT,
         "Text preview limited to {}; use Source or Hex for ranges",
         limits::describe(limits::TEXT_INPUT)
     );
-    Ok(String::from_utf8(bytes)?)
+    let (text, encoding) = decode(&bytes);
+    Ok((text.into_owned(), encoding))
+}
+/// `read_text` without the encoding.
+pub fn text(path: &Path, cancel: &CancelToken) -> anyhow::Result<String> {
+    read_text(path, cancel).map(|(text, _)| text)
 }
 /// A file's own text behind a rendered presentation, one page at a time.
 pub fn source(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<Inspection> {
     let mut data = lines(path, offset, limits::SOURCE_PAGE, cancel)?;
-    data.title = format!("Source · byte {offset}");
+    data.title = format!("Source · byte {}", data.position);
     data.source_available = true;
     Ok(data)
 }
@@ -162,41 +231,31 @@ pub fn source(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<
 pub fn plain(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<Inspection> {
     let mut data = lines(path, offset, limits::TEXT_PAGE, cancel)?;
     let count = data.blocks.len();
-    data.title = match (offset, count) {
+    data.title = match (data.position, count) {
         (0, 1) => "1 line".into(),
         (0, _) => format!("{count} lines"),
-        _ => format!("{count} lines from byte {offset}"),
+        (position, _) => format!("{count} lines from byte {position}"),
     };
-    if data.next.is_some() || offset > 0 {
-        data.notice = format!(
+    if data.next.is_some() || data.position > 0 {
+        let paged = format!(
             "Shown {} at a time · [ and ] move through the file",
             limits::describe(limits::TEXT_PAGE)
         );
+        data.notice = if data.notice.is_empty() {
+            paged
+        } else {
+            format!("{} · {paged}", data.notice)
+        };
     }
     Ok(data)
 }
 
-/// One page of a text file as the code view wants it: a block per line, the
-/// language taken from the name. A page ends on a line where it can. Text the
-/// code view's bounds do not hold (a minified file is one endless line) stays
-/// one block of plain text.
-fn lines(
-    path: &Path,
-    offset: u64,
-    page: usize,
-    cancel: &CancelToken,
-) -> anyhow::Result<Inspection> {
-    let bytes = read(path, offset, page + 1, cancel)?;
-    let more = bytes.len() > page;
-    let mut end = bytes.len().min(page);
-    if more && let Some(newline) = bytes[..end].iter().rposition(|byte| *byte == b'\n') {
-        end = newline + 1;
-    }
-    let text = String::from_utf8_lossy(&bytes[..end]);
-    let language = path
-        .extension()
-        .or_else(|| path.file_name())
-        .map(|name| name.to_string_lossy().into_owned());
+/// The code view of `text`: a block per line in `language` (a file
+/// extension or name, as the highlighter takes it). Text the view's bounds
+/// do not hold (a minified file is one endless line) stays one block of
+/// plain text. Formats that show a text of their own as source (a book's
+/// chapter) use this rather than one big block.
+pub fn code_lines(text: &str, language: Option<String>) -> Inspection {
     let bounded = text.lines().count() <= limits::CODE_LINES
         && text.lines().all(|line| line.len() <= limits::LINE_BYTES);
     let (kind, blocks) = if bounded {
@@ -209,24 +268,88 @@ fn lines(
                 ..Block::default()
             })
             .collect();
-        (bibli_core::inspection::InspectionKind::Code, blocks)
+        (InspectionKind::Code, blocks)
     } else {
         let block = Block {
-            text: text.into_owned(),
+            text: text.to_owned(),
             code: true,
             language,
             ..Block::default()
         };
-        (bibli_core::inspection::InspectionKind::Text, vec![block])
+        (InspectionKind::Text, vec![block])
     };
-    Ok(Inspection {
+    Inspection {
         kind,
         blocks,
-        position: offset,
-        previous: (offset > 0).then(|| offset.saturating_sub(page as u64)),
-        next: more.then_some(offset + end as u64),
         ..Inspection::default()
+    }
+}
+
+/// One page of a text file as the code view wants it (`code_lines`), the
+/// language taken from the name. A page starts and ends on a line where it
+/// can: going back a page lands on an arbitrary byte, so a page whose start
+/// is not at a line start begins after the first newline and says where
+/// (`position`); a page ends after its last newline.
+fn lines(
+    path: &Path,
+    offset: u64,
+    page: usize,
+    cancel: &CancelToken,
+) -> anyhow::Result<Inspection> {
+    // One byte before the page tells whether it starts a line.
+    let before = u64::from(offset > 0);
+    let bytes = read(path, offset - before, page + 1 + before as usize, cancel)?;
+    let mut start = before as usize;
+    if bytes
+        .first()
+        .is_some_and(|byte| before == 1 && *byte != b'\n')
+        && let Some(newline) = bytes[1..bytes.len().min(page)]
+            .iter()
+            .position(|byte| *byte == b'\n')
+    {
+        start = newline + 2;
+    } else {
+        // No line to start on: at least do not start inside a character.
+        while bytes.get(start).is_some_and(|byte| byte & 0xC0 == 0x80) && start < 4 {
+            start += 1;
+        }
+    }
+    let position = offset - before + start as u64;
+    let bytes = &bytes[start.min(bytes.len())..];
+    let limit = page - (position - offset) as usize;
+    let more = bytes.len() > limit;
+    let mut end = bytes.len().min(limit);
+    if more && let Some(newline) = bytes[..end].iter().rposition(|byte| *byte == b'\n') {
+        end = newline + 1;
+    }
+    let (text, encoding) = page_text(&bytes[..end], position == 0);
+    let language = path
+        .extension()
+        .or_else(|| path.file_name())
+        .map(|name| name.to_string_lossy().into_owned());
+    Ok(Inspection {
+        position,
+        previous: (position > 0).then(|| position.saturating_sub(page as u64)),
+        next: more.then_some(position + end as u64),
+        notice: encoding.notice().unwrap_or_default(),
+        ..code_lines(&text, language)
     })
+}
+
+/// A page's text. UTF-8 cut through its last character is still UTF-8;
+/// otherwise `decode` decides, except that UTF-16 is recognised only by the
+/// mark at the start of the file: a page elsewhere cannot tell.
+fn page_text(bytes: &[u8], first: bool) -> (Cow<'_, str>, Encoding) {
+    let marked = first && encoding_rs::Encoding::for_bom(bytes).is_some();
+    if !marked && text_prefix(bytes).is_some() {
+        return (String::from_utf8_lossy(bytes), Encoding::Utf8);
+    }
+    match decode(bytes) {
+        (_, Encoding::Utf16Le | Encoding::Utf16Be) if !first => {
+            (String::from_utf8_lossy(bytes), Encoding::Utf8)
+        }
+        decoded => decoded,
+    }
 }
 pub fn image(bytes: &[u8]) -> anyhow::Result<Image> {
     anyhow::ensure!(
@@ -265,6 +388,40 @@ pub fn detail(label: &str, value: impl AsRef<str>) -> Option<bibli_core::inspect
         }
         bibli_core::inspection::Detail::new(label, text)
     })
+}
+/// What a rich document cut at `limits::BLOCKS` says in its notice.
+pub fn blocks_notice() -> String {
+    format!("First {} blocks · Source shows the rest", limits::BLOCKS)
+}
+/// The facts of `Inspection::details` from `(label, value)` pairs, in order,
+/// leaving out what is blank or `None` (`count` makes a zero blank).
+pub fn details<'a, V: Into<Option<String>>>(
+    facts: impl IntoIterator<Item = (&'a str, V)>,
+) -> Vec<bibli_core::inspection::Detail> {
+    facts
+        .into_iter()
+        .filter_map(|(label, value)| detail(label, value.into()?))
+        .collect()
+}
+/// A count worth stating: nothing for zero, where a Details row would only
+/// say that something is absent.
+pub fn count(n: usize) -> Option<String> {
+    (n > 0).then(|| n.to_string())
+}
+/// A size the way the file list shows one: `512 B`, `1.5 KB`, `3.2 GB`, in
+/// binary multiples.
+pub fn size(bytes: u64) -> String {
+    const UNITS: [&str; 6] = ["B", "KB", "MB", "GB", "TB", "PB"];
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    format!("{value:.1} {}", UNITS[unit])
 }
 pub fn extension(path: &Path) -> String {
     path.extension()
@@ -419,6 +576,115 @@ mod tests {
         std::fs::write(&minified, "x".repeat(limits::LINE_BYTES + 1)).unwrap();
         let data = plain(&minified, 0, &cancel).unwrap();
         assert_eq!((data.kind, data.blocks.len()), (InspectionKind::Text, 1));
+    }
+
+    #[test]
+    fn going_back_a_page_lands_on_a_line_and_meets_the_page_after() {
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = CancelToken::new();
+        let path = dir.path().join("notes caf\u{e9}.txt");
+        // Lines of varying length, with characters of several bytes, so a
+        // page boundary falls in the middle of a line and of a character.
+        let text = (0..60_000).fold(String::new(), |mut text, i| {
+            use std::fmt::Write as _;
+            let _ = writeln!(text, "{i} {}", "\u{e9}t\u{e9}".repeat(i % 7 + 3));
+            text
+        });
+        std::fs::write(&path, &text).unwrap();
+        let first = plain(&path, 0, &cancel).unwrap();
+        let second = plain(&path, first.next.unwrap(), &cancel).unwrap();
+        let third = plain(&path, second.next.unwrap(), &cancel).unwrap();
+        let back = plain(&path, third.previous.unwrap(), &cancel).unwrap();
+        let at = back.position as usize;
+        assert!(at > 0 && text.as_bytes()[at - 1] == b'\n', "starts a line");
+        assert_eq!(back.next, Some(third.position), "ends where it was left");
+        let lines: std::collections::HashSet<&str> = text.lines().collect();
+        assert_eq!(back.kind, InspectionKind::Code);
+        assert!(
+            back.blocks.iter().all(|b| lines.contains(b.text.as_str())),
+            "every line whole"
+        );
+        assert!(back.notice.contains("at a time") && !back.notice.contains("Read as"));
+        // A requested line start is kept as it is.
+        assert_eq!(
+            plain(&path, second.position, &cancel).unwrap().position,
+            second.position
+        );
+    }
+
+    #[test]
+    fn text_is_decoded_by_its_mark_else_utf8_else_windows_1252() {
+        assert_eq!(decode(b"plain"), (Cow::Borrowed("plain"), Encoding::Utf8));
+        assert_eq!(
+            decode("\u{feff}# T\u{ed}tulo".as_bytes()).0,
+            "# T\u{ed}tulo"
+        );
+        let utf16: Vec<u8> = [0xFF, 0xFE]
+            .into_iter()
+            .chain("a,\u{e9}".encode_utf16().flat_map(u16::to_le_bytes))
+            .collect();
+        assert_eq!(
+            decode(&utf16),
+            (Cow::Owned("a,\u{e9}".into()), Encoding::Utf16Le)
+        );
+        assert_eq!(
+            decode(b"caf\xe9;\x80"),
+            (
+                Cow::Owned("caf\u{e9};\u{20ac}".into()),
+                Encoding::Windows1252
+            )
+        );
+        assert_eq!(Encoding::Utf8.notice(), None);
+        assert_eq!(
+            Encoding::Windows1252.notice().as_deref(),
+            Some("Read as Windows-1252")
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = CancelToken::new();
+        let path = dir.path().join("export.csv");
+        std::fs::write(&path, b"name;price\ncaf\xe9;3\n").unwrap();
+        assert_eq!(
+            read_text(&path, &cancel).unwrap(),
+            ("name;price\ncaf\u{e9};3\n".into(), Encoding::Windows1252)
+        );
+        let data = plain(&path, 0, &cancel).unwrap();
+        assert_eq!(data.blocks[1].text, "caf\u{e9};3");
+        assert_eq!(data.notice, "Read as Windows-1252");
+    }
+
+    #[test]
+    fn code_lines_and_details() {
+        let code = code_lines("a\n\nb", Some("rs".into()));
+        assert_eq!(code.kind, InspectionKind::Code);
+        assert_eq!(code.blocks.len(), 3);
+        assert!(code_lines("", None).blocks.is_empty());
+        let facts = details([
+            ("Words", count(12)),
+            ("Headings", count(0)),
+            ("Author", Some("  ".into())),
+            ("Title", None),
+        ]);
+        assert_eq!(facts, [bibli_core::inspection::Detail::new("Words", "12")]);
+        assert_eq!(details([("Size", size(1536))])[0].value, "1.5 KB");
+        assert_eq!(size(512), "512 B");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_named_pipe_is_refused_not_waited_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("x.csv");
+        rustix::fs::mknodat(
+            rustix::fs::CWD,
+            &fifo,
+            rustix::fs::FileType::Fifo,
+            rustix::fs::Mode::from_raw_mode(0o600),
+            0,
+        )
+        .unwrap();
+        let error = text(&fifo, &CancelToken::new()).unwrap_err();
+        assert_eq!(error.to_string(), "preview needs a regular file");
     }
 
     #[test]

@@ -92,25 +92,35 @@ def check_archive(executable, root):
     with tempfile.TemporaryDirectory() as tmp:
         output = Path(tmp) / "member"
         target = next(e for e in entries if e["name"] == "../outside.txt")
-        subprocess.run([executable, str(path), str(target["index"]), str(output), "--bytes", str(MEMBER_BYTES)], check=True, stdout=subprocess.DEVNULL)
+        read = [executable, str(path), str(target["index"]), str(output), "--name", target["name"], "--bytes", str(MEMBER_BYTES)]
+        subprocess.run(read, check=True, stdout=subprocess.DEVNULL)
         assert output.read_text() == "A name, never an extraction path"
         assert not (Path(tmp).parent / "outside.txt").exists()
+        read[read.index("--name") + 1] = "folder/example.txt"
+        result = subprocess.run(read, capture_output=True)
+        assert result.returncode != 0 and b"changed" in result.stderr, "an index names the member it was listed with"
         bomb = Path(tmp) / "large.zip"
         with zipfile.ZipFile(bomb, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("large", bytes(17 * 1024 * 1024))
-        result = subprocess.run([executable, str(bomb), "0", str(output), "--bytes", str(MEMBER_BYTES)], capture_output=True)
-        assert result.returncode != 0 and b"16 MiB" in result.stderr
-        result = subprocess.run([executable, str(bomb), "0", str(output)], capture_output=True)
+        result = subprocess.run([executable, str(bomb), "0", str(output), "--name", "large", "--bytes", str(MEMBER_BYTES)], capture_output=True)
+        assert result.returncode != 0 and b"preview limit" in result.stderr
+        result = subprocess.run([executable, str(bomb), "0", str(output), "--name", "large"], capture_output=True)
         assert result.returncode != 0 and b"--bytes" in result.stderr, "a member read without a bound is refused"
         result = subprocess.run([executable, str(path), "--members", "2", "--names", "4096"], capture_output=True)
-        assert result.returncode != 0 and b"2 entries" in result.stderr, "listing bounds come from the caller"
+        assert result.returncode != 0 and b"2 members" in result.stderr, "listing bounds come from the caller"
+        accented = Path(tmp) / "accents.zip"
+        with zipfile.ZipFile(accented, "w") as archive:
+            archive.writestr("Cr\u00e8me/r\u00e9sum\u00e9.txt", "caf\u00e9")
+        clean = {"PATH": os.environ.get("PATH", "")}
+        names = json.loads(subprocess.check_output([executable, str(accented), *LISTING], env=clean))
+        assert [e["name"] for e in names] == ["Cr\u00e8me/r\u00e9sum\u00e9.txt"], "names convert in any locale"
         tar = Path(tmp) / "links.tar"
         with tarfile.open(tar, "w") as archive:
             entry = tarfile.TarInfo("link")
             entry.type = tarfile.SYMTYPE
             entry.linkname = "../outside"
             archive.addfile(entry)
-        result = subprocess.run([executable, str(tar), "0", str(output), "--bytes", str(MEMBER_BYTES)], capture_output=True)
+        result = subprocess.run([executable, str(tar), "0", str(output), "--name", "link", "--bytes", str(MEMBER_BYTES)], capture_output=True)
         assert result.returncode != 0 and b"regular" in result.stderr
     print("Archive: ZIP listing, selected bytes, traversal names, caller-provided bounds and symlink rejection passed")
 

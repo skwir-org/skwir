@@ -1,5 +1,6 @@
 //! Small native helper for archive metadata and bounded member reads.
 use crate::inspection::{self, limits};
+use anyhow::Context;
 use bibli_core::{
     CancelToken,
     inspection::{Block, Inspection},
@@ -15,9 +16,19 @@ pub struct Member {
     pub regular: bool,
     pub encrypted: bool,
 }
-fn worker() -> anyhow::Result<std::path::PathBuf> {
+impl Member {
+    /// The last component of the member's path: what it is called.
+    pub fn file_name(&self) -> &str {
+        self.name.rsplit('/').next().unwrap_or(&self.name)
+    }
+}
+/// The helper's executable: `BIBLI_ARCHIVE_WORKER`, beside our binary, or
+/// on `PATH`. Plugins that require it name this, not the literals.
+pub fn worker_path() -> Option<std::path::PathBuf> {
     crate::process::find_worker("BIBLI_ARCHIVE_WORKER", "bibli-archive-worker")
-        .map_or_else(|| crate::process::required("bibli-archive-worker"), Ok)
+}
+fn worker() -> anyhow::Result<std::path::PathBuf> {
+    worker_path().context("Install bibli-archive-worker to preview this file")
 }
 pub fn list(path: &Path, cancel: &CancelToken) -> anyhow::Result<Vec<Member>> {
     let bytes = crate::process::run(
@@ -51,42 +62,52 @@ pub fn member_file(into: &Path, name: &str) -> std::path::PathBuf {
     }
     file
 }
-/// Write one member of an archive as a file of its own; bounded like `read`.
+/// Stream `member`, as listed, to `output`. The helper finds it by index and
+/// checks it still carries the listed name, so an archive rewritten since
+/// its listing fails instead of showing another member. The declared size
+/// is checked here first; the helper bounds the bytes it actually produces.
+fn write_member(
+    path: &Path,
+    member: &Member,
+    output: &Path,
+    cancel: &CancelToken,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        u64::try_from(member.size).unwrap_or(0) <= limits::BINARY_INPUT as u64,
+        "Member preview exceeds {} limit",
+        limits::describe(limits::BINARY_INPUT)
+    );
+    crate::process::run(
+        Command::new(worker()?)
+            .arg(path)
+            .arg(member.index.to_string())
+            .arg(output)
+            .arg("--name")
+            .arg(&member.name)
+            .arg("--bytes")
+            .arg(limits::BINARY_INPUT.to_string()),
+        cancel,
+        limits::HELPER_TIMEOUT,
+    )?;
+    Ok(())
+}
+/// Write one member of an archive as a file of its own, named by
+/// `member_file` after the last component of its name.
 pub fn extract(
     path: &Path,
-    index: u64,
-    name: &str,
+    member: &Member,
     into: &Path,
     cancel: &CancelToken,
 ) -> anyhow::Result<std::path::PathBuf> {
-    let output = member_file(into, name);
-    crate::process::run(
-        Command::new(worker()?)
-            .arg(path)
-            .arg(index.to_string())
-            .arg(&output)
-            .arg("--bytes")
-            .arg(limits::BINARY_INPUT.to_string()),
-        cancel,
-        limits::HELPER_TIMEOUT,
-    )?;
+    let output = member_file(into, member.file_name());
+    write_member(path, member, &output, cancel)?;
     Ok(output)
 }
-/// The worker enforces the same member bound it is given here, so a member
-/// larger than the preview limit fails inside the helper before any read.
-pub fn read(path: &Path, index: u64, cancel: &CancelToken) -> anyhow::Result<Vec<u8>> {
+/// One member's bytes, bounded like `extract`.
+pub fn read(path: &Path, member: &Member, cancel: &CancelToken) -> anyhow::Result<Vec<u8>> {
     let temp = tempfile::tempdir()?;
     let output = temp.path().join("member");
-    crate::process::run(
-        Command::new(worker()?)
-            .arg(path)
-            .arg(index.to_string())
-            .arg(&output)
-            .arg("--bytes")
-            .arg(limits::BINARY_INPUT.to_string()),
-        cancel,
-        limits::HELPER_TIMEOUT,
-    )?;
+    write_member(path, member, &output, cancel)?;
     inspection::read_bounded(&output, limits::BINARY_INPUT, "Member preview", cancel)
 }
 /// Image, text prefix or paged hexadecimal view of a container member or

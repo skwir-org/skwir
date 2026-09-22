@@ -855,8 +855,7 @@ impl Shell {
                 // Reuse only an already cached desktop thumbnail as initial feedback.
                 if show_thumbnail {
                     use bibli_core::thumbs::{ThumbRequest, ThumbSize, ThumbnailProvider};
-                    let cached =
-                        bibli_platform::thumb_providers::FreedesktopCache { write_back: false };
+                    let cached = bibli_platform::thumb_providers::FreedesktopCache::desktop(false);
                     let thumb = ThumbRequest {
                         entry: request.entry.clone(),
                         mime: request.mime.clone().map(Into::into),

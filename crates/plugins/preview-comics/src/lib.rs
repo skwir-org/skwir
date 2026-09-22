@@ -54,7 +54,7 @@ impl PreviewProvider for Provider {
         anyhow::ensure!(!pages.is_empty(), "Comic contains no supported images");
         let index = view.offset.min(pages.len() as u64 - 1) as usize;
         let page = &pages[index];
-        let image = inspection::image(&archive::read(&path, page.index, cancel)?)?;
+        let image = inspection::image(&archive::read(&path, page, cancel)?)?;
         Ok(Some(Inspection {
             kind: bibli_core::inspection::InspectionKind::Comic,
             title: format!("Comic · {} / {}", index + 1, pages.len()),

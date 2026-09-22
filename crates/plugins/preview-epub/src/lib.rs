@@ -69,7 +69,7 @@ impl PreviewProvider for Provider {
                     "Chapter",
                     cancel,
                 )?)?;
-                let blocks = rich_preview::html(&html, cancel, |_| None)?;
+                let blocks = rich_preview::html(&html, cancel, |_| None)?.blocks;
                 if blocks
                     .iter()
                     .any(|b| b.text.to_lowercase().contains(&query))
@@ -112,6 +112,7 @@ impl PreviewProvider for Provider {
                     .ok()?;
                 inspection::image(&bytes).ok()
             })?
+            .blocks
         };
         for block in &mut blocks {
             for run in &mut block.runs {

@@ -22,8 +22,9 @@ tempfile.workspace = true
 serde_json.workspace = true
 scraper = "0.24"
 percent-encoding = "2"
+encoding_rs = "0.8"
 crossbeam-channel.workspace = true
-rustix = { workspace = true, features = ["process"] }
+rustix = { workspace = true, features = ["process", "event"] }
 kamadak-exif = "0.6"
 
 [target.'cfg(target_os = "linux")'.dependencies]

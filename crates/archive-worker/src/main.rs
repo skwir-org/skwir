@@ -24,6 +24,44 @@ mod native {
         fn archive_error_string(a: *mut c_void) -> *const c_char;
         fn archive_read_free(a: *mut c_void) -> c_int;
     }
+    // From the C library std already links.
+    unsafe extern "C" {
+        fn setlocale(category: c_int, locale: *const c_char) -> *mut c_char;
+    }
+    #[cfg(any(
+        target_vendor = "apple",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))]
+    const LC_CTYPE: c_int = 2;
+    #[cfg(not(any(
+        target_vendor = "apple",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    )))]
+    const LC_CTYPE: c_int = 0;
+
+    const ARCHIVE_EOF: c_int = 1;
+    /// A warning is not a failure: libarchive reports one when, for instance,
+    /// a name cannot be converted to the locale's charset, and the entry is
+    /// still there to read. Only `ARCHIVE_FAILED` and `ARCHIVE_FATAL` stop us.
+    const ARCHIVE_WARN: c_int = -20;
+
+    /// libarchive converts member names through the C library's charset. A
+    /// process starts in the "C" locale, where any non-ASCII name fails to
+    /// convert, so ask for UTF-8 first and the environment's locale after.
+    fn utf8_locale() {
+        for locale in [c"C.UTF-8", c""] {
+            if !unsafe { setlocale(LC_CTYPE, locale.as_ptr()) }.is_null() {
+                return;
+            }
+        }
+    }
+
     struct Reader(*mut c_void);
     impl Drop for Reader {
         fn drop(&mut self) {
@@ -34,7 +72,7 @@ mod native {
     }
     impl Reader {
         fn check(&self, status: c_int) -> anyhow::Result<()> {
-            if status < 0 {
+            if status < ARCHIVE_WARN {
                 let p = unsafe { archive_error_string(self.0) };
                 let error = if p.is_null() {
                     "Archive error".into()
@@ -47,19 +85,23 @@ mod native {
         }
     }
     /// `bibli-archive-worker <archive> --members N --names N` lists members;
-    /// `bibli-archive-worker <archive> <index> <output> --bytes N` streams one.
+    /// `bibli-archive-worker <archive> <index> <output> --name NAME --bytes N`
+    /// streams the member at `index`, provided it is still called `NAME`, so
+    /// an archive rewritten since its listing never yields another member.
     /// Every bound arrives from the caller so the UI process and this helper
     /// can never disagree on a limit.
     pub struct Args {
         pub path: std::ffi::OsString,
         pub member: Option<u64>,
         pub output: Option<std::ffi::OsString>,
+        pub name: Option<std::ffi::OsString>,
         pub bytes: Option<usize>,
         pub members: Option<usize>,
         pub names: Option<usize>,
     }
     pub fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result<Args> {
         let mut positional = Vec::new();
+        let mut name = None;
         let mut bytes = None;
         let mut members = None;
         let mut names = None;
@@ -69,6 +111,13 @@ mod native {
                 Some("--bytes") => &mut bytes,
                 Some("--members") => &mut members,
                 Some("--names") => &mut names,
+                Some("--name") => {
+                    name = Some(
+                        args.next()
+                            .ok_or_else(|| anyhow::anyhow!("missing value for --name"))?,
+                    );
+                    continue;
+                }
                 _ => {
                     positional.push(arg);
                     continue;
@@ -89,7 +138,10 @@ mod native {
             .transpose()?;
         let output = positional.next();
         if member.is_some() {
-            anyhow::ensure!(bytes.is_some(), "missing --bytes bound for member read");
+            anyhow::ensure!(
+                bytes.is_some() && name.is_some(),
+                "missing --name or --bytes bound for member read"
+            );
         } else {
             anyhow::ensure!(
                 members.is_some() && names.is_some(),
@@ -100,20 +152,35 @@ mod native {
             path,
             member,
             output,
+            name,
             bytes,
             members,
             names,
         })
+    }
+    /// The member's name as the listing reports it: UTF-8 where libarchive
+    /// can say, the raw bytes read lossily otherwise.
+    fn entry_name(entry: *mut c_void) -> anyhow::Result<String> {
+        let mut name = unsafe { archive_entry_pathname_utf8(entry) };
+        if name.is_null() {
+            name = unsafe { archive_entry_pathname(entry) };
+        }
+        anyhow::ensure!(!name.is_null(), "Archive member has no name");
+        Ok(unsafe { CStr::from_ptr(name) }
+            .to_string_lossy()
+            .into_owned())
     }
     pub fn run() -> anyhow::Result<()> {
         let Args {
             path,
             member,
             output,
+            name: expected,
             bytes: byte_limit,
             members: member_limit,
             names: name_limit,
         } = parse_args(std::env::args_os().skip(1))?;
+        utf8_locale();
         #[cfg(unix)]
         let path = {
             use std::os::unix::ffi::OsStrExt;
@@ -138,12 +205,17 @@ mod native {
         loop {
             let mut entry = std::ptr::null_mut();
             let status = unsafe { archive_read_next_header(reader.0, &raw mut entry) };
-            if status == 1 {
+            if status == ARCHIVE_EOF {
                 break;
             }
             reader.check(status)?;
             anyhow::ensure!(!entry.is_null(), "Missing archive header");
             if member == Some(index) {
+                anyhow::ensure!(
+                    expected.as_deref().and_then(|e| e.to_str())
+                        == Some(entry_name(entry)?.as_str()),
+                    "Archive changed since it was listed; select it again"
+                );
                 anyhow::ensure!(
                     unsafe { archive_entry_filetype(entry) } == 0o100_000,
                     "Only regular archive members can be previewed"
@@ -162,36 +234,34 @@ mod native {
                 loop {
                     let n =
                         unsafe { archive_read_data(reader.0, buf.as_mut_ptr().cast(), buf.len()) };
-                    anyhow::ensure!(n >= 0, "Archive decompression failed");
+                    if n == ARCHIVE_WARN as isize {
+                        // The block is kept and handed out by the next call.
+                        continue;
+                    }
+                    if n < 0 {
+                        reader.check(c_int::try_from(n)?)?;
+                        anyhow::bail!("Archive decompression failed");
+                    }
                     if n == 0 {
                         break;
                     }
                     let n = usize::try_from(n)?;
                     total += n;
-                    anyhow::ensure!(
-                        total <= limit,
-                        "Member preview exceeds {} limit",
-                        super::describe(limit)
-                    );
+                    // The caller names its bound in its own words; this is
+                    // the backstop for a member larger than it declared.
+                    anyhow::ensure!(total <= limit, "Member exceeds the preview limit");
                     file.write_all(&buf[..n])?;
                 }
-                println!("{{\"bytes\":{total}}}");
                 return Ok(());
             }
             if member.is_none() {
-                let mut name = unsafe { archive_entry_pathname_utf8(entry) };
-                if name.is_null() {
-                    name = unsafe { archive_entry_pathname(entry) };
-                }
-                anyhow::ensure!(!name.is_null(), "Archive member has no name");
-                let name = unsafe { CStr::from_ptr(name) }.to_string_lossy();
+                let name = entry_name(entry)?;
                 names += name.len();
                 let (member_limit, name_limit) =
                     (member_limit.unwrap_or(0), name_limit.unwrap_or(0));
                 anyhow::ensure!(
                     names <= name_limit && entries.len() < member_limit,
-                    "Archive listing exceeds preview limit ({member_limit} entries / {} names)",
-                    super::describe(name_limit)
+                    "Archive listing exceeds the preview limit of {member_limit} members"
                 );
                 entries.push(serde_json::json!({"index":index,"name":name,"size":unsafe{archive_entry_size(entry)},"directory":unsafe{archive_entry_filetype(entry)}==0o040_000,"regular":unsafe{archive_entry_filetype(entry)}==0o100_000,"encrypted":unsafe{archive_entry_is_encrypted(entry)}!=0}));
             }
@@ -200,16 +270,6 @@ mod native {
         anyhow::ensure!(member.is_none(), "Archive member no longer exists");
         println!("{}", serde_json::to_string(&entries)?);
         Ok(())
-    }
-}
-/// Whole binary units for messages, matching `bibli_platform::inspection::limits::describe`.
-fn describe(bytes: usize) -> String {
-    if bytes > 0 && bytes.is_multiple_of(1024 * 1024) {
-        format!("{} MiB", bytes / (1024 * 1024))
-    } else if bytes > 0 && bytes.is_multiple_of(1024) {
-        format!("{} KiB", bytes / 1024)
-    } else {
-        format!("{bytes} bytes")
     }
 }
 fn main() {
@@ -230,14 +290,29 @@ mod tests {
         let listing = parse_args(args(&["a.zip", "--members", "10", "--names", "2048"])).unwrap();
         assert_eq!(listing.member, None);
         assert_eq!((listing.members, listing.names), (Some(10), Some(2048)));
-        let read = parse_args(args(&["a.zip", "3", "out", "--bytes", "4096"])).unwrap();
+        let read = parse_args(args(&[
+            "a.zip",
+            "3",
+            "out",
+            "--name",
+            "dir/caf\u{e9}.txt",
+            "--bytes",
+            "4096",
+        ]))
+        .unwrap();
         assert_eq!(read.member, Some(3));
         assert_eq!(read.output.as_deref().and_then(|o| o.to_str()), Some("out"));
+        assert_eq!(
+            read.name.as_deref().and_then(|o| o.to_str()),
+            Some("dir/caf\u{e9}.txt")
+        );
         assert_eq!(read.bytes, Some(4096));
         assert!(parse_args(args(&["a.zip"])).is_err());
         assert!(parse_args(args(&["a.zip", "3", "out"])).is_err());
+        assert!(parse_args(args(&["a.zip", "3", "out", "--bytes", "4096"])).is_err());
         assert!(parse_args(args(&["a.zip", "--members", "10"])).is_err());
         assert!(parse_args(args(&["a.zip", "--bytes"])).is_err());
+        assert!(parse_args(args(&["a.zip", "3", "out", "--name"])).is_err());
         assert!(parse_args(args(&[])).is_err());
     }
 }

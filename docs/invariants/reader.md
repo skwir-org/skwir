@@ -7,6 +7,12 @@ Read this before touching `crates/pdf-worker`, `crates/poppler-worker`, `crates/
   Session creation/render/search are blocking worker entry points. The manager
   thread owns child cleanup and temporary files; dropping a UI session must
   only cancel/send, never wait for a process or delete files.
+- Protocol lines are `Tagged`: the greeting is reply 0 and request `n` gets
+  reply `n`, once, in order (`bibli_core::document::worker::serve`, shared by
+  both workers). A cancelled request sends `Cancel` and its answer is drained
+  later; a worker is restarted only when it stays busy past a short grace,
+  times out or breaks the protocol, never for a cancel or a page's `Error`.
+  A page whose text cannot be carried is shown without selectable text.
 - A session follows both the selected preview and its provider registration.
   Page/search requests have separate cancellation and generation checks.
   Cancel background search before a visible page request. Disabling a provider

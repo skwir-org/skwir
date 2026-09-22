@@ -2,30 +2,19 @@
 //! A document stays open for the worker's lifetime; each request releases pages
 //! and bitmaps. The parent enforces cancellation, time and output limits.
 
-use std::io::{BufRead, Read, Write};
 use std::path::Path;
 
 use anyhow::Context;
 use bibli_core::document::{
-    Destination, DocumentInfo, Link, MAX_HITS, MAX_REPLY, MAX_SIDE, Outline, PIXELS_FILE,
-    PageContent, Rect, SearchHit, TextChar, WorkerReply, WorkerRequest,
+    Destination, DocumentInfo, Link, MAX_HITS, MAX_PAGE_CHARS, MAX_SIDE, Outline, PIXELS_FILE,
+    PageContent, Rect, SearchHit, TextChar, WorkerReply, WorkerRequest, worker,
 };
 use pdfium_render::prelude::*;
 
 fn main() {
     if let Err(error) = run() {
-        let _ = reply(&WorkerReply::Error(format!("{error:#}")));
+        worker::fail(&error);
     }
-}
-
-fn reply(value: &WorkerReply) -> anyhow::Result<()> {
-    let bytes = serde_json::to_vec(value)?;
-    anyhow::ensure!(bytes.len() <= MAX_REPLY, "document metadata exceeds limit");
-    let mut out = std::io::stdout().lock();
-    out.write_all(&bytes)?;
-    out.write_all(b"\n")?;
-    out.flush()?;
-    Ok(())
 }
 
 fn run() -> anyhow::Result<()> {
@@ -38,10 +27,9 @@ fn run() -> anyhow::Result<()> {
     let bindings = match bindings {
         Ok(bindings) => bindings,
         Err(error) => {
-            reply(&WorkerReply::Unavailable(format!(
+            return worker::greet(&WorkerReply::Unavailable(format!(
                 "PDFium library unavailable: {error}"
-            )))?;
-            return Ok(());
+            )));
         }
     };
     let pdfium = Pdfium::new(bindings);
@@ -50,27 +38,16 @@ fn run() -> anyhow::Result<()> {
         .context("open PDF (encrypted files require an external reader)")?;
     let info = document_info(&document);
     anyhow::ensure!(info.pages > 0, "document has no pages");
-    reply(&WorkerReply::Ready(info))?;
-    let mut input = std::io::stdin().lock();
-    loop {
-        let mut line = String::new();
-        let n = std::io::Read::by_ref(&mut input)
-            .take(16 * 1024)
-            .read_line(&mut line)?;
-        if n == 0 {
-            break;
+    worker::greet(&WorkerReply::Ready(info))?;
+    let scratch = Path::new(&args[1]);
+    worker::serve(|request, superseded| match request {
+        WorkerRequest::Render { page, side } => render(&document, page, side, scratch),
+        WorkerRequest::Search { query } => {
+            search(&document, &query, superseded).map(WorkerReply::Matches)
         }
-        anyhow::ensure!(line.ends_with('\n'), "request exceeds limit");
-        let request: WorkerRequest = serde_json::from_str(&line)?;
-        let result = match request {
-            WorkerRequest::Render { page, side } => {
-                render(&document, page, side, Path::new(&args[1]))
-            }
-            WorkerRequest::Search { query } => search(&document, &query).map(WorkerReply::Matches),
-        };
-        reply(&result.unwrap_or_else(|e| WorkerReply::Error(format!("{e:#}"))))?;
-    }
-    Ok(())
+        // `serve` answers it: nothing runs by the time it is read.
+        WorkerRequest::Cancel => anyhow::bail!("nothing to cancel"),
+    })
 }
 
 fn document_info(document: &PdfDocument<'_>) -> DocumentInfo {
@@ -143,22 +120,29 @@ fn render(
     let width = u32::try_from(bitmap.width())?;
     let height = u32::try_from(bitmap.height())?;
     std::fs::write(scratch.join(PIXELS_FILE), bitmap.as_rgba_bytes())?;
-    let text = page.text()?;
-    anyhow::ensure!(text.chars().len() <= 200_000, "page text exceeds limit");
-    let chars = text
-        .chars()
-        .iter()
-        .filter_map(|ch| {
-            let text = ch.unicode_string()?;
-            let bounds = ch
-                .loose_bounds()
-                .or_else(|_| ch.tight_bounds())
-                .ok()
-                .and_then(|b| rect(&page, b).ok())
-                .unwrap_or_default();
-            Some(TextChar { text, bounds })
+    // Text is what can be selected on the page; the pixels are already
+    // rendered. A page whose text cannot be read, or holds more than the
+    // protocol carries, is shown without selectable text rather than lost.
+    let chars = page
+        .text()
+        .ok()
+        .filter(|text| text.chars().len() <= MAX_PAGE_CHARS)
+        .map(|text| {
+            text.chars()
+                .iter()
+                .filter_map(|ch| {
+                    let text = ch.unicode_string()?;
+                    let bounds = ch
+                        .loose_bounds()
+                        .or_else(|_| ch.tight_bounds())
+                        .ok()
+                        .and_then(|b| rect(&page, b).ok())
+                        .unwrap_or_default();
+                    Some(TextChar { text, bounds })
+                })
+                .collect()
         })
-        .collect();
+        .unwrap_or_default();
     let links = page
         .links()
         .iter()
@@ -199,13 +183,19 @@ fn render(
     })
 }
 
-fn search(document: &PdfDocument<'_>, query: &str) -> anyhow::Result<Vec<SearchHit>> {
+/// Stops, with an error nobody reads, as soon as a newer request waits.
+fn search(
+    document: &PdfDocument<'_>,
+    query: &str,
+    superseded: &dyn Fn() -> bool,
+) -> anyhow::Result<Vec<SearchHit>> {
     anyhow::ensure!(query.len() <= 4096, "search query exceeds limit");
     if query.trim().is_empty() {
         return Ok(Vec::new());
     }
     let mut hits = Vec::new();
     for (index, page) in document.pages().iter().enumerate() {
+        anyhow::ensure!(!superseded(), "search superseded");
         let text = page.text()?;
         let options = PdfSearchOptions::new();
         let search = text.search(query, &options)?;

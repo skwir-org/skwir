@@ -67,14 +67,19 @@ impl PreviewProvider for Provider {
             inspection::extension(&path).as_str(),
             "md" | "markdown" | "mdown"
         ) {
+            let page = rich_preview::html(&source, cancel, |href| {
+                rich_preview::local_image(base, href, cancel)
+            })?;
             return Ok(Some(measured(Inspection {
                 kind: InspectionKind::Markdown,
                 title: "HTML".into(),
-                blocks: rich_preview::html(&source, cancel, |href| {
-                    rich_preview::local_image(base, href, cancel)
-                })?,
+                blocks: page.blocks,
                 source_available: true,
-                notice: "Reading mode · scripts, styles and remote content are not loaded".into(),
+                notice: if page.truncated {
+                    inspection::blocks_notice()
+                } else {
+                    "Reading mode · scripts, styles and remote content are not loaded".into()
+                },
                 ..Inspection::default()
             })));
         }

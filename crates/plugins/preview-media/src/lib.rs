@@ -24,8 +24,7 @@ impl Plugin for PreviewPlugin {
         use bibli_core::plugin::Requirement;
         vec![
             Requirement::new("bibli-media-worker", "Video and audio playback", || {
-                bibli_platform::process::find_worker("BIBLI_MEDIA_WORKER", "bibli-media-worker")
-                    .is_some()
+                bibli_platform::media::worker_path().is_some()
             }),
             Requirement::program("ffmpeg", "Still frames when playback is unavailable"),
         ]

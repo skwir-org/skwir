@@ -593,21 +593,30 @@ fn synthetic_png(width: u32, height: u32) -> Vec<u8> {
     out
 }
 
+/// The libarchive helper: `BIBLI_ARCHIVE_WORKER`, else the one built into
+/// the target directory this test runs from (wherever `CARGO_TARGET_DIR`
+/// put it: the test binary sits in its `deps`).
 fn archive_worker() -> Option<std::path::PathBuf> {
     if let Some(path) = std::env::var_os("BIBLI_ARCHIVE_WORKER") {
         return Some(path.into());
     }
-    let built =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/bibli-archive-worker");
+    let exe = std::env::current_exe().ok()?;
+    let built = exe.parent()?.parent()?.join("bibli-archive-worker");
     built.is_file().then_some(built)
 }
 
-/// Needs the libarchive helper built beside the workspace target (`just
-/// previews-check` builds it); skips with a note otherwise.
+/// Needs the libarchive helper (`just workers` builds it). Without it the
+/// test says so and passes, unless `BIBLI_REQUIRE_WORKERS` is set, as it
+/// should be wherever the workers are built: there a missing helper is a
+/// failure, not a skip.
 #[test]
 fn archive_members_preview_as_image_text_or_paged_bytes() {
     use std::io::Write;
     let Some(worker) = archive_worker() else {
+        assert!(
+            std::env::var_os("BIBLI_REQUIRE_WORKERS").is_none(),
+            "bibli-archive-worker is not built"
+        );
         eprintln!("skipped: bibli-archive-worker is not built");
         return;
     };
@@ -632,6 +641,12 @@ fn archive_members_preview_as_image_text_or_paged_bytes() {
         ("folder/notes.txt", text.as_bytes()),
         ("blob.bin", &binary),
         ("../outside.txt", b"a name, never a path"),
+        // libarchive converts names through the locale's charset: in the C
+        // locale a name like this one fails the whole listing.
+        (
+            "Cr\u{e8}me br\u{fb}l\u{e9}e/r\u{e9}sum\u{e9} \u{e9}t\u{e9}.txt",
+            "caf\u{e9}".as_bytes(),
+        ),
     ] {
         zip.start_file(
             name,
@@ -694,6 +709,17 @@ fn archive_members_preview_as_image_text_or_paged_bytes() {
     );
     assert_eq!(second.position, 4096);
     assert_eq!(second.rows[0].cells[0], "0000000000001000");
+    let accented = "r\u{e9}sum\u{e9} \u{e9}t\u{e9}.txt";
+    assert!(
+        listing
+            .rows
+            .iter()
+            .any(|r| r.cells[0] == "Cr\u{e8}me br\u{fb}l\u{e9}e" && r.branch)
+    );
+    assert_eq!(
+        inspect(&app, &path, &target(accented)).plain_text(),
+        "caf\u{e9}"
+    );
     let outside = inspect(&app, &path, &target("outside.txt"));
     assert_eq!(outside.plain_text(), "a name, never a path");
     assert!(!tmp.path().parent().unwrap().join("outside.txt").exists());

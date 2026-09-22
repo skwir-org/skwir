@@ -1,11 +1,11 @@
 //! Persistent Poppler reader. Native handles never leave this process.
-use std::io::{BufRead, BufWriter, Read, Write};
+use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use anyhow::Context;
 use bibli_core::document::{
-    DocumentInfo, MAX_HITS, MAX_REPLY, MAX_SIDE, PIXELS_FILE, PageContent, Rect, SearchHit,
-    WorkerReply, WorkerRequest,
+    DocumentInfo, MAX_HITS, MAX_SIDE, PIXELS_FILE, PageContent, Rect, SearchHit, WorkerReply,
+    WorkerRequest, worker,
 };
 use cairo::{Context as CairoContext, Format, ImageSurface};
 use poppler::{Document, Page};
@@ -14,18 +14,8 @@ mod navigation;
 
 fn main() {
     if let Err(error) = run() {
-        let _ = reply(&WorkerReply::Error(format!("{error:#}")));
+        worker::fail(&error);
     }
-}
-
-fn reply(value: &WorkerReply) -> anyhow::Result<()> {
-    let bytes = serde_json::to_vec(value)?;
-    anyhow::ensure!(bytes.len() <= MAX_REPLY, "document metadata exceeds limit");
-    let mut out = std::io::stdout().lock();
-    out.write_all(&bytes)?;
-    out.write_all(b"\n")?;
-    out.flush()?;
-    Ok(())
 }
 
 fn run() -> anyhow::Result<()> {
@@ -36,30 +26,19 @@ fn run() -> anyhow::Result<()> {
         .context("open PDF (encrypted files require an external reader)")?;
     let pages = u32::try_from(document.n_pages())?;
     anyhow::ensure!(pages > 0, "document has no pages");
-    reply(&WorkerReply::Ready(DocumentInfo {
+    worker::greet(&WorkerReply::Ready(DocumentInfo {
         pages,
         outlines: navigation::outlines(&document),
     }))?;
-    let mut input = std::io::stdin().lock();
-    loop {
-        let mut line = String::new();
-        let n = Read::by_ref(&mut input)
-            .take(16 * 1024)
-            .read_line(&mut line)?;
-        if n == 0 {
-            break;
+    let scratch = Path::new(&args[1]);
+    worker::serve(|request, superseded| match request {
+        WorkerRequest::Render { page, side } => render(&document, page, side, scratch),
+        WorkerRequest::Search { query } => {
+            search(&document, &query, superseded).map(WorkerReply::Matches)
         }
-        anyhow::ensure!(line.ends_with('\n'), "request exceeds limit");
-        let request: WorkerRequest = serde_json::from_str(&line)?;
-        let result = match request {
-            WorkerRequest::Render { page, side } => {
-                render(&document, page, side, Path::new(&args[1]))
-            }
-            WorkerRequest::Search { query } => search(&document, &query).map(WorkerReply::Matches),
-        };
-        reply(&result.unwrap_or_else(|e| WorkerReply::Error(format!("{e:#}"))))?;
-    }
-    Ok(())
+        // `serve` answers it: nothing runs by the time it is read.
+        WorkerRequest::Cancel => anyhow::bail!("nothing to cancel"),
+    })
 }
 
 /// Poppler text layout uses displayed, top-left coordinates; links and search
@@ -130,7 +109,7 @@ fn render(
         output.write_all(row)?;
     }
     output.flush()?;
-    let chars = navigation::chars(&page, size)?;
+    let chars = navigation::chars(&page, size);
     let links = navigation::links(document, &page, size);
     let width = u32::try_from(width)?;
     let height = u32::try_from(height)?;
@@ -147,7 +126,12 @@ fn render(
     })
 }
 
-fn search(document: &Document, query: &str) -> anyhow::Result<Vec<SearchHit>> {
+/// Stops, with an error nobody reads, as soon as a newer request waits.
+fn search(
+    document: &Document,
+    query: &str,
+    superseded: &dyn Fn() -> bool,
+) -> anyhow::Result<Vec<SearchHit>> {
     anyhow::ensure!(
         query.len() <= 4096 && !query.contains('\0'),
         "invalid search query"
@@ -157,6 +141,7 @@ fn search(document: &Document, query: &str) -> anyhow::Result<Vec<SearchHit>> {
     }
     let mut hits = Vec::new();
     for index in 0..document.n_pages() {
+        anyhow::ensure!(!superseded(), "search superseded");
         let page = document.page(index).context("missing page")?;
         let size = page_size(&page)?;
         for bounds in page.find_text(query) {

@@ -858,6 +858,6 @@ fn handle_message(
 }
 fn main() {
     if let Err(error) = run() {
-        let _ = reply(&Reply::Error(error.to_string()));
+        let _ = reply(&Reply::Error(format!("{error:#}")));
     }
 }

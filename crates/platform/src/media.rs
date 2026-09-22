@@ -5,7 +5,7 @@
 //! its session's cancellation signal and, until the worker greets, a single
 //! startup deadline. Nothing here polls on a timer.
 
-use crate::process::ChildGuard;
+use crate::line_channel::LineChannel;
 use anyhow::Context;
 use bibli_core::{
     CancelToken,
@@ -15,9 +15,9 @@ use bibli_core::{
 use parking_lot::Mutex;
 use std::{
     fs::OpenOptions,
-    io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
+    io::{Read, Seek, SeekFrom},
     path::PathBuf,
-    process::{Command, Stdio},
+    process::Command,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -140,19 +140,9 @@ impl MediaSession for WorkerSession {
     }
 }
 impl WorkerSession {
-    pub fn open(
-        path: PathBuf,
-        lifetime: &CancelToken,
-        wake: Waker,
-    ) -> anyhow::Result<Option<Arc<dyn MediaSession>>> {
-        let Some(executable) = worker_path() else {
-            return Ok(None);
-        };
-        Self::open_with_worker(executable, path, lifetime, wake)
-    }
-
-    /// `open`, with how the worker should treat the sound: settings it needs
-    /// when it builds its pipeline, not while it plays.
+    /// Open a player on `path`, with how the worker should treat the sound:
+    /// settings it needs when it builds its pipeline, not while it plays.
+    /// `None` when the worker or its runtime is not installed.
     pub fn open_tuned(
         path: PathBuf,
         tuning: Tuning,
@@ -165,6 +155,7 @@ impl WorkerSession {
         Self::open_with_tuning(executable, path, tuning, lifetime, wake)
     }
 
+    #[cfg(test)]
     fn open_with_worker(
         executable: PathBuf,
         path: PathBuf,
@@ -204,7 +195,7 @@ impl WorkerSession {
                     &startup,
                 );
                 if let Err(error) = result {
-                    let message = error.to_string();
+                    let message = format!("{error:#}");
                     let _ = startup.try_send(Err(anyhow::anyhow!("{message}")));
                     if !manager_lifetime.is_cancelled() {
                         manager_shared.publish(|u| u.error = Some(message));
@@ -227,6 +218,16 @@ impl WorkerSession {
                 Err(_) => anyhow::bail!("video worker stopped during startup"),
             },
             recv(cancelled.receiver()) -> _ => {
+                // The manager cancels its lifetime right after sending its
+                // verdict: when both are ready, the verdict is the outcome.
+                if let Ok(verdict) = ready.try_recv() {
+                    lifetime.cancel();
+                    return match verdict {
+                        Ok(false) => Ok(None),
+                        Ok(true) => anyhow::bail!("video open cancelled"),
+                        Err(error) => Err(error),
+                    };
+                }
                 lifetime.cancel();
                 anyhow::bail!("video open cancelled")
             }
@@ -282,12 +283,7 @@ fn manage(
     let audio_only =
         crate::mime::by_name(path.as_os_str()).is_some_and(|mime| mime.0.starts_with("audio/"));
     let mut command = Command::new(executable);
-    command
-        .arg(path)
-        .arg(scratch.path())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+    command.arg(path).arg(scratch.path());
     if audio_only {
         command.env("BIBLI_MEDIA_AUDIO_ONLY", "1");
     }
@@ -305,50 +301,7 @@ fn manage(
     // frame buffers across those threads. Bound fragmentation in this child.
     #[cfg(target_env = "gnu")]
     command.env("MALLOC_ARENA_MAX", "2");
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-    let mut child = ChildGuard(command.spawn().context("start bibli-media-worker")?);
-    let mut input = child.0.stdin.take().context("video worker stdin")?;
-    #[cfg(unix)]
-    {
-        // A wedged decoder must not trap its manager in a full command pipe;
-        // cancellation still needs to reach ChildGuard and reap the process.
-        let flags = rustix::fs::fcntl_getfl(&input)?;
-        rustix::fs::fcntl_setfl(&input, flags | rustix::fs::OFlags::NONBLOCK)?;
-    }
-    let output = child.0.stdout.take().context("video worker stdout")?;
-    let (tx, replies) = crossbeam_channel::bounded(2);
-    std::thread::Builder::new()
-        .name("bibli-video-replies".into())
-        .spawn(move || {
-            let mut reader = BufReader::new(output);
-            loop {
-                let mut bytes = Vec::new();
-                let result = (|| -> anyhow::Result<Reply> {
-                    let n = Read::by_ref(&mut reader)
-                        .take((MAX_MESSAGE + 1) as u64)
-                        .read_until(b'\n', &mut bytes)?;
-                    anyhow::ensure!(
-                        n > 0 && n <= MAX_MESSAGE && bytes.last() == Some(&b'\n'),
-                        "invalid or closed video worker output"
-                    );
-                    Ok(serde_json::from_slice(&bytes)?)
-                })();
-                let failed = result.is_err();
-                if tx.send(result).is_err() || failed {
-                    break;
-                }
-            }
-        })?;
-    let send = |input: &mut std::process::ChildStdin, request: &Request| -> anyhow::Result<()> {
-        serde_json::to_writer(&mut *input, request)?;
-        input.write_all(b"\n")?;
-        input.flush()?;
-        Ok(())
-    };
+    let mut worker = LineChannel::<Reply>::spawn(&mut command, MAX_MESSAGE, "bibli-media-worker")?;
     let cancelled = lifetime.subscribe();
     // Fires once; after the greeting it is simply never selected again.
     let deadline = crossbeam_channel::at(Instant::now() + STARTUP_TIMEOUT);
@@ -360,12 +313,12 @@ fn manage(
         let reply = crossbeam_channel::select! {
             recv(commands) -> request => {
                 let Ok(request) = request else { break; };
-                send(&mut input, &request)?;
+                worker.send(&request)?;
                 continue;
             }
-            recv(replies) -> reply => {
-                let result = reply.context("video worker exited")?;
-                if result.is_err() && !ready && child.0.try_wait()?.is_some_and(|status| status.code() == Some(127)) {
+            recv(worker.replies()) -> reply => {
+                let result = reply.map_err(|_| anyhow::anyhow!("video worker exited")).and_then(|r| r);
+                if result.is_err() && !ready && worker.child().try_wait()?.is_some_and(|status| status.code() == Some(127)) {
                     // A dynamic loader reports missing shared libraries with 127.
                     // Decoder/file errors have a protocol reply and never fall back.
                     let _ = startup.send(Ok(false));
@@ -420,11 +373,11 @@ fn manage(
                         bgra,
                     },
                 );
-                send(&mut input, &Request::Consumed)?;
+                worker.send(&Request::Consumed)?;
             }
         }
     }
-    // ChildGuard reaps before scratch is removed. Neither runs on the UI.
+    // The channel reaps its child before scratch is removed. Neither runs on the UI.
     Ok(())
 }
 
