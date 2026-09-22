@@ -29,6 +29,8 @@ pub struct Session {
     /// Whether Details is open under the preview.
     pub details: bool,
     pub timeline: bool,
+    /// How tall the pinned player's dock was dragged.
+    pub player_height: f32,
 }
 
 impl Shell {
@@ -42,6 +44,7 @@ impl Shell {
             preview_width: self.preview.width,
             details: self.preview.details_open,
             timeline: self.timeline.open,
+            player_height: self.player.height,
         }
     }
 

@@ -612,6 +612,11 @@ impl Shell {
                         let playing = self.preview.playing_path();
                         let session = match &self.player.pinned {
                             Some(pinned) if Some(&pinned.path) == playing.as_ref() => {
+                                // It has been playing all along: the panel
+                                // takes its state and its frames as they
+                                // are, with no poster to wait behind.
+                                self.preview.media.state = pinned.state.clone();
+                                self.preview.media.show_live();
                                 Arc::clone(&pinned.session)
                             }
                             _ => session,
@@ -1366,6 +1371,7 @@ impl Shell {
     /// Root-level hook so edge drags are tracked anywhere in the window.
     pub fn resize_hook<E: InteractiveElement>(&self, el: E, cx: &mut Context<Self>) -> E {
         el.on_drag_move(cx.listener(Self::on_resize_drag))
+            .on_drag_move(cx.listener(Self::on_dock_drag))
             .on_drag_move(cx.listener(Self::on_column_drag))
             .on_mouse_up(
                 gpui::MouseButton::Left,
@@ -1502,7 +1508,13 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
     if p.media.session.is_some() && shell.media_is_audio() {
         let figure = crate::media::audio_content(shell, theme);
         return if interactive {
-            crate::media::surface("audio-surface", figure, shell, cx)
+            crate::media::surface(
+                "audio-surface",
+                figure,
+                crate::media::Flash::Preview,
+                shell,
+                cx,
+            )
         } else {
             figure
         };
@@ -1602,7 +1614,13 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
             };
             // A film answers a click like a player does.
             let picture = if p.media.session.is_some() && interactive {
-                crate::media::surface("video-surface", picture, shell, cx)
+                crate::media::surface(
+                    "video-surface",
+                    picture,
+                    crate::media::Flash::Preview,
+                    shell,
+                    cx,
+                )
             } else {
                 picture
             };
@@ -1865,7 +1883,12 @@ pub fn max_width(window: f32, panes: usize, sidebar: bool) -> f32 {
 
 /// `limit` is `Shell::preview_width_limit`: the remembered width is kept as
 /// the user left it and only drawn narrower while the window is too small.
-pub fn render_panel(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyElement> {
+pub fn render_panel(
+    shell: &Shell,
+    limit: f32,
+    dock_limit: f32,
+    cx: &mut Context<Shell>,
+) -> Option<AnyElement> {
     if !shell.preview.open {
         return None;
     }
@@ -1901,6 +1924,7 @@ pub fn render_panel(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Optio
             .bg(theme.surface)
             .child(header(shell, &theme, cx))
             .child(body(shell, &theme, !shell.preview.peek, cx))
+            .children(crate::dock::render(shell, dock_limit, cx))
             .child(handle)
             .into_any_element(),
     )

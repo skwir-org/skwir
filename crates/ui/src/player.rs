@@ -2,9 +2,12 @@
 //!
 //! A preview dies with the selection, and its media session with it. Pinned,
 //! the session belongs to the window instead: browsing goes on, the music
-//! too, and the status bar holds what is needed to steer it. The panel shows
-//! the same session again whenever its file is selected; there is never a
-//! second player for one file, and never two playing at once.
+//! (or the film) too, and the dock at the foot of the preview panel
+//! (`dock.rs`) holds it: cover or picture, visualizer, transport. With the
+//! panel closed the status bar keeps a strip of the controls instead. The
+//! panel shows the same session again whenever its file is selected, and
+//! the dock steps aside while it does; there is never a second player for
+//! one file, and never two playing at once.
 //!
 //! Whichever plays, pinned or previewed, is published as core's
 //! `playing::NowPlaying`, and what others ask of it (`PlayerRequest`: the
@@ -19,7 +22,7 @@ use bibli_core::media::{Control, MediaSession, Playback};
 use bibli_core::playing::{NowPlaying, PlayerRequest};
 use bibli_core::preview::PreviewRequest;
 use bibli_core::{CancelToken, op::EntryRef, scheduler::Priority};
-use gpui::{AnyElement, Context, Window, div, prelude::*, px};
+use gpui::{AnyElement, Context, RenderImage, Window, div, prelude::*, px};
 
 use crate::shell::Shell;
 use crate::theme::Theme;
@@ -41,6 +44,15 @@ pub struct Pinned {
     /// The tracks Next and Previous walk: the folder's, or the playlist's.
     pub queue: Vec<PathBuf>,
     pub index: usize,
+    /// A film rather than music: the dock shows its frames, not a cover.
+    pub video: bool,
+    /// The cover of the track, for the dock: the panel's picture when
+    /// pinned, then whatever the cover worker finds for each track.
+    pub cover: Option<Arc<RenderImage>>,
+    /// The film's last frame, with its size.
+    pub frame: Option<(Arc<RenderImage>, u32, u32)>,
+    /// Where the seek bar's knob is being dragged to, in seconds.
+    pub scrub: Option<f64>,
 }
 
 impl Drop for Pinned {
@@ -80,8 +92,18 @@ pub struct PlayerState {
     /// The track whose cover was asked for, and the file it was written to
     /// once a worker has done so.
     cover: Option<(PathBuf, Option<PathBuf>)>,
-    cover_tx: flume::Sender<(PathBuf, PathBuf)>,
-    cover_rx: flume::Receiver<(PathBuf, PathBuf)>,
+    cover_tx: flume::Sender<(PathBuf, PathBuf, bibli_core::thumbs::Image)>,
+    cover_rx: flume::Receiver<(PathBuf, PathBuf, bibli_core::thumbs::Image)>,
+    /// The dock's height, as dragged; `dock::COMPACT` until it is.
+    pub height: f32,
+    /// The colour of the cover shown, by image: worked out once per cover.
+    pub tint: std::cell::Cell<Option<(gpui::ImageId, Option<gpui::Hsla>)>>,
+    /// The dock's answer to a click on its picture (`media::surface`).
+    pub flash: Option<(u64, bool)>,
+    /// The dock asked for fullscreen, which is the panel's: granted once the
+    /// panel shows the pinned film.
+    pub fullscreen_wanted: bool,
+    pub focus: Option<gpui::FocusHandle>,
     /// Whether anything was published, to say once that nothing plays.
     published: bool,
     /// The previewed track that has actually played. Selecting a song is not
@@ -111,6 +133,11 @@ impl Default for PlayerState {
             published: false,
             engaged: None,
             was_playing: false,
+            height: crate::dock::COMPACT,
+            tint: std::cell::Cell::new(None),
+            flash: None,
+            fullscreen_wanted: false,
+            focus: None,
         }
     }
 }
@@ -143,13 +170,20 @@ impl Shell {
         let Some(session) = self.preview.media.session.clone() else {
             return;
         };
-        if !self.media_is_audio() {
-            return self.set_status("Only audio keeps playing", false, cx);
-        }
         let Some(path) = self.preview.playing_path() else {
             return;
         };
-        let (queue, index) = self.pin_queue(&path);
+        let video = !self.media_is_audio();
+        let (queue, index) = self.pin_queue(&path, video);
+        let picture = match &self.preview.content {
+            Some(crate::preview::PreviewContent::Image {
+                image,
+                width,
+                height,
+                ..
+            }) => Some((Arc::clone(image), *width, *height)),
+            _ => None,
+        };
         self.player.pinned = Some(Pinned {
             session,
             queued: None,
@@ -158,13 +192,27 @@ impl Shell {
             path,
             queue,
             index,
+            video,
+            cover: picture
+                .as_ref()
+                .filter(|_| !video)
+                .map(|(image, ..)| Arc::clone(image)),
+            frame: picture.filter(|_| video),
+            scrub: None,
         });
+        // A film needs room to be seen; music is fine in a row.
+        if video && self.player.height < crate::dock::TALL_FROM {
+            self.player.height = crate::dock::VIDEO_HEIGHT;
+        }
+        self.player.focus.get_or_insert_with(|| cx.focus_handle());
+        self.remember_session();
         cx.notify();
     }
 
-    /// The tracks a pin walks. A folder's are known at once; a playlist's
-    /// are resolved by its provider on a worker and arrive later.
-    fn pin_queue(&mut self, path: &std::path::Path) -> (Vec<PathBuf>, usize) {
+    /// The tracks a pin walks: the files of the same kind (music, or films)
+    /// in the folder, known at once; a playlist's are resolved by its
+    /// provider on a worker and arrive later.
+    fn pin_queue(&mut self, path: &std::path::Path, video: bool) -> (Vec<PathBuf>, usize) {
         if let (Some(queue), Some(key)) = (&self.preview.queue, self.preview.path()) {
             let (previews, tx, wake) = (
                 Arc::clone(&self.app.previews),
@@ -215,10 +263,13 @@ impl Shell {
             .iter()
             .filter_map(|id| {
                 let entry = pane.listing.get(*id)?;
-                let audio = !entry.is_dir()
+                let kind = if video { "video/" } else { "audio/" };
+                let same_kind = !entry.is_dir()
                     && bibli_platform::mime::by_name(&entry.name)
-                        .is_some_and(|mime| mime.as_str().starts_with("audio/"));
-                audio.then(|| pane.open.as_ref()?.path_of(*id)).flatten()
+                        .is_some_and(|mime| mime.as_str().starts_with(kind));
+                same_kind
+                    .then(|| pane.open.as_ref()?.path_of(*id))
+                    .flatten()
             })
             .take(Self::QUEUE_TRACKS)
             .collect();
@@ -313,7 +364,7 @@ impl Shell {
             "player-cover",
             self.app.lifetime().child(),
             move || {
-                let cover = || -> Option<PathBuf> {
+                let cover = || -> Option<(PathBuf, bibli_core::thumbs::Image)> {
                     let request = PreviewRequest {
                         entry: EntryRef::from_path(&track)?,
                         mime: bibli_platform::mime::by_name(track.as_os_str())
@@ -332,10 +383,10 @@ impl Shell {
                     track.hash(&mut hasher);
                     let file = directory.join(format!("{:016x}.png", hasher.finish()));
                     picture.save(&file).ok()?;
-                    Some(file)
+                    Some((file, image))
                 };
-                if let Some(file) = cover() {
-                    let _ = tx.send((track, file));
+                if let Some((file, image)) = cover() {
+                    let _ = tx.send((track, file, image));
                     wake();
                 }
             },
@@ -343,11 +394,18 @@ impl Shell {
     }
 
     pub fn sync_player(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        while let Ok((track, file)) = self.player.cover_rx.try_recv() {
+        while let Ok((track, file, image)) = self.player.cover_rx.try_recv() {
             if let Some((wanted, cover)) = &mut self.player.cover
                 && *wanted == track
             {
                 *cover = Some(file);
+            }
+            if let Some(pinned) = &mut self.player.pinned
+                && pinned.path == track
+                && !pinned.video
+            {
+                pinned.cover = crate::thumbs::to_render_image(&image);
+                cx.notify();
             }
         }
         while let Ok((current, paths)) = self.player.queue_rx.try_recv() {
@@ -382,6 +440,9 @@ impl Shell {
                         volume: pinned.state.volume,
                         ..Playback::default()
                     };
+                    // Another track: its own cover comes when found.
+                    pinned.cover = None;
+                    pinned.frame = None;
                 }
                 Ok(None) => {
                     opened.lifetime.cancel();
@@ -426,10 +487,26 @@ impl Shell {
                 }
                 if let Some(path) = update.advanced {
                     pinned.advance(&path);
+                    pinned.frame = None;
+                    cx.notify();
+                }
+                // A film's frames go to the dock while the panel shows
+                // something else; the slot is bounded by the worker.
+                if let Some(frame) = update.frame.filter(|_| pinned.video)
+                    && let Some(buffer) =
+                        image::RgbaImage::from_raw(frame.width, frame.height, frame.bgra)
+                {
+                    let image = Arc::new(RenderImage::new(smallvec::SmallVec::from_buf([
+                        image::Frame::new(buffer),
+                    ])));
+                    pinned.frame = Some((image, frame.width, frame.height));
                     cx.notify();
                 }
                 failed = update.error;
             }
+        }
+        if shown && std::mem::take(&mut self.player.fullscreen_wanted) {
+            self.media_fullscreen(window, cx);
         }
         if let Some(error) = failed {
             self.player.pinned = None;
@@ -442,6 +519,36 @@ impl Shell {
             self.player_request(request, window, cx);
         }
         self.publish_now_playing();
+    }
+
+    /// `ui.player_mute`: the pinned player's sound, on or off.
+    pub fn player_mute(&mut self, cx: &mut Context<Self>) {
+        if let Some(pinned) = &self.player.pinned {
+            let _ = pinned.session.control(Control::Mute(!pinned.state.muted));
+            cx.notify();
+        }
+    }
+
+    /// The dock's seek bar being dragged: the knob follows the pointer and
+    /// the session is told where on release.
+    pub fn player_scrub(&mut self, phase: &str, fraction: f32, cx: &mut Context<Self>) {
+        let Some(pinned) = &mut self.player.pinned else {
+            return;
+        };
+        let Some(duration) = pinned.state.duration.filter(|_| pinned.state.seekable) else {
+            return;
+        };
+        let seconds = f64::from(fraction.clamp(0., 1.)) * duration;
+        match phase {
+            "down" => pinned.scrub = Some(seconds),
+            "move" if pinned.scrub.is_some() => pinned.scrub = Some(seconds),
+            "up" if pinned.scrub.take().is_some() => {
+                pinned.state.position = seconds;
+                let _ = pinned.session.control(Control::Seek(seconds));
+            }
+            _ => {}
+        }
+        cx.notify();
     }
 
     /// The session requests go to, and its state: the pin's, else the panel's
@@ -586,10 +693,14 @@ impl Shell {
     }
 }
 
-/// The pin in the status bar: what plays, and the three controls that matter
-/// when the panel shows something else.
+/// The pin in the status bar while the preview panel is closed and the dock
+/// with it: what plays, and the three controls that matter.
 pub fn render_status(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    let pinned = shell.player.pinned.as_ref()?;
+    let pinned = shell
+        .player
+        .pinned
+        .as_ref()
+        .filter(|_| !shell.preview.open)?;
     let state = &pinned.state;
     let title = if state.title.is_empty() {
         pinned

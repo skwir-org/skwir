@@ -22,6 +22,8 @@ pub const CONFIRM: &str = "Confirm";
 pub const PEEK: &str = "Peek";
 pub const READER: &str = "DocumentReader";
 pub const IMAGE: &str = "ImagePreview";
+/// The pinned player's dock.
+pub const PLAYER: &str = "Player";
 pub const REVIEW: &str = "Review";
 pub const JUMP: &str = "Jump";
 pub const BULK: &str = "BulkRename";
@@ -186,6 +188,39 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         Some("MediaPlayer"),
     ),
     ("f", "ui.media_fullscreen", "{}", Some("MediaPlayer")),
+    // The dock steers the pinned player through the same requests the
+    // desktop's media keys send.
+    (
+        "space",
+        "ui.player",
+        r#"{"request":"play_pause"}"#,
+        Some("Player"),
+    ),
+    (
+        "left",
+        "ui.player",
+        r#"{"request":{"seek_by":-5.0}}"#,
+        Some("Player"),
+    ),
+    (
+        "right",
+        "ui.player",
+        r#"{"request":{"seek_by":5.0}}"#,
+        Some("Player"),
+    ),
+    (
+        "shift-left",
+        "ui.player",
+        r#"{"request":"previous"}"#,
+        Some("Player"),
+    ),
+    (
+        "shift-right",
+        "ui.player",
+        r#"{"request":"next"}"#,
+        Some("Player"),
+    ),
+    ("m", "ui.player_mute", "{}", Some("Player")),
     ("c", "ui.media_controls", "{}", Some("MediaPlayer")),
     ("escape", "ui.media_escape", "{}", Some("MediaPlayer")),
     (
@@ -400,6 +435,7 @@ pub fn context_label(context: &str) -> String {
             "Jump" => place = "Jump",
             "BulkRename" => place = "Bulk rename",
             "MediaPlayer" => place = "Media player",
+            "Player" => place = "Pinned player",
             "Inspector" => place = "Structured previews",
             "ToolbarButton" | "ToolbarPopup" => place = "Toolbars",
             "ContextMenu" => place = "Context menu",

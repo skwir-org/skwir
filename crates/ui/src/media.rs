@@ -74,6 +74,13 @@ impl Drop for MediaState {
 }
 
 impl MediaState {
+    /// Show the session's frames as they come, with no poster first: for a
+    /// session that is already playing.
+    pub(crate) fn show_live(&mut self) {
+        self.poster = Poster::Dismissed;
+        self.initial_frame = None;
+    }
+
     /// The lifetime the next session of this preview is opened with.
     pub(crate) fn lifetime(&self) -> bibli_core::CancelToken {
         self.lifetime.clone()
@@ -313,42 +320,58 @@ impl Shell {
     /// A click on the picture, as on any video site: one toggles playback and
     /// says so with a flash in the middle; a double click on a film also
     /// goes fullscreen (or comes back), after the second click undid the
-    /// first, so the film plays as it did before.
+    /// first, so the film plays as it did before. `on` says which player
+    /// answers: the panel's, or the pinned one in the dock.
     pub fn media_clicked(
         &mut self,
+        on: Flash,
         event: &gpui::ClickEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.preview.media.session.is_none() {
-            return;
-        }
-        let playing = !self.preview.media.state.playing();
-        self.media_control(&serde_json::json!({"action": "play"}), cx);
-        if event.click_count() == 2 {
-            if !self.media_is_audio() {
-                self.media_fullscreen(window, cx);
+        let double = event.click_count() == 2;
+        let playing = match on {
+            Flash::Preview => {
+                if self.preview.media.session.is_none() {
+                    return;
+                }
+                let playing = !self.preview.media.state.playing();
+                self.media_control(&serde_json::json!({"action": "play"}), cx);
+                if double && !self.media_is_audio() {
+                    self.media_fullscreen(window, cx);
+                }
+                playing
             }
-            self.preview.media.flash = None;
-            cx.notify();
-            return;
+            Flash::Dock => {
+                let Some(pinned) = &self.player.pinned else {
+                    return;
+                };
+                let (playing, video) = (!pinned.state.playing(), pinned.video);
+                self.player_request(bibli_core::playing::PlayerRequest::PlayPause, window, cx);
+                if double && video {
+                    // Fullscreen is the panel's: show the film there first.
+                    self.player.fullscreen_wanted = true;
+                    self.player_reveal(window, cx);
+                }
+                playing
+            }
+        };
+        if double {
+            *self.flash_slot(on) = None;
+            return cx.notify();
         }
         self.preview.media.flashes += 1;
         let flash = self.preview.media.flashes;
-        self.preview.media.flash = Some((flash, playing));
+        *self.flash_slot(on) = Some((flash, playing));
         // Gone once its entrance has ended; one repaint, not a loop.
         cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(FLASH_MS + 60))
                 .await;
             this.update(cx, |shell, cx| {
-                if shell
-                    .preview
-                    .media
-                    .flash
-                    .is_some_and(|(seq, _)| seq == flash)
-                {
-                    shell.preview.media.flash = None;
+                let slot = shell.flash_slot(on);
+                if slot.is_some_and(|(seq, _)| seq == flash) {
+                    *slot = None;
                     cx.notify();
                 }
             })
@@ -356,6 +379,13 @@ impl Shell {
         })
         .detach();
         cx.notify();
+    }
+
+    fn flash_slot(&mut self, on: Flash) -> &mut Option<(u64, bool)> {
+        match on {
+            Flash::Preview => &mut self.preview.media.flash,
+            Flash::Dock => &mut self.player.flash,
+        }
     }
 
     pub fn media_control(&mut self, args: &serde_json::Value, cx: &mut Context<Self>) {
@@ -602,16 +632,29 @@ pub fn flash_at(delta: f32) -> (f32, f32) {
     (1. - eased, 56. + 12. * delta + 24. * eased)
 }
 
+/// Which player a click on a picture steers: the panel's preview, or the
+/// pinned one in the dock. Each has a flash of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Flash {
+    Preview,
+    Dock,
+}
+
 /// The picture with the click behaviour of a player on it: `inner` is the
 /// film or the audio figure, laid out as it was, and the flash sits over its
 /// middle while it lasts.
 pub fn surface(
     id: &'static str,
     inner: AnyElement,
+    on: Flash,
     shell: &Shell,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
-    let flash = shell.preview.media.flash.map(|(seq, playing)| {
+    let flash = match on {
+        Flash::Preview => shell.preview.media.flash,
+        Flash::Dock => shell.player.flash,
+    };
+    let flash = flash.map(|(seq, playing)| {
         div()
             .absolute()
             .inset_0()
@@ -654,9 +697,11 @@ pub fn surface(
         .flex_col()
         .child(inner)
         .children(flash)
-        .on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
-            this.media_clicked(event, window, cx);
-        }))
+        .on_click(
+            cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+                this.media_clicked(on, event, window, cx);
+            }),
+        )
         .into_any_element()
 }
 
@@ -696,6 +741,7 @@ pub fn fullscreen(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
                             .size_full()
                             .object_fit(gpui::ObjectFit::Contain)
                             .into_any_element(),
+                        Flash::Preview,
                         shell,
                         cx,
                     )),
@@ -746,9 +792,90 @@ fn control(
         .args(serde_json::json!({"action": action, "value":value}))
 }
 
-fn seek_bar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
+/// A phase of dragging a seek bar's knob, with the bar's fraction under the
+/// pointer. Whoever owns the player decides what a phase does, and ignores
+/// a move or a release it never saw the press of.
+pub type Scrub = Rc<dyn Fn(&mut Shell, &str, f32, &mut Window, &mut Context<Shell>)>;
+
+/// A seek bar drawn at `fraction`, reporting presses, moves and releases
+/// through `scrub`. The same bar serves the panel's player and the dock's.
+pub(crate) fn seek_bar_of(
+    id: &'static str,
+    fraction: f32,
+    theme: &Theme,
+    scrub: Scrub,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
     let bounds = Rc::new(Cell::new(Bounds::<Pixels>::default()));
     let measured = bounds.clone();
+    let coordinate = |bounds: Bounds<Pixels>, x: Pixels| {
+        f32::from(x - bounds.origin.x) / f32::from(bounds.size.width).max(1.)
+    };
+    let phase = |name: &'static str| {
+        let (bounds, scrub) = (bounds.clone(), scrub.clone());
+        cx.listener(move |this, position: &gpui::Point<Pixels>, window, cx| {
+            scrub(this, name, coordinate(bounds.get(), position.x), window, cx);
+        })
+    };
+    let (down, moved, up, up_out) = (phase("down"), phase("move"), phase("up"), phase("up"));
+    div()
+        .id(id)
+        .relative()
+        .flex_1()
+        .min_w(px(40.))
+        .h(px(30.))
+        .cursor_pointer()
+        .child(
+            gpui::canvas(move |b, _, _| measured.set(b), |_, (), _, _| {})
+                .absolute()
+                .size_full(),
+        )
+        .child(
+            div()
+                .absolute()
+                .top(px(13.))
+                .h(px(4.))
+                .w_full()
+                .rounded_full()
+                .bg(theme.border),
+        )
+        .child(
+            div()
+                .absolute()
+                .top(px(13.))
+                .h(px(4.))
+                .w(gpui::relative(fraction))
+                .rounded_full()
+                .bg(theme.accent),
+        )
+        .on_mouse_down(
+            MouseButton::Left,
+            move |ev: &gpui::MouseDownEvent, window, cx| {
+                down(&ev.position, window, cx);
+                cx.stop_propagation();
+            },
+        )
+        .on_mouse_move(move |ev: &gpui::MouseMoveEvent, window, cx| {
+            moved(&ev.position, window, cx);
+        })
+        .on_mouse_up(
+            MouseButton::Left,
+            move |ev: &gpui::MouseUpEvent, window, cx| {
+                up(&ev.position, window, cx);
+            },
+        )
+        .on_mouse_up_out(
+            MouseButton::Left,
+            move |ev: &gpui::MouseUpEvent, window, cx| {
+                up_out(&ev.position, window, cx);
+            },
+        )
+        .into_any_element()
+}
+
+/// The panel's seek bar: scrubbing goes through `ui.media_scrub` on the
+/// panel's pane.
+fn seek_bar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
     let state = &shell.preview.media.state;
     let duration = state.duration.unwrap_or(0.);
     let position = shell.preview.media.scrub.unwrap_or(state.position);
@@ -758,35 +885,20 @@ fn seek_bar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement
         0.
     };
     let pane = shell.pane;
-    let down = bounds.clone();
-    let moved = bounds.clone();
-    let up = bounds.clone();
-    let coordinate = |bounds: Bounds<Pixels>, x: Pixels| {
-        f32::from(x - bounds.origin.x) / f32::from(bounds.size.width).max(1.)
-    };
-    div().id("video-seek").relative().flex_1().min_w(px(40.)).h(px(30.)).cursor_pointer()
-        .child(gpui::canvas(move |b, _, _| measured.set(b), |_, (), _, _| {}).absolute().size_full())
-        .child(div().absolute().top(px(13.)).h(px(4.)).w_full().rounded_full().bg(theme.border))
-        .child(div().absolute().top(px(13.)).h(px(4.)).w(gpui::relative(fraction)).rounded_full().bg(theme.accent))
-        .on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &gpui::MouseDownEvent, window, cx| {
-            this.with_pane(pane, |this| this.run("ui.media_scrub", serde_json::json!({"phase":"down", "fraction":coordinate(down.get(), ev.position.x)}), window, cx));
-            cx.stop_propagation();
-        }))
-        .on_mouse_move(cx.listener(move |this, ev: &gpui::MouseMoveEvent, window, cx| {
-            if this.preview.media.scrub.is_some() {
-                this.with_pane(pane, |this| this.run("ui.media_scrub", serde_json::json!({"phase":"move", "fraction":coordinate(moved.get(), ev.position.x)}), window, cx));
-            }
-        }))
-        .on_mouse_up(MouseButton::Left, cx.listener(move |this, ev: &gpui::MouseUpEvent, window, cx| {
-            if this.preview.media.scrub.is_some() {
-                this.with_pane(pane, |this| this.run("ui.media_scrub", serde_json::json!({"phase":"up", "fraction":coordinate(up.get(), ev.position.x)}), window, cx));
-            }
-        }))
-        .on_mouse_up_out(MouseButton::Left, cx.listener(move |this, ev: &gpui::MouseUpEvent, window, cx| {
-            if this.preview.media.scrub.is_some() {
-                this.with_pane(pane, |this| this.run("ui.media_scrub", serde_json::json!({"phase":"up", "fraction":coordinate(bounds.get(), ev.position.x)}), window, cx));
-            }
-        })).into_any_element()
+    let scrub: Scrub = Rc::new(move |this, phase, fraction, window, cx| {
+        if phase != "down" && this.preview.media.scrub.is_none() {
+            return;
+        }
+        this.with_pane(pane, |this| {
+            this.run(
+                "ui.media_scrub",
+                serde_json::json!({"phase": phase, "fraction": fraction}),
+                window,
+                cx,
+            );
+        });
+    });
+    seek_bar_of("video-seek", fraction, theme, scrub, cx)
 }
 
 pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
@@ -896,19 +1008,18 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         )
         .active(shell.preview.media.fullscreen.is_some()),
     ));
-    if shell.media_is_audio() {
-        bar.push(Item::button(
-            Slot::View,
-            1,
-            Button::new(
-                "audio-pin",
-                "pin",
-                "Keep playing while you browse",
-                "ui.media_pin",
-            )
-            .active(shell.preview_is_pinned()),
-        ));
-    }
+    // Music and films alike keep playing in the dock.
+    bar.push(Item::button(
+        Slot::View,
+        1,
+        Button::new(
+            "media-pin",
+            "pin",
+            "Keep playing while you browse",
+            "ui.media_pin",
+        )
+        .active(shell.preview_is_pinned()),
+    ));
     bar.settings = Some(std::rc::Rc::new(settings));
     crate::preview_bar::render(&bar, crate::preview::active_popup(shell), shell, theme, cx)
 }
@@ -1007,20 +1118,16 @@ fn settings(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
     rows
 }
 
-/// Cover and metadata remain visible during playback; spectrum has no UI timer.
-pub fn audio_content(shell: &Shell, theme: &Theme) -> AnyElement {
-    let p = &shell.preview;
-    let state = &p.media.state;
-    let cover = match &p.content {
-        Some(PreviewContent::Image { image, .. }) => Some(image.clone()),
-        _ => None,
-    };
-    // The cover's colour, worked out once per cover, not per frame.
-    let tint = cover
-        .as_ref()
+/// The colour a cover is drawn with, worked out once per cover through
+/// `cache`, never per frame; the accent without a cover or for a grey one.
+pub(crate) fn cover_tint(
+    cover: Option<&Arc<RenderImage>>,
+    cache: &Cell<Option<(gpui::ImageId, Option<gpui::Hsla>)>>,
+    theme: &Theme,
+) -> gpui::Hsla {
+    cover
         .and_then(|cover| {
-            let cached = p.media.tint.get();
-            if let Some((id, colour)) = cached
+            if let Some((id, colour)) = cache.get()
                 && id == cover.id
             {
                 return colour;
@@ -1029,10 +1136,21 @@ pub fn audio_content(shell: &Shell, theme: &Theme) -> AnyElement {
                 .as_bytes(0)
                 .and_then(crate::elements::halo::tint)
                 .map(crate::elements::halo::vivid);
-            p.media.tint.set(Some((cover.id, colour)));
+            cache.set(Some((cover.id, colour)));
             colour
         })
-        .unwrap_or(theme.accent);
+        .unwrap_or(theme.accent)
+}
+
+/// The audio player's figure: the halo round the cover, the title and the
+/// artist and album under it. Drawn for the panel and, pinned, for the dock.
+pub(crate) fn audio_figure(
+    state: &Playback,
+    name: &str,
+    cover: Option<Arc<RenderImage>>,
+    tint: gpui::Hsla,
+    theme: &Theme,
+) -> AnyElement {
     let line = |text: &str, muted: bool| {
         div()
             .flex_none()
@@ -1075,7 +1193,7 @@ pub fn audio_content(shell: &Shell, theme: &Theme) -> AnyElement {
         )
         .child(div().flex_none().max_w_full().truncate().text_lg().child(
             if state.title.is_empty() {
-                p.info.name.clone()
+                name.to_owned()
             } else {
                 state.title.clone()
             },
@@ -1083,6 +1201,17 @@ pub fn audio_content(shell: &Shell, theme: &Theme) -> AnyElement {
         .child(line(&state.artist, true))
         .child(line(&state.album, true))
         .into_any_element()
+}
+
+/// Cover and metadata remain visible during playback; spectrum has no UI timer.
+pub fn audio_content(shell: &Shell, theme: &Theme) -> AnyElement {
+    let p = &shell.preview;
+    let cover = match &p.content {
+        Some(PreviewContent::Image { image, .. }) => Some(image.clone()),
+        _ => None,
+    };
+    let tint = cover_tint(cover.as_ref(), &p.media.tint, theme);
+    audio_figure(&p.media.state, &p.info.name, cover, tint, theme)
 }
 
 #[cfg(test)]

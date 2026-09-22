@@ -285,6 +285,9 @@ impl Shell {
         if session.preview_width > 0. {
             self.preview.width = session.preview_width;
         }
+        if session.player_height > 0. {
+            self.player.height = session.player_height;
+        }
         self.timeline.open = session.timeline;
         if !session.view.is_empty() {
             self.restoring_view = Some(session.view);
@@ -962,6 +965,7 @@ impl Shell {
             "inspect" => self.inspect_command(args, window, cx),
             "media_control" => self.media_control(args, cx),
             "media_pin" => self.media_pin(cx),
+            "player_mute" => self.player_mute(cx),
             "player" => {
                 let request = args.get("request").cloned().unwrap_or_default();
                 match serde_json::from_value(request) {
@@ -1374,7 +1378,12 @@ impl Render for Shell {
             }
             _ => {}
         }
-        let panel = preview::render_panel(self, self.preview_width_limit(window), cx);
+        let panel = preview::render_panel(
+            self,
+            self.preview_width_limit(window),
+            self.dock_height_limit(window),
+            cx,
+        );
         let status_bar = status::render(self, cx);
         // Not deferred: GPUI cannot nest deferred draws and the dialog's own
         // dropdowns are. It is the last overlay, so it paints above the rest.

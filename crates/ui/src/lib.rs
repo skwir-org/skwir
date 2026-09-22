@@ -20,6 +20,7 @@ mod code_preview;
 pub mod controls;
 mod details;
 pub mod dnd;
+pub mod dock;
 mod dragicon;
 pub mod elements;
 pub mod format;

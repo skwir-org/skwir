@@ -55,6 +55,9 @@ impl Shell {
     }
 }
 
+/// The bar's height: the dock above it measures its drag from the bottom.
+pub const HEIGHT: f32 = 26.;
+
 pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let selection = shell.selection_ctx();
@@ -81,7 +84,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
         (false, _) => format::count(count, "item"),
     };
     let mut bar = div()
-        .h(px(26.))
+        .h(px(HEIGHT))
         .w_full()
         .flex()
         .flex_row()

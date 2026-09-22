@@ -93,17 +93,33 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
   as shown (`preview::Queue`), and the player's Previous, Next and hand-over
   then walk that queue instead of the folder; leaving the playlist forgets it.
 - Keep playing (`player.rs`). A preview dies with the selection and its media
-  session with it; pinned (`ui.media_pin`, audio only), the session belongs to
-  the window. A media session has a lifetime of its own (`MediaState`), not
-  the reader's, which the pin takes with it and gives back when unpinned, so
-  neither going away ends the other's session. The panel shows the pinned
-  session again whenever its file is selected: never a second player for one
-  file. Starting another track while one is pinned moves the pin: never two
-  playing at once. One reader pulls a session's updates, the panel when it
-  shows the session, otherwise the pin. The pin walks a queue of paths, the
-  folder's audio files in the pane's order or the playlist's tracks (resolved
-  on a worker), opens the next on a worker, and hands over at the end of a
-  track. The status bar holds its controls; its title shows the track.
+  session with it; pinned (`ui.media_pin`, music or a film), the session
+  belongs to the window. A media session has a lifetime of its own
+  (`MediaState`), not the reader's, which the pin takes with it and gives
+  back when unpinned, so neither going away ends the other's session. The
+  panel shows the pinned session again whenever its file is selected, taking
+  its state and its frames live (`MediaState::show_live`, no poster to wait
+  behind): never a second player for one file. Starting another track while
+  one is pinned moves the pin: never two playing at once. One reader pulls a
+  session's updates, the panel when it shows the session, otherwise the pin,
+  which keeps a film's last frame for the dock. The pin walks a queue of
+  paths, the folder's files of the same kind in the pane's order or the
+  playlist's tracks (resolved on a worker), opens the next on a worker, and
+  hands over at the end of a track.
+- The dock (`dock.rs`) is the pinned player's home: a strip at the foot of
+  the preview panel with the cover or the film, a bar meter of the spectrum,
+  the transport, the seek bar and a close button. Its height is dragged on
+  its top edge and remembered with the window's shape, a preference decided
+  in render like the panel's width, never a measured size: below `TALL_FROM`
+  a row, above it the panel's halo figure; a film takes whatever height it
+  is given (`VIDEO_HEIGHT` when pinned into a compact dock). It steps aside
+  while the panel shows the pinned session itself, and while the panel is
+  closed the status bar keeps a strip of the controls instead, so the
+  controls move but are never lost. Its picture answers clicks through
+  `media::surface` (`Flash::Dock`); a double click on a film reveals it in
+  the panel, which goes fullscreen once it shows the session
+  (`fullscreen_wanted`). The dock's keys (`Player` context: Space, Left,
+  Right, Shift+Left/Right, M) send the same `PlayerRequest`s as the desktop.
 - What plays is core data. `App::player` holds `playing::NowPlaying`, which
   the shell publishes once per wake for the pin or, without one, the audio
   preview; listeners hear of changes, not of time passing, and work out the

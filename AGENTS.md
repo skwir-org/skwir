@@ -183,10 +183,12 @@ current source before assuming a planned crate, command, or API exists.
   publishes `playing::NowPlaying` in `App::player`; whoever shows or steers it
   (the desktop's media controls through a plugin, a script, an agent) reads it
   and leaves a `PlayerRequest`, which the shell takes when it next wakes.
-  Audio can be pinned to keep playing while the selection moves
-  (`crates/ui/src/player.rs`); the status bar then holds its controls, an
-  exception to "state, never messages" only in that a player is state.
-  See `docs/invariants/media.md`.
+  Music or a film can be pinned to keep playing while the selection moves
+  (`crates/ui/src/player.rs`); the dock at the foot of the preview panel
+  (`dock.rs`) then holds it, cover or picture, meter and transport, as tall
+  as its top edge is dragged; with the panel closed the status bar keeps a
+  strip of its controls, an exception to "state, never messages" only in
+  that a player is state. See `docs/invariants/media.md`.
 - **Volumes.** The places plugin lists mounted volumes from mountinfo and
   present-but-unmounted ones from `lsblk` (on a worker). A place with
   `activate` runs that command instead of navigating: `places.mount`, or
