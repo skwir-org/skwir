@@ -91,8 +91,8 @@ Found by looking at all fourteen kinds in a window and reading the code.
 A section of the frame, not a preview kind.
 
 - **Placement (decided, revised):** the header is a card (icon, name, type ·
-  size · date) and clicking it opens Details between the toolbar and the
-  content, up to half the panel; the bottom bar it first had repeated the
+  size · date) and clicking it, or Ctrl+I, opens Details right under the
+  card, up to half the panel; the bottom bar it first had repeated the
   header. Details fills the body when there is no preview (including folders
   and several entries selected). Its state belongs to `session.rs`.
 - **Groups:** General · Location (path, link target) · Permissions (owner,

@@ -1233,7 +1233,13 @@ impl Shell {
 
     /// `ui.preview_details`: open or close Details under the preview.
     pub fn preview_details(&mut self, cx: &mut Context<Self>) {
-        self.preview.details_open = !self.preview.details_open;
+        // With the panel closed, Ctrl+I asks for the details: open both.
+        if !self.preview.open && !self.preview.peek {
+            self.preview.open = true;
+            self.preview.details_open = true;
+        } else {
+            self.preview.details_open = !self.preview.details_open;
+        }
         self.remember_session();
         cx.notify();
     }
@@ -1386,6 +1392,17 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
         .flex()
         .flex_col()
         .when(document && interactive, |d| d.key_context(keymap::READER));
+    // Details opens right under the card that opened it, above the toolbar
+    // and the content. With nothing to preview it is the whole body instead,
+    // under the toolbar and whatever the content has to say (why the preview
+    // failed), so neither ends up at the bottom.
+    let alone = crate::details::alone(shell);
+    let mut details = Some(())
+        .filter(|()| interactive || alone)
+        .and_then(|()| crate::details::render(shell, theme, cx));
+    if !alone {
+        frame = frame.children(details.take());
+    }
     if interactive && !shell.preview.info.name.is_empty() {
         let controls = if matches!(shell.preview.content, Some(PreviewContent::Inspection(_))) {
             crate::inspector::toolbar(shell, theme, cx)
@@ -1415,18 +1432,11 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
             shell.preview.media.focus.as_ref().filter(|_| interactive),
             |d, focus| d.track_focus(focus).key_context("MediaPlayer"),
         )
-        // Details opens between the toolbar and the content: the toolbar
-        // stays with the header, the content moves down.
-        .children(
-            Some(())
-                .filter(|()| interactive || crate::details::alone(shell))
-                .and_then(|()| crate::details::render(shell, theme, cx)),
-        )
         .child(
             div()
                 .flex()
                 .flex_col()
-                .when(!crate::details::alone(shell), gpui::Styled::flex_1)
+                .when(!alone, gpui::Styled::flex_1)
                 .min_h_0()
                 // What is read is on paper; a picture, a page or a film keeps
                 // the panel's own surface as its letterbox.
@@ -1448,6 +1458,7 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
                 )
                 .child(content(shell, theme, interactive, cx)),
         )
+        .children(details)
         .into_any_element()
 }
 
@@ -1702,8 +1713,8 @@ fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
 /// Everything the panel knows at a glance: the entry's icon, its name (a
 /// trail inside a container), and one line of type, size and date. The card
 /// is the one place that says what the panel shows; Details, which opens
-/// under the toolbar when the card is clicked, holds the rest and repeats
-/// none of it. With nothing to preview Details is always open and the card
+/// right under it when the card is clicked (or Ctrl+I), holds the rest and
+/// repeats none of it. With nothing to preview Details is always open and the card
 /// has no chevron. The peek overlay alone keeps a close button: the panel
 /// is closed by the Preview button that opened it.
 fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {

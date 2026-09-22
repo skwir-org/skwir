@@ -280,8 +280,8 @@ pub fn alone(shell: &Shell) -> bool {
         )
 }
 
-/// The section, between the toolbar and the content: open on demand under a
-/// preview, taking up to half the panel; the whole of the panel's body when
+/// The section: open on demand right under the header's card, above the
+/// toolbar, taking up to half the panel; the whole of the panel's body when
 /// `alone`. The header's card is what opens it, and holds the name, type,
 /// size and date, so the groups here repeat none of those.
 pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {

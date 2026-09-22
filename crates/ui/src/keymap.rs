@@ -114,6 +114,7 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     // F3 splits and F11 shows the side panel, as in Dolphin; inside a
     // document F3 stays "next match", the deeper context wins.
     ("f11", "ui.toggle_preview", None),
+    ("ctrl-i", "ui.preview_details", None),
     ("f3", "ui.split", None),
     ("space", "ui.peek_close", Some("peek")),
     ("escape", "ui.peek_close", Some("peek")),

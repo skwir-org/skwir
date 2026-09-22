@@ -115,9 +115,9 @@ still to come are in `docs/preview-frame.md`.
   preview: everything known about what the panel shows that the header does
   not say (no Name or Type row: the header has them). With nothing to
   preview (a folder, an unknown file, an error) it is the whole body; under
-  a preview it opens between the toolbar and the content, up to half the
-  panel, so the toolbar stays with the header and the content moves down.
-  Whether it is open belongs to the window's shape (`session.rs`).
+  a preview it opens right under the card, above the toolbar, up to half
+  the panel (Ctrl+I; with the panel closed, Ctrl+I opens both). Whether it
+  is open belongs to the window's shape (`session.rs`).
   Facts come from three places and none is read while painting: the entry's
   metadata with its provenance, collected when the entry, its listing or the
   selection changes (`entry_groups`, pure and tested); what the preview
