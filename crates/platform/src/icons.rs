@@ -1,4 +1,11 @@
 //! Icon theme lookup. Cached; never touches the network.
+//!
+//! A lookup that misses the cache reads the icon theme from disk, through up
+//! to four themes, and the first one also lists every installed theme: it
+//! blocks, so it belongs on a worker, never in a render. The UI asks
+//! [`try_cached`] while drawing and runs [`lookup`] (or [`for_mime`],
+//! [`folder`], [`unknown`], each a few lookups) on a worker for what it
+//! did not have; a later [`try_cached`] then answers.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -6,7 +13,8 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::mime::Mime;
 
-/// The active icon theme name.
+/// The active icon theme name. Lists the installed themes the first time:
+/// blocks.
 pub fn theme_name() -> String {
     static NAME: OnceLock<String> = OnceLock::new();
     NAME.get_or_init(imp::detect_theme).clone()
@@ -17,8 +25,16 @@ fn cache() -> &'static Mutex<HashMap<(String, u16), Option<PathBuf>>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// What [`lookup`] found for `name` at `size`, if it has already run:
+/// `None` when it has not, `Some(None)` when the themes have no such icon.
+/// Never touches the filesystem, so it is safe in a render.
+pub fn try_cached(name: &str, size: u16) -> Option<Option<PathBuf>> {
+    cache().lock().ok()?.get(&(name.to_owned(), size)).cloned()
+}
+
 /// Find `name` at `size` px in the active theme (with fallbacks).
-/// Returns a `.png` or `.svg` path.
+/// Returns a `.png` or `.svg` path. Reads the theme on a cache miss: blocks,
+/// call it from a worker.
 pub fn lookup(name: &str, size: u16) -> Option<PathBuf> {
     let key = (name.to_owned(), size);
     if let Some(hit) = cache().lock().ok()?.get(&key) {
@@ -32,6 +48,7 @@ pub fn lookup(name: &str, size: u16) -> Option<PathBuf> {
 }
 
 /// Icon for a MIME type: specific, then generic, then a last resort.
+/// Blocks like [`lookup`].
 pub fn for_mime(mime: &Mime, size: u16) -> Option<PathBuf> {
     lookup(&mime.icon_name(), size)
         .or_else(|| lookup(&mime.generic_icon_name(), size))
@@ -134,7 +151,9 @@ mod tests {
             "unexpected icon format: {}",
             p.display()
         );
-        assert_eq!(lookup("folder", 48), Some(p));
+        assert_eq!(lookup("folder", 48), Some(p.clone()));
+        assert_eq!(try_cached("folder", 48), Some(Some(p)));
+        assert_eq!(try_cached("folder", 47), None, "never looked up");
         assert!(
             cache()
                 .lock()

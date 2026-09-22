@@ -64,127 +64,130 @@ impl ThumbSize {
     }
 }
 
-/// Percent-encode a path for a `file://` URI as the spec (and `GLib`) does:
-/// unreserved characters and `/` pass through, everything else is `%XX`.
-pub fn file_uri(path: &Path) -> String {
-    use std::fmt::Write;
-    let bytes = os_bytes(path.as_os_str());
-    let mut s = String::with_capacity(bytes.len() + 7);
-    s.push_str("file://");
-    for &b in bytes {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
-                s.push(b as char);
-            }
-            _ => {
-                let _ = write!(s, "%{b:02X}");
-            }
-        }
-    }
-    s
-}
-
-#[cfg(unix)]
-fn os_bytes(s: &std::ffi::OsStr) -> &[u8] {
-    std::os::unix::ffi::OsStrExt::as_bytes(s)
-}
-
-#[cfg(not(unix))]
-fn os_bytes(s: &std::ffi::OsStr) -> &[u8] {
-    // Lossy on non-Unix; thumbnails are looked up by the platform crate there anyway.
-    s.to_str().map_or(&[], str::as_bytes)
-}
-
-/// The spec's cache key for an absolute path.
+/// The spec's cache key for an absolute path: the MD5 of its URI, escaped
+/// as `GLib` escapes it (`crate::uri::file_uri`).
 pub fn key(path: &Path) -> String {
-    format!("{:x}", md5::compute(file_uri(path)))
+    format!("{:x}", md5::compute(crate::uri::file_uri(path)))
 }
 
-/// Root of the thumbnail cache.
-pub fn cache_dir() -> Option<PathBuf> {
-    dirs::cache_dir().map(|c| c.join("thumbnails"))
+/// A thumbnail cache directory: the desktop's, shared with every other
+/// application, or an explicit one for tests and the bench, so nobody has
+/// to rewrite `XDG_CACHE_HOME` in a running process.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ThumbCache {
+    root: PathBuf,
 }
 
-/// Find a fresh cached thumbnail for `path`, at `size` or larger.
-/// `path` must be absolute. Stale (mtime mismatch) thumbnails are ignored.
-pub fn lookup(path: &Path, size: ThumbSize) -> Option<PathBuf> {
-    let root = cache_dir()?;
-    let key = key(path);
-    let mtime = std::fs::symlink_metadata(path)
-        .ok()?
-        .modified()
-        .ok()?
-        .duration_since(UNIX_EPOCH)
-        .ok()?
-        .as_secs();
-    ThumbSize::ALL.iter().filter(|s| **s >= size).find_map(|s| {
-        let candidate = root.join(s.dir_name()).join(format!("{key}.png"));
-        let thumb_mtime = png_text_chunk(&candidate, "Thumb::MTime")?;
-        (thumb_mtime.trim().parse::<u64>().ok() == Some(mtime)).then_some(candidate)
-    })
-}
-
-/// `lookup` then decode: the cached thumbnail as RGBA8 pixels.
-pub fn load(path: &Path, size: ThumbSize) -> Option<Image> {
-    let png = lookup(path, size)?;
-    let img = image::open(&png).ok()?.into_rgba8();
-    Some(Image {
-        width: img.width(),
-        height: img.height(),
-        rgba: img.into_raw().into(),
-    })
-}
-
-/// Write `image` into the cache for `path` per the spec: PNG with
-/// `Thumb::URI`, `Thumb::MTime`, `Thumb::Size` and `Software` text chunks,
-/// written to a temp file in the size directory and renamed into place,
-/// file mode 0600, directory 0700. Returns the thumbnail path.
-pub fn store(
-    path: &Path,
-    size: ThumbSize,
-    image: &Image,
-    mtime: SystemTime,
-) -> anyhow::Result<PathBuf> {
-    use anyhow::Context;
-    let meta =
-        std::fs::symlink_metadata(path).with_context(|| format!("stat {}", path.display()))?;
-    anyhow::ensure!(meta.is_file(), "{} is not a regular file", path.display());
-    anyhow::ensure!(path.is_absolute(), "{} is not absolute", path.display());
-    anyhow::ensure!(
-        image.width.max(image.height) <= size.pixels(),
-        "image {}x{} exceeds the {} size",
-        image.width,
-        image.height,
-        size.dir_name()
-    );
-    let root = cache_dir().context("no cache directory")?;
-    let dir = root.join(size.dir_name());
-    std::fs::create_dir_all(&dir)?;
-    set_mode(&dir, 0o700);
-    let key = key(path);
-    let secs = mtime.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    let tmp = dir.join(format!(".bibli-{}-{key}.png", std::process::id()));
-    {
-        let file = std::fs::File::create(&tmp)?;
-        set_mode(&tmp, 0o600);
-        let w = std::io::BufWriter::new(file);
-        let mut enc = png::Encoder::new(w, image.width, image.height);
-        enc.set_color(png::ColorType::Rgba);
-        enc.set_depth(png::BitDepth::Eight);
-        enc.add_text_chunk("Thumb::URI".into(), file_uri(path))?;
-        enc.add_text_chunk("Thumb::MTime".into(), secs.to_string())?;
-        enc.add_text_chunk("Thumb::Size".into(), meta.len().to_string())?;
-        enc.add_text_chunk("Software".into(), "bibli".into())?;
-        let mut writer = enc.write_header()?;
-        writer.write_image_data(&image.rgba)?;
-        writer.finish()?;
+impl ThumbCache {
+    /// `$XDG_CACHE_HOME/thumbnails`.
+    pub fn desktop() -> Option<Self> {
+        dirs::cache_dir().map(|cache| Self::at(cache.join("thumbnails")))
     }
-    let dest = dir.join(format!("{key}.png"));
-    if let Err(e) = std::fs::rename(&tmp, &dest) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.into());
+
+    /// A cache rooted at `root`, which holds the `normal`, `large`, …
+    /// directories.
+    pub fn at(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
     }
-    Ok(dest)
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Find a fresh cached thumbnail for `path`, at `size` or larger.
+    /// `path` must be absolute. Stale (mtime mismatch) thumbnails are ignored.
+    pub fn lookup(&self, path: &Path, size: ThumbSize) -> Option<PathBuf> {
+        let key = key(path);
+        let mtime = std::fs::symlink_metadata(path)
+            .ok()?
+            .modified()
+            .ok()?
+            .duration_since(UNIX_EPOCH)
+            .ok()?
+            .as_secs();
+        ThumbSize::ALL.iter().filter(|s| **s >= size).find_map(|s| {
+            let candidate = self.root.join(s.dir_name()).join(format!("{key}.png"));
+            let thumb_mtime = png_text_chunk(&candidate, "Thumb::MTime")?;
+            (thumb_mtime.trim().parse::<u64>().ok() == Some(mtime)).then_some(candidate)
+        })
+    }
+
+    /// `lookup` then decode: the cached thumbnail as RGBA8 pixels, at most
+    /// `size` on its longest side. A larger size class serves a smaller
+    /// request (a desktop on a high-density screen writes `x-large`), shrunk here so
+    /// callers never hold 16 times the pixels they asked for.
+    pub fn load(&self, path: &Path, size: ThumbSize) -> Option<Image> {
+        let png = self.lookup(path, size)?;
+        let file = crate::file::open_regular(&png).ok()?;
+        let img =
+            image::ImageReader::with_format(std::io::BufReader::new(file), image::ImageFormat::Png)
+                .decode()
+                .ok()?;
+        let px = size.pixels();
+        let img = if img.width().max(img.height()) > px {
+            img.thumbnail(px, px)
+        } else {
+            img
+        };
+        let img = img.into_rgba8();
+        Some(Image {
+            width: img.width(),
+            height: img.height(),
+            rgba: img.into_raw().into(),
+        })
+    }
+
+    /// Write `image` into the cache for `path` per the spec: PNG with
+    /// `Thumb::URI`, `Thumb::MTime`, `Thumb::Size` and `Software` text chunks,
+    /// written to a private temp file in the size directory and renamed into
+    /// place, file mode 0600, directory 0700. Returns the thumbnail path.
+    pub fn store(
+        &self,
+        path: &Path,
+        size: ThumbSize,
+        image: &Image,
+        mtime: SystemTime,
+    ) -> anyhow::Result<PathBuf> {
+        use anyhow::Context;
+        let meta =
+            std::fs::symlink_metadata(path).with_context(|| format!("stat {}", path.display()))?;
+        anyhow::ensure!(meta.is_file(), "{} is not a regular file", path.display());
+        anyhow::ensure!(path.is_absolute(), "{} is not absolute", path.display());
+        anyhow::ensure!(
+            image.width.max(image.height) <= size.pixels(),
+            "image {}x{} exceeds the {} size",
+            image.width,
+            image.height,
+            size.dir_name()
+        );
+        let dir = self.root.join(size.dir_name());
+        std::fs::create_dir_all(&dir)?;
+        set_mode(&dir, 0o700);
+        let key = key(path);
+        let secs = mtime.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        // Created 0600 with a unique name: never readable by others, and two
+        // stores of one key do not write into each other's file.
+        let staged = tempfile::Builder::new()
+            .prefix(".bibli-")
+            .suffix(".png")
+            .tempfile_in(&dir)?;
+        {
+            let w = std::io::BufWriter::new(staged.as_file());
+            let mut enc = png::Encoder::new(w, image.width, image.height);
+            enc.set_color(png::ColorType::Rgba);
+            enc.set_depth(png::BitDepth::Eight);
+            enc.add_text_chunk("Thumb::URI".into(), crate::uri::file_uri(path))?;
+            enc.add_text_chunk("Thumb::MTime".into(), secs.to_string())?;
+            enc.add_text_chunk("Thumb::Size".into(), meta.len().to_string())?;
+            enc.add_text_chunk("Software".into(), "bibli".into())?;
+            let mut writer = enc.write_header()?;
+            writer.write_image_data(&image.rgba)?;
+            writer.finish()?;
+        }
+        let dest = dir.join(format!("{key}.png"));
+        staged.persist(&dest).map_err(|e| e.error)?;
+        Ok(dest)
+    }
 }
 
 #[cfg(unix)]
@@ -200,7 +203,7 @@ fn set_mode(_p: &Path, _mode: u32) {}
 /// Only the chunk headers up to `IDAT` are visited.
 pub fn png_text_chunk(png: &Path, keyword: &str) -> Option<String> {
     use std::io::{Read, Seek, SeekFrom};
-    let mut f = std::fs::File::open(png).ok()?;
+    let mut f = crate::file::open_regular(png).ok()?;
     let mut sig = [0u8; 8];
     f.read_exact(&mut sig).ok()?;
     if sig != [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A] {
@@ -240,22 +243,14 @@ mod tests {
     fn spec_example_hash() {
         // From the freedesktop thumbnail spec, "Thumbnail Filename".
         let p = Path::new("/home/jens/photos/me.png");
-        assert_eq!(file_uri(p), "file:///home/jens/photos/me.png");
+        assert_eq!(crate::uri::file_uri(p), "file:///home/jens/photos/me.png");
         assert_eq!(key(p), "c6ee772d9e49320e97ec29a7eb5b1697");
     }
 
     #[test]
-    fn uri_encoding_escapes_spaces_and_unicode() {
-        let p = Path::new("/tmp/a b/é.png");
-        assert_eq!(file_uri(p), "file:///tmp/a%20b/%C3%A9.png");
-    }
-
-    #[test]
-    #[allow(unsafe_code)]
     fn store_then_lookup_and_load_round_trip() {
         let cache = tempfile::tempdir().unwrap();
-        // SAFETY: nextest runs each test in its own process; nothing else reads the env here.
-        unsafe { std::env::set_var("XDG_CACHE_HOME", cache.path()) };
+        let thumbs = ThumbCache::at(cache.path().join("thumbnails"));
         let src_dir = tempfile::tempdir().unwrap();
         let src = src_dir.path().join("photo.jpg");
         std::fs::write(&src, b"not really a jpeg, only its mtime matters").unwrap();
@@ -265,7 +260,7 @@ mod tests {
             height: 3,
             rgba: vec![200u8; 2 * 3 * 4].into(),
         };
-        let dest = store(&src, ThumbSize::Normal, &img, mtime).unwrap();
+        let dest = thumbs.store(&src, ThumbSize::Normal, &img, mtime).unwrap();
         assert_eq!(
             dest,
             cache
@@ -275,14 +270,14 @@ mod tests {
         );
         assert_eq!(
             png_text_chunk(&dest, "Thumb::URI").as_deref(),
-            Some(file_uri(&src).as_str())
+            Some(crate::uri::file_uri(&src).as_str())
         );
         assert_eq!(png_text_chunk(&dest, "Software").as_deref(), Some("bibli"));
         assert_eq!(
-            lookup(&src, ThumbSize::Normal).as_deref(),
+            thumbs.lookup(&src, ThumbSize::Normal).as_deref(),
             Some(dest.as_path())
         );
-        let back = load(&src, ThumbSize::Normal).unwrap();
+        let back = thumbs.load(&src, ThumbSize::Normal).unwrap();
         assert_eq!((back.width, back.height), (2, 3));
         assert_eq!(&back.rgba[..4], &[200, 200, 200, 200]);
         #[cfg(unix)]
@@ -293,6 +288,16 @@ mod tests {
                 0o600
             );
         }
+        // A larger size class serves a smaller request, shrunk to it.
+        let large = Image {
+            width: 256,
+            height: 128,
+            rgba: vec![7u8; 256 * 128 * 4].into(),
+        };
+        std::fs::remove_file(&dest).unwrap();
+        thumbs.store(&src, ThumbSize::Large, &large, mtime).unwrap();
+        let back = thumbs.load(&src, ThumbSize::Normal).unwrap();
+        assert_eq!((back.width, back.height), (128, 64));
         // Touching the source makes the thumbnail stale.
         std::fs::File::options()
             .write(true)
@@ -300,7 +305,7 @@ mod tests {
             .unwrap()
             .set_modified(mtime + std::time::Duration::from_secs(5))
             .unwrap();
-        assert!(lookup(&src, ThumbSize::Normal).is_none());
+        assert!(thumbs.lookup(&src, ThumbSize::Normal).is_none());
     }
 
     #[test]

@@ -35,8 +35,8 @@ enum Cmd {
     /// Measure listing and stat throughput, print JSON.
     List {
         /// Number of repetitions; min and median are reported.
-        #[arg(long, default_value_t = 5)]
-        runs: usize,
+        #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u16).range(1..))]
+        runs: u16,
         /// Profiles to measure; all when omitted.
         profiles: Vec<Profile>,
     },
@@ -44,8 +44,8 @@ enum Cmd {
     Check {
         #[arg(long, default_value = "crates/bench/budgets.toml")]
         budgets: PathBuf,
-        #[arg(long, default_value_t = 5)]
-        runs: usize,
+        #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u16).range(1..))]
+        runs: u16,
     },
 }
 
@@ -61,7 +61,7 @@ fn main() -> Result<()> {
             let mut all = serde_json::Map::new();
             for p in profiles::or_all(profiles) {
                 generate::generate(&cli.root, p)?;
-                let r = measure::run(&cli.root, p, runs);
+                let r = measure::run(&cli.root, p, usize::from(runs));
                 all.insert(p.name().to_owned(), serde_json::to_value(r)?);
             }
             println!("{}", serde_json::to_string_pretty(&all)?);
@@ -73,7 +73,7 @@ fn main() -> Result<()> {
             let mut failed = false;
             for p in Profile::ALL {
                 generate::generate(&cli.root, p)?;
-                let r = measure::run(&cli.root, p, runs);
+                let r = measure::run(&cli.root, p, usize::from(runs));
                 failed |= !measure::check(p, &r, &budgets);
             }
             if failed {

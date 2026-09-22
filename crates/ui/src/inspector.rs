@@ -843,7 +843,7 @@ fn has_scheme(href: &str) -> bool {
 /// read the way the author wrote it: next to their file.
 fn document_link(from: &std::path::Path, href: &str) -> Option<std::path::PathBuf> {
     let href = href.split(['#', '?']).next().filter(|h| !h.is_empty())?;
-    let href = bibli_platform::places::percent_decode(href);
+    let href = String::from_utf8_lossy(&bibli_platform::uri::percent_decode(href)).into_owned();
     let path = if let Some(rest) = href.strip_prefix("file://") {
         // file://host/path is not ours to resolve; file:///path is.
         std::path::PathBuf::from(rest.strip_prefix('/').map(|p| format!("/{p}"))?)

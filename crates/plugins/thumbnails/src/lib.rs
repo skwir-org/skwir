@@ -66,7 +66,7 @@ impl Plugin for ThumbnailsPlugin {
         app.thumbnails
             .set_budget(usize::try_from(budget_mb).unwrap_or(64) << 20);
         app.thumbnails
-            .register(ID, Arc::new(FreedesktopCache { write_back }));
+            .register(ID, Arc::new(FreedesktopCache::desktop(write_back)));
         app.thumbnails.register(ID, Arc::new(ImageDecoder));
         let thumbnailers = Thumbnailers::from_system();
         if !thumbnailers.is_empty() {

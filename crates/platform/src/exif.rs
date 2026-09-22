@@ -14,7 +14,7 @@ use crate::inspection::{detail, limits};
 
 /// The facts worth a row, in the order they are shown.
 pub fn details(path: &Path) -> Vec<Detail> {
-    let Ok(file) = std::fs::File::open(path) else {
+    let Ok(file) = crate::file::open_regular(path) else {
         return Vec::new();
     };
     // The reader seeks to the metadata and stops; the bound is for a segment

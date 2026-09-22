@@ -3,6 +3,7 @@
 //! decoder, and the desktop's installed `*.thumbnailer` programs.
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -13,7 +14,7 @@ use bibli_core::cancel::CancelToken;
 use bibli_core::thumbs::{Image, ThumbRequest, ThumbnailProvider};
 use image::{DynamicImage, ImageDecoder as _};
 
-use crate::thumbnails::{self, ThumbSize};
+use crate::thumbnails::{ThumbCache, ThumbSize};
 
 /// MIME of a request: the caller's, else guessed from the file name.
 fn mime_of(req: &ThumbRequest) -> Option<Arc<str>> {
@@ -49,7 +50,28 @@ fn fit(img: DynamicImage, px: u32) -> Image {
 /// providers produce so every other application benefits too.
 #[derive(Debug, Clone)]
 pub struct FreedesktopCache {
-    pub write_back: bool,
+    /// `None` when there is no cache directory at all.
+    cache: Option<ThumbCache>,
+    write_back: bool,
+}
+
+impl FreedesktopCache {
+    /// The desktop's cache (`$XDG_CACHE_HOME/thumbnails`); `write_back`
+    /// stores what later providers make.
+    pub fn desktop(write_back: bool) -> Self {
+        Self {
+            cache: ThumbCache::desktop(),
+            write_back,
+        }
+    }
+
+    /// A cache at an explicit root, for tests and the bench.
+    pub fn at(cache: ThumbCache, write_back: bool) -> Self {
+        Self {
+            cache: Some(cache),
+            write_back,
+        }
+    }
 }
 
 impl ThumbnailProvider for FreedesktopCache {
@@ -58,7 +80,7 @@ impl ThumbnailProvider for FreedesktopCache {
     }
 
     fn accepts(&self, req: &ThumbRequest) -> bool {
-        req.entry.path.is_absolute() && is_regular_file(&req.entry.path)
+        self.cache.is_some() && req.entry.path.is_absolute() && is_regular_file(&req.entry.path)
     }
 
     fn thumbnail(
@@ -66,16 +88,16 @@ impl ThumbnailProvider for FreedesktopCache {
         req: &ThumbRequest,
         _cancel: &CancelToken,
     ) -> anyhow::Result<Option<Image>> {
-        Ok(thumbnails::load(
-            &req.entry.path,
-            ThumbSize::from_core(req.size),
-        ))
+        Ok(self
+            .cache
+            .as_ref()
+            .and_then(|cache| cache.load(&req.entry.path, ThumbSize::from_core(req.size))))
     }
 
     fn store(&self, req: &ThumbRequest, image: &Image) {
-        if !self.write_back {
+        let Some(cache) = self.cache.as_ref().filter(|_| self.write_back) else {
             return;
-        }
+        };
         let mtime = req.mtime.or_else(|| {
             std::fs::symlink_metadata(&req.entry.path)
                 .ok()?
@@ -83,7 +105,7 @@ impl ThumbnailProvider for FreedesktopCache {
                 .ok()
         });
         let Some(mtime) = mtime else { return };
-        if let Err(e) = thumbnails::store(
+        if let Err(e) = cache.store(
             &req.entry.path,
             ThumbSize::from_core(req.size),
             image,
@@ -139,8 +161,8 @@ impl ThumbnailProvider for ImageDecoder {
     fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
         let path = &req.entry.path;
         let open = || -> anyhow::Result<image::ImageReader<BufReader<std::fs::File>>> {
-            let f =
-                std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+            let f = crate::file::open_regular(path)
+                .with_context(|| format!("open {}", path.display()))?;
             Ok(image::ImageReader::new(BufReader::new(f)).with_guessed_format()?)
         };
         let (w, h) = open()?.into_dimensions()?;
@@ -234,15 +256,6 @@ pub fn default_thumbnailer_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-fn on_path(program: &str) -> bool {
-    let p = Path::new(program);
-    if p.is_absolute() {
-        return p.is_file();
-    }
-    std::env::var_os("PATH")
-        .is_some_and(|paths| std::env::split_paths(&paths).any(|d| d.join(program).is_file()))
-}
-
 /// Read every `*.thumbnailer` in `dirs`, keeping the first definition of a
 /// name and dropping those whose `TryExec` is not installed.
 pub fn discover(dirs: &[PathBuf]) -> Vec<ThumbnailerEntry> {
@@ -272,7 +285,11 @@ pub fn discover(dirs: &[PathBuf]) -> Vec<ThumbnailerEntry> {
             let Some(entry) = parse_thumbnailer(&name, &text) else {
                 continue;
             };
-            if entry.try_exec.as_deref().is_some_and(|t| !on_path(t)) {
+            if entry
+                .try_exec
+                .as_deref()
+                .is_some_and(|t| bibli_core::os_path::find_program(t).is_none())
+            {
                 continue;
             }
             out.push(entry);
@@ -327,30 +344,40 @@ fn shell_words(s: &str) -> Vec<String> {
 }
 
 /// Substitute `%i`, `%o`, `%s`, `%u`, `%%` in an `Exec` line, per word.
-pub fn substitute_exec(exec: &str, input: &Path, output: &Path, size: u32) -> Vec<String> {
-    let uri = thumbnails::file_uri(input);
+/// Paths go in as they are, bytes and all: a name that is not UTF-8 must
+/// reach the thumbnailer as the file that exists.
+pub fn substitute_exec(exec: &str, input: &Path, output: &Path, size: u32) -> Vec<OsString> {
+    let uri = crate::uri::file_uri(input);
     shell_words(exec)
         .into_iter()
         .map(|w| {
-            let mut out = String::with_capacity(w.len());
+            let mut out = OsString::with_capacity(w.len());
+            let mut literal = String::new();
             let mut it = w.chars();
             while let Some(c) = it.next() {
                 if c != '%' {
-                    out.push(c);
+                    literal.push(c);
                     continue;
                 }
                 match it.next() {
-                    Some('i') => out.push_str(&input.to_string_lossy()),
-                    Some('o') => out.push_str(&output.to_string_lossy()),
-                    Some('s') => out.push_str(&size.to_string()),
-                    Some('u') => out.push_str(&uri),
-                    Some('%') | None => out.push('%'),
+                    Some('i') => {
+                        out.push(std::mem::take(&mut literal));
+                        out.push(input);
+                    }
+                    Some('o') => {
+                        out.push(std::mem::take(&mut literal));
+                        out.push(output);
+                    }
+                    Some('s') => literal.push_str(&size.to_string()),
+                    Some('u') => literal.push_str(&uri),
+                    Some('%') | None => literal.push('%'),
                     Some(other) => {
-                        out.push('%');
-                        out.push(other);
+                        literal.push('%');
+                        literal.push(other);
                     }
                 }
             }
+            out.push(literal);
             out
         })
         .collect()
@@ -398,6 +425,12 @@ impl Thumbnailers {
         req: &ThumbRequest,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Image>> {
+        // A FIFO named `x.mp4` would hold the thumbnailer until its timeout.
+        anyhow::ensure!(
+            std::fs::metadata(&req.entry.path)?.is_file(),
+            "{} is not a regular file",
+            req.entry.path.display()
+        );
         let scratch = tempfile::tempdir()?;
         let output = scratch.path().join("thumbnail.png");
         let argv = substitute_exec(&entry.exec, &req.entry.path, &output, req.size.pixels());
@@ -485,7 +518,18 @@ mod tests {
                 "%",
                 "file:///p/a%20b.mp4"
             ]
+            .map(OsString::from)
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn paths_that_are_not_utf8_reach_the_thumbnailer_unchanged() {
+        use std::os::unix::ffi::OsStrExt;
+        let input = Path::new(std::ffi::OsStr::from_bytes(b"/p/caf\xe9.mp4"));
+        let argv = substitute_exec("tool --in=%i %o", input, Path::new("/t/o.png"), 128);
+        assert_eq!(argv[1].as_bytes(), b"--in=/p/caf\xe9.mp4");
+        assert_eq!(argv[2], "/t/o.png");
     }
 
     #[test]

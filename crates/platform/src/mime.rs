@@ -53,7 +53,8 @@ pub fn by_name(name: &OsStr) -> Option<Mime> {
 /// `picture.cfg` is a PNG); without a match, `text/plain` when the head is
 /// UTF-8 without NUL, else `application/octet-stream`, which from here, and
 /// only from here, means the bytes were looked at and are binary. `None`
-/// when the file cannot be read.
+/// when the file cannot be read or is not a regular file (a FIFO would
+/// otherwise block until something writes to it).
 pub fn by_content(path: &Path) -> Option<Mime> {
     imp::by_content(path)
 }
@@ -136,7 +137,7 @@ mod imp {
     pub fn by_content(path: &Path) -> Option<Mime> {
         use std::io::Read;
         let mut head = Vec::with_capacity(super::SNIFF);
-        std::fs::File::open(path)
+        crate::file::open_regular(path)
             .ok()?
             .take(super::SNIFF as u64)
             .read_to_end(&mut head)
@@ -252,6 +253,17 @@ mod tests {
             Some("application/x-zerosize".into())
         );
         assert_eq!(by_content(&dir.path().join("missing.cfg")), None);
+        assert_eq!(by_content(dir.path()), None, "a directory has no content");
+        let fifo = dir.path().join("pipe");
+        rustix::fs::mknodat(
+            rustix::fs::CWD,
+            &fifo,
+            rustix::fs::FileType::Fifo,
+            rustix::fs::Mode::from_raw_mode(0o600),
+            0,
+        )
+        .unwrap();
+        assert_eq!(by_content(&fifo), None, "a FIFO is refused, not waited on");
     }
 
     #[test]

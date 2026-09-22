@@ -1,6 +1,11 @@
 //! Places the user already knows: home, XDG user dirs, GTK bookmarks, mounts.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::Duration;
+
+use bibli_core::CancelToken;
 
 /// An XDG user directory.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -159,57 +164,81 @@ pub fn container_of(json: &str, cleartext: &str) -> Option<String> {
         .map(|other| other.path.clone())
 }
 
+/// How long `lsblk` may take: it reads sysfs and udev's database, which
+/// answer at once unless something is badly wrong.
+const LSBLK_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How long udisks may take to mount, unmount, lock or unlock: a key
+/// derivation takes seconds, flushing a slow stick before unmounting longer.
+/// A drive that has not answered by then is not going to.
+const UDISKS_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// Run `lsblk` and return its JSON. Spawns a process: call from a worker.
 pub fn lsblk() -> Option<String> {
-    let output = std::process::Command::new("lsblk")
-        .args(LSBLK_ARGS)
-        .output()
-        .ok()?;
-    output
+    let finished = crate::process::run_to_exit(
+        Command::new("lsblk").args(LSBLK_ARGS),
+        None,
+        &CancelToken::new(),
+        LSBLK_TIMEOUT,
+    )
+    .ok()?;
+    finished
         .status
         .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+        .then(|| String::from_utf8_lossy(&finished.stdout).into_owned())
 }
 
 pub fn unmounted_volumes() -> Vec<Volume> {
     lsblk().map(|json| parse_lsblk(&json)).unwrap_or_default()
 }
 
-fn udisks(verb: &str, device: &str) -> std::process::Command {
-    let mut command = std::process::Command::new("udisksctl");
+/// Run `udisksctl <verb> --block-device <device>`, with `input` on its
+/// standard input, and return what it printed.
+fn udisks(
+    verb: &str,
+    device: &str,
+    extra: &[&str],
+    input: Option<&[u8]>,
+) -> anyhow::Result<String> {
+    let mut command = Command::new("udisksctl");
     command
         .arg(verb)
         .arg("--block-device")
         .arg(device)
-        .arg("--no-user-interaction");
-    command
-}
-
-fn finished(output: std::io::Result<std::process::Output>) -> anyhow::Result<String> {
-    let output = output.map_err(|error| anyhow::anyhow!("udisksctl could not be run: {error}"))?;
-    anyhow::ensure!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr).trim().to_owned()
-    );
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        .arg("--no-user-interaction")
+        .args(extra);
+    let finished =
+        crate::process::run_to_exit(&mut command, input, &CancelToken::new(), UDISKS_TIMEOUT)
+            .map_err(|error| anyhow::anyhow!("udisksctl could not be run: {error:#}"))?;
+    // udisks says what went wrong on standard error, in the user's words.
+    anyhow::ensure!(finished.status.success(), "{}", finished.stderr);
+    Ok(String::from_utf8_lossy(&finished.stdout).into_owned())
 }
 
 /// `Mounted /dev/sdb1 at /run/media/example/USB stick` gives the mount point.
+/// Older udisks end the sentence with a period, newer ones do not; a label
+/// may end with one too, so the period goes only when the path without it is
+/// the directory that exists.
 pub fn mount_point_of(message: &str) -> Option<PathBuf> {
     let (_, path) = message.trim().split_once(" at ")?;
-    Some(PathBuf::from(path.trim_end_matches('.')))
+    let exact = PathBuf::from(path);
+    match path.strip_suffix('.') {
+        Some(shorter) if !exact.is_dir() && Path::new(shorter).is_dir() => {
+            Some(PathBuf::from(shorter))
+        }
+        _ => Some(exact),
+    }
 }
 
 /// `Unlocked /dev/sdb2 as /dev/dm-3.` gives the cleartext device.
 pub fn cleartext_of(message: &str) -> Option<String> {
     let (_, device) = message.trim().split_once(" as ")?;
-    Some(device.trim_end_matches('.').to_owned())
+    Some(device.strip_suffix('.').unwrap_or(device).to_owned())
 }
 
 /// Mount through udisks and return the mount point. Blocks: worker only.
 pub fn mount(device: &str) -> anyhow::Result<PathBuf> {
-    let message = finished(udisks("mount", device).output())?;
+    let message = udisks("mount", device, &[], None)?;
     mount_point_of(&message)
         .ok_or_else(|| anyhow::anyhow!("udisksctl did not say where it mounted the volume"))
 }
@@ -218,20 +247,14 @@ pub fn mount(device: &str) -> anyhow::Result<PathBuf> {
 /// passphrase travels on the child's standard input, never on a command
 /// line, and is not kept. Blocks: worker only.
 pub fn unlock(device: &str, passphrase: &str) -> anyhow::Result<String> {
-    use std::io::Write as _;
-    let mut child = udisks("unlock", device)
-        .arg("--key-file")
-        .arg("/dev/stdin")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|error| anyhow::anyhow!("udisksctl could not be run: {error}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        // No trailing newline: a key file is taken byte for byte.
-        stdin.write_all(passphrase.as_bytes())?;
-    }
-    let message = finished(child.wait_with_output()).map_err(|error| {
+    // No trailing newline: a key file is taken byte for byte.
+    let message = udisks(
+        "unlock",
+        device,
+        &["--key-file", "/dev/stdin"],
+        Some(passphrase.as_bytes()),
+    )
+    .map_err(|error| {
         let text = error.to_string();
         if text.contains("Failed to activate") || text.contains("No key available") {
             anyhow::anyhow!("The passphrase was not accepted")
@@ -247,9 +270,9 @@ pub fn unlock(device: &str, passphrase: &str) -> anyhow::Result<String> {
 /// is safe to unplug and asks for its passphrase next time. Blocks: worker only.
 pub fn unmount(source: &str) -> anyhow::Result<()> {
     let container = lsblk().and_then(|json| container_of(&json, source));
-    finished(udisks("unmount", source).output())?;
+    udisks("unmount", source, &[], None)?;
     if let Some(container) = container {
-        finished(udisks("lock", &container).output())?;
+        udisks("lock", &container, &[], None)?;
     }
     Ok(())
 }
@@ -319,8 +342,7 @@ pub fn parse_bookmarks(text: &str) -> Vec<Bookmark> {
                 Some((u, l)) => (u, Some(l.trim())),
                 None => (l, None),
             };
-            let raw = uri.strip_prefix("file://")?;
-            let path = PathBuf::from(percent_decode(raw));
+            let path = crate::uri::path_of(uri)?;
             let title = label
                 .filter(|s| !s.is_empty())
                 .map(str::to_owned)
@@ -331,56 +353,17 @@ pub fn parse_bookmarks(text: &str) -> Vec<Bookmark> {
         .collect()
 }
 
-/// Decode `%XX` sequences into bytes (lossy UTF-8).
-pub fn percent_decode(s: &str) -> String {
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'%'
-            && i + 2 < b.len()
-            && let Ok(v) =
-                u8::from_str_radix(std::str::from_utf8(&b[i + 1..i + 3]).unwrap_or("zz"), 16)
-        {
-            out.push(v);
-            i += 3;
-            continue;
-        }
-        out.push(b[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-/// `file://` URI of a path, escaping what the bookmarks format and URIs
-/// reserve (space, `%`, control and non-ASCII bytes).
-pub fn file_uri(path: &Path) -> String {
-    use std::fmt::Write as _;
-    let mut uri = String::from("file://");
-    for byte in path.as_os_str().as_encoded_bytes() {
-        if byte.is_ascii_alphanumeric() || b"/-._~!$&'()*+,;=:@".contains(byte) {
-            uri.push(*byte as char);
-        } else {
-            let _ = write!(uri, "%{byte:02X}");
-        }
-    }
-    uri
-}
-
-/// The bookmarks text with `path` added, or `None` if it is already there.
+/// The bookmarks text with `path` added, or `None` if it is already there,
+/// however the application that wrote it escaped its URI.
 pub fn with_bookmark(text: &str, path: &Path) -> Option<String> {
-    let uri = file_uri(path);
-    if text
-        .lines()
-        .any(|line| line.split(' ').next() == Some(uri.as_str()))
-    {
+    if parse_bookmarks(text).iter().any(|b| b.path == path) {
         return None;
     }
     let mut out = text.to_owned();
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
     }
-    out.push_str(&uri);
+    out.push_str(&crate::uri::file_uri(path));
     out.push('\n');
     Some(out)
 }
@@ -388,12 +371,22 @@ pub fn with_bookmark(text: &str, path: &Path) -> Option<String> {
 /// Add a folder to the GTK bookmarks every file manager and file dialog on
 /// the desktop shares. Returns false if it was already bookmarked. Writes a
 /// file: call from a worker.
+///
+/// A bookmarks file that is a link (a dotfile manager's) is updated where
+/// it points, keeping its mode; if that is read-only, as a declarative
+/// configuration is, it is refused rather than replaced by a copy that
+/// silently parts from the declaration.
 pub fn add_bookmark(path: &Path) -> anyhow::Result<bool> {
     use std::io::Write as _;
     let dir = dirs::config_dir()
         .ok_or_else(|| anyhow::anyhow!("no configuration directory"))?
         .join("gtk-3.0");
-    let file = dir.join("bookmarks");
+    let link = dir.join("bookmarks");
+    let file = match std::fs::canonicalize(&link) {
+        Ok(target) => target,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => link,
+        Err(error) => return Err(error.into()),
+    };
     let text = match std::fs::read_to_string(&file) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -402,8 +395,24 @@ pub fn add_bookmark(path: &Path) -> anyhow::Result<bool> {
     let Some(updated) = with_bookmark(&text, path) else {
         return Ok(false);
     };
-    std::fs::create_dir_all(&dir)?;
-    let mut staged = tempfile::NamedTempFile::new_in(&dir)?;
+    let parent = file.parent().unwrap_or(&dir);
+    std::fs::create_dir_all(parent)?;
+    let read_only = |error: &std::io::Error| {
+        matches!(
+            error.kind(),
+            std::io::ErrorKind::ReadOnlyFilesystem | std::io::ErrorKind::PermissionDenied
+        )
+    };
+    let mut staged = match tempfile::NamedTempFile::new_in(parent) {
+        Ok(staged) => staged,
+        Err(error) if read_only(&error) => {
+            anyhow::bail!("the bookmarks file is read-only; add the folder where it is managed")
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if let Ok(metadata) = std::fs::metadata(&file) {
+        std::fs::set_permissions(staged.path(), metadata.permissions())?;
+    }
     staged.write_all(updated.as_bytes())?;
     staged.persist(&file)?;
     Ok(true)
@@ -480,15 +489,19 @@ pub fn parse_mountinfo(text: &str) -> Vec<Mount> {
             path: mountpoint,
             fstype,
             removable,
-            source: rf.get(1).map(|s| unescape_mountinfo(s)).unwrap_or_default(),
+            source: rf
+                .get(1)
+                .map(|s| unescape_mountinfo(s).to_string_lossy().into_owned())
+                .unwrap_or_default(),
         });
     }
     out
 }
 
 /// mountinfo escapes space, tab, newline and backslash as octal `\040` etc.
-fn unescape_mountinfo(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
+/// Every other byte is the path's own, UTF-8 or not.
+fn unescape_mountinfo(s: &str) -> OsString {
+    let mut out = Vec::with_capacity(s.len());
     let b = s.as_bytes();
     let mut i = 0;
     while i < b.len() {
@@ -497,14 +510,24 @@ fn unescape_mountinfo(s: &str) -> String {
             && let Ok(v) =
                 u8::from_str_radix(std::str::from_utf8(&b[i + 1..i + 4]).unwrap_or("zzz"), 8)
         {
-            out.push(v as char);
+            out.push(v);
             i += 4;
             continue;
         }
-        out.push(b[i] as char);
+        out.push(b[i]);
         i += 1;
     }
-    out
+    os_string(out)
+}
+
+#[cfg(unix)]
+fn os_string(bytes: Vec<u8>) -> OsString {
+    std::os::unix::ffi::OsStringExt::from_vec(bytes)
+}
+
+#[cfg(not(unix))]
+fn os_string(bytes: Vec<u8>) -> OsString {
+    String::from_utf8_lossy(&bytes).into_owned().into()
 }
 
 #[cfg(target_os = "linux")]
@@ -580,12 +603,8 @@ mod tests {
     #[test]
     fn bookmarks_are_added_once_as_escaped_uris() {
         let path = std::path::Path::new("/example/Work files/it's 100% done");
-        let uri = super::file_uri(path);
+        let uri = crate::uri::file_uri(path);
         assert_eq!(uri, "file:///example/Work%20files/it's%20100%25%20done");
-        assert_eq!(
-            super::percent_decode(&uri["file://".len()..]),
-            path.to_string_lossy()
-        );
         let first = super::with_bookmark("file:///example/other Other\n", path).unwrap();
         assert_eq!(
             first,
@@ -593,6 +612,14 @@ mod tests {
             "existing bookmarks and their labels are kept"
         );
         assert_eq!(super::with_bookmark(&first, path), None);
+        assert_eq!(
+            super::with_bookmark(
+                "file:///example/Work%20files/it%27s%20100%25%20done\n",
+                path
+            ),
+            None,
+            "another application's escaping names the same folder"
+        );
         assert_eq!(super::with_bookmark("", path).unwrap(), format!("{uri}\n"));
     }
 
@@ -674,8 +701,22 @@ mod tests {
     }
 
     #[test]
-    fn percent_decode_edges() {
-        assert_eq!(percent_decode("a%20b%zz%4"), "a b%zz%4");
-        assert_eq!(percent_decode("%C3%A9"), "é");
+    fn mount_points_keep_their_own_bytes_and_periods() {
+        let mounts = parse_mountinfo(
+            "26 23 0:30 / /run/media/u/Cl\\303\\251\\040A rw - vfat /dev/sdb1 rw\n",
+        );
+        assert_eq!(mounts[0].path, Path::new("/run/media/u/Clé A"));
+        let dir = tempfile::tempdir().unwrap();
+        let label = dir.path().join("Backup.");
+        std::fs::create_dir(&label).unwrap();
+        let old = |path: &Path| format!("Mounted /dev/sdb1 at {}.\n", path.display());
+        let new = |path: &Path| format!("Mounted /dev/sdb1 at {}\n", path.display());
+        assert_eq!(mount_point_of(&old(&label)), Some(label.clone()));
+        assert_eq!(mount_point_of(&new(&label)), Some(label));
+        let other = tempfile::tempdir().unwrap();
+        let plain = other.path().join("Backup");
+        std::fs::create_dir(&plain).unwrap();
+        assert_eq!(mount_point_of(&old(&plain)), Some(plain.clone()));
+        assert_eq!(mount_point_of(&new(&plain)), Some(plain));
     }
 }

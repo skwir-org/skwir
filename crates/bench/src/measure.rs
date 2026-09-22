@@ -56,19 +56,37 @@ pub struct Budgets {
     pub profiles: BTreeMap<String, BTreeMap<String, u64>>,
 }
 
-fn timed<T>(runs: usize, mut f: impl FnMut() -> T) -> Stat {
-    let mut samples: Vec<Duration> = (0..runs)
-        .map(|_| {
-            let t = Instant::now();
-            std::hint::black_box(f());
-            t.elapsed()
-        })
-        .collect();
-    samples.sort();
-    Stat {
-        min_us: samples[0].as_micros() as u64,
-        median_us: samples[samples.len() / 2].as_micros() as u64,
+impl Stat {
+    /// Nothing measured: a metric that does not apply to the profile.
+    const NONE: Stat = Stat {
+        min_us: 0,
+        median_us: 0,
+    };
+
+    /// Min and median of `samples`; `NONE` for no samples.
+    fn of(mut samples: Vec<Duration>) -> Stat {
+        samples.sort();
+        let us = |d: &Duration| u64::try_from(d.as_micros()).unwrap_or(u64::MAX);
+        match (samples.first(), samples.get(samples.len() / 2)) {
+            (Some(min), Some(median)) => Stat {
+                min_us: us(min),
+                median_us: us(median),
+            },
+            _ => Stat::NONE,
+        }
     }
+}
+
+fn timed<T>(runs: usize, mut f: impl FnMut() -> T) -> Stat {
+    Stat::of(
+        (0..runs)
+            .map(|_| {
+                let t = Instant::now();
+                std::hint::black_box(f());
+                t.elapsed()
+            })
+            .collect(),
+    )
 }
 
 fn open_dir(path: &Path) -> rustix::io::Result<rustix::fd::OwnedFd> {
@@ -169,6 +187,10 @@ fn walk_parallel(path: &Path) -> u64 {
     count
 }
 
+/// The longest a listing may take before the bench gives up on it: far
+/// beyond any budget, short of hanging CI.
+const STREAM_DEADLINE: Duration = Duration::from_secs(120);
+
 /// Open `path` through the core provider; return (open, first batch, complete) durations.
 fn stream(app: &bibli_core::App, path: &Path) -> (Duration, Duration, Duration) {
     use bibli_core::location::{ListingEvent, Location};
@@ -179,7 +201,11 @@ fn stream(app: &bibli_core::App, path: &Path) -> (Duration, Duration, Duration) 
     let mut first = None;
     let complete;
     loop {
-        match rx.recv().expect("event") {
+        let left = STREAM_DEADLINE.saturating_sub(t.elapsed());
+        match rx
+            .recv_timeout(left)
+            .unwrap_or_else(|e| panic!("listing {} did not complete: {e}", path.display()))
+        {
             ListingEvent::Added(_) => {
                 first.get_or_insert_with(|| t.elapsed());
             }
@@ -195,16 +221,21 @@ fn stream(app: &bibli_core::App, path: &Path) -> (Duration, Duration, Duration) 
     (opened, first.unwrap_or(complete), complete)
 }
 
-/// Request thumbnails for `paths` through a fresh app with the thumbnails
-/// plugin; return the time until every one is `Ready`, divided by the count.
-fn thumbs_pass(paths: &[std::path::PathBuf], scratch: &Path) -> Duration {
+/// Request thumbnails for `paths` through a fresh app with the providers
+/// the thumbnails plugin registers for images, the cache at `cache`; return
+/// the time until every one is `Ready`, divided by the count.
+fn thumbs_pass(paths: &[std::path::PathBuf], cache: &Path, scratch: &Path) -> Duration {
     use bibli_core::scheduler::Priority;
     use bibli_core::thumbs::{ThumbRequest, ThumbSize, ThumbState};
+    use bibli_platform::thumb_providers::{FreedesktopCache, ImageDecoder};
+    use bibli_platform::thumbnails::ThumbCache;
     let app = bibli_core::App::new(bibli_core::app::AppConfig::ephemeral(scratch)).expect("app");
-    app.plugins.add(
-        std::sync::Arc::new(bibli_plugin_thumbnails::ThumbnailsPlugin),
-        &app,
+    app.thumbnails.register(
+        "bench",
+        std::sync::Arc::new(FreedesktopCache::at(ThumbCache::at(cache), true)),
     );
+    app.thumbnails
+        .register("bench", std::sync::Arc::new(ImageDecoder));
     let reqs: Vec<ThumbRequest> = paths
         .iter()
         .map(|p| ThumbRequest {
@@ -236,10 +267,10 @@ fn thumbs_pass(paths: &[std::path::PathBuf], scratch: &Path) -> Duration {
     t.elapsed() / u32::try_from(paths.len()).unwrap_or(1)
 }
 
-/// Cold and warm thumbnail timings over the first 200 images of `dir`,
-/// with `XDG_CACHE_HOME` pointed at a temp dir for the whole process.
-#[allow(unsafe_code)]
-fn thumbs(dir: &Path, runs: usize) -> (Stat, Stat) {
+/// Cold and warm thumbnail timings over the first 200 images of `dir`, each
+/// run with a fresh thumbnail cache beside the trees, on the same disk
+/// (a cache on tmpfs would make write-back look free).
+fn thumbs(root: &Path, dir: &Path, runs: usize) -> (Stat, Stat) {
     let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
         .expect("images dir")
         .flatten()
@@ -255,20 +286,15 @@ fn thumbs(dir: &Path, runs: usize) -> (Stat, Stat) {
     let mut cold = Vec::new();
     let mut warm = Vec::new();
     for _ in 0..runs {
-        let cache = tempfile::tempdir().expect("tempdir");
-        // SAFETY: the bench is single-threaded at this point and owns its environment.
-        unsafe { std::env::set_var("XDG_CACHE_HOME", cache.path()) };
-        cold.push(thumbs_pass(&paths, cache.path()));
-        warm.push(thumbs_pass(&paths, cache.path()));
+        let scratch = tempfile::Builder::new()
+            .prefix(".thumbs-")
+            .tempdir_in(root)
+            .expect("scratch dir");
+        let cache = scratch.path().join("thumbnails");
+        cold.push(thumbs_pass(&paths, &cache, scratch.path()));
+        warm.push(thumbs_pass(&paths, &cache, scratch.path()));
     }
-    let stat_of = |mut v: Vec<Duration>| {
-        v.sort();
-        Stat {
-            min_us: v[0].as_micros() as u64,
-            median_us: v[v.len() / 2].as_micros() as u64,
-        }
-    };
-    (stat_of(cold), stat_of(warm))
+    (Stat::of(cold), Stat::of(warm))
 }
 
 /// Measure `profile` under `root`.
@@ -294,26 +320,10 @@ pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
         firsts.push(f);
         completes.push(c);
     }
-    let stat_of = |mut v: Vec<Duration>| {
-        v.sort();
-        Stat {
-            min_us: v[0].as_micros() as u64,
-            median_us: v[v.len() / 2].as_micros() as u64,
-        }
-    };
     let (thumbs_cold_per_image, thumbs_warm_per_image) = if profile == Profile::Images10k {
-        thumbs(&dir, runs)
+        thumbs(root, &dir, runs)
     } else {
-        (
-            Stat {
-                min_us: 0,
-                median_us: 0,
-            },
-            Stat {
-                min_us: 0,
-                median_us: 0,
-            },
-        )
+        (Stat::NONE, Stat::NONE)
     };
     Report {
         files: profile.file_count(),
@@ -324,9 +334,9 @@ pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
         stat_statx: timed(runs, || statx_all(&single, &n)),
         stat_parallel: timed(runs, || stat_parallel(&single, &n)),
         walk_parallel: timed(runs, || walk_parallel(&dir)),
-        stream_open: stat_of(opens),
-        stream_first_batch: stat_of(firsts),
-        stream_complete: stat_of(completes),
+        stream_open: Stat::of(opens),
+        stream_first_batch: Stat::of(firsts),
+        stream_complete: Stat::of(completes),
         thumbs_cold_per_image,
         thumbs_warm_per_image,
     }

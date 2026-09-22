@@ -1,13 +1,22 @@
-//! Bounded, cancellable tool execution. Call only from scheduler workers.
-//! Each Unix child owns a process group so cancellation also stops descendants.
+//! Running other programs without holding anyone up.
+//!
+//! [`run`] and [`run_to_exit`]: bounded, cancellable tool execution. Call
+//! only from scheduler workers. Each Unix child owns a process group so
+//! cancellation also stops descendants.
+//!
+//! [`spawn_detached`] and [`spawn_watched`]: programs that outlive the call
+//! (a terminal, an editor). Nobody waits on them: one reaper thread collects
+//! every exit, so no child lingers as a zombie and no scheduler worker is
+//! held for as long as a window stays open.
 
-use std::io::{Read, Seek};
+use std::io::{self, Read, Seek, Write as _};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use bibli_core::CancelToken;
+use bibli_core::os_path::find_program;
 
 /// Locate one of our optional worker executables: an explicit override in
 /// `variable`, then next to the running binary, then `PATH`.
@@ -18,63 +27,129 @@ pub fn find_worker(variable: &str, executable: &str) -> Option<PathBuf> {
             let sibling = std::env::current_exe().ok()?.parent()?.join(executable);
             sibling.is_file().then_some(sibling)
         })
-        .or_else(|| find(executable))
+        .or_else(|| find_program(executable))
 }
 
-pub fn find(program: &str) -> Option<PathBuf> {
-    std::env::var_os("PATH").and_then(|paths| {
-        std::env::split_paths(&paths).find_map(|dir| {
-            let path = dir.join(program);
-            let metadata = path.metadata().ok()?;
-            if !metadata.is_file() {
-                return None;
-            }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if metadata.permissions().mode() & 0o111 == 0 {
-                    return None;
-                }
-            }
-            std::fs::canonicalize(path).ok()
-        })
-    })
-}
-
+/// The installed `program` a preview needs, as its real path: a sandbox
+/// binds the store it lives in, not the profile's symlink farm.
 pub fn required(program: &str) -> anyhow::Result<PathBuf> {
-    find(program).with_context(|| format!("Install {program} to preview this file"))
+    find_program(program)
+        .and_then(|path| std::fs::canonicalize(path).ok())
+        .with_context(|| format!("Install {program} to preview this file"))
 }
 
+/// A child that is killed, with its process group, and reaped when dropped.
 pub(crate) struct ChildGuard(pub(crate) Child);
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
+
+impl ChildGuard {
+    #[cfg(unix)]
+    fn pid(&self) -> Option<rustix::process::Pid> {
+        rustix::process::Pid::from_raw(i32::try_from(self.0.id()).ok()?)
+    }
+
+    /// Whether the child has exited, without reaping it. Until it is reaped
+    /// its pid cannot be reused, so the group kill in `finish` and `Drop`
+    /// reaches only its own descendants, never a stranger's group.
+    fn exited(&mut self) -> io::Result<bool> {
         #[cfg(unix)]
-        if let Ok(raw) = i32::try_from(self.0.id())
-            && let Some(pid) = rustix::process::Pid::from_raw(raw)
         {
+            use rustix::process::{WaitId, WaitIdOptions, waitid};
+            let pid = self
+                .pid()
+                .ok_or_else(|| io::Error::other("invalid child pid"))?;
+            Ok(waitid(
+                WaitId::Pid(pid),
+                WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
+            )?
+            .is_some())
+        }
+        #[cfg(not(unix))]
+        {
+            Ok(self.0.try_wait()?.is_some())
+        }
+    }
+
+    /// Kill what the child left running in its group, while the child's
+    /// unreaped pid still names that group.
+    fn stop_group(&mut self) {
+        #[cfg(unix)]
+        if let Some(pid) = self.pid()
+            && self.exited().is_ok()
+        {
+            // `exited` fails with ECHILD once someone reaped the leader
+            // (`Child::try_wait`): its pid may be anyone's by now.
             let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
         }
+    }
+
+    /// Stop the group and reap the child, which has exited.
+    fn finish(mut self) -> io::Result<ExitStatus> {
+        self.stop_group();
+        self.0.wait()
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        self.stop_group();
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
 }
 
-/// Capture small diagnostic/metadata output without pipes that can deadlock.
-/// Files live in a private temporary directory and are capped while running.
-/// Rendered artifacts must separately be checked by the caller before decoding.
-/// The cap is derived from the largest helper listing (an archive's member
-/// names, JSON-escaped), so a helper bound can never exceed what is captured.
-pub fn run(
+/// How a program run by [`run_to_exit`] ended.
+#[derive(Debug)]
+pub struct Finished {
+    pub status: ExitStatus,
+    pub stdout: Vec<u8>,
+    /// The start of what it wrote to standard error, enough for a diagnostic.
+    pub stderr: String,
+}
+
+/// Bytes of standard error kept in [`Finished::stderr`].
+const DIAGNOSTIC: u64 = 4096;
+
+/// The most [`run_to_exit`] writes to a child's standard input. It is
+/// written before the child starts, into the pipe's buffer, which is never
+/// smaller than a page: a child that exits without reading it cannot make
+/// the write fail or block.
+pub const MAX_INPUT: usize = 4096;
+
+/// Run `command` to its end, however it ends: cancelled or timed out is an
+/// error, a failed exit status is not. `input`, if any, is its standard
+/// input (at most [`MAX_INPUT`] bytes); otherwise it reads nothing.
+///
+/// Output goes to private temporary files, not pipes that could deadlock,
+/// capped while it runs. The cap is derived from the largest helper listing
+/// (an archive's member names, JSON-escaped), so a helper bound can never
+/// exceed what is captured. Rendered artifacts must separately be checked by
+/// the caller before decoding.
+pub fn run_to_exit(
     command: &mut Command,
+    input: Option<&[u8]>,
     cancel: &CancelToken,
     timeout: Duration,
-) -> anyhow::Result<Vec<u8>> {
+) -> anyhow::Result<Finished> {
     const OUTPUT_LIMIT: u64 = crate::inspection::limits::HELPER_OUTPUT;
-    anyhow::ensure!(!cancel.is_cancelled(), "preview cancelled");
+    let program = Path::new(command.get_program())
+        .file_name()
+        .unwrap_or(command.get_program())
+        .to_string_lossy()
+        .into_owned();
+    anyhow::ensure!(!cancel.is_cancelled(), "{program} was cancelled");
+    let stdin = match input {
+        Some(bytes) => {
+            anyhow::ensure!(bytes.len() <= MAX_INPUT, "{program}: input too large");
+            let (reader, mut writer) = io::pipe()?;
+            writer.write_all(bytes)?;
+            Stdio::from(reader)
+        }
+        None => Stdio::null(),
+    };
     let mut stdout = tempfile::tempfile()?;
     let mut stderr = tempfile::tempfile()?;
     command
-        .stdin(Stdio::null())
+        .stdin(stdin)
         .stdout(stdout.try_clone()?)
         .stderr(stderr.try_clone()?);
     #[cfg(unix)]
@@ -82,39 +157,232 @@ pub fn run(
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
-    let program = Path::new(command.get_program())
-        .file_name()
-        .unwrap_or(command.get_program())
-        .to_string_lossy()
-        .into_owned();
     let mut child = ChildGuard(
         command
             .spawn()
             .with_context(|| format!("start {program}"))?,
     );
+    // The pipe's write end was dropped above and the child holds the read
+    // end: it sees the input, then end of file.
     let start = Instant::now();
-    let status = loop {
-        anyhow::ensure!(!cancel.is_cancelled(), "preview cancelled");
-        anyhow::ensure!(start.elapsed() < timeout, "{program}: preview timed out");
+    loop {
+        anyhow::ensure!(!cancel.is_cancelled(), "{program} was cancelled");
+        anyhow::ensure!(start.elapsed() < timeout, "{program} timed out");
         anyhow::ensure!(
             stdout.metadata()?.len() <= OUTPUT_LIMIT && stderr.metadata()?.len() <= OUTPUT_LIMIT,
             "{program}: excessive output"
         );
-        if let Some(status) = child.0.try_wait()? {
-            break status;
+        if child.exited()? {
+            break;
         }
         std::thread::sleep(Duration::from_millis(10));
-    };
-    if !status.success() {
-        stderr.rewind()?;
-        let mut diagnostic = String::new();
-        stderr.take(4096).read_to_string(&mut diagnostic).ok();
-        anyhow::bail!("{program} failed ({status}): {}", diagnostic.trim());
     }
+    let status = child.finish()?;
+    stderr.rewind()?;
+    let mut diagnostic = Vec::new();
+    stderr.take(DIAGNOSTIC).read_to_end(&mut diagnostic)?;
     stdout.rewind()?;
     let mut bytes = Vec::new();
     stdout.take(OUTPUT_LIMIT).read_to_end(&mut bytes)?;
-    Ok(bytes)
+    Ok(Finished {
+        status,
+        stdout: bytes,
+        stderr: String::from_utf8_lossy(&diagnostic).trim().to_owned(),
+    })
+}
+
+/// [`run_to_exit`] without input, for a program whose failed exit is an
+/// error: its standard output, or its status and standard error.
+pub fn run(
+    command: &mut Command,
+    cancel: &CancelToken,
+    timeout: Duration,
+) -> anyhow::Result<Vec<u8>> {
+    let finished = run_to_exit(command, None, cancel, timeout)?;
+    if !finished.status.success() {
+        let program = Path::new(command.get_program())
+            .file_name()
+            .unwrap_or(command.get_program())
+            .to_string_lossy()
+            .into_owned();
+        anyhow::bail!(
+            "{program} failed ({}): {}",
+            finished.status,
+            finished.stderr
+        );
+    }
+    Ok(finished.stdout)
+}
+
+/// What to do when a watched child exits. It runs on the reaper thread,
+/// which every watched child shares: do something brief (send on a channel,
+/// schedule a job, wake the app), never the work itself.
+pub type OnExit = Box<dyn FnOnce(io::Result<ExitStatus>) + Send>;
+
+/// Start `command` and let it run on its own: in a process group of its own
+/// (a Ctrl+C in the terminal bibli was started from does not reach it), its
+/// exit collected by the reaper. Standard streams are the caller's to set.
+///
+/// # Errors
+/// When the program cannot be started.
+pub fn spawn_detached(command: &mut Command) -> io::Result<()> {
+    spawn_watched(command, |_| {})
+}
+
+/// [`spawn_detached`], and call `on_exit` with the program's exit status
+/// when it ends (see [`OnExit`] for where that runs). For a terminal or an
+/// editor whose end means the user is done; no thread waits in between.
+///
+/// # Errors
+/// When the program cannot be started; `on_exit` is then never called.
+pub fn spawn_watched(
+    command: &mut Command,
+    on_exit: impl FnOnce(io::Result<ExitStatus>) + Send + 'static,
+) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let child = command.spawn()?;
+    reaper::watch(child, Box::new(on_exit));
+    Ok(())
+}
+
+fn report(on_exit: OnExit, status: io::Result<ExitStatus>) {
+    // A panicking callback must not take the reaper, and every other
+    // child's exit, down with it.
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| on_exit(status))).is_err() {
+        tracing::warn!("a child exit handler panicked");
+    }
+}
+
+/// A thread that waits on one child: the fallback where pidfds are not
+/// available.
+fn wait_on_thread(mut child: Child, on_exit: OnExit) {
+    let spawned = std::thread::Builder::new()
+        .name("bibli-wait".into())
+        .spawn(move || {
+            let status = child.wait();
+            report(on_exit, status);
+        });
+    if let Err(error) = spawned {
+        tracing::warn!("cannot wait for a child: {error}");
+    }
+}
+
+/// One thread polls a pidfd per child and an eventfd that announces new
+/// ones; it sleeps in `poll` while nothing exits.
+#[cfg(target_os = "linux")]
+mod reaper {
+    use std::os::fd::OwnedFd;
+    use std::process::Child;
+    use std::sync::OnceLock;
+
+    use parking_lot::Mutex;
+    use rustix::event::{EventfdFlags, PollFd, PollFlags};
+
+    use super::OnExit;
+
+    struct Watched {
+        child: Child,
+        pidfd: OwnedFd,
+        on_exit: OnExit,
+    }
+
+    struct Reaper {
+        queue: Mutex<Vec<Watched>>,
+        wake: OwnedFd,
+    }
+
+    fn reaper() -> Option<&'static Reaper> {
+        static REAPER: OnceLock<Option<&'static Reaper>> = OnceLock::new();
+        *REAPER.get_or_init(|| {
+            let wake =
+                rustix::event::eventfd(0, EventfdFlags::CLOEXEC | EventfdFlags::NONBLOCK).ok()?;
+            let reaper: &'static Reaper = Box::leak(Box::new(Reaper {
+                queue: Mutex::new(Vec::new()),
+                wake,
+            }));
+            std::thread::Builder::new()
+                .name("bibli-reaper".into())
+                .spawn(move || run(reaper))
+                .ok()?;
+            Some(reaper)
+        })
+    }
+
+    pub(super) fn watch(child: Child, on_exit: OnExit) {
+        let pidfd = i32::try_from(child.id())
+            .ok()
+            .and_then(rustix::process::Pid::from_raw)
+            .and_then(|pid| {
+                rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty()).ok()
+            });
+        match (reaper(), pidfd) {
+            (Some(reaper), Some(pidfd)) => {
+                reaper.queue.lock().push(Watched {
+                    child,
+                    pidfd,
+                    on_exit,
+                });
+                let _ = rustix::io::write(&reaper.wake, &1u64.to_ne_bytes());
+            }
+            _ => super::wait_on_thread(child, on_exit),
+        }
+    }
+
+    fn run(reaper: &'static Reaper) {
+        let mut children: Vec<Watched> = Vec::new();
+        loop {
+            let polled = {
+                let mut fds: Vec<PollFd<'_>> = std::iter::once(&reaper.wake)
+                    .chain(children.iter().map(|watched| &watched.pidfd))
+                    .map(|fd| PollFd::new(fd, PollFlags::IN))
+                    .collect();
+                rustix::event::poll(&mut fds, None)
+            };
+            match polled {
+                Ok(_) | Err(rustix::io::Errno::INTR) => {}
+                Err(error) => {
+                    tracing::warn!("reaper poll failed: {error}");
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                }
+            }
+            // The counter is reset by the read, so a child announced after
+            // it wakes the next poll.
+            let mut counter = [0u8; 8];
+            let _ = rustix::io::read(&reaper.wake, &mut counter);
+            children.append(&mut reaper.queue.lock());
+            // A handful of children at most: asking each is cheaper than
+            // mapping poll results back to them.
+            let mut i = 0;
+            while i < children.len() {
+                match children[i].child.try_wait() {
+                    Ok(None) => i += 1,
+                    Ok(Some(status)) => {
+                        let done = children.swap_remove(i);
+                        super::report(done.on_exit, Ok(status));
+                    }
+                    Err(error) => {
+                        let done = children.swap_remove(i);
+                        super::report(done.on_exit, Err(error));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+mod reaper {
+    use std::process::Child;
+
+    use super::OnExit;
+
+    pub(super) fn watch(child: Child, on_exit: OnExit) {
+        super::wait_on_thread(child, on_exit);
+    }
 }
 
 #[cfg(test)]
@@ -210,5 +478,48 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("broken"));
+    }
+
+    #[test]
+    fn watched_children_report_their_exit_in_any_order() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        for (code, delay) in [(3, "0.3"), (4, "0")] {
+            let tx = tx.clone();
+            spawn_watched(
+                Command::new("sh").args(["-c", &format!("sleep {delay}; exit {code}")]),
+                move |status| {
+                    let _ = tx.send(status.unwrap().code());
+                },
+            )
+            .unwrap();
+        }
+        let timeout = Duration::from_secs(5);
+        assert_eq!(rx.recv_timeout(timeout).unwrap(), Some(4));
+        assert_eq!(rx.recv_timeout(timeout).unwrap(), Some(3));
+        assert!(spawn_detached(&mut Command::new("/nonexistent/program")).is_err());
+    }
+
+    #[test]
+    fn input_reaches_the_child_and_a_failed_exit_is_reported() {
+        let token = CancelToken::new();
+        let finished = run_to_exit(
+            Command::new("sh").args(["-c", "cat; echo oops >&2; exit 2"]),
+            Some(b"secret"),
+            &token,
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        assert_eq!(finished.stdout, b"secret");
+        assert_eq!(finished.stderr, "oops");
+        assert_eq!(finished.status.code(), Some(2));
+        // A child that never reads its input still ends normally.
+        let finished = run_to_exit(
+            Command::new("sh").args(["-c", "exit 0"]),
+            Some(&[b'x'; MAX_INPUT]),
+            &token,
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        assert!(finished.status.success());
     }
 }
