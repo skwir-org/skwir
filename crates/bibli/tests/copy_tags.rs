@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use bibli_core::app::{App, AppConfig};
 use bibli_core::command::{Invocation, Outcome};
 use bibli_core::location::Location;
-use bibli_core::op::{Copy, EntryRef, Operation, Plan};
+use bibli_core::op::{Copy, EntryRef, Operation, Plan, StepContext};
 use bibli_core::settings::{PRESERVE_TAGS_ON_COPY, SaveState};
 use bibli_plugin_tags::{read_tags, write_tags};
 use serde_json::{Value, json};
@@ -186,12 +186,12 @@ fn failed_copy_does_not_publish_a_partial_tree_or_touch_an_existing_target() {
         dest.clone(),
         &app.settings,
     );
-    assert!(copy.apply().is_err());
+    assert!(copy.apply(&StepContext::detached()).is_err());
     assert_eq!(std::fs::read_dir(&dest).unwrap().count(), 0);
     std::fs::remove_file(source.join("socket")).unwrap();
     std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o555)).unwrap();
     std::fs::write(dest.join("source"), "existing destination").unwrap();
-    assert!(copy.apply().is_err());
+    assert!(copy.apply(&StepContext::detached()).is_err());
     assert_eq!(
         std::fs::read(dest.join("source")).unwrap(),
         b"existing destination"

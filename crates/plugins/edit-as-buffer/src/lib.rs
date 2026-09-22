@@ -271,7 +271,7 @@ pub fn diff_buffer(
     for (i, name) in order_renames(&old, &renames) {
         steps.push(Box::new(Rename {
             entry: EntryRef::new(original[i].0.id, current[i].clone()),
-            new_name: name.clone(),
+            new_name: name.clone().into(),
         }));
         current[i] = dir.join(name);
     }
@@ -288,7 +288,7 @@ pub fn diff_buffer(
         } else {
             steps.push(Box::new(Rename {
                 entry: EntryRef::new(original[i].0.id, after_move.clone()),
-                new_name: name.clone(),
+                new_name: name.clone().into(),
             }));
             current[i] = dest.join(name);
         }

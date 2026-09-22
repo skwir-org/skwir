@@ -7,9 +7,12 @@
 //! each step checks whether it is already done before acting.
 
 mod builtin;
+mod context;
 mod entry_ref;
 mod executor;
+mod order;
 
+use std::ffi::OsStr;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,47 +24,101 @@ use serde::{Deserialize, Serialize};
 pub use builtin::{
     Copy, Delete, Mkdir, Move, Rename, Restore, Rmdir, Swap, Trash, register_builtin,
 };
+pub use context::{Cancelled, StepContext};
 pub use entry_ref::{EntryRef, ResolveError};
-pub use executor::{ExecEvent, ExecResult, Executor, JournalEntry, Progress};
+pub use executor::{ExecEvent, ExecResult, Executor, JournalEntry, Progress, Transfer};
+pub use order::{RenameOrderError, RenameRequest, order_renames};
+
+/// Whether `name` can name an entry inside a directory: not empty, not `.`
+/// or `..`, and free of `/` and NUL. Every operation that takes a name from
+/// a command (rename, copy under a new name, a new folder) checks it here,
+/// so no surface can reach outside the directory it meant.
+///
+/// # Errors
+/// Why the name is not usable, in the user's words.
+pub fn valid_file_name(name: &OsStr) -> anyhow::Result<()> {
+    let bytes = name.as_encoded_bytes();
+    if bytes.is_empty() {
+        anyhow::bail!("a name cannot be empty");
+    }
+    if bytes == b"." || bytes == b".." {
+        anyhow::bail!("“{}” cannot be used as a name", name.display());
+    }
+    if bytes.contains(&b'/') {
+        anyhow::bail!("a name cannot contain “/”");
+    }
+    if bytes.contains(&0) {
+        anyhow::bail!("a name cannot contain a NUL character");
+    }
+    Ok(())
+}
 
 /// What a step will do, for the diff shown before apply.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case", tag = "change")]
 pub enum Change {
     Rename {
+        #[serde(with = "crate::os_path")]
+        #[schemars(with = "crate::os_path::PathArg")]
         from: PathBuf,
+        #[serde(with = "crate::os_path")]
+        #[schemars(with = "crate::os_path::PathArg")]
         to: PathBuf,
     },
     Move {
+        #[serde(with = "crate::os_path")]
+        #[schemars(with = "crate::os_path::PathArg")]
         from: PathBuf,
+        #[serde(with = "crate::os_path")]
+        #[schemars(with = "crate::os_path::PathArg")]
         to: PathBuf,
     },
     Copy {
+        #[serde(with = "crate::os_path")]
+        #[schemars(with = "crate::os_path::PathArg")]
         from: PathBuf,
+        #[serde(with = "crate::os_path")]
+        #[schemars(with = "crate::os_path::PathArg")]
         to: PathBuf,
     },
     Swap {
+        #[serde(with = "crate::os_path")]
+        #[schemars(with = "crate::os_path::PathArg")]
         a: PathBuf,
+        #[serde(with = "crate::os_path")]
+        #[schemars(with = "crate::os_path::PathArg")]
         b: PathBuf,
     },
     Trash {
+        #[serde(with = "crate::os_path")]
+        #[schemars(with = "crate::os_path::PathArg")]
         path: PathBuf,
     },
     Restore {
+        #[serde(with = "crate::os_path")]
+        #[schemars(with = "crate::os_path::PathArg")]
         path: PathBuf,
     },
     Delete {
+        #[serde(with = "crate::os_path")]
+        #[schemars(with = "crate::os_path::PathArg")]
         path: PathBuf,
     },
     Create {
+        #[serde(with = "crate::os_path")]
+        #[schemars(with = "crate::os_path::PathArg")]
         path: PathBuf,
         directory: bool,
     },
     Remove {
+        #[serde(with = "crate::os_path")]
+        #[schemars(with = "crate::os_path::PathArg")]
         path: PathBuf,
     },
     /// A metadata-only change (tags, attributes), naming the field.
     Metadata {
+        #[serde(with = "crate::os_path")]
+        #[schemars(with = "crate::os_path::PathArg")]
         path: PathBuf,
         field: String,
     },
@@ -113,10 +170,12 @@ pub trait Operation: Send + Sync + fmt::Debug {
     fn args(&self) -> serde_json::Value;
     /// What this will do.
     fn describe(&self) -> Change;
-    /// Dry run.
-    fn check(&self) -> StepStatus;
-    /// Do it. Returns the inverse, or `None` when irreversible.
-    fn apply(&self) -> anyhow::Result<Option<Box<dyn Operation>>>;
+    /// Dry run. `ctx` holds lookups shared by the plan's steps.
+    fn check(&self, ctx: &StepContext) -> StepStatus;
+    /// Do it. Returns the inverse, or `None` when irreversible. A step that
+    /// takes long (a copy) checks `ctx` between files and reports its bytes;
+    /// cancelled, it undoes its own partial work and returns [`Cancelled`].
+    fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>>;
     /// Clone into a box (plans are cloned into the journal).
     fn clone_box(&self) -> Box<dyn Operation>;
 }
@@ -225,21 +284,23 @@ impl Plan {
 
     /// Dry run every step.
     pub fn diff(&self) -> PlanDiff {
+        let ctx = StepContext::detached();
         PlanDiff {
             title: self.title.clone(),
             steps: self
                 .steps
                 .iter()
-                .map(|s| (s.describe(), s.check()))
+                .map(|s| (s.describe(), s.check(&ctx)))
                 .collect(),
         }
     }
 
     /// Whether every step is pending or already done (no conflicts).
     pub fn is_applicable(&self) -> bool {
+        let ctx = StepContext::detached();
         self.steps
             .iter()
-            .all(|s| !matches!(s.check(), StepStatus::Conflict { .. }))
+            .all(|s| !matches!(s.check(&ctx), StepStatus::Conflict { .. }))
     }
 
     pub fn to_data(&self) -> PlanData {

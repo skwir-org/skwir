@@ -11,7 +11,7 @@ use bibli_core::app::App;
 use bibli_core::command::{Invocation, Outcome};
 use bibli_core::entry::{Entry, Metadata, Provenance, Value};
 use bibli_core::metadata::MetadataProvider;
-use bibli_core::op::{Change, EntryRef, Operation, Plan, ResolveError, StepStatus};
+use bibli_core::op::{Change, EntryRef, Operation, Plan, ResolveError, StepContext, StepStatus};
 use bibli_core::plugin::Plugin;
 use bibli_core::registry::{KeyBinding, MenuItem};
 use bibli_core::workspace::PaneId;
@@ -143,7 +143,7 @@ impl Operation for SetTags {
             field: "tags".into(),
         }
     }
-    fn check(&self) -> StepStatus {
+    fn check(&self, _ctx: &StepContext) -> StepStatus {
         match self.entry.resolve() {
             Ok(p) if same_set(&read_tags(&p), &self.tags) => StepStatus::AlreadyDone,
             Ok(_) => StepStatus::Pending { reversible: true },
@@ -155,7 +155,7 @@ impl Operation for SetTags {
             },
         }
     }
-    fn apply(&self) -> anyhow::Result<Option<Box<dyn Operation>>> {
+    fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let path = self.entry.resolve()?;
         let previous = read_tags(&path);
         write_tags(&path, &self.tags)

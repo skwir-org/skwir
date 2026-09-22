@@ -1,15 +1,24 @@
 //! The built-in operations: rename, move, copy, swap, trash, restore, delete,
 //! mkdir, rmdir. Each is idempotent (`check` detects an effect already in
 //! place) and returns its inverse from `apply`.
+//!
+//! Names are `OsString`s and paths `PathBuf`s from end to end, serialized
+//! through `crate::os_path`: a name that is not UTF-8 must survive a rename
+//! and its undo byte for byte.
 
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::ffi::{OsStr, OsString};
+use std::io::{Read, Write};
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::Context;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use super::{Change, EntryRef, OpRegistry, Operation, ResolveError, StepStatus};
+use super::{
+    Change, EntryRef, OpRegistry, Operation, ResolveError, StepContext, StepStatus, valid_file_name,
+};
 use crate::fs::stat::id_of;
+use crate::os_path::PathArg;
 
 fn pending(reversible: bool) -> StepStatus {
     StepStatus::Pending { reversible }
@@ -25,10 +34,32 @@ fn exists(p: &Path) -> bool {
     std::fs::symlink_metadata(p).is_ok()
 }
 
-fn file_name_string(p: &Path) -> String {
-    p.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default()
+fn file_name(p: &Path) -> OsString {
+    p.file_name().unwrap_or_default().to_os_string()
+}
+
+fn invalid_name(name: &OsStr) -> Option<StepStatus> {
+    valid_file_name(name).err().map(|e| conflict(e.to_string()))
+}
+
+/// Whether `dir` lists an entry spelled exactly `name`. On a
+/// case-insensitive filesystem `a.txt` and `A.txt` stat the same file, and
+/// only the listing says which spelling is on disk.
+fn name_listed(dir: &Path, name: &OsStr) -> bool {
+    std::fs::read_dir(dir).is_ok_and(|rd| rd.flatten().any(|e| e.file_name() == name))
+}
+
+/// A free name in `dir` to park an entry under while it changes names.
+fn parking_name(dir: &Path, purpose: &str) -> PathBuf {
+    let pid = std::process::id();
+    let mut n = 0u64;
+    loop {
+        let candidate = dir.join(format!(".bibli-{purpose}-{pid}-{n}"));
+        if !exists(&candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
 }
 
 fn rename_noreplace(from: &Path, to: &Path) -> anyhow::Result<()> {
@@ -48,7 +79,22 @@ fn rename_noreplace(from: &Path, to: &Path) -> anyhow::Result<()> {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Rename {
     pub entry: EntryRef,
-    pub new_name: String,
+    #[serde(with = "crate::os_path")]
+    #[schemars(with = "PathArg")]
+    pub new_name: OsString,
+}
+
+/// How a rename relates to what is on disk at its target.
+enum RenameTarget {
+    /// Nothing there.
+    Free,
+    /// The entry itself under a spelling that differs only in case, on a
+    /// case-insensitive filesystem: the rename changes the spelling.
+    Respelled,
+    /// The entry is already spelled as asked.
+    Spelled,
+    /// Something else, or another hard link to the entry.
+    Taken,
 }
 
 impl Rename {
@@ -58,6 +104,27 @@ impl Rename {
             .parent()
             .unwrap_or(Path::new("/"))
             .join(&self.new_name)
+    }
+
+    fn classify(&self, src: &Path, target: &Path) -> RenameTarget {
+        if !exists(target) {
+            return RenameTarget::Free;
+        }
+        if id_of(target) != Some(self.entry.id) {
+            return RenameTarget::Taken;
+        }
+        // The target stats as the entry: either the same file under another
+        // spelling (case-insensitive) or a second hard link. The listing
+        // tells them apart: a hard link lists both names.
+        let dir = target.parent().unwrap_or(Path::new("/"));
+        match (
+            name_listed(dir, &file_name(src)),
+            name_listed(dir, &self.new_name),
+        ) {
+            (true, false) => RenameTarget::Respelled,
+            (false, true) => RenameTarget::Spelled,
+            _ => RenameTarget::Taken,
+        }
     }
 }
 
@@ -77,26 +144,43 @@ impl Operation for Rename {
             to: self.target(),
         }
     }
-    fn check(&self) -> StepStatus {
-        let target = self.target();
-        if self.new_name.is_empty() || self.new_name.contains('/') {
-            return conflict("invalid name");
+    fn check(&self, _ctx: &StepContext) -> StepStatus {
+        if let Some(invalid) = invalid_name(&self.new_name) {
+            return invalid;
         }
+        let target = self.target();
         match self.entry.resolve() {
             Ok(src) if src == target => StepStatus::AlreadyDone,
-            Ok(_) if exists(&target) => conflict(format!("{} already exists", target.display())),
-            Ok(_) => pending(true),
+            Ok(src) => match self.classify(&src, &target) {
+                RenameTarget::Free | RenameTarget::Respelled => pending(true),
+                RenameTarget::Spelled => StepStatus::AlreadyDone,
+                RenameTarget::Taken => conflict(format!("{} already exists", target.display())),
+            },
             Err(_) if id_of(&target) == Some(self.entry.id) => StepStatus::AlreadyDone,
             Err(e) => conflict(e.to_string()),
         }
     }
-    fn apply(&self) -> anyhow::Result<Option<Box<dyn Operation>>> {
+    fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+        valid_file_name(&self.new_name)?;
         let src = self.entry.resolve()?;
         let target = self.target();
-        rename_noreplace(&src, &target)?;
+        match self.classify(&src, &target) {
+            // rename(2) between two spellings of one file is a no-op on a
+            // case-insensitive filesystem: go through a parked name.
+            RenameTarget::Respelled => {
+                let parked = parking_name(target.parent().unwrap_or(Path::new("/")), "rename");
+                rename_noreplace(&src, &parked)?;
+                if let Err(e) = rename_noreplace(&parked, &target) {
+                    rename_noreplace(&parked, &src).context("put the entry back")?;
+                    return Err(e);
+                }
+            }
+            RenameTarget::Spelled => {}
+            RenameTarget::Free | RenameTarget::Taken => rename_noreplace(&src, &target)?,
+        }
         Ok(Some(Box::new(Rename {
             entry: EntryRef::new(self.entry.id, target),
-            new_name: file_name_string(&src),
+            new_name: file_name(&src),
         })))
     }
 }
@@ -107,6 +191,8 @@ impl Operation for Rename {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Move {
     pub entry: EntryRef,
+    #[serde(with = "crate::os_path")]
+    #[schemars(with = "PathArg")]
     pub dest_dir: PathBuf,
 }
 
@@ -132,7 +218,7 @@ impl Operation for Move {
             to: self.target(&self.entry.path),
         }
     }
-    fn check(&self) -> StepStatus {
+    fn check(&self, _ctx: &StepContext) -> StepStatus {
         if !self.dest_dir.is_dir() {
             return conflict(format!("{} is not a directory", self.dest_dir.display()));
         }
@@ -148,10 +234,19 @@ impl Operation for Move {
             Err(_) if id_of(&self.target(&self.entry.path)) == Some(self.entry.id) => {
                 StepStatus::AlreadyDone
             }
+            // Across devices the moved entry is a copy with a new identity.
+            // The source being gone and its name standing in a destination
+            // on another device is the most a re-run can know of it.
+            Err(ResolveError::Gone(_))
+                if exists(&self.target(&self.entry.path))
+                    && id_of(&self.dest_dir).is_some_and(|d| d.dev != self.entry.id.dev) =>
+            {
+                StepStatus::AlreadyDone
+            }
             Err(e) => conflict(e.to_string()),
         }
     }
-    fn apply(&self) -> anyhow::Result<Option<Box<dyn Operation>>> {
+    fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let src = self.entry.resolve()?;
         let target = self.target(&src);
         let origin = src.parent().unwrap_or(Path::new("/")).to_path_buf();
@@ -160,7 +255,7 @@ impl Operation for Move {
             Err(e) if is_cross_device(&e) => {
                 // A move must never lose metadata, whatever the copy preference
                 // says, and a failed transfer must not leave a partial target.
-                copy_staged(&src, &target, &self.dest_dir, true)?;
+                copy_staged(&src, &target, &self.dest_dir, true, ctx)?;
                 remove_recursive(&src)?;
             }
             Err(e) => return Err(e),
@@ -184,10 +279,13 @@ fn is_cross_device(e: &anyhow::Error) -> bool {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Copy {
     pub entry: EntryRef,
+    #[serde(with = "crate::os_path")]
+    #[schemars(with = "PathArg")]
     pub dest_dir: PathBuf,
     /// Name at the destination; the source name when `None`.
-    #[serde(default)]
-    pub new_name: Option<String>,
+    #[serde(default, with = "optional_name")]
+    #[schemars(with = "Option<PathArg>")]
+    pub new_name: Option<OsString>,
     /// Captured when the plan is created, so redo does not consult live settings.
     #[serde(default = "preserve_tags_default")]
     pub preserve_tags: bool,
@@ -195,6 +293,20 @@ pub struct Copy {
 
 fn preserve_tags_default() -> bool {
     true
+}
+
+/// `Option<OsString>` through `crate::os_path`.
+mod optional_name {
+    use super::{Deserialize, Deserializer, OsString, PathArg, Serialize, Serializer};
+
+    #[allow(clippy::ref_option, reason = "the signature serde's `with` expects")]
+    pub fn serialize<S: Serializer>(name: &Option<OsString>, s: S) -> Result<S::Ok, S::Error> {
+        name.as_ref().map(|n| PathArg(n.into())).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<OsString>, D::Error> {
+        Ok(Option::<PathArg>::deserialize(d)?.map(|p| p.0.into_os_string()))
+    }
 }
 
 impl Copy {
@@ -236,7 +348,10 @@ impl Operation for Copy {
             to: self.target(&self.entry.path),
         }
     }
-    fn check(&self) -> StepStatus {
+    fn check(&self, ctx: &StepContext) -> StepStatus {
+        if let Some(invalid) = self.new_name.as_deref().and_then(invalid_name) {
+            return invalid;
+        }
         if !self.dest_dir.is_dir() {
             return conflict(format!("{} is not a directory", self.dest_dir.display()));
         }
@@ -248,16 +363,13 @@ impl Operation for Copy {
         if target == src {
             return conflict("source and destination are the same");
         }
-        if let (Ok(a), Ok(b)) = (
-            std::fs::symlink_metadata(&src),
-            std::fs::symlink_metadata(&target),
-        ) {
-            let same = a.is_dir() == b.is_dir()
-                && (a.is_dir() || (a.len() == b.len() && a.modified().ok() == b.modified().ok()));
-            return if same {
-                StepStatus::AlreadyDone
-            } else {
-                conflict(format!("{} already exists", target.display()))
+        if exists(&target) {
+            // Only a finished copy of this very source is "already done": an
+            // unrelated folder that happens to share the name is a conflict.
+            return match same_tree(&src, &target, ctx) {
+                Ok(true) => StepStatus::AlreadyDone,
+                Ok(false) => conflict(format!("{} already exists", target.display())),
+                Err(e) => conflict(format!("{e:#}")),
             };
         }
         if src.is_dir() && target.starts_with(&src) {
@@ -265,14 +377,56 @@ impl Operation for Copy {
         }
         pending(true)
     }
-    fn apply(&self) -> anyhow::Result<Option<Box<dyn Operation>>> {
+    fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+        if let Some(name) = &self.new_name {
+            valid_file_name(name)?;
+        }
         let src = self.entry.resolve()?;
         let target = self.target(&src);
-        copy_staged(&src, &target, &self.dest_dir, self.preserve_tags)?;
+        copy_staged(&src, &target, &self.dest_dir, self.preserve_tags, ctx)?;
         let r = EntryRef::from_path(&target)
             .ok_or_else(|| anyhow::anyhow!("copy vanished: {}", target.display()))?;
-        Ok(Some(Box::new(Delete { entry: r })))
+        // Undo puts the copy in the trash rather than deleting it: it may
+        // have been edited since, and redo then restores it as it was.
+        Ok(Some(Box::new(Trash { entry: r })))
     }
+}
+
+/// Whether `copy` holds what copying `src` would produce: the same kinds,
+/// names, sizes and file times all the way down (a copy keeps file mtimes),
+/// and the same link targets. Stops at the first difference.
+fn same_tree(src: &Path, copy: &Path, ctx: &StepContext) -> anyhow::Result<bool> {
+    ctx.check_cancelled()?;
+    let (a, b) = (
+        std::fs::symlink_metadata(src)?,
+        std::fs::symlink_metadata(copy)?,
+    );
+    if a.file_type() != b.file_type() {
+        return Ok(false);
+    }
+    if a.is_symlink() {
+        return Ok(std::fs::read_link(src)? == std::fs::read_link(copy)?);
+    }
+    if !a.is_dir() {
+        return Ok(a.len() == b.len() && a.modified().ok() == b.modified().ok());
+    }
+    let names = |dir: &Path| -> std::io::Result<Vec<OsString>> {
+        let mut names = std::fs::read_dir(dir)?
+            .map(|e| e.map(|e| e.file_name()))
+            .collect::<std::io::Result<Vec<_>>>()?;
+        names.sort_unstable();
+        Ok(names)
+    };
+    let children = names(src)?;
+    if children != names(copy)? {
+        return Ok(false);
+    }
+    for name in children {
+        if !same_tree(&src.join(&name), &copy.join(&name), ctx)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Copy `src` to `target` through a private staging directory inside
@@ -284,13 +438,15 @@ fn copy_staged(
     target: &Path,
     dest_dir: &Path,
     preserve_tags: bool,
+    ctx: &StepContext,
 ) -> anyhow::Result<()> {
+    ctx.add_total(tree_size(src, ctx)?);
     let staging = tempfile::Builder::new()
         .prefix(".bibli-copy-")
         .permissions(std::fs::Permissions::from_mode(0o700))
         .tempdir_in(dest_dir)?;
     let staged = staging.path().join("entry");
-    let result = copy_recursive_with_tags(src, &staged, preserve_tags)
+    let result = copy_recursive_with_tags(src, &staged, preserve_tags, ctx)
         .and_then(|()| rename_noreplace(&staged, target));
     if let Err(error) = result {
         // Completed subdirectories may already have read-only permissions.
@@ -301,6 +457,20 @@ fn copy_staged(
         return Err(error);
     }
     Ok(())
+}
+
+/// Bytes of regular files under `path`, so progress has a total.
+fn tree_size(path: &Path, ctx: &StepContext) -> anyhow::Result<u64> {
+    ctx.check_cancelled()?;
+    let m = std::fs::symlink_metadata(path)?;
+    if !m.is_dir() {
+        return Ok(if m.is_file() { m.len() } else { 0 });
+    }
+    let mut total = 0;
+    for e in std::fs::read_dir(path)? {
+        total += tree_size(&e?.path(), ctx)?;
+    }
+    Ok(total)
 }
 
 fn remove_staged_copy(path: &Path) -> std::io::Result<()> {
@@ -319,43 +489,135 @@ fn remove_staged_copy(path: &Path) -> std::io::Result<()> {
     }
 }
 
-fn copy_file(src: &Path, dst: &Path, preserve_tags: bool) -> anyhow::Result<()> {
-    let mut sf = std::fs::File::open(src)?;
+/// Bytes per `copy_file_range` call: large enough to stay in the kernel's
+/// fast path, small enough that Cancel is answered within a fraction of a
+/// second on a slow disk.
+const COPY_CHUNK: usize = 8 << 20;
+
+fn copy_file(src: &Path, dst: &Path, preserve_tags: bool, ctx: &StepContext) -> anyhow::Result<()> {
+    // Non-blocking, then checked: a file swapped for a FIFO since it was
+    // listed must not block the executor in open(2).
+    let mut sf = {
+        use std::os::unix::fs::OpenOptionsExt;
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(rustix::fs::OFlags::NONBLOCK.bits().cast_signed())
+            .open(src)?;
+        anyhow::ensure!(
+            file.metadata()?.is_file(),
+            "{} is no longer a regular file",
+            src.display()
+        );
+        file
+    };
     let mut df = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(dst)?;
-    if rustix::fs::ioctl_ficlone(&df, &sf).is_err() {
-        std::io::copy(&mut sf, &mut df)
+    let m = sf.metadata()?;
+    if rustix::fs::ioctl_ficlone(&df, &sf).is_ok() {
+        ctx.advance(m.len());
+    } else {
+        copy_contents(&mut sf, &mut df, ctx)
             .with_context(|| format!("copy {} -> {}", src.display(), dst.display()))?;
     }
     // Set attributes before restoring a read-only source's permissions.
     if preserve_tags {
         copy_tags(src, dst)?;
     }
-    let m = sf.metadata()?;
     df.set_permissions(m.permissions())?;
     let _ = df.set_modified(m.modified()?);
     Ok(())
 }
 
-fn copy_recursive_with_tags(src: &Path, dst: &Path, preserve_tags: bool) -> anyhow::Result<()> {
+/// Copy the bytes in chunks, checking for Cancel and reporting progress
+/// between them: in the kernel where it can (`copy_file_range`), through a
+/// buffer where it cannot.
+fn copy_contents(
+    sf: &mut std::fs::File,
+    df: &mut std::fs::File,
+    ctx: &StepContext,
+) -> anyhow::Result<()> {
+    let mut copied = 0u64;
+    loop {
+        ctx.check_cancelled()?;
+        match rustix::fs::copy_file_range(&*sf, None, &*df, None, COPY_CHUNK) {
+            Ok(0) if copied > 0 => return Ok(()),
+            Ok(n @ 1..) => {
+                copied += n as u64;
+                ctx.advance(n as u64);
+            }
+            // Some filesystems (procfs, a few FUSE) report 0 before the end,
+            // so a first 0 is not trusted; others cannot copy in the kernel.
+            // Either way the buffer takes over.
+            Ok(0)
+            | Err(
+                rustix::io::Errno::XDEV
+                | rustix::io::Errno::NOSYS
+                | rustix::io::Errno::INVAL
+                | rustix::io::Errno::OPNOTSUPP
+                | rustix::io::Errno::PERM,
+            ) => break,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    // Both offsets advanced together, so the buffered copy resumes in place.
+    let mut buf = vec![0; 1 << 20];
+    loop {
+        ctx.check_cancelled()?;
+        let n = match sf.read(&mut buf) {
+            Ok(0) => return Ok(()),
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e.into()),
+        };
+        df.write_all(&buf[..n])?;
+        ctx.advance(n as u64);
+    }
+}
+
+fn copy_recursive_with_tags(
+    src: &Path,
+    dst: &Path,
+    preserve_tags: bool,
+    ctx: &StepContext,
+) -> anyhow::Result<()> {
+    ctx.check_cancelled()?;
     let m = std::fs::symlink_metadata(src)?;
-    if m.is_symlink() {
+    let kind = m.file_type();
+    if kind.is_symlink() {
         let target = std::fs::read_link(src)?;
         std::os::unix::fs::symlink(target, dst)?;
-    } else if m.is_dir() {
+    } else if kind.is_dir() {
         std::fs::create_dir(dst)?;
         for e in std::fs::read_dir(src)? {
             let e = e?;
-            copy_recursive_with_tags(&e.path(), &dst.join(e.file_name()), preserve_tags)?;
+            copy_recursive_with_tags(&e.path(), &dst.join(e.file_name()), preserve_tags, ctx)?;
         }
         if preserve_tags {
             copy_tags(src, dst)?;
         }
         std::fs::set_permissions(dst, m.permissions())?;
+    } else if kind.is_file() {
+        copy_file(src, dst, preserve_tags, ctx)?;
+    } else if kind.is_fifo() {
+        // A named pipe has no content to copy; reading one would wait for a
+        // writer forever. Make a new pipe, as `cp -R` does.
+        rustix::fs::mknodat(
+            rustix::fs::CWD,
+            dst,
+            rustix::fs::FileType::Fifo,
+            rustix::fs::Mode::from_raw_mode(m.permissions().mode() & 0o7777),
+            0,
+        )
+        .with_context(|| format!("create pipe {}", dst.display()))?;
     } else {
-        copy_file(src, dst, preserve_tags)?;
+        let what = if kind.is_socket() {
+            "a socket"
+        } else {
+            "a device"
+        };
+        anyhow::bail!("{} is {what}, which cannot be copied", src.display());
     }
     Ok(())
 }
@@ -410,13 +672,17 @@ impl Operation for Swap {
             b: self.b.path.clone(),
         }
     }
-    fn check(&self) -> StepStatus {
+    fn check(&self, _ctx: &StepContext) -> StepStatus {
+        // Each stands where the other was: the exchange is in place.
+        if id_of(&self.a.path) == Some(self.b.id) && id_of(&self.b.path) == Some(self.a.id) {
+            return StepStatus::AlreadyDone;
+        }
         match (self.a.resolve(), self.b.resolve()) {
             (Ok(_), Ok(_)) => pending(true),
             (Err(e), _) | (_, Err(e)) => conflict(e.to_string()),
         }
     }
-    fn apply(&self) -> anyhow::Result<Option<Box<dyn Operation>>> {
+    fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let (pa, pb) = (self.a.resolve()?, self.b.resolve()?);
         rustix::fs::renameat_with(
             rustix::fs::CWD,
@@ -456,15 +722,16 @@ impl Operation for Trash {
             path: self.entry.path.clone(),
         }
     }
-    fn check(&self) -> StepStatus {
+    fn check(&self, _ctx: &StepContext) -> StepStatus {
         match self.entry.resolve() {
             Ok(_) => pending(true),
             Err(ResolveError::Gone(_)) => StepStatus::AlreadyDone,
             Err(e) => conflict(e.to_string()),
         }
     }
-    fn apply(&self) -> anyhow::Result<Option<Box<dyn Operation>>> {
+    fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let src = self.entry.resolve()?;
+        ctx.forget_trash();
         trash::delete(&src).with_context(|| format!("trash {}", src.display()))?;
         Ok(Some(Box::new(Restore { path: src })))
     }
@@ -473,16 +740,20 @@ impl Operation for Trash {
 /// Restore the most recently trashed item that had this original path.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Restore {
+    #[serde(with = "crate::os_path")]
+    #[schemars(with = "PathArg")]
     pub path: PathBuf,
 }
 
 impl Restore {
-    fn find(&self) -> anyhow::Result<Option<trash::TrashItem>> {
-        let items = trash::os_limited::list().context("list trash")?;
-        Ok(items
-            .into_iter()
-            .filter(|i| i.original_path() == self.path)
-            .max_by_key(|i| i.time_deleted))
+    /// Index of the item to restore in the plan's trash listing.
+    fn find(&self, items: &[trash::TrashItem]) -> Option<usize> {
+        items
+            .iter()
+            .enumerate()
+            .filter(|(_, i)| i.original_path() == self.path)
+            .max_by_key(|(_, i)| i.time_deleted)
+            .map(|(n, _)| n)
     }
 }
 
@@ -501,19 +772,21 @@ impl Operation for Restore {
             path: self.path.clone(),
         }
     }
-    fn check(&self) -> StepStatus {
+    fn check(&self, ctx: &StepContext) -> StepStatus {
         if exists(&self.path) {
             return StepStatus::AlreadyDone;
         }
-        match self.find() {
+        match ctx.with_trash(|items| self.find(items)) {
             Ok(Some(_)) => pending(true),
             Ok(None) => conflict(format!("{} is not in the trash", self.path.display())),
-            Err(e) => conflict(e.to_string()),
+            Err(e) => conflict(format!("list trash: {e}")),
         }
     }
-    fn apply(&self) -> anyhow::Result<Option<Box<dyn Operation>>> {
-        let item = self
-            .find()?
+    fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+        // Taken out of the listing: once restored it is no longer there.
+        let item = ctx
+            .with_trash(|items| self.find(items).map(|n| items.swap_remove(n)))
+            .context("list trash")?
             .ok_or_else(|| anyhow::anyhow!("{} is not in the trash", self.path.display()))?;
         trash::os_limited::restore_all([item])
             .with_context(|| format!("restore {}", self.path.display()))?;
@@ -546,14 +819,14 @@ impl Operation for Delete {
             path: self.entry.path.clone(),
         }
     }
-    fn check(&self) -> StepStatus {
+    fn check(&self, _ctx: &StepContext) -> StepStatus {
         match self.entry.resolve() {
             Ok(_) => pending(false),
             Err(ResolveError::Gone(_)) => StepStatus::AlreadyDone,
             Err(e) => conflict(e.to_string()),
         }
     }
-    fn apply(&self) -> anyhow::Result<Option<Box<dyn Operation>>> {
+    fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let src = self.entry.resolve()?;
         remove_recursive(&src)?;
         Ok(None)
@@ -565,6 +838,8 @@ impl Operation for Delete {
 /// Create a directory (parent must exist).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Mkdir {
+    #[serde(with = "crate::os_path")]
+    #[schemars(with = "PathArg")]
     pub path: PathBuf,
 }
 
@@ -584,7 +859,15 @@ impl Operation for Mkdir {
             directory: true,
         }
     }
-    fn check(&self) -> StepStatus {
+    fn check(&self, _ctx: &StepContext) -> StepStatus {
+        if self.path.components().any(|c| c == Component::ParentDir) {
+            return conflict(format!("{} contains “..”", self.path.display()));
+        }
+        match self.path.file_name().map(invalid_name) {
+            None => return conflict(format!("{} has no name", self.path.display())),
+            Some(Some(invalid)) => return invalid,
+            Some(None) => {}
+        }
         match std::fs::symlink_metadata(&self.path) {
             Ok(m) if m.is_dir() => StepStatus::AlreadyDone,
             Ok(_) => conflict(format!(
@@ -595,7 +878,7 @@ impl Operation for Mkdir {
             Err(_) => conflict("parent directory does not exist"),
         }
     }
-    fn apply(&self) -> anyhow::Result<Option<Box<dyn Operation>>> {
+    fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         std::fs::create_dir(&self.path)
             .with_context(|| format!("mkdir {}", self.path.display()))?;
         Ok(Some(Box::new(Rmdir {
@@ -607,6 +890,8 @@ impl Operation for Mkdir {
 /// Remove an empty directory.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Rmdir {
+    #[serde(with = "crate::os_path")]
+    #[schemars(with = "PathArg")]
     pub path: PathBuf,
 }
 
@@ -625,7 +910,7 @@ impl Operation for Rmdir {
             path: self.path.clone(),
         }
     }
-    fn check(&self) -> StepStatus {
+    fn check(&self, _ctx: &StepContext) -> StepStatus {
         match std::fs::read_dir(&self.path) {
             Ok(mut rd) => {
                 if rd.next().is_none() {
@@ -638,7 +923,7 @@ impl Operation for Rmdir {
             Err(e) => conflict(e.to_string()),
         }
     }
-    fn apply(&self) -> anyhow::Result<Option<Box<dyn Operation>>> {
+    fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         std::fs::remove_dir(&self.path)
             .with_context(|| format!("rmdir {}", self.path.display()))?;
         Ok(Some(Box::new(Mkdir {

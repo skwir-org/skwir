@@ -392,7 +392,7 @@ pub fn plan_bulk_rename_in(
         current_path[i] = parent.join(&name);
         ops.push(Box::new(Rename {
             entry,
-            new_name: name,
+            new_name: name.into(),
         }));
     }
     let mut idx: Vec<usize> = renames.keys().copied().collect();
@@ -748,7 +748,7 @@ mod tests {
         for (i, name) in steps {
             ops.push(Box::new(Rename {
                 entry: EntryRef::new(items[i].0.id, current[i].clone()),
-                new_name: name.clone(),
+                new_name: name.clone().into(),
             }));
             current[i] = tmp.path().join(name);
         }

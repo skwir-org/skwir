@@ -11,6 +11,8 @@ use crate::fs::stat::id_of;
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EntryRef {
     pub id: EntryId,
+    #[serde(with = "crate::os_path")]
+    #[schemars(with = "crate::os_path::PathArg")]
     pub path: PathBuf,
 }
 
@@ -63,17 +65,18 @@ impl EntryRef {
             .ok_or_else(|| ResolveError::Gone(self.path.clone()))
     }
 
+    /// The entry's current path in the hint's directory. The directory
+    /// listing carries each inode number (`d_ino`), so only a matching name
+    /// is stat-ed: a folder of 100k entries costs one read, not 100k stats.
+    /// `d_ino` differs from the stat inode only on a mount point, which
+    /// cannot be renamed in place anyway.
     fn find_in_parent(&self) -> Option<PathBuf> {
+        use std::os::unix::fs::DirEntryExt;
         let parent: &Path = self.path.parent()?;
         let rd = std::fs::read_dir(parent).ok()?;
-        for e in rd.flatten() {
-            if let Ok(m) = e.metadata() {
-                use std::os::unix::fs::MetadataExt;
-                if m.ino() == self.id.ino && m.dev() == self.id.dev {
-                    return Some(e.path());
-                }
-            }
-        }
-        None
+        rd.flatten()
+            .filter(|e| e.ino() == self.id.ino)
+            .map(|e| e.path())
+            .find(|p| id_of(p) == Some(self.id))
     }
 }
