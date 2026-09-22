@@ -126,7 +126,8 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
   (`fullscreen_wanted`). The compact row has three forms measured by
   `AdaptiveRow`, richest first: the meter beside the text with the text
   whole, beside it with the text at least `TEXT_LEAST` wide, and under the
-  text, so the meter never costs the title its end. The dock's keys
+  text, so the meter never costs the title its end; beside the text it is
+  as tall as the two lines and takes what the panel has beyond the text. The dock's keys
   (`Player` context: Space, Left,
   Right, Shift+Left/Right, M) send the same `PlayerRequest`s as the desktop.
 - What plays is core data. `App::player` holds `playing::NowPlaying`, which

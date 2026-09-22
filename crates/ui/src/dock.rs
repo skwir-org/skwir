@@ -42,7 +42,8 @@ const COVER: f32 = 64.;
 /// The width the compact row's text gets beside the meter when it does
 /// not fit whole: enough for a title to be read.
 const TEXT_LEAST: f32 = 200.;
-/// The meter beside the text.
+/// The least the meter beside the text gets; it takes what the panel has
+/// beyond it.
 const METER_W: f32 = 80.;
 /// What the panel keeps above the dock at the least: its header, its toolbar
 /// and something of its content.
@@ -87,14 +88,15 @@ impl Shell {
 }
 
 /// A bar meter of the spectrum: one bar per band, the cover's colour.
-fn meter(spectrum: &[f32], playing: bool, tint: gpui::Hsla, height: f32) -> AnyElement {
-    let mut row = div().flex().items_end().gap(px(1.)).h(px(height)).w_full();
+/// It fills the box it is given: the bars are shares of its height.
+fn meter(spectrum: &[f32], playing: bool, tint: gpui::Hsla) -> AnyElement {
+    let mut row = div().flex().items_end().gap(px(1.)).size_full();
     for level in spectrum {
         let level = if playing { level.clamp(0., 1.) } else { 0. };
         row = row.child(
             div()
                 .flex_1()
-                .h(px((2. + level * (height - 2.)).round()))
+                .h(gpui::relative(0.06 + level * 0.94))
                 .rounded(px(1.))
                 .bg(tint.opacity(0.35 + 0.65 * level)),
         );
@@ -418,7 +420,6 @@ fn compact_row(
             .child(text.to_owned())
     };
     let text = div()
-        .flex_1()
         .min_w_0()
         .overflow_hidden()
         .flex()
@@ -426,31 +427,44 @@ fn compact_row(
         .gap(px(2.))
         .child(line(title, false))
         .child(line(by, true));
+    let meter = meter(&state.spectrum, state.playing(), tint);
+    // The root of a variant: as wide as the row it is chosen for.
     let row = div()
-        .flex_1()
-        .min_w_0()
+        .size_full()
         .flex()
         .items_center()
         .gap_3()
         .px_3()
         .child(cover);
-    // Measured, the text column is as wide as its lines (an overflow box
-    // contributes its flex basis, which is its content without one), or
-    // as wide as `TEXT_LEAST`; laid out, it grows to what the meter leaves.
+    // Measured, an overflow box contributes its flex basis: the text column
+    // is as wide as its lines without one, or as wide as `TEXT_LEAST`, and
+    // the meter `METER_W`. Laid out, the meter takes what the panel has
+    // beyond that (with the text, when the text is not whole), as tall as
+    // the two lines beside it.
     match form {
         Form::Whole | Form::Least => row
-            .child(text.when(matches!(form, Form::Least), |d| {
-                d.flex_basis(px(TEXT_LEAST))
-            }))
-            .child(div().flex_none().w(px(METER_W)).child(meter(
-                &state.spectrum,
-                state.playing(),
-                tint,
-                40.,
-            )))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .gap_3()
+                    .child(match form {
+                        Form::Least => text.flex_1().flex_basis(px(TEXT_LEAST)),
+                        _ => text.flex_none(),
+                    })
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex_basis(px(METER_W))
+                            .min_w(px(METER_W))
+                            .overflow_hidden()
+                            .child(meter),
+                    ),
+            )
             .into_any_element(),
         Form::Stacked => row
-            .child(text.child(meter(&state.spectrum, state.playing(), tint, 14.)))
+            .child(text.flex_1().child(div().h(px(14.)).child(meter)))
             .into_any_element(),
     }
 }
