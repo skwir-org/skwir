@@ -6,6 +6,8 @@
 
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
 
+use bibli_core::os_path::PathArg;
+
 use crate::controls;
 use crate::dnd::DragPayload;
 use crate::format;
@@ -46,7 +48,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
     places.sort_by_key(|p| (group_rank(&p.group), !p.location.is_path()));
     let font = shell.font.clone();
 
-    let drop_tint = theme.selection_bg.opacity(0.35);
+    let drop_tint = theme.drop_target;
     let mut column = div()
         .id("sidebar")
         .size_full()
@@ -62,10 +64,10 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
         // row is that row's and never reaches here.
         .drag_over::<DragPayload>(move |s, _, _, _| s.bg(drop_tint))
         .on_drop(cx.listener(|this, payload: &DragPayload, window, cx| {
-            for path in &payload.paths {
+            for path in this.drag_paths(payload.pane) {
                 this.run(
                     "places.bookmark",
-                    serde_json::json!({ "path": path }),
+                    serde_json::json!({ "path": PathArg::from(path) }),
                     window,
                     cx,
                 );
@@ -113,7 +115,11 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
             continue;
         }
         let is_current = place.location.to_string() == current;
-        let location = place.location.to_string();
+        // A folder goes by its path, which need not be UTF-8.
+        let location = match place.location.path() {
+            Some(path) => serde_json::json!(PathArg::from(path)),
+            None => serde_json::json!(place.location.to_string()),
+        };
         // Present but not mounted: clicking mounts it (or asks to unlock it).
         let activate = place.activate.clone();
         let waiting = activate.is_some();
@@ -180,7 +186,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
                 Some(activate) => this.run(&activate.name, activate.args.clone(), window, cx),
                 None => this.run(
                     "navigate",
-                    serde_json::json!({ "location": location }),
+                    serde_json::json!({ "location": location.clone() }),
                     window,
                     cx,
                 ),
@@ -211,7 +217,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
             row = row.tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), font.clone(), cx));
         }
         if let Some(eject) = place.eject.clone() {
-            let hover = theme.border;
+            let hover = theme.selection_bg;
             row = row.child(
                 div()
                     .id(("eject", i))

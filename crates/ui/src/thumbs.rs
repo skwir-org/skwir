@@ -2,11 +2,12 @@
 //! core's RGBA images into GPUI `RenderImage`s once, and keeps a byte-capped
 //! LRU that releases atlas textures on eviction.
 
-use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use bibli_core::EntryId;
 use bibli_core::entry::keys;
+use bibli_core::lru::ByteLru;
 use bibli_core::op::EntryRef;
 use bibli_core::scheduler::Priority;
 use bibli_core::thumbs::{Image, ThumbRequest, ThumbSize, ThumbState};
@@ -23,71 +24,34 @@ pub enum ThumbView {
     Unavailable,
 }
 
-type Key = (EntryId, ThumbSize);
+/// An entry's picture at one size, as of one modification time: a file
+/// edited in place gets a new key, so its old picture is never shown again
+/// (it ages out of the cache).
+type Key = (EntryId, ThumbSize, Option<SystemTime>);
 
-pub struct ThumbCache {
-    map: HashMap<Key, (Arc<RenderImage>, usize, u64)>,
-    order: VecDeque<(Key, u64)>,
-    bytes: usize,
-    budget: usize,
-    tick: u64,
-}
+/// Converted pictures, bounded by bytes. Evicted images are handed back so
+/// their atlas textures can be released.
+pub struct ThumbCache(ByteLru<Key, Arc<RenderImage>>);
 
 impl Default for ThumbCache {
     fn default() -> Self {
-        ThumbCache {
-            map: HashMap::new(),
-            order: VecDeque::new(),
-            bytes: 0,
-            budget: 48 << 20,
-            tick: 0,
-        }
+        ThumbCache(ByteLru::new(48 << 20))
     }
 }
 
 impl ThumbCache {
-    fn get(&mut self, k: Key) -> Option<Arc<RenderImage>> {
-        self.tick += 1;
-        let (img, _, stamp) = self.map.get_mut(&k)?;
-        *stamp = self.tick;
-        self.order.push_back((k, self.tick));
-        Some(Arc::clone(img))
+    fn get(&mut self, k: &Key) -> Option<Arc<RenderImage>> {
+        self.0.get(k).cloned()
     }
 
-    /// Insert a converted image; returns the images evicted to stay in budget.
+    /// Insert a converted image; returns the images to release: those
+    /// evicted to stay in budget, and the one it replaced.
     fn insert(&mut self, k: Key, img: Arc<RenderImage>, bytes: usize) -> Vec<Arc<RenderImage>> {
-        self.tick += 1;
-        if let Some((old, b, _)) = self.map.insert(k, (img, bytes, self.tick)) {
-            self.bytes -= b;
-            drop(old);
-        }
-        self.bytes += bytes;
-        self.order.push_back((k, self.tick));
-        let mut evicted = Vec::new();
-        while self.bytes > self.budget {
-            let Some((old_k, stamp)) = self.order.pop_front() else {
-                break;
-            };
-            if self.map.get(&old_k).is_some_and(|(_, _, s)| *s == stamp)
-                && let Some((old, b, _)) = self.map.remove(&old_k)
-            {
-                self.bytes -= b;
-                evicted.push(old);
-            }
-        }
-        evicted
+        self.0.insert(k, img, bytes)
     }
 
     pub fn bytes(&self) -> usize {
-        self.bytes
-    }
-
-    pub fn len(&self) -> usize {
-        self.map.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.map.is_empty()
+        self.0.bytes()
     }
 }
 
@@ -118,10 +82,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ThumbView {
-        if let Some(img) = self.thumbs.get((id, size)) {
-            return ThumbView::Ready(img);
-        }
-        let req = {
+        let (key, req) = {
             let ws = self.app.workspace.read();
             let Some(pane) = ws.pane(self.pane) else {
                 return ThumbView::Unavailable;
@@ -132,28 +93,34 @@ impl Shell {
             if e.is_dir() {
                 return ThumbView::Unavailable;
             }
+            let mtime = e
+                .metadata
+                .value(keys::MODIFIED)
+                .and_then(bibli_core::Value::as_time);
+            let key = (id, size, mtime);
+            if let Some(img) = self.thumbs.get(&key) {
+                return ThumbView::Ready(img);
+            }
             if !e.metadata.is_hydrated() {
                 return ThumbView::Pending;
             }
             let Some(path) = pane.open.as_ref().and_then(|o| o.path_of(id)) else {
                 return ThumbView::Unavailable;
             };
-            ThumbRequest {
+            let req = ThumbRequest {
                 entry: EntryRef::new(id, path),
                 mime: bibli_platform::mime::by_name(&e.name).map(|m| Arc::from(m.as_str())),
-                mtime: e
-                    .metadata
-                    .value(keys::MODIFIED)
-                    .and_then(bibli_core::Value::as_time),
+                mtime,
                 size,
-            }
+            };
+            (key, req)
         };
         match self.app.thumbnails.get(req, Priority::Visible) {
             ThumbState::Ready(img) => {
                 let Some(ri) = to_render_image(&img) else {
                     return ThumbView::Unavailable;
                 };
-                for old in self.thumbs.insert((id, size), Arc::clone(&ri), img.bytes()) {
+                for old in self.thumbs.insert(key, Arc::clone(&ri), img.bytes()) {
                     cx.drop_image(old, Some(window));
                 }
                 ThumbView::Ready(ri)
@@ -192,21 +159,27 @@ mod tests {
     }
 
     #[test]
-    fn lru_evicts_oldest_over_budget() {
-        let mut c = ThumbCache {
-            budget: 3 * 64,
-            ..ThumbCache::default()
-        };
-        let k = |n: u64| (EntryId { dev: 1, ino: n }, ThumbSize::Normal);
-        assert!(c.insert(k(1), img(4), 64).is_empty());
-        assert!(c.insert(k(2), img(4), 64).is_empty());
-        assert!(c.insert(k(3), img(4), 64).is_empty());
-        assert!(c.get(k(1)).is_some(), "touch 1 so 2 is the oldest");
-        let evicted = c.insert(k(4), img(4), 64);
-        assert_eq!(evicted.len(), 1);
-        assert!(c.get(k(2)).is_none());
-        assert!(c.get(k(1)).is_some());
+    fn an_edited_file_is_a_new_picture_and_the_cache_stays_in_budget() {
+        let mut c = ThumbCache(ByteLru::new(3 * 64));
+        let id = EntryId { dev: 1, ino: 7 };
+        let then = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(10);
+        let now = then + std::time::Duration::from_secs(5);
+        assert!(
+            c.insert((id, ThumbSize::Normal, Some(then)), img(4), 64)
+                .is_empty()
+        );
+        assert!(c.get(&(id, ThumbSize::Normal, Some(then))).is_some());
+        assert!(
+            c.get(&(id, ThumbSize::Normal, Some(now))).is_none(),
+            "edited since: not the old picture"
+        );
+        for n in 0..10 {
+            let k = (EntryId { dev: 1, ino: n }, ThumbSize::Normal, None);
+            c.insert(k, img(4), 64);
+            for _ in 0..100 {
+                c.get(&k);
+            }
+        }
         assert_eq!(c.bytes(), 192);
-        assert_eq!(c.len(), 3);
     }
 }

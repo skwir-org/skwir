@@ -2,19 +2,21 @@
 //! rectangle over the entries to select.
 //!
 //! The element sits over a view's scroll area and owns no layout. It knows
-//! its bounds where they are real (prepaint), turns pointer positions into
-//! content coordinates with the view's scroll offset, and asks pure geometry
-//! which entries a rectangle covers. The drag itself lives in the shell,
+//! its bounds where they are real (prepaint), reads the view's scroll offset
+//! and tile slots when it paints (after the view's own prepaint, so they are
+//! this frame's), turns pointer positions into content coordinates, and asks
+//! pure geometry which entries a rectangle covers. The drag itself lives in the shell,
 //! anchored in content coordinates, so it survives re-renders and scrolling.
 
 use gpui::{
     App, Bounds, Element, ElementId, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId,
     IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Point, Style, WeakEntity, Window, point, px, relative,
+    Point, ScrollHandle, Style, WeakEntity, Window, point, px, relative,
 };
 
 use bibli_core::workspace::PaneId;
 
+use crate::elements::uniform_grid::UniformGridScrollHandle;
 use crate::elements::uniform_grid::math::Slots;
 use crate::shell::Shell;
 use crate::theme::Theme;
@@ -25,9 +27,9 @@ use crate::theme::Theme;
 pub enum Geometry {
     /// Full-width rows of one height.
     Rows { height: f32 },
-    /// A grid's tiles, after `pad_x` of left padding. The gutters between
-    /// them are empty: a band can begin there.
-    Cells { slots: Slots, pad_x: f32 },
+    /// A grid's tiles, placed from `origin` (the grid's border and
+    /// padding). The gutters between them are empty: a band can begin there.
+    Cells { slots: Slots, origin: (f32, f32) },
 }
 
 impl Geometry {
@@ -39,7 +41,7 @@ impl Geometry {
         }
         let index = match self {
             Geometry::Rows { height } => (y / *height) as usize,
-            Geometry::Cells { slots, pad_x } => slots.tile_at(x - *pad_x, y)?,
+            Geometry::Cells { slots, origin } => slots.tile_at(x - origin.0, y - origin.1)?,
         };
         (index < count).then_some(index)
     }
@@ -57,8 +59,11 @@ impl Geometry {
                 let last = ((y1 / height) as usize).min(count - 1);
                 (first..=last).filter(|index| *index < count).collect()
             }
-            Geometry::Cells { slots, pad_x } => slots
-                .covered((x0 - *pad_x, x1 - *pad_x), (y0, y1))
+            Geometry::Cells { slots, origin } => slots
+                .covered(
+                    (x0 - origin.0, x1 - origin.0),
+                    (y0 - origin.1, y1 - origin.1),
+                )
                 .into_iter()
                 .filter(|index| *index < count)
                 .collect(),
@@ -80,13 +85,33 @@ pub struct Drag {
     pub kept: Vec<bibli_core::EntryId>,
 }
 
+/// Where a view's entries are, read when the marquee paints: after the
+/// view's own prepaint, so the scroll offset and the grid's slots are this
+/// frame's, never the last one's.
+pub enum Source {
+    Rows { height: f32 },
+    Grid(UniformGridScrollHandle),
+}
+
+impl Source {
+    fn geometry(&self) -> Geometry {
+        match self {
+            Source::Rows { height } => Geometry::Rows { height: *height },
+            Source::Grid(grid) => Geometry::Cells {
+                slots: grid.slots(),
+                origin: grid.origin(),
+            },
+        }
+    }
+}
+
 pub struct Marquee {
     pub pane: PaneId,
     pub shell: WeakEntity<Shell>,
-    pub geometry: Geometry,
+    pub source: Source,
     pub count: usize,
-    /// The view's scroll offset (zero or negative).
-    pub offset: Point<Pixels>,
+    /// The handle the view scrolls with.
+    pub scroll: ScrollHandle,
     pub drag: Option<Drag>,
 }
 
@@ -147,8 +172,13 @@ impl Element for Marquee {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let (geometry, count, offset, pane) =
-            (self.geometry.clone(), self.count, self.offset, self.pane);
+        // Painted after the view laid itself out and scrolled: current.
+        let (geometry, count, offset, pane) = (
+            self.source.geometry(),
+            self.count,
+            self.scroll.offset(),
+            self.pane,
+        );
         let to_content = move |position: Point<Pixels>| {
             (
                 f32::from(position.x - bounds.origin.x - offset.x),
@@ -257,7 +287,7 @@ mod tests {
         // Four 100 by 120 tiles a row, each 8 px from the edge of its slot.
         let cells = Geometry::Cells {
             slots: Slots::new(Columns::fit(464., 100., 16., 40.), 16., 10, |_| 120.),
-            pad_x: 4.,
+            origin: (4., 0.),
         };
         assert_eq!(cells.item_at(130., 150., 10), Some(5));
         assert_eq!(cells.item_at(124., 150., 10), None, "in the gutter");

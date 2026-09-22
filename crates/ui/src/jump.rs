@@ -1,17 +1,22 @@
 //! Jump overlay: frecency candidates from the jump plugin as you type.
+//!
+//! Ranking reads the recently-used list and checks that each file is still
+//! there, so candidates are asked for on a worker, and only the answer to
+//! the latest query is shown.
 
-use gpui::{
-    AnyElement, Context, Entity, MouseButton, Subscription, Window, deferred, div, prelude::*, px,
-};
+use bibli_core::command::{Invocation, Outcome};
+use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*, px};
 use serde::Deserialize;
 
 use crate::input::{InputEvent, TextInput};
 use crate::keymap;
+use crate::modal::{self, FocusReturn, Picker};
 use crate::shell::Shell;
 use crate::theme::Theme;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Candidate {
+    #[serde(with = "bibli_core::os_path")]
     pub path: std::path::PathBuf,
     #[serde(default)]
     pub kind: String,
@@ -22,13 +27,16 @@ pub struct Candidate {
 pub struct JumpState {
     pub input: Entity<TextInput>,
     pub candidates: Vec<Candidate>,
-    pub highlighted: usize,
-    query: Option<String>,
+    pub picker: Picker,
+    /// The query asked of the plugin last; its answer may still be coming.
+    asked: Option<String>,
+    back: FocusReturn,
     _sub: Subscription,
 }
 
 impl Shell {
     pub fn open_jump(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let back = FocusReturn::capture(window, cx);
         let input = cx.new(|cx| TextInput::new("Jump to a folder or recent file", cx));
         let sub = cx.subscribe_in(
             &input,
@@ -36,83 +44,96 @@ impl Shell {
             |this, _, ev: &InputEvent, window, cx| match ev {
                 InputEvent::Submit => this.jump_submit(window, cx),
                 InputEvent::Cancel => this.close_jump(window, cx),
-                InputEvent::Changed => cx.notify(),
+                InputEvent::Changed => this.jump_refresh(window, cx),
             },
         );
         input.update(cx, |i, _| i.focus(window));
         self.jump = Some(JumpState {
             input,
             candidates: Vec::new(),
-            highlighted: 0,
-            query: None,
+            picker: Picker::default(),
+            asked: None,
+            back,
             _sub: sub,
         });
-        self.jump_refresh(cx);
+        self.jump_refresh(window, cx);
         cx.notify();
     }
 
     pub fn close_jump(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.jump = None;
-        window.focus(&self.ui().focus);
+        if let Some(jump) = self.jump.take() {
+            jump.back.restore(window, &self.ui().focus);
+        }
         cx.notify();
     }
 
     pub fn jump_move(&mut self, delta: isize, cx: &mut Context<Self>) {
-        if let Some(j) = &mut self.jump
-            && !j.candidates.is_empty()
-        {
-            let n = j.candidates.len() as isize;
-            j.highlighted = ((j.highlighted as isize + delta).rem_euclid(n)) as usize;
+        if let Some(j) = &mut self.jump {
+            j.picker.step(delta, j.candidates.len());
             cx.notify();
         }
     }
 
     fn jump_submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let target = self
-            .jump
-            .as_ref()
-            .and_then(|j| j.candidates.get(j.highlighted).map(|c| c.path.clone()));
+        let target = self.jump.as_ref().and_then(|j| {
+            j.candidates
+                .get(j.picker.highlighted)
+                .map(|c| c.path.clone())
+        });
         self.close_jump(window, cx);
-        if let Some(p) = target {
-            self.run(
-                "jump.to",
-                serde_json::json!({ "path": p.to_string_lossy() }),
-                window,
-                cx,
-            );
+        if let Some(path) = target {
+            // A folder opens; a file is selected in its folder. Which one it
+            // is, and whether it is still there, is asked on a worker.
+            let pane = self.pane;
+            self.reveal_path(pane, &path, window, cx);
         }
     }
 
-    /// Ask the plugin for candidates when the query changed.
-    fn jump_refresh(&mut self, cx: &mut Context<Self>) {
-        let Some(j) = &self.jump else { return };
-        let q = j.input.read(cx).text().to_owned();
-        if j.query.as_deref() == Some(q.as_str()) {
+    /// Ask the plugin for candidates on a worker when the query changed.
+    fn jump_refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(j) = &mut self.jump else { return };
+        let query = j.input.read(cx).text().to_owned();
+        if j.asked.as_deref() == Some(query.as_str()) {
             return;
         }
-        let value = self.query_value(
-            "jump.candidates",
-            serde_json::json!({ "query": q, "limit": 30 }),
+        j.asked = Some(query.clone());
+        let app = std::sync::Arc::clone(&self.app);
+        let args = serde_json::json!({ "query": query, "limit": 30 });
+        self.off_thread(
+            "jump-candidates",
+            move || app.dispatch(&Invocation::with_args("jump.candidates", &args)),
+            move |this, result, _, cx| {
+                let Some(j) = this.jump.as_mut().filter(|j| j.asked == Some(query)) else {
+                    return;
+                };
+                match result {
+                    Ok(Outcome::Value(value)) => {
+                        j.candidates = serde_json::from_value(value).unwrap_or_default();
+                    }
+                    Ok(_) => j.candidates.clear(),
+                    Err(error) => {
+                        j.candidates.clear();
+                        this.set_status(format!("{error:#}"), true, cx);
+                    }
+                }
+                if let Some(j) = &mut this.jump {
+                    j.picker = Picker::default();
+                }
+                cx.notify();
+            },
+            window,
             cx,
         );
-        let candidates: Vec<Candidate> = value
-            .and_then(|v| serde_json::from_value(v).ok())
-            .unwrap_or_default();
-        if let Some(j) = &mut self.jump {
-            j.candidates = candidates;
-            j.highlighted = 0;
-            j.query = Some(q);
-        }
     }
 }
 
-pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    shell.jump_refresh(cx);
+pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let j = shell.jump.as_ref()?;
     let theme = cx.global::<Theme>().clone();
     let mut list = div().flex().flex_col().py_1().overflow_hidden();
-    for (ix, c) in j.candidates.iter().enumerate().take(14) {
-        let hl = ix == j.highlighted;
+    for ix in j.picker.shown(j.candidates.len()) {
+        let c = &j.candidates[ix];
+        let hl = ix == j.picker.highlighted;
         list = list.child(
             div()
                 .id(("jump", ix))
@@ -125,9 +146,10 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 .when(hl, |d| {
                     d.bg(theme.selection_bg).text_color(theme.selection_text)
                 })
+                .when(!hl, |d| d.hover(|s| s.bg(theme.hover)))
                 .on_click(cx.listener(move |this, _, window, cx| {
                     if let Some(j) = &mut this.jump {
-                        j.highlighted = ix;
+                        j.picker.highlighted = ix;
                     }
                     this.jump_submit(window, cx);
                 }))
@@ -135,7 +157,9 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                     div()
                         .flex_1()
                         .min_w_0()
-                        .truncate()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis_middle()
                         .child(c.path.to_string_lossy().into_owned()),
                 )
                 .child(
@@ -159,47 +183,19 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 .child("No candidates"),
         );
     }
-    Some(
-        deferred(
+    let panel = modal::panel(640., &theme)
+        .key_context(keymap::JUMP)
+        .child(
             div()
-                .absolute()
-                .inset_0()
+                .p_2()
                 .flex()
-                .justify_center()
-                .items_start()
-                .pt(px(80.))
-                .occlude()
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, window, cx| this.close_jump(window, cx)),
-                )
-                .child(
-                    div()
-                        .w(px(640.))
-                        .flex()
-                        .flex_col()
-                        .rounded_lg()
-                        .border_1()
-                        .border_color(theme.border)
-                        .bg(theme.surface)
-                        .shadow_lg()
-                        .key_context(keymap::JUMP)
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .child(
-                            div()
-                                .p_2()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .border_b_1()
-                                .border_color(theme.border)
-                                .child(div().text_xs().text_color(theme.text_muted).child("Jump"))
-                                .child(div().flex_1().child(j.input.clone())),
-                        )
-                        .child(list),
-                ),
+                .items_center()
+                .gap_2()
+                .border_b_1()
+                .border_color(theme.border)
+                .child(div().text_xs().text_color(theme.text_muted).child("Jump"))
+                .child(div().flex_1().child(j.input.clone())),
         )
-        .with_priority(4)
-        .into_any_element(),
-    )
+        .child(list);
+    Some(modal::modal(panel, 80., 4, Shell::close_jump, &theme, cx))
 }

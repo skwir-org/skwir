@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use bibli_core::app::NotifyLevel;
 use bibli_core::command::{Invocation, Outcome};
-use bibli_core::op::StepStatus;
+use bibli_core::os_path::PathArg;
 use bibli_core::workspace::PaneId;
 use bibli_core::{App, Location, Plan, SortKey};
 use gpui::{
@@ -35,6 +35,12 @@ use crate::{
     address, jump, menu, palette, preview, prompts, renamebulk, review, sidebar, status, timeline,
 };
 
+/// What the shell says when a command needs a selection and there is none.
+pub const NOTHING_SELECTED: &str = "Select a file or folder first";
+
+/// What the shelf publishes in `App::tallies`: how many items it holds.
+pub const SHELF_ITEMS: &str = "shelf.items";
+
 /// UI state of one pane: focus, address bar, cached order, views.
 pub struct PaneUi {
     pub id: PaneId,
@@ -49,9 +55,12 @@ pub struct PaneUi {
     /// Registry revision the registrations above were reconciled against.
     views_revision: u64,
     pub view_id: &'static str,
-    pub grid_rows_visible: usize,
     pub usage: UsageState,
     pub loading: crate::loading::State,
+    /// What this pane last searched for, for its "Nothing found".
+    pub last_search: String,
+    /// The placeholder's button, kept so Tab can reach it.
+    placeholder_focus: FocusHandle,
     _sub: Subscription,
 }
 
@@ -72,6 +81,9 @@ pub struct Shell {
     pub font: SharedString,
     pub mono_font: SharedString,
     pub key_hints: Vec<KeyHint>,
+    /// Keymap registry revision `key_hints` and GPUI's bindings were built
+    /// from; `sync` installs them again when it moves.
+    keymap_revision: u64,
     pub zoom: u32,
     pub thumbs: ThumbCache,
     pub icons: IconCache,
@@ -104,8 +116,8 @@ pub struct Shell {
     /// Settings revision the theme was last resolved against.
     theme_revision: u64,
     /// Plans proposed by background work, oldest first; the front is shown.
-    pub reviews: VecDeque<Plan>,
-    pub review_focus: Option<FocusHandle>,
+    pub reviews: VecDeque<crate::review::Review>,
+    pub review_focus: Option<crate::review::ReviewFocus>,
     pub timeline: TimelineState,
     pub toasts: crate::toast::ToastState,
     /// This frame's snapshot of what waits for a paste; rows and cells test
@@ -119,17 +131,23 @@ pub struct Shell {
     pub nudges: crate::shortcuts::Nudges,
     pub last_search: String,
     pub shelf_count: usize,
+    /// `App::tallies` revision `shelf_count` was read at.
+    tallies_revision: Option<u64>,
+    /// A plain press on a row of a multi-selection, waiting for its
+    /// release to make the selection that row (unless a drag starts).
+    pub press_collapse: Option<(PaneId, bibli_core::EntryId)>,
     /// A file to select once the folder it lives in has listed it: a listing
     /// streams, so a link followed to another folder cannot select its target
     /// in the same frame it navigates.
     reveal: Option<Reveal>,
+    /// Advances with each `reveal_path`, so only the latest one's answer
+    /// from its worker is acted on.
+    reveal_asked: u64,
     /// The window's shape as last written to settings; `remember_session`
     /// compares against it so nothing is written on an ordinary frame.
     pub(crate) stored_session: crate::session::Session,
     /// Scroll position of the sidebar, so it can have a scrollbar.
     pub sidebar_scroll: gpui::ScrollHandle,
-    /// A remembered view id waiting for its pane's views to be reconciled.
-    restoring_view: Option<String>,
     started: Instant,
     first_frame_logged: bool,
     _subscriptions: Vec<Subscription>,
@@ -142,7 +160,7 @@ impl Shell {
         started: Instant,
         font: SharedString,
         mono_font: SharedString,
-        key_hints: Vec<KeyHint>,
+        keymap: keymap::Keymap,
         wake_rx: flume::Receiver<()>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -225,7 +243,8 @@ impl Shell {
             panes: Vec::new(),
             font,
             mono_font,
-            key_hints,
+            key_hints: keymap.hints,
+            keymap_revision: keymap.revision,
             zoom: DEFAULT_ZOOM,
             thumbs: ThumbCache::default(),
             icons: IconCache::default(),
@@ -260,10 +279,12 @@ impl Shell {
             nudges: crate::shortcuts::Nudges::default(),
             last_search: String::new(),
             shelf_count: 0,
+            tallies_revision: None,
+            press_collapse: None,
             reveal: None,
+            reveal_asked: 0,
             stored_session: crate::session::Session::default(),
             sidebar_scroll: gpui::ScrollHandle::new(),
-            restoring_view: None,
             started,
             first_frame_logged: false,
             _subscriptions: subs,
@@ -298,11 +319,15 @@ impl Shell {
             self.player.height = session.player_height;
         }
         self.timeline.open = session.timeline;
-        if !session.view.is_empty() {
-            self.restoring_view = Some(session.view);
-        }
         if session.split {
             self.split(window, cx);
+        }
+        // The views this build and its plugins have were instantiated with
+        // the panes; a remembered one that is gone leaves the List.
+        for pane in &mut self.panes {
+            if let Some(known) = pane.views.keys().find(|k| ***k == *session.view).copied() {
+                pane.view_id = known;
+            }
         }
         self.stored_session = self.session();
     }
@@ -336,35 +361,30 @@ impl Shell {
                 InputEvent::Changed => {}
             },
         );
-        let mut views: HashMap<&'static str, Box<dyn PaneView>> = HashMap::new();
-        for spec in self.app.registry.views.all() {
-            if let Some(v) = view::instantiate(&spec) {
-                views.insert(v.id(), v);
-            }
-        }
         // Read the revision before the descriptors: a registration landing
         // between the two reads is then picked up by the next sync_views.
         let views_revision = self.app.registry.views.revision();
+        let mut views = HashMap::new();
+        let mut view_registrations = HashMap::new();
+        view::reconcile(
+            &mut views,
+            &mut view_registrations,
+            &self.app.registry.views.all(),
+        );
         PaneUi {
             id,
             focus: cx.focus_handle(),
             address,
             address_shown: String::new(),
             list: ListState::default(),
-            view_registrations: self
-                .app
-                .registry
-                .views
-                .all()
-                .into_iter()
-                .map(|s| (s.id.to_string(), s.factory))
-                .collect(),
+            view_registrations,
             views_revision,
             views,
             view_id: view::LIST,
-            grid_rows_visible: 4,
             usage: UsageState::default(),
             loading: crate::loading::State::default(),
+            last_search: String::new(),
+            placeholder_focus: cx.focus_handle(),
             _sub: sub,
         }
     }
@@ -406,9 +426,41 @@ impl Shell {
         self.panes.iter().map(|p| p.id).find(|id| *id != self.pane)
     }
 
+    /// Run `work` on a scheduler worker (it may block: a stat, a plugin
+    /// reading files) and hand its result to `then` on the UI thread. The
+    /// one way the shell waits for something without blocking a frame;
+    /// `then` decides whether the answer is still wanted.
+    pub fn off_thread<T: Send + 'static>(
+        &self,
+        label: &'static str,
+        work: impl FnOnce() -> T + Send + 'static,
+        then: impl FnOnce(&mut Shell, T, &mut Window, &mut Context<Shell>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (tx, rx) = flume::bounded(1);
+        self.app.scheduler.spawn(
+            bibli_core::scheduler::Priority::Visible,
+            label,
+            self.app.lifetime().child(),
+            move || {
+                let _ = tx.send(work());
+            },
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            if let Ok(result) = rx.recv_async().await {
+                this.update_in(cx, |shell, window, cx| then(shell, result, window, cx))
+                    .ok();
+            }
+        })
+        .detach();
+    }
+
     /// Show `path` in `pane`: navigate to the folder that holds it and select
     /// the file itself once the listing reaches it. A directory is simply
-    /// opened. Returns false if the path is not there.
+    /// opened. Whether it is a directory, or there at all, is asked on a
+    /// worker (the disk may be asleep); a path that is gone is reported.
+    /// Returns false only for a path that cannot name a file (no parent).
     pub fn reveal_path(
         &mut self,
         pane: PaneId,
@@ -416,29 +468,54 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Ok(metadata) = std::fs::metadata(path) else {
+        if path.parent().is_none() && !path.has_root() {
             return false;
-        };
-        let (folder, name) = if metadata.is_dir() {
-            (path.to_path_buf(), None)
-        } else {
-            match (path.parent(), path.file_name()) {
-                (Some(parent), Some(name)) => (parent.to_path_buf(), Some(name.to_owned())),
-                _ => return false,
-            }
-        };
-        self.activate_pane(pane, cx);
-        self.run(
-            "navigate",
-            serde_json::json!({ "location": folder.to_string_lossy() }),
+        }
+        self.reveal_asked += 1;
+        let asked = self.reveal_asked;
+        let target = path.to_path_buf();
+        self.off_thread(
+            "reveal-stat",
+            move || {
+                let is_dir = std::fs::metadata(&target).map(|m| m.is_dir());
+                (target, is_dir)
+            },
+            move |this, (path, is_dir), window, cx| {
+                if this.reveal_asked != asked {
+                    return;
+                }
+                let found = match is_dir {
+                    Ok(true) => Some((path.clone(), None)),
+                    Ok(false) => path
+                        .parent()
+                        .zip(path.file_name())
+                        .map(|(parent, name)| (parent.to_path_buf(), Some(name.to_owned()))),
+                    Err(_) => None,
+                };
+                let Some((folder, name)) = found else {
+                    let name = path.file_name().map_or_else(
+                        || path.display().to_string(),
+                        |name| name.to_string_lossy().into_owned(),
+                    );
+                    this.set_status(format!("“{name}” is not there any more"), true, cx);
+                    return;
+                };
+                this.activate_pane(pane, cx);
+                this.run(
+                    "navigate",
+                    serde_json::json!({ "location": PathArg::from(folder), "pane": pane }),
+                    window,
+                    cx,
+                );
+                this.reveal = name.map(|name| Reveal {
+                    pane,
+                    name,
+                    until: Instant::now() + std::time::Duration::from_secs(10),
+                });
+            },
             window,
             cx,
         );
-        self.reveal = name.map(|name| Reveal {
-            pane,
-            name,
-            until: Instant::now() + std::time::Duration::from_secs(10),
-        });
         true
     }
 
@@ -471,13 +548,11 @@ impl Shell {
                 pane.selection.set([id]);
             }
         }
-        let saved = self.pane;
-        self.pane = pane;
-        let index = self.cursor_index();
-        if let Some(index) = index {
-            self.with_view(|view, _| view.scroll_to(index));
-        }
-        self.pane = saved;
+        self.with_pane(pane, |shell| {
+            if let Some(index) = shell.cursor_index() {
+                shell.with_view(|view, _| view.scroll_to(index));
+            }
+        });
         cx.notify();
     }
 
@@ -547,7 +622,7 @@ impl Shell {
         match self.other_pane_dir() {
             Some(dest) => self.run(
                 cmd,
-                serde_json::json!({ "dest": dest.to_string_lossy() }),
+                serde_json::json!({ "dest": PathArg::from(dest), "pane": self.pane }),
                 window,
                 cx,
             ),
@@ -587,14 +662,20 @@ impl Shell {
         specs
     }
 
-    pub fn view_shortcut(&self, id: &str) -> Option<String> {
-        self.key_hints
-            .iter()
-            .find(|h| {
-                h.command == "ui.view"
-                    && h.args.get("id").and_then(serde_json::Value::as_str) == Some(id)
-            })
-            .map(|h| h.keys.clone())
+    /// The keys bound to `command` with `args`, as people read them.
+    pub fn keys_for(&self, command: &str, args: &serde_json::Value) -> Option<String> {
+        keymap::keys_for(&self.key_hints, command, args)
+    }
+
+    /// Install the key bindings again when a plugin added or withdrew some.
+    fn sync_keymap(&mut self, cx: &mut Context<Self>) {
+        if self.app.registry.keymap.revision() == self.keymap_revision {
+            return;
+        }
+        let keymap = keymap::install(&self.app, cx);
+        self.key_hints = keymap.hints;
+        self.keymap_revision = keymap.revision;
+        cx.notify();
     }
 
     fn sync_views(&mut self) {
@@ -737,28 +818,17 @@ impl Shell {
             Ok(Outcome::Done) => {}
             Ok(Outcome::Value(v)) => self.on_value(name, v, cx),
             Ok(Outcome::Plan(plan)) => self.apply_user_plan(plan, cx),
-            Err(e) => self.set_status(format!("{e:#}"), true, cx),
+            Err(e) => self.report_error(&e, cx),
         }
         cx.notify();
     }
 
-    /// A user-initiated plan applies immediately (it is undoable); conflicts
-    /// are reported instead.
+    /// A user-initiated plan applies immediately (it is undoable), as a
+    /// whole: the executor checks every step first, on its lane, and a
+    /// conflict applies nothing and comes back as the toast's error.
     pub fn apply_user_plan(&mut self, plan: Plan, cx: &mut Context<Self>) {
-        if plan.is_applicable() {
-            self.app.apply(plan);
-        } else {
-            let reason = plan
-                .diff()
-                .steps
-                .into_iter()
-                .find_map(|(_, s)| match s {
-                    StepStatus::Conflict { reason } => Some(reason),
-                    _ => None,
-                })
-                .unwrap_or_else(|| "plan cannot be applied".into());
-            self.set_status(reason, true, cx);
-        }
+        self.app.apply_whole(plan);
+        cx.notify();
     }
 
     /// Values from commands the shell knows how to present; others are ignored.
@@ -896,7 +966,7 @@ impl Shell {
             "rename_bulk_prompt" => self.open_bulk(window, cx),
             "rename_bulk_next" => self.bulk_focus_next(1, window, cx),
             "rename_bulk_prev" => self.bulk_focus_next(-1, window, cx),
-            "rename_bulk_case" => self.bulk_cycle_case(cx),
+            "rename_bulk_case" => self.bulk_cycle_case(window, cx),
             "review_apply" => self.review_apply(cx),
             "review_cancel" => self.review_cancel(cx),
             "usage" => self.set_view("usage", cx),
@@ -932,17 +1002,26 @@ impl Shell {
                 }
             }
             "confirm_delete" => {
-                let n = self.selection_ctx().count;
-                if n == 0 {
-                    self.set_status("nothing selected", true, cx);
-                } else {
-                    let noun = if n == 1 { "item" } else { "items" };
-                    self.open_confirm(
-                        format!("Delete {n} {noun} permanently? This cannot be undone."),
-                        Invocation::new("delete"),
-                        window,
-                        cx,
-                    );
+                // The plan is built now, from what is selected now, so Enter
+                // deletes what the question named even if the selection or
+                // the active pane changes before it is answered.
+                let pane = self.pane;
+                match self.app.dispatch(&Invocation::with_args(
+                    "delete",
+                    &serde_json::json!({ "pane": pane }),
+                )) {
+                    Ok(Outcome::Plan(plan)) if !plan.is_empty() => {
+                        let n = plan.len();
+                        let noun = if n == 1 { "item" } else { "items" };
+                        self.open_confirm(
+                            format!("Delete {n} {noun} permanently? This cannot be undone."),
+                            plan,
+                            window,
+                            cx,
+                        );
+                    }
+                    Ok(_) => self.set_status(NOTHING_SELECTED, false, cx),
+                    Err(error) => self.set_status(format!("{error:#}"), true, cx),
                 }
             }
             "accept" => self.confirm_accept(window, cx),
@@ -1144,7 +1223,7 @@ impl Shell {
         if let Some(path) = target {
             self.run(
                 "navigate",
-                serde_json::json!({ "location": path.to_string_lossy() }),
+                serde_json::json!({ "location": PathArg::from(path), "pane": self.pane }),
                 window,
                 cx,
             );
@@ -1159,16 +1238,7 @@ impl Shell {
         let t0 = Instant::now();
         let report = self.app.pump_report();
         self.sync_views();
-        if let Some(id) = self.restoring_view.take()
-            && self.ui().views.contains_key(id.as_str())
-        {
-            self.set_view(&id, cx);
-            for pane in &mut self.panes {
-                if let Some(known) = pane.views.keys().find(|k| ***k == *id).copied() {
-                    pane.view_id = known;
-                }
-            }
-        }
+        self.sync_keymap(cx);
         self.app.thumbnails.tick();
         self.drain_executor(cx);
         for n in self.app.take_notifications() {
@@ -1205,7 +1275,7 @@ impl Shell {
                 self.column_widths = widths.map(crate::views::list::clamp_width);
             }
         }
-        if self.type_names.absorb() {
+        if self.type_names.absorb() | self.icons.absorb() {
             cx.notify();
         }
         if let Some(settings) = self.settings.clone() {
@@ -1213,9 +1283,9 @@ impl Shell {
         }
         let proposals = self.app.take_proposals();
         if !proposals.is_empty() {
-            self.reviews.extend(proposals);
-            cx.notify();
+            self.add_reviews(proposals, window, cx);
         }
+        self.sync_review_focus(window, cx);
         // Follow the workspace's active pane (commands may change it).
         let active = self.app.workspace.read().active_id();
         if self.panes.iter().any(|p| p.id == active) {
@@ -1273,14 +1343,19 @@ impl Shell {
         self.sync_shelf(cx);
     }
 
+    /// The shelf publishes how many items it holds in `App::tallies`; read
+    /// it when that moved, never by asking the shelf each frame.
     fn sync_shelf(&mut self, cx: &mut Context<Self>) {
-        if self.app.commands.get("shelf.list").is_none() {
+        let revision = self.app.tallies.revision();
+        if self.tallies_revision == Some(revision) {
             return;
         }
+        self.tallies_revision = Some(revision);
         let n = self
-            .query_value("shelf.list", serde_json::json!({}), cx)
-            .and_then(|v| v.as_array().map(Vec::len))
-            .unwrap_or(0);
+            .app
+            .tallies
+            .get(SHELF_ITEMS)
+            .map_or(0, |n| usize::try_from(n).unwrap_or(usize::MAX));
         if n != self.shelf_count {
             self.shelf_count = n;
             cx.notify();
@@ -1304,7 +1379,8 @@ impl Shell {
             .then(|| crate::placeholder::of(self, id))
             .flatten();
         let body = if let Some(placeholder) = placeholder {
-            crate::placeholder::render(placeholder, cx)
+            let focus = self.ui().placeholder_focus.clone();
+            crate::placeholder::render(placeholder, &focus, cx)
         } else {
             match self.take_view() {
                 Some(mut v) => {
@@ -1378,19 +1454,6 @@ impl Render for Shell {
         for id in pane_ids {
             columns.push(self.render_pane(id, window, cx));
         }
-        // The review modal owns focus while a proposal waits.
-        match (self.reviews.is_empty(), self.review_focus.is_some()) {
-            (false, false) => {
-                let h = cx.focus_handle();
-                window.focus(&h);
-                self.review_focus = Some(h);
-            }
-            (true, true) => {
-                self.review_focus = None;
-                window.focus(&self.ui().focus);
-            }
-            _ => {}
-        }
         let panel = preview::render_panel(
             self,
             self.preview_width_limit(window),
@@ -1411,7 +1474,7 @@ impl Render for Shell {
             prompts::render_prompt(self, cx),
             prompts::render_confirm(self, cx),
             jump::render(self, cx),
-            renamebulk::render(self, cx),
+            renamebulk::render(self, window, cx),
             palette::render(self, cx),
             preview::render_peek(self, cx),
             review::render(self, cx),
@@ -1446,6 +1509,10 @@ impl Render for Shell {
             .children(settings)
             .children(shortcuts)
             .child(div().h(px(0.)));
+        // Icons the panels and the sidebar missed while building this frame;
+        // the views ask for theirs as their rows are built.
+        let app = Arc::clone(&self.app);
+        self.icons.request(&app);
         self.resize_hook(root, cx)
     }
 }

@@ -2,6 +2,7 @@
 //! bookkeeping, selection and cursor interaction, type-ahead, and the pane
 //! container (focus, key context, external drops).
 
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
@@ -13,6 +14,7 @@ use gpui::{
     Window, div, prelude::*,
 };
 
+use crate::dnd::DragPayload;
 use crate::keymap;
 use crate::menu::SelectionCtx;
 use crate::shell::Shell;
@@ -23,12 +25,19 @@ pub struct ListState {
     /// Entry ids in display order, from the core's cached sort.
     pub sorted: std::sync::Arc<[EntryId]>,
     sorted_at: Option<(u64, SortSpec)>,
-    /// Hydration requested and not yet answered; cleared when the listing changes.
+    /// Hydration requested and not yet answered. Kept until the pane shows
+    /// another location: an answer arrives as an update that hydrates the
+    /// entry (or removes it), so nothing asked for needs asking again, and a
+    /// listing that changes while 100 000 entries are in flight must not
+    /// send them all a second time.
     pub pending_hydrate: HashSet<EntryId>,
-    pending_at: u64,
     pub visible_rows: usize,
     typeahead: String,
     typeahead_at: Option<Instant>,
+    /// The selection summary and the (selection revision, listing version)
+    /// it was computed for: read several times a frame, recomputed only
+    /// when one of them moved.
+    selection: Cell<Option<((u64, u64), SelectionCtx)>>,
 }
 
 impl Default for ListState {
@@ -37,10 +46,10 @@ impl Default for ListState {
             sorted: std::sync::Arc::from([]),
             sorted_at: None,
             pending_hydrate: HashSet::new(),
-            pending_at: 0,
             visible_rows: 20,
             typeahead: String::new(),
             typeahead_at: None,
+            selection: Cell::new(None),
         }
     }
 }
@@ -54,10 +63,6 @@ impl ListState {
         }
         self.sorted = listing.sorted(spec);
         self.sorted_at = Some((version, spec));
-        if self.pending_at != version {
-            self.pending_hydrate.clear();
-            self.pending_at = version;
-        }
         true
     }
 
@@ -69,6 +74,7 @@ impl ListState {
         self.sorted = std::sync::Arc::from([]);
         self.sorted_at = None;
         self.pending_hydrate.clear();
+        self.selection.set(None);
     }
 
     pub fn index_of(&self, id: EntryId) -> Option<usize> {
@@ -76,33 +82,50 @@ impl ListState {
     }
 }
 
+/// What the selection of `pane` amounts to. Walks the whole selection.
+fn summarize(pane: &bibli_core::workspace::Pane) -> SelectionCtx {
+    let mut ctx = SelectionCtx {
+        count: pane.selection.len(),
+        all_dirs: true,
+        all_files: true,
+        bytes: 0,
+    };
+    for id in pane.selection.iter() {
+        match pane.listing.get(id) {
+            Some(e) if e.is_dir() => ctx.all_files = false,
+            Some(e) => {
+                ctx.all_dirs = false;
+                ctx.bytes += e
+                    .metadata
+                    .value(bibli_core::entry::keys::SIZE)
+                    .and_then(bibli_core::Value::as_u64)
+                    .unwrap_or(0);
+            }
+            None => {}
+        }
+    }
+    ctx
+}
+
 impl Shell {
     /// Selection summary for `when` evaluation and the pane key context.
+    /// Cached per pane on the selection's revision and the listing's
+    /// version: with 100 000 entries selected, a frame must not walk them
+    /// for every reader.
     pub fn selection_ctx(&self) -> SelectionCtx {
         let ws = self.app.workspace.read();
         let Some(pane) = ws.pane(self.pane) else {
             return SelectionCtx::default();
         };
-        let mut ctx = SelectionCtx {
-            count: pane.selection.len(),
-            all_dirs: true,
-            all_files: true,
-            bytes: 0,
-        };
-        for id in pane.selection.iter() {
-            match pane.listing.get(id) {
-                Some(e) if e.is_dir() => ctx.all_files = false,
-                Some(e) => {
-                    ctx.all_dirs = false;
-                    ctx.bytes += e
-                        .metadata
-                        .value(bibli_core::entry::keys::SIZE)
-                        .and_then(bibli_core::Value::as_u64)
-                        .unwrap_or(0);
-                }
-                None => {}
-            }
+        let key = (pane.selection.revision(), pane.listing.version());
+        let cache = &self.ui().list.selection;
+        if let Some((at, ctx)) = cache.get()
+            && at == key
+        {
+            return ctx;
         }
+        let ctx = summarize(pane);
+        cache.set(Some((key, ctx)));
         ctx
     }
 
@@ -143,8 +166,9 @@ impl Shell {
         cx.notify();
     }
 
-    /// Ask the core for metadata on `ids` (once per listing version).
-    pub fn request_hydrate(&mut self, ids: Vec<EntryId>) {
+    /// Ask the core for metadata on `ids`, once each until the pane shows
+    /// another location.
+    pub fn request_hydrate(&mut self, ids: impl IntoIterator<Item = EntryId>) {
         let pane = self.pane;
         let need: Vec<EntryId> = {
             let pending = &mut self.ui_mut().list.pending_hydrate;
@@ -276,6 +300,7 @@ impl Shell {
     ) {
         self.activate_pane(pane, cx);
         window.focus(&self.ui().focus);
+        self.press_collapse = None;
         let Some(&id) = self.ui().list.sorted.get(ix) else {
             return;
         };
@@ -293,9 +318,12 @@ impl Shell {
                 } else if ev.modifiers.shift {
                     self.select_ids(vec![id], "range_to", window, cx);
                 } else if !selected {
-                    // Keep a multi-selection when pressing on one of its rows,
-                    // so a drag can carry all of it.
                     self.select_ids(vec![id], "replace", window, cx);
+                } else {
+                    // Keep a multi-selection when pressing on one of its rows,
+                    // so a drag can carry all of it; a release without a drag
+                    // makes it that one row (`on_entry_mouse_up`).
+                    self.press_collapse = Some((pane, id));
                 }
             }
             MouseButton::Right => {
@@ -307,6 +335,27 @@ impl Shell {
             _ => {}
         }
         cx.notify();
+    }
+
+    /// The release of a plain click on a row of a multi-selection: the
+    /// selection becomes that row, as in every file manager. A drag that
+    /// started from the press has already cleared the request.
+    pub fn on_entry_mouse_up(
+        &mut self,
+        pane: PaneId,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((pressed, id)) = self.press_collapse.take() else {
+            return;
+        };
+        let here = self.with_pane(pane, |shell| shell.ui().list.sorted.get(ix).copied());
+        if pressed == pane && here == Some(id) {
+            self.with_pane(pane, |shell| {
+                shell.select_ids(vec![id], "replace", window, cx);
+            });
+        }
     }
 
     fn on_pane_key_down(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -419,7 +468,7 @@ impl Shell {
     /// Wrap a view's element in the pane container: focus, key context,
     /// type-ahead, empty-area context menu, external drops.
     pub fn pane_container(&mut self, content: AnyElement, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.global::<Theme>().clone();
+        let tint = cx.global::<Theme>().drop_target;
         let key_context = self.pane_key_context();
         let pane = self.pane;
         div()
@@ -461,7 +510,22 @@ impl Shell {
                     this.open_context_menu(ev.position, window, cx);
                 }),
             )
-            .drag_over::<ExternalPaths>(move |s, _, _, _| s.bg(theme.selection_bg.opacity(0.4)))
+            // A drop beside the rows lands in the folder the pane shows,
+            // from the other pane or from another application.
+            .drag_over::<DragPayload>(move |s, payload: &DragPayload, _, _| {
+                // Its own rows are already in this folder.
+                if payload.pane == pane { s } else { s.bg(tint) }
+            })
+            .on_drop(cx.listener(move |this, payload: &DragPayload, window, cx| {
+                if payload.pane == pane {
+                    return;
+                }
+                match this.pane_folder(pane) {
+                    Some(dest) => this.drop_into(payload.pane, &dest, window, cx),
+                    None => this.set_status("drop target is not a directory", true, cx),
+                }
+            }))
+            .drag_over::<ExternalPaths>(move |s, _, _, _| s.bg(tint))
             .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
                 this.activate_pane(pane, cx);
                 this.drop_external(paths.paths(), window, cx);
@@ -469,4 +533,29 @@ impl Shell {
             .child(content)
             .into_any_element()
     }
+}
+
+/// The pointer on a row or cell `ix` of `pane`: press to select (right
+/// button: and open the menu), release to collapse a multi-selection. One
+/// definition for every view, so they cannot drift apart.
+pub fn entry_mouse<E: InteractiveElement>(
+    el: E,
+    pane: PaneId,
+    ix: usize,
+    cx: &mut Context<Shell>,
+) -> E {
+    let press = move |this: &mut Shell,
+                      ev: &MouseDownEvent,
+                      window: &mut Window,
+                      cx: &mut Context<Shell>| {
+        this.on_entry_mouse_down(pane, ix, ev, window, cx);
+    };
+    el.on_mouse_down(MouseButton::Left, cx.listener(press))
+        .on_mouse_down(MouseButton::Right, cx.listener(press))
+        .on_mouse_up(
+            MouseButton::Left,
+            cx.listener(move |this, _: &gpui::MouseUpEvent, window, cx| {
+                this.on_entry_mouse_up(pane, ix, window, cx);
+            }),
+        )
 }

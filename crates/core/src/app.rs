@@ -93,6 +93,8 @@ pub struct App {
     pub pending: crate::pending::PendingTransfer,
     /// What is playing, published by the player, and what is asked of it.
     pub player: crate::playing::Player,
+    /// Counts plugins publish for others to show (`shelf.items`).
+    pub tallies: crate::tally::Tallies,
     pub thumbnails: Arc<crate::thumbs::Thumbnails>,
     pub metadata: Arc<crate::metadata::MetadataProviders>,
     pub previews: Arc<crate::preview::Previews>,
@@ -139,6 +141,7 @@ impl App {
             workspace: RwLock::new(Workspace::default()),
             pending: crate::pending::PendingTransfer::default(),
             player: crate::playing::Player::default(),
+            tallies: crate::tally::Tallies::default(),
             providers: RwLock::new(HashMap::new()),
             waker: RwLock::new(None),
             batch_size: config.batch_size,
@@ -198,11 +201,13 @@ impl App {
     pub fn unregister_owner(&self, owner: &str) {
         self.commands.unregister_owner(owner);
         self.ops.unregister_owner(owner);
+        self.executor.remove_observers(owner);
         self.thumbnails.unregister_owner(owner);
         self.metadata.unregister_owner(owner);
         self.previews.unregister_owner(owner);
         self.pending.unregister_owner(owner);
         self.player.unregister_owner(owner);
+        self.tallies.unregister_owner(owner);
         self.registry.remove_owner(owner);
         self.providers.write().retain(|_, (o, _)| &**o != owner);
         for spec in self.settings.schema() {
@@ -286,6 +291,13 @@ impl App {
     /// Execute a plan in the background.
     pub fn apply(&self, plan: Plan) {
         self.executor.execute(plan, self.lifetime.child());
+    }
+
+    /// Apply `plan` only if none of its steps conflicts, checked when its
+    /// turn comes (see [`Executor::execute_whole`]): what a user's single
+    /// action and a reviewed proposal need. Never blocks the caller.
+    pub fn apply_whole(&self, plan: Plan) {
+        self.executor.execute_whole(plan, self.lifetime.child());
     }
 
     /// Offer a plan for the user to review. Never applies anything; wakes the UI.
@@ -489,7 +501,7 @@ mod builtin {
     ) -> anyhow::Result<Outcome> {
         let refs = app.selected_refs(pane);
         if refs.is_empty() {
-            anyhow::bail!("nothing selected");
+            return Err(crate::command::NothingSelected.into());
         }
         Ok(Outcome::Plan(Plan::with_steps(
             title,

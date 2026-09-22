@@ -21,17 +21,28 @@ pub struct Bar {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Histogram {
+    /// The bucket the bars use: coarser than the one asked for when that
+    /// one would need too many bars.
+    #[serde(default)]
+    pub bucket: Option<String>,
     #[serde(default)]
     pub bars: Vec<Bar>,
     #[serde(default)]
     pub unknown: u64,
+    /// Entries dated far from the others, outside the bars.
+    #[serde(default)]
+    pub outside: u64,
     #[serde(default)]
     pub total: u64,
 }
 
+/// What `timeline.histogram {subtree}` and `timeline.status` answer: the
+/// walk runs in the plugin, which says whether it still does.
 #[derive(Clone, Debug, Default, Deserialize)]
 struct SubtreeStatus {
+    #[serde(default)]
     scanning: bool,
+    #[serde(default)]
     histogram: Option<Histogram>,
 }
 
@@ -80,11 +91,34 @@ impl Shell {
         self.timeline.computed_for = None;
         self.timeline.hover = None;
         if self.timeline.open {
-            let ids: Vec<bibli_core::EntryId> = self.ui().list.sorted.to_vec();
-            self.request_hydrate(ids);
+            self.hydrate_for_timeline();
         }
         self.remember_session();
         cx.notify();
+    }
+
+    /// Ask for the metadata of every entry the timeline cannot date yet.
+    /// Only those: asking for all of them again on every listing change
+    /// would re-stat the folder for as long as the timeline is open.
+    fn hydrate_for_timeline(&mut self) {
+        let need: Vec<bibli_core::EntryId> = {
+            let ws = self.app.workspace.read();
+            let Some(pane) = ws.pane(self.pane) else {
+                return;
+            };
+            self.ui()
+                .list
+                .sorted
+                .iter()
+                .copied()
+                .filter(|id| {
+                    pane.listing
+                        .get(*id)
+                        .is_some_and(|e| !e.metadata.is_hydrated())
+                })
+                .collect()
+        };
+        self.request_hydrate(need);
     }
 
     pub fn timeline_set_bucket(&mut self, bucket: &str, cx: &mut Context<Self>) {
@@ -115,28 +149,29 @@ impl Shell {
             self.timeline.subtree,
         );
         if self.timeline.computed_for != Some(key) {
-            // Newly visible entries need metadata before they count.
-            let ids: Vec<bibli_core::EntryId> = self.ui().list.sorted.to_vec();
-            self.request_hydrate(ids);
+            // Entries without metadata need it before they count.
+            self.hydrate_for_timeline();
             let args = serde_json::json!({
                 "bucket": BUCKETS[self.timeline.bucket],
                 "subtree": self.timeline.subtree,
                 "pane": self.pane,
             });
             match self.query_value("timeline.histogram", args, cx) {
+                Some(v) if self.timeline.subtree => {
+                    // The walk runs in the plugin; `timeline.status` follows it.
+                    match serde_json::from_value::<SubtreeStatus>(v) {
+                        Ok(status) => {
+                            self.timeline.scanning = status.scanning;
+                            self.timeline.histogram = status.histogram;
+                        }
+                        Err(e) => tracing::warn!("timeline.histogram: {e}"),
+                    }
+                }
                 Some(v) => {
-                    if self.timeline.subtree {
-                        // The subtree walk answers through `timeline.status`.
-                        self.timeline.scanning = true;
-                        if let Ok(h) = serde_json::from_value::<Histogram>(v.clone()) {
-                            self.timeline.histogram = Some(h);
-                        }
-                    } else {
-                        self.timeline.scanning = false;
-                        match serde_json::from_value::<Histogram>(v) {
-                            Ok(h) => self.timeline.histogram = Some(h),
-                            Err(e) => tracing::warn!("timeline.histogram: {e}"),
-                        }
+                    self.timeline.scanning = false;
+                    match serde_json::from_value::<Histogram>(v) {
+                        Ok(h) => self.timeline.histogram = Some(h),
+                        Err(e) => tracing::warn!("timeline.histogram: {e}"),
                     }
                 }
                 None => self.timeline.histogram = None,
@@ -145,7 +180,11 @@ impl Shell {
         }
         if self.timeline.subtree
             && self.timeline.scanning
-            && let Some(v) = self.query_value("timeline.status", serde_json::json!({}), cx)
+            && let Some(v) = self.query_value(
+                "timeline.status",
+                serde_json::json!({ "pane": self.pane }),
+                cx,
+            )
             && let Ok(s) = serde_json::from_value::<SubtreeStatus>(v)
         {
             self.timeline.scanning = s.scanning;
@@ -224,11 +263,24 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 format::size(b.bytes)
             )
         }
-        (Some(h), _) => format!(
-            "{} dated · {} without a date · click a bar to list its files",
-            format::thousands(h.total as usize),
-            format::thousands(h.unknown as usize)
-        ),
+        (Some(h), _) => {
+            let mut parts = vec![
+                format!("{} dated", format::thousands(h.total as usize)),
+                format!("{} without a date", format::thousands(h.unknown as usize)),
+            ];
+            if h.outside > 0 {
+                parts.push(format!(
+                    "{} far outside",
+                    format::thousands(h.outside as usize)
+                ));
+            }
+            // Asked for days over decades: the plugin drew wider bars.
+            if let Some(bucket) = h.bucket.as_deref().filter(|b| *b != BUCKETS[t.bucket]) {
+                parts.push(format!("shown by {bucket}"));
+            }
+            parts.push("click a bar to list its files".to_owned());
+            parts.join(" · ")
+        }
         (None, _) => "no data".into(),
     };
     controls = controls
@@ -246,6 +298,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     if let Some(h) = &t.histogram {
         let counts: Vec<u64> = h.bars.iter().map(|b| b.count).collect();
         let heights = bar_heights(&counts, BAR_AREA_H - 4.0);
+        let (pane, subtree) = (shell.pane, t.subtree);
         for (i, (b, hgt)) in h.bars.iter().zip(heights).enumerate() {
             let (start, end) = (b.start, b.end);
             let hovered = t.hover == Some(i);
@@ -265,7 +318,12 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.run(
                             "timeline.select",
-                            serde_json::json!({ "start": start, "end": end }),
+                            serde_json::json!({
+                                "start": start,
+                                "end": end,
+                                "pane": pane,
+                                "subtree": subtree,
+                            }),
                             window,
                             cx,
                         );
@@ -273,7 +331,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                     .child(div().w_full().h(px(hgt)).rounded_sm().bg(if hovered {
                         theme.accent
                     } else {
-                        theme.accent.opacity(0.6)
+                        theme.chart
                     })),
             );
         }

@@ -41,6 +41,7 @@ pub mod preview;
 pub mod registry;
 pub mod scheduler;
 pub mod settings;
+pub mod tally;
 pub mod thumbs;
 pub mod workspace;
 

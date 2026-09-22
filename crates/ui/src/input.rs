@@ -74,6 +74,18 @@ pub fn key_bindings() -> Vec<KeyBinding> {
 
 const BULLET: char = '•';
 
+/// The UTF-8 byte offset in `text` of UTF-16 offset `offset`.
+fn utf16_to_utf8(text: &str, offset: usize) -> usize {
+    let mut utf16 = 0;
+    for (index, ch) in text.char_indices() {
+        if utf16 >= offset {
+            return index;
+        }
+        utf16 += ch.len_utf16();
+    }
+    text.len()
+}
+
 /// What an input tells its owner.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InputEvent {
@@ -131,6 +143,18 @@ impl TextInput {
             .char_indices()
             .nth(offset / BULLET.len_utf8())
             .map_or(self.content.len(), |(index, _)| index)
+    }
+
+    /// Byte offset in what is displayed for a byte offset in the text.
+    fn shown_offset(&self, offset: usize) -> usize {
+        if self.masked {
+            self.content[..offset.min(self.content.len())]
+                .chars()
+                .count()
+                * BULLET.len_utf8()
+        } else {
+            offset
+        }
     }
 
     pub fn text(&self) -> &str {
@@ -489,11 +513,14 @@ impl EntityInputHandler for TextInput {
         } else {
             Some(range.start..range.start + new_text.len())
         };
+        // The new selection is given in UTF-16 within `new_text`, which now
+        // starts at `range.start`: both ends move by that much.
         self.selected_range = new_selected_range_utf16.as_ref().map_or_else(
             || range.start + new_text.len()..range.start + new_text.len(),
             |r| {
-                let r = self.range_from_utf16(r);
-                r.start + range.start..r.end + range.end
+                let start = range.start + utf16_to_utf8(new_text, r.start);
+                let end = range.start + utf16_to_utf8(new_text, r.end);
+                start.min(self.content.len())..end.min(self.content.len())
             },
         );
         cx.emit(InputEvent::Changed);
@@ -509,13 +536,14 @@ impl EntityInputHandler for TextInput {
     ) -> Option<Bounds<Pixels>> {
         let last_layout = self.last_layout.as_ref()?;
         let range = self.range_from_utf16(&range_utf16);
+        // The layout is of what is shown: bullets, when masked.
         Some(Bounds::from_corners(
             point(
-                bounds.left() + last_layout.x_for_index(range.start),
+                bounds.left() + last_layout.x_for_index(self.shown_offset(range.start)),
                 bounds.top(),
             ),
             point(
-                bounds.left() + last_layout.x_for_index(range.end),
+                bounds.left() + last_layout.x_for_index(self.shown_offset(range.end)),
                 bounds.bottom(),
             ),
         ))
@@ -529,8 +557,8 @@ impl EntityInputHandler for TextInput {
     ) -> Option<usize> {
         let line_point = self.last_bounds?.localize(&point)?;
         let last_layout = self.last_layout.as_ref()?;
-        let utf8_index = last_layout.index_for_x(point.x - line_point.x)?;
-        Some(self.offset_to_utf16(utf8_index))
+        let shown = last_layout.index_for_x(point.x - line_point.x)?;
+        Some(self.offset_to_utf16(self.text_offset(shown)))
     }
 }
 
@@ -591,13 +619,7 @@ impl Element for TextElement {
         // A masked input shapes bullets; offsets into the text become
         // offsets into the bullets (one bullet per character).
         let masked = input.masked;
-        let shown = |offset: usize| {
-            if masked {
-                input.content[..offset].chars().count() * BULLET.len_utf8()
-            } else {
-                offset
-            }
-        };
+        let shown = |offset: usize| input.shown_offset(offset);
         let content: SharedString = if masked {
             BULLET
                 .to_string()
@@ -770,5 +792,18 @@ impl Render for TextInput {
 impl Focusable for TextInput {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::utf16_to_utf8;
+
+    #[test]
+    fn utf16_offsets_become_byte_offsets_within_the_composed_text() {
+        assert_eq!(utf16_to_utf8("abc", 2), 2);
+        assert_eq!(utf16_to_utf8("été", 1), 2, "é is two bytes, one unit");
+        assert_eq!(utf16_to_utf8("a😀b", 3), 5, "an emoji is two units");
+        assert_eq!(utf16_to_utf8("ab", 9), 2, "clamped to the end");
     }
 }

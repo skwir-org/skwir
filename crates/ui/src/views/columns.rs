@@ -1,12 +1,15 @@
 //! Miller columns: ancestor directories to the left, the pane's listing as
 //! the deepest column. Ancestors are opened by the view through
-//! `App::open_location` and pumped here; they close when the view drops them.
+//! `App::open_location` (which only enqueues the listing) when the pane's
+//! folder changes, kept while they stay ancestors, pumped here, and closed
+//! when the view drops them.
 
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use bibli_core::location::OpenLocation;
+use bibli_core::os_path::PathArg;
 use bibli_core::{EntryId, Listing, Location, SortSpec};
 use gpui::{
     AnyElement, Context, MouseButton, ScrollStrategy, UniformListScrollHandle, Window, div,
@@ -22,16 +25,26 @@ use crate::views::list::{ROW_HEIGHT, row};
 
 const MAX_ANCESTORS: usize = 3;
 const COLUMN_W: f32 = 240.0;
+const ICON_PX: u16 = 18;
+
+/// One row of an ancestor column, built when its listing changes.
+struct AncestorRow {
+    name: std::ffi::OsString,
+    label: gpui::SharedString,
+    is_dir: bool,
+}
 
 struct Ancestor {
     path: PathBuf,
     /// Name of the child on the way to the pane's directory.
-    child: String,
+    child: std::ffi::OsString,
     open: Arc<dyn OpenLocation>,
     listing: Listing,
-    ids: Arc<[EntryId]>,
+    rows: Arc<[AncestorRow]>,
     sorted_at: Option<(u64, SortSpec)>,
     scroll: UniformListScrollHandle,
+    /// The row on the way down was scrolled into view once it listed.
+    shown_child: bool,
 }
 
 impl Drop for Ancestor {
@@ -48,15 +61,14 @@ pub struct ColumnsView {
 }
 
 impl ColumnsView {
+    /// The ancestors of `base`, nearest last. Those already open (going one
+    /// level down or up keeps most of them) are kept with their listing and
+    /// scroll; only the new ones are opened.
     fn rebuild(&mut self, shell: &Shell, base: &Path) {
-        self.ancestors.clear();
-        let mut chain: Vec<(PathBuf, String)> = Vec::new();
+        let mut chain: Vec<(PathBuf, std::ffi::OsString)> = Vec::new();
         let mut cur = base.to_path_buf();
         while let Some(parent) = cur.parent().map(Path::to_path_buf) {
-            let child = cur
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
+            let child = cur.file_name().map(ToOwned::to_owned).unwrap_or_default();
             chain.push((parent.clone(), child));
             cur = parent;
             if chain.len() >= MAX_ANCESTORS {
@@ -64,16 +76,27 @@ impl ColumnsView {
             }
         }
         chain.reverse();
+        let mut old: Vec<Ancestor> = std::mem::take(&mut self.ancestors);
         for (path, child) in chain {
+            if let Some(i) = old.iter().position(|a| a.path == path) {
+                let mut kept = old.swap_remove(i);
+                if kept.child != child {
+                    kept.child = child;
+                    kept.shown_child = false;
+                }
+                self.ancestors.push(kept);
+                continue;
+            }
             match shell.app.open_location(&Location::from_path(&path)) {
                 Ok(open) => self.ancestors.push(Ancestor {
                     path,
                     child,
                     open,
                     listing: Listing::default(),
-                    ids: Arc::from([]),
+                    rows: Arc::from([]),
                     sorted_at: None,
                     scroll: UniformListScrollHandle::new(),
+                    shown_child: false,
                 }),
                 Err(e) => tracing::warn!(path = %path.display(), "columns: {e:#}"),
             }
@@ -85,9 +108,26 @@ impl ColumnsView {
         for a in &mut self.ancestors {
             a.listing.drain(a.open.events());
             let v = a.listing.version();
-            if a.sorted_at != Some((v, spec)) {
-                a.ids = a.listing.sorted(spec);
-                a.sorted_at = Some((v, spec));
+            if a.sorted_at == Some((v, spec)) {
+                continue;
+            }
+            a.sorted_at = Some((v, spec));
+            let listing = &a.listing;
+            a.rows = listing
+                .sorted(spec)
+                .iter()
+                .filter_map(|id| listing.get(*id))
+                .map(|e| AncestorRow {
+                    name: e.name.clone(),
+                    label: e.name_str().into_owned().into(),
+                    is_dir: e.is_dir(),
+                })
+                .collect();
+            if !a.shown_child
+                && let Some(ix) = a.rows.iter().position(|row| row.name == a.child)
+            {
+                a.scroll.scroll_to_item(ix, ScrollStrategy::Center);
+                a.shown_child = true;
             }
         }
     }
@@ -101,21 +141,9 @@ fn ancestor_column(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let a = &view.ancestors[k];
-    let ids = Arc::clone(&a.ids);
+    let rows = Arc::clone(&a.rows);
     let path = a.path.clone();
     let child = a.child.clone();
-    // Ancestor rows are read from the view's own listing, so they are built
-    // here rather than through the shell's processor.
-    let mut rows: Vec<(EntryId, String, bool, Option<Arc<Path>>)> = Vec::with_capacity(ids.len());
-    {
-        let _ = cx;
-    }
-    for id in ids.iter() {
-        if let Some(e) = a.listing.get(*id) {
-            rows.push((*id, e.name_str().into_owned(), e.is_dir(), None));
-        }
-    }
-    let rows = Arc::new(rows);
     let list = uniform_list(
         ("column", k),
         rows.len(),
@@ -123,31 +151,25 @@ fn ancestor_column(
             let theme = cx.global::<Theme>().clone();
             let mut out = Vec::with_capacity(range.len());
             for ix in range {
-                let Some((_, name, is_dir, _)) = rows.get(ix) else {
+                let Some(row) = rows.get(ix) else {
                     break;
                 };
-                let target = path.join(name);
-                let is_on_path = *name == child;
-                let icon: AnyElement = {
-                    let e = bibli_core::Entry::new(
-                        EntryId { dev: 0, ino: 0 },
-                        name.as_str(),
-                        if *is_dir {
-                            bibli_core::EntryKind::Directory
-                        } else {
-                            bibli_core::EntryKind::File
-                        },
-                    );
-                    match this.icons.for_entry(&e, 18) {
-                        Some(p) => icons::element(&p, 18.0),
-                        None => div()
-                            .size(px(18.))
-                            .rounded_sm()
-                            .bg(theme.text_muted)
-                            .into_any_element(),
-                    }
+                let target = path.join(&row.name);
+                let is_on_path = row.name == child;
+                let icon = if row.is_dir {
+                    this.icons.folder(ICON_PX)
+                } else {
+                    this.icons.for_name(&row.name, ICON_PX)
                 };
-                let dir_target = is_dir.then(|| target.clone());
+                let icon: AnyElement = match icon {
+                    Some(p) => icons::element(&p, f32::from(ICON_PX)),
+                    None => div()
+                        .size(px(f32::from(ICON_PX)))
+                        .rounded_sm()
+                        .bg(theme.text_muted)
+                        .into_any_element(),
+                };
+                let dir_target = row.is_dir.then(|| target.clone());
                 let mut el = div()
                     .id(ix)
                     .h(px(ROW_HEIGHT))
@@ -159,7 +181,7 @@ fn ancestor_column(
                     .when(is_on_path, |d| {
                         d.bg(theme.selection_bg).text_color(theme.selection_text)
                     })
-                    .when(!is_on_path, |d| d.hover(|s| s.bg(theme.surface)))
+                    .when(!is_on_path, |d| d.hover(|s| s.bg(theme.hover)))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _, window, cx| {
@@ -167,7 +189,10 @@ fn ancestor_column(
                             if let Some(t) = &dir_target {
                                 this.run(
                                     "navigate",
-                                    serde_json::json!({ "location": t.to_string_lossy() }),
+                                    serde_json::json!({
+                                        "location": PathArg::from(t.as_path()),
+                                        "pane": pane,
+                                    }),
                                     window,
                                     cx,
                                 );
@@ -182,16 +207,18 @@ fn ancestor_column(
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis_middle()
-                            .child(name.clone()),
+                            .child(row.label.clone()),
                     )
-                    .when(*is_dir, |d| {
+                    .when(row.is_dir, |d| {
                         d.child(div().text_color(theme.text_muted).child("›"))
                     });
-                if *is_dir {
+                if row.is_dir {
                     el = dnd::droppable_dir(el, target, cx);
                 }
                 out.push(el);
             }
+            let app = Arc::clone(&this.app);
+            this.icons.request(&app);
             out
         }),
     )
@@ -217,10 +244,6 @@ fn ancestor_column(
 impl PaneView for ColumnsView {
     fn id(&self) -> &'static str {
         crate::view::COLUMNS
-    }
-
-    fn title(&self) -> &'static str {
-        "Columns"
     }
 
     fn render(&mut self, shell: &mut Shell, _: &mut Window, cx: &mut Context<Shell>) -> AnyElement {
@@ -256,7 +279,7 @@ impl PaneView for ColumnsView {
                 this.with_pane(pane, |this| {
                     let theme = cx.global::<Theme>().clone();
                     this.ui_mut().list.visible_rows = range.len().max(1);
-                    let rows = this.rows(range, 18);
+                    let rows = this.rows(range, ICON_PX, true);
                     let need: Vec<EntryId> =
                         rows.iter().filter(|r| !r.hydrated).map(|r| r.id).collect();
                     this.request_hydrate(need);

@@ -565,6 +565,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "bibli-core",
+ "bibli-platform",
  "bibli-plugin-edit-as-buffer",
  "bibli-plugin-jump",
  "bibli-plugin-mpris",
@@ -594,6 +595,7 @@ dependencies = [
  "bibli-plugin-usage",
  "bibli-ui",
  "dirs 7.0.0",
+ "flate2",
  "serde_json",
  "tempfile",
  "tracing",
@@ -708,6 +710,7 @@ dependencies = [
  "anyhow",
  "bibli-core",
  "bibli-platform",
+ "dirs 7.0.0",
  "parking_lot",
  "schemars",
  "serde",
@@ -723,6 +726,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "bibli-core",
+ "bibli-platform",
  "crossbeam-channel",
  "dirs 7.0.0",
  "humantime",
@@ -742,8 +746,8 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "bibli-core",
+ "bibli-platform",
  "parking_lot",
- "percent-encoding",
  "tracing",
  "zbus",
 ]
@@ -782,6 +786,7 @@ dependencies = [
  "anyhow",
  "bibli-core",
  "bibli-platform",
+ "crossbeam-channel",
  "notify",
  "parking_lot",
  "schemars",
@@ -807,6 +812,7 @@ version = "0.0.1"
 dependencies = [
  "bibli-core",
  "bibli-platform",
+ "tempfile",
  "toml 0.9.12+spec-1.1.0",
 ]
 
@@ -877,6 +883,7 @@ dependencies = [
  "anyhow",
  "bibli-core",
  "bibli-platform",
+ "memchr",
  "serde_json",
  "tempfile",
 ]
@@ -954,6 +961,7 @@ dependencies = [
  "humantime",
  "ignore",
  "parking_lot",
+ "proptest",
  "schemars",
  "serde",
  "serde_json",
@@ -1012,6 +1020,7 @@ dependencies = [
  "anyhow",
  "bibli-core",
  "dirs 7.0.0",
+ "rustix 1.1.5",
  "schemars",
  "serde",
  "serde_json",
@@ -1028,7 +1037,6 @@ dependencies = [
  "bibli-platform",
  "parking_lot",
  "tempfile",
- "toml 0.9.12+spec-1.1.0",
 ]
 
 [[package]]
@@ -1054,6 +1062,7 @@ dependencies = [
  "crossbeam-channel",
  "notify",
  "parking_lot",
+ "rustix 1.1.5",
  "schemars",
  "serde",
  "serde_json",

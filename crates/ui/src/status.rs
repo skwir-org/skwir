@@ -15,12 +15,6 @@ impl Shell {
         if error {
             tracing::warn!(%text, "status");
         }
-        // Reached from the palette with nothing selected: a hint, not a failure.
-        let (text, error) = if text == "nothing selected" {
-            ("Select a file or folder first".to_owned(), false)
-        } else {
-            (text, error)
-        };
         self.toast(
             Toast {
                 text,
@@ -29,6 +23,20 @@ impl Shell {
             },
             cx,
         );
+    }
+
+    /// A command failed. Nothing selected, reached from the palette or a
+    /// menu, is a hint rather than a failure.
+    pub fn report_error(&mut self, error: &anyhow::Error, cx: &mut Context<Self>) {
+        // Plugins that still bail with the bare text (not yet the typed
+        // `NothingSelected`) are recognized by it; remove once they adopt it.
+        if bibli_core::command::is_nothing_selected(error)
+            || error.root_cause().to_string() == "nothing selected"
+        {
+            self.set_status(crate::shell::NOTHING_SELECTED, false, cx);
+        } else {
+            self.set_status(format!("{error:#}"), true, cx);
+        }
     }
 
     /// An error whose remedy is a setting: the toast links to it.
@@ -121,12 +129,8 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
             ("copied", "copy")
         };
         let keys = shell
-            .key_hints
-            .iter()
-            .find(|hint| hint.command == "clipboard_paste")
-            .map_or_else(String::new, |hint| {
-                format!(" Paste with {}.", crate::keymap::display_keys(&hint.keys))
-            });
+            .keys_for("clipboard_paste", &serde_json::Value::Null)
+            .map_or_else(String::new, |keys| format!(" Paste with {keys}."));
         let tip: gpui::SharedString = format!("{keys} Click to forget.").trim().to_owned().into();
         bar = bar.child(
             div()
@@ -163,9 +167,8 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
                 .px_2()
                 .rounded_md()
                 .cursor_pointer()
-                .when(shell.shelf_count > 0, |d| {
-                    d.bg(theme.selection_bg).text_color(theme.selection_text)
-                })
+                .bg(theme.selection_bg)
+                .text_color(theme.selection_text)
                 .hover(|s| s.bg(theme.hover))
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.run("ui.shelf_open", serde_json::json!({}), window, cx);
@@ -173,15 +176,11 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
                 .child(format!("Shelf: {}", shell.shelf_count)),
         );
     }
-    if let Some(title) = shell.app.executor.undo_titles().pop() {
+    if let Some(title) = shell.app.executor.last_undo_title() {
         let font = shell.font.clone();
         let keys = shell
-            .key_hints
-            .iter()
-            .find(|hint| hint.command == "undo")
-            .map_or_else(String::new, |hint| {
-                format!(" ({})", crate::keymap::display_keys(&hint.keys))
-            });
+            .keys_for("undo", &serde_json::Value::Null)
+            .map_or_else(String::new, |keys| format!(" ({keys})"));
         let tip: gpui::SharedString = format!("Undo {title}{keys}").into();
         bar = bar.child(
             div()

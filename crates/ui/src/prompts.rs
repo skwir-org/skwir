@@ -1,14 +1,14 @@
 //! Single-line prompts (rename, new folder, search, tags) and the delete
 //! confirmation modal.
 
+use bibli_core::Plan;
 use bibli_core::command::Invocation;
-use gpui::{
-    AnyElement, Context, Entity, FocusHandle, MouseButton, Subscription, Window, deferred, div,
-    prelude::*, px,
-};
+use gpui::{AnyElement, Context, Entity, FocusHandle, Subscription, Window, div, prelude::*, px};
 
+use crate::controls::{self, ButtonStyle};
 use crate::input::{InputEvent, TextInput};
 use crate::keymap;
+use crate::modal::{self, FocusReturn};
 use crate::shell::Shell;
 use crate::theme::Theme;
 
@@ -30,13 +30,20 @@ pub struct PromptState {
     pub title: String,
     pub kind: PromptKind,
     pub input: Entity<TextInput>,
+    back: FocusReturn,
     _sub: Subscription,
 }
 
+/// A question before something that cannot be undone. It holds the plan
+/// itself, built when the question was asked: what the user read about is
+/// what happens, whatever the selection or the active pane is by then.
 pub struct ConfirmState {
     pub message: String,
-    pub command: Invocation,
+    pub plan: Plan,
     pub focus: FocusHandle,
+    cancel: FocusHandle,
+    accept: FocusHandle,
+    back: FocusReturn,
 }
 
 impl Shell {
@@ -57,6 +64,7 @@ impl Shell {
             PromptKind::Search => "*.pdf modified<7d size>10M  (in: picks the root)",
             PromptKind::Tags => "tag1, tag2 (empty clears)",
         };
+        let back = FocusReturn::capture(window, cx);
         let input = cx.new(|cx| TextInput::new(placeholder, cx));
         input.update(cx, |i, cx| {
             i.set_masked(kind == PromptKind::Passphrase);
@@ -78,8 +86,7 @@ impl Shell {
                     } else {
                         input.read(cx).text().trim().to_owned()
                     };
-                    this.prompt = None;
-                    window.focus(&this.ui().focus);
+                    this.close_prompt(window, cx);
                     if let Some(kind) = kind {
                         this.prompt_submitted(kind, text, window, cx);
                     }
@@ -87,9 +94,7 @@ impl Shell {
                 }
                 InputEvent::Cancel => {
                     this.unlock_device = None;
-                    this.prompt = None;
-                    window.focus(&this.ui().focus);
-                    cx.notify();
+                    this.close_prompt(window, cx);
                 }
                 InputEvent::Changed => {}
             },
@@ -99,8 +104,17 @@ impl Shell {
             title: title.to_owned(),
             kind,
             input,
+            back,
             _sub: sub,
         });
+        cx.notify();
+    }
+
+    /// Close the prompt and give the keyboard back to what had it.
+    pub fn close_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(prompt) = self.prompt.take() {
+            prompt.back.restore(window, &self.ui().focus);
+        }
         cx.notify();
     }
 
@@ -156,6 +170,7 @@ impl Shell {
             }
             PromptKind::Search if !text.is_empty() => {
                 self.last_search.clone_from(&text);
+                self.ui_mut().last_search.clone_from(&text);
                 let pane = self.pane;
                 self.run(
                     "query.search",
@@ -182,154 +197,129 @@ impl Shell {
         }
     }
 
+    /// Ask before applying `plan`, which cannot be undone.
     pub fn open_confirm(
         &mut self,
         message: String,
-        command: Invocation,
+        plan: Plan,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let back = FocusReturn::capture(window, cx);
         let focus = cx.focus_handle();
         window.focus(&focus);
         self.confirm = Some(ConfirmState {
             message,
-            command,
+            plan,
             focus,
+            cancel: cx.focus_handle(),
+            accept: cx.focus_handle(),
+            back,
         });
         cx.notify();
     }
 
     pub fn confirm_accept(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(c) = self.confirm.take() {
-            window.focus(&self.ui().focus);
-            self.run(&c.command.name, c.command.args.clone(), window, cx);
+            c.back.restore(window, &self.ui().focus);
+            self.apply_user_plan(c.plan, cx);
             cx.notify();
         }
     }
 
     pub fn confirm_dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.confirm.take().is_some() {
-            window.focus(&self.ui().focus);
+        if let Some(c) = self.confirm.take() {
+            c.back.restore(window, &self.ui().focus);
             cx.notify();
         }
     }
 }
 
-fn backdrop(cx: &mut Context<Shell>) -> gpui::Div {
-    div()
-        .absolute()
-        .inset_0()
-        .flex()
-        .justify_center()
-        .items_start()
-        .pt(px(120.))
-        .occlude()
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(|this, _, window, cx| {
-                this.prompt = None;
-                this.confirm_dismiss(window, cx);
-                window.focus(&this.ui().focus);
-                cx.notify();
-            }),
-        )
-}
-
-fn panel(theme: &Theme) -> gpui::Div {
-    div()
-        .w(px(560.))
-        .p_3()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .rounded_lg()
-        .border_1()
-        .border_color(theme.border)
-        .bg(theme.surface)
-        .shadow_lg()
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-}
-
 pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let p = shell.prompt.as_ref()?;
     let theme = cx.global::<Theme>().clone();
-    Some(
-        deferred(
-            backdrop(cx).child(
-                panel(&theme)
-                    .child(div().text_color(theme.text_muted).child(p.title.clone()))
-                    .child(
-                        div()
-                            .h(px(30.))
-                            .px_2()
-                            .flex()
-                            .items_center()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(theme.accent)
-                            .bg(theme.bg)
-                            .child(p.input.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.text_muted)
-                            .child("Enter to confirm, Escape to cancel"),
-                    ),
-            ),
+    let panel = modal::panel(560., &theme)
+        .p_3()
+        .gap_2()
+        .child(div().text_color(theme.text_muted).child(p.title.clone()))
+        .child(
+            div()
+                .h(px(30.))
+                .px_2()
+                .flex()
+                .items_center()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.accent)
+                .bg(theme.bg)
+                .child(p.input.clone()),
         )
-        .with_priority(3)
-        .into_any_element(),
-    )
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.text_muted)
+                .child("Enter to confirm, Escape to cancel"),
+        );
+    Some(modal::modal(
+        panel,
+        120.,
+        3,
+        |this, window, cx| {
+            this.unlock_device = None;
+            this.close_prompt(window, cx);
+        },
+        &theme,
+        cx,
+    ))
 }
 
 pub fn render_confirm(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let c = shell.confirm.as_ref()?;
     let theme = cx.global::<Theme>().clone();
-    Some(
-        deferred(
-            backdrop(cx).child(
-                panel(&theme)
-                    .track_focus(&c.focus)
-                    .key_context(keymap::CONFIRM)
-                    .child(div().child(c.message.clone()))
-                    .child(
-                        div()
-                            .flex()
-                            .gap_2()
-                            .justify_end()
-                            .child(
-                                div()
-                                    .id("confirm-no")
-                                    .px_3()
-                                    .py_1()
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(theme.border)
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.confirm_dismiss(window, cx);
-                                    }))
-                                    .child("Cancel (Esc)"),
-                            )
-                            .child(
-                                div()
-                                    .id("confirm-yes")
-                                    .px_3()
-                                    .py_1()
-                                    .rounded_md()
-                                    .bg(theme.error)
-                                    .text_color(gpui::white())
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.confirm_accept(window, cx);
-                                    }))
-                                    .child("Delete (Enter)"),
-                            ),
-                    ),
-            ),
-        )
-        .with_priority(3)
-        .into_any_element(),
-    )
+    let panel = modal::panel(560., &theme)
+        .p_3()
+        .gap_2()
+        .track_focus(&c.focus)
+        .key_context(keymap::CONFIRM)
+        .child(div().child(c.message.clone()))
+        .child(
+            div()
+                .flex()
+                .gap_2()
+                .justify_end()
+                .child(
+                    controls::button(
+                        "confirm-no",
+                        "Cancel (Esc)",
+                        None,
+                        ButtonStyle::Plain,
+                        &c.cancel,
+                        &theme,
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.confirm_dismiss(window, cx);
+                    })),
+                )
+                .child(
+                    controls::button(
+                        "confirm-yes",
+                        "Delete (Enter)",
+                        Some("trash"),
+                        ButtonStyle::Danger,
+                        &c.accept,
+                        &theme,
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.confirm_accept(window, cx);
+                    })),
+                ),
+        );
+    Some(modal::modal(
+        panel,
+        120.,
+        3,
+        Shell::confirm_dismiss,
+        &theme,
+        cx,
+    ))
 }

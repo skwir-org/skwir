@@ -33,7 +33,6 @@ pub enum Nav {
 /// A way to render the active pane's listing.
 pub trait PaneView {
     fn id(&self) -> &'static str;
-    fn title(&self) -> &'static str;
     /// Render the pane. The view is taken out of the shell for the call, so
     /// it gets the whole shell mutably.
     fn render(

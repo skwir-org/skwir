@@ -154,9 +154,6 @@ impl PaneView for UsageView {
     fn id(&self) -> &'static str {
         "usage"
     }
-    fn title(&self) -> &'static str {
-        "Usage"
-    }
     fn scroll_to(&mut self, _: usize) {}
     fn nav_delta(&self, nav: Nav, _: &Shell) -> Option<isize> {
         match nav {
@@ -216,7 +213,7 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
         Button::new(
             format!("usage-refresh-{}", pane.0),
             "refresh",
-            "Recalculate sizes · Ctrl+R",
+            "Recalculate sizes",
             "ui.usage_refresh",
         )
         .enabled(state.root.is_some())
@@ -238,15 +235,9 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
             let selected = child
                 .id
                 .is_some_and(|id| p.is_some_and(|p| p.selection.contains(id)));
-            let mut color = if child.is_dir {
-                theme.accent
-            } else {
-                theme.text_muted
-            };
-            let color_index = child.id.map_or(index % 7, |id| (id.ino % 7) as usize);
-            color.h = (color.h + color_index as f32 * 0.04) % 1.;
-            color.s = if child.is_dir { 0.55 } else { 0.1 };
-            color.l = if selected { 0.65 } else { 0.42 };
+            // Colored by identity, so a block keeps its color as the map reflows.
+            let color_index = child.id.map_or(index, |id| (id.ino % 7) as usize);
+            let color = theme.block(color_index, child.is_dir, selected);
             details.push(format!(
                 "{} · {}{} · {} on disk{}",
                 child.name,
@@ -328,7 +319,7 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
         ("usage-map", pane.0 as usize),
         items,
         theme.bg,
-        gpui::white(),
+        theme.on_fill,
         hover,
         move |key, _, cx| {
             entity.update(cx, |shell, cx| {
@@ -359,7 +350,7 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
         .size_full()
         .flex()
         .flex_col()
-        .text_color(gpui::white())
+        .text_color(theme.on_fill)
         .child(header)
         .child(div().flex_1().min_h_0().w_full().child(map))
         .child(

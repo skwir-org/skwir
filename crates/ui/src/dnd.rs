@@ -4,6 +4,8 @@
 use std::path::{Path, PathBuf};
 
 use bibli_core::op::{self, EntryRef};
+use bibli_core::os_path::PathArg;
+use bibli_core::workspace::PaneId;
 use bibli_core::{Plan, app::NotifyLevel, fs, scheduler::Priority, settings::Settings};
 use gpui::{
     Context, Div, ExternalPaths, Pixels, Point, Render, Stateful, Window, div, prelude::*, px,
@@ -43,21 +45,20 @@ fn dropped_copy_plan(
     }
 }
 
-/// What a drag carries: the dragging pane's selection at drag start.
-#[derive(Clone, Debug)]
+/// What a drag carries: only the pane it started in. Rows are made
+/// draggable every frame, so the payload must cost nothing to build; the
+/// selection it moves is read when the drag starts and when it drops.
+#[derive(Clone, Copy, Debug)]
 pub struct DragPayload {
-    pub count: usize,
-    pub label: String,
-    /// The selected paths, handed to the compositor so other applications can
-    /// accept the drag.
-    pub paths: Vec<PathBuf>,
+    pub pane: PaneId,
 }
 
 /// The floating preview under the cursor. Empty once the compositor owns
 /// the drag: it draws the icon itself, and this element would only freeze
 /// at the last in-window pointer position.
 pub struct DragPreview {
-    payload: DragPayload,
+    count: usize,
+    label: String,
     position: Point<Pixels>,
     hidden: bool,
 }
@@ -68,10 +69,10 @@ impl Render for DragPreview {
             return div();
         }
         let theme = cx.global::<Theme>().clone();
-        let text = if self.payload.count == 1 {
-            self.payload.label.clone()
+        let text = if self.count == 1 {
+            self.label.clone()
         } else {
-            format!("{} items", self.payload.count)
+            format!("{} items", self.count)
         };
         div()
             .pl(self.position.x + px(12.))
@@ -82,7 +83,7 @@ impl Render for DragPreview {
                     .py_1()
                     .rounded_md()
                     .bg(theme.accent)
-                    .text_color(gpui::white())
+                    .text_color(theme.on_fill)
                     .text_xs()
                     .shadow_md()
                     .child(text),
@@ -91,45 +92,41 @@ impl Render for DragPreview {
 }
 
 impl Shell {
-    /// The payload for a drag starting on the current selection.
-    pub fn drag_payload(&self) -> DragPayload {
+    /// The paths of `pane`'s selection: what a drag from it carries.
+    pub fn drag_paths(&self, pane: PaneId) -> Vec<PathBuf> {
         let ws = self.app.workspace.read();
-        let Some(pane) = ws.pane(self.pane) else {
-            return DragPayload {
-                count: 0,
-                label: String::new(),
-                paths: Vec::new(),
-            };
-        };
-        let count = pane.selection.len();
-        let label = pane
-            .selection
-            .iter()
-            .next()
-            .and_then(|id| pane.listing.get(id))
-            .map(|e| e.name_str().into_owned())
-            .unwrap_or_default();
-        let paths = pane
-            .open
-            .as_ref()
-            .map(|open| {
-                pane.selection
-                    .iter()
-                    .filter_map(|id| open.path_of(id))
-                    .collect()
+        ws.pane(pane)
+            .and_then(|pane| {
+                let open = pane.open.as_ref()?;
+                Some(
+                    pane.selection
+                        .iter()
+                        .filter_map(|id| open.path_of(id))
+                        .collect(),
+                )
             })
-            .unwrap_or_default();
-        DragPayload {
-            count,
-            label,
-            paths,
-        }
+            .unwrap_or_default()
+    }
+
+    /// Count and first name of `pane`'s selection, for the drag preview.
+    fn drag_label(&self, pane: PaneId) -> (usize, String) {
+        let ws = self.app.workspace.read();
+        ws.pane(pane).map_or((0, String::new()), |pane| {
+            let label = pane
+                .selection
+                .iter()
+                .next()
+                .and_then(|id| pane.listing.get(id))
+                .map(|e| e.name_str().into_owned())
+                .unwrap_or_default();
+            (pane.selection.len(), label)
+        })
     }
 
     /// Whether `paths` are exactly this pane's current selection: a drag that
     /// left through the compositor and came back to us.
     fn is_own_drag(&self, paths: &[PathBuf]) -> bool {
-        let own = self.drag_payload().paths;
+        let own = self.drag_paths(self.pane);
         !own.is_empty() && own.len() == paths.len() && own.iter().all(|p| paths.contains(p))
     }
 
@@ -148,7 +145,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         if self.is_own_drag(paths) {
-            self.drop_into(dest, window, cx);
+            self.drop_into(self.pane, dest, window, cx);
             return;
         }
         let paths: Vec<PathBuf> = paths
@@ -177,8 +174,16 @@ impl Shell {
         );
     }
 
-    /// Drop the dragging selection into `dest`: a `move` plan, or `copy` with ctrl held.
-    pub fn drop_into(&mut self, dest: &Path, window: &mut Window, cx: &mut Context<Self>) {
+    /// Drop `from`'s selection into `dest`: a `move` plan, or `copy` with
+    /// ctrl held. The pane the drag started in says what moves, whichever
+    /// pane is active when it lands.
+    pub fn drop_into(
+        &mut self,
+        from: PaneId,
+        dest: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let cmd = if window.modifiers().control {
             "copy"
         } else {
@@ -186,10 +191,17 @@ impl Shell {
         };
         self.run(
             cmd,
-            serde_json::json!({ "dest": dest.to_string_lossy() }),
+            serde_json::json!({ "dest": PathArg::from(dest), "pane": from }),
             window,
             cx,
         );
+    }
+
+    /// The folder `pane` shows, if it is one.
+    pub fn pane_folder(&self, pane: PaneId) -> Option<PathBuf> {
+        let ws = self.app.workspace.read();
+        ws.pane(pane)
+            .and_then(|p| p.location().and_then(bibli_core::Location::path))
     }
 
     /// Paths dropped onto the file area: into the current directory.
@@ -199,12 +211,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let dest = {
-            let ws = self.app.workspace.read();
-            ws.pane(self.pane)
-                .and_then(|p| p.location().and_then(bibli_core::Location::path))
-        };
-        let Some(dest) = dest else {
+        let Some(dest) = self.pane_folder(self.pane) else {
             self.set_status("drop target is not a directory", true, cx);
             return;
         };
@@ -212,48 +219,60 @@ impl Shell {
     }
 }
 
-/// Make a stateful element draggable, carrying the selection.
-pub fn draggable(el: Stateful<Div>, shell: &Shell) -> Stateful<Div> {
-    let payload = shell.drag_payload();
-    if payload.count == 0 {
-        return el;
-    }
-    let icon = shell.drag_icon();
-    el.on_drag(payload, move |p: &DragPayload, position, window, cx| {
-        // Hand the drag to the compositor so other applications can accept it.
-        // When that works, a drop back onto bibli arrives as ExternalPaths and
-        // `drop_paths_into` recognizes it as our own selection.
-        let external = window.start_external_drag(p.paths.clone(), Some(icon.clone()));
-        if !external {
-            tracing::debug!("external drag unsupported here; in-window drag only");
-        }
-        let payload = p.clone();
-        cx.new(|_| DragPreview {
-            payload,
-            position,
-            hidden: external,
-        })
-    })
+/// Make a row or cell of `pane` draggable. Every row is, selected or not:
+/// GPUI only starts a drag from an element that had a drag listener when it
+/// was pressed, and the press is what selects the row. What the drag
+/// carries (paths, label, icon) is built when it starts, not per frame.
+pub fn draggable(el: Stateful<Div>, pane: PaneId, cx: &mut Context<Shell>) -> Stateful<Div> {
+    let shell = cx.weak_entity();
+    el.on_drag(
+        DragPayload { pane },
+        move |p: &DragPayload, position, window, cx| {
+            let pane = p.pane;
+            let (paths, (count, label), icon) = shell
+                .update(cx, |shell, _| {
+                    // A drag is not the click that collapses a multi-selection.
+                    shell.press_collapse = None;
+                    shell.with_pane(pane, |shell| {
+                        (
+                            shell.drag_paths(pane),
+                            shell.drag_label(pane),
+                            Some(shell.drag_icon()),
+                        )
+                    })
+                })
+                .unwrap_or_default();
+            // Hand the drag to the compositor so other applications can accept it.
+            // When that works, a drop back onto bibli arrives as ExternalPaths and
+            // `drop_paths_into` recognizes it as our own selection.
+            let external = !paths.is_empty() && window.start_external_drag(paths, icon);
+            if !external {
+                tracing::debug!("external drag unsupported here; in-window drag only");
+            }
+            cx.new(|_| DragPreview {
+                count,
+                label,
+                position,
+                hidden: external,
+            })
+        },
+    )
 }
 
 /// Make an element a drop target into `dir`, for in-window drags and for
 /// compositor drags (from other applications, or our own that went external).
 pub fn droppable_dir<E: InteractiveElement>(el: E, dir: PathBuf, cx: &mut Context<Shell>) -> E {
     let theme = cx.global::<Theme>().clone();
-    let theme2 = theme.clone();
+    let (tint, edge) = (theme.drop_target, theme.accent);
     let dir2 = dir.clone();
-    el.drag_over::<DragPayload>(move |s, _, _, _| {
-        s.bg(theme.selection_bg).border_color(theme.accent)
-    })
-    .on_drop(cx.listener(move |this, _: &DragPayload, window, cx| {
-        this.drop_into(&dir, window, cx);
-    }))
-    .drag_over::<ExternalPaths>(move |s, _, _, _| {
-        s.bg(theme2.selection_bg).border_color(theme2.accent)
-    })
-    .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
-        this.drop_paths_into(paths.paths(), &dir2, window, cx);
-    }))
+    el.drag_over::<DragPayload>(move |s, _, _, _| s.bg(tint).border_color(edge))
+        .on_drop(cx.listener(move |this, payload: &DragPayload, window, cx| {
+            this.drop_into(payload.pane, &dir, window, cx);
+        }))
+        .drag_over::<ExternalPaths>(move |s, _, _, _| s.bg(tint).border_color(edge))
+        .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
+            this.drop_paths_into(paths.paths(), &dir2, window, cx);
+        }))
 }
 
 #[cfg(test)]

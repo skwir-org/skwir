@@ -1,12 +1,12 @@
 //! Bulk rename dialog: template, regex, replacement, case, start; live
 //! preview from `rename_bulk.preview`; Enter applies `rename_bulk`.
 
-use gpui::{
-    AnyElement, Context, Entity, MouseButton, Subscription, Window, deferred, div, prelude::*, px,
-};
+use bibli_core::command::{Invocation, Outcome};
+use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*, px};
 
 use crate::input::{InputEvent, TextInput};
 use crate::keymap;
+use crate::modal::{self, FocusReturn};
 use crate::shell::Shell;
 use crate::theme::Theme;
 
@@ -27,7 +27,12 @@ pub struct BulkState {
     pub focused: usize,
     pub preview: Vec<(String, String)>,
     pub error: Option<String>,
-    dirty: bool,
+    /// Advances with each change; only the latest preview is shown.
+    asked: u64,
+    /// The preview shown is the answer to the latest change.
+    current: bool,
+    count: usize,
+    back: FocusReturn,
     _subs: Vec<Subscription>,
 }
 
@@ -61,10 +66,12 @@ impl Shell {
     }
 
     pub fn open_bulk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.selection_ctx().count == 0 {
-            self.set_status("select the entries to rename first", true, cx);
+        let count = self.selection_ctx().count;
+        if count == 0 {
+            self.set_status(crate::shell::NOTHING_SELECTED, false, cx);
             return;
         }
+        let back = FocusReturn::capture(window, cx);
         let mut inputs = Vec::new();
         let mut subs = Vec::new();
         for (i, (_, placeholder)) in FIELDS.iter().enumerate() {
@@ -82,12 +89,7 @@ impl Shell {
                     |this, _, ev: &InputEvent, window, cx| match ev {
                         InputEvent::Submit => this.bulk_apply(window, cx),
                         InputEvent::Cancel => this.close_bulk(window, cx),
-                        InputEvent::Changed => {
-                            if let Some(b) = &mut this.bulk {
-                                b.dirty = true;
-                            }
-                            cx.notify();
-                        }
+                        InputEvent::Changed => this.bulk_refresh(window, cx),
                     },
                 ),
             );
@@ -100,22 +102,33 @@ impl Shell {
             focused: 0,
             preview: Vec::new(),
             error: None,
-            dirty: true,
+            asked: 0,
+            current: false,
+            count,
+            back,
             _subs: subs,
         });
+        self.bulk_refresh(window, cx);
         cx.notify();
     }
 
     pub fn close_bulk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.bulk = None;
-        window.focus(&self.ui().focus);
+        if let Some(bulk) = self.bulk.take() {
+            bulk.back.restore(window, &self.ui().focus);
+        }
         cx.notify();
     }
 
     pub fn bulk_focus_next(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(b) = &mut self.bulk {
             let n = b.inputs.len() as isize;
-            b.focused = ((b.focused as isize + delta).rem_euclid(n)) as usize;
+            // From the field that has the keyboard, which a click may have moved.
+            let current = b
+                .inputs
+                .iter()
+                .position(|i| i.read(cx).is_focused(window))
+                .unwrap_or(b.focused);
+            b.focused = ((current as isize + delta).rem_euclid(n)) as usize;
             b.inputs[b.focused].update(cx, |i, cx| {
                 i.select_all_now(cx);
                 i.focus(window);
@@ -124,52 +137,67 @@ impl Shell {
         }
     }
 
-    pub fn bulk_cycle_case(&mut self, cx: &mut Context<Self>) {
+    pub fn bulk_cycle_case(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(b) = &mut self.bulk {
             b.case = (b.case + 1) % CASES.len();
-            b.dirty = true;
-            cx.notify();
+            self.bulk_refresh(window, cx);
         }
     }
 
-    /// Recompute the preview when a field changed.
-    fn bulk_refresh(&mut self, cx: &mut Context<Self>) {
-        if !self.bulk.as_ref().is_some_and(|b| b.dirty) {
-            return;
-        }
+    /// Ask for the preview again after a change, on a worker: the plugin
+    /// reads every selected entry and may stat the targets.
+    fn bulk_refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let spec = self.bulk_spec(cx);
-        let (preview, error) = match self.app.dispatch(&bibli_core::command::Invocation {
-            name: "rename_bulk.preview".into(),
-            args: spec,
-        }) {
-            Ok(bibli_core::command::Outcome::Value(v)) => (
-                v.as_array()
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|x| {
-                                Some((
-                                    x.get("from")?.as_str()?.to_owned(),
-                                    x.get("to")?.as_str()?.to_owned(),
-                                ))
+        let Some(b) = &mut self.bulk else { return };
+        b.asked += 1;
+        b.current = false;
+        let asked = b.asked;
+        let app = std::sync::Arc::clone(&self.app);
+        self.off_thread(
+            "rename-bulk-preview",
+            move || app.dispatch(&Invocation::with_args("rename_bulk.preview", &spec)),
+            move |this, result, _, cx| {
+                let Some(b) = this.bulk.as_mut().filter(|b| b.asked == asked) else {
+                    return;
+                };
+                let (preview, error) = match result {
+                    Ok(Outcome::Value(v)) => (
+                        v.as_array()
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|x| {
+                                        Some((
+                                            x.get("from")?.as_str()?.to_owned(),
+                                            x.get("to")?.as_str()?.to_owned(),
+                                        ))
+                                    })
+                                    .collect()
                             })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                None,
-            ),
-            Ok(_) => (Vec::new(), None),
-            Err(e) => (Vec::new(), Some(format!("{e:#}"))),
-        };
-        if let Some(b) = &mut self.bulk {
-            b.preview = preview;
-            b.error = error;
-            b.dirty = false;
-        }
+                            .unwrap_or_default(),
+                        None,
+                    ),
+                    Ok(_) => (Vec::new(), None),
+                    Err(e) => (Vec::new(), Some(format!("{e:#}"))),
+                };
+                b.preview = preview;
+                b.error = error;
+                b.current = true;
+                cx.notify();
+            },
+            window,
+            cx,
+        );
+        cx.notify();
     }
 
     fn bulk_apply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let spec = self.bulk_spec(cx);
-        if self.bulk.as_ref().is_some_and(|b| b.error.is_some()) {
+        // Only what the preview showed, and only if it showed no error.
+        if self
+            .bulk
+            .as_ref()
+            .is_some_and(|b| !b.current || b.error.is_some())
+        {
             return;
         }
         self.close_bulk(window, cx);
@@ -177,13 +205,13 @@ impl Shell {
     }
 }
 
-pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    shell.bulk_refresh(cx);
+pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let b = shell.bulk.as_ref()?;
     let theme = cx.global::<Theme>().clone();
     let mut form = div().flex().flex_col().gap_2();
     for (i, (label, _)) in FIELDS.iter().enumerate() {
-        let focused = i == b.focused;
+        // Where the keyboard is, whether Tab or a click put it there.
+        let focused = b.inputs[i].read(cx).is_focused(window);
         form = form.child(
             div()
                 .flex()
@@ -232,8 +260,13 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                     .border_1()
                     .border_color(theme.border)
                     .cursor_pointer()
-                    .on_click(cx.listener(|this, _, _, cx| this.bulk_cycle_case(cx)))
-                    .child(format!("{}  (ctrl-k cycles)", CASES[b.case])),
+                    .on_click(cx.listener(|this, _, window, cx| this.bulk_cycle_case(window, cx)))
+                    .child(
+                        match shell.keys_for("ui.rename_bulk_case", &serde_json::Value::Null) {
+                            Some(keys) => format!("{}  ({keys} cycles)", CASES[b.case]),
+                            None => CASES[b.case].to_owned(),
+                        },
+                    ),
             ),
     );
     let mut list = div()
@@ -267,48 +300,23 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 .child(format!("… {} more", b.preview.len() - 40)),
         );
     }
-    Some(
-        deferred(
-            div()
-                .absolute()
-                .inset_0()
-                .flex()
-                .justify_center()
-                .items_start()
-                .pt(px(60.))
-                .occlude()
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, window, cx| this.close_bulk(window, cx)),
-                )
-                .child(
-                    div()
-                        .w(px(720.))
-                        .p_3()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .rounded_lg()
-                        .border_1()
-                        .border_color(theme.border)
-                        .bg(theme.surface)
-                        .shadow_lg()
-                        .key_context(keymap::BULK)
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .child(div().child(format!("Rename {} items", shell.selection_ctx().count)))
-                        .child(form)
-                        .children(
-                            b.error
-                                .clone()
-                                .map(|e| div().text_xs().text_color(theme.error).child(e)),
-                        )
-                        .child(list)
-                        .child(div().text_xs().text_color(theme.text_muted).child(
-                            "Tab switches fields · Enter renames (undoable) · Escape cancels",
-                        )),
-                ),
+    let panel = modal::panel(720., &theme)
+        .p_3()
+        .gap_2()
+        .key_context(keymap::BULK)
+        .child(div().child(format!("Rename {} items", b.count)))
+        .child(form)
+        .children(
+            b.error
+                .clone()
+                .map(|e| div().text_xs().text_color(theme.error).child(e)),
         )
-        .with_priority(4)
-        .into_any_element(),
-    )
+        .child(list)
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.text_muted)
+                .child("Tab switches fields · Enter renames (undoable) · Escape cancels"),
+        );
+    Some(modal::modal(panel, 60., 4, Shell::close_bulk, &theme, cx))
 }

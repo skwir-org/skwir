@@ -1,14 +1,15 @@
 //! Command palette: fuzzy search over every command, run on Enter, prompt for
 //! required string arguments in sequence.
 
-use gpui::{
-    AnyElement, Context, Entity, MouseButton, Subscription, Window, deferred, div, prelude::*, px,
-};
+use std::sync::OnceLock;
+
+use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*, px};
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 
 use crate::input::{InputEvent, TextInput};
 use crate::keymap;
+use crate::modal::{self, FocusReturn, Picker};
 use crate::shell::Shell;
 use crate::theme::Theme;
 
@@ -33,9 +34,10 @@ pub struct PaletteState {
     pub input: Entity<TextInput>,
     pub items: Vec<PaletteItem>,
     pub filtered: Vec<usize>,
-    pub highlighted: usize,
+    pub picker: Picker,
     query: Option<String>,
     pub args: Option<ArgPrompt>,
+    back: FocusReturn,
     _sub: Subscription,
 }
 
@@ -166,14 +168,26 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.quit", "{}", "Quit"),
 ];
 
+/// [`UI_COMMANDS`] with their arguments parsed, once.
+pub fn ui_commands() -> &'static [(&'static str, serde_json::Value, &'static str)] {
+    static PARSED: OnceLock<Vec<(&'static str, serde_json::Value, &'static str)>> = OnceLock::new();
+    PARSED.get_or_init(|| {
+        UI_COMMANDS
+            .iter()
+            .map(|(name, args, title)| {
+                (
+                    *name,
+                    serde_json::from_str(args).expect("valid ui args"),
+                    *title,
+                )
+            })
+            .collect()
+    })
+}
+
 impl Shell {
     fn palette_items(&self) -> Vec<PaletteItem> {
-        let key_of = |name: &str| {
-            self.key_hints
-                .iter()
-                .find(|h| h.command == name)
-                .map(|h| h.keys.clone())
-        };
+        let no_args = serde_json::json!({});
         let mut items: Vec<PaletteItem> = self
             .app
             .commands
@@ -182,7 +196,7 @@ impl Shell {
             // Structured preference batches are edited by the Settings dialog.
             .filter(|c| !matches!(&*c.name, "settings.apply" | "plugins.set_enabled"))
             .map(|c| PaletteItem {
-                keys: key_of(&c.name),
+                keys: self.keys_for(&c.name, &no_args),
                 name: c.name.to_string(),
                 args: serde_json::json!({}),
                 title: c.title.clone(),
@@ -194,7 +208,7 @@ impl Shell {
                 name: "ui.view".into(),
                 args: serde_json::json!({"id": spec.id}),
                 title: format!("{} view", spec.title),
-                keys: self.view_shortcut(&spec.id),
+                keys: self.keys_for("ui.view", &serde_json::json!({ "id": spec.id })),
                 required: Vec::new(),
             });
         }
@@ -229,12 +243,12 @@ impl Shell {
                 required: Vec::new(),
             });
         }
-        for (name, args, title) in UI_COMMANDS {
+        for (name, args, title) in ui_commands() {
             items.push(PaletteItem {
                 name: (*name).into(),
-                args: serde_json::from_str(args).expect("valid ui args"),
+                args: args.clone(),
                 title: (*title).into(),
-                keys: key_of(name),
+                keys: self.keys_for(name, args),
                 required: Vec::new(),
             });
         }
@@ -242,6 +256,7 @@ impl Shell {
     }
 
     pub fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let back = FocusReturn::capture(window, cx);
         let input = cx.new(|cx| TextInput::new("Type a command", cx));
         let sub = cx.subscribe_in(
             &input,
@@ -258,26 +273,25 @@ impl Shell {
             input,
             filtered: (0..items.len()).collect(),
             items,
-            highlighted: 0,
+            picker: Picker::default(),
             query: None,
             args: None,
+            back,
             _sub: sub,
         });
         cx.notify();
     }
 
     pub fn close_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.palette = None;
-        window.focus(&self.ui().focus);
+        if let Some(palette) = self.palette.take() {
+            palette.back.restore(window, &self.ui().focus);
+        }
         cx.notify();
     }
 
     pub fn palette_move(&mut self, delta: isize, cx: &mut Context<Self>) {
-        if let Some(p) = &mut self.palette
-            && !p.filtered.is_empty()
-        {
-            let n = p.filtered.len() as isize;
-            p.highlighted = ((p.highlighted as isize + delta).rem_euclid(n)) as usize;
+        if let Some(p) = &mut self.palette {
+            p.picker.step(delta, p.filtered.len());
             cx.notify();
         }
     }
@@ -301,7 +315,7 @@ impl Shell {
             self.run(&name, values, window, cx);
             return;
         }
-        let Some(&ix) = p.filtered.get(p.highlighted) else {
+        let Some(&ix) = p.filtered.get(p.picker.highlighted) else {
             return;
         };
         let item = p.items[ix].clone();
@@ -349,7 +363,7 @@ impl Shell {
             scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
             p.filtered = scored.into_iter().map(|(_, i)| i).collect();
         }
-        p.highlighted = 0;
+        p.picker = Picker::default();
         p.query = Some(q);
     }
 }
@@ -363,18 +377,9 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
         Some(a) => format!("{} · {}", a.name, a.required[a.index]),
         None => "Command".to_owned(),
     };
-    let mut panel = div()
-        .w(px(560.))
+    let mut panel = modal::panel(560., &theme)
         .max_h(px(420.))
-        .flex()
-        .flex_col()
-        .rounded_lg()
-        .border_1()
-        .border_color(theme.border)
-        .bg(theme.surface)
-        .shadow_lg()
         .key_context(keymap::PALETTE)
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(
             div()
                 .p_2()
@@ -388,9 +393,14 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
         );
     if p.args.is_none() {
         let mut list = div().flex().flex_col().py_1().overflow_hidden();
-        for (row_ix, &ix) in p.filtered.iter().take(14).enumerate() {
-            let item = &p.items[ix];
-            let hl = row_ix == p.highlighted;
+        for row_ix in p.picker.shown(p.filtered.len()) {
+            let item = &p.items[p.filtered[row_ix]];
+            let hl = row_ix == p.picker.highlighted;
+            let muted = if hl {
+                theme.selection_text
+            } else {
+                theme.text_muted
+            };
             let name = item.name.clone();
             list = list.child(
                 div()
@@ -404,34 +414,21 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                     .when(hl, |d| {
                         d.bg(theme.selection_bg).text_color(theme.selection_text)
                     })
+                    .when(!hl, |d| d.hover(|s| s.bg(theme.hover)))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         if let Some(p) = &mut this.palette {
-                            p.highlighted = row_ix;
+                            p.picker.highlighted = row_ix;
                         }
                         this.palette_submit(window, cx);
                     }))
                     .child(div().child(item.title.clone()))
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(if hl {
-                                theme.selection_text
-                            } else {
-                                theme.text_muted
-                            })
-                            .child(name),
-                    )
+                    .child(div().text_xs().text_color(muted).child(name))
                     .child(div().flex_1())
-                    .children(item.keys.clone().map(|k| {
-                        div()
-                            .text_xs()
-                            .text_color(if hl {
-                                theme.selection_text
-                            } else {
-                                theme.text_muted
-                            })
-                            .child(k)
-                    })),
+                    .children(
+                        item.keys
+                            .clone()
+                            .map(|k| div().text_xs().text_color(muted).child(k)),
+                    ),
             );
         }
         if p.filtered.is_empty() {
@@ -445,23 +442,12 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
         }
         panel = panel.child(list);
     }
-    Some(
-        deferred(
-            div()
-                .absolute()
-                .inset_0()
-                .flex()
-                .justify_center()
-                .items_start()
-                .pt(px(80.))
-                .occlude()
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, window, cx| this.close_palette(window, cx)),
-                )
-                .child(panel),
-        )
-        .with_priority(4)
-        .into_any_element(),
-    )
+    Some(modal::modal(
+        panel,
+        80.,
+        4,
+        Shell::close_palette,
+        &theme,
+        cx,
+    ))
 }

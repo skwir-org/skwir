@@ -56,6 +56,8 @@ impl Shell {
     ) {
         let x = f32::from(ev.event.position.x);
         let column = ev.drag(cx).0;
+        // A drag starts clean (`resize_edge` clears the state), so a release
+        // missed outside the window cannot leave another edge's start here.
         let (_, start_x, start_width) =
             *self
                 .column_drag
@@ -115,7 +117,8 @@ impl Shell {
 }
 
 /// The draggable left edge of a header cell.
-fn resize_edge(column: usize) -> Stateful<Div> {
+fn resize_edge(column: usize, cx: &mut Context<Shell>) -> Stateful<Div> {
+    let shell = cx.weak_entity();
     div()
         .id(("column-edge", column))
         .absolute()
@@ -126,7 +129,9 @@ fn resize_edge(column: usize) -> Stateful<Div> {
         .h_full()
         .cursor(gpui::CursorStyle::ResizeLeftRight)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_drag(ColumnResize(column), |_, _, _, cx| {
+        .on_drag(ColumnResize(column), move |_, _, _, cx| {
+            // The first move of this drag records where it starts.
+            shell.update(cx, |shell, _| shell.column_drag = None).ok();
             cx.new(|_| NoDragPreview)
         })
 }
@@ -160,7 +165,7 @@ pub struct RowData {
 
 /// Tags from the entry's `tags` metadata field (a list of text values).
 pub fn tags_of(e: &bibli_core::Entry) -> Vec<String> {
-    match e.metadata.value("tags") {
+    match e.metadata.value(keys::TAGS) {
         Some(bibli_core::Value::List(items)) => items
             .iter()
             .filter_map(|v| v.as_str().map(str::to_owned))
@@ -171,11 +176,12 @@ pub fn tags_of(e: &bibli_core::Entry) -> Vec<String> {
 }
 
 impl Shell {
-    /// Collect row data for `range` of the sorted order.
-    pub fn rows(&mut self, range: Range<usize>, icon_px: u16) -> Vec<RowData> {
+    /// Collect row data for `range` of the sorted order. `compact` rows
+    /// (the Columns view) show a name only: their details are not computed.
+    pub fn rows(&mut self, range: Range<usize>, icon_px: u16, compact: bool) -> Vec<RowData> {
         let mut out = Vec::with_capacity(range.len());
         let friendly = self.friendly_dates;
-        let now = jiff::Zoned::now();
+        let now = (!compact && friendly && self.columns[1]).then(jiff::Zoned::now);
         let app = std::sync::Arc::clone(&self.app);
         let ws = app.workspace.read();
         let Some(pane) = ws.pane(self.pane) else {
@@ -189,38 +195,15 @@ impl Shell {
             let Some(e) = pane.listing.get(id) else {
                 continue;
             };
-            let size = e
-                .metadata
-                .value(keys::SIZE)
-                .and_then(bibli_core::Value::as_u64)
-                .map_or_else(
-                    || "—".to_owned(),
-                    |s| {
-                        if e.is_dir() {
-                            "—".to_owned()
-                        } else {
-                            format::size(s)
-                        }
-                    },
-                );
-            let time = e
-                .metadata
-                .value(keys::MODIFIED)
-                .and_then(bibli_core::Value::as_time);
-            let modified_exact = time.map_or_else(String::new, format::time);
-            let modified = match time {
-                None => "—".to_owned(),
-                Some(time) if friendly => format::friendly_time(time, &now),
-                Some(_) => modified_exact.clone(),
-            };
-            let kind: std::sync::Arc<str> = if e.is_dir() {
-                "Folder".into()
+            let mime = (!e.is_dir())
+                .then(|| bibli_platform::mime::by_name(&e.name))
+                .flatten();
+            let icon = if e.is_dir() {
+                self.icons.folder(icon_px)
             } else {
-                bibli_platform::mime::by_name(&e.name)
-                    .and_then(|mime| self.type_names.get(&mime))
-                    .unwrap_or_else(|| crate::typenames::fallback(&e.name_str()).into())
+                self.icons.for_mime(mime.as_ref(), icon_px)
             };
-            out.push(RowData {
+            let mut row = RowData {
                 ix,
                 id,
                 name: e.name_str().into_owned(),
@@ -230,20 +213,56 @@ impl Shell {
                 } else {
                     None
                 },
-                size,
-                modified,
-                modified_exact,
-                kind,
+                size: String::new(),
+                modified: String::new(),
+                modified_exact: String::new(),
+                kind: std::sync::Arc::from(""),
                 selected: pane.selection.contains(id),
                 cut: self.pending.cut && self.pending.entries.contains(&id),
                 is_cursor: cursor == Some(id),
-                icon: self.icons.for_entry(e, icon_px),
+                icon,
                 hydrated: e.metadata.is_hydrated(),
                 tags: tags_of(e),
-            });
+            };
+            if !compact {
+                let [size, modified, kind] = self.columns;
+                if size {
+                    row.size = match e
+                        .metadata
+                        .value(keys::SIZE)
+                        .and_then(bibli_core::Value::as_u64)
+                    {
+                        Some(s) if !e.is_dir() => format::size(s),
+                        _ => "—".to_owned(),
+                    };
+                }
+                if modified {
+                    let time = e
+                        .metadata
+                        .value(keys::MODIFIED)
+                        .and_then(bibli_core::Value::as_time);
+                    row.modified_exact = time.map_or_else(String::new, format::time);
+                    row.modified = match (time, &now) {
+                        (None, _) => "—".to_owned(),
+                        (Some(time), Some(now)) => format::friendly_time(time, now),
+                        (Some(_), None) => row.modified_exact.clone(),
+                    };
+                }
+                if kind {
+                    row.kind = if e.is_dir() {
+                        "Folder".into()
+                    } else {
+                        mime.as_ref()
+                            .and_then(|mime| self.type_names.get(mime))
+                            .unwrap_or_else(|| crate::typenames::fallback(&e.name_str()).into())
+                    };
+                }
+            }
+            out.push(row);
         }
         drop(ws);
         self.type_names.request(&app);
+        self.icons.request(&app);
         out
     }
 }
@@ -296,19 +315,8 @@ pub fn row(
         })
         .when(!r.selected, |d| d.hover(|s| s.bg(theme.hover)))
         .when(r.cut, |d| d.opacity(CUT_OPACITY))
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
-                this.on_entry_mouse_down(pane, ix, ev, window, cx);
-            }),
-        )
-        .on_mouse_down(
-            MouseButton::Right,
-            cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
-                this.on_entry_mouse_down(pane, ix, ev, window, cx);
-            }),
-        )
         .child(icon);
+    let el = crate::list::entry_mouse(el, pane, ix, cx);
     let name = div()
         .flex()
         .items_center()
@@ -328,7 +336,7 @@ pub fn row(
                 .px_1()
                 .rounded_sm()
                 .text_xs()
-                .bg(theme.accent.opacity(0.18))
+                .bg(theme.tag_bg)
                 .text_color(if r.selected {
                     theme.selection_text
                 } else {
@@ -371,7 +379,7 @@ pub fn row(
             });
     }
     let mut el = el.child(line);
-    el = dnd::draggable(el, shell);
+    el = dnd::draggable(el, pane, cx);
     if let Some(p) = &r.path {
         el = dnd::droppable_dir(el, p.clone(), cx);
     }
@@ -485,7 +493,7 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Div {
                             theme,
                             cx,
                         ))
-                        .child(resize_edge(0)),
+                        .child(resize_edge(0, cx)),
                 )
             })
             .when(shell.columns[1], |d| {
@@ -500,7 +508,7 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Div {
                             theme,
                             cx,
                         ))
-                        .child(resize_edge(1)),
+                        .child(resize_edge(1, cx)),
                 )
             })
             .when(shell.columns[2], |d| {
@@ -508,7 +516,7 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Div {
                     column(shell.column_widths[2], theme.text_muted)
                         .relative()
                         .child("Type")
-                        .child(resize_edge(2)),
+                        .child(resize_edge(2, cx)),
                 )
             }),
         )
@@ -517,10 +525,6 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Div {
 impl PaneView for ListView {
     fn id(&self) -> &'static str {
         crate::view::LIST
-    }
-
-    fn title(&self) -> &'static str {
-        "List"
     }
 
     fn render(&mut self, shell: &mut Shell, _: &mut Window, cx: &mut Context<Shell>) -> AnyElement {
@@ -534,7 +538,7 @@ impl PaneView for ListView {
                 this.with_pane(pane, |this| {
                     let theme = cx.global::<Theme>().clone();
                     this.ui_mut().list.visible_rows = range.len().max(1);
-                    let rows = this.rows(range, ICON_PX as u16);
+                    let rows = this.rows(range, ICON_PX as u16, false);
                     let need: Vec<EntryId> =
                         rows.iter().filter(|r| !r.hydrated).map(|r| r.id).collect();
                     this.request_hydrate(need);
@@ -549,9 +553,9 @@ impl PaneView for ListView {
         let marquee = crate::elements::marquee::Marquee {
             pane,
             shell: cx.weak_entity(),
-            geometry: crate::elements::marquee::Geometry::Rows { height: ROW_HEIGHT },
+            source: crate::elements::marquee::Source::Rows { height: ROW_HEIGHT },
             count,
-            offset: self.scroll.0.borrow().base_handle.offset(),
+            scroll: self.scroll.0.borrow().base_handle.clone(),
             drag: shell.marquee.clone(),
         };
         div()

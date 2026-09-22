@@ -20,6 +20,7 @@ use serde::Serialize;
 use super::context::Meter;
 use super::{Cancelled, Change, Operation, Plan, PlanId, StepContext, StepStatus};
 use crate::cancel::CancelToken;
+use crate::registry::Contributions;
 use crate::scheduler::{Priority, Scheduler};
 
 /// Progress of one step.
@@ -40,6 +41,8 @@ pub enum ExecEvent {
         plan: PlanId,
         title: String,
         total: usize,
+        /// Whether this run applies a plan or takes one back (or again).
+        run: RunKind,
     },
     Step(Progress),
     Finished {
@@ -52,6 +55,25 @@ pub enum ExecEvent {
     },
 }
 
+/// What a run does with the journal, so a surface can word its result
+/// ("Undid …", a Redo button) without reading it from the title.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunKind {
+    Apply,
+    Undo,
+    Redo,
+}
+
+impl From<Direction> for RunKind {
+    fn from(direction: Direction) -> Self {
+        match direction {
+            Direction::Undo => RunKind::Undo,
+            Direction::Redo => RunKind::Redo,
+        }
+    }
+}
+
 /// Bytes moved so far by a running plan's steps (copies, cross-device
 /// moves). `total` grows as each such step starts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -59,6 +81,16 @@ pub struct Transfer {
     pub done: u64,
     pub total: u64,
 }
+
+/// Told, once per finished run of a plan (undo and redo runs included),
+/// the changes that hold afterward: the steps applied and the steps found
+/// already done, in plan order. A plugin that keeps paths of its own (the
+/// shelf, a clipboard) follows moves, renames and removals with it instead
+/// of stat-ing what it holds.
+///
+/// It runs on the lane after the `Finished` event, before the next plan:
+/// keep it brief (update a map, wake), and never wait for the executor.
+pub type ChangeObserver = Arc<dyn Fn(&[Change]) + Send + Sync>;
 
 /// One journaled change and the plan that takes it back.
 #[derive(Debug)]
@@ -103,7 +135,11 @@ enum Direction {
 }
 
 enum Work {
-    Execute(Plan),
+    /// `whole`: dry-run every step first and apply nothing if one conflicts.
+    Execute {
+        plan: Plan,
+        whole: bool,
+    },
     Replay(Direction),
 }
 
@@ -131,6 +167,7 @@ pub struct Executor {
     /// Plans being applied, so a surface can cancel one by id and read its
     /// byte progress.
     running: Mutex<Vec<(PlanId, CancelToken, Arc<Meter>)>>,
+    observers: Contributions<ChangeObserver>,
 }
 
 /// Removes a plan from `running` however `apply_plan` leaves.
@@ -164,6 +201,7 @@ impl Executor {
             rx,
             waker: Mutex::new(None),
             running: Mutex::new(Vec::new()),
+            observers: Contributions::default(),
         })
     }
 
@@ -191,7 +229,7 @@ impl Executor {
             .lock()
             .queue
             .iter()
-            .find(|job| matches!(&job.work, Work::Execute(p) if p.id == plan))
+            .find(|job| matches!(&job.work, Work::Execute { plan: p, .. } if p.id == plan))
             .map(|job| job.cancel.cancel())
             .is_some()
     }
@@ -209,6 +247,16 @@ impl Executor {
             })
     }
 
+    /// Tell `observer` what each finished plan changed, until `owner`'s
+    /// observers are removed (`App::unregister_owner` does).
+    pub fn observe(&self, owner: &str, observer: ChangeObserver) {
+        self.observers.add(owner, observer);
+    }
+
+    pub fn remove_observers(&self, owner: &str) {
+        self.observers.remove_owner(owner);
+    }
+
     /// Progress and completion events.
     pub fn events(&self) -> &Receiver<ExecEvent> {
         &self.rx
@@ -216,14 +264,30 @@ impl Executor {
 
     /// Queue `plan` on the lane; journal the inverse when it finishes.
     pub fn execute(self: &Arc<Self>, plan: Plan, cancel: CancelToken) {
-        self.submit(Work::Execute(plan), cancel);
+        self.submit(Work::Execute { plan, whole: false }, cancel);
+    }
+
+    /// Like [`Executor::execute`], but all or nothing: when its turn comes,
+    /// every step is checked first and a conflict anywhere applies nothing
+    /// and finishes with that conflict as the error. For a plan the user
+    /// asked for as one action, so it never stops halfway on a conflict
+    /// that was there from the start. The checks stat the filesystem, so
+    /// they run on the lane, never on the caller's thread.
+    pub fn execute_whole(self: &Arc<Self>, plan: Plan, cancel: CancelToken) {
+        self.submit(Work::Execute { plan, whole: true }, cancel);
     }
 
     /// Apply `plan` in lane order, waiting for it, and journal it. Returns
     /// what happened. Never call it from inside an operation.
     pub fn execute_blocking(&self, plan: &Plan, cancel: &CancelToken) -> ExecResult {
-        self.submit_blocking(Work::Execute(plan.clone()), cancel)
-            .expect("an executed plan has a result")
+        self.submit_blocking(
+            Work::Execute {
+                plan: plan.clone(),
+                whole: false,
+            },
+            cancel,
+        )
+        .expect("an executed plan has a result")
     }
 
     /// Undo the most recent plan once everything queued before has run.
@@ -262,6 +326,11 @@ impl Executor {
 
     pub fn can_redo(&self) -> bool {
         !self.journal.lock().redo.is_empty()
+    }
+
+    /// The title of what Undo would take back, without copying the stack.
+    pub fn last_undo_title(&self) -> Option<String> {
+        self.journal.lock().undo.last().map(|e| e.title.clone())
     }
 
     /// Titles of the undo stack, most recent last.
@@ -328,7 +397,12 @@ impl Executor {
                 job
             };
             let result = match job.work {
-                Work::Execute(plan) => Some(self.run_execute(&plan, &job.cancel)),
+                Work::Execute { plan, whole } => {
+                    Some(match whole.then(|| first_conflict(&plan)).flatten() {
+                        Some(reason) => self.refuse(&plan, reason),
+                        None => self.run_execute(&plan, &job.cancel),
+                    })
+                }
                 Work::Replay(direction) => self.replay(direction, &job.cancel),
             };
             if let Some(reply) = job.reply {
@@ -337,8 +411,34 @@ impl Executor {
         }
     }
 
+    /// A plan that will not be applied at all: say so with the usual events.
+    fn refuse(&self, plan: &Plan, error: String) -> ExecResult {
+        self.emit(ExecEvent::Started {
+            plan: plan.id,
+            title: plan.title.clone(),
+            total: plan.steps.len(),
+            run: RunKind::Apply,
+        });
+        self.emit(ExecEvent::Finished {
+            plan: plan.id,
+            applied: 0,
+            skipped: 0,
+            error: Some(error.clone()),
+            cancelled: false,
+            undoable: false,
+        });
+        ExecResult {
+            applied: 0,
+            skipped: 0,
+            error: Some(error),
+            cancelled: false,
+            undoable: false,
+            complete: false,
+        }
+    }
+
     fn run_execute(&self, plan: &Plan, cancel: &CancelToken) -> ExecResult {
-        let (r, inverse) = self.apply_plan(plan, cancel);
+        let (r, inverse) = self.apply_plan(plan, cancel, RunKind::Apply);
         if r.applied > 0 {
             let mut j = self.journal.lock();
             j.undo.push(JournalEntry {
@@ -380,6 +480,7 @@ impl Executor {
                 plan: id,
                 title,
                 total: 0,
+                run: direction.into(),
             });
             self.emit(ExecEvent::Finished {
                 plan: id,
@@ -400,7 +501,7 @@ impl Executor {
         };
         let mut run = plan.clone();
         run.title = title;
-        let (r, back) = self.apply_plan(&run, cancel);
+        let (r, back) = self.apply_plan(&run, cancel, direction.into());
         // This run's inverses come first: its steps were applied after the
         // ones an earlier, interrupted attempt already took back.
         let mut steps = back.map(|p| p.steps).unwrap_or_default();
@@ -430,7 +531,12 @@ impl Executor {
     }
 
     /// The core loop: check, skip if done, apply, collect inverses in reverse order.
-    fn apply_plan(&self, plan: &Plan, cancel: &CancelToken) -> (ExecResult, Option<Plan>) {
+    fn apply_plan(
+        &self,
+        plan: &Plan,
+        cancel: &CancelToken,
+        run: RunKind,
+    ) -> (ExecResult, Option<Plan>) {
         let total = plan.steps.len();
         let meter = Arc::new(Meter::new(self.waker.lock().clone()));
         self.running
@@ -442,8 +548,10 @@ impl Executor {
             plan: plan.id,
             title: plan.title.clone(),
             total,
+            run,
         });
         let mut inverses: Vec<Box<dyn Operation>> = Vec::new();
+        let mut held = Vec::new();
         let mut applied = 0;
         let mut skipped = 0;
         let mut complete = true;
@@ -457,16 +565,22 @@ impl Executor {
             let change = step.describe();
             let status = step.check(&ctx);
             let mut err = None;
+            let mut holds = false;
             match &status {
-                StepStatus::AlreadyDone => skipped += 1,
+                StepStatus::AlreadyDone => {
+                    skipped += 1;
+                    holds = true;
+                }
                 StepStatus::Conflict { reason } => err = Some(reason.clone()),
                 StepStatus::Pending { .. } => match step.apply(&ctx) {
                     Ok(Some(inv)) => {
                         applied += 1;
+                        holds = true;
                         inverses.push(inv);
                     }
                     Ok(None) => {
                         applied += 1;
+                        holds = true;
                         complete = false;
                     }
                     // The step stopped midway and undid its own partial work:
@@ -477,6 +591,9 @@ impl Executor {
                     }
                     Err(e) => err = Some(format!("{e:#}")),
                 },
+            }
+            if holds {
+                held.push(change.clone());
             }
             self.emit(ExecEvent::Step(Progress {
                 plan: plan.id,
@@ -505,6 +622,11 @@ impl Executor {
             cancelled,
             undoable: inverse.is_some(),
         });
+        if !held.is_empty() {
+            for observer in self.observers.all() {
+                observer(&held);
+            }
+        }
         (
             ExecResult {
                 applied,
@@ -516,5 +638,104 @@ impl Executor {
             },
             inverse,
         )
+    }
+}
+
+/// The reason the first conflicting step gives, after a dry run of every
+/// step with one shared context.
+fn first_conflict(plan: &Plan) -> Option<String> {
+    let ctx = StepContext::detached();
+    plan.steps.iter().find_map(|step| match step.check(&ctx) {
+        StepStatus::Conflict { reason } => Some(reason),
+        _ => None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+
+    /// A step that counts its applications and conflicts when told to.
+    #[derive(Debug, Clone)]
+    struct Probe {
+        applied: Arc<AtomicUsize>,
+        conflict: bool,
+    }
+
+    impl Operation for Probe {
+        fn kind(&self) -> &'static str {
+            "probe"
+        }
+        fn args(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        fn describe(&self) -> Change {
+            Change::Trash {
+                path: "/example/probe".into(),
+            }
+        }
+        fn check(&self, _: &StepContext) -> StepStatus {
+            if self.conflict {
+                StepStatus::Conflict {
+                    reason: "in the way".into(),
+                }
+            } else {
+                StepStatus::Pending { reversible: false }
+            }
+        }
+        fn apply(&self, _: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+            self.applied.fetch_add(1, Ordering::SeqCst);
+            Ok(None)
+        }
+        fn clone_box(&self) -> Box<dyn Operation> {
+            Box::new(self.clone())
+        }
+    }
+
+    #[test]
+    fn a_whole_plan_with_a_conflict_applies_nothing_and_says_why() {
+        let executor = Executor::new(Scheduler::new(1));
+        let applied = Arc::new(AtomicUsize::new(0));
+        let probe = |conflict| {
+            Box::new(Probe {
+                applied: Arc::clone(&applied),
+                conflict,
+            }) as Box<dyn Operation>
+        };
+        let done = Arc::new(Mutex::new(None));
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        let finished = Arc::clone(&done);
+        executor.set_waker(Some(Arc::new(move || {
+            let _ = tx.try_send(());
+        })));
+        let plan = Plan::with_steps("two", vec![probe(false), probe(true)]);
+        let id = plan.id;
+        executor.execute_whole(plan, CancelToken::new());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while finished.lock().unwrap().is_none() {
+            let _ = rx.recv_timeout(deadline - std::time::Instant::now());
+            for event in executor.events().try_iter() {
+                if let ExecEvent::Finished {
+                    plan,
+                    error,
+                    applied,
+                    ..
+                } = event
+                {
+                    assert_eq!(plan, id);
+                    *finished.lock().unwrap() = Some((applied, error));
+                }
+            }
+            assert!(std::time::Instant::now() < deadline, "the plan finished");
+        }
+        assert_eq!(
+            done.lock().unwrap().clone(),
+            Some((0, Some("in the way".to_owned())))
+        );
+        assert_eq!(applied.load(Ordering::SeqCst), 0, "not even the first step");
+        assert!(!executor.can_undo());
     }
 }

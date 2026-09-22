@@ -6,6 +6,7 @@ use crate::{
     theme::Theme,
     toolbar::{self, Button},
 };
+use bibli_core::os_path::PathArg;
 use gpui::{AnyElement, Context, Window, div, prelude::*, px};
 use std::path::PathBuf;
 
@@ -55,13 +56,7 @@ fn view_button(shell: &Shell, spec: &bibli_core::registry::ViewSpec, prefix: &st
     Button::new(
         format!("{prefix}-{}", spec.id),
         icon,
-        format!(
-            "{} view{}",
-            spec.title,
-            shell
-                .view_shortcut(&spec.id)
-                .map_or_else(String::new, |key| format!(" · {key}"))
-        ),
+        format!("{} view", spec.title),
         "ui.view",
     )
     .args(serde_json::json!({"id": spec.id}))
@@ -118,12 +113,7 @@ fn app_row(
             )
             .child(
                 labelled(
-                    Button::new(
-                        "new-folder",
-                        "folder-plus",
-                        "New folder · Ctrl+Shift+N",
-                        "ui.mkdir_prompt",
-                    ),
+                    Button::new("new-folder", "folder-plus", "New folder", "ui.mkdir_prompt"),
                     "New folder",
                     mode,
                 )
@@ -131,15 +121,8 @@ fn app_row(
             );
     }
     bar = bar.child(div().flex_1().min_w(px(12.)));
-    bar = bar.child(
-        Button::new(
-            "file-search",
-            "search",
-            "Search files · Ctrl+F",
-            "ui.search",
-        )
-        .render(shell, cx),
-    );
+    bar = bar
+        .child(Button::new("file-search", "search", "Search files", "ui.search").render(shell, cx));
     if mode < 2 {
         bar = bar
             .child(toolbar::separator(&theme))
@@ -147,7 +130,7 @@ fn app_row(
             // the window, the preview panel at its right edge.
             .child(
                 labelled(
-                    Button::new("split-toggle", "split", "Split panes · F3", "ui.split")
+                    Button::new("split-toggle", "split", "Split panes", "ui.split")
                         .active(shell.is_split()),
                     "Split",
                     mode,
@@ -159,7 +142,7 @@ fn app_row(
                     Button::new(
                         "preview-toggle",
                         "preview",
-                        "Preview panel · F11",
+                        "Preview panel",
                         "ui.toggle_preview",
                     )
                     .active(shell.preview.open),
@@ -184,9 +167,11 @@ fn menu_item(button: Button, label: impl Into<gpui::SharedString>) -> Button {
     button.label(label).menu()
 }
 
-fn sort_items(shell: &Shell) -> Vec<Button> {
+/// The Sort and display menu, in its titled groups. The narrowest toolbar,
+/// which has no Sort button, puts all of it in More.
+fn sort_groups(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
     let spec = shell.sort_spec();
-    let mut items: Vec<Button> = [
+    let order: Vec<Button> = [
         ("name", "Name", bibli_core::SortKey::Name),
         ("size", "Size", bibli_core::SortKey::Size),
         ("modified", "Date modified", bibli_core::SortKey::Modified),
@@ -212,17 +197,17 @@ fn sort_items(shell: &Shell) -> Vec<Button> {
         )
     })
     .collect();
-    items.push(menu_item(
+    let mut show = vec![menu_item(
         Button::new(
             "menu-hidden",
             "eye",
-            "Show hidden files · Ctrl+H",
+            "Show hidden files",
             "ui.toggle_hidden",
         )
         .active(spec.show_hidden),
         "Hidden files",
-    ));
-    items.push(menu_item(
+    )];
+    show.push(menu_item(
         Button::new(
             "menu-grid-fill",
             "crop",
@@ -232,23 +217,30 @@ fn sort_items(shell: &Shell) -> Vec<Button> {
         .active(shell.grid_fill),
         "Fill thumbnails",
     ));
-    for (dir, icon, label, keys) in [
-        ("in", "plus", "Larger", "Ctrl+= or Ctrl+wheel up"),
-        ("out", "minus", "Smaller", "Ctrl+- or Ctrl+wheel down"),
-        ("reset", "fit", "Default size", "Ctrl+0"),
+    let mut size = Vec::new();
+    for (dir, icon, label, tip) in [
+        ("in", "plus", "Larger", "Larger (or Ctrl and the wheel)"),
+        ("out", "minus", "Smaller", "Smaller (or Ctrl and the wheel)"),
+        ("reset", "fit", "Default size", "Default size"),
     ] {
-        items.push(menu_item(
-            Button::new(
-                format!("zoom-{dir}"),
-                icon,
-                format!("{label} · {keys}"),
-                "ui.zoom",
-            )
-            .args(serde_json::json!({"dir": dir})),
+        size.push(menu_item(
+            Button::new(format!("zoom-{dir}"), icon, tip, "ui.zoom")
+                .args(serde_json::json!({"dir": dir})),
             label,
         ));
     }
-    items
+    vec![("Sort by", order), ("Show", show), ("Icon size", size)]
+}
+
+/// A group's title in a popup menu.
+fn group_title(title: &'static str, theme: &Theme) -> gpui::Div {
+    div()
+        .px_2()
+        .pt_2()
+        .pb_1()
+        .text_xs()
+        .text_color(theme.text_muted)
+        .child(title)
 }
 
 /// The More menu. It holds what has no button in the chosen toolbar variant:
@@ -263,15 +255,7 @@ fn more_panel(
 ) -> AnyElement {
     let mut panel = toolbar::popup_panel(popup, "ui.toolbar_menu", theme, cx);
     let group = |panel: gpui::Stateful<gpui::Div>, title: &'static str| {
-        panel.child(
-            div()
-                .px_2()
-                .pt_2()
-                .pb_1()
-                .text_xs()
-                .text_color(theme.text_muted)
-                .child(title),
-        )
+        panel.child(group_title(title, theme))
     };
     if everything {
         panel = group(panel, "View");
@@ -285,7 +269,7 @@ fn more_panel(
         }
         for (button, label) in [
             (
-                Button::new("menu-split", "split", "Split panes · F3", "ui.split")
+                Button::new("menu-split", "split", "Split panes", "ui.split")
                     .active(shell.is_split()),
                 "Split panes",
             ),
@@ -293,7 +277,7 @@ fn more_panel(
                 Button::new(
                     "menu-preview",
                     "preview",
-                    "Preview panel · F11",
+                    "Preview panel",
                     "ui.toggle_preview",
                 )
                 .active(shell.preview.open),
@@ -308,54 +292,43 @@ fn more_panel(
                 Button::new(
                     "menu-new-folder",
                     "folder-plus",
-                    "New folder · Ctrl+Shift+N",
+                    "New folder",
                     "ui.mkdir_prompt",
                 ),
                 "New folder…",
             )
             .render(shell, cx),
         );
-        for item in sort_items(shell).into_iter().take(4) {
-            panel = panel.child(item.render(shell, cx));
+        // Without the Sort button, its whole menu is here.
+        for (title, items) in sort_groups(shell) {
+            panel = group(panel, title);
+            for item in items {
+                panel = panel.child(item.render(shell, cx));
+            }
         }
         panel = group(panel, "bibli");
     }
     for (button, label) in [
         (
-            Button::new(
-                "menu-timeline",
-                "calendar",
-                "Timeline · Ctrl+Shift+L",
-                "ui.timeline",
-            )
-            .active(shell.timeline.open),
+            Button::new("menu-timeline", "calendar", "Timeline", "ui.timeline")
+                .active(shell.timeline.open),
             "Timeline",
         ),
         (
-            Button::new(
-                "menu-palette",
-                "command",
-                "Command palette · Ctrl+Shift+P",
-                "ui.palette",
-            ),
+            Button::new("menu-palette", "command", "Command palette", "ui.palette"),
             "Command palette…",
         ),
         (
             Button::new(
                 "menu-shortcuts",
                 "keyboard",
-                "Shortcuts here · F1",
+                "Shortcuts here",
                 "ui.shortcuts",
             ),
             "Shortcuts…",
         ),
         (
-            Button::new(
-                "menu-settings",
-                "settings",
-                "Settings · Ctrl+,",
-                "ui.settings",
-            ),
+            Button::new("menu-settings", "settings", "Settings", "ui.settings"),
             "Settings…",
         ),
     ] {
@@ -383,25 +356,11 @@ pub fn render_toolbar(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
     };
     if popup.kind == SORT {
         let mut panel = toolbar::popup_panel(popup, "ui.toolbar_menu", &theme, cx);
-        for (index, item) in sort_items(shell).into_iter().enumerate() {
-            let title = match index {
-                0 => Some("Sort by"),
-                3 => Some("Show"),
-                5 => Some("Icon size"),
-                _ => None,
-            };
-            if let Some(title) = title {
-                panel = panel.child(
-                    div()
-                        .px_2()
-                        .pt_2()
-                        .pb_1()
-                        .text_xs()
-                        .text_color(theme.text_muted)
-                        .child(title),
-                );
+        for (title, items) in sort_groups(shell) {
+            panel = panel.child(group_title(title, &theme));
+            for item in items {
+                panel = panel.child(item.render(shell, cx));
             }
-            panel = panel.child(item.render(shell, cx));
         }
         root = root.child(anchors[0].popup(panel));
     } else {
@@ -448,17 +407,17 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         .border_color(theme.border)
         .bg(theme.surface)
         .child(
-            Button::new("back", "back", "Back · Alt+Left", "back")
+            Button::new("back", "back", "Back", "back")
                 .enabled(back)
                 .render(shell, cx),
         )
         .child(
-            Button::new("forward", "forward", "Forward · Alt+Right", "forward")
+            Button::new("forward", "forward", "Forward", "forward")
                 .enabled(forward)
                 .render(shell, cx),
         )
         .child(
-            Button::new("up", "up", "Parent folder · Alt+Up", "up")
+            Button::new("up", "up", "Parent folder", "up")
                 .enabled(up)
                 .render(shell, cx),
         )
@@ -598,7 +557,7 @@ fn breadcrumbs(
                 this.activate_pane(pane, cx);
                 this.run(
                     "navigate",
-                    serde_json::json!({ "location": open, "pane": pane }),
+                    serde_json::json!({ "location": PathArg::from(open.as_path()), "pane": pane }),
                     window,
                     cx,
                 );

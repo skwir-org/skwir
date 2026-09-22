@@ -18,15 +18,14 @@
 //! wrapper that disagrees with the shaper by a word costs an ellipsis, not a
 //! name drawn over the next row.
 
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::rc::Rc;
 
 use bibli_core::EntryId;
 use bibli_core::thumbs::ThumbSize;
-use gpui::{
-    AnyElement, Context, MouseButton, MouseDownEvent, ScrollWheelEvent, Window, div, img,
-    prelude::*, px, size,
-};
+use gpui::{AnyElement, Context, ScrollWheelEvent, Window, div, img, prelude::*, px, size};
 
 use crate::dnd;
 use crate::elements::uniform_grid::{TileHeights, UniformGridScrollHandle, uniform_grid};
@@ -46,6 +45,11 @@ pub struct GridView {
     scroll: UniformGridScrollHandle,
     /// Lines each name needs, in sorted order.
     lines: Rc<[u8]>,
+    /// Lines per entry, with a hash of the name they were counted for, at
+    /// `wrapped_at` (zoom and font). A listing streaming in, or re-sorted,
+    /// wraps only the names it has not seen.
+    wrapped: HashMap<EntryId, (u64, u8)>,
+    wrapped_at: Option<(u32, gpui::SharedString)>,
     /// What `lines` was counted for: the names, their order and the zoom.
     /// Not the listing's version, which hydration advances with every batch.
     lines_for: Option<(u64, std::sync::Arc<[EntryId]>, u32)>,
@@ -96,11 +100,18 @@ impl GridView {
             return;
         }
         let started = std::time::Instant::now();
+        let at = (shell.zoom, shell.font.clone());
+        if self.wrapped_at.as_ref() != Some(&at) {
+            self.wrapped.clear();
+            self.wrapped_at = Some(at);
+        }
         let font_size = window.rem_size() * 0.75; // text_xs
         let mut wrapper = cx
             .text_system()
             .line_wrapper(gpui::font(shell.font.clone()), font_size);
         let width = px(Self::label_width(shell.zoom));
+        let mut wrapped_now = 0usize;
+        let counted = &mut self.wrapped;
         self.lines = list
             .sorted
             .iter()
@@ -108,18 +119,37 @@ impl GridView {
                 let Some(entry) = listing.and_then(|listing| listing.get(*id)) else {
                     return 1;
                 };
+                let hash = {
+                    let mut hasher = std::hash::DefaultHasher::new();
+                    entry.name.hash(&mut hasher);
+                    hasher.finish()
+                };
+                if let Some((seen, lines)) = counted.get(id)
+                    && *seen == hash
+                {
+                    return *lines;
+                }
+                wrapped_now += 1;
                 let name = entry.name_str();
                 let breaks = wrapper
                     .wrap_line(&[gpui::LineFragment::text(&name)], width)
                     .take(usize::from(MAX_LINES) - 1)
                     .count();
-                breaks as u8 + 1
+                let lines = breaks as u8 + 1;
+                counted.insert(*id, (hash, lines));
+                lines
             })
             .collect();
+        // Entries that left keep no memory: bounded by the listing.
+        if self.wrapped.len() > 2 * self.lines.len() + 1024 {
+            let ids: HashSet<EntryId> = list.sorted.iter().copied().collect();
+            self.wrapped.retain(|id, _| ids.contains(id));
+        }
         self.lines_for = Some((names, list.sorted.clone(), shell.zoom));
         self.revision += 1;
         tracing::debug!(
             names = self.lines.len(),
+            wrapped = wrapped_now,
             took_us = started.elapsed().as_micros() as u64,
             "grid names measured"
         );
@@ -152,7 +182,7 @@ fn cell(
 ) -> AnyElement {
     let zoom = shell.zoom;
     let pane = shell.pane;
-    let (name, is_dir, selected, is_cursor, icon, path, hydrated) = {
+    let (name, is_dir, selected, is_cursor, icon, path) = {
         let ws = shell.app.workspace.read();
         let Some(pane) = ws.pane(shell.pane) else {
             return div().into_any_element();
@@ -171,12 +201,8 @@ fn cell(
             } else {
                 None
             },
-            e.metadata.is_hydrated(),
         )
     };
-    if !hydrated {
-        shell.request_hydrate(vec![id]);
-    }
     // A filled box shows the short side of the thumbnail at full size.
     let fill = shell.grid_fill;
     let size = if zoom > 128 || (fill && zoom > 96) {
@@ -206,7 +232,7 @@ fn cell(
         ThumbView::Pending => div()
             .size(px(zoom as f32 * 0.6))
             .rounded_md()
-            .bg(theme.border.opacity(0.6))
+            .bg(theme.placeholder)
             .into_any_element(),
         ThumbView::Unavailable => match &icon {
             Some(p) => icons::element(p, icon_px),
@@ -244,18 +270,6 @@ fn cell(
             shell.pending.cut && shell.pending.entries.contains(&id),
             |d| d.opacity(crate::views::list::CUT_OPACITY),
         )
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
-                this.on_entry_mouse_down(pane, ix, ev, window, cx);
-            }),
-        )
-        .on_mouse_down(
-            MouseButton::Right,
-            cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
-                this.on_entry_mouse_down(pane, ix, ev, window, cx);
-            }),
-        )
         .child(
             div()
                 .size(px(zoom as f32))
@@ -276,7 +290,8 @@ fn cell(
                 .line_clamp(usize::from(lines))
                 .child(name),
         );
-    el = dnd::draggable(el, shell);
+    el = crate::list::entry_mouse(el, pane, ix, cx);
+    el = dnd::draggable(el, pane, cx);
     if let Some(p) = path {
         el = dnd::droppable_dir(el, p, cx);
     }
@@ -286,10 +301,6 @@ fn cell(
 impl PaneView for GridView {
     fn id(&self) -> &'static str {
         crate::view::GRID
-    }
-
-    fn title(&self) -> &'static str {
-        "Grid"
     }
 
     fn render(
@@ -311,12 +322,31 @@ impl PaneView for GridView {
                     let ids: Vec<(usize, EntryId)> = range
                         .filter_map(|ix| this.ui().list.sorted.get(ix).map(|id| (ix, *id)))
                         .collect();
-                    ids.into_iter()
+                    // Metadata for the whole visible range in one request.
+                    let need: Vec<EntryId> = {
+                        let ws = this.app.workspace.read();
+                        ws.pane(pane).map_or_else(Vec::new, |p| {
+                            ids.iter()
+                                .map(|(_, id)| *id)
+                                .filter(|id| {
+                                    p.listing
+                                        .get(*id)
+                                        .is_some_and(|e| !e.metadata.is_hydrated())
+                                })
+                                .collect()
+                        })
+                    };
+                    this.request_hydrate(need);
+                    let cells = ids
+                        .into_iter()
                         .map(|(ix, id)| {
                             let lines = lines.get(ix).copied().unwrap_or(1);
                             cell(this, &theme, ix, id, lines, window, cx)
                         })
-                        .collect::<Vec<_>>()
+                        .collect::<Vec<_>>();
+                    let app = std::sync::Arc::clone(&this.app);
+                    this.icons.request(&app);
+                    cells
                 })
             },
         );
@@ -343,14 +373,9 @@ impl PaneView for GridView {
         let marquee = crate::elements::marquee::Marquee {
             pane,
             shell: cx.weak_entity(),
-            geometry: crate::elements::marquee::Geometry::Cells {
-                // Where the last prepaint put the tiles: a band dragged in
-                // the frame a resize lands is off by that frame only.
-                slots: self.scroll.slots(),
-                pad_x: 4.,
-            },
+            source: crate::elements::marquee::Source::Grid(self.scroll.clone()),
             count,
-            offset: self.scroll.0.borrow().base_handle.offset(),
+            scroll: self.scroll.0.borrow().base_handle.clone(),
             drag: shell.marquee.clone(),
         };
         // Ctrl and the wheel resize the tiles. Taken in the capture phase, so

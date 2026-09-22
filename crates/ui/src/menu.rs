@@ -7,6 +7,7 @@ use gpui::{
     prelude::*, px,
 };
 
+use crate::modal::FocusReturn;
 use crate::shell::Shell;
 use crate::theme::Theme;
 
@@ -20,40 +21,40 @@ pub struct SelectionCtx {
     pub bytes: u64,
 }
 
+/// What `when` can say about the selection, for menu items and key bindings
+/// alike: one vocabulary, one table. `empty` is nothing selected.
+pub const SELECTION_TOKENS: [&str; 5] = ["empty", "selection", "single", "dir", "file"];
+
+/// A token as the table spells it: `none` is the old spelling of `empty`.
+pub fn canonical_token(token: &str) -> &str {
+    if token == "none" { "empty" } else { token }
+}
+
 impl SelectionCtx {
-    /// Flags added to the pane key context.
-    pub fn flags(self) -> Vec<&'static str> {
-        let mut f = Vec::new();
-        if self.count == 0 {
-            f.push("none");
-        } else {
-            f.push("selection");
-            if self.count == 1 {
-                f.push("single");
-            }
-            if self.all_dirs {
-                f.push("dir");
-            }
-            if self.all_files {
-                f.push("file");
-            }
+    /// Whether one selection token holds; unknown tokens do not.
+    pub fn holds(self, token: &str) -> bool {
+        match canonical_token(token) {
+            "empty" => self.count == 0,
+            "selection" => self.count > 0,
+            "single" => self.count == 1,
+            "dir" => self.count > 0 && self.all_dirs,
+            "file" => self.count > 0 && self.all_files,
+            _ => false,
         }
-        f
+    }
+
+    /// Flags added to the pane key context: the tokens that hold.
+    pub fn flags(self) -> Vec<&'static str> {
+        SELECTION_TOKENS
+            .into_iter()
+            .filter(|token| self.holds(token))
+            .collect()
     }
 }
 
-/// Space-separated tokens, all of which must hold. `None` or `none` always holds.
+/// Space-separated tokens, all of which must hold. `None` always holds.
 pub fn when_holds(when: Option<&str>, ctx: SelectionCtx) -> bool {
-    let Some(when) = when else { return true };
-    when.split_whitespace().all(|t| match t {
-        "none" => true,
-        "empty" => ctx.count == 0,
-        "selection" => ctx.count > 0,
-        "single" => ctx.count == 1,
-        "dir" => ctx.count > 0 && ctx.all_dirs,
-        "file" => ctx.count > 0 && ctx.all_files,
-        _ => false,
-    })
+    when.is_none_or(|when| when.split_whitespace().all(|t| ctx.holds(t)))
 }
 
 pub struct MenuState {
@@ -66,6 +67,35 @@ pub struct MenuState {
     pub highlighted: Option<usize>,
     /// The submenu whose items are shown, in place, under its parent row.
     pub expanded: Option<String>,
+    /// What had the keyboard before: a preview's menu gives it back to the
+    /// preview, not to the pane.
+    back: FocusReturn,
+}
+
+impl MenuState {
+    /// Take the keyboard for a menu of `items` at `position`.
+    fn open(
+        position: Point<Pixels>,
+        items: Vec<MenuItem>,
+        window: &mut Window,
+        cx: &mut Context<Shell>,
+    ) -> Self {
+        let back = FocusReturn::capture(window, cx);
+        let focus = cx.focus_handle();
+        window.focus(&focus);
+        // GPUI focuses the focusable element under a mouse-down after our
+        // handler ran (the pane, here) unless the event is marked handled;
+        // without this the menu opens unfocused and keys reach the pane.
+        window.prevent_default();
+        MenuState {
+            position,
+            items,
+            focus,
+            highlighted: None,
+            expanded: None,
+            back,
+        }
+    }
 }
 
 /// What the menu shows, top to bottom.
@@ -148,19 +178,7 @@ impl Shell {
             window.prevent_default();
             return;
         }
-        let focus = cx.focus_handle();
-        window.focus(&focus);
-        // GPUI focuses the focusable element under a mouse-down after our
-        // handler ran (the pane, here) unless the event is marked handled;
-        // without this the menu opens unfocused and keys reach the pane.
-        window.prevent_default();
-        self.menu = Some(MenuState {
-            position,
-            items,
-            focus,
-            highlighted: None,
-            expanded: None,
-        });
+        self.menu = Some(MenuState::open(position, items, window, cx));
         cx.notify();
     }
 
@@ -205,16 +223,7 @@ impl Shell {
             icon: Some("revert".into()),
             submenu: None,
         });
-        let focus = cx.focus_handle();
-        window.focus(&focus);
-        window.prevent_default();
-        self.menu = Some(MenuState {
-            position,
-            items,
-            focus,
-            highlighted: None,
-            expanded: None,
-        });
+        self.menu = Some(MenuState::open(position, items, window, cx));
         cx.notify();
     }
 
@@ -272,22 +281,13 @@ impl Shell {
             Some(_) => vec![item(100, "Copy path", "copy", "ui.preview_copy_path", none)],
             None => return,
         };
-        let focus = cx.focus_handle();
-        window.focus(&focus);
-        window.prevent_default();
-        self.menu = Some(MenuState {
-            position,
-            items,
-            focus,
-            highlighted: None,
-            expanded: None,
-        });
+        self.menu = Some(MenuState::open(position, items, window, cx));
         cx.notify();
     }
 
     pub fn close_context_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.menu.take().is_some() {
-            window.focus(&self.ui().focus);
+        if let Some(menu) = self.menu.take() {
+            menu.back.restore(window, &self.ui().focus);
             cx.notify();
         }
     }
@@ -360,7 +360,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let mut panel = div()
         .min_w(px(220.))
         .py_1()
-        .rounded_md()
+        .rounded_lg()
         .border_1()
         .border_color(theme.border)
         .bg(theme.surface)
@@ -389,13 +389,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 if !nested {
                     previous = Some(item);
                 }
-                let keys = shell
-                    .key_hints
-                    .iter()
-                    .find(|hint| {
-                        *hint.command == *item.command.name && hint.args == item.command.args
-                    })
-                    .map(|hint| crate::keymap::display_keys(&hint.keys));
+                let keys = shell.keys_for(&item.command.name, &item.command.args);
                 (
                     item.title.clone(),
                     item.icon.clone(),
@@ -543,7 +537,8 @@ mod tests {
     #[test]
     fn when_evaluation() {
         assert!(when_holds(None, ctx(0, true, true)));
-        assert!(when_holds(Some("none"), ctx(0, true, true)));
+        assert!(when_holds(Some("none"), ctx(0, true, true)), "old spelling");
+        assert!(!when_holds(Some("none"), ctx(1, true, true)));
         assert!(!when_holds(Some("selection"), ctx(0, true, true)));
         assert!(when_holds(Some("selection"), ctx(2, false, true)));
         assert!(!when_holds(Some("single"), ctx(2, false, true)));
@@ -556,7 +551,7 @@ mod tests {
 
     #[test]
     fn flags_follow_selection() {
-        assert_eq!(ctx(0, true, true).flags(), ["none"]);
+        assert_eq!(ctx(0, true, true).flags(), ["empty"]);
         assert_eq!(ctx(1, true, false).flags(), ["selection", "single", "dir"]);
         assert_eq!(ctx(3, false, true).flags(), ["selection", "file"]);
     }

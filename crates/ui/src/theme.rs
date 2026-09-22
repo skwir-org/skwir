@@ -10,7 +10,8 @@
 //!   is for secondary facts (line numbers, captions), never for the data.
 //! - color: the fields of [`Theme`]. State colors are tokens too: `hover` for
 //!   whatever is under the pointer, `selection_*` for what is chosen,
-//!   `success`/`warning`/`error` for outcomes, `scrim` behind a dialog.
+//!   `success`/`warning`/`error` for outcomes, `scrim` behind a dialog,
+//!   `drop_target` under a drag, `on_fill` for text on a saturated fill.
 //!   Do not derive a hover from `border` or `surface` locally.
 //! - radius: `rounded_sm` inside controls (segments, menu rows, key caps),
 //!   `rounded_md` for controls and rows, `rounded_lg` for panels (menus,
@@ -43,6 +44,25 @@ pub struct Theme {
     pub warning: Hsla,
     /// Dims the window behind a modal dialog.
     pub scrim: Hsla,
+    /// A line or row pointed at without being chosen: the line clicked in
+    /// the code view, the setting a link named.
+    pub highlight: Hsla,
+    /// An edge that is dragged (the preview panel's side, the dock's top)
+    /// under the pointer.
+    pub handle: Hsla,
+    /// Laid over a picture of a page: selected text, and a search match.
+    pub page_selection: Hsla,
+    pub page_match: Hsla,
+    /// A folder, row or place that a drag would drop into.
+    pub drop_target: Hsla,
+    /// Text and glyphs on a saturated fill (`accent`, `error`, chart blocks).
+    pub on_fill: Hsla,
+    /// Background of a tag chip.
+    pub tag_bg: Hsla,
+    /// Where a picture will be once it is loaded.
+    pub placeholder: Hsla,
+    /// Bars of a chart; the one under the pointer is `accent`.
+    pub chart: Hsla,
     pub is_dark: bool,
 }
 
@@ -66,6 +86,15 @@ impl Theme {
             success: rgb(0x2e7d32).into(),
             warning: rgb(0xb26a00).into(),
             scrim: gpui::hsla(0., 0., 0., 0.25),
+            highlight: Hsla::from(rgb(0xd6e4ff)).opacity(0.5),
+            handle: Hsla::from(rgb(0x2f6feb)).opacity(0.35),
+            page_selection: Hsla::from(rgb(0x2f6feb)).opacity(0.35),
+            page_match: Hsla::from(rgb(0xffce33)).opacity(0.4),
+            drop_target: Hsla::from(rgb(0xd6e4ff)).opacity(0.6),
+            on_fill: gpui::white(),
+            tag_bg: Hsla::from(rgb(0x2f6feb)).opacity(0.18),
+            placeholder: Hsla::from(rgb(0xd8d8d8)).opacity(0.6),
+            chart: Hsla::from(rgb(0x2f6feb)).opacity(0.6),
             is_dark: false,
         }
     }
@@ -87,8 +116,29 @@ impl Theme {
             success: rgb(0x6fcf7f).into(),
             warning: rgb(0xf2b84b).into(),
             scrim: gpui::hsla(0., 0., 0., 0.5),
+            highlight: Hsla::from(rgb(0x2c4f8a)).opacity(0.5),
+            handle: Hsla::from(rgb(0x6ea8fe)).opacity(0.35),
+            page_selection: Hsla::from(rgb(0x6ea8fe)).opacity(0.35),
+            page_match: Hsla::from(rgb(0xffce33)).opacity(0.4),
+            drop_target: Hsla::from(rgb(0x2c4f8a)).opacity(0.6),
+            on_fill: gpui::white(),
+            tag_bg: Hsla::from(rgb(0x6ea8fe)).opacity(0.18),
+            placeholder: Hsla::from(rgb(0x3a3a3a)).opacity(0.6),
+            chart: Hsla::from(rgb(0x6ea8fe)).opacity(0.6),
             is_dark: true,
         }
+    }
+
+    /// The fill of block `index` of a chart of folder contents (the Usage
+    /// map): folders in shades of the accent, files grey, a selected block
+    /// lighter. Neighbours differ in hue so their edges read.
+    pub fn block(&self, index: usize, folder: bool, selected: bool) -> Hsla {
+        let mut color = if folder { self.accent } else { self.text_muted };
+        color.h = (color.h + (index % 7) as f32 * 0.04) % 1.;
+        color.s = if folder { 0.55 } else { 0.1 };
+        color.l = if selected { 0.65 } else { 0.42 };
+        color.a = 1.;
+        color
     }
 
     /// The `ui.theme` preference, falling back to the desktop's appearance.

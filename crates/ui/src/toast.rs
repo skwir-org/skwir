@@ -8,7 +8,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use bibli_core::op::{Change, ExecEvent, PlanId};
+use bibli_core::op::{Change, ExecEvent, PlanId, RunKind};
 use gpui::{Animation, AnimationExt, AnyElement, Context, div, prelude::*, px};
 
 use crate::controls::{self, ButtonStyle};
@@ -43,6 +43,7 @@ pub struct Toast {
 pub struct Running {
     pub plan: PlanId,
     pub title: String,
+    pub run: RunKind,
     pub step: usize,
     pub total: usize,
     /// First change that was applied, to name a single item in the result.
@@ -53,9 +54,14 @@ pub struct Running {
 #[derive(Default)]
 pub struct ToastState {
     pub current: Option<Toast>,
-    pub running: Option<Running>,
+    /// Plans started and not finished, oldest first. Events name their
+    /// plan, and each is matched to its own: a second plan starting never
+    /// takes over the first one's bar or result.
+    pub running: Vec<Running>,
     generation: u64,
     close: Option<gpui::FocusHandle>,
+    /// Kept across frames, so Tab can reach the toast's button.
+    action_focus: Option<gpui::FocusHandle>,
 }
 
 fn name_of(path: &Path) -> String {
@@ -78,13 +84,13 @@ fn capitalized(text: &str) -> String {
 
 /// What an applied plan did, in a sentence: the item by name when there is
 /// one, a count otherwise. Falls back to the plan's title.
-pub fn describe(title: &str, first: Option<&Change>, applied: usize) -> String {
+pub fn describe(title: &str, run: RunKind, first: Option<&Change>, applied: usize) -> String {
     let many = format::count(applied, "item");
     let one = applied == 1;
     let quoted = |path: &Path| format!("“{}”", name_of(path));
     match first {
-        _ if title.starts_with("undo ") => {
-            format!("Undid: {}", title.trim_start_matches("undo "))
+        _ if run == RunKind::Undo => {
+            format!("Undid: {}", title.strip_prefix("undo ").unwrap_or(title))
         }
         Some(Change::Trash { path }) if one => format!("Moved {} to Trash", quoted(path)),
         Some(Change::Trash { .. }) => format!("Moved {many} to Trash"),
@@ -156,10 +162,16 @@ impl Shell {
         while let Ok(event) = rx.try_recv() {
             any = true;
             match event {
-                ExecEvent::Started { plan, title, total } => {
-                    self.toasts.running = Some(Running {
+                ExecEvent::Started {
+                    plan,
+                    title,
+                    total,
+                    run,
+                } => {
+                    self.toasts.running.push(Running {
                         plan,
                         title,
+                        run,
                         step: 0,
                         total,
                         first: None,
@@ -167,7 +179,12 @@ impl Shell {
                     });
                 }
                 ExecEvent::Step(progress) => {
-                    if let Some(running) = &mut self.toasts.running {
+                    if let Some(running) = self
+                        .toasts
+                        .running
+                        .iter_mut()
+                        .find(|r| r.plan == progress.plan)
+                    {
                         running.step = progress.step + 1;
                         running.total = progress.total;
                         if running.first.is_none() && progress.error.is_none() {
@@ -176,17 +193,20 @@ impl Shell {
                     }
                 }
                 ExecEvent::Finished {
+                    plan,
                     applied,
                     error,
                     cancelled,
                     undoable,
                     ..
                 } => {
-                    let running = self.toasts.running.take();
-                    let (title, first) =
-                        running.map_or_else(|| (String::new(), None), |r| (r.title, r.first));
-                    let was_undo = title.starts_with("undo ");
-                    let done = describe(&title, first.as_ref(), applied);
+                    let Some(index) = self.toasts.running.iter().position(|r| r.plan == plan)
+                    else {
+                        continue;
+                    };
+                    let running = self.toasts.running.remove(index);
+                    let (title, run, first) = (running.title, running.run, running.first);
+                    let done = describe(&title, run, first.as_ref(), applied);
                     let (text, tone) = match (error, cancelled) {
                         (Some(error), _) if applied > 0 => {
                             (format!("{done}, then stopped: {error}"), Tone::Error)
@@ -197,7 +217,7 @@ impl Shell {
                         (None, true) => (format!("Cancelled. {done}"), Tone::Info),
                         (None, false) => (done, Tone::Success),
                     };
-                    let action = if was_undo {
+                    let action = if run == RunKind::Undo {
                         self.app.executor.can_redo().then(|| Action {
                             label: "Redo".into(),
                             command: "redo".into(),
@@ -252,9 +272,32 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
         Tone::Error => controls::glyph("warning", theme.error, 15.),
         Tone::Info => controls::glyph("info", theme.text_muted, 15.),
     };
-    // A plan with a single step finishes before anyone could read a bar.
-    let content = if let Some(running) = shell.toasts.running.as_ref().filter(|r| r.total > 1) {
-        let fraction = (running.step as f32 / running.total.max(1) as f32).clamp(0., 1.);
+    // A plan with a single step finishes before anyone could read a bar,
+    // unless the step moves bytes (one large copy): then the bytes are the bar.
+    let progress = shell.toasts.running.iter().find_map(|running| {
+        let transfer = shell
+            .app
+            .executor
+            .transfer(running.plan)
+            .filter(|t| t.total > 0);
+        (running.total > 1 || transfer.is_some()).then_some((running, transfer))
+    });
+    let content = if let Some((running, transfer)) = progress {
+        let (fraction, amount) = match transfer {
+            Some(t) => (
+                t.done as f32 / t.total as f32,
+                format!("{} of {}", format::size(t.done), format::size(t.total)),
+            ),
+            None => (
+                running.step as f32 / running.total.max(1) as f32,
+                format!(
+                    "{} of {}",
+                    format::thousands(running.step),
+                    format::thousands(running.total)
+                ),
+            ),
+        };
+        let fraction = fraction.clamp(0., 1.);
         let plan = running.plan;
         let focus = close.clone();
         card(Tone::Info)
@@ -266,12 +309,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .child(format!(
-                        "{} — {} of {}",
-                        capitalized(&running.title),
-                        format::thousands(running.step),
-                        format::thousands(running.total)
-                    ))
+                    .child(format!("{} — {amount}", capitalized(&running.title)))
                     .child(
                         div()
                             .h(px(4.))
@@ -303,7 +341,8 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 .mr_2()
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if this.app.executor.cancel(plan)
-                        && let Some(running) = &mut this.toasts.running
+                        && let Some(running) =
+                            this.toasts.running.iter_mut().find(|r| r.plan == plan)
                     {
                         running.cancelling = true;
                     }
@@ -316,7 +355,11 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
             .child(glyph(toast.tone))
             .child(div().flex_1().min_w_0().py_1().child(toast.text.clone()));
         if let Some(action) = toast.action {
-            let focus = cx.focus_handle();
+            let focus = shell
+                .toasts
+                .action_focus
+                .get_or_insert_with(|| cx.focus_handle())
+                .clone();
             let label = action.label.clone();
             card = card.child(
                 controls::button(
@@ -360,7 +403,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
 #[cfg(test)]
 mod tests {
     use super::describe;
-    use bibli_core::op::Change;
+    use bibli_core::op::{Change, RunKind};
     use std::path::PathBuf;
 
     #[test]
@@ -369,11 +412,11 @@ mod tests {
             path: PathBuf::from("/example/it's a draft.txt"),
         };
         assert_eq!(
-            describe("move to trash", Some(&trash), 1),
+            describe("move to trash", RunKind::Apply, Some(&trash), 1),
             "Moved “it's a draft.txt” to Trash"
         );
         assert_eq!(
-            describe("move to trash", Some(&trash), 3),
+            describe("move to trash", RunKind::Apply, Some(&trash), 3),
             "Moved 3 items to Trash"
         );
         let copy = Change::Copy {
@@ -381,14 +424,20 @@ mod tests {
             to: PathBuf::from("/example/Archive 2026/a.txt"),
         };
         assert_eq!(
-            describe("copy", Some(&copy), 2),
+            describe("copy", RunKind::Apply, Some(&copy), 2),
             "Copied 2 items to Archive 2026"
         );
         assert_eq!(
-            describe("undo move to trash", Some(&trash), 1),
+            describe("undo move to trash", RunKind::Undo, Some(&trash), 1),
             "Undid: move to trash"
         );
-        assert_eq!(describe("add tag", None, 2), "Add tag (2 items)");
-        assert_eq!(describe("paste", None, 0), "Paste: nothing to do");
+        assert_eq!(
+            describe("add tag", RunKind::Apply, None, 2),
+            "Add tag (2 items)"
+        );
+        assert_eq!(
+            describe("paste", RunKind::Apply, None, 0),
+            "Paste: nothing to do"
+        );
     }
 }

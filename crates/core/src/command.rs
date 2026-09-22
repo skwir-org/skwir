@@ -60,6 +60,28 @@ impl Invocation {
     }
 }
 
+/// The error of a command that acts on the selection when nothing is
+/// selected. Typed, so a surface can answer it as the hint it is ("select
+/// something first") rather than as a failure, whatever context wraps it:
+/// `anyhow::Error::from(NothingSelected)`, test with [`is_nothing_selected`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NothingSelected;
+
+impl std::fmt::Display for NothingSelected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("nothing selected")
+    }
+}
+
+impl std::error::Error for NothingSelected {}
+
+/// Whether `error`, or anything it wraps, is [`NothingSelected`].
+pub fn is_nothing_selected(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(<dyn std::error::Error + 'static>::is::<NothingSelected>)
+}
+
 /// Arguments of a command that takes none.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct NoArgs {}

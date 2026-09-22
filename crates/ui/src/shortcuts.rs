@@ -12,6 +12,7 @@ use gpui::{AnyElement, Context, FocusHandle, MouseButton, Window, div, prelude::
 
 use crate::controls::{self, ButtonStyle};
 use crate::keymap::{self, KeyHint};
+use crate::modal::FocusReturn;
 use crate::shell::Shell;
 use crate::theme::Theme;
 use crate::toast::{Toast, Tone};
@@ -22,9 +23,12 @@ const USES_BEFORE_HINT: u32 = 3;
 
 pub struct Overview {
     focus: FocusHandle,
-    previous: Option<FocusHandle>,
-    /// Place name and its bindings, the focused place first.
-    groups: Vec<(String, Vec<KeyHint>)>,
+    /// The "All shortcuts" button's, kept so Tab can reach it.
+    all: FocusHandle,
+    previous: FocusReturn,
+    /// Place name and its bindings with what each does, the focused place
+    /// first. Titled once, when the overview opens.
+    groups: Vec<(String, Vec<(KeyHint, String)>)>,
 }
 
 #[derive(Default)]
@@ -45,34 +49,33 @@ pub fn applies(predicate: &str, holds: &dyn Fn(&str) -> bool) -> bool {
 impl Shell {
     pub fn toggle_shortcuts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(open) = self.shortcuts.take() {
-            match open.previous {
-                Some(previous) => window.focus(&previous),
-                None => window.focus(&self.ui().focus),
-            }
+            open.previous.restore(window, &self.ui().focus);
             cx.notify();
             return;
         }
         let stack = window.context_stack();
         let holds = |token: &str| stack.iter().any(|context| context.contains(token));
-        let mut groups: Vec<(String, Vec<KeyHint>)> = Vec::new();
+        let mut groups: Vec<(String, Vec<(KeyHint, String)>)> = Vec::new();
         for hint in &self.key_hints {
             if !applies(&hint.context, &holds) {
                 continue;
             }
             // Conditions narrow a place; the overview groups by the place.
             let place = keymap::context_label(hint.context.split("&&").next().unwrap_or_default());
+            let titled = (hint.clone(), keymap::title_of(&self.app, hint));
             match groups.iter_mut().find(|(name, _)| *name == place) {
-                Some((_, hints)) => hints.push(hint.clone()),
-                None => groups.push((place, vec![hint.clone()])),
+                Some((_, hints)) => hints.push(titled),
+                None => groups.push((place, vec![titled])),
             }
         }
         // The innermost place is what the user is looking at.
         groups.sort_by_key(|(name, _)| name == "Anywhere");
+        let previous = FocusReturn::capture(window, cx);
         let focus = cx.focus_handle();
-        let previous = window.focused(cx);
         window.focus(&focus);
         self.shortcuts = Some(Overview {
             focus,
+            all: cx.focus_handle(),
             previous,
             groups,
         });
@@ -86,6 +89,8 @@ impl Shell {
         args: &serde_json::Value,
         cx: &mut Context<Self>,
     ) {
+        let empty = serde_json::json!({});
+        let args = if args.is_null() { &empty } else { args };
         let Some(hint) = self
             .key_hints
             .iter()
@@ -154,7 +159,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 .text_color(theme.text_muted)
                 .child(place.clone()),
         );
-        for hint in hints {
+        for (hint, title) in hints {
             let mut keys = div().flex().flex_none().items_center().gap(px(8.));
             for stroke in keymap::key_caps(&hint.keys) {
                 let mut caps = div().flex().items_center().gap(px(3.));
@@ -170,19 +175,13 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                     .items_center()
                     .justify_between()
                     .gap_3()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .child(keymap::title_of(&shell.app, hint)),
-                    )
+                    .child(div().flex_1().min_w_0().truncate().child(title.clone()))
                     .child(keys),
             );
         }
         columns = columns.child(column);
     }
-    let all = cx.focus_handle();
+    let all = overview.all.clone();
     let panel = div()
         .id("shortcuts")
         .max_w(px(1000.))

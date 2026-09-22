@@ -39,31 +39,18 @@ pub struct KeyHint {
     pub context: String,
 }
 
-/// Defaults used when no plugin contributed bindings (`keys, command, when`).
-const DEFAULTS: &[(&str, &str, Option<&str>)] = &[
-    ("enter", "open", Some("pane")),
-    ("backspace", "up", Some("pane")),
-    ("alt-up", "up", None),
-    ("alt-left", "back", None),
-    ("alt-right", "forward", None),
+/// Bindings the shell always needs, independent of plugins: every `ui.*`
+/// command the shell owns has its key here, so disabling a plugin never
+/// takes the palette or Quit with it. Keys for core and plugin commands are
+/// the plugins' (ops-basic binds the file operations).
+const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("f2", "ui.rename_prompt", Some("pane single")),
-    ("delete", "trash", Some("pane selection")),
     ("shift-delete", "ui.confirm_delete", Some("pane selection")),
-    ("ctrl-z", "undo", None),
-    ("ctrl-shift-z", "redo", None),
-    ("ctrl-a", "select_all", Some("pane")),
-    ("escape", "select_none", Some("pane")),
-    ("escape", "clipboard_clear", Some("pane none")),
-    ("f5", "refresh", None),
     ("ctrl-shift-n", "ui.mkdir_prompt", None),
     ("ctrl-l", "ui.focus_address", None),
     ("ctrl-shift-p", "ui.palette", None),
     ("ctrl-q", "ui.quit", None),
     ("ctrl-h", "ui.toggle_hidden", None),
-];
-
-/// Bindings the shell always needs, independent of plugins.
-const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("tab", "ui.toolbar_next", None),
     ("shift-tab", "ui.toolbar_prev", None),
     ("enter", "ui.toolbar_activate", Some("ToolbarButton")),
@@ -387,8 +374,8 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
 
 /// Map a registry `when` string to a GPUI context predicate.
 /// Tokens: `pane`, `address`, `palette`, `confirm` name a context; anything
-/// else (`selection`, `single`, `dir`, `file`, `none`) is a flag the pane
-/// sets on its key context every frame. All tokens must hold.
+/// else is a flag the pane sets on its key context (the selection tokens of
+/// `menu::SELECTION_TOKENS`, `split`, `usage`). All tokens must hold.
 pub fn context_of(when: Option<&str>) -> String {
     let Some(when) = when else {
         return ROOT.to_owned();
@@ -405,7 +392,7 @@ pub fn context_of(when: Option<&str>) -> String {
             "review" => REVIEW.to_owned(),
             "jump" => JUMP.to_owned(),
             "bulk" => BULK.to_owned(),
-            other => other.to_owned(),
+            other => crate::menu::canonical_token(other).to_owned(),
         })
         .collect();
     if parts.is_empty() {
@@ -443,6 +430,7 @@ pub fn context_label(context: &str) -> String {
             "Settings" | "SettingsNav" | "SettingControl" | "SettingNumber" => place = "Settings",
             "single" => conditions.push("one item selected"),
             "selection" => conditions.push("with a selection"),
+            "empty" => conditions.push("nothing selected"),
             "split" => conditions.push("split view"),
             "dir" => conditions.push("on a folder"),
             "file" => conditions.push("on a file"),
@@ -460,13 +448,10 @@ pub fn context_label(context: &str) -> String {
 /// the registered title for core and plugin commands, a readable form of
 /// the name otherwise.
 pub fn title_of(app: &App, hint: &KeyHint) -> String {
-    if let Some((_, _, title)) = crate::palette::UI_COMMANDS.iter().find(|(name, args, _)| {
-        *name == hint.command
-            && serde_json::from_str::<serde_json::Value>(args)
-                .ok()
-                .as_ref()
-                == Some(&hint.args)
-    }) {
+    if let Some((_, _, title)) = crate::palette::ui_commands()
+        .iter()
+        .find(|(name, args, _)| *name == hint.command && *args == hint.args)
+    {
         return (*title).to_owned();
     }
     if hint.command == "ui.view"
@@ -559,31 +544,43 @@ fn valid_keys(keys: &str) -> bool {
     !keys.is_empty() && keys.split_whitespace().all(|k| Keystroke::parse(k).is_ok())
 }
 
-/// Install every binding into GPUI. Returns the key hints for the palette.
-pub fn install(app: &App, cx: &mut gpui::App) -> Vec<KeyHint> {
-    let mut specs: Vec<(String, String, serde_json::Value, String)> = Vec::new();
+/// The keymap as the shell knows it: what GPUI binds, what the palette,
+/// menus and F1 show, and the registry revision it was built from.
+pub struct Keymap {
+    pub hints: Vec<KeyHint>,
+    pub revision: u64,
+}
 
-    let registered = app.registry.keymap.all();
-    if registered.is_empty() {
-        tracing::info!("no plugin key bindings registered; using UI defaults");
-        for (keys, command, when) in DEFAULTS {
-            specs.push((
-                (*keys).into(),
-                (*command).into(),
-                serde_json::json!({}),
-                context_of(*when),
-            ));
-        }
-    } else {
-        for b in registered {
-            specs.push((
+/// The keys bound to `command` with exactly `args`, as people read them.
+/// The one lookup behind every shortcut the interface shows (menus, the
+/// palette, toolbar tooltips, the status bar): matching the name alone would
+/// show Zoom in's keys beside Zoom out.
+pub fn keys_for(hints: &[KeyHint], command: &str, args: &serde_json::Value) -> Option<String> {
+    let empty = serde_json::Value::Object(serde_json::Map::new());
+    let args = if args.is_null() { &empty } else { args };
+    hints
+        .iter()
+        .find(|hint| hint.command == command && hint.args == *args)
+        .map(|hint| display_keys(&hint.keys))
+}
+
+/// Every binding: the plugins' from the registry, then the shell's own.
+/// A binding the shell and a plugin both declare is listed once.
+fn specs(app: &App) -> Vec<(String, String, serde_json::Value, String)> {
+    let mut specs: Vec<(String, String, serde_json::Value, String)> = app
+        .registry
+        .keymap
+        .all()
+        .into_iter()
+        .map(|b| {
+            (
                 b.keys.clone(),
                 b.command.name.to_string(),
                 b.command.args.clone(),
                 context_of(b.when.as_deref()),
-            ));
-        }
-    }
+            )
+        })
+        .collect();
     for (keys, command, when) in BUILTIN {
         specs.push((
             (*keys).into(),
@@ -600,10 +597,21 @@ pub fn install(app: &App, cx: &mut gpui::App) -> Vec<KeyHint> {
             context_of(*when),
         ));
     }
+    let mut seen = std::collections::HashSet::new();
+    specs.retain(|spec| seen.insert(spec.clone()));
+    specs
+}
 
+/// Replace every binding in GPUI with the registry's current keymap plus
+/// the shell's and the text input's own. Called at startup and again
+/// whenever the registry's keymap revision moves (a plugin enabled or
+/// disabled), so a plugin's keys come and go with it.
+pub fn install(app: &App, cx: &mut gpui::App) -> Keymap {
+    // Read before the bindings: a change in between is picked up next time.
+    let revision = app.registry.keymap.revision();
     let mut hints = Vec::new();
     let mut bindings = Vec::new();
-    for (keys, name, args, context) in specs {
+    for (keys, name, args, context) in specs(app) {
         if !valid_keys(&keys) {
             tracing::warn!(keys, name, "skipping key binding with unparsable keys");
             continue;
@@ -620,8 +628,10 @@ pub fn install(app: &App, cx: &mut gpui::App) -> Vec<KeyHint> {
             Some(&context),
         ));
     }
+    cx.clear_key_bindings();
+    cx.bind_keys(crate::input::key_bindings());
     cx.bind_keys(bindings);
-    hints
+    Keymap { hints, revision }
 }
 
 #[cfg(test)]
@@ -653,5 +663,10 @@ mod tests {
         assert_eq!(context_of(Some("pane single")), "Pane && single");
         assert_eq!(context_of(Some("address")), "AddressBar");
         assert_eq!(context_of(Some("  ")), "Shell");
+        assert_eq!(
+            context_of(Some("pane none")),
+            "Pane && empty",
+            "the old spelling of nothing selected"
+        );
     }
 }

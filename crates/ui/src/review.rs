@@ -1,10 +1,13 @@
 //! Review of proposed plans (from editors, agents, background work): a modal
 //! listing each step's change and status, Apply or Cancel.
 
+use bibli_core::Plan;
 use bibli_core::op::{PlanDiff, StepStatus};
-use gpui::{AnyElement, Context, MouseButton, deferred, div, prelude::*, px};
+use gpui::{AnyElement, Context, FocusHandle, Window, div, prelude::*, px};
 
+use crate::controls::{self, ButtonStyle};
 use crate::keymap;
+use crate::modal::{self, FocusReturn};
 use crate::shell::Shell;
 use crate::theme::Theme;
 
@@ -39,32 +42,124 @@ pub fn lines(diff: &PlanDiff) -> Vec<(String, &'static str, LineKind)> {
         .collect()
 }
 
+/// A proposed plan waiting for the user, with its dry run once a worker has
+/// done it (it stats every step's files).
+pub struct Review {
+    pub plan: Plan,
+    pub diff: Option<PlanDiff>,
+}
+
+impl Review {
+    fn applicable(&self) -> Option<bool> {
+        self.diff.as_ref().map(|diff| {
+            !diff
+                .steps
+                .iter()
+                .any(|(_, status)| matches!(status, StepStatus::Conflict { .. }))
+        })
+    }
+}
+
+/// The keyboard while a proposal is shown: its own focus, and what had it.
+pub struct ReviewFocus {
+    pub focus: FocusHandle,
+    cancel: FocusHandle,
+    apply: FocusHandle,
+    back: FocusReturn,
+}
+
 impl Shell {
-    pub fn review_apply(&mut self, cx: &mut Context<Self>) {
-        if let Some(plan) = self.reviews.pop_front() {
-            if plan.is_applicable() {
-                self.app.apply(plan);
-            } else {
-                self.set_status("plan has conflicts; not applied", true, cx);
+    /// Queue proposals and dry-run each on a worker.
+    pub fn add_reviews(&mut self, plans: Vec<Plan>, window: &mut Window, cx: &mut Context<Self>) {
+        for plan in plans {
+            let id = plan.id;
+            let dry = plan.clone();
+            self.reviews.push_back(Review { plan, diff: None });
+            self.off_thread(
+                "review-diff",
+                move || dry.diff(),
+                move |this, diff, _, cx| {
+                    if let Some(review) = this.reviews.iter_mut().find(|r| r.plan.id == id) {
+                        review.diff = Some(diff);
+                        cx.notify();
+                    }
+                },
+                window,
+                cx,
+            );
+        }
+        cx.notify();
+    }
+
+    /// The front proposal takes the keyboard once no other dialog holds it
+    /// (a proposal arriving under an open prompt waits for the prompt), and
+    /// gives it back when the last one is answered.
+    pub fn sync_review_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match (self.reviews.is_empty(), self.review_focus.is_some()) {
+            (false, false) if !self.modal_open() => {
+                let back = FocusReturn::capture(window, cx);
+                let focus = cx.focus_handle();
+                window.focus(&focus);
+                self.review_focus = Some(ReviewFocus {
+                    focus,
+                    cancel: cx.focus_handle(),
+                    apply: cx.focus_handle(),
+                    back,
+                });
+                cx.notify();
             }
-            cx.notify();
+            (true, true) => {
+                if let Some(review) = self.review_focus.take() {
+                    review.back.restore(window, &self.ui().focus);
+                }
+                cx.notify();
+            }
+            _ => {}
         }
     }
 
+    /// Apply the front proposal, if its dry run found no conflict. It
+    /// stays in front otherwise, for the user to discard.
+    pub fn review_apply(&mut self, cx: &mut Context<Self>) {
+        match self.reviews.front().map(Review::applicable) {
+            Some(Some(true)) => {
+                if let Some(review) = self.reviews.pop_front() {
+                    // Checked again when its turn comes: all or nothing.
+                    self.app.apply_whole(review.plan);
+                }
+            }
+            Some(Some(false)) => {
+                self.set_status(
+                    "This proposal has conflicts; discard it or fix them",
+                    true,
+                    cx,
+                );
+            }
+            Some(None) | None => {}
+        }
+        cx.notify();
+    }
+
     pub fn review_cancel(&mut self, cx: &mut Context<Self>) {
-        if let Some(plan) = self.reviews.pop_front() {
-            self.set_status(format!("discarded proposal: {}", plan.title), false, cx);
+        if let Some(review) = self.reviews.pop_front() {
+            self.set_status(
+                format!("Discarded proposal: {}", review.plan.title),
+                false,
+                cx,
+            );
             cx.notify();
         }
     }
 }
 
 pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    let plan = shell.reviews.front()?;
-    let focus = shell.review_focus.clone()?;
+    let review = shell.reviews.front()?;
+    let handles = shell.review_focus.as_ref()?;
+    let focus = handles.focus.clone();
+    let (cancel_focus, apply_focus) = (handles.cancel.clone(), handles.apply.clone());
     let theme = cx.global::<Theme>().clone();
-    let diff = plan.diff();
-    let applicable = plan.is_applicable();
+    let plan = &review.plan;
+    let applicable = review.applicable();
     let mut list = div()
         .flex()
         .flex_col()
@@ -73,125 +168,102 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .overflow_hidden()
         .text_xs()
         .font_family(shell.mono_font.clone());
-    for (text, status, kind) in lines(&diff).into_iter().take(60) {
-        let color = match kind {
-            LineKind::Pending => theme.text,
-            LineKind::Done => theme.text_muted,
-            LineKind::Conflict => theme.error,
-        };
-        list = list.child(
-            div()
-                .flex()
-                .gap_2()
-                .text_color(color)
-                .child(div().flex_1().min_w_0().truncate().child(text))
-                .child(div().flex_none().text_color(theme.text_muted).child(status)),
-        );
+    let steps = plan.steps.len();
+    match &review.diff {
+        Some(diff) => {
+            for (text, status, kind) in lines(diff).into_iter().take(60) {
+                let color = match kind {
+                    LineKind::Pending => theme.text,
+                    LineKind::Done => theme.text_muted,
+                    LineKind::Conflict => theme.error,
+                };
+                list = list.child(
+                    div()
+                        .flex()
+                        .gap_2()
+                        .text_color(color)
+                        .child(div().flex_1().min_w_0().truncate().child(text))
+                        .child(div().flex_none().text_color(theme.text_muted).child(status)),
+                );
+            }
+        }
+        None => {
+            list = list.child(
+                div()
+                    .text_color(theme.text_muted)
+                    .child("Checking each step…"),
+            );
+        }
     }
-    if diff.steps.len() > 60 {
+    if steps > 60 {
         list = list.child(
             div()
                 .text_color(theme.text_muted)
-                .child(format!("… and {} more steps", diff.steps.len() - 60)),
+                .child(format!("… and {} more steps", steps - 60)),
         );
     }
     let pending = shell.reviews.len() - 1;
-    Some(
-        deferred(
+    let panel = modal::panel(720., &theme)
+        .p_3()
+        .gap_2()
+        .track_focus(&focus)
+        .key_context(keymap::REVIEW)
+        .child(
             div()
-                .absolute()
-                .inset_0()
                 .flex()
-                .items_start()
-                .justify_center()
-                .pt(px(80.))
-                .bg(gpui::black().opacity(0.3))
-                .occlude()
-                .child(
-                    div()
-                        .track_focus(&focus)
-                        .key_context(keymap::REVIEW)
-                        .w(px(720.))
-                        .p_3()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .rounded_lg()
-                        .border_1()
-                        .border_color(theme.border)
-                        .bg(theme.surface)
-                        .shadow_lg()
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .child(div().flex_1().child(format!("Proposed: {}", plan.title)))
-                                .child(div().text_xs().text_color(theme.text_muted).child(
-                                    format!(
-                                        "{} step{}{}",
-                                        diff.steps.len(),
-                                        if diff.steps.len() == 1 { "" } else { "s" },
-                                        if pending > 0 {
-                                            format!(" · {pending} more waiting")
-                                        } else {
-                                            String::new()
-                                        }
-                                    ),
-                                )),
-                        )
-                        .child(list)
-                        .child(
-                            div()
-                                .flex()
-                                .gap_2()
-                                .justify_end()
-                                .items_center()
-                                .child(div().text_xs().text_color(theme.text_muted).flex_1().child(
-                                    if applicable {
-                                        "Enter applies (undoable), Escape discards"
-                                    } else {
-                                        "Cannot apply: fix the conflicts first"
-                                    },
-                                ))
-                                .child(
-                                    div()
-                                        .id("review-cancel")
-                                        .px_3()
-                                        .py_1()
-                                        .rounded_md()
-                                        .border_1()
-                                        .border_color(theme.border)
-                                        .cursor_pointer()
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| this.review_cancel(cx)),
-                                        )
-                                        .child("Cancel"),
-                                )
-                                .child(
-                                    div()
-                                        .id("review-apply")
-                                        .px_3()
-                                        .py_1()
-                                        .rounded_md()
-                                        .bg(if applicable {
-                                            theme.accent
-                                        } else {
-                                            theme.border
-                                        })
-                                        .text_color(gpui::white())
-                                        .when(applicable, gpui::Styled::cursor_pointer)
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| this.review_apply(cx)),
-                                        )
-                                        .child("Apply"),
-                                ),
-                        ),
-                ),
+                .items_center()
+                .child(div().flex_1().child(format!("Proposed: {}", plan.title)))
+                .child(div().text_xs().text_color(theme.text_muted).child(format!(
+                    "{}{}",
+                    crate::format::count(steps, "step"),
+                    if pending > 0 {
+                        format!(" · {pending} more waiting")
+                    } else {
+                        String::new()
+                    }
+                ))),
         )
-        .with_priority(6)
-        .into_any_element(),
-    )
+        .child(list)
+        .child(
+            div()
+                .flex()
+                .gap_2()
+                .justify_end()
+                .items_center()
+                .child(div().text_xs().text_color(theme.text_muted).flex_1().child(
+                    match applicable {
+                        Some(true) => "Enter applies (undoable), Escape discards",
+                        Some(false) => "Cannot apply: fix the conflicts first",
+                        None => "Checking…",
+                    },
+                ))
+                .child(
+                    controls::button(
+                        "review-cancel",
+                        "Discard",
+                        None,
+                        ButtonStyle::Plain,
+                        &cancel_focus,
+                        &theme,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| this.review_cancel(cx))),
+                )
+                .child(
+                    controls::button(
+                        "review-apply",
+                        "Apply",
+                        Some("check"),
+                        ButtonStyle::Plain,
+                        &apply_focus,
+                        &theme,
+                    )
+                    .when(applicable != Some(true), |d| d.opacity(0.5))
+                    .on_click(cx.listener(|this, _, _, cx| this.review_apply(cx))),
+                ),
+        );
+    // Neither a press outside nor Escape on another dialog discards a
+    // proposal: only its own buttons and keys answer it.
+    Some(modal::modal(panel, 80., 6, |_, _, _| {}, &theme, cx))
 }
 
 #[cfg(test)]

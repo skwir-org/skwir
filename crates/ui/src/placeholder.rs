@@ -97,12 +97,10 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
         return None;
     }
     let location = state.location()?;
-    let query = (&*location.scheme == "query").then_some(shell.last_search.as_str());
-    let keys = shell
-        .key_hints
-        .iter()
-        .find(|hint| hint.command == "ui.mkdir_prompt")
-        .map(|hint| crate::keymap::display_keys(&hint.keys));
+    // The pane's own search: in a split, the other pane may have searched
+    // for something else since.
+    let query = (&*location.scheme == "query").then_some(shell.ui().last_search.as_str());
+    let keys = shell.keys_for("ui.mkdir_prompt", &serde_json::Value::Null);
     Some(empty(
         &location.scheme,
         query.filter(|query| !query.is_empty()),
@@ -110,7 +108,11 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
     ))
 }
 
-pub fn render(placeholder: Placeholder, cx: &mut Context<Shell>) -> AnyElement {
+pub fn render(
+    placeholder: Placeholder,
+    focus: &gpui::FocusHandle,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let color = if placeholder.problem {
         theme.error
@@ -145,14 +147,13 @@ pub fn render(placeholder: Placeholder, cx: &mut Context<Shell>) -> AnyElement {
             )
         });
     if let Some((label, command)) = placeholder.action {
-        let focus = cx.focus_handle();
         card = card.child(
             controls::button(
                 "placeholder-action",
                 label,
                 None,
                 ButtonStyle::Plain,
-                &focus,
+                focus,
                 &theme,
             )
             .mt_2()

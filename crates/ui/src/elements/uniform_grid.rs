@@ -355,7 +355,9 @@ pub struct UniformGridFrameState {
 pub struct GridLayout {
     pub slots: math::Slots,
     pub rows_visible: usize,
-    pub top_item: usize,
+    /// Where tile coordinates start, from the element's top left (its
+    /// border and padding).
+    pub origin: (f32, f32),
 }
 
 #[derive(Debug, Default)]
@@ -401,9 +403,10 @@ impl UniformGridScrollHandle {
         self.0.borrow().layout.rows_visible.max(1)
     }
 
-    /// Index of the item at the top-left of the viewport in the last prepaint.
-    pub fn top_item(&self) -> usize {
-        self.0.borrow().layout.top_item
+    /// Where tile coordinates start in the last prepaint, from the
+    /// element's top left.
+    pub fn origin(&self) -> (f32, f32) {
+        self.0.borrow().layout.origin
     }
 }
 
@@ -578,7 +581,10 @@ impl Element for UniformGrid {
                     state.layout = GridLayout {
                         slots: slots.clone(),
                         rows_visible: visible.len(),
-                        top_item: slots.anchor(y).0,
+                        origin: (
+                            f32::from(border.left + padding.left),
+                            f32::from(border.top + padding.top * 2.),
+                        ),
                     };
                 }
                 if item_count == 0 || visible.is_empty() {

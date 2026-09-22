@@ -36,6 +36,7 @@ mod loading;
 mod markdown;
 mod media;
 pub mod menu;
+pub mod modal;
 mod outline;
 pub mod palette;
 pub mod placeholder;
@@ -183,13 +184,12 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
             let font = pick_font(cx, &FONT_CANDIDATES, "ui");
             let mono_font = pick_font(cx, &MONO_CANDIDATES, "mono");
             tracing::debug!(ms = started.elapsed().as_millis() as u64, "font picked");
-            let key_hints = keymap::install(&app, cx);
+            let keymap = keymap::install(&app, cx);
             // Debug aid: `RUST_LOG=bibli_ui=trace` shows every keystroke GPUI saw.
             cx.observe_keystrokes(|ev, _, _| {
                 tracing::trace!(keystroke = %ev.keystroke.unparse(), "keystroke");
             })
             .detach();
-            cx.bind_keys(input::key_bindings());
             let stats_app = Arc::clone(&app);
             cx.on_window_closed(move |cx| {
                 if cx.windows().is_empty() {
@@ -216,8 +216,7 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
                     |window, cx| {
                         cx.new(|cx| {
                             Shell::new(
-                                app, initial, started, font, mono_font, key_hints, wake_rx, window,
-                                cx,
+                                app, initial, started, font, mono_font, keymap, wake_rx, window, cx,
                             )
                         })
                     },

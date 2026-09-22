@@ -175,7 +175,12 @@ impl Button {
         let command = self.command;
         let args = self.args.clone();
         let enabled = self.enabled;
-        let title = self.title;
+        // The shortcut comes from the keymap, never from the title: it
+        // follows what is bound, and goes when its plugin does.
+        let title: SharedString = match shell.keys_for(command, &args) {
+            Some(keys) => format!("{} · {keys}", self.title).into(),
+            None => self.title,
+        };
         div()
             .id(self.id)
             .relative()
@@ -299,11 +304,11 @@ pub fn row(theme: &Theme) -> Div {
 pub struct Popup {
     pub kind: &'static str,
     pub focus: FocusHandle,
-    previous: Option<FocusHandle>,
+    previous: crate::modal::FocusReturn,
 }
 impl Popup {
     pub fn new(kind: &'static str, window: &mut Window, cx: &mut Context<Shell>) -> Self {
-        let previous = window.focused(cx);
+        let previous = crate::modal::FocusReturn::capture(window, cx);
         let focus = cx.focus_handle().tab_index(1).tab_stop(false);
         window.focus(&focus);
         Self {
@@ -313,9 +318,7 @@ impl Popup {
         }
     }
     pub fn restore(self, window: &mut Window) {
-        if let Some(focus) = self.previous {
-            window.focus(&focus);
-        }
+        self.previous.restore_if_any(window);
     }
 }
 
@@ -339,7 +342,7 @@ pub fn popup_panel(
         .border_color(theme.border)
         .bg(theme.bg)
         .text_color(theme.text)
-        .shadow_lg()
+        .shadow_md()
         .occlude()
         .track_focus(&popup.focus)
         .tab_stop(false)
