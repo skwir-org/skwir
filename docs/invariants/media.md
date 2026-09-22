@@ -135,7 +135,10 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
   preview; listeners hear of changes, not of time passing, and work out the
   position themselves. What others want of the player is a `PlayerRequest`
   left there (`ui.player` for the UI's own surfaces) and taken when the shell
-  next wakes: nothing calls into the UI from another thread.
+  next wakes: nothing calls into the UI from another thread. The wake itself
+  takes them (`Shell::sync` from the wake task), not the frame it asks for:
+  a window on a workspace that is off screen is never drawn, and a media key
+  pressed there must act at once, as must a track ending.
 - A file manager is a player only while it is one. Selecting a song is not
   playing it: the preview's track is announced (`NowPlaying`) once it starts
   to play, on that transition, and no longer after Stop or when the selection

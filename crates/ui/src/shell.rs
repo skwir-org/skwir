@@ -173,14 +173,23 @@ impl Shell {
             cx.notify();
         }));
 
-        // Wake-up, not polling: the core signals, we notify, GPUI re-renders.
-        cx.spawn(async move |this, cx| {
+        // Wake-up, not polling: the core signals, the shell applies what it
+        // sent, GPUI re-renders. Applying is done here, not left to the draw
+        // that `notify` asks for: a window the compositor is not showing (a
+        // workspace that is not on screen) is never asked to draw, and what
+        // the core sent (a media key's request, a track that ended) must not
+        // wait until it is. `render` syncs too, for what the user did since.
+        cx.spawn_in(window, async move |this, cx| {
             loop {
                 if wake_rx.recv_async().await.is_err() {
                     break;
                 }
                 while wake_rx.try_recv().is_ok() {}
-                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                let applied = this.update_in(cx, |this, window, cx| {
+                    this.sync(window, cx);
+                    cx.notify();
+                });
+                if applied.is_err() {
                     break;
                 }
             }
@@ -1142,7 +1151,10 @@ impl Shell {
         }
     }
 
-    /// Apply core events and refresh derived state. Called first in `render`.
+    /// Apply core events and refresh derived state. Called when the core
+    /// wakes the shell (whether or not the window can draw) and first in
+    /// `render`, for what the user did since; a second call finds nothing
+    /// new to apply.
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let t0 = Instant::now();
         let report = self.app.pump_report();

@@ -318,6 +318,12 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   the UI after enqueueing. Other background results must call `App::wake` or a
   captured `waker_handle` after publishing. `Complete` ends the initial listing;
   updates and removals may still arrive afterward.
+- A wake applies what the core sent (`Shell::sync`) and then asks for a
+  draw; it never leaves the applying to the draw. A window the compositor is
+  not showing (a workspace off screen, a minimized window) is not asked to
+  draw at all, on Wayland or X11, and a media key's request or a track that
+  ended must not wait for the window to be looked at. `render` syncs too,
+  for what the user did since; a sync that finds nothing is cheap.
 - The scheduler skips cancelled jobs before they start; running jobs must
   check their token themselves. Use child tokens for work tied to the app or
   an open location, and cancel superseded requests. Only accept results for the
