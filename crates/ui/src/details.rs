@@ -108,25 +108,27 @@ const CORE: [&str; 9] = [
 ];
 
 /// What the entry itself says. Pure, so it is tested without a window.
-pub fn entry_groups(entry: &Entry, path: &std::path::Path, kind: Option<String>) -> Vec<Group> {
+pub fn entry_groups(entry: &Entry, path: &std::path::Path) -> Vec<Group> {
     let meta = &entry.metadata;
     let uint = |key| meta.value(key).and_then(Value::as_u64);
     let time = |key| meta.value(key).and_then(Value::as_time);
 
-    let mut general = vec![Row::new("Name", entry.name_str().into_owned())];
-    if let Some(kind) = kind {
-        general.push(Row::new("Type", kind));
-    }
-    if let Some(size) = uint(keys::SIZE).filter(|_| !entry.is_dir()) {
-        general.push(Row::new(
-            "Size",
-            format!(
-                "{} ({} bytes)",
-                format::size(size),
-                format::thousands(size as usize)
-            ),
-        ));
-    }
+    // The header already shows the name and the type; the exact byte count
+    // is the one general fact it rounds.
+    let general = uint(keys::SIZE)
+        .filter(|_| !entry.is_dir())
+        .map(|size| {
+            Row::new(
+                "Size",
+                format!(
+                    "{} ({} bytes)",
+                    format::size(size),
+                    format::thousands(size as usize)
+                ),
+            )
+        })
+        .into_iter()
+        .collect();
 
     let mut location = Vec::new();
     if let Some(parent) = path.parent() {
@@ -278,16 +280,20 @@ pub fn alone(shell: &Shell) -> bool {
         )
 }
 
-/// The section: a bar that opens under a preview, or the whole of the panel's
-/// body when `alone`.
+/// The section, between the toolbar and the content: open on demand under a
+/// preview, taking up to half the panel; the whole of the panel's body when
+/// `alone`. The header's card is what opens it, and holds the name, type,
+/// size and date, so the groups here repeat none of those.
 pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let preview = &shell.preview;
     if preview.info.name.is_empty() {
         return None;
     }
     let alone = alone(shell);
-    let open = alone || preview.details_open;
-    let mut section = div()
+    if !alone && !preview.details_open {
+        return None;
+    }
+    let section = div()
         .flex()
         .flex_col()
         .min_h_0()
@@ -296,55 +302,9 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
         .when(!alone, |d| {
             d.flex_none()
                 .max_h(gpui::relative(0.5))
-                .border_t_1()
+                .border_b_1()
                 .border_color(theme.border)
         });
-    if !alone {
-        let summary = [preview.info.size.clone(), preview.info.modified.clone()]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" · ");
-        section = section.child(
-            div()
-                .id("details-bar")
-                .flex_none()
-                .h(px(28.))
-                .px_2()
-                .flex()
-                .items_center()
-                .gap_2()
-                .text_xs()
-                .bg(theme.surface)
-                .cursor_pointer()
-                .hover(|d| d.bg(theme.hover))
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.run("ui.preview_details", serde_json::json!({}), window, cx);
-                }))
-                .child(
-                    gpui::svg()
-                        .path(if open {
-                            "toolbar/chevron.svg"
-                        } else {
-                            "toolbar/chevron-right.svg"
-                        })
-                        .size(px(12.))
-                        .text_color(theme.text_muted),
-                )
-                .child("Details")
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_color(theme.text_muted)
-                        .child(summary),
-                ),
-        );
-    }
-    if !open {
-        return Some(section.into_any_element());
-    }
     let groups = preview
         .selection_summary
         .iter()
@@ -456,11 +416,7 @@ mod tests {
                 confidence: 0.82,
             },
         );
-        let groups = entry_groups(
-            &entry,
-            std::path::Path::new("/data/notes/it's a café.txt"),
-            Some("Plain text document".into()),
-        );
+        let groups = entry_groups(&entry, std::path::Path::new("/data/notes/it's a café.txt"));
         let find = |title: &str, label: &str| {
             groups
                 .iter()
@@ -471,6 +427,10 @@ mod tests {
         assert_eq!(
             find("General", "Size").unwrap().value,
             "1.2 MB (1,234,567 bytes)"
+        );
+        assert!(
+            find("General", "Name").is_none() && find("General", "Type").is_none(),
+            "the header shows them"
         );
         assert_eq!(find("Location", "Folder").unwrap().value, "/data/notes");
         assert_eq!(

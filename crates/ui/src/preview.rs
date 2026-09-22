@@ -567,10 +567,11 @@ impl Shell {
             self.preview.info = Info {
                 name: entry.name_str().into_owned(),
                 mime,
-                size: key.size.map(format::size),
+                // A folder's own size says nothing about what it holds.
+                size: key.size.filter(|_| !entry.is_dir()).map(format::size),
                 modified: key.modified.map(format::time),
                 is_dir: entry.is_dir(),
-                icon: self.icons.for_entry(&entry, 64),
+                icon: self.icons.for_entry(&entry, 48),
             };
             if !entry.metadata.is_hydrated() {
                 self.request_hydrate(vec![id]);
@@ -578,19 +579,7 @@ impl Shell {
         }
         if self.preview.details_at != Some(seen) {
             self.preview.details_at = Some(seen);
-            let kind = type_label(self, &self.preview.info).map(|label| {
-                match self
-                    .preview
-                    .info
-                    .mime
-                    .as_deref()
-                    .filter(|_| !entry.is_dir())
-                {
-                    Some(mime) => format!("{label} ({mime})"),
-                    None => label,
-                }
-            });
-            self.preview.details = crate::details::entry_groups(&entry, &key.path, kind);
+            self.preview.details = crate::details::entry_groups(&entry, &key.path);
             self.preview.audio_neighbours = if self.media_is_audio() {
                 self.audio_neighbours(id)
             } else {
@@ -1426,6 +1415,13 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
             shell.preview.media.focus.as_ref().filter(|_| interactive),
             |d, focus| d.track_focus(focus).key_context("MediaPlayer"),
         )
+        // Details opens between the toolbar and the content: the toolbar
+        // stays with the header, the content moves down.
+        .children(
+            Some(())
+                .filter(|()| interactive || crate::details::alone(shell))
+                .and_then(|()| crate::details::render(shell, theme, cx)),
+        )
         .child(
             div()
                 .flex()
@@ -1451,11 +1447,6 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
                     },
                 )
                 .child(content(shell, theme, interactive, cx)),
-        )
-        .children(
-            Some(())
-                .filter(|()| interactive || crate::details::alone(shell))
-                .and_then(|()| crate::details::render(shell, theme, cx)),
         )
         .into_any_element()
 }
@@ -1523,8 +1514,9 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
             .text_color(theme.text_muted)
             .child("Loading…")
             .into_any_element(),
+        // Nothing to look at: the header says what it is and Details the rest.
         None | Some(PreviewContent::Generic | PreviewContent::Dir { .. }) => {
-            hero(&p.info, None, theme)
+            div().into_any_element()
         }
         Some(PreviewContent::Image {
             image,
@@ -1637,32 +1629,23 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                 )
                 .into_any_element()
         }
-        Some(PreviewContent::Error(error)) => hero(&p.info, Some(error), theme),
+        Some(PreviewContent::Error(error)) => failure(error, theme),
     }
 }
 
 /// What stands for an entry that has no preview: its icon and, when there
 /// should have been one, why there is none. Details says the rest.
-fn hero(info: &Info, error: Option<&String>, theme: &Theme) -> AnyElement {
+/// Why there is no preview, in the content's place; the entry itself is
+/// already in the header.
+fn failure(error: &str, theme: &Theme) -> AnyElement {
     div()
         .flex_none()
-        .flex()
-        .flex_col()
-        .items_center()
-        .gap_2()
-        .pt_6()
-        .pb_2()
         .px_3()
-        .children(info.icon.as_ref().map(|icon| icons::element(icon, 64.)))
-        .when_some(error, |d, error| {
-            d.child(
-                div()
-                    .text_xs()
-                    .text_center()
-                    .text_color(theme.error)
-                    .child(error.clone()),
-            )
-        })
+        .py_4()
+        .text_xs()
+        .text_center()
+        .text_color(theme.error)
+        .child(error.to_owned())
         .into_any_element()
 }
 
@@ -1671,18 +1654,26 @@ fn hero(info: &Info, error: Option<&String>, theme: &Theme) -> AnyElement {
 fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
     let preview = &shell.preview;
     let mut line = div().min_w_0().flex_1().flex().items_center().gap_1();
+    let name = |name: String| {
+        div()
+            .min_w_0()
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis_middle()
+            .child(name)
+    };
     if preview.nested.is_empty() {
-        return line.child(div().min_w_0().truncate().child(preview.info.name.clone()));
+        return line.child(name(preview.info.name.clone()));
     }
     let names = std::iter::once(preview.info.name.clone())
         .chain(preview.nested.iter().map(|member| member.name.clone()));
     let last = preview.nested.len();
-    for (depth, name) in names.enumerate() {
+    for (depth, name_at) in names.enumerate() {
         if depth > 0 {
             line = line.child(div().flex_none().text_color(theme.text_muted).child("›"));
         }
         line = line.child(if depth == last {
-            div().min_w_0().truncate().child(name).into_any_element()
+            name(name_at).into_any_element()
         } else {
             div()
                 .id(("preview-trail", depth))
@@ -1693,6 +1684,7 @@ fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
                 .cursor_pointer()
                 .hover(|d| d.text_color(theme.accent))
                 .on_click(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
                     this.run(
                         "ui.inspect",
                         serde_json::json!({"action":"ascend","depth":depth}),
@@ -1700,66 +1692,127 @@ fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
                         cx,
                     );
                 }))
-                .child(name)
+                .child(name_at)
                 .into_any_element()
         });
     }
     line
 }
 
-fn header(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>) -> AnyElement {
-    let info = &shell.preview.info;
-    div()
-        .px_2()
+/// Everything the panel knows at a glance: the entry's icon, its name (a
+/// trail inside a container), and one line of type, size and date. The card
+/// is the one place that says what the panel shows; Details, which opens
+/// under the toolbar when the card is clicked, holds the rest and repeats
+/// none of it. With nothing to preview Details is always open and the card
+/// has no chevron. The peek overlay alone keeps a close button: the panel
+/// is closed by the Preview button that opened it.
+fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
+    let preview = &shell.preview;
+    let info = &preview.info;
+    let alone = crate::details::alone(shell);
+    let toggles = !alone && !info.name.is_empty();
+    let open = alone || preview.details_open;
+    // Each fact is one unbreakable segment of a wrapping line: a narrow
+    // panel wraps between the facts, never inside the date.
+    let facts = [
+        type_label(shell, info),
+        info.size.clone(),
+        info.modified.clone(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    let last = facts.len().saturating_sub(1);
+    let facts = facts.into_iter().enumerate().map(|(index, fact)| {
+        div().whitespace_nowrap().child(if index == last {
+            fact
+        } else {
+            format!("{fact} ·")
+        })
+    });
+    let card = div()
+        .id("preview-info")
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_1()
         .py_1()
+        .rounded_md()
+        .when(toggles, |d| {
+            d.cursor_pointer()
+                .hover(|d| d.bg(theme.hover))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.run("ui.preview_details", serde_json::json!({}), window, cx);
+                }))
+        })
+        .children(
+            info.icon
+                .as_ref()
+                .map(|icon| div().flex_none().child(icons::element(icon, ICON))),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .child(trail(shell, theme, cx))
+                .child(
+                    div()
+                        .id("preview-meta")
+                        .flex()
+                        .flex_wrap()
+                        .gap_x_1()
+                        .text_xs()
+                        .text_color(theme.text_muted)
+                        .when_some(info.mime.clone(), |d, mime| {
+                            let font = shell.font.clone();
+                            d.tooltip(move |_, cx| {
+                                crate::toolbar::tooltip(mime.clone().into(), font.clone(), cx)
+                            })
+                        })
+                        .children(facts),
+                ),
+        )
+        .when(toggles, |d| {
+            d.child(
+                gpui::svg()
+                    .path(if open {
+                        "toolbar/chevron.svg"
+                    } else {
+                        "toolbar/chevron-right.svg"
+                    })
+                    .size(px(12.))
+                    .flex_none()
+                    .text_color(theme.text_muted),
+            )
+        });
+    div()
+        .px_1()
+        .py(px(2.))
         .border_b_1()
         .border_color(theme.border)
         .flex()
-        .flex_col()
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_1()
-                .child(trail(shell, theme, cx))
-                .when(interactive, |d| {
-                    d.child(
-                        crate::toolbar::Button::new(
-                            "preview-close",
-                            "close",
-                            "Close preview",
-                            "ui.preview_close",
-                        )
-                        .render(shell, cx),
-                    )
-                }),
-        )
-        .child(
-            div()
-                .id("preview-meta")
-                .text_xs()
-                .text_color(theme.text_muted)
-                .truncate()
-                .when_some(info.mime.clone(), |d, mime| {
-                    let font = shell.font.clone();
-                    d.tooltip(move |_, cx| {
-                        crate::toolbar::tooltip(mime.clone().into(), font.clone(), cx)
-                    })
-                })
-                .child(
-                    [
-                        type_label(shell, info),
-                        info.size.clone(),
-                        info.modified.clone(),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .collect::<Vec<_>>()
-                    .join(" · "),
-                ),
-        )
+        .items_center()
+        .child(card)
+        .when(preview.peek, |d| {
+            d.child(
+                crate::toolbar::Button::new(
+                    "preview-close",
+                    "close",
+                    "Close preview",
+                    "ui.preview_close",
+                )
+                .render(shell, cx),
+            )
+        })
         .into_any_element()
 }
+
+/// The header's icon: two lines of text tall.
+const ICON: f32 = 36.;
 
 /// "PDF document" rather than `application/pdf`; the raw type is the tooltip.
 fn type_label(shell: &Shell, info: &Info) -> Option<String> {
@@ -1824,7 +1877,7 @@ pub fn render_panel(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Optio
             .border_l_1()
             .border_color(theme.border)
             .bg(theme.surface)
-            .child(header(shell, &theme, !shell.preview.peek, cx))
+            .child(header(shell, &theme, cx))
             .child(body(shell, &theme, !shell.preview.peek, cx))
             .child(handle)
             .into_any_element(),
@@ -1869,7 +1922,7 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
                     .bg(theme.surface)
                     .shadow_lg()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(header(shell, &theme, true, cx))
+                    .child(header(shell, &theme, cx))
                     .child(body(shell, &theme, true, cx))
                     .child(
                         div()

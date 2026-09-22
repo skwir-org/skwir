@@ -90,10 +90,11 @@ Found by looking at all fourteen kinds in a window and reading the code.
 
 A section of the frame, not a preview kind.
 
-- **Placement (decided):** a collapsible bar at the bottom of the panel. It is
-  expanded and fills the panel when there is no preview (including folders and
-  several entries selected); collapsed to one line when there is one. Its state
-  belongs to `session.rs`.
+- **Placement (decided, revised):** the header is a card (icon, name, type ·
+  size · date) and clicking it opens Details between the toolbar and the
+  content, up to half the panel; the bottom bar it first had repeated the
+  header. Details fills the body when there is no preview (including folders
+  and several entries selected). Its state belongs to `session.rs`.
 - **Groups:** General · Location (path, link target) · Permissions (owner,
   group, mode in words) · Times (modified, created, accessed) · Tags · then
   what the format knows.

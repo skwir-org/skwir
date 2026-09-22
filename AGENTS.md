@@ -88,8 +88,9 @@ current source before assuming a planned crate, command, or API exists.
   animation allowed is a bounded entrance (under 200 ms) that ends by itself.
 - **Application row and pane row.** The application toolbar holds what is
   about the window: views, the Sort and display menu, New folder, Search, the
-  Preview and Split toggles, and More (everything else, so the narrowest
-  variant loses nothing). Navigation is per pane: Back, Forward, Up and the
+  Split and Preview toggles (in the order of what they open: the middle of
+  the window, then its right edge), and More (everything else, so the
+  narrowest variant loses nothing). Navigation is per pane: Back, Forward, Up and the
   breadcrumb trail live in each pane's own row (`address.rs`). The trail and
   the list's detail columns use the same layout-only technique, a wrapping
   flex line one row tall, so the segments nearest the current folder stay

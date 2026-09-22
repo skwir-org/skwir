@@ -9,11 +9,12 @@ picture zooms, a PDF opens in the reader, JSON folds, Markdown reads. The name
 in the header becomes a trail (`bundle.zip › notes.md`); click a step, or Back,
 to return. The panel follows an archive inside an archive, and no deeper.
 
-**Details**, at the bottom of the panel, lists what is known about the entry:
-type, exact size, folder, owner and access, times, tags, and what the format
+The header shows the entry's icon, name, type, size and date. Click it for
+**Details**, which opens under the toolbar and lists the rest of what is
+known: exact size, folder, owner and access, times, tags, and what the format
 says (a book's author, a font's family, an archive's unpacked size, a
 picture's dimensions). It fills the panel when there is nothing to preview.
-Click a value to copy it.
+Click a value to copy it. The panel closes with the Preview button (F11).
 
 Each format is enabled by an independent plugin in **Settings → Plugins**:
 

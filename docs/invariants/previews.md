@@ -106,11 +106,18 @@ still to come are in `docs/preview-frame.md`.
   block of plain text. There is no second, poorer text renderer in the UI.
   HTML files open in the inert reading mode, like Markdown, with their source
   one toggle away.
+- **The header is a card** (`preview::header`): the entry's icon, its name
+  (a trail inside a container) and one line of type, size and date. It is
+  the one place that says what the panel shows, and clicking it opens
+  Details. It has no close button: the panel is closed by the Preview button
+  that opened it (the peek overlay alone keeps one).
 - **Details** (`details.rs`) is a section of the frame, not a kind of
-  preview: everything known about what the panel shows. With nothing to
-  preview (a folder, an unknown file, an error) it fills the panel under the
-  entry's icon; under a preview it is one bar at the bottom that opens on
-  demand, and whether it is open belongs to the window's shape (`session.rs`).
+  preview: everything known about what the panel shows that the header does
+  not say (no Name or Type row: the header has them). With nothing to
+  preview (a folder, an unknown file, an error) it is the whole body; under
+  a preview it opens between the toolbar and the content, up to half the
+  panel, so the toolbar stays with the header and the content moves down.
+  Whether it is open belongs to the window's shape (`session.rs`).
   Facts come from three places and none is read while painting: the entry's
   metadata with its provenance, collected when the entry, its listing or the
   selection changes (`entry_groups`, pure and tested); what the preview

@@ -143,6 +143,17 @@ fn app_row(
     if mode < 2 {
         bar = bar
             .child(toolbar::separator(&theme))
+            // In the order of what they open: the split is in the middle of
+            // the window, the preview panel at its right edge.
+            .child(
+                labelled(
+                    Button::new("split-toggle", "split", "Split panes · F3", "ui.split")
+                        .active(shell.is_split()),
+                    "Split",
+                    mode,
+                )
+                .render(shell, cx),
+            )
             .child(
                 labelled(
                     Button::new(
@@ -153,15 +164,6 @@ fn app_row(
                     )
                     .active(shell.preview.open),
                     "Preview",
-                    mode,
-                )
-                .render(shell, cx),
-            )
-            .child(
-                labelled(
-                    Button::new("split-toggle", "split", "Split panes · F3", "ui.split")
-                        .active(shell.is_split()),
-                    "Split",
                     mode,
                 )
                 .render(shell, cx),
@@ -283,6 +285,11 @@ fn more_panel(
         }
         for (button, label) in [
             (
+                Button::new("menu-split", "split", "Split panes · F3", "ui.split")
+                    .active(shell.is_split()),
+                "Split panes",
+            ),
+            (
                 Button::new(
                     "menu-preview",
                     "preview",
@@ -291,11 +298,6 @@ fn more_panel(
                 )
                 .active(shell.preview.open),
                 "Preview panel",
-            ),
-            (
-                Button::new("menu-split", "split", "Split panes · F3", "ui.split")
-                    .active(shell.is_split()),
-                "Split panes",
             ),
         ] {
             panel = panel.child(menu_item(button, label).render(shell, cx));
