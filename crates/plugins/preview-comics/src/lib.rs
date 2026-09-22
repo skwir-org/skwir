@@ -18,6 +18,16 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> &'static str {
         "Read CBZ and CBR comic books page by page"
     }
+    fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
+        vec![
+            bibli_core::plugin::Requirement::new(
+                "bibli-archive-worker",
+                "Reading the pages of a comic book",
+                || archive::worker_path().is_some(),
+            )
+            .required(),
+        ]
+    }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
     }
@@ -41,16 +51,11 @@ impl PreviewProvider for Provider {
     ) -> anyhow::Result<Option<Inspection>> {
         let path = req.entry.resolve()?;
         let mut pages: Vec<_> = archive::list(&path, cancel)?
+            .members
             .into_iter()
-            .filter(|m| {
-                m.regular
-                    && matches!(
-                        inspection::extension(std::path::Path::new(&m.name)).as_str(),
-                        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp"
-                    )
-            })
+            .filter(is_page)
             .collect();
-        pages.sort_by_cached_key(|m| natural_key(&m.name));
+        pages.sort_by_cached_key(|m| bibli_core::collate::sort_key(m.name.as_ref()));
         anyhow::ensure!(!pages.is_empty(), "Comic contains no supported images");
         let index = view.offset.min(pages.len() as u64 - 1) as usize;
         let page = &pages[index];
@@ -67,31 +72,57 @@ impl PreviewProvider for Provider {
         }))
     }
 }
-fn natural_key(name: &str) -> String {
-    use std::fmt::Write;
-    let mut key = String::new();
-    let mut digits = String::new();
-    for c in name.to_lowercase().chars().chain(std::iter::once('\0')) {
-        if c.is_ascii_digit() {
-            digits.push(c);
-        } else {
-            if !digits.is_empty() {
-                let number = digits.trim_start_matches('0');
-                let _ = write!(key, "{:08}{}", number.len(), number);
-                digits.clear();
-            }
-            key.push(c);
-        }
-    }
-    key
+/// A picture the book shows: a regular, readable image, and not something a
+/// tool left beside the pages. Archives made on a Mac carry an `AppleDouble`
+/// twin of every page (`__MACOSX/._page01.jpg`) that sorts first and is no
+/// picture at all; other dotfiles are thumbnails and caches.
+fn is_page(member: &archive::Member) -> bool {
+    member.regular
+        && !member.encrypted
+        && !member
+            .name
+            .split('/')
+            .any(|part| part.starts_with('.') || part == "__MACOSX")
+        && matches!(
+            inspection::extension(std::path::Path::new(&member.name)).as_str(),
+            "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp"
+        )
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn member(index: u64, name: &str, encrypted: bool) -> archive::Member {
+        archive::Member {
+            index,
+            name: name.into(),
+            size: 1,
+            directory: false,
+            regular: true,
+            encrypted,
+        }
+    }
+
     #[test]
-    fn pages_sort_numerically() {
-        let mut names = ["page10.png", "page2.png", "page1.png"];
-        names.sort_by_key(|n| natural_key(n));
-        assert_eq!(names, ["page1.png", "page2.png", "page10.png"]);
+    fn pages_sort_numerically_without_what_tools_left_beside_them() {
+        let mut pages: Vec<_> = [
+            member(0, "__MACOSX/._page01.jpg", false),
+            member(1, "Book/page10.png", false),
+            member(2, "Book/page2.png", false),
+            member(3, "Book/.thumbs/page1.png", false),
+            member(4, "Book/._page1.png", false),
+            member(5, "Book/page1.png", false),
+            member(6, "Book/secret.png", true),
+            member(7, "Book/notes.txt", false),
+        ]
+        .into_iter()
+        .filter(is_page)
+        .collect();
+        pages.sort_by_cached_key(|m| bibli_core::collate::sort_key(m.name.as_ref()));
+        let names: Vec<_> = pages.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["Book/page1.png", "Book/page2.png", "Book/page10.png"]
+        );
     }
 }

@@ -22,20 +22,45 @@ fn app(root: &Path) -> Arc<App> {
     }
     app
 }
+/// A request as the preview worker makes one: the type a fixture's name
+/// says. Only bytes proven binary are `application/octet-stream`, which is
+/// what the hexadecimal fallback takes, so a text file never says it.
 fn request(path: &Path) -> PreviewRequest {
+    let mime = match bibli_platform::inspection::extension(path).as_str() {
+        "md" => "text/markdown",
+        "csv" => "text/csv",
+        "json" => "application/json",
+        "yaml" => "application/yaml",
+        "toml" => "application/toml",
+        "eml" => "message/rfc822",
+        "epub" => "application/epub+zip",
+        "zip" => "application/zip",
+        "gz" => "application/gzip",
+        "ttf" => "font/ttf",
+        _ => "application/octet-stream",
+    };
     PreviewRequest {
         entry: EntryRef::from_path(path).unwrap(),
-        mime: Some("application/octet-stream".into()),
+        mime: Some(mime.into()),
         page: 1,
         seconds: None,
         max_side: 512,
     }
 }
-fn inspect(app: &App, path: &Path, view: &InspectRequest) -> Inspection {
+/// What the preview worker shows: the provider's inspection, else, for the
+/// source view, the shared code view (`ui/src/preview.rs` does the same).
+fn try_inspect(app: &App, path: &Path, view: &InspectRequest) -> Option<Inspection> {
+    let cancel = CancelToken::new();
     app.previews
-        .inspect(&request(path), view, &CancelToken::new())
+        .inspect(&request(path), view, &cancel)
         .unwrap()
-        .unwrap()
+        .or_else(|| {
+            view.source
+                .then(|| bibli_platform::inspection::source(path, view.offset, &cancel).unwrap())
+        })
+}
+fn inspect(app: &App, path: &Path, view: &InspectRequest) -> Inspection {
+    try_inspect(app, path, view).expect("a provider answers")
 }
 #[test]
 fn asf_media_ownership_precedes_hex_fallback_but_allows_explicit_hex() {
@@ -45,7 +70,7 @@ fn asf_media_ownership_precedes_hex_fallback_but_allows_explicit_hex() {
     let app = app(tmp.path());
     app.plugins
         .add(Arc::new(bibli_plugin_preview_media::PreviewPlugin), &app);
-    let request = request(&path); // Deliberately generic application/octet-stream.
+    let request = request(&path); // `.asf` is not in the table: generic bytes.
     let default = InspectRequest::default();
     assert!(
         app.previews
@@ -124,11 +149,9 @@ fn markdown_styles_source_and_plugin_fallback() {
     );
     assert!(source.plain_text().contains("**bold**"));
     assert!(app.plugins.set_enabled("preview-markdown", false, &app));
-    assert!(
-        inspect(&app, &path, &InspectRequest::default())
-            .title
-            .starts_with("Hex")
-    );
+    // Text is never the byte view's: with Markdown off, nothing claims the
+    // file and the worker shows it as the plain code view.
+    assert!(try_inspect(&app, &path, &InspectRequest::default()).is_none());
     assert!(app.plugins.set_enabled("preview-markdown", true, &app));
     // Registry order cannot let the fallback claim a known format on re-enable.
     assert_eq!(
@@ -256,15 +279,6 @@ fn email_decodes_headers_body_and_attachment_without_fetching() {
     assert!(mail.plain_text().contains("Synthetic café"));
     assert!(!mail.plain_text().contains("hidden"));
     assert_eq!(mail.rows.len(), 1);
-    let member = inspect(
-        &app,
-        &path,
-        &InspectRequest {
-            target: Some("0".into()),
-            ..InspectRequest::default()
-        },
-    );
-    assert!(member.plain_text().contains("hello"));
 
     // The panel's way: the attachment becomes a file of its own, in the
     // directory it was given and under a name of ours, and is then previewed
@@ -390,7 +404,7 @@ fn all_preview_plugins() -> Vec<(&'static str, Arc<dyn Plugin>)> {
         ),
         (
             "preview-audio",
-            Arc::new(bibli_plugin_preview_audio::PreviewPlugin),
+            Arc::new(bibli_plugin_preview_audio::PreviewPlugin::default()),
         ),
         (
             "preview-markdown",
@@ -609,16 +623,14 @@ fn archive_worker() -> Option<std::path::PathBuf> {
 /// test says so and passes, unless `BIBLI_REQUIRE_WORKERS` is set, as it
 /// should be wherever the workers are built: there a missing helper is a
 /// failure, not a skip.
-#[test]
-fn archive_members_preview_as_image_text_or_paged_bytes() {
-    use std::io::Write;
+fn with_archive_worker() -> bool {
     let Some(worker) = archive_worker() else {
         assert!(
             std::env::var_os("BIBLI_REQUIRE_WORKERS").is_none(),
             "bibli-archive-worker is not built"
         );
         eprintln!("skipped: bibli-archive-worker is not built");
-        return;
+        return false;
     };
     // The helper path is process-wide; tests in this binary run in separate
     // processes under nextest, so the variable cannot leak into another test.
@@ -627,29 +639,22 @@ fn archive_members_preview_as_image_text_or_paged_bytes() {
     unsafe {
         std::env::set_var("BIBLI_ARCHIVE_WORKER", &worker);
     }
-    let tmp = tempfile::tempdir().unwrap();
-    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    true
+}
+
+fn archives_app(root: &Path) -> Arc<App> {
+    let app = App::new(AppConfig::ephemeral(root.join("state"))).unwrap();
     app.plugins
         .add(Arc::new(bibli_plugin_preview_archives::PreviewPlugin), &app);
-    let path = tmp.path().join("Synthetic bundle's.zip");
-    let png = synthetic_png(3, 2);
-    let text = "caf\u{e9} member\n".repeat(20);
-    let binary: Vec<u8> = (0..=255u8).cycle().take(5000).collect();
-    let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
-    for (name, body) in [
-        ("folder/cover.png", png.as_slice()),
-        ("folder/notes.txt", text.as_bytes()),
-        ("blob.bin", &binary),
-        ("../outside.txt", b"a name, never a path"),
-        // libarchive converts names through the locale's charset: in the C
-        // locale a name like this one fails the whole listing.
-        (
-            "Cr\u{e8}me br\u{fb}l\u{e9}e/r\u{e9}sum\u{e9} \u{e9}t\u{e9}.txt",
-            "caf\u{e9}".as_bytes(),
-        ),
-    ] {
+    app
+}
+
+fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
+    use std::io::Write;
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+    for (name, body) in entries {
         zip.start_file(
-            name,
+            *name,
             zip::write::SimpleFileOptions::default()
                 .compression_method(zip::CompressionMethod::Deflated),
         )
@@ -657,28 +662,66 @@ fn archive_members_preview_as_image_text_or_paged_bytes() {
         zip.write_all(body).unwrap();
     }
     zip.finish().unwrap();
+}
+
+/// A member is written out and previewed as the file it is; the archive
+/// provider only lists.
+#[test]
+fn archive_members_are_written_out_under_our_names() {
+    if !with_archive_worker() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let app = archives_app(tmp.path());
+    let path = tmp.path().join("Synthetic bundle's.zip");
+    let png = synthetic_png(3, 2);
+    let text = "caf\u{e9} member\n".repeat(20);
+    let binary: Vec<u8> = (0..=255u8).cycle().take(5000).collect();
+    write_zip(
+        &path,
+        &[
+            ("folder/cover.png", png.as_slice()),
+            ("folder/notes.txt", text.as_bytes()),
+            ("blob.bin", &binary),
+            ("../outside.txt", b"a name, never a path"),
+            // libarchive converts names through the locale's charset: in the C
+            // locale a name like this one fails the whole listing.
+            (
+                "Cr\u{e8}me br\u{fb}l\u{e9}e/r\u{e9}sum\u{e9} \u{e9}t\u{e9}.txt",
+                "caf\u{e9}".as_bytes(),
+            ),
+        ],
+    );
     let listing = inspect(&app, &path, &InspectRequest::default());
     assert_eq!(
         listing.kind,
         bibli_core::inspection::InspectionKind::Archive
     );
-    let target = |name: &str| {
-        let row = listing.rows.iter().find(|r| r.cells[0] == name).unwrap();
-        InspectRequest {
-            target: row.target.clone(),
-            ..InspectRequest::default()
-        }
-    };
+    assert!(listing.notice.is_empty(), "{}", listing.notice);
+    assert!(
+        listing
+            .rows
+            .iter()
+            .any(|r| r.cells[0] == "Cr\u{e8}me br\u{fb}l\u{e9}e" && r.branch)
+    );
     // A member written out for the panel lands under our name in the
     // directory given, whatever its own name tries to say.
     let into = tmp.path().join("members");
     std::fs::create_dir(&into).unwrap();
-    for (name, file) in [("cover.png", "member.png"), ("outside.txt", "member.txt")] {
+    let accented = "r\u{e9}sum\u{e9} \u{e9}t\u{e9}.txt";
+    for (name, file, body) in [
+        ("cover.png", "member.png", png.as_slice()),
+        ("notes.txt", "member.txt", text.as_bytes()),
+        ("blob.bin", "member.bin", &binary),
+        ("outside.txt", "member.txt", b"a name, never a path"),
+        (accented, "member.txt", "caf\u{e9}".as_bytes()),
+    ] {
+        let row = listing.rows.iter().find(|r| r.cells[0] == name).unwrap();
         let member = app
             .previews
             .extract(
                 &request(&path),
-                target(name).target.as_deref().unwrap(),
+                row.target.as_deref().unwrap(),
                 &into,
                 &CancelToken::new(),
             )
@@ -688,39 +731,60 @@ fn archive_members_preview_as_image_text_or_paged_bytes() {
             (member.name.as_str(), &member.path),
             (name, &into.join(file))
         );
+        assert_eq!(std::fs::read(&member.path).unwrap(), body);
     }
-    assert_eq!(std::fs::read(into.join("member.png")).unwrap(), png);
     assert!(!tmp.path().join("outside.txt").exists());
-    let image = inspect(&app, &path, &target("cover.png"));
-    assert_eq!(image.image.map(|i| (i.width, i.height)), Some((3, 2)));
-    let notes = inspect(&app, &path, &target("notes.txt"));
-    assert_eq!(notes.plain_text(), text);
-    let bytes = inspect(&app, &path, &target("blob.bin"));
-    assert_eq!(bytes.kind, bibli_core::inspection::InspectionKind::Hex);
-    assert_eq!(bytes.rows.len(), 256);
-    assert_eq!(bytes.next, Some(4096));
-    let second = inspect(
-        &app,
-        &path,
-        &InspectRequest {
-            offset: 4096,
-            ..target("blob.bin")
-        },
-    );
-    assert_eq!(second.position, 4096);
-    assert_eq!(second.rows[0].cells[0], "0000000000001000");
-    let accented = "r\u{e9}sum\u{e9} \u{e9}t\u{e9}.txt";
-    assert!(
-        listing
-            .rows
-            .iter()
-            .any(|r| r.cells[0] == "Cr\u{e8}me br\u{fb}l\u{e9}e" && r.branch)
-    );
-    assert_eq!(
-        inspect(&app, &path, &target(accented)).plain_text(),
-        "caf\u{e9}"
-    );
-    let outside = inspect(&app, &path, &target("outside.txt"));
-    assert_eq!(outside.plain_text(), "a name, never a path");
     assert!(!tmp.path().parent().unwrap().join("outside.txt").exists());
+}
+
+/// A file that is only compressed is an archive of one member, named after
+/// it; a listing past its bound shows the start and says so.
+#[test]
+fn compressed_files_and_long_archives_are_listed() {
+    use std::io::Write;
+    if !with_archive_worker() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let app = archives_app(tmp.path());
+    let log = tmp.path().join("access.log.1.gz");
+    let mut gzip = flate2::write::GzEncoder::new(
+        std::fs::File::create(&log).unwrap(),
+        flate2::Compression::default(),
+    );
+    gzip.write_all(b"GET / 200\n").unwrap();
+    gzip.finish().unwrap();
+    let listing = inspect(&app, &log, &InspectRequest::default());
+    assert_eq!(listing.rows.len(), 1);
+    assert_eq!(listing.rows[0].cells[0], "access.log.1");
+    let into = tmp.path().join("members");
+    std::fs::create_dir(&into).unwrap();
+    let member = app
+        .previews
+        .extract(
+            &request(&log),
+            listing.rows[0].target.as_deref().unwrap(),
+            &into,
+            &CancelToken::new(),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(std::fs::read(&member.path).unwrap(), b"GET / 200\n");
+
+    let many = tmp.path().join("Synthetic many.zip");
+    let names: Vec<String> = (0..=bibli_platform::inspection::limits::CONTAINER_MEMBERS)
+        .map(|i| format!("f{i}.txt"))
+        .collect();
+    let entries: Vec<(&str, &[u8])> = names.iter().map(|n| (n.as_str(), &b""[..])).collect();
+    write_zip(&many, &entries);
+    let listing = inspect(&app, &many, &InspectRequest::default());
+    assert_eq!(
+        listing.rows.len(),
+        bibli_platform::inspection::limits::CONTAINER_MEMBERS
+    );
+    assert!(
+        listing.notice.starts_with("First 4000 members"),
+        "{}",
+        listing.notice
+    );
 }

@@ -41,13 +41,17 @@ impl PreviewProvider for Provider {
     ) -> anyhow::Result<Option<Inspection>> {
         let path = req.entry.resolve()?;
         let language = inspection::extension(&path);
-        let result = inspection::text(&path, cancel)
-            .and_then(|text| code(&text, &language, view.source, cancel));
+        let result = inspection::read_text(&path, cancel).and_then(|(text, encoding)| {
+            let mut data = code(&text, &language, view.source, cancel)?;
+            data.notice = encoding.notice().unwrap_or_default();
+            Ok(data)
+        });
         match result {
             Ok(data) => Ok(Some(data)),
+            // The source view takes its language from the name, like any
+            // text file, and may hold no line at all (an empty file).
             Err(error) if !cancel.is_cancelled() => {
                 let mut source = inspection::source(&path, view.offset, cancel)?;
-                source.blocks[0].language = Some(language);
                 source.notice = format!("Showing source: {error}");
                 Ok(Some(source))
             }
@@ -65,7 +69,8 @@ fn code(
     cancel: &CancelToken,
 ) -> anyhow::Result<Inspection> {
     inspection::check(cancel)?;
-    let text = if language == "json" && !original {
+    // An empty file has nothing to format: it is shown as it is.
+    let text = if language == "json" && !original && !source.trim().is_empty() {
         let value: serde_json::Value = serde_json::from_str(source)?;
         let mut pending = vec![(&value, 0)];
         let mut count = 0;
@@ -90,6 +95,10 @@ fn code(
         }
         serde_json::to_string_pretty(&value)?
     } else {
+        if language == "json" && !source.trim().is_empty() {
+            // Folds are read lexically from text known to be JSON.
+            serde_json::from_str::<serde_json::Value>(source)?;
+        }
         source.to_owned()
     };
     anyhow::ensure!(
@@ -167,6 +176,50 @@ mod tests {
         let data = code(source, "yaml", false, &CancelToken::new()).unwrap();
         assert_eq!(data.plain_text(), source);
         assert_eq!(data.folds, [0..5, 2..5, 5..10]);
+    }
+
+    fn inspect(path: &std::path::Path, source: bool) -> Inspection {
+        let request = PreviewRequest {
+            entry: bibli_core::op::EntryRef::from_path(path).unwrap(),
+            mime: Some("application/json".into()),
+            page: 1,
+            seconds: None,
+            max_side: 64,
+        };
+        let view = InspectRequest {
+            source,
+            ..InspectRequest::default()
+        };
+        Provider
+            .inspect(&request, &view, &CancelToken::new())
+            .unwrap()
+            .unwrap()
+    }
+
+    #[test]
+    fn an_empty_or_marked_file_is_read_not_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let empty = dir.path().join("empty.json");
+        std::fs::write(&empty, b"").unwrap();
+        for source in [false, true] {
+            let data = inspect(&empty, source);
+            assert_eq!(data.kind, InspectionKind::Code);
+            assert!(data.plain_text().is_empty());
+            assert!(data.notice.is_empty(), "{}", data.notice);
+        }
+        // A byte order mark is not JSON's business: the value still folds.
+        let marked = dir.path().join("it's marked.json");
+        std::fs::write(&marked, "\u{feff}{\"a\": [1, 2]}".as_bytes()).unwrap();
+        let data = inspect(&marked, false);
+        assert!(data.notice.is_empty(), "{}", data.notice);
+        assert!(!data.folds.is_empty());
+        assert!(!data.plain_text().contains('\u{feff}'));
+        // A legacy encoding is read, and said.
+        let legacy = dir.path().join("legacy.yaml");
+        std::fs::write(&legacy, b"name: caf\xe9\n").unwrap();
+        let data = inspect(&legacy, false);
+        assert_eq!(data.plain_text(), "name: caf\u{e9}\n");
+        assert_eq!(data.notice, "Read as Windows-1252");
     }
 
     #[test]

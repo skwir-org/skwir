@@ -5,6 +5,7 @@ Usage: python3 tools/previews/check.py --root /tmp/bibli-preview-fixtures
 No personal media, mail or documents are used. Generated files stay outside git.
 """
 import argparse
+import gzip
 import importlib.util
 import io
 import json
@@ -87,8 +88,9 @@ LISTING = ["--members", "4000", "--names", str(256 * 1024)]
 
 def check_archive(executable, root):
     path = root / "06 Archive's.zip"
-    entries = json.loads(subprocess.check_output([executable, str(path), *LISTING]))
-    assert len(entries) == 4
+    listing = json.loads(subprocess.check_output([executable, str(path), *LISTING]))
+    entries = listing["members"]
+    assert len(entries) == 4 and listing["complete"]
     with tempfile.TemporaryDirectory() as tmp:
         output = Path(tmp) / "member"
         target = next(e for e in entries if e["name"] == "../outside.txt")
@@ -106,13 +108,25 @@ def check_archive(executable, root):
         assert result.returncode != 0 and b"preview limit" in result.stderr
         result = subprocess.run([executable, str(bomb), "0", str(output), "--name", "large"], capture_output=True)
         assert result.returncode != 0 and b"--bytes" in result.stderr, "a member read without a bound is refused"
-        result = subprocess.run([executable, str(path), "--members", "2", "--names", "4096"], capture_output=True)
-        assert result.returncode != 0 and b"2 members" in result.stderr, "listing bounds come from the caller"
+        short = json.loads(subprocess.check_output([executable, str(path), "--members", "2", "--names", "4096"]))
+        assert len(short["members"]) == 2 and not short["complete"], "listing bounds come from the caller"
+        single = Path(tmp) / "notes.txt.gz"
+        with gzip.open(single, "wb") as stream:
+            stream.write(b"only compressed")
+        alone = json.loads(subprocess.check_output([executable, str(single), *LISTING]))
+        assert [e["name"] for e in alone["members"]] == ["notes.txt"], "a compressed file is one member"
+        read = [executable, str(single), "0", str(output), "--name", "notes.txt", "--bytes", str(MEMBER_BYTES)]
+        subprocess.run(read, check=True, stdout=subprocess.DEVNULL)
+        assert output.read_bytes() == b"only compressed"
+        plain = Path(tmp) / "plain.zip"
+        plain.write_bytes(b"not an archive at all")
+        result = subprocess.run([executable, str(plain), *LISTING], capture_output=True)
+        assert result.returncode != 0, "bytes that are not compressed are not a raw archive"
         accented = Path(tmp) / "accents.zip"
         with zipfile.ZipFile(accented, "w") as archive:
             archive.writestr("Cr\u00e8me/r\u00e9sum\u00e9.txt", "caf\u00e9")
         clean = {"PATH": os.environ.get("PATH", "")}
-        names = json.loads(subprocess.check_output([executable, str(accented), *LISTING], env=clean))
+        names = json.loads(subprocess.check_output([executable, str(accented), *LISTING], env=clean))["members"]
         assert [e["name"] for e in names] == ["Cr\u00e8me/r\u00e9sum\u00e9.txt"], "names convert in any locale"
         tar = Path(tmp) / "links.tar"
         with tarfile.open(tar, "w") as archive:

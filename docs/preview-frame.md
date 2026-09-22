@@ -113,10 +113,11 @@ A section of the frame, not a preview kind.
 ## Archive members as real previews
 
 Providers take a path and nothing else (`PreviewProvider`, `PreviewRequest`
-holds an `EntryRef`). A member is extracted by `bibli-archive-worker` into a
-temporary directory, read back as at most 16 MiB of bytes, and shown by
-`archive::member_preview` as an image, 64 KiB of plain text, or hex. Email
-attachments share that function.
+holds an `EntryRef`). A member is written out by `PreviewProvider::extract`
+(`bibli-archive-worker` for an archive, at most 16 MiB; the parsed message
+for an email attachment) and the worker pipeline previews that file like any
+other. Containers never inspect a member themselves: there is no second,
+poorer member view.
 
 - Keep the extracted file for as long as the preview's generation lives, and
   dispatch the registry again on a nested `PreviewRequest`: the temporary path,

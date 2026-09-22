@@ -32,8 +32,11 @@ pub fn parse(
     Ok(folds)
 }
 
+/// JSON's delimiters, read from text the caller has already parsed as JSON
+/// (or produced by printing a parsed value): its only place for a stray
+/// bracket is a string, which the lexer below steps over, so no second
+/// parse is needed to trust them.
 fn json(text: &str, cancel: &CancelToken) -> anyhow::Result<Vec<Range<usize>>> {
-    let _: serde_json::Value = serde_json::from_str(text)?;
     let mut folds = Vec::new();
     let mut stack = Vec::new();
     let (mut quoted, mut escaped) = (false, false);

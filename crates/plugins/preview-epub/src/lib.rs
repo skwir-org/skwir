@@ -6,7 +6,7 @@
 //! documents), each extracted here with the same bound as every chapter.
 use bibli_core::{
     App, CancelToken,
-    inspection::{Block, InspectRequest, Inspection, Row},
+    inspection::{InspectRequest, Inspection, Row},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
 };
@@ -47,83 +47,63 @@ impl PreviewProvider for Provider {
         let path = req.entry.resolve()?;
         let mut container = Container::open(&path, cancel)?;
         let book = package(&mut container, cancel)?;
-        let chapters: Vec<_> = book
+        let chapters: Vec<String> = book
             .spine()
             .iter()
             .filter_map(|s| s.manifest_entry())
+            .map(|c| c.href().as_str().to_owned())
             .collect();
         anyhow::ensure!(!chapters.is_empty(), "EPUB has no readable chapters");
+        // A chapter is found by the member it names, however a link spells
+        // it (`Text/../Text/ch2.xhtml`, escaped, with a fragment).
+        let keys: Vec<_> = chapters.iter().map(|href| member_key(href)).collect();
         let mut index = view.offset.min(chapters.len().saturating_sub(1) as u64) as usize;
-        let mut notice =
-            String::from("Reading mode · publisher CSS and fixed-page layout are not applied");
+        let mut notice = vec![String::from(
+            "Reading mode · publisher CSS and fixed-page layout are not applied",
+        )];
         if let Some(query) = view.query.as_deref().filter(|q| !q.is_empty()) {
             // A search starts at the requested chapter and wraps, so a caller
             // resuming at `position + 1` reaches the next matching chapter.
+            // A chapter that cannot be read is passed over, not the search.
             let start = (view.offset % chapters.len() as u64) as usize;
             let query = query.to_lowercase();
-            let mut found = false;
-            for candidate in (start..chapters.len()).chain(0..start) {
-                inspection::check(cancel)?;
-                let html = String::from_utf8(container.read(
-                    chapters[candidate].href().as_str(),
-                    "Chapter",
-                    cancel,
-                )?)?;
-                let blocks = rich_preview::html(&html, cancel, |_| None)?.blocks;
-                if blocks
-                    .iter()
-                    .any(|b| b.text.to_lowercase().contains(&query))
-                {
-                    index = candidate;
-                    found = true;
-                    break;
-                }
+            let found = (start..chapters.len()).chain(0..start).find(|&candidate| {
+                !cancel.is_cancelled()
+                    && container
+                        .read(&chapters[candidate], "Chapter", cancel)
+                        .and_then(|bytes| {
+                            rich_preview::html(&inspection::decode(&bytes).0, cancel, |_| None)
+                        })
+                        .is_ok_and(|page| {
+                            page.blocks
+                                .iter()
+                                .any(|b| b.text.to_lowercase().contains(&query))
+                        })
+            });
+            inspection::check(cancel)?;
+            if let Some(found) = found {
+                index = found;
             }
-            notice = if found {
+            notice = vec![if found.is_some() {
                 "Search match in this chapter".into()
             } else {
                 "No matching chapter".into()
-            };
+            }];
         }
         let href = view
             .target
             .clone()
             .filter(|_| view.query.is_none())
-            .unwrap_or_else(|| chapters[index].href().as_str().to_owned());
-        let index = chapters
+            .unwrap_or_else(|| chapters[index].clone());
+        let target = member_key(&href);
+        let index = keys
             .iter()
-            .position(|c| c.href().as_str() == href.split('#').next().unwrap_or(&href))
+            .position(|key| key.is_some() && *key == target)
             .unwrap_or(index);
-        let source = String::from_utf8(container.read(&href, "Chapter", cancel)?)?;
+        let bytes = container.read(&href, "Chapter", cancel)?;
+        let (source, encoding) = inspection::decode(&bytes);
+        notice.extend(encoding.notice());
         let base = href.rsplit_once('/').map_or("", |(base, _)| base);
-        let mut blocks = if view.source {
-            vec![Block {
-                text: source,
-                code: true,
-                ..Block::default()
-            }]
-        } else {
-            rich_preview::html(&source, cancel, |src| {
-                if src.contains(':') {
-                    return None;
-                }
-                let bytes = container
-                    .read(&resolve(base, src), "Embedded image", cancel)
-                    .ok()?;
-                inspection::image(&bytes).ok()
-            })?
-            .blocks
-        };
-        for block in &mut blocks {
-            for run in &mut block.runs {
-                if let Some(link) = &mut run.link
-                    && !link.contains(':')
-                    && !link.starts_with('#')
-                {
-                    *link = resolve(base, link);
-                }
-            }
-        }
         let mut rows = Vec::new();
         for entry in book.toc() {
             contents(entry, 0, &mut rows);
@@ -132,9 +112,9 @@ impl PreviewProvider for Provider {
             rows = chapters
                 .iter()
                 .enumerate()
-                .map(|(i, c)| Row {
+                .map(|(i, href)| Row {
                     cells: vec![format!("Chapter {}", i + 1)],
-                    target: Some(c.href().as_str().into()),
+                    target: Some(href.clone()),
                     ..Row::default()
                 })
                 .collect();
@@ -142,7 +122,7 @@ impl PreviewProvider for Provider {
         // What the package says about the book, for the panel's Details.
         let metadata = book.metadata();
         let people = |names: Vec<&str>| names.join(", ");
-        let details = [
+        let details = inspection::details([
             (
                 "Title",
                 metadata.title().map(|title| title.value().to_owned()),
@@ -161,23 +141,56 @@ impl PreviewProvider for Provider {
                     .language()
                     .map(|language| language.value().to_owned()),
             ),
-            ("Chapters", Some(chapters.len().to_string())),
-        ]
-        .into_iter()
-        .filter_map(|(label, value)| inspection::detail(label, value?))
-        .collect();
-        Ok(Some(Inspection {
+            ("Chapters", inspection::count(chapters.len())),
+        ]);
+        let frame = Inspection {
             details,
-            kind: bibli_core::inspection::InspectionKind::Book,
             title: format!("EPUB · chapter {} / {}", index + 1, chapters.len()),
-            blocks,
-            rows,
             previous: (index > 0).then(|| index as u64 - 1),
             next: (index + 1 < chapters.len()).then_some(index as u64 + 1),
             position: index as u64,
             source_available: true,
-            notice,
             ..Inspection::default()
+        };
+        // A chapter's source is the shared code view, a line per block.
+        if view.source {
+            let code = inspection::code_lines(&source, Some("xhtml".into()));
+            return Ok(Some(Inspection {
+                kind: code.kind,
+                blocks: code.blocks,
+                notice: encoding.notice().unwrap_or_default(),
+                ..frame
+            }));
+        }
+        let page = rich_preview::html(&source, cancel, |src| {
+            if src.contains(':') {
+                return None;
+            }
+            let bytes = container
+                .read(&resolve(base, src), "Embedded image", cancel)
+                .ok()?;
+            inspection::image(&bytes).ok()
+        })?;
+        if page.truncated {
+            notice.push(inspection::blocks_notice());
+        }
+        let mut blocks = page.blocks;
+        for block in &mut blocks {
+            for run in &mut block.runs {
+                if let Some(link) = &mut run.link
+                    && !link.contains(':')
+                    && !link.starts_with('#')
+                {
+                    *link = resolve(base, link);
+                }
+            }
+        }
+        Ok(Some(Inspection {
+            kind: bibli_core::inspection::InspectionKind::Book,
+            blocks,
+            rows,
+            notice: notice.join(" · "),
+            ..frame
         }))
     }
 }
@@ -199,24 +212,19 @@ struct Container {
 }
 impl Container {
     fn open(path: &std::path::Path, cancel: &CancelToken) -> anyhow::Result<Self> {
-        let mut archive = zip::ZipArchive::new(std::fs::File::open(path)?)?;
+        let mut archive = zip::ZipArchive::new(inspection::open(path)?)?;
         anyhow::ensure!(
             archive.len() <= limits::CONTAINER_MEMBERS,
             "EPUB exceeds {} resources",
             limits::CONTAINER_MEMBERS
         );
-        // Declared sizes reject obvious oversizes early; they are advisory,
-        // and `read` enforces the bound on the bytes actually produced.
+        // Declared sizes are not checked here: a book's pictures, audio or
+        // video are never read unless a chapter shows them, and `read`
+        // bounds the bytes each read actually produces.
         let mut members = HashMap::new();
-        let mut total = 0u64;
         for i in 0..archive.len() {
             inspection::check(cancel)?;
             let file = archive.by_index_raw(i)?;
-            total = total.saturating_add(file.size());
-            anyhow::ensure!(
-                file.size() <= limits::BINARY_INPUT as u64 && total <= limits::CONTAINER_EXPANSION,
-                "EPUB resource expansion exceeds preview limit"
-            );
             if let Some(name) = normalize(file.name()) {
                 members.entry(name).or_insert(i);
             }
@@ -225,14 +233,21 @@ impl Container {
     }
     /// Read one resource by container href (absolute or root-relative, percent-encoded or not).
     fn read(&mut self, href: &str, what: &str, cancel: &CancelToken) -> anyhow::Result<Vec<u8>> {
-        let href = href.split(['#', '?']).next().unwrap_or(href);
-        let decoded = percent_encoding::percent_decode_str(href).decode_utf8()?;
-        let index = normalize(&decoded)
+        let index = member_key(href)
             .and_then(|name| self.members.get(&name).copied())
             .ok_or_else(|| anyhow::anyhow!("Missing EPUB resource {href}"))?;
         let file = self.archive.by_index(index)?;
         inspection::copy_bounded(file, limits::BINARY_INPUT, what, cancel)
     }
+}
+/// The member an href names: without its fragment or query, unescaped and
+/// normalized. Chapters, links and resources are all compared by it.
+fn member_key(href: &str) -> Option<String> {
+    let href = href.split(['#', '?']).next().unwrap_or(href);
+    let decoded = percent_encoding::percent_decode_str(href)
+        .decode_utf8()
+        .ok()?;
+    normalize(&decoded)
 }
 /// Collapse `.`/`..`/empty segments; a path escaping the root is not a member.
 fn normalize(path: &str) -> Option<String> {
@@ -255,8 +270,8 @@ fn package(container: &mut Container, cancel: &CancelToken) -> anyhow::Result<rb
     const CONTAINER: &str = "META-INF/container.xml";
     let container_xml = container.read(CONTAINER, "EPUB container", cancel)?;
     let opf_path = {
-        let text = std::str::from_utf8(&container_xml)?;
-        let doc = roxmltree::Document::parse(text)?;
+        let text = inspection::decode(&container_xml).0;
+        let doc = roxmltree::Document::parse(&text)?;
         doc.descendants()
             .find(|n| n.has_tag_name("rootfile"))
             .and_then(|n| n.attribute("full-path"))
@@ -267,8 +282,8 @@ fn package(container: &mut Container, cancel: &CancelToken) -> anyhow::Result<rb
     let opf_dir = opf_path.rsplit_once('/').map_or("", |(dir, _)| dir);
     let mut contents = Vec::new();
     {
-        let text = std::str::from_utf8(&opf)?;
-        let doc = roxmltree::Document::parse(text)?;
+        let text = inspection::decode(&opf).0;
+        let doc = roxmltree::Document::parse(&text)?;
         let items: Vec<_> = doc
             .descendants()
             .filter(|n| n.has_tag_name("item"))
@@ -300,8 +315,7 @@ fn package(container: &mut Container, cancel: &CancelToken) -> anyhow::Result<rb
     }
     for href in contents {
         inspection::check(cancel)?;
-        let decoded = percent_encoding::percent_decode_str(&href).decode_utf8()?;
-        let Some(name) = normalize(&decoded) else {
+        let Some(name) = member_key(&href) else {
             continue;
         };
         if !written.insert(name.clone()) {
@@ -507,6 +521,144 @@ mod tests {
             error.to_string().contains("EPUB container exceeds 16 MiB"),
             "{error}"
         );
+    }
+
+    /// The layout Sigil writes: package in `OEBPS/`, chapters in `Text/`,
+    /// linked to each other through `../Text/`.
+    fn sigil(path: &std::path::Path, extra: &[(&str, &[u8])]) {
+        let opf = OPF
+            .replace(
+                "nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"",
+                "Text/nav.xhtml\" media-type=\"application/xhtml+xml\"",
+            )
+            .replace("href=\"one.xhtml\"", "href=\"Text/one.xhtml\"")
+            .replace("href=\"two.xhtml\"", "href=\"Text/two.xhtml\"")
+            .replace(
+                "href=\"sub/caf%C3%A9%20three.xhtml\"",
+                "href=\"Text/three.xhtml\"",
+            );
+        let container = CONTAINER_XML.replace("EPUB/book.opf", "OEBPS/content.opf");
+        let mut entries: Vec<(&str, &[u8])> = vec![
+            ("mimetype", b"application/epub+zip"),
+            ("META-INF/container.xml", container.as_bytes()),
+            ("OEBPS/content.opf", opf.as_bytes()),
+            (
+                "OEBPS/Text/one.xhtml",
+                br#"<html><body><h1>First</h1><p><a href="../Text/two.xhtml#note5">Note</a></p></body></html>"#,
+            ),
+            (
+                "OEBPS/Text/two.xhtml",
+                br#"<html><body><h1>Second</h1><p id="note5">The note.</p></body></html>"#,
+            ),
+            (
+                "OEBPS/Text/three.xhtml",
+                b"<html><body><h1>Th\xe9</h1><p>caf\xe9</p></body></html>",
+            ),
+        ];
+        entries.extend_from_slice(extra);
+        write(path, &entries);
+    }
+
+    #[test]
+    fn a_link_through_parent_folders_lands_on_its_chapter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("Synthetic sigil book.epub");
+        sigil(&path, &[]);
+        let first = inspect(&path, &InspectRequest::default()).unwrap();
+        let link = first
+            .blocks
+            .iter()
+            .flat_map(|b| &b.runs)
+            .find_map(|r| r.link.clone())
+            .unwrap();
+        assert!(link.ends_with("../Text/two.xhtml#note5"), "{link}");
+        let linked = inspect(
+            &path,
+            &InspectRequest {
+                target: Some(link),
+                ..InspectRequest::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(linked.position, 1);
+        assert_eq!(linked.title, "EPUB · chapter 2 / 3");
+        assert_eq!((linked.previous, linked.next), (Some(0), Some(2)));
+        assert!(linked.plain_text().contains("The note."));
+        // A chapter in a legacy encoding reads, and says how.
+        let third = inspect(
+            &path,
+            &InspectRequest {
+                offset: 2,
+                ..InspectRequest::default()
+            },
+        )
+        .unwrap();
+        assert!(third.plain_text().contains("caf\u{e9}"));
+        assert!(
+            third.notice.contains("Read as Windows-1252"),
+            "{}",
+            third.notice
+        );
+    }
+
+    #[test]
+    fn resources_never_read_do_not_refuse_the_book() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("Synthetic illustrated book.epub");
+        let video = vec![0u8; limits::BINARY_INPUT + 1024];
+        sigil(&path, &[("OEBPS/Video/film.mp4", &video)]);
+        let first = inspect(&path, &InspectRequest::default()).unwrap();
+        assert!(first.plain_text().contains("First"));
+    }
+
+    #[test]
+    fn a_chapter_source_is_the_code_view_and_search_passes_over_bad_chapters() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("Synthetic book.epub");
+        book(&path);
+        let source = inspect(
+            &path,
+            &InspectRequest {
+                source: true,
+                offset: 1,
+                ..InspectRequest::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(source.kind, bibli_core::inspection::InspectionKind::Code);
+        assert!(source.blocks.iter().all(|b| b.code));
+        assert_eq!(source.blocks[0].language.as_deref(), Some("xhtml"));
+        assert_eq!(source.position, 1);
+        assert!(source.source_available);
+
+        // The spine names a chapter the container lacks: the search reads on.
+        let broken = tmp.path().join("Synthetic broken book.epub");
+        let opf = OPF.replace("href=\"two.xhtml\"", "href=\"absent.xhtml\"");
+        write(
+            &broken,
+            &[
+                ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+                ("EPUB/book.opf", opf.as_bytes()),
+                ("EPUB/nav.xhtml", NAV.as_bytes()),
+                (
+                    "EPUB/one.xhtml",
+                    b"<html><body><p>Nothing.</p></body></html>",
+                ),
+                (
+                    "EPUB/sub/caf\u{e9} three.xhtml",
+                    b"<html><body><p>The needle.</p></body></html>",
+                ),
+            ],
+        );
+        let found = inspect(
+            &broken,
+            &InspectRequest {
+                query: Some("needle".into()),
+                ..InspectRequest::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(found.position, 2);
     }
 
     #[test]

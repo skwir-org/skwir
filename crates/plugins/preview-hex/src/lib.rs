@@ -61,8 +61,13 @@ impl PreviewProvider for Provider {
         }
         let offset = position / row * row;
         let bytes = read(&path, offset, limits::HEX_PAGE as usize, cancel)?;
-        let mut page =
-            inspection::hex_page(format!("Hex · {len} bytes"), &bytes, len, offset, position);
+        let mut page = inspection::hex_page(
+            format!("Hex · {}", inspection::size(len)),
+            &bytes,
+            len,
+            offset,
+            position,
+        );
         page.notice = notice;
         Ok(Some(page))
     }
@@ -96,8 +101,9 @@ fn find(
     cancel: &CancelToken,
 ) -> anyhow::Result<Option<u64>> {
     use std::io::{Seek, SeekFrom};
-    let mut file = std::fs::File::open(path)?;
+    let mut file = inspection::open(path)?;
     file.seek(SeekFrom::Start(offset))?;
+    let finder = memchr::memmem::Finder::new(needle);
     let mut bytes = vec![0; 64 * 1024 + needle.len()];
     let mut keep = 0;
     let mut base = offset;
@@ -108,10 +114,7 @@ fn find(
             return Ok(None);
         }
         let available = keep + n;
-        if let Some(i) = bytes[..available]
-            .windows(needle.len())
-            .position(|w| w == needle)
-        {
+        if let Some(i) = finder.find(&bytes[..available]) {
             return Ok(Some(base + i as u64));
         }
         keep = (needle.len() - 1).min(available);

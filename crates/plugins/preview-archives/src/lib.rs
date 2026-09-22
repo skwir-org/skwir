@@ -71,8 +71,9 @@ impl PreviewProvider for Provider {
     ) -> anyhow::Result<Option<bibli_core::preview::Member>> {
         let path = req.entry.resolve()?;
         let index = target.parse::<u64>()?;
-        let members = archive::list(&path, cancel)?;
-        let member = members
+        let listing = archive::list(&path, cancel)?;
+        let member = listing
+            .members
             .iter()
             .find(|m| m.index == index)
             .ok_or_else(|| anyhow::anyhow!("Missing archive member"))?;
@@ -86,64 +87,63 @@ impl PreviewProvider for Provider {
             path: archive::extract(&path, member, into, cancel)?,
         }))
     }
+    /// The listing. A member is never inspected here: the panel extracts it
+    /// and previews it as the file it is.
     fn inspect(
         &self,
         req: &PreviewRequest,
-        view: &InspectRequest,
+        _view: &InspectRequest,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Inspection>> {
         let path = req.entry.resolve()?;
-        let members = archive::list(&path, cancel)?;
-        if let Some(target) = &view.target {
-            let index = target.parse::<u64>()?;
-            let member = members
-                .iter()
-                .find(|m| m.index == index)
-                .ok_or_else(|| anyhow::anyhow!("Missing archive member"))?;
-            anyhow::ensure!(
-                member.regular && !member.encrypted,
-                "This member cannot be previewed (directory, link or encrypted file)"
-            );
-            return archive::member_preview(
-                &member.name,
-                &archive::read(&path, member, cancel)?,
-                view.offset,
+        let listing = archive::list(&path, cancel)?;
+        let members = &listing.members;
+        let rows = member_rows(members, cancel)?;
+        let details = facts(members, &rows);
+        // What was left out is the one thing the strip has to say.
+        let notice = if listing.complete {
+            String::new()
+        } else {
+            format!(
+                "First {} members · open it in an archive application for the rest",
+                members.len()
             )
-            .map(Some);
-        }
-        let rows = member_rows(&members, cancel)?;
-        let folders = rows.iter().filter(|r| r.branch).count();
-        let unpacked: u64 = members
-            .iter()
-            .filter(|member| !member.directory)
-            .map(|member| u64::try_from(member.size).unwrap_or(0))
-            .sum();
-        let encrypted = members.iter().filter(|member| member.encrypted).count();
-        let details = [
-            ("Files", (rows.len() - folders).to_string()),
-            ("Folders", folders.to_string()),
-            ("Unpacked", format!("{unpacked} bytes")),
-            (
-                "Encrypted",
-                match encrypted {
-                    0 => String::new(),
-                    count => format!("{count} members"),
-                },
-            ),
-        ]
-        .into_iter()
-        .filter_map(|(label, value)| inspection::detail(label, value))
-        .collect();
+        };
         Ok(Some(Inspection {
             details,
             kind: bibli_core::inspection::InspectionKind::Archive,
             title: format!("Archive · {} members", members.len()),
-            notice: format!("{} files · {folders} folders", rows.len() - folders),
+            notice,
             rows,
-            columns: vec!["Name".into(), "Size".into()],
+            columns: vec!["Name".into(), "Size".into(), "Status".into()],
             ..Inspection::default()
         }))
     }
+}
+
+/// What the listing says about the archive, for the panel's Details.
+fn facts(members: &[archive::Member], rows: &[Row]) -> Vec<bibli_core::inspection::Detail> {
+    let folders = rows.iter().filter(|r| r.branch).count();
+    // Declared sizes are the archive's word: a hostile one must not
+    // overflow the total.
+    let unpacked = members
+        .iter()
+        .filter(|member| !member.directory)
+        .filter_map(|member| u64::try_from(member.size).ok())
+        .fold(0u64, u64::saturating_add);
+    let encrypted = members.iter().filter(|member| member.encrypted).count();
+    inspection::details([
+        ("Files", inspection::count(rows.len() - folders)),
+        ("Folders", inspection::count(folders)),
+        (
+            "Unpacked",
+            (unpacked > 0).then(|| inspection::size(unpacked)),
+        ),
+        (
+            "Encrypted",
+            inspection::count(encrypted).map(|count| format!("{count} members")),
+        ),
+    ])
 }
 
 fn member_rows(members: &[archive::Member], cancel: &CancelToken) -> anyhow::Result<Vec<Row>> {
@@ -159,22 +159,13 @@ fn member_rows(members: &[archive::Member], cancel: &CancelToken) -> anyhow::Res
         for end in 1..=parts.len() {
             let name: Vec<String> = parts[..end].iter().map(|s| (*s).to_owned()).collect();
             let directory = end < parts.len() || member.directory;
+            let bytes = (!directory)
+                .then(|| u64::try_from(member.size).ok())
+                .flatten();
             rows.entry(name).or_insert_with(|| Row {
                 cells: vec![
                     parts[end - 1].into(),
-                    if directory {
-                        String::new()
-                    } else {
-                        format!(
-                            "{} bytes{}",
-                            member.size,
-                            if member.encrypted {
-                                " · encrypted"
-                            } else {
-                                ""
-                            }
-                        )
-                    },
+                    bytes.map(inspection::size).unwrap_or_default(),
                     if directory || (member.regular && !member.encrypted) {
                         String::new()
                     } else if member.encrypted {
@@ -183,9 +174,7 @@ fn member_rows(members: &[archive::Member], cancel: &CancelToken) -> anyhow::Res
                         "Link / special".into()
                     },
                 ],
-                bytes: (!directory)
-                    .then(|| u64::try_from(member.size).ok())
-                    .flatten(),
+                bytes,
                 depth: end - 1,
                 branch: directory,
                 target: (!directory && member.regular && !member.encrypted)
@@ -265,5 +254,26 @@ mod tests {
         assert_eq!(rows[7].target, None);
         assert_eq!(rows[8].bytes, None);
         assert_eq!(rows[8].target, None);
+        assert_eq!(rows[5].cells[1], "1.5 KB");
+    }
+
+    #[test]
+    fn hostile_declared_sizes_saturate_the_total() {
+        let members: Vec<_> = (0..3)
+            .map(|i| archive::Member {
+                index: i,
+                name: format!("huge{i}"),
+                size: i64::MAX,
+                directory: false,
+                regular: true,
+                encrypted: false,
+            })
+            .collect();
+        let rows = member_rows(&members, &CancelToken::new()).unwrap();
+        let facts = facts(&members, &rows);
+        let unpacked = facts.iter().find(|f| f.label == "Unpacked").unwrap();
+        assert_eq!(unpacked.value, inspection::size(u64::MAX));
+        assert_eq!(facts[0], bibli_core::inspection::Detail::new("Files", "3"));
+        assert!(facts.iter().all(|f| f.label != "Folders"));
     }
 }

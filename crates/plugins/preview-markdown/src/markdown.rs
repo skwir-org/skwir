@@ -99,27 +99,49 @@ fn inline_event(inline: &mut Inline, event: &Event) -> bool {
     true
 }
 
-/// A heading's link target, in the shape readers already type: lowercase,
-/// spaces to hyphens, punctuation dropped, and a counter when a document
-/// repeats a heading. Links like `[see](#the-plan)` resolve against it.
-fn slug(text: &str, used: &mut Vec<String>) -> String {
-    let mut base = String::new();
-    for c in text.chars() {
-        if c.is_alphanumeric() {
-            base.extend(c.to_lowercase());
-        } else if matches!(c, ' ' | '-' | '_' | '\t') && !base.ends_with('-') {
-            base.push('-');
-        }
+/// Heading link targets, named the way GitHub names them, since that is
+/// where READMEs' `[see](#the-plan)` links were written against: lowercase,
+/// a space becomes a hyphen, and everything but letters, digits, `-` and
+/// `_` is dropped; a repeated target gets `-1`, `-2` and so on. An explicit
+/// `{#id}` is kept as written and only made unique.
+#[derive(Default)]
+struct Anchors {
+    /// Every target handed out, with the next suffix to try for it.
+    used: std::collections::HashMap<String, usize>,
+}
+impl Anchors {
+    fn slug(&mut self, text: &str) -> String {
+        let base: String = text
+            .trim()
+            .chars()
+            .filter_map(|c| match c {
+                ' ' => Some('-'),
+                c if c.is_alphanumeric() || c == '-' || c == '_' => Some(c),
+                _ => None,
+            })
+            .flat_map(char::to_lowercase)
+            .collect();
+        self.unique(base)
     }
-    let base = base.trim_matches('-').to_owned();
-    let mut candidate = base.clone();
-    let mut seen = 0;
-    while used.contains(&candidate) {
-        seen += 1;
-        candidate = format!("{base}-{seen}");
+    fn unique(&mut self, base: String) -> String {
+        let Some(next) = self.used.get(&base).copied() else {
+            self.used.insert(base.clone(), 1);
+            return base;
+        };
+        // Each base remembers where its count stopped, so a document that
+        // repeats one heading a thousand times costs a thousand lookups.
+        let mut seen = next;
+        let candidate = loop {
+            let candidate = format!("{base}-{seen}");
+            seen += 1;
+            if !self.used.contains_key(&candidate) {
+                break candidate;
+            }
+        };
+        self.used.insert(base, seen);
+        self.used.insert(candidate.clone(), 1);
+        candidate
     }
-    used.push(candidate.clone());
-    candidate
 }
 
 fn level(level: HeadingLevel) -> u8 {
@@ -154,11 +176,14 @@ fn emit_html(
     Ok(())
 }
 
+/// The document's blocks, up to `limits::BLOCKS`: a longer one (a changelog
+/// is a list item per line) is cut there and says so (`Page::truncated`),
+/// its source one toggle away.
 pub fn parse(
     source: &str,
     cancel: &CancelToken,
     mut image: impl FnMut(&str) -> Option<Image>,
-) -> anyhow::Result<Vec<Block>> {
+) -> anyhow::Result<rich_preview::Page> {
     // Metadata blocks are enabled so that a note's front matter is recognized
     // and skipped, rather than read as a rule and a large heading.
     let options = Options::ENABLE_TABLES
@@ -182,7 +207,7 @@ pub fn parse(
     let mut cells: Vec<std::ops::Range<usize>> = Vec::new();
     let mut cell_start = 0usize;
     let mut html = String::new();
-    let mut anchors: Vec<String> = Vec::new();
+    let mut anchors = Anchors::default();
     // One budget for every image in the document, Markdown's and raw HTML's.
     let mut images_seen = 0usize;
     let mut load = |href: &str| -> Option<Image> {
@@ -193,11 +218,12 @@ pub fn parse(
 
     for event in Parser::new_ext(source, options) {
         check(cancel)?;
-        anyhow::ensure!(
-            blocks.len() < limits::BLOCKS,
-            "Document exceeds {} preview blocks",
-            limits::BLOCKS
-        );
+        if blocks.len() >= limits::BLOCKS {
+            return Ok(rich_preview::Page {
+                blocks: cut(blocks),
+                truncated: true,
+            });
+        }
         if in_metadata {
             if matches!(event, Event::End(TagEnd::MetadataBlock(_))) {
                 in_metadata = false;
@@ -274,7 +300,7 @@ pub fn parse(
             }
             Event::End(TagEnd::Heading(_)) => {
                 if current.anchor.is_none() {
-                    current.anchor = Some(slug(&current.text, &mut anchors));
+                    current.anchor = Some(anchors.slug(&current.text));
                 }
                 flush(&mut blocks, &mut current, &mut marker);
             }
@@ -282,7 +308,7 @@ pub fn parse(
                 flush(&mut blocks, &mut current, &mut marker);
                 begin(&mut current, quote_depth, &lists, marker.as_deref());
                 current.heading = level(tag);
-                current.anchor = id.map(|id| slug(id.as_ref(), &mut anchors));
+                current.anchor = id.map(|id| anchors.unique(id.to_string()));
             }
             Event::Start(Tag::BlockQuote(_)) => {
                 flush(&mut blocks, &mut current, &mut marker);
@@ -409,7 +435,16 @@ pub fn parse(
     }
     flush(&mut blocks, &mut current, &mut marker);
     emit_html(&mut blocks, &mut html, cancel, &mut load, quote_depth)?;
-    Ok(blocks)
+    Ok(rich_preview::Page {
+        truncated: blocks.len() > limits::BLOCKS,
+        blocks: cut(blocks),
+    })
+}
+
+/// A run of raw HTML may add several blocks at once: keep to the bound.
+fn cut(mut blocks: Vec<Block>) -> Vec<Block> {
+    blocks.truncate(limits::BLOCKS);
+    blocks
 }
 
 #[cfg(test)]
@@ -417,7 +452,9 @@ mod tests {
     use super::*;
 
     fn parse(source: &str) -> Vec<Block> {
-        super::parse(source, &CancelToken::new(), |_| None).unwrap()
+        super::parse(source, &CancelToken::new(), |_| None)
+            .unwrap()
+            .blocks
     }
 
     #[test]
@@ -499,7 +536,8 @@ mod tests {
                 None
             },
         )
-        .unwrap();
+        .unwrap()
+        .blocks;
         assert_eq!(asked, ["logo.png"], "its images use the bounded loader");
         assert!(blocks.iter().any(|b| b.text == "Logo"));
         assert!(blocks.iter().any(|b| b.text == "Text."));
@@ -561,13 +599,46 @@ mod tests {
 
     #[test]
     fn headings_carry_a_link_target() {
-        let blocks = parse("# The Plan!\n\n## The Plan\n\n### Explicit {#named}\n");
+        let blocks = parse(
+            "# The Plan!\n\n## The Plan\n\n### Explicit {#Named_Part}\n\n## my_func\n\n## a -- b\n\n## The Plan-1\n",
+        );
         let anchors: Vec<_> = blocks.iter().map(|b| b.anchor.as_deref()).collect();
         assert_eq!(
             anchors,
-            [Some("the-plan"), Some("the-plan-1"), Some("named")],
-            "repeated headings still get distinct targets"
+            [
+                Some("the-plan"),
+                Some("the-plan-1"),
+                Some("Named_Part"),
+                Some("my_func"),
+                Some("a----b"),
+                Some("the-plan-1-1"),
+            ],
+            "GitHub's names, explicit ids verbatim, repeats made distinct"
         );
+    }
+
+    #[test]
+    fn a_repeated_heading_costs_a_lookup_not_a_scan() {
+        let source = "# a\n".repeat(limits::BLOCKS - 1);
+        let started = std::time::Instant::now();
+        let blocks = parse(&source);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        assert_eq!(blocks[1].anchor.as_deref(), Some("a-1"));
+        let last = format!("a-{}", limits::BLOCKS - 2);
+        assert_eq!(
+            blocks.last().unwrap().anchor.as_deref(),
+            Some(last.as_str())
+        );
+    }
+
+    #[test]
+    fn a_long_document_is_cut_at_the_bound_not_refused() {
+        let source = "- item\n".repeat(limits::BLOCKS + 500);
+        let page = super::parse(&source, &CancelToken::new(), |_| None).unwrap();
+        assert!(page.truncated);
+        assert_eq!(page.blocks.len(), limits::BLOCKS);
+        let short = super::parse("- one\n- two\n", &CancelToken::new(), |_| None).unwrap();
+        assert!(!short.truncated);
     }
 
     #[test]

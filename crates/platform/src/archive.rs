@@ -1,10 +1,7 @@
 //! Small native helper for archive metadata and bounded member reads.
 use crate::inspection::{self, limits};
 use anyhow::Context;
-use bibli_core::{
-    CancelToken,
-    inspection::{Block, Inspection},
-};
+use bibli_core::CancelToken;
 use serde::Deserialize;
 use std::{path::Path, process::Command};
 #[derive(Clone, Debug, Deserialize)]
@@ -30,7 +27,15 @@ pub fn worker_path() -> Option<std::path::PathBuf> {
 fn worker() -> anyhow::Result<std::path::PathBuf> {
     worker_path().context("Install bibli-archive-worker to preview this file")
 }
-pub fn list(path: &Path, cancel: &CancelToken) -> anyhow::Result<Vec<Member>> {
+/// An archive's members as the helper listed them: the first
+/// `limits::CONTAINER_MEMBERS`, within `limits::MEMBER_NAMES` bytes of names.
+#[derive(Debug, Deserialize)]
+pub struct Listing {
+    pub members: Vec<Member>,
+    /// Every member is listed. A longer archive shows its start, and says so.
+    pub complete: bool,
+}
+pub fn list(path: &Path, cancel: &CancelToken) -> anyhow::Result<Listing> {
     let bytes = crate::process::run(
         Command::new(worker()?)
             .arg(path)
@@ -110,51 +115,9 @@ pub fn read(path: &Path, member: &Member, cancel: &CancelToken) -> anyhow::Resul
     write_member(path, member, &output, cancel)?;
     inspection::read_bounded(&output, limits::BINARY_INPUT, "Member preview", cancel)
 }
-/// Image, text prefix or paged hexadecimal view of a container member or
-/// attachment. `offset` pages the byte view; text and images ignore it.
-pub fn member_preview(name: &str, bytes: &[u8], offset: u64) -> anyhow::Result<Inspection> {
-    if let Ok(image) = inspection::image(bytes) {
-        return Ok(Inspection {
-            title: name.into(),
-            image: Some(image),
-            ..Inspection::default()
-        });
-    }
-    let len = bytes.len().min(limits::MEMBER_TEXT);
-    if let Some(text) = inspection::text_prefix(&bytes[..len]) {
-        return Ok(Inspection {
-            title: name.into(),
-            blocks: vec![Block {
-                text: text.to_owned(),
-                code: true,
-                ..Block::default()
-            }],
-            notice: format!(
-                "Member preview · first {} of text",
-                limits::describe(limits::MEMBER_TEXT)
-            ),
-            ..Inspection::default()
-        });
-    }
-    let total = bytes.len() as u64;
-    let offset = offset.min(total.saturating_sub(1)) / inspection::HEX_ROW as u64
-        * inspection::HEX_ROW as u64;
-    let end = (offset + limits::HEX_PAGE).min(total);
-    let mut page = inspection::hex_page(
-        format!("{name} · {total} bytes"),
-        &bytes[offset as usize..end as usize],
-        total,
-        offset,
-        offset,
-    );
-    page.notice = "Member preview · bytes".into();
-    Ok(page)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::inspection::InspectionKind;
 
     #[test]
     fn a_member_is_written_under_our_name_never_its_own() {
@@ -168,44 +131,5 @@ mod tests {
         assert_eq!(file("x./../y"), into.join("member"));
         assert_eq!(file("a.sh;rm -rf"), into.join("member"));
         assert_eq!(file(&format!("a.{}", "x".repeat(40))), into.join("member"));
-    }
-
-    #[test]
-    fn member_preview_detects_image_text_and_bytes() {
-        let mut png = std::io::Cursor::new(Vec::new());
-        image::RgbaImage::from_pixel(2, 2, image::Rgba([1, 2, 3, 255]))
-            .write_to(&mut png, image::ImageFormat::Png)
-            .unwrap();
-        let image = member_preview("cover.png", png.get_ref(), 0).unwrap();
-        assert_eq!(
-            image.image.as_ref().map(|i| (i.width, i.height)),
-            Some((2, 2))
-        );
-        assert!(image.blocks.is_empty());
-
-        let text = member_preview("notes.txt", "caf\u{e9} note\n".as_bytes(), 0).unwrap();
-        assert_eq!(text.kind, InspectionKind::Text);
-        assert_eq!(text.plain_text(), "caf\u{e9} note\n");
-        assert!(text.blocks[0].code);
-
-        // The text cut lands inside the last two-byte character.
-        let mut long = b"a".to_vec();
-        long.extend_from_slice("\u{e9}".repeat(limits::MEMBER_TEXT / 2).as_bytes());
-        let cut = member_preview("long.txt", &long, 0).unwrap();
-        assert_eq!(cut.kind, InspectionKind::Text);
-        assert_eq!(cut.plain_text().len(), limits::MEMBER_TEXT - 1);
-
-        let binary: Vec<u8> = (0..=255u8).cycle().take(5000).collect();
-        let bytes = member_preview("blob.bin", &binary, 0).unwrap();
-        assert_eq!(bytes.kind, InspectionKind::Hex);
-        assert_eq!(bytes.rows.len(), 256);
-        assert_eq!(bytes.next, Some(4096));
-        assert_eq!(bytes.columns, inspection::hex_columns());
-        let second = member_preview("blob.bin", &binary, 4100).unwrap();
-        assert_eq!(second.position, 4096);
-        assert_eq!(second.rows[0].cells[0], "0000000000001000");
-        assert_eq!(second.rows.len(), (5000usize - 4096).div_ceil(16));
-        assert_eq!(second.previous, Some(0));
-        assert_eq!(second.next, None);
     }
 }

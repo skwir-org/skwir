@@ -40,8 +40,6 @@ pub mod limits {
     pub const TEXT_PAGE: usize = 256 * 1024;
     pub const HEX_PAGE: u64 = 4096;
     pub const HEX_NEEDLE: usize = 4096;
-    /// Text prefix shown for a container member or attachment.
-    pub const MEMBER_TEXT: usize = 64 * 1024;
     /// Semantic blocks per rich document; rows per contents listing.
     pub const BLOCKS: usize = 2000;
     /// Bytes per logical line: code lines and split rich-text rows. Must match
@@ -86,8 +84,19 @@ pub fn check(cancel: &CancelToken) -> anyhow::Result<()> {
     anyhow::ensure!(!cancel.is_cancelled(), "preview cancelled");
     Ok(())
 }
-/// Up to `limit` bytes of a regular file from `offset`. Opened through
-/// `file::open_regular`, so a named pipe fails instead of blocking the worker.
+/// A regular file opened for a preview that streams it (a table, a byte
+/// search): through `file::open_regular`, so a named pipe fails instead of
+/// blocking the worker.
+pub fn open(path: &Path) -> anyhow::Result<std::fs::File> {
+    crate::file::open_regular(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::InvalidInput {
+            anyhow::anyhow!("preview needs a regular file")
+        } else {
+            error.into()
+        }
+    })
+}
+/// Up to `limit` bytes of a regular file from `offset`, opened by `open`.
 pub fn read(
     path: &Path,
     offset: u64,
@@ -95,13 +104,7 @@ pub fn read(
     cancel: &CancelToken,
 ) -> anyhow::Result<Vec<u8>> {
     check(cancel)?;
-    let mut file = crate::file::open_regular(path).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::InvalidInput {
-            anyhow::anyhow!("preview needs a regular file")
-        } else {
-            error.into()
-        }
-    })?;
+    let mut file = open(path)?;
     file.seek(SeekFrom::Start(offset))?;
     let mut out = Vec::new();
     file.take(limit as u64).read_to_end(&mut out)?;
@@ -170,6 +173,17 @@ impl Encoding {
             Self::Utf16Be => "UTF-16BE",
             Self::Windows1252 => "Windows-1252",
         }
+    }
+    /// Bytes read in this encoding, whatever they look like: a stream that
+    /// was told its encoding once (a table's cells) reads every piece alike.
+    pub fn decode(self, bytes: &[u8]) -> Cow<'_, str> {
+        let encoding = match self {
+            Self::Utf8 => return String::from_utf8_lossy(bytes),
+            Self::Utf16Le => encoding_rs::UTF_16LE,
+            Self::Utf16Be => encoding_rs::UTF_16BE,
+            Self::Windows1252 => encoding_rs::WINDOWS_1252,
+        };
+        encoding.decode_without_bom_handling(bytes).0
     }
     /// What a preview says about the encoding, or nothing for UTF-8.
     pub fn notice(self) -> Option<String> {

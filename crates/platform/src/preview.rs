@@ -126,10 +126,15 @@ fn finish(
     Ok(Preview { image, info })
 }
 
+/// Playback tuning an owner can change while its provider stays registered:
+/// each session reads it when it opens, so a changed preference applies from
+/// the next track and never stops the one playing.
+pub type SharedTuning = std::sync::Arc<parking_lot::Mutex<crate::media::Tuning>>;
+
 pub struct MediaPreviews {
     audio: bool,
     backend: String,
-    tuning: crate::media::Tuning,
+    tuning: SharedTuning,
     cache: CacheSlot,
     gate: Mutex<()>,
 }
@@ -142,15 +147,15 @@ impl MediaPreviews {
         self.backend = backend;
         self
     }
-    pub fn with_replay_gain(mut self, replay_gain: crate::media::ReplayGain) -> Self {
-        self.tuning.replay_gain = replay_gain;
+    pub fn with_tuning(mut self, tuning: SharedTuning) -> Self {
+        self.tuning = tuning;
         self
     }
     pub fn new(cache: CacheSlot) -> Self {
         Self {
             cache,
             backend: "auto".into(),
-            tuning: crate::media::Tuning::default(),
+            tuning: SharedTuning::default(),
             audio: false,
             gate: Mutex::new(()),
         }
@@ -169,7 +174,7 @@ impl PreviewProvider for MediaPreviews {
         }
         let session = crate::media::WorkerSession::open_tuned(
             req.entry.resolve()?,
-            self.tuning,
+            *self.tuning.lock(),
             lifetime,
             wake,
         )?;

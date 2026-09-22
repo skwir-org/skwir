@@ -13,11 +13,15 @@ mod native {
         fn archive_read_new() -> *mut c_void;
         fn archive_read_support_filter_all(a: *mut c_void) -> c_int;
         fn archive_read_support_format_all(a: *mut c_void) -> c_int;
+        fn archive_read_support_format_raw(a: *mut c_void) -> c_int;
+        fn archive_format(a: *mut c_void) -> c_int;
+        fn archive_filter_count(a: *mut c_void) -> c_int;
         fn archive_read_open_filename(a: *mut c_void, path: *const c_char, block: usize) -> c_int;
         fn archive_read_next_header(a: *mut c_void, entry: *mut *mut c_void) -> c_int;
         fn archive_entry_pathname_utf8(e: *mut c_void) -> *const c_char;
         fn archive_entry_pathname(e: *mut c_void) -> *const c_char;
         fn archive_entry_size(e: *mut c_void) -> i64;
+        fn archive_entry_size_is_set(e: *mut c_void) -> c_int;
         fn archive_entry_filetype(e: *mut c_void) -> u32;
         fn archive_entry_is_encrypted(e: *mut c_void) -> c_int;
         fn archive_read_data(a: *mut c_void, buf: *mut c_void, size: usize) -> isize;
@@ -46,6 +50,8 @@ mod native {
     const LC_CTYPE: c_int = 0;
 
     const ARCHIVE_EOF: c_int = 1;
+    /// `ARCHIVE_FORMAT_RAW`: no archive at all, one stream of data.
+    const ARCHIVE_FORMAT_RAW: c_int = 0x90000;
     /// A warning is not a failure: libarchive reports one when, for instance,
     /// a name cannot be converted to the locale's charset, and the entry is
     /// still there to read. Only `ARCHIVE_FAILED` and `ARCHIVE_FATAL` stop us.
@@ -170,6 +176,27 @@ mod native {
             .to_string_lossy()
             .into_owned())
     }
+    /// A file that is only compressed (`notes.txt.gz`, `dump.sql.xz`) is read
+    /// as an archive of one member, which libarchive calls `data`; it is
+    /// named after the file instead, less its compression suffix. Anything
+    /// raw that was not decompressed is not an archive at all.
+    fn member_name(
+        reader: &Reader,
+        entry: *mut c_void,
+        archive: &std::path::Path,
+    ) -> anyhow::Result<String> {
+        if unsafe { archive_format(reader.0) } != ARCHIVE_FORMAT_RAW {
+            return entry_name(entry);
+        }
+        // The "none" filter is always there; a decompressor makes two.
+        anyhow::ensure!(
+            unsafe { archive_filter_count(reader.0) } > 1,
+            "Unrecognized archive format"
+        );
+        Ok(archive
+            .file_stem()
+            .map_or_else(|| "data".into(), |stem| stem.to_string_lossy().into_owned()))
+    }
     pub fn run() -> anyhow::Result<()> {
         let Args {
             path,
@@ -181,6 +208,7 @@ mod native {
             names: name_limit,
         } = parse_args(std::env::args_os().skip(1))?;
         utf8_locale();
+        let archive = std::path::PathBuf::from(&path);
         #[cfg(unix)]
         let path = {
             use std::os::unix::ffi::OsStrExt;
@@ -193,6 +221,8 @@ mod native {
         unsafe {
             reader.check(archive_read_support_filter_all(reader.0))?;
             reader.check(archive_read_support_format_all(reader.0))?;
+            // Raw bids last: it is what is left when no archive format is.
+            reader.check(archive_read_support_format_raw(reader.0))?;
             reader.check(archive_read_open_filename(
                 reader.0,
                 path.as_ptr(),
@@ -202,6 +232,7 @@ mod native {
         let mut entries = Vec::new();
         let mut index = 0u64;
         let mut names = 0usize;
+        let mut complete = true;
         loop {
             let mut entry = std::ptr::null_mut();
             let status = unsafe { archive_read_next_header(reader.0, &raw mut entry) };
@@ -213,7 +244,7 @@ mod native {
             if member == Some(index) {
                 anyhow::ensure!(
                     expected.as_deref().and_then(|e| e.to_str())
-                        == Some(entry_name(entry)?.as_str()),
+                        == Some(member_name(&reader, entry, &archive)?.as_str()),
                     "Archive changed since it was listed; select it again"
                 );
                 anyhow::ensure!(
@@ -255,20 +286,36 @@ mod native {
                 return Ok(());
             }
             if member.is_none() {
-                let name = entry_name(entry)?;
+                let name = member_name(&reader, entry, &archive)?;
                 names += name.len();
-                let (member_limit, name_limit) =
-                    (member_limit.unwrap_or(0), name_limit.unwrap_or(0));
-                anyhow::ensure!(
-                    names <= name_limit && entries.len() < member_limit,
-                    "Archive listing exceeds the preview limit of {member_limit} members"
-                );
-                entries.push(serde_json::json!({"index":index,"name":name,"size":unsafe{archive_entry_size(entry)},"directory":unsafe{archive_entry_filetype(entry)}==0o040_000,"regular":unsafe{archive_entry_filetype(entry)}==0o100_000,"encrypted":unsafe{archive_entry_is_encrypted(entry)}!=0}));
+                // Past either bound the listing ends there: what was
+                // listed is shown, with a word that it is not all.
+                if names > name_limit.unwrap_or(0) || entries.len() >= member_limit.unwrap_or(0) {
+                    complete = false;
+                    break;
+                }
+                let kind = unsafe { archive_entry_filetype(entry) };
+                let size = if unsafe { archive_entry_size_is_set(entry) } != 0 {
+                    unsafe { archive_entry_size(entry) }
+                } else {
+                    -1
+                };
+                entries.push(serde_json::json!({
+                    "index": index,
+                    "name": name,
+                    "size": size,
+                    "directory": kind == 0o040_000,
+                    "regular": kind == 0o100_000,
+                    "encrypted": unsafe { archive_entry_is_encrypted(entry) } != 0,
+                }));
             }
             index += 1;
         }
         anyhow::ensure!(member.is_none(), "Archive member no longer exists");
-        println!("{}", serde_json::to_string(&entries)?);
+        println!(
+            "{}",
+            serde_json::json!({"members": entries, "complete": complete})
+        );
         Ok(())
     }
 }

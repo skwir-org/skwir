@@ -1,7 +1,7 @@
 //! Font specimens rasterized on a worker, without registering fonts globally.
 use bibli_core::{
     App, CancelToken,
-    inspection::{Block, InspectRequest, Inspection},
+    inspection::{InspectRequest, Inspection},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
     thumbs::Image,
@@ -77,31 +77,32 @@ fn specimen(
     };
     let name = named(ttf_parser::name_id::FULL_NAME).unwrap_or_else(|| "Font specimen".into());
     let glyphs = face.number_of_glyphs();
-    // What the name table says, for the panel's Details.
-    let mut details: Vec<_> = [
+    // What the name table says, for the panel's Details, then what the
+    // tables hold.
+    let tables = face.tables();
+    let outlines = if tables.glyf.is_some() {
+        Some("TrueType")
+    } else if tables.cff.is_some() || tables.cff2.is_some() {
+        Some("PostScript (CFF)")
+    } else if tables.sbix.is_some()
+        || tables.cbdt.is_some()
+        || tables.ebdt.is_some()
+        || tables.bdat.is_some()
+    {
+        Some("Bitmaps only")
+    } else {
+        None
+    };
+    let mut details = inspection::details([
         ("Family", named(ttf_parser::name_id::FAMILY)),
         ("Style", named(ttf_parser::name_id::SUBFAMILY)),
         ("Version", named(ttf_parser::name_id::VERSION)),
         ("Designer", named(ttf_parser::name_id::DESIGNER)),
         ("License", named(ttf_parser::name_id::LICENSE)),
-    ]
-    .into_iter()
-    .filter_map(|(label, value)| inspection::detail(label, value?))
-    .collect();
-    details.extend(inspection::detail("Glyphs", glyphs.to_string()));
-    details.extend(inspection::detail(
-        "Outlines",
-        if face.tables().glyf.is_some() {
-            "TrueType"
-        } else {
-            "PostScript (CFF)"
-        },
-    ));
-    details.extend(
-        face.is_variable()
-            .then(|| inspection::detail("Variable", "Yes"))
-            .flatten(),
-    );
+        ("Glyphs", inspection::count(usize::from(glyphs))),
+        ("Outlines", outlines.map(str::to_owned)),
+        ("Variable", face.is_variable().then(|| "Yes".to_owned())),
+    ]);
     let font = fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default())
         .map_err(anyhow::Error::msg)?;
     let mut chars: Vec<_> = font
@@ -111,6 +112,7 @@ fn specimen(
         .filter(|c| !c.is_control())
         .collect();
     chars.sort_unstable();
+    details.extend(inspection::detail("Characters", chars.len().to_string()));
     let sheet = limits::SHEET_GLYPHS;
     let offset = view.offset.min(chars.len().saturating_sub(1) as u64) as usize;
     let sample = view
@@ -149,13 +151,6 @@ fn specimen(
             height: HEIGHT as u32,
             rgba: rgba.into(),
         }),
-        blocks: vec![Block {
-            text: format!(
-                "{glyphs} glyphs · {} mapped characters\nCharacter sheet starts at {offset}",
-                chars.len()
-            ),
-            ..Block::default()
-        }],
         previous: (offset > 0).then(|| offset.saturating_sub(sheet) as u64),
         next: (offset + sheet < chars.len()).then_some((offset + sheet) as u64),
         position: offset as u64,
@@ -373,7 +368,17 @@ mod tests {
         let data = render(synthetic_ttf(1000, 400, 400), Some("AAA")).unwrap();
         assert_eq!(data.kind, bibli_core::inspection::InspectionKind::Font);
         assert!(data.title.starts_with("Font · "));
-        assert!(data.plain_text().contains("2 glyphs · 1 mapped characters"));
+        // What the font is made of is Details, never a sentence in the sheet.
+        assert!(data.blocks.is_empty());
+        let fact = |label: &str| {
+            data.details
+                .iter()
+                .find(|d| d.label == label)
+                .map(|d| d.value.as_str())
+        };
+        assert_eq!(fact("Glyphs"), Some("2"));
+        assert_eq!(fact("Characters"), Some("1"));
+        assert_eq!(fact("Outlines"), Some("TrueType"));
         let image = data.image.unwrap();
         assert_eq!((image.width, image.height), (WIDTH as u32, HEIGHT as u32));
         let dark = image.rgba.chunks(4).filter(|px| px[0] < 128).count();

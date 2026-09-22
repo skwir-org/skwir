@@ -25,19 +25,33 @@ impl Plugin for PreviewPlugin {
         app.previews.register(self.id(), Arc::new(Provider));
     }
 }
-/// What reading a document tells us for free: how long it is.
-fn measured(mut data: Inspection) -> Inspection {
-    let words: usize = data
+/// What reading a document tells us for free: how long it is. What was left
+/// out (an encoding assumed, blocks past the bound) is the notice.
+fn measured(
+    mut data: Inspection,
+    encoding: inspection::Encoding,
+    page: rich_preview::Page,
+) -> Inspection {
+    let words: usize = page
         .blocks
         .iter()
         .map(|block| block.text.split_whitespace().count())
         .sum();
-    let headings = data.blocks.iter().filter(|block| block.heading > 0).count();
-    data.details = [("Words", words), ("Headings", headings)]
-        .into_iter()
-        .filter(|(_, count)| *count > 0)
-        .filter_map(|(label, count)| inspection::detail(label, count.to_string()))
-        .collect();
+    let headings = page.blocks.iter().filter(|block| block.heading > 0).count();
+    data.details = inspection::details([
+        ("Words", inspection::count(words)),
+        ("Headings", inspection::count(headings)),
+    ]);
+    data.notice = [
+        encoding.notice(),
+        page.truncated.then(inspection::blocks_notice),
+        (!data.notice.is_empty()).then(|| std::mem::take(&mut data.notice)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" · ");
+    data.blocks = page.blocks;
     data
 }
 struct Provider;
@@ -57,40 +71,88 @@ impl PreviewProvider for Provider {
         view: &InspectRequest,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Inspection>> {
-        let path = req.entry.resolve()?;
+        // The source is the shared code view (the worker's fallback).
         if view.source {
-            return Ok(Some(inspection::source(&path, view.offset, cancel)?));
+            return Ok(None);
         }
-        let source = inspection::text(&path, cancel)?;
+        let path = req.entry.resolve()?;
+        let (source, encoding) = inspection::read_text(&path, cancel)?;
         let base = path.parent().unwrap_or(std::path::Path::new("."));
-        if !matches!(
+        let image = |href: &str| rich_preview::local_image(base, href, cancel);
+        let markdown = matches!(
             inspection::extension(&path).as_str(),
             "md" | "markdown" | "mdown"
-        ) {
-            let page = rich_preview::html(&source, cancel, |href| {
-                rich_preview::local_image(base, href, cancel)
-            })?;
-            return Ok(Some(measured(Inspection {
+        );
+        let (title, page, notice) = if markdown {
+            ("Markdown", markdown::parse(&source, cancel, image)?, "")
+        } else {
+            (
+                "HTML",
+                rich_preview::html(&source, cancel, image)?,
+                "Reading mode · scripts, styles and remote content are not loaded",
+            )
+        };
+        Ok(Some(measured(
+            Inspection {
                 kind: InspectionKind::Markdown,
-                title: "HTML".into(),
-                blocks: page.blocks,
+                title: title.into(),
                 source_available: true,
-                notice: if page.truncated {
-                    inspection::blocks_notice()
-                } else {
-                    "Reading mode · scripts, styles and remote content are not loaded".into()
-                },
+                notice: notice.into(),
                 ..Inspection::default()
-            })));
-        }
-        Ok(Some(measured(Inspection {
-            kind: InspectionKind::Markdown,
-            title: "Markdown".into(),
-            blocks: markdown::parse(&source, cancel, |href| {
-                rich_preview::local_image(base, href, cancel)
-            })?,
-            source_available: true,
-            ..Inspection::default()
-        })))
+            },
+            encoding,
+            page,
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn read_as(name: &str, bytes: &[u8], view: &InspectRequest) -> Option<Inspection> {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(name);
+        std::fs::write(&path, bytes).unwrap();
+        let request = PreviewRequest {
+            entry: bibli_core::op::EntryRef::from_path(&path).unwrap(),
+            mime: Some("text/markdown".into()),
+            page: 1,
+            seconds: None,
+            max_side: 64,
+        };
+        Provider
+            .inspect(&request, view, &CancelToken::new())
+            .unwrap()
+    }
+    fn read(name: &str, bytes: &[u8]) -> Inspection {
+        read_as(name, bytes, &InspectRequest::default()).unwrap()
+    }
+
+    #[test]
+    fn a_marked_or_legacy_readme_still_starts_with_its_title() {
+        let data = read("README.md", "\u{feff}# T\u{ed}tulo\n\nText.\n".as_bytes());
+        assert_eq!(data.blocks[0].heading, 1);
+        assert_eq!(data.blocks[0].text, "T\u{ed}tulo");
+        assert!(data.notice.is_empty());
+        let data = read("notes caf\u{e9}.md", b"# Caf\xe9\n");
+        assert_eq!(data.blocks[0].text, "Caf\u{e9}");
+        assert_eq!(data.notice, "Read as Windows-1252");
+    }
+
+    #[test]
+    fn a_long_changelog_shows_its_start_and_says_so() {
+        let changelog = "- a change\n".repeat(3000);
+        let data = read("CHANGELOG.md", changelog.as_bytes());
+        assert_eq!(data.blocks.len(), inspection::limits::BLOCKS);
+        assert_eq!(data.notice, inspection::blocks_notice());
+        let source = InspectRequest {
+            source: true,
+            ..InspectRequest::default()
+        };
+        assert!(
+            read_as("CHANGELOG.md", changelog.as_bytes(), &source).is_none(),
+            "the source is the shared code view"
+        );
     }
 }

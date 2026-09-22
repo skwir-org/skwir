@@ -43,12 +43,8 @@ impl PreviewProvider for Provider {
         into: &std::path::Path,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<bibli_core::preview::Member>> {
-        let path = req.entry.resolve()?;
-        let bytes = inspection::read_bounded(&path, limits::BINARY_INPUT, "Email", cancel)?;
-        let message = mail_parser::MessageParser::default()
-            .parse(&bytes)
-            .ok_or_else(|| anyhow::anyhow!("Invalid email"))?;
-        inspection::check(cancel)?;
+        let bytes = read(req, cancel)?;
+        let message = parse(&bytes, cancel)?;
         let attachment = message
             .attachment(target.parse()?)
             .ok_or_else(|| anyhow::anyhow!("Missing attachment"))?;
@@ -61,32 +57,23 @@ impl PreviewProvider for Provider {
             path: file,
         }))
     }
+    /// The message. An attachment is never inspected here: the panel
+    /// extracts it and previews it as the file it is.
     fn inspect(
         &self,
         req: &PreviewRequest,
         view: &InspectRequest,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Inspection>> {
-        let path = req.entry.resolve()?;
+        // The source is the shared code view (the worker's fallback).
         if view.source {
-            return inspection::source(&path, view.offset, cancel).map(Some);
+            return Ok(None);
         }
-        let bytes = inspection::read_bounded(&path, limits::BINARY_INPUT, "Email", cancel)?;
-        let message = mail_parser::MessageParser::default()
-            .parse(&bytes)
-            .ok_or_else(|| anyhow::anyhow!("Invalid email"))?;
-        inspection::check(cancel)?;
-        if let Some(target) = &view.target {
-            let attachment = message
-                .attachment(target.parse()?)
-                .ok_or_else(|| anyhow::anyhow!("Missing attachment"))?;
-            return archive::member_preview(
-                attachment.attachment_name().unwrap_or("Attachment"),
-                attachment.contents(),
-                view.offset,
-            )
-            .map(Some);
-        }
+        let bytes = read(req, cancel)?;
+        let message = parse(&bytes, cancel)?;
+        let sent = message
+            .date()
+            .map_or_else(String::new, mail_parser::DateTime::to_rfc3339);
         let mut blocks = vec![
             Block {
                 text: message.subject().unwrap_or("No subject").into(),
@@ -95,67 +82,69 @@ impl PreviewProvider for Provider {
             },
             Block {
                 text: format!(
-                    "From: {}\nTo: {}\nDate: {}",
+                    "From: {}\nTo: {}\nDate: {sent}",
                     addresses(message.from()),
                     addresses(message.to()),
-                    message
-                        .date()
-                        .map_or_else(String::new, mail_parser::DateTime::to_rfc3339)
                 ),
                 ..Block::default()
             },
         ];
+        let mut remote = false;
+        let mut truncated = false;
         if let Some(html) = message.body_html(0) {
-            blocks.extend(
-                rich_preview::html(&html, cancel, |src| {
-                    let id = src.strip_prefix("cid:")?;
-                    let part = message.parts.iter().find(|p| p.content_id() == Some(id))?;
-                    inspection::image(part.contents()).ok()
-                })?
-                .blocks,
-            );
+            let page = rich_preview::html(&html, cancel, |src| {
+                let Some(id) = src.strip_prefix("cid:") else {
+                    remote |= ["http:", "https:", "//"].iter().any(|p| src.starts_with(p));
+                    return None;
+                };
+                let part = message.parts.iter().find(|p| p.content_id() == Some(id))?;
+                inspection::image(part.contents()).ok()
+            })?;
+            truncated = page.truncated;
+            blocks.extend(page.blocks);
         } else if let Some(text) = message.body_text(0) {
             blocks.push(Block {
                 text: text.into_owned(),
                 ..Block::default()
             });
         }
-        let details = [
-            ("Subject", message.subject().unwrap_or_default().to_owned()),
-            ("From", addresses(message.from())),
-            ("To", addresses(message.to())),
-            ("Cc", addresses(message.cc())),
-            (
-                "Sent",
-                message
-                    .date()
-                    .map_or_else(String::new, mail_parser::DateTime::to_rfc3339),
-            ),
-            (
-                "Attachments",
-                match message.attachments().count() {
-                    0 => String::new(),
-                    count => count.to_string(),
-                },
-            ),
-        ]
-        .into_iter()
-        .filter_map(|(label, value)| inspection::detail(label, value))
-        .collect();
+        let attachments = message.attachments().count();
+        let details = inspection::details([
+            ("Subject", message.subject().map(str::to_owned)),
+            ("From", Some(addresses(message.from()))),
+            ("To", Some(addresses(message.to()))),
+            ("Cc", Some(addresses(message.cc()))),
+            ("Sent", Some(sent)),
+            ("Attachments", inspection::count(attachments)),
+        ]);
         let rows = message
             .attachments()
             .enumerate()
             .take(limits::ATTACHMENTS)
-            .map(|(i, a)| Row {
-                cells: vec![
-                    a.attachment_name().unwrap_or("Attachment").into(),
-                    format!("{} bytes", a.contents().len()),
-                ],
-                target: Some(i.to_string()),
-                bytes: Some(a.contents().len() as u64),
-                ..Row::default()
+            .map(|(i, a)| {
+                let bytes = a.contents().len() as u64;
+                Row {
+                    cells: vec![
+                        a.attachment_name().unwrap_or("Attachment").into(),
+                        inspection::size(bytes),
+                    ],
+                    target: Some(i.to_string()),
+                    bytes: Some(bytes),
+                    ..Row::default()
+                }
             })
             .collect();
+        // Only what applies to this message: a strip that always says the
+        // same thing stops being read.
+        let notice = [
+            remote.then(|| "Remote images are not loaded".to_owned()),
+            truncated.then(inspection::blocks_notice),
+            (attachments > 0).then(|| "Select an attachment to preview it".to_owned()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ");
         Ok(Some(Inspection {
             details,
             kind: bibli_core::inspection::InspectionKind::Mail,
@@ -163,25 +152,86 @@ impl PreviewProvider for Provider {
             blocks,
             rows,
             source_available: true,
-            notice: "Remote images are not loaded · select an attachment to preview".into(),
+            notice,
             ..Inspection::default()
         }))
     }
 }
+fn read(req: &PreviewRequest, cancel: &CancelToken) -> anyhow::Result<Vec<u8>> {
+    inspection::read_bounded(&req.entry.resolve()?, limits::BINARY_INPUT, "Email", cancel)
+}
+/// The one parse both the message and its attachments are read from.
+fn parse<'x>(bytes: &'x [u8], cancel: &CancelToken) -> anyhow::Result<mail_parser::Message<'x>> {
+    let message = mail_parser::MessageParser::default()
+        .parse(bytes)
+        .ok_or_else(|| anyhow::anyhow!("Invalid email"))?;
+    inspection::check(cancel)?;
+    Ok(message)
+}
+/// `Name <address>`, or the bare address when there is no name.
 fn addresses(value: Option<&mail_parser::Address<'_>>) -> String {
     value
         .map(|v| {
             v.iter()
                 .take(limits::ADDRESSES)
                 .map(|a| {
-                    format!(
-                        "{} <{}>",
-                        a.name.as_deref().unwrap_or(""),
-                        a.address.as_deref().unwrap_or("")
-                    )
+                    let address = a.address.as_deref().unwrap_or("");
+                    match a.name.as_deref().map(str::trim) {
+                        Some(name) if !name.is_empty() => format!("{name} <{address}>"),
+                        _ => address.to_owned(),
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join(", ")
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn read(message: &str) -> Inspection {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Synthetic message.eml");
+        std::fs::write(&path, message).unwrap();
+        let request = PreviewRequest {
+            entry: bibli_core::op::EntryRef::from_path(&path).unwrap(),
+            mime: Some("message/rfc822".into()),
+            page: 1,
+            seconds: None,
+            max_side: 64,
+        };
+        Provider
+            .inspect(&request, &InspectRequest::default(), &CancelToken::new())
+            .unwrap()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_plain_message_says_nothing_it_has_no_reason_to() {
+        let data = read(
+            "From: sender@example.invalid\r\nTo: Reader <reader@example.invalid>\r\nSubject: Plain\r\n\r\nJust text.\r\n",
+        );
+        assert!(data.plain_text().contains("From: sender@example.invalid\n"));
+        assert!(
+            data.plain_text()
+                .contains("To: Reader <reader@example.invalid>")
+        );
+        assert!(data.plain_text().contains("Just text."));
+        assert!(data.notice.is_empty(), "{}", data.notice);
+    }
+
+    #[test]
+    fn remote_images_and_attachments_are_mentioned_when_there_are_some() {
+        let data = read(
+            "From: Example <sender@example.invalid>\r\nSubject: Rich\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=sample\r\n\r\n--sample\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n<p>Hi</p><img src='https://example.invalid/pixel.png'>\r\n--sample\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=data.bin\r\nContent-Transfer-Encoding: base64\r\n\r\nAAAA\r\n--sample--\r\n",
+        );
+        assert_eq!(
+            data.notice,
+            "Remote images are not loaded · Select an attachment to preview it"
+        );
+        assert_eq!(data.rows[0].cells, ["data.bin", "3 B"]);
+        assert_eq!(data.rows[0].bytes, Some(3));
+    }
 }
