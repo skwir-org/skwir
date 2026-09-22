@@ -36,8 +36,10 @@ use crate::theme::Theme;
 use crate::thumbs::ThumbView;
 use crate::view::{Nav, PaneView};
 
-/// Zoom steps for `ui.zoom`.
-pub const ZOOMS: [u32; 4] = [96, 128, 192, 256];
+/// Zoom steps for `ui.zoom`: the side of a tile's box.
+pub const ZOOMS: [u32; 5] = [64, 96, 128, 192, 256];
+/// The step a new window opens at, and Ctrl+0 returns to.
+pub const DEFAULT_ZOOM: u32 = 128;
 
 #[derive(Default)]
 pub struct GridView {
@@ -64,9 +66,13 @@ const MAX_LINES: u8 = 3;
 const GUTTER: (f32, f32) = (12., 8.);
 const MAX_GUTTER: f32 = 24.;
 
+/// A label is as wide as the box, but never narrower than this: at the small
+/// steps a box-wide label would break most names in the middle of a word.
+const MIN_LABEL: f32 = 90.;
+
 impl GridView {
     fn label_width(zoom: u32) -> f32 {
-        zoom as f32 + 2.
+        (zoom as f32 + 2.).max(MIN_LABEL)
     }
 
     fn tile_width(zoom: u32) -> f32 {
@@ -126,7 +132,8 @@ impl GridView {
     /// scaled down, not up.
     fn icon(zoom: u32) -> (f32, u16) {
         let theme = match zoom {
-            0..=96 => 96,
+            0..=64 => 64,
+            65..=96 => 96,
             97..=128 => 128,
             _ => 256,
         };

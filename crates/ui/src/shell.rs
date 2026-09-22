@@ -30,7 +30,7 @@ use crate::thumbs::ThumbCache;
 use crate::timeline::TimelineState;
 use crate::usage::UsageState;
 use crate::view::{self, Nav, PaneView};
-use crate::views::grid::ZOOMS;
+use crate::views::grid::{DEFAULT_ZOOM, ZOOMS};
 use crate::{
     address, jump, menu, palette, preview, prompts, renamebulk, review, sidebar, status, timeline,
 };
@@ -217,7 +217,7 @@ impl Shell {
             font,
             mono_font,
             key_hints,
-            zoom: 128,
+            zoom: DEFAULT_ZOOM,
             thumbs: ThumbCache::default(),
             icons: IconCache::default(),
             type_names: crate::typenames::TypeNames::default(),
@@ -656,11 +656,12 @@ impl Shell {
     }
 
     fn zoom_to(&mut self, dir: &str, cx: &mut Context<Self>) {
-        let pos = ZOOMS.iter().position(|z| *z == self.zoom).unwrap_or(1);
+        let at = |zoom| ZOOMS.iter().position(|z| *z == zoom);
+        let pos = at(self.zoom).or_else(|| at(DEFAULT_ZOOM)).unwrap_or(0);
         self.zoom = match dir {
             "in" => ZOOMS[(pos + 1).min(ZOOMS.len() - 1)],
             "out" => ZOOMS[pos.saturating_sub(1)],
-            _ => 128,
+            _ => DEFAULT_ZOOM,
         };
         self.remember_session();
         cx.notify();
