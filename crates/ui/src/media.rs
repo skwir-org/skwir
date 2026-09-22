@@ -586,11 +586,21 @@ impl Shell {
 
 /// A full-window canvas, independent of the preview card's chrome and zoom.
 /// The image fills its bounds with Contain, including upscaling small videos.
-/// How long the flash takes to grow and fade. Longer than the entrance the
-/// rules allow elsewhere, on purpose: it is the one animation that answers
-/// a click, and players make it about half a second so the eye can read
-/// the glyph before it is gone.
-const FLASH_MS: u64 = 450;
+/// How long the flash lasts. Longer than the entrance the rules allow
+/// elsewhere, on purpose: it is the one animation that answers a click, and
+/// players hold the glyph in view before it goes, so the eye can read it.
+const FLASH_MS: u64 = 800;
+/// The share of `FLASH_MS` the glyph stays whole before it fades out.
+const FLASH_HOLD: f32 = 0.45;
+
+/// The flash's opacity and size at `delta` of its life: whole and slowly
+/// growing while held, then fading and growing on.
+pub fn flash_at(delta: f32) -> (f32, f32) {
+    let delta = delta.clamp(0., 1.);
+    let fade = ((delta - FLASH_HOLD) / (1. - FLASH_HOLD)).max(0.);
+    let eased = 1. - (1. - fade).powi(3);
+    (1. - eased, 56. + 12. * delta + 24. * eased)
+}
 
 /// The picture with the click behaviour of a player on it: `inner` is the
 /// film or the audio figure, laid out as it was, and the flash sits over its
@@ -627,11 +637,10 @@ pub fn surface(
                     )
                     .with_animation(
                         ("media-flash", seq),
-                        gpui::Animation::new(Duration::from_millis(FLASH_MS))
-                            .with_easing(gpui::ease_out_quint()),
+                        gpui::Animation::new(Duration::from_millis(FLASH_MS)),
                         |disc, delta| {
-                            let side = px(56. + 28. * delta);
-                            disc.w(side).h(side).opacity(1. - delta)
+                            let (opacity, side) = flash_at(delta);
+                            disc.w(px(side)).h(px(side)).opacity(opacity)
                         },
                     ),
             )
@@ -1074,4 +1083,20 @@ pub fn audio_content(shell: &Shell, theme: &Theme) -> AnyElement {
         .child(line(&state.artist, true))
         .child(line(&state.album, true))
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_flash_holds_before_it_fades() {
+        let (start, _) = flash_at(0.);
+        let (held, _) = flash_at(FLASH_HOLD * 0.9);
+        let (late, _) = flash_at(0.8);
+        let (end, side) = flash_at(1.);
+        assert!((start - 1.).abs() < 1e-6 && (held - 1.).abs() < 1e-6);
+        assert!(late < 1. && late > 0.);
+        assert!(end.abs() < 1e-6 && side > 80.);
+    }
 }
