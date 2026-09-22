@@ -1,0 +1,10 @@
+# Tests must never reach the user's Trash, settings or cache: see
+# tools/test/isolate-xdg.sh.
+experimental = ["setup-scripts"]
+
+[scripts.setup.isolate-xdg]
+command = "tools/test/isolate-xdg.sh"
+
+[[profile.default.scripts]]
+filter = "all()"
+setup = "isolate-xdg"
