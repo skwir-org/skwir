@@ -86,6 +86,11 @@ pub fn stat_path(path: &Path) -> Option<Entry> {
 }
 
 /// The stable id of a path, without building an entry.
+///
+/// This is what an [`EntryId`] means everywhere: statx's device and inode,
+/// without following a final symlink. [`stat_entry`] and [`stat_path`]
+/// report the same; a listing's provisional id for a mount point is
+/// replaced by this one when the entry is stat-ed.
 pub fn id_of(path: &Path) -> Option<EntryId> {
     let st = rustix::fs::statx(
         rustix::fs::CWD,

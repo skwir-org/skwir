@@ -128,9 +128,6 @@ struct RequestArgs {
     request: PlayerRequest,
 }
 
-#[derive(Deserialize, schemars::JsonSchema)]
-struct NoArgs {}
-
 /// The player as commands, so a key binding, a script and an agent steer it
 /// the way the desktop's media keys do.
 pub(crate) fn register(app: &crate::App) {
@@ -147,7 +144,7 @@ pub(crate) fn register(app: &crate::App) {
             Ok(crate::command::Outcome::Done)
         },
     );
-    app.commands.register::<NoArgs, _>(
+    app.commands.register::<crate::command::NoArgs, _>(
         "core",
         "player.now",
         "What is playing",
@@ -157,7 +154,7 @@ pub(crate) fn register(app: &crate::App) {
                 serde_json::Value::Null,
                 |now| {
                     serde_json::json!({
-                        "path": now.path,
+                        "path": crate::os_path::PathArg::from(now.path.as_path()),
                         "title": now.title,
                         "artist": now.artist,
                         "album": now.album,

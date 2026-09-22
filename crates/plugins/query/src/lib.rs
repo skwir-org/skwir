@@ -69,10 +69,7 @@ pub fn location_for(expr: &str, root: Option<&std::path::Path>) -> Location {
         Some(r) if !has_root => format!("{expr} in:{}", lang::quote(&r.to_string_lossy())),
         _ => expr.to_owned(),
     };
-    Location {
-        scheme: SCHEME.into(),
-        rest,
-    }
+    Location::new(SCHEME, rest)
 }
 
 /// Saved queries from settings.
@@ -103,10 +100,7 @@ fn register_places(app: &App) {
             ID,
             Place {
                 title: s.name,
-                location: Location {
-                    scheme: SCHEME.into(),
-                    rest: s.expr,
-                },
+                location: Location::new(SCHEME, s.expr),
                 icon: Some("folder-saved-search".into()),
                 group: "queries".into(),
                 space: None,

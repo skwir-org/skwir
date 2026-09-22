@@ -50,25 +50,35 @@ pub struct CacheSlot {
 impl CacheSlot {
     /// Bound this namespace's disk usage by removing its oldest files.
     /// Worker-only maintenance; never call from render or command dispatch.
+    /// Another process may be writing and trimming the same cache: a file
+    /// or bucket that vanishes mid-walk is skipped, not an error.
     pub fn trim_to_bytes(&self, budget: u64) -> std::io::Result<()> {
         let mut files = Vec::new();
         let mut total = 0u64;
-        if !self.dir.exists() {
-            return Ok(());
-        }
-        for bucket in std::fs::read_dir(&self.dir)? {
-            let bucket = bucket?;
-            if !bucket.file_type()?.is_dir() {
+        let buckets = match std::fs::read_dir(&self.dir) {
+            Ok(buckets) => buckets,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e),
+        };
+        for bucket in buckets.flatten() {
+            if !bucket.file_type().is_ok_and(|t| t.is_dir()) {
                 continue;
             }
-            for file in std::fs::read_dir(bucket.path())? {
-                let file = file?;
-                if !file.file_type()?.is_file() {
+            let Ok(entries) = std::fs::read_dir(bucket.path()) else {
+                continue;
+            };
+            for file in entries.flatten() {
+                let Ok(metadata) = file.metadata() else {
+                    continue;
+                };
+                if !metadata.is_file() {
                     continue;
                 }
-                let metadata = file.metadata()?;
+                let Ok(modified) = metadata.modified() else {
+                    continue;
+                };
                 total = total.saturating_add(metadata.len());
-                files.push((metadata.modified()?, metadata.len(), file.path()));
+                files.push((modified, metadata.len(), file.path()));
             }
         }
         files.sort_by_key(|(time, _, _)| *time);
@@ -92,18 +102,19 @@ impl CacheSlot {
         std::fs::read(self.path_for(key)).ok()
     }
 
-    /// Write atomically (temp file + rename) so readers never see a partial value.
+    /// Write atomically (a uniquely named temp file, then a rename) so
+    /// readers never see a partial value and concurrent writers never share
+    /// a temp file.
     pub fn put(&self, key: &[u8], value: &[u8]) -> std::io::Result<()> {
+        use std::io::Write as _;
         let path = self.path_for(key);
         let parent = path.parent().expect("cache path has parent");
         std::fs::create_dir_all(parent)?;
-        let tmp = parent.join(format!(
-            ".tmp-{}-{}",
-            std::process::id(),
-            blake3::hash(value).to_hex()
-        ));
-        std::fs::write(&tmp, value)?;
-        std::fs::rename(tmp, path)
+        let mut tmp = tempfile::Builder::new()
+            .prefix(".tmp-")
+            .tempfile_in(parent)?;
+        tmp.write_all(value)?;
+        tmp.persist(path).map(drop).map_err(|e| e.error)
     }
 
     pub fn remove(&self, key: &[u8]) -> std::io::Result<()> {

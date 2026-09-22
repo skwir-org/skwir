@@ -10,6 +10,7 @@ use parking_lot::RwLock;
 use crate::entry::Entry;
 
 /// Shared on-disk tag format used by the tags provider and copy operations.
+/// The field that holds tags in memory is [`crate::entry::keys::TAGS`].
 pub const TAGS_XATTR: &str = "user.xdg.tags";
 
 /// Fills fields on freshly stat-ed entries.

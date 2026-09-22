@@ -34,13 +34,35 @@ impl Invocation {
         }
     }
 
+    /// An invocation with typed arguments. Arguments that cannot be
+    /// represented in JSON (a path that is not UTF-8 in a plain `PathBuf`
+    /// field: use [`crate::os_path::PathArg`]) are logged and replaced by
+    /// `null`, which every command refuses at dispatch: the mistake surfaces
+    /// as an error, never as a crash or as a command run with defaults.
     pub fn with_args<A: Serialize>(name: impl Into<Arc<str>>, args: &A) -> Self {
-        Invocation {
+        let name = name.into();
+        let args = serde_json::to_value(args).unwrap_or_else(|error| {
+            tracing::error!(command = %name, "arguments cannot be serialized: {error}");
+            serde_json::Value::Null
+        });
+        Invocation { name, args }
+    }
+
+    /// Like [`Invocation::with_args`], reporting a serialization failure.
+    pub fn try_with_args<A: Serialize>(
+        name: impl Into<Arc<str>>,
+        args: &A,
+    ) -> serde_json::Result<Self> {
+        Ok(Invocation {
             name: name.into(),
-            args: serde_json::to_value(args).expect("serializable args"),
-        }
+            args: serde_json::to_value(args)?,
+        })
     }
 }
+
+/// Arguments of a command that takes none.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct NoArgs {}
 
 /// What a command produced. Commands that would mutate the filesystem return
 /// a plan; the caller decides whether to apply it.
@@ -93,9 +115,15 @@ pub enum CommandError {
 }
 
 /// The command registry.
+///
+/// A name registered by a second owner shadows the first rather than
+/// replacing it: when that owner is disabled, the earlier command comes
+/// back instead of the name disappearing. The same owner registering a
+/// name again replaces its own command.
 #[derive(Default)]
 pub struct CommandRegistry {
-    commands: RwLock<IndexMap<Arc<str>, (CommandSpec, Handler)>>,
+    /// Per name, every owner's registration; the last one is active.
+    commands: RwLock<IndexMap<Arc<str>, Vec<(CommandSpec, Handler)>>>,
 }
 
 impl CommandRegistry {
@@ -129,24 +157,40 @@ impl CommandRegistry {
                 })?;
             handler(typed, app)
         });
-        self.commands.write().insert(name, (spec, h));
+        let mut commands = self.commands.write();
+        let stack = commands.entry(name).or_default();
+        if let Some(prev) = stack.last()
+            && prev.0.owner != spec.owner
+        {
+            tracing::debug!(command = %spec.name, owner = %spec.owner, shadowed = %prev.0.owner, "command shadows another");
+        }
+        stack.retain(|(s, _)| s.owner != spec.owner);
+        stack.push((spec, h));
     }
 
-    /// Remove every command owned by `owner` (a plugin being disabled).
+    /// Remove every command owned by `owner` (a plugin being disabled);
+    /// a command it shadowed becomes active again.
     pub fn unregister_owner(&self, owner: &str) {
-        self.commands
-            .write()
-            .retain(|_, (spec, _)| &*spec.owner != owner);
+        let mut commands = self.commands.write();
+        for stack in commands.values_mut() {
+            stack.retain(|(spec, _)| &*spec.owner != owner);
+        }
+        commands.retain(|_, stack| !stack.is_empty());
     }
 
     pub fn get(&self, name: &str) -> Option<CommandSpec> {
-        self.commands.read().get(name).map(|(s, _)| s.clone())
+        self.commands
+            .read()
+            .get(name)
+            .and_then(|stack| stack.last())
+            .map(|(s, _)| s.clone())
     }
 
     pub fn list(&self) -> Vec<CommandSpec> {
         self.commands
             .read()
             .values()
+            .filter_map(|stack| stack.last())
             .map(|(s, _)| s.clone())
             .collect()
     }
@@ -158,6 +202,7 @@ impl CommandRegistry {
             .commands
             .read()
             .get(&inv.name)
+            .and_then(|stack| stack.last())
             .map(|(_, h)| Arc::clone(h));
         let handler = handler.ok_or_else(|| CommandError::Unknown(inv.name.clone()))?;
         handler(inv.args.clone(), app)

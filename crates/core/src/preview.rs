@@ -111,34 +111,62 @@ pub struct Previews {
 }
 
 impl Previews {
+    /// The one dispatch every call shares: the first provider `chosen`
+    /// picks (in priority order) runs `call` under a token that also
+    /// follows the provider's registration, and a result that arrives after
+    /// cancellation is refused, so a disabled provider cannot answer late.
+    /// The first chosen provider owns the presentation: a reader without a
+    /// result must not be displaced by a lower-priority fallback.
+    fn dispatch<T>(
+        &self,
+        cancel: &CancelToken,
+        chosen: impl Fn(&dyn PreviewProvider) -> bool,
+        call: impl FnOnce(&dyn PreviewProvider, &CancelToken) -> anyhow::Result<T>,
+    ) -> anyhow::Result<Option<T>> {
+        anyhow::ensure!(!cancel.is_cancelled(), "preview cancelled");
+        let providers = self.providers.read().clone();
+        let Some(p) = providers.into_iter().find(|p| chosen(&*p.provider)) else {
+            return Ok(None);
+        };
+        let cancel = cancel.linked(&p.lifetime);
+        anyhow::ensure!(!cancel.is_cancelled(), "preview cancelled");
+        let result = call(&*p.provider, &cancel)?;
+        anyhow::ensure!(!cancel.is_cancelled(), "preview cancelled");
+        Ok(Some(result))
+    }
+
+    /// Blocking worker entry point. Disabling a provider cancels its active
+    /// requests; re-enabling gets a fresh lifetime and cannot revive old jobs.
+    pub fn render(
+        &self,
+        request: &PreviewRequest,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Option<Preview>> {
+        self.dispatch(
+            cancel,
+            |p| p.accepts(request),
+            |p, cancel| p.render(request, cancel),
+        )
+    }
+
+    /// The provider `view.provider` names, or the first that accepts.
     pub fn inspect(
         &self,
         request: &PreviewRequest,
         view: &crate::inspection::InspectRequest,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<crate::inspection::Inspection>> {
-        let providers = self.providers.read().clone();
-        for p in providers {
-            if view
-                .provider
+        let chosen = |p: &dyn PreviewProvider| {
+            view.provider
                 .as_deref()
-                .map_or_else(|| p.provider.accepts(request), |id| p.provider.id() == id)
-            {
-                let cancel = cancel.linked(&p.lifetime);
-                anyhow::ensure!(!cancel.is_cancelled(), "preview cancelled");
-                let result = p.provider.inspect(request, view, &cancel)?;
-                anyhow::ensure!(!cancel.is_cancelled(), "preview cancelled");
-                // The first matching provider owns the presentation, just as in
-                // open_media/open_document. A reader without an inspection result
-                // must not be displaced by a lower-priority hexadecimal fallback.
-                return Ok(result);
-            }
-        }
-        Ok(None)
+                .map_or_else(|| p.accepts(request), |id| p.id() == id)
+        };
+        Ok(self
+            .dispatch(cancel, chosen, |p, cancel| p.inspect(request, view, cancel))?
+            .flatten())
     }
 
-    /// The first provider that accepts the container extracts from it, like
-    /// every other call here.
+    /// The first provider that accepts the container extracts from it.
     pub fn extract(
         &self,
         request: &PreviewRequest,
@@ -146,16 +174,15 @@ impl Previews {
         into: &std::path::Path,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Member>> {
-        let providers = self.providers.read().clone();
-        for p in providers {
-            if p.provider.accepts(request) {
-                let cancel = cancel.linked(&p.lifetime);
-                anyhow::ensure!(!cancel.is_cancelled(), "preview cancelled");
-                return p.provider.extract(request, target, into, &cancel);
-            }
-        }
-        Ok(None)
+        Ok(self
+            .dispatch(
+                cancel,
+                |p| p.accepts(request),
+                |p, cancel| p.extract(request, target, into, cancel),
+            )?
+            .flatten())
     }
+
     /// Blocking startup on a scheduler worker; subsequent controls are nonblocking.
     pub fn open_media(
         &self,
@@ -163,17 +190,13 @@ impl Previews {
         lifetime: &CancelToken,
         wake: crate::location::Waker,
     ) -> anyhow::Result<Option<Arc<dyn crate::media::MediaSession>>> {
-        let providers = self.providers.read().clone();
-        for p in providers {
-            let lifetime = lifetime.linked(&p.lifetime);
-            anyhow::ensure!(!lifetime.is_cancelled(), "preview cancelled");
-            if p.provider.accepts(request) {
-                let session = p.provider.open_media(request, &lifetime, wake)?;
-                anyhow::ensure!(!lifetime.is_cancelled(), "preview cancelled");
-                return Ok(session);
-            }
-        }
-        Ok(None)
+        Ok(self
+            .dispatch(
+                lifetime,
+                |p| p.accepts(request),
+                |p, lifetime| p.open_media(request, lifetime, wake),
+            )?
+            .flatten())
     }
 
     /// Open an optional reader session on a worker. Its lifetime follows both
@@ -183,17 +206,13 @@ impl Previews {
         request: &PreviewRequest,
         lifetime: &CancelToken,
     ) -> anyhow::Result<Option<Arc<dyn crate::document::DocumentSession>>> {
-        let providers = self.providers.read().clone();
-        for p in providers {
-            let lifetime = lifetime.linked(&p.lifetime);
-            anyhow::ensure!(!lifetime.is_cancelled(), "preview cancelled");
-            if p.provider.accepts(request) {
-                let session = p.provider.open_document(request, &lifetime)?;
-                anyhow::ensure!(!lifetime.is_cancelled(), "preview cancelled");
-                return Ok(session);
-            }
-        }
-        Ok(None)
+        Ok(self
+            .dispatch(
+                lifetime,
+                |p| p.accepts(request),
+                |p, lifetime| p.open_document(request, lifetime),
+            )?
+            .flatten())
     }
 
     pub fn register(&self, owner: &str, provider: Arc<dyn PreviewProvider>) {
@@ -229,26 +248,6 @@ impl Previews {
             .iter()
             .map(|p| p.provider.id())
             .collect()
-    }
-
-    /// Blocking worker entry point. Disabling a provider cancels its active
-    /// requests; re-enabling gets a fresh lifetime and cannot revive old jobs.
-    pub fn render(
-        &self,
-        request: &PreviewRequest,
-        cancel: &CancelToken,
-    ) -> anyhow::Result<Option<Preview>> {
-        let providers = self.providers.read().clone();
-        for p in providers {
-            let cancel = cancel.linked(&p.lifetime);
-            anyhow::ensure!(!cancel.is_cancelled(), "preview cancelled");
-            if p.provider.accepts(request) {
-                let result = p.provider.render(request, &cancel)?;
-                anyhow::ensure!(!cancel.is_cancelled(), "preview cancelled");
-                return Ok(Some(result));
-            }
-        }
-        Ok(None)
     }
 }
 

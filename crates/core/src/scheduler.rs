@@ -79,10 +79,29 @@ struct Inner {
     slow_threshold: Duration,
 }
 
-/// The shared scheduler. Cheap to clone.
+/// The shared scheduler. Cheap to clone. When the last clone is dropped
+/// the workers finish their current job and exit; queued jobs are dropped
+/// unrun.
 #[derive(Clone)]
 pub struct Scheduler {
     inner: Arc<Inner>,
+    /// Held by handles only, never by workers: its drop is the shutdown.
+    _owner: Arc<Owner>,
+}
+
+struct Owner(Arc<Inner>);
+
+impl Drop for Owner {
+    fn drop(&mut self) {
+        let queued = {
+            let mut q = self.0.queue.lock();
+            q.shutdown = true;
+            std::mem::take(&mut q.heap)
+        };
+        self.0.cv.notify_all();
+        // Jobs can own handles and resources: drop them outside the lock.
+        drop(queued);
+    }
 }
 
 impl Scheduler {
@@ -110,7 +129,10 @@ impl Scheduler {
                 .spawn(move || worker(&inner))
                 .expect("spawn worker");
         }
-        Scheduler { inner }
+        Scheduler {
+            _owner: Arc::new(Owner(Arc::clone(&inner))),
+            inner,
+        }
     }
 
     /// Submit a job. It is skipped (never run) if `cancel` fires before it starts.
@@ -147,13 +169,6 @@ impl Scheduler {
             .iter()
             .map(|(k, v)| (*k, v.clone()))
             .collect()
-    }
-}
-
-impl Drop for Inner {
-    fn drop(&mut self) {
-        self.queue.lock().shutdown = true;
-        self.cv.notify_all();
     }
 }
 
@@ -196,6 +211,28 @@ fn worker(inner: &Inner) {
         s.max = s.max.max(took);
         if took > inner.slow_threshold {
             tracing::warn!(label = task.label, ms = took.as_millis(), "slow task");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropping_the_last_handle_stops_the_workers() {
+        let scheduler = Scheduler::new(2);
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        scheduler.spawn(Priority::Normal, "test", CancelToken::new(), move || {
+            tx.send(()).unwrap();
+        });
+        rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let inner = Arc::downgrade(&scheduler.inner);
+        drop(scheduler);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while inner.strong_count() > 0 {
+            assert!(Instant::now() < deadline, "workers still hold the queue");
+            std::thread::sleep(Duration::from_millis(1));
         }
     }
 }

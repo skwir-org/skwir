@@ -31,6 +31,8 @@ pub struct Selection {
 }
 
 impl Selection {
+    /// Deselect everything. The cursor stays where it was, so the keyboard
+    /// carries on from there; a new location resets the whole selection.
     pub fn clear(&mut self) {
         self.items.clear();
         self.anchor = None;
@@ -58,6 +60,12 @@ impl Selection {
 
     pub fn remove(&mut self, id: EntryId) {
         self.items.shift_remove(&id);
+        if self.anchor == Some(id) {
+            self.anchor = self.items.first().copied();
+        }
+        if self.cursor == Some(id) {
+            self.cursor = self.items.last().copied();
+        }
     }
 
     pub fn contains(&self, id: EntryId) -> bool {
@@ -128,7 +136,8 @@ impl Pane {
             old.close();
         }
         self.listing = Listing::default();
-        self.selection.clear();
+        // Nothing of the old location survives, the cursor included.
+        self.selection = Selection::default();
     }
 
     pub fn location(&self) -> Option<&Location> {
@@ -191,6 +200,11 @@ impl Workspace {
             return false;
         };
         self.panes.remove(i);
+        // The active pane stays active when one before it closes; closing
+        // the active pane activates the one that took its place.
+        if i < self.active {
+            self.active -= 1;
+        }
         self.active = self.active.min(self.panes.len() - 1);
         true
     }
@@ -257,4 +271,32 @@ impl Workspace {
 pub struct PumpReport {
     pub applied: usize,
     pub panes_changed: Vec<PaneId>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn closing_a_pane_before_the_active_one_keeps_it_active() {
+        let mut ws = Workspace::default();
+        let first = ws.active_id();
+        let second = ws.add_pane();
+        let third = ws.add_pane();
+        assert!(ws.set_active(second));
+        assert!(ws.close_pane(first));
+        assert_eq!(ws.active_id(), second);
+        assert!(ws.close_pane(second));
+        assert_eq!(ws.active_id(), third);
+    }
+
+    #[test]
+    fn removing_the_anchor_or_cursor_moves_them_to_what_remains() {
+        let id = |ino| EntryId { dev: 1, ino };
+        let mut sel = Selection::default();
+        sel.set([id(1), id(2), id(3)]);
+        sel.remove(id(1));
+        sel.remove(id(3));
+        assert_eq!((sel.anchor, sel.cursor), (Some(id(2)), Some(id(2))));
+    }
 }

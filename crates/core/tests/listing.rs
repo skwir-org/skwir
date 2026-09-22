@@ -288,3 +288,172 @@ fn forward_returns_where_back_came_from_and_a_new_navigation_forgets_it() {
         "navigating drops the forward history"
     );
 }
+
+fn entry_id(
+    app: &bibli_core::App,
+    pane: bibli_core::workspace::PaneId,
+    name: &str,
+) -> bibli_core::EntryId {
+    app.workspace
+        .read()
+        .pane(pane)
+        .unwrap()
+        .listing
+        .find_by_name(name.as_ref())
+        .unwrap()
+        .id
+}
+
+#[test]
+fn a_refresh_keeps_metadata_and_restats() {
+    use bibli_core::command::Invocation;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("r");
+    std::fs::create_dir(&dir).unwrap();
+    for name in ["a", "b", "c"] {
+        std::fs::write(dir.join(name), name).unwrap();
+    }
+    let app = app(tmp.path());
+    let pane = active(&app);
+    navigate(&app, &dir);
+    let ids: Vec<_> = app
+        .workspace
+        .read()
+        .pane(pane)
+        .unwrap()
+        .listing
+        .ids()
+        .collect();
+    app.dispatch(&Invocation::with_args(
+        "hydrate",
+        &serde_json::json!({ "ids": ids }),
+    ))
+    .unwrap();
+    wait(&app, pane, |l| l.iter().all(|e| e.metadata.is_hydrated()));
+
+    std::fs::write(dir.join("a"), b"grown").unwrap();
+    app.dispatch(&Invocation::new("refresh")).unwrap();
+    let a = entry_id(&app, pane, "a");
+    let size = |l: &bibli_core::Listing| {
+        l.get(a)
+            .and_then(|e| e.metadata.value(bibli_core::entry::keys::SIZE))
+            .and_then(bibli_core::Value::as_u64)
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        app.pump();
+        let ws = app.workspace.read();
+        let listing = &ws.pane(pane).unwrap().listing;
+        assert!(
+            listing.iter().all(|e| e.metadata.is_hydrated()),
+            "a refresh never blanks what was known"
+        );
+        if size(listing) == Some(5) {
+            break;
+        }
+        drop(ws);
+        assert!(Instant::now() < deadline, "the refresh did not re-stat");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn a_listing_follows_its_folder_when_it_moves_and_says_when_it_is_gone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("before");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("f"), b"1").unwrap();
+    let app = app(tmp.path());
+    let pane = active(&app);
+    navigate(&app, &dir);
+    let id = entry_id(&app, pane, "f");
+    let path_of = || {
+        let ws = app.workspace.read();
+        ws.pane(pane).unwrap().open.as_ref().unwrap().path_of(id)
+    };
+    assert_eq!(path_of(), Some(dir.join("f")));
+
+    let moved = tmp.path().join("after");
+    std::fs::rename(&dir, &moved).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while path_of() != Some(moved.join("f")) {
+        assert!(
+            Instant::now() < deadline,
+            "path_of still says {:?}",
+            path_of()
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    std::fs::remove_dir_all(&moved).unwrap();
+    wait(&app, pane, |l| l.is_empty() && l.error().is_some());
+}
+
+#[cfg(unix)]
+#[test]
+fn folders_whose_names_are_not_utf8_can_be_reached() {
+    use bibli_core::command::Invocation;
+    use bibli_core::os_path::PathArg;
+    use std::os::unix::ffi::OsStrExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join(std::ffi::OsStr::from_bytes(b"caf\xe9"));
+    let inner = dir.join("inner");
+    std::fs::create_dir_all(&inner).unwrap();
+    let app = app(tmp.path());
+    let pane = active(&app);
+    let navigate = Invocation::with_args(
+        "navigate",
+        &serde_json::json!({ "location": PathArg::from(inner.as_path()) }),
+    );
+    app.dispatch(&navigate).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    app.dispatch(&Invocation::new("up")).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    assert_eq!(app.pane_dir(pane).unwrap(), dir);
+    assert!(
+        app.workspace
+            .read()
+            .pane(pane)
+            .unwrap()
+            .listing
+            .find_by_name("inner".as_ref())
+            .is_some()
+    );
+}
+
+#[test]
+fn virtual_locations_hydrate_by_path_in_one_batch() {
+    use bibli_core::location::OpenContext;
+    let tmp = tempfile::tempdir().unwrap();
+    let (a, b) = (tmp.path().join("a"), tmp.path().join("sub"));
+    std::fs::write(&a, b"123").unwrap();
+    std::fs::create_dir(&b).unwrap();
+    let app = app(tmp.path());
+    let ctx = OpenContext {
+        scheduler: app.scheduler.clone(),
+        cancel: app.lifetime().child(),
+        batch_size: 64,
+        waker: None,
+        metadata: std::sync::Arc::clone(&app.metadata),
+    };
+    let (sink, rx) = ctx.channel();
+    let id = |ino| bibli_core::EntryId { dev: 0, ino };
+    let gone = bibli_core::fs::hydrate_paths(
+        &[
+            (id(1), a.clone()),
+            (id(2), b.clone()),
+            (id(3), tmp.path().join("missing")),
+        ],
+        &app.metadata,
+        &sink,
+        &ctx.cancel,
+    );
+    assert_eq!(gone, [id(3)]);
+    let ListingEvent::Updated(found) = rx.try_recv().unwrap() else {
+        panic!("expected one Updated first")
+    };
+    assert_eq!(found.len(), 2);
+    assert!(found.iter().all(|e| e.metadata.is_hydrated()));
+    assert!(found.iter().any(|e| e.id == id(2) && e.is_dir()));
+    assert!(matches!(rx.try_recv().unwrap(), ListingEvent::Removed(ids) if ids == [id(3)]));
+}

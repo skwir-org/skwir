@@ -15,10 +15,16 @@ use crossbeam_channel::Receiver;
 use crate::cancel::CancelToken;
 
 /// A coalesced change: the names in the watched directory that were touched.
+#[derive(Default)]
 pub struct Changes {
     pub names: HashSet<OsString>,
     /// Something changed that we could not attribute to a name: relist.
     pub rescan: bool,
+    /// The watched directory itself moved elsewhere.
+    pub moved: bool,
+    /// The watched directory itself is gone (deleted, or its filesystem
+    /// unmounted).
+    pub deleted: bool,
 }
 
 /// Keeps the watch alive; dropping it stops watching.
@@ -38,13 +44,14 @@ pub fn watch(
 
 #[cfg(target_os = "linux")]
 mod imp {
-    use std::collections::HashSet;
     use std::path::Path;
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
 
     use crossbeam_channel::{Receiver, Sender, unbounded};
     use inotify::{EventMask, Inotify, WatchMask};
-    use rustix::event::{PollFd, PollFlags};
+    use rustix::event::{EventfdFlags, PollFd, PollFlags};
+    use rustix::fd::OwnedFd;
 
     use super::{Changes, WatchHandle};
     use crate::cancel::CancelToken;
@@ -65,12 +72,18 @@ mod imp {
             | WatchMask::DELETE_SELF
             | WatchMask::MOVE_SELF;
         inotify.watches().add(dir, mask)?;
+        // The thread sleeps in poll(2) on the inotify descriptor and this
+        // one; dropping the handle writes to it. No timer wakes it.
+        let stop = Arc::new(rustix::event::eventfd(
+            0,
+            EventfdFlags::CLOEXEC | EventfdFlags::NONBLOCK,
+        )?);
         let (tx, rx) = unbounded();
-        let stop = cancel.child();
-        let thread_stop = stop.clone();
+        let thread_stop = Arc::clone(&stop);
+        let cancel = cancel.clone();
         std::thread::Builder::new()
             .name("bibli-inotify".into())
-            .spawn(move || run(&mut inotify, &tx, window, &thread_stop))?;
+            .spawn(move || run(&mut inotify, &tx, window, &thread_stop, &cancel))?;
         Ok((
             WatchHandle {
                 _inner: Box::new(StopOnDrop(stop)),
@@ -79,48 +92,66 @@ mod imp {
         ))
     }
 
-    struct StopOnDrop(CancelToken);
+    struct StopOnDrop(Arc<OwnedFd>);
     impl Drop for StopOnDrop {
         fn drop(&mut self) {
-            self.0.cancel();
+            let _ = rustix::io::write(&*self.0, &1u64.to_ne_bytes());
         }
     }
 
-    /// Wait up to `timeout` for the inotify fd to become readable.
-    fn wait_readable(inotify: &Inotify, timeout: Duration) -> bool {
-        let mut fds = [PollFd::new(inotify, PollFlags::IN)];
-        let ts = rustix::time::Timespec {
-            tv_sec: i64::try_from(timeout.as_secs()).unwrap_or(i64::MAX),
-            tv_nsec: i64::from(timeout.subsec_nanos()),
-        };
-        matches!(rustix::event::poll(&mut fds, Some(&ts)), Ok(n) if n > 0)
+    enum Wait {
+        Ready,
+        Timeout,
+        Stop,
     }
 
-    fn run(inotify: &mut Inotify, out: &Sender<Changes>, window: Duration, stop: &CancelToken) {
+    /// Wait for the inotify descriptor, a stop, or `timeout` (forever when `None`).
+    fn wait(inotify: &Inotify, stop: &OwnedFd, timeout: Option<Duration>) -> Wait {
+        let mut fds = [
+            PollFd::new(inotify, PollFlags::IN),
+            PollFd::new(stop, PollFlags::IN),
+        ];
+        let ts = timeout.map(|t| rustix::time::Timespec {
+            tv_sec: i64::try_from(t.as_secs()).unwrap_or(i64::MAX),
+            tv_nsec: i64::from(t.subsec_nanos()),
+        });
+        match rustix::event::poll(&mut fds, ts.as_ref()) {
+            Ok(_) if !fds[1].revents().is_empty() => Wait::Stop,
+            Ok(n) if n > 0 => Wait::Ready,
+            Ok(_) | Err(rustix::io::Errno::INTR) => Wait::Timeout,
+            Err(_) => Wait::Stop,
+        }
+    }
+
+    fn run(
+        inotify: &mut Inotify,
+        out: &Sender<Changes>,
+        window: Duration,
+        stop: &OwnedFd,
+        cancel: &CancelToken,
+    ) {
         let mut buf = vec![0u8; 64 * 1024];
         loop {
-            if stop.is_cancelled() {
-                return;
+            match wait(inotify, stop, None) {
+                Wait::Stop => return,
+                Wait::Timeout => continue,
+                Wait::Ready => {}
             }
-            if !wait_readable(inotify, Duration::from_millis(250)) {
-                continue;
-            }
-            let mut changes = Changes {
-                names: HashSet::new(),
-                rescan: false,
-            };
+            let mut changes = Changes::default();
             let deadline = Instant::now() + window;
             loop {
                 match inotify.read_events(&mut buf) {
                     Ok(events) => {
                         for ev in events {
-                            if ev.mask.intersects(
-                                EventMask::Q_OVERFLOW
-                                    | EventMask::DELETE_SELF
-                                    | EventMask::MOVE_SELF
-                                    | EventMask::IGNORED,
-                            ) {
+                            if ev.mask.contains(EventMask::Q_OVERFLOW) {
                                 changes.rescan = true;
+                            } else if ev.mask.contains(EventMask::MOVE_SELF) {
+                                changes.moved = true;
+                            } else if ev
+                                .mask
+                                .intersects(EventMask::DELETE_SELF | EventMask::IGNORED)
+                            {
+                                changes.deleted = true;
                             } else if let Some(name) = ev.name {
                                 changes.names.insert(name.to_os_string());
                             }
@@ -133,11 +164,17 @@ mod imp {
                     }
                 }
                 let left = deadline.saturating_duration_since(Instant::now());
-                if left.is_zero() || !wait_readable(inotify, left) {
+                if left.is_zero() {
                     break;
                 }
+                match wait(inotify, stop, Some(left)) {
+                    Wait::Stop => return,
+                    Wait::Timeout => break,
+                    Wait::Ready => {}
+                }
             }
-            if stop.is_cancelled() || out.send(changes).is_err() {
+            let gone = changes.deleted;
+            if cancel.is_cancelled() || out.send(changes).is_err() || gone {
                 return;
             }
         }
@@ -146,7 +183,6 @@ mod imp {
 
 #[cfg(not(target_os = "linux"))]
 mod imp {
-    use std::collections::HashSet;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::time::Duration;
@@ -202,10 +238,7 @@ mod imp {
                 }
                 Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return,
             };
-            let mut changes = Changes {
-                names: HashSet::new(),
-                rescan: false,
-            };
+            let mut changes = Changes::default();
             absorb(&mut changes, first, dir);
             let deadline = std::time::Instant::now() + window;
             while let Ok(ev) = raw.recv_deadline(deadline) {

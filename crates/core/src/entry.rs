@@ -112,6 +112,10 @@ pub mod keys {
     pub const GID: &str = "gid";
     /// Symlink target, present for symlinks after stat.
     pub const LINK_TARGET: &str = "link_target";
+    /// The user's tags, a `Value::List` of `Value::Text`, stored on disk in
+    /// [`crate::metadata::TAGS_XATTR`]. Written by the tags plugin, read by
+    /// search and the views.
+    pub const TAGS: &str = "tags";
 }
 
 /// The metadata bag. Keys are sorted for deterministic serialization.

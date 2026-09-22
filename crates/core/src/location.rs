@@ -16,21 +16,41 @@ use serde::{Deserialize, Serialize};
 
 use crate::cancel::CancelToken;
 use crate::entry::{Entry, EntryId};
+use crate::os_path::PathArg;
 use crate::scheduler::{Priority, Scheduler};
 
 /// The scheme used for plain filesystem paths.
 pub const PATH_SCHEME: &str = "path";
 
 /// A parsed location string.
+///
+/// A path location keeps its exact path: a name that is not valid UTF-8 has
+/// no faithful string form, so `rest` then holds a display form and the path
+/// itself travels beside it (serialized as bytes, see [`crate::os_path`]).
+/// Build path locations with [`Location::from_path`] and read them with
+/// [`Location::path`]; never round-trip one through `to_string`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Location {
     /// `path` for filesystem paths, otherwise a plugin's scheme.
     pub scheme: Arc<str>,
-    /// Everything after the scheme; the path itself for `path`.
+    /// Everything after the scheme; the path itself for `path` (a display
+    /// form when the path is not valid UTF-8).
     pub rest: String,
+    /// The exact path, only when `rest` cannot hold it.
+    #[serde(default, rename = "path", skip_serializing_if = "Option::is_none")]
+    raw: Option<PathArg>,
 }
 
 impl Location {
+    /// A location of a plugin's `scheme`.
+    pub fn new(scheme: &str, rest: impl Into<String>) -> Self {
+        Location {
+            scheme: scheme.into(),
+            rest: rest.into(),
+            raw: None,
+        }
+    }
+
     /// Parse `s`. Absolute or relative paths, `~`, and `scheme:rest` are all accepted.
     /// A single letter before the colon is treated as a Windows drive, not a scheme.
     pub fn parse(s: &str) -> Self {
@@ -40,21 +60,30 @@ impl Location {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         {
-            return Location {
-                scheme: scheme.into(),
-                rest: rest.to_owned(),
-            };
+            return Location::new(scheme, rest);
         }
-        Location {
-            scheme: PATH_SCHEME.into(),
-            rest: s.to_owned(),
+        Location::new(PATH_SCHEME, s)
+    }
+
+    /// [`Location::parse`] for text that arrived as an OS string (a command
+    /// argument, see [`crate::os_path`]): what is not UTF-8 can only be a path.
+    pub fn parse_os(s: &OsStr) -> Self {
+        match s.to_str() {
+            Some(text) => Location::parse(text),
+            None => Location::from_path(s),
         }
     }
 
+    /// A path location, exact whatever bytes the path holds.
     pub fn from_path(p: impl AsRef<Path>) -> Self {
-        Location {
-            scheme: PATH_SCHEME.into(),
-            rest: p.as_ref().to_string_lossy().into_owned(),
+        let p = p.as_ref();
+        match p.to_str() {
+            Some(text) => Location::new(PATH_SCHEME, text),
+            None => Location {
+                scheme: PATH_SCHEME.into(),
+                rest: p.to_string_lossy().into_owned(),
+                raw: Some(PathArg::from(p)),
+            },
         }
     }
 
@@ -66,6 +95,9 @@ impl Location {
     pub fn path(&self) -> Option<PathBuf> {
         if !self.is_path() {
             return None;
+        }
+        if let Some(raw) = &self.raw {
+            return Some(raw.to_path_buf());
         }
         let r = &self.rest;
         if r == "~" || r.starts_with("~/") {
@@ -89,9 +121,12 @@ impl fmt::Display for Location {
 /// What an open location streams. Every variant is a batch.
 #[derive(Clone, Debug)]
 pub enum ListingEvent {
-    /// New entries (or, for an id already present, replacements).
+    /// New entries, or for an id already present its replacement. A
+    /// replacement that carries no stat under the same name (a re-listing)
+    /// keeps the metadata the listing already has.
     Added(Vec<Entry>),
-    /// Entries whose name, kind, or metadata changed.
+    /// Entries whose name, kind, or metadata changed. Ids the listing does
+    /// not hold are ignored: a late stat must not resurrect a removed entry.
     Updated(Vec<Entry>),
     /// Entries that no longer exist here.
     Removed(Vec<EntryId>),
@@ -208,9 +243,62 @@ impl Default for SortSpec {
 
 #[derive(Debug)]
 struct SortCache {
-    version: u64,
+    /// The versions the order depends on: see [`Listing::sorted`].
+    stamp: (u64, u64),
     spec: SortSpec,
     ids: Arc<[EntryId]>,
+}
+
+#[derive(Debug)]
+struct Slot {
+    entry: Entry,
+    /// [`crate::collate::sort_key`] of the name, computed once per name.
+    key: Box<[u8]>,
+}
+
+impl Slot {
+    fn new(entry: Entry) -> Self {
+        let key = crate::collate::sort_key(&entry.name);
+        Slot { entry, key }
+    }
+}
+
+/// What one replacement changed, for the versions that depend on it.
+// One flag per version it bumps; a state machine would say less.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Default)]
+struct Delta {
+    any: bool,
+    name: bool,
+    order: bool,
+    size: bool,
+    modified: bool,
+}
+
+impl Delta {
+    fn between(old: &Entry, new: &Entry) -> Self {
+        use crate::entry::keys;
+        let name = old.name != new.name;
+        let size = old.metadata.value(keys::SIZE) != new.metadata.value(keys::SIZE);
+        let modified = old.metadata.value(keys::MODIFIED) != new.metadata.value(keys::MODIFIED);
+        Delta {
+            any: old != new,
+            name,
+            order: name || old.kind != new.kind,
+            size,
+            modified,
+        }
+    }
+
+    fn arrival() -> Self {
+        Delta {
+            any: true,
+            name: true,
+            order: true,
+            size: true,
+            modified: true,
+        }
+    }
 }
 
 /// An in-memory view of a listing, kept up to date by applying events.
@@ -218,51 +306,108 @@ struct SortCache {
 /// gives a cached order for a [`SortSpec`].
 #[derive(Debug, Default)]
 pub struct Listing {
-    entries: IndexMap<EntryId, Entry>,
+    entries: IndexMap<EntryId, Slot>,
     complete: bool,
     error: Option<String>,
-    /// Incremented on every change, so views know when to recompute.
+    /// Incremented on every change, so views know when to recompute. An
+    /// event that changes nothing (a stat that found what the listing
+    /// already had) leaves it alone, so work keyed on it cannot loop.
     version: u64,
     /// Incremented when a name appears, disappears or changes. Hydration
     /// leaves it alone, so work that depends only on names (a grid counting
     /// the lines each one wraps to) is not redone for every metadata batch.
     names_version: u64,
+    /// Incremented when a change can move an entry under every sort: an
+    /// arrival, a removal, a new name or kind.
+    order_version: u64,
+    /// Incremented when a size or a modification time changes: only the
+    /// sorts by those keys depend on them.
+    size_version: u64,
+    modified_version: u64,
     sort_cache: parking_lot::Mutex<Option<SortCache>>,
 }
 
 impl Listing {
-    pub fn apply(&mut self, event: ListingEvent) {
+    /// Apply one event. Returns whether the listing changed.
+    pub fn apply(&mut self, event: ListingEvent) -> bool {
+        let mut delta = Delta::default();
         match event {
-            ListingEvent::Added(batch) | ListingEvent::Updated(batch) => {
-                let mut names_changed = false;
+            ListingEvent::Added(batch) => {
                 for e in batch {
-                    match self.entries.entry(e.id) {
-                        indexmap::map::Entry::Occupied(mut slot) => {
-                            names_changed |= slot.get().name != e.name;
-                            slot.insert(e);
-                        }
-                        indexmap::map::Entry::Vacant(slot) => {
-                            names_changed = true;
-                            slot.insert(e);
-                        }
-                    }
+                    self.upsert(e, true, &mut delta);
                 }
-                self.names_version += u64::from(names_changed);
+            }
+            ListingEvent::Updated(batch) => {
+                for e in batch {
+                    self.upsert(e, false, &mut delta);
+                }
             }
             ListingEvent::Removed(ids) => {
-                let mut names_changed = false;
-                for id in ids {
-                    names_changed |= self.entries.shift_remove(&id).is_some();
+                let before = self.entries.len();
+                if ids.len() > 16 {
+                    // One pass instead of an O(n) shift per id.
+                    let gone: std::collections::HashSet<EntryId> = ids.into_iter().collect();
+                    self.entries.retain(|id, _| !gone.contains(id));
+                } else {
+                    for id in ids {
+                        self.entries.shift_remove(&id);
+                    }
                 }
-                self.names_version += u64::from(names_changed);
+                if self.entries.len() != before {
+                    delta = Delta::arrival();
+                }
             }
             ListingEvent::Complete => {
+                delta.any = !self.complete || self.error.is_some();
                 self.complete = true;
                 self.error = None;
             }
-            ListingEvent::Error(e) => self.error = Some(e),
+            ListingEvent::Error(e) => {
+                delta.any = self.error.as_deref() != Some(e.as_str());
+                self.error = Some(e);
+            }
         }
-        self.version += 1;
+        self.names_version += u64::from(delta.name);
+        self.order_version += u64::from(delta.order);
+        self.size_version += u64::from(delta.size);
+        self.modified_version += u64::from(delta.modified);
+        self.version += u64::from(delta.any);
+        delta.any
+    }
+
+    fn upsert(&mut self, mut e: Entry, insert: bool, delta: &mut Delta) {
+        match self.entries.entry(e.id) {
+            indexmap::map::Entry::Occupied(mut slot) => {
+                let old = &slot.get().entry;
+                // A re-listing (refresh, a watcher's rescan) sends bare
+                // entries: keep what hydration found rather than blanking
+                // every column until the rows are stat-ed again.
+                if !e.metadata.is_hydrated() && old.metadata.is_hydrated() && old.name == e.name {
+                    e.metadata = old.metadata.clone();
+                    e.kind = old.kind;
+                }
+                let d = Delta::between(old, &e);
+                if !d.any {
+                    return;
+                }
+                if d.name {
+                    *slot.get_mut() = Slot::new(e);
+                } else {
+                    slot.get_mut().entry = e;
+                }
+                delta.any = true;
+                delta.name |= d.name;
+                delta.order |= d.order;
+                delta.size |= d.size;
+                delta.modified |= d.modified;
+            }
+            indexmap::map::Entry::Vacant(slot) => {
+                if insert {
+                    slot.insert(Slot::new(e));
+                    *delta = Delta::arrival();
+                }
+            }
+        }
     }
 
     /// Changes so far; equal versions mean identical contents.
@@ -275,19 +420,28 @@ impl Listing {
         self.names_version
     }
 
-    /// The ids in `spec` order, directories first. Cached until the listing
-    /// or the spec changes, so calling this every frame is cheap.
+    /// The ids in `spec` order, directories first. Cached until something
+    /// the order depends on changes: a metadata batch re-sorts only a sort
+    /// by size or date, so calling this every frame is cheap.
     pub fn sorted(&self, spec: SortSpec) -> Arc<[EntryId]> {
+        let stamp = (
+            self.order_version,
+            match spec.key {
+                SortKey::Name => 0,
+                SortKey::Size => self.size_version,
+                SortKey::Modified => self.modified_version,
+            },
+        );
         let mut cache = self.sort_cache.lock();
         if let Some(c) = cache.as_ref()
-            && c.version == self.version
+            && c.stamp == stamp
             && c.spec == spec
         {
             return Arc::clone(&c.ids);
         }
         let ids = self.compute_sorted(spec);
         *cache = Some(SortCache {
-            version: self.version,
+            stamp,
             spec,
             ids: Arc::clone(&ids),
         });
@@ -296,12 +450,11 @@ impl Listing {
 
     fn compute_sorted(&self, spec: SortSpec) -> Arc<[EntryId]> {
         use crate::entry::{Value, keys};
-        use std::os::unix::ffi::OsStrExt;
-        let mut keyed: Vec<(bool, u64, Vec<u8>, EntryId)> = self
+        let mut keyed: Vec<(bool, u64, &[u8], EntryId)> = self
             .entries
             .values()
-            .filter(|e| spec.show_hidden || !e.name.as_bytes().starts_with(b"."))
-            .map(|e| {
+            .filter(|s| spec.show_hidden || !s.entry.name.as_encoded_bytes().starts_with(b"."))
+            .map(|Slot { entry: e, key }| {
                 let num = match spec.key {
                     SortKey::Name => 0,
                     SortKey::Size => e
@@ -316,29 +469,24 @@ impl Listing {
                         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                         .map_or(0, |d| d.as_secs()),
                 };
-                (
-                    !e.is_dir(),
-                    num,
-                    e.name.as_bytes().to_ascii_lowercase(),
-                    e.id,
-                )
+                (!e.is_dir(), num, &**key, e.id)
             })
             .collect();
         keyed.sort_unstable_by(|a, b| {
             a.0.cmp(&b.0).then_with(|| {
-                let o = a.1.cmp(&b.1).then_with(|| a.2.cmp(&b.2));
+                let o = a.1.cmp(&b.1).then_with(|| a.2.cmp(b.2));
                 if spec.ascending { o } else { o.reverse() }
             })
         });
         keyed.into_iter().map(|(_, _, _, id)| id).collect()
     }
 
-    /// Drain everything currently available without blocking.
+    /// Drain everything currently available without blocking. Returns how
+    /// many events changed the listing.
     pub fn drain(&mut self, rx: &Receiver<ListingEvent>) -> usize {
         let mut n = 0;
         while let Ok(ev) = rx.try_recv() {
-            self.apply(ev);
-            n += 1;
+            n += usize::from(self.apply(ev));
         }
         n
     }
@@ -360,15 +508,15 @@ impl Listing {
     }
 
     pub fn get(&self, id: EntryId) -> Option<&Entry> {
-        self.entries.get(&id)
+        self.entries.get(&id).map(|s| &s.entry)
     }
 
     pub fn get_index(&self, i: usize) -> Option<&Entry> {
-        self.entries.get_index(i).map(|(_, e)| e)
+        self.entries.get_index(i).map(|(_, s)| &s.entry)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Entry> {
-        self.entries.values()
+        self.entries.values().map(|s| &s.entry)
     }
 
     pub fn ids(&self) -> impl Iterator<Item = EntryId> + '_ {
@@ -376,7 +524,7 @@ impl Listing {
     }
 
     pub fn find_by_name(&self, name: &OsStr) -> Option<&Entry> {
-        self.entries.values().find(|e| e.name == name)
+        self.iter().find(|e| e.name == name)
     }
 }
 
@@ -408,5 +556,119 @@ mod tests {
         assert_eq!(listing.names_version(), names + 1, "nothing was removed");
         listing.apply(ListingEvent::Removed(vec![EntryId { dev: 1, ino: 2 }]));
         assert_eq!(listing.names_version(), names + 2);
+    }
+
+    fn stat(mut e: Entry, size: u64) -> Entry {
+        use crate::entry::{Provenance, Value, keys};
+        e.metadata
+            .set(keys::SIZE, Value::UInt(size), Provenance::Filesystem);
+        e
+    }
+
+    #[test]
+    fn a_relisting_keeps_what_hydration_found() {
+        let file = |ino, name: &str| Entry::new(EntryId { dev: 1, ino }, name, EntryKind::File);
+        let mut listing = Listing::default();
+        listing.apply(ListingEvent::Added(vec![file(1, "a"), file(2, "b")]));
+        listing.apply(ListingEvent::Updated(vec![stat(file(1, "a"), 7)]));
+        let version = listing.version();
+
+        // A refresh sends the same entries bare: nothing changes.
+        assert!(!listing.apply(ListingEvent::Added(vec![file(1, "a"), file(2, "b")])));
+        assert_eq!(listing.version(), version);
+        assert!(
+            listing
+                .get(EntryId { dev: 1, ino: 1 })
+                .unwrap()
+                .metadata
+                .is_hydrated()
+        );
+
+        // A stat that finds the same thing again changes nothing either, so
+        // work keyed on the version cannot loop on it.
+        assert!(!listing.apply(ListingEvent::Updated(vec![stat(file(1, "a"), 7)])));
+        assert_eq!(listing.version(), version);
+
+        // An inode reused under another name is another file.
+        listing.apply(ListingEvent::Added(vec![file(1, "c")]));
+        assert!(
+            !listing
+                .get(EntryId { dev: 1, ino: 1 })
+                .unwrap()
+                .metadata
+                .is_hydrated()
+        );
+    }
+
+    #[test]
+    fn a_late_update_does_not_resurrect_a_removed_entry() {
+        let file = |ino, name: &str| Entry::new(EntryId { dev: 1, ino }, name, EntryKind::File);
+        let mut listing = Listing::default();
+        listing.apply(ListingEvent::Added(vec![file(1, "a")]));
+        listing.apply(ListingEvent::Removed(vec![EntryId { dev: 1, ino: 1 }]));
+        assert!(!listing.apply(ListingEvent::Updated(vec![stat(file(1, "a"), 1)])));
+        assert!(listing.is_empty());
+    }
+
+    #[test]
+    fn hydration_re_sorts_only_the_sorts_that_depend_on_it() {
+        let file = |ino, name: &str| Entry::new(EntryId { dev: 1, ino }, name, EntryKind::File);
+        let mut listing = Listing::default();
+        listing.apply(ListingEvent::Added(vec![
+            file(1, "f10"),
+            file(2, "f2"),
+            file(3, "É"),
+            file(4, "z"),
+        ]));
+        let by_name = SortSpec::default();
+        let by_size = SortSpec {
+            key: SortKey::Size,
+            ..SortSpec::default()
+        };
+        let names = listing.sorted(by_name);
+        let ino: Vec<u64> = names.iter().map(|id| id.ino).collect();
+        assert_eq!(ino, [3, 2, 1, 4], "natural and case-folded");
+        listing.apply(ListingEvent::Updated(vec![stat(file(4, "z"), 1)]));
+        assert!(
+            Arc::ptr_eq(&names, &listing.sorted(by_name)),
+            "not sorted again"
+        );
+        let sizes: Vec<u64> = listing.sorted(by_size).iter().map(|id| id.ino).collect();
+        assert_eq!(sizes, [3, 2, 1, 4]);
+        listing.apply(ListingEvent::Updated(vec![stat(file(2, "f2"), 9)]));
+        let sizes: Vec<u64> = listing.sorted(by_size).iter().map(|id| id.ino).collect();
+        assert_eq!(sizes, [3, 1, 4, 2]);
+    }
+
+    #[test]
+    fn large_removals_keep_the_order_of_what_remains() {
+        let file = |ino| Entry::new(EntryId { dev: 1, ino }, format!("n{ino}"), EntryKind::File);
+        let mut listing = Listing::default();
+        listing.apply(ListingEvent::Added((0..100).map(file).collect()));
+        listing.apply(ListingEvent::Removed(
+            (0..100)
+                .filter(|i| i % 3 != 0)
+                .map(|ino| EntryId { dev: 1, ino })
+                .collect(),
+        ));
+        let left: Vec<u64> = listing.ids().map(|id| id.ino).collect();
+        assert_eq!(left, (0..100).filter(|i| i % 3 == 0).collect::<Vec<_>>());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn path_locations_keep_names_that_are_not_utf8() {
+        use std::os::unix::ffi::OsStrExt;
+        let raw = Path::new(OsStr::from_bytes(b"/example/caf\xe9"));
+        let loc = Location::from_path(raw);
+        assert_eq!(loc.path().as_deref(), Some(raw));
+        let json = serde_json::to_value(&loc).unwrap();
+        let back: Location = serde_json::from_value(json).unwrap();
+        assert_eq!(back, loc);
+        assert_eq!(Location::parse_os(raw.as_os_str()), loc);
+        assert_eq!(
+            Location::from_path("/example/a"),
+            Location::parse("/example/a")
+        );
     }
 }

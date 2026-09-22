@@ -7,9 +7,8 @@
 //! from, keeps a byte-budgeted LRU of results, and wakes the UI when one
 //! lands. Toolkit-specific GPU upload is the UI's job.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use parking_lot::{Mutex, RwLock};
@@ -18,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::cancel::CancelToken;
 use crate::entry::EntryId;
 use crate::location::Waker;
+use crate::lru::ByteLru;
 use crate::op::EntryRef;
 use crate::scheduler::{Priority, Scheduler};
 
@@ -88,63 +88,32 @@ pub enum ThumbState {
 
 type Key = (EntryId, ThumbSize);
 
-struct Lru {
-    map: HashMap<Key, (Arc<Image>, u64)>,
-    order: VecDeque<(Key, u64)>,
-    bytes: usize,
-    budget: usize,
-    tick: u64,
-}
-
-impl Lru {
-    fn get(&mut self, k: &Key) -> Option<Arc<Image>> {
-        self.tick += 1;
-        let tick = self.tick;
-        let (img, stamp) = self.map.get_mut(k)?;
-        *stamp = tick;
-        self.order.push_back((*k, tick));
-        Some(Arc::clone(img))
-    }
-
-    fn insert(&mut self, k: Key, img: &Arc<Image>) {
-        self.tick += 1;
-        if let Some((old, _)) = self.map.insert(k, (Arc::clone(img), self.tick)) {
-            self.bytes -= old.bytes();
-        }
-        self.bytes += img.bytes();
-        self.order.push_back((k, self.tick));
-        self.evict();
-    }
-
-    fn evict(&mut self) {
-        while self.bytes > self.budget {
-            let Some((old_k, stamp)) = self.order.pop_front() else {
-                break;
-            };
-            if self.map.get(&old_k).is_some_and(|(_, s)| *s == stamp) {
-                let (old, _) = self.map.remove(&old_k).expect("present");
-                self.bytes -= old.bytes();
-            }
-        }
-    }
-
-    fn remove(&mut self, k: &Key) {
-        if let Some((old, _)) = self.map.remove(k) {
-            self.bytes -= old.bytes();
-        }
-    }
+struct Queued {
+    key: Key,
+    req: ThumbRequest,
+    priority: Priority,
+    /// The frame it was last asked for: older than a few frames, the
+    /// viewport has moved on and it is dropped before it runs.
+    frame: u64,
+    seq: u64,
 }
 
 struct State {
-    lru: Lru,
+    lru: ByteLru<Key, Arc<Image>>,
     unavailable: HashSet<Key>,
-    /// Pending requests, most recent last; workers pop from the back.
-    queue: Vec<(Key, ThumbRequest, Priority, u64)>,
-    in_flight: HashSet<Key>,
+    /// Pending requests; workers take the best priority, most recent first.
+    queue: Vec<Queued>,
+    /// Running requests: the frame they were last asked for, and the token
+    /// that stops their provider once nobody asks any more.
+    in_flight: HashMap<Key, (u64, CancelToken)>,
     frame: u64,
+    seq: u64,
     decoded: u64,
     skipped: u64,
 }
+
+/// Frames a request may go unasked before it is dropped or cancelled.
+const STALE_FRAMES: u64 = 3;
 
 /// The service. One per app, shared with workers.
 pub struct Thumbnails {
@@ -152,31 +121,33 @@ pub struct Thumbnails {
     state: Mutex<State>,
     scheduler: Scheduler,
     waker: Mutex<Option<Waker>>,
-    seq: AtomicU64,
+    /// Stops every queued and running request when the owner goes away.
+    lifetime: CancelToken,
 }
 
 impl Thumbnails {
+    /// A service whose work lives as long as the returned value is used.
     pub fn new(scheduler: Scheduler) -> Arc<Self> {
+        Self::with_lifetime(scheduler, CancelToken::new())
+    }
+
+    /// A service whose providers are cancelled when `lifetime` is (the app's).
+    pub fn with_lifetime(scheduler: Scheduler, lifetime: CancelToken) -> Arc<Self> {
         Arc::new(Thumbnails {
             providers: RwLock::new(Vec::new()),
             state: Mutex::new(State {
-                lru: Lru {
-                    map: HashMap::new(),
-                    order: VecDeque::new(),
-                    bytes: 0,
-                    budget: 64 << 20,
-                    tick: 0,
-                },
+                lru: ByteLru::new(64 << 20),
                 unavailable: HashSet::new(),
                 queue: Vec::new(),
-                in_flight: HashSet::new(),
+                in_flight: HashMap::new(),
                 frame: 0,
+                seq: 0,
                 decoded: 0,
                 skipped: 0,
             }),
             scheduler,
             waker: Mutex::new(None),
-            seq: AtomicU64::new(0),
+            lifetime,
         })
     }
 
@@ -186,9 +157,8 @@ impl Thumbnails {
 
     /// Bytes of decoded images to keep. Default 64 MiB.
     pub fn set_budget(&self, bytes: usize) {
-        let mut s = self.state.lock();
-        s.lru.budget = bytes;
-        s.lru.evict();
+        let evicted = self.state.lock().lru.set_budget(bytes);
+        drop(evicted);
     }
 
     pub fn register(&self, owner: &str, provider: Arc<dyn ThumbnailProvider>) {
@@ -204,34 +174,68 @@ impl Thumbnails {
         self.providers.read().iter().map(|(_, p)| p.id()).collect()
     }
 
-    /// Call once per rendered frame: requests older than a few frames are
-    /// dropped before they run, since the viewport moved on.
+    /// Call once per rendered frame: requests not asked for in the last few
+    /// frames are dropped before they run, and running ones are cancelled,
+    /// since the viewport moved on.
     pub fn tick(&self) {
-        self.state.lock().frame += 1;
+        let mut s = self.state.lock();
+        s.frame += 1;
+        let frame = s.frame;
+        for (asked, cancel) in s.in_flight.values() {
+            if frame.saturating_sub(*asked) > STALE_FRAMES {
+                cancel.cancel();
+            }
+        }
     }
 
     /// Ask for a thumbnail. Returns immediately.
     pub fn get(self: &Arc<Self>, req: ThumbRequest, priority: Priority) -> ThumbState {
         let key = (req.entry.id, req.size);
-        let mut s = self.state.lock();
-        if let Some(img) = s.lru.get(&key) {
-            return ThumbState::Ready(img);
-        }
-        if s.unavailable.contains(&key) {
-            return ThumbState::Unavailable;
-        }
-        if !s.in_flight.contains(&key) {
-            let accepted = self.providers.read().iter().any(|(_, p)| p.accepts(&req));
-            if !accepted {
-                s.unavailable.insert(key);
+        {
+            let mut s = self.state.lock();
+            if let Some(img) = s.lru.get(&key) {
+                return ThumbState::Ready(Arc::clone(img));
+            }
+            if s.unavailable.contains(&key) {
                 return ThumbState::Unavailable;
             }
-            s.in_flight.insert(key);
             let frame = s.frame;
-            s.queue.push((key, req, priority, frame));
-            drop(s);
-            self.spawn_worker(priority);
+            if let Some((asked, _)) = s.in_flight.get_mut(&key) {
+                *asked = frame;
+                if let Some(q) = s.queue.iter_mut().find(|q| q.key == key) {
+                    q.frame = frame;
+                    q.priority = q.priority.min(priority);
+                }
+                return ThumbState::Pending;
+            }
         }
+        // Plugin code runs outside the state lock.
+        let accepted = {
+            let providers = self.providers.read();
+            providers.iter().any(|(_, p)| p.accepts(&req))
+        };
+        let mut s = self.state.lock();
+        if !accepted {
+            s.unavailable.insert(key);
+            return ThumbState::Unavailable;
+        }
+        if s.in_flight.contains_key(&key) || s.lru.contains(&key) {
+            // Another caller queued it (or it landed) while we asked.
+            return ThumbState::Pending;
+        }
+        let frame = s.frame;
+        s.in_flight.insert(key, (frame, self.lifetime.child()));
+        s.seq += 1;
+        let seq = s.seq;
+        s.queue.push(Queued {
+            key,
+            req,
+            priority,
+            frame,
+            seq,
+        });
+        drop(s);
+        self.spawn_worker(priority);
         ThumbState::Pending
     }
 
@@ -247,33 +251,46 @@ impl Thumbnails {
     /// (decoded, skipped as stale, cached bytes)
     pub fn stats(&self) -> (u64, u64, usize) {
         let s = self.state.lock();
-        (s.decoded, s.skipped, s.lru.bytes)
+        (s.decoded, s.skipped, s.lru.bytes())
     }
 
     fn spawn_worker(self: &Arc<Self>, priority: Priority) {
         let this = Arc::clone(self);
-        let seq = self.seq.fetch_add(1, Ordering::Relaxed);
-        let _ = seq;
         self.scheduler
-            .spawn(priority, "thumb", CancelToken::new(), move || {
+            .spawn(priority, "thumb", self.lifetime.child(), move || {
                 this.work_one();
             });
     }
 
-    /// Pop the most recent live request and run the providers on it.
+    /// Take the best live request (visible first, most recent first) and run
+    /// the providers on it.
     fn work_one(self: &Arc<Self>) {
-        let (key, req) = {
+        let (key, req, cancel) = {
             let mut s = self.state.lock();
             loop {
-                let Some((key, req, _, frame)) = s.queue.pop() else {
+                let best = s
+                    .queue
+                    .iter()
+                    .enumerate()
+                    .min_by_key(|(_, q)| (q.priority, std::cmp::Reverse(q.seq)))
+                    .map(|(i, _)| i);
+                let Some(i) = best else {
                     return;
                 };
-                if s.frame.saturating_sub(frame) > 3 {
-                    s.in_flight.remove(&key);
-                    s.skipped += 1;
-                    continue;
+                let q = s.queue.swap_remove(i);
+                let cancel = s.in_flight.get(&q.key).map(|(_, c)| c.clone());
+                match cancel {
+                    Some(cancel)
+                        if s.frame.saturating_sub(q.frame) <= STALE_FRAMES
+                            && !cancel.is_cancelled() =>
+                    {
+                        break (q.key, q.req, cancel);
+                    }
+                    _ => {
+                        s.in_flight.remove(&q.key);
+                        s.skipped += 1;
+                    }
                 }
-                break (key, req);
             }
         };
         let providers: Vec<Arc<dyn ThumbnailProvider>> = self
@@ -282,9 +299,11 @@ impl Thumbnails {
             .iter()
             .map(|(_, p)| Arc::clone(p))
             .collect();
-        let cancel = CancelToken::new();
         let mut produced: Option<(usize, Image)> = None;
         for (i, p) in providers.iter().enumerate() {
+            if cancel.is_cancelled() {
+                break;
+            }
             if !p.accepts(&req) {
                 continue;
             }
@@ -299,24 +318,36 @@ impl Thumbnails {
                 }
             }
         }
-        if let Some((i, img)) = &produced {
+        let cancelled = cancel.is_cancelled();
+        if let Some((i, img)) = &produced
+            && !cancelled
+        {
             for p in &providers[..*i] {
                 p.store(&req, img);
             }
         }
-        {
+        let evicted = {
             let mut s = self.state.lock();
             s.in_flight.remove(&key);
             match produced {
                 Some((_, img)) => {
                     s.decoded += 1;
-                    s.lru.insert(key, &Arc::new(img));
+                    let bytes = img.bytes();
+                    s.lru.insert(key, Arc::new(img), bytes)
+                }
+                // A cancelled request says nothing about the file: the next
+                // ask queues it again.
+                None if cancelled => {
+                    s.skipped += 1;
+                    Vec::new()
                 }
                 None => {
                     s.unavailable.insert(key);
+                    Vec::new()
                 }
             }
-        }
+        };
+        drop(evicted);
         if let Some(w) = self.waker.lock().as_ref() {
             w();
         }
@@ -326,7 +357,7 @@ impl Thumbnails {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct Fake {
         id: &'static str,

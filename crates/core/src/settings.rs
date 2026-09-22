@@ -5,6 +5,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use parking_lot::{Mutex, RwLock};
+
+use crate::os_path::PathArg;
 use serde::de::DeserializeOwned;
 use std::io::Write;
 
@@ -14,6 +16,12 @@ pub const STARTUP: &str = "core.startup";
 pub const STARTUP_FOLDER: &str = "core.startup_folder";
 /// Application data: where the window was when it closed.
 pub const LAST_LOCATION: &str = "core.last_location";
+
+/// The namespace of a dotted setting key: the owning plugin's id (or
+/// `core`/`ui`). The one place that says which keys a plugin owns.
+pub fn owner_of(key: &str) -> &str {
+    key.split_once('.').map_or(key, |(owner, _)| owner)
+}
 
 /// How an editor should present a setting. The value's type is still the
 /// type of `default`; the kind only picks the control.
@@ -175,7 +183,7 @@ impl SettingSpec {
 
     /// The settings namespace, which is the owning plugin's id (or `core`/`ui`).
     pub fn owner(&self) -> &str {
-        self.key.split('.').next().unwrap_or_default()
+        owner_of(&self.key)
     }
 
     /// The label of a choice value, falling back to the value itself.
@@ -208,7 +216,11 @@ impl SettingSpec {
         );
         let value = match self.default {
             toml::Value::String(_) => toml::Value::String(text.into()),
-            toml::Value::Boolean(_) => toml::Value::Boolean(text.parse()?),
+            toml::Value::Boolean(_) => toml::Value::Boolean(
+                text.trim()
+                    .parse()
+                    .map_err(|_| anyhow::anyhow!("expected true or false"))?,
+            ),
             toml::Value::Integer(_) => toml::Value::Integer(
                 text.trim()
                     .parse()
@@ -373,9 +385,9 @@ impl Drop for SaveGuard {
 pub fn startup_folder(settings: &Settings, home: &Path) -> PathBuf {
     let stored = |key: &str| {
         settings
-            .get::<String>(key)
-            .filter(|path| !path.is_empty())
-            .map(PathBuf::from)
+            .get::<PathArg>(key)
+            .map(PathArg::into_inner)
+            .filter(|path| !path.as_os_str().is_empty())
     };
     let choice = match settings.get::<String>(STARTUP).as_deref() {
         Some("last") => stored(LAST_LOCATION),
@@ -390,11 +402,15 @@ pub fn remember_location(settings: &Settings, folder: &Path) {
     if settings.get::<String>(STARTUP).as_deref() != Some("last") {
         return;
     }
-    let folder = folder.to_string_lossy().into_owned();
-    if settings.get::<String>(LAST_LOCATION).as_deref() == Some(folder.as_str()) {
+    // A string when the path is UTF-8, its bytes otherwise (`os_path`): a
+    // folder whose name is not UTF-8 reopens as itself.
+    if settings.get::<PathArg>(LAST_LOCATION).as_deref() == Some(folder) {
         return;
     }
-    settings.set(LAST_LOCATION, toml::Value::String(folder));
+    let Ok(value) = toml::Value::try_from(PathArg::from(folder)) else {
+        return;
+    };
+    settings.set(LAST_LOCATION, value);
     if let Err(error) = settings.save() {
         tracing::warn!("cannot remember the last folder: {error:#}");
     }

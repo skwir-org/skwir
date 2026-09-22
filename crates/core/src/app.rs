@@ -12,11 +12,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::cache::Cache;
 use crate::cancel::CancelToken;
-use crate::command::{CommandRegistry, Invocation, Outcome};
+use crate::command::{CommandRegistry, Invocation, NoArgs, Outcome};
 use crate::entry::EntryId;
 use crate::fs::PathProvider;
 use crate::location::{Location, LocationProvider, OpenContext, OpenLocation, Waker};
 use crate::op::{self, EntryRef, Executor, OpRegistry, Plan, PlanData};
+use crate::os_path::PathArg;
 use crate::plugin::PluginHost;
 use crate::registry::Registry;
 use crate::scheduler::{Priority, Scheduler};
@@ -112,6 +113,7 @@ pub struct App {
 impl App {
     pub fn new(config: AppConfig) -> anyhow::Result<Arc<Self>> {
         let scheduler = Scheduler::new(config.workers);
+        let lifetime = CancelToken::new();
         let settings = match config.settings_path {
             Some(p) => Settings::load(p)?,
             None => Settings::in_memory(),
@@ -120,7 +122,10 @@ impl App {
             weak: weak.clone(),
             notifications: parking_lot::Mutex::new(Vec::new()),
             executor: Executor::new(scheduler.clone()),
-            thumbnails: crate::thumbs::Thumbnails::new(scheduler.clone()),
+            thumbnails: crate::thumbs::Thumbnails::with_lifetime(
+                scheduler.clone(),
+                lifetime.child(),
+            ),
             metadata: Arc::new(crate::metadata::MetadataProviders::default()),
             previews: Arc::new(crate::preview::Previews::default()),
             proposals: parking_lot::Mutex::new(Vec::new()),
@@ -137,7 +142,7 @@ impl App {
             providers: RwLock::new(HashMap::new()),
             waker: RwLock::new(None),
             batch_size: config.batch_size,
-            lifetime: CancelToken::new(),
+            lifetime,
         });
         app.register_provider("core", Arc::new(PathProvider));
         op::register_builtin(&app.ops);
@@ -201,7 +206,7 @@ impl App {
         self.registry.remove_owner(owner);
         self.providers.write().retain(|_, (o, _)| &**o != owner);
         for spec in self.settings.schema() {
-            if spec.key.starts_with(&format!("{owner}.")) {
+            if spec.owner() == owner {
                 self.settings.undeclare(&spec.key);
             }
         }
@@ -333,17 +338,43 @@ impl App {
 
     /// Entry references for the current selection of a pane, in selection order.
     pub fn selected_refs(&self, pane: PaneId) -> Vec<EntryRef> {
-        let ws = self.workspace.read();
-        let Some(p) = ws.pane(pane) else {
+        let Some((open, ids)) = self.with_open(pane, |p| p.selection.iter().collect::<Vec<_>>())
+        else {
             return Vec::new();
         };
-        let Some(open) = &p.open else {
-            return Vec::new();
-        };
-        p.selection
-            .iter()
+        ids.into_iter()
             .filter_map(|id| open.path_of(id).map(|path| EntryRef::new(id, path)))
             .collect()
+    }
+
+    /// `pane`, or the active pane when `None`: what a command's optional
+    /// `pane` argument means.
+    pub fn pane_or_active(&self, pane: Option<PaneId>) -> PaneId {
+        pane.unwrap_or_else(|| self.workspace.read().active_id())
+    }
+
+    /// The directory a pane shows, or an error a command can return as is.
+    pub fn pane_dir(&self, pane: PaneId) -> anyhow::Result<PathBuf> {
+        let ws = self.workspace.read();
+        let p = ws
+            .pane(pane)
+            .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+        p.location()
+            .and_then(Location::path)
+            .ok_or_else(|| anyhow::anyhow!("pane is not showing a directory"))
+    }
+
+    /// A pane's open location and a snapshot taken with it, outside the
+    /// workspace lock: the location's methods are plugin code that may
+    /// take other locks, send and wake.
+    fn with_open<T>(
+        &self,
+        pane: PaneId,
+        snapshot: impl FnOnce(&crate::workspace::Pane) -> T,
+    ) -> Option<(Arc<dyn OpenLocation>, T)> {
+        let ws = self.workspace.read();
+        let p = ws.pane(pane)?;
+        Some((Arc::clone(p.open.as_ref()?), snapshot(p)))
     }
 }
 
@@ -356,21 +387,17 @@ impl Drop for App {
 // ================================================================ built-in commands
 
 /// Arguments shared by commands that act on a pane.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct PaneArg {
     /// The pane to act on; the active pane when omitted.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pane: Option<PaneId>,
-}
-
-fn pane_of(app: &App, arg: Option<PaneId>) -> PaneId {
-    arg.unwrap_or_else(|| app.workspace.read().active_id())
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct NavigateArgs {
-    /// A path or `scheme:rest`.
-    pub location: String,
+    /// A path or `scheme:rest`; a path that is not UTF-8 as `{"bytes": [..]}`.
+    pub location: PathArg,
     #[serde(default)]
     pub pane: Option<PaneId>,
 }
@@ -405,7 +432,7 @@ pub struct SelectArgs {
     pub ids: Vec<EntryId>,
     /// Select by name instead of (or in addition to) ids.
     #[serde(default)]
-    pub names: Vec<String>,
+    pub names: Vec<PathArg>,
     #[serde(default)]
     pub mode: SelectMode,
     #[serde(default)]
@@ -414,7 +441,7 @@ pub struct SelectArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RenameArgs {
-    pub new_name: String,
+    pub new_name: PathArg,
     #[serde(default)]
     pub pane: Option<PaneId>,
 }
@@ -422,14 +449,14 @@ pub struct RenameArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct DestArgs {
     /// Destination directory.
-    pub dest: String,
+    pub dest: PathArg,
     #[serde(default)]
     pub pane: Option<PaneId>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MkdirArgs {
-    pub name: String,
+    pub name: PathArg,
     #[serde(default)]
     pub pane: Option<PaneId>,
 }
@@ -453,16 +480,6 @@ pub struct PlanDiffArgs {
 
 mod builtin {
     use super::*;
-
-    fn dir_of(app: &App, pane: PaneId) -> anyhow::Result<PathBuf> {
-        let ws = app.workspace.read();
-        let p = ws
-            .pane(pane)
-            .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-        p.location()
-            .and_then(Location::path)
-            .ok_or_else(|| anyhow::anyhow!("pane is not showing a directory"))
-    }
 
     fn selection_plan(
         app: &App,
@@ -489,8 +506,8 @@ mod builtin {
             "Go to location",
             "Open a path or location in a pane",
             |a, app| {
-                let pane = pane_of(app, a.pane);
-                app.navigate(pane, &Location::parse(&a.location))?;
+                let pane = app.pane_or_active(a.pane);
+                app.navigate(pane, &Location::parse_os(a.location.as_os_str()))?;
                 Ok(Outcome::Done)
             },
         );
@@ -501,9 +518,8 @@ mod builtin {
             "Refresh",
             "Re-list the pane's location",
             |a, app| {
-                let pane = pane_of(app, a.pane);
-                let ws = app.workspace.read();
-                if let Some(open) = ws.pane(pane).and_then(|p| p.open.as_ref()) {
+                let pane = app.pane_or_active(a.pane);
+                if let Some((open, ())) = app.with_open(pane, |_| ()) {
                     open.refresh();
                 }
                 Ok(Outcome::Done)
@@ -520,7 +536,7 @@ mod builtin {
             ),
         ] {
             c.register::<PaneArg, _>("core", name, title, description, move |a, app| {
-                let pane = pane_of(app, a.pane);
+                let pane = app.pane_or_active(a.pane);
                 let target = {
                     let ws = app.workspace.read();
                     let p = ws
@@ -554,8 +570,8 @@ mod builtin {
             "Parent directory",
             "Go to the parent of the current directory",
             |a, app| {
-                let pane = pane_of(app, a.pane);
-                let dir = dir_of(app, pane)?;
+                let pane = app.pane_or_active(a.pane);
+                let dir = app.pane_dir(pane)?;
                 if let Some(parent) = dir.parent() {
                     app.navigate(pane, &Location::from_path(parent))?;
                 }
@@ -569,16 +585,16 @@ mod builtin {
             "Select",
             "Select entries by id or name",
             |a, app| {
-                let pane = pane_of(app, a.pane);
+                let pane = app.pane_or_active(a.pane);
                 let mut ws = app.workspace.write();
                 let p = ws
                     .pane_mut(pane)
                     .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
                 let mut ids = a.ids;
                 for n in &a.names {
-                    match p.listing.find_by_name(std::ffi::OsStr::new(n)) {
+                    match p.listing.find_by_name(n.as_os_str()) {
                         Some(e) => ids.push(e.id),
-                        None => anyhow::bail!("no entry named `{n}`"),
+                        None => anyhow::bail!("no entry named `{}`", n.display()),
                     }
                 }
                 match a.mode {
@@ -613,7 +629,7 @@ mod builtin {
             "Sort",
             "Set the sort key, direction, and hidden-file visibility of a pane",
             |a, app| {
-                let pane = pane_of(app, a.pane);
+                let pane = app.pane_or_active(a.pane);
                 let mut ws = app.workspace.write();
                 let p = ws
                     .pane_mut(pane)
@@ -642,7 +658,7 @@ mod builtin {
             "Toggle hidden files",
             "Show or hide dot-prefixed entries",
             |a, app| {
-                let pane = pane_of(app, a.pane);
+                let pane = app.pane_or_active(a.pane);
                 if let Some(p) = app.workspace.write().pane_mut(pane) {
                     p.sort.show_hidden = !p.sort.show_hidden;
                 }
@@ -656,7 +672,7 @@ mod builtin {
             "Select all",
             "Select every entry",
             |a, app| {
-                let pane = pane_of(app, a.pane);
+                let pane = app.pane_or_active(a.pane);
                 let mut ws = app.workspace.write();
                 let p = ws
                     .pane_mut(pane)
@@ -673,7 +689,7 @@ mod builtin {
             "Clear selection",
             "Deselect everything",
             |a, app| {
-                let pane = pane_of(app, a.pane);
+                let pane = app.pane_or_active(a.pane);
                 if let Some(p) = app.workspace.write().pane_mut(pane) {
                     p.selection.clear();
                 }
@@ -687,9 +703,8 @@ mod builtin {
             "Load metadata",
             "Request metadata for entries (views call this for visible rows)",
             |a, app| {
-                let pane = pane_of(app, a.pane);
-                let ws = app.workspace.read();
-                if let Some(open) = ws.pane(pane).and_then(|p| p.open.as_ref()) {
+                let pane = app.pane_or_active(a.pane);
+                if let Some((open, ())) = app.with_open(pane, |_| ()) {
                     open.hydrate(&a.ids, Priority::Visible);
                 }
                 Ok(Outcome::Done)
@@ -702,16 +717,18 @@ mod builtin {
             "Rename",
             "Rename the selected entry (plan)",
             |a, app| {
-                let pane = pane_of(app, a.pane);
+                let pane = app.pane_or_active(a.pane);
                 let refs = app.selected_refs(pane);
                 let [r] = refs.as_slice() else {
                     anyhow::bail!("rename needs exactly one selected entry")
                 };
+                let new_name = a.new_name.into_inner().into_os_string();
+                op::valid_file_name(&new_name)?;
                 Ok(Outcome::Plan(Plan::with_steps(
-                    format!("rename to {}", a.new_name),
+                    format!("rename to {}", new_name.display()),
                     vec![Box::new(op::Rename {
                         entry: r.clone(),
-                        new_name: a.new_name,
+                        new_name,
                     })],
                 )))
             },
@@ -723,8 +740,8 @@ mod builtin {
             "Move",
             "Move the selection to a directory (plan)",
             |a, app| {
-                let pane = pane_of(app, a.pane);
-                let dest = Location::parse(&a.dest)
+                let pane = app.pane_or_active(a.pane);
+                let dest = Location::parse_os(a.dest.as_os_str())
                     .path()
                     .ok_or_else(|| anyhow::anyhow!("destination must be a path"))?;
                 selection_plan(app, pane, &format!("move to {}", dest.display()), |e| {
@@ -742,8 +759,8 @@ mod builtin {
             "Copy",
             "Copy the selection to a directory (plan)",
             |a, app| {
-                let pane = pane_of(app, a.pane);
-                let dest = Location::parse(&a.dest)
+                let pane = app.pane_or_active(a.pane);
+                let dest = Location::parse_os(a.dest.as_os_str())
                     .path()
                     .ok_or_else(|| anyhow::anyhow!("destination must be a path"))?;
                 selection_plan(app, pane, &format!("copy to {}", dest.display()), |e| {
@@ -758,7 +775,7 @@ mod builtin {
             "Move to trash",
             "Trash the selection (plan)",
             |a, app| {
-                let pane = pane_of(app, a.pane);
+                let pane = app.pane_or_active(a.pane);
                 selection_plan(app, pane, "move to trash", |e| {
                     Box::new(op::Trash { entry: e })
                 })
@@ -771,7 +788,7 @@ mod builtin {
             "Delete permanently",
             "Delete the selection without trash (plan, irreversible)",
             |a, app| {
-                let pane = pane_of(app, a.pane);
+                let pane = app.pane_or_active(a.pane);
                 selection_plan(app, pane, "delete permanently", |e| {
                     Box::new(op::Delete { entry: e })
                 })
@@ -784,12 +801,14 @@ mod builtin {
             "New folder",
             "Create a folder in the current directory (plan)",
             |a, app| {
-                let pane = pane_of(app, a.pane);
-                let dir = dir_of(app, pane)?;
+                let pane = app.pane_or_active(a.pane);
+                let dir = app.pane_dir(pane)?;
+                let name = a.name.into_inner().into_os_string();
+                op::valid_file_name(&name)?;
                 Ok(Outcome::Plan(Plan::with_steps(
-                    format!("new folder {}", a.name),
+                    format!("new folder {}", name.display()),
                     vec![Box::new(op::Mkdir {
-                        path: dir.join(a.name),
+                        path: dir.join(name),
                     })],
                 )))
             },
@@ -818,7 +837,7 @@ mod builtin {
             },
         );
 
-        c.register::<PaneArg, _>(
+        c.register::<NoArgs, _>(
             "core",
             "undo",
             "Undo",
@@ -831,7 +850,7 @@ mod builtin {
             },
         );
 
-        c.register::<PaneArg, _>(
+        c.register::<NoArgs, _>(
             "core",
             "redo",
             "Redo",
@@ -844,7 +863,7 @@ mod builtin {
             },
         );
 
-        c.register::<PaneArg, _>(
+        c.register::<NoArgs, _>(
             "core",
             "commands",
             "List commands",

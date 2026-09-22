@@ -3,6 +3,7 @@
 //! Every contribution can be withdrawn by owner when a plugin is disabled.
 
 use std::any::Any;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
@@ -12,24 +13,53 @@ use serde::Serialize;
 use crate::command::Invocation;
 use crate::location::Location;
 
+/// Owners whose contributions are refused: disabled plugins. Shared by
+/// every list of a [`Registry`], so a plugin's worker that publishes after
+/// the plugin was disabled cannot bring its items back.
+#[derive(Default)]
+pub struct OwnerGate {
+    closed: RwLock<HashSet<Arc<str>>>,
+}
+
+impl OwnerGate {
+    pub fn set_open(&self, owner: &str, open: bool) {
+        let mut closed = self.closed.write();
+        if open {
+            closed.remove(owner);
+        } else {
+            closed.insert(owner.into());
+        }
+    }
+
+    pub fn is_open(&self, owner: &str) -> bool {
+        !self.closed.read().contains(owner)
+    }
+}
+
 /// A list of contributions, each tagged with its owner (plugin id or `core`).
 pub struct Contributions<T> {
     items: RwLock<Vec<(Arc<str>, T)>>,
     /// Bumped on every add or removal, so per-frame consumers compare one
     /// atomic instead of taking the read lock and walking the items.
     revision: AtomicU64,
+    gate: Arc<OwnerGate>,
 }
 
 impl<T> Default for Contributions<T> {
     fn default() -> Self {
-        Contributions {
-            items: RwLock::new(Vec::new()),
-            revision: AtomicU64::new(0),
-        }
+        Self::gated(Arc::default())
     }
 }
 
 impl<T> Contributions<T> {
+    fn gated(gate: Arc<OwnerGate>) -> Self {
+        Contributions {
+            items: RwLock::new(Vec::new()),
+            revision: AtomicU64::new(0),
+            gate,
+        }
+    }
+
     /// Changes whenever the set of contributions changes (including a
     /// remove followed by an add of the same id).
     pub fn revision(&self) -> u64 {
@@ -43,9 +73,33 @@ impl<T> Contributions<T> {
 }
 
 impl<T: Clone> Contributions<T> {
-    pub fn add(&self, owner: &str, item: T) {
-        self.items.write().push((owner.into(), item));
+    /// Add an item. Refused (returns false) while `owner` is disabled.
+    pub fn add(&self, owner: &str, item: T) -> bool {
+        let mut items = self.items.write();
+        if !self.gate.is_open(owner) {
+            return false;
+        }
+        items.push((owner.into(), item));
+        drop(items);
         self.bump();
+        true
+    }
+
+    /// Replace everything `owner` contributed with `items`, in one step:
+    /// a reader sees the old list or the new one, never a partial one, and
+    /// the revision moves once. Refused (returns false) while `owner` is
+    /// disabled.
+    pub fn replace_owner(&self, owner: &str, new: impl IntoIterator<Item = T>) -> bool {
+        let owner: Arc<str> = owner.into();
+        let mut items = self.items.write();
+        if !self.gate.is_open(&owner) {
+            return false;
+        }
+        items.retain(|(o, _)| *o != owner);
+        items.extend(new.into_iter().map(|t| (Arc::clone(&owner), t)));
+        drop(items);
+        self.bump();
+        true
     }
 
     pub fn remove_owner(&self, owner: &str) {
@@ -165,16 +219,37 @@ pub struct KeyBinding {
 }
 
 /// All UI registries.
-#[derive(Default)]
 pub struct Registry {
     pub views: Contributions<ViewSpec>,
     pub panels: Contributions<PanelSpec>,
     pub places: Contributions<Place>,
     pub menus: Contributions<MenuItem>,
     pub keymap: Contributions<KeyBinding>,
+    gate: Arc<OwnerGate>,
+}
+
+impl Default for Registry {
+    fn default() -> Self {
+        let gate = Arc::new(OwnerGate::default());
+        Registry {
+            views: Contributions::gated(Arc::clone(&gate)),
+            panels: Contributions::gated(Arc::clone(&gate)),
+            places: Contributions::gated(Arc::clone(&gate)),
+            menus: Contributions::gated(Arc::clone(&gate)),
+            keymap: Contributions::gated(Arc::clone(&gate)),
+            gate,
+        }
+    }
 }
 
 impl Registry {
+    /// Accept or refuse contributions from `owner`. The plugin host closes
+    /// the gate before withdrawing a disabled plugin's items and opens it
+    /// before registering an enabled one.
+    pub fn set_owner_enabled(&self, owner: &str, enabled: bool) {
+        self.gate.set_open(owner, enabled);
+    }
+
     pub fn remove_owner(&self, owner: &str) {
         self.views.remove_owner(owner);
         self.panels.remove_owner(owner);
@@ -199,5 +274,31 @@ mod tests {
         assert_eq!(c.revision(), r1);
         c.remove_owner("a");
         assert_ne!(c.revision(), r1);
+    }
+
+    #[test]
+    fn replacing_is_one_step_and_a_closed_owner_is_refused() {
+        let registry = Registry::default();
+        let c = &registry.keymap;
+        let binding = |keys: &str| KeyBinding {
+            keys: keys.into(),
+            command: Invocation::new("x"),
+            when: None,
+        };
+        c.add("p", binding("a"));
+        c.add("q", binding("b"));
+        let r = c.revision();
+        assert!(c.replace_owner("p", [binding("c"), binding("d")]));
+        assert_eq!(c.revision(), r + 1);
+        let keys: Vec<String> = c.all().into_iter().map(|b| b.keys).collect();
+        assert_eq!(keys, ["b", "c", "d"]);
+
+        registry.set_owner_enabled("p", false);
+        registry.remove_owner("p");
+        assert!(!c.add("p", binding("late")));
+        assert!(!c.replace_owner("p", [binding("late")]));
+        assert_eq!(c.all().len(), 1);
+        registry.set_owner_enabled("p", true);
+        assert!(c.add("p", binding("again")));
     }
 }

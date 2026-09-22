@@ -73,8 +73,7 @@ impl Requirement {
 
 /// Whether an executable called `program` is on `PATH`.
 pub fn on_path(program: &str) -> bool {
-    std::env::var_os("PATH")
-        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
+    crate::os_path::find_program(program).is_some()
 }
 
 /// The outcome of probing one [`Requirement`].
@@ -93,9 +92,6 @@ struct SetEnabledArgs {
     id: String,
     enabled: bool,
 }
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-struct NoArgs {}
 
 /// Plugin management as commands, so the settings UI, the CLI and agents
 /// share one surface. Lifecycle callbacks can block (a plugin joins its
@@ -132,7 +128,7 @@ pub(crate) fn register(app: &App) {
             Ok(crate::command::Outcome::Done)
         },
     );
-    app.commands.register::<NoArgs, _>(
+    app.commands.register::<crate::command::NoArgs, _>(
         "core",
         "plugins.list",
         "List plugins",
@@ -177,6 +173,7 @@ impl PluginHost {
             .settings
             .get::<bool>(&Self::setting_key(plugin.id()))
             .unwrap_or(true);
+        app.registry.set_owner_enabled(plugin.id(), enabled);
         if enabled {
             plugin.register(app);
         }
@@ -234,6 +231,9 @@ impl PluginHost {
             slot.1 = enabled;
             Arc::clone(&slot.0)
         };
+        // The gate closes before the withdrawal, so a worker of the plugin
+        // that publishes in between cannot bring its items back.
+        app.registry.set_owner_enabled(id, enabled);
         if enabled {
             plugin.register(app);
         } else {
@@ -254,21 +254,18 @@ impl PluginHost {
             .plugins
             .read()
             .iter()
-            .filter(|(plugin, enabled)| {
-                *enabled
-                    && keys
-                        .iter()
-                        .any(|key| key.starts_with(&format!("{}.", plugin.id())))
-            })
+            .filter(|(_, enabled)| *enabled)
             .map(|(plugin, _)| Arc::clone(plugin))
             .collect();
         for plugin in plugins {
             let owned: Vec<_> = keys
                 .iter()
-                .filter(|key| key.starts_with(&format!("{}.", plugin.id())))
+                .filter(|key| crate::settings::owner_of(key) == plugin.id())
                 .cloned()
                 .collect();
-            plugin.on_settings_changed(app, &owned);
+            if !owned.is_empty() {
+                plugin.on_settings_changed(app, &owned);
+            }
         }
     }
 

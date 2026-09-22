@@ -14,6 +14,7 @@
 //! - [`cache`] and [`settings`]: the throwaway cache and namespaced settings.
 //! - [`thumbs`]: the thumbnail service: providers, LRU of decoded images, viewport priority.
 //! - [`workspace`]: panes, selection, focus.
+//! - [`collate`] and [`lru`]: the natural name order and the byte-budgeted LRU every cache shares.
 //! - [`app`]: the object that ties them together and hosts the built-in commands.
 //!
 //! The crate is toolkit-agnostic and has no async runtime: work runs on the
@@ -22,14 +23,17 @@
 pub mod app;
 pub mod cache;
 pub mod cancel;
+pub mod collate;
 pub mod command;
 pub mod document;
 pub mod entry;
 pub mod fs;
 pub mod location;
+pub mod lru;
 pub mod media;
 pub mod metadata;
 pub mod op;
+pub mod os_path;
 pub mod pending;
 pub mod playing;
 pub mod plugin;
