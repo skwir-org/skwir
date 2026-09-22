@@ -18,7 +18,8 @@ pub struct DocumentElement {
     pub page: Arc<PageContent>,
     pub highlights: Vec<Rect>,
     pub selection: Vec<Rect>,
-    pub color: Hsla,
+    /// The theme's `page_match` and `page_selection`, drawn over the page.
+    pub colors: (Hsla, Hsla),
     pub zoom: Option<f32>,
     pub fit_width: bool,
     pub on_pointer: Pointer,
@@ -134,11 +135,8 @@ impl Element for DocumentElement {
                 false,
             );
             for (rects, color) in [
-                (
-                    &self.highlights,
-                    gpui::Hsla::from(gpui::rgb(0xffce33)).opacity(0.4),
-                ),
-                (&self.selection, self.color.opacity(0.35)),
+                (&self.highlights, self.colors.0),
+                (&self.selection, self.colors.1),
             ] {
                 for rect in rects {
                     let bounds = Bounds::new(

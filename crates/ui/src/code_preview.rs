@@ -6,39 +6,111 @@ use bibli_core::{
 };
 use gpui::{AnyElement, WeakEntity, div, prelude::*, px};
 use std::collections::BTreeSet;
+use std::sync::OnceLock;
+use syntect::highlighting::ThemeSet;
+use syntect::parsing::SyntaxSet;
 
-/// Keep the highlighter's parser state across lines (e.g. multiline strings).
-/// Runs on the preview conversion worker, before any UI rows are created.
-pub fn highlight(data: &mut Inspection, dark: bool) {
-    let language = data.blocks.first().and_then(|b| b.language.as_deref());
-    let syntaxes = crate::preview::syntaxes(language);
-    let syntax = language
-        .and_then(|language| syntaxes.find_syntax_by_token(language))
-        .unwrap_or_else(|| syntaxes.find_syntax_plain_text());
-    let theme = &crate::preview::themes().themes[if dark {
-        "base16-ocean.dark"
+pub(crate) fn syntaxes(language: Option<&str>) -> &'static SyntaxSet {
+    static DEFAULTS: OnceLock<SyntaxSet> = OnceLock::new();
+    static TOML: OnceLock<SyntaxSet> = OnceLock::new();
+    if language.is_some_and(|language| language.eq_ignore_ascii_case("toml")) {
+        TOML.get_or_init(|| {
+            // Keep the bundled grammar separate: rebuilding the precompiled
+            // default set would delay every language's first preview.
+            let mut builder = syntect::parsing::SyntaxSetBuilder::new();
+            builder.add_plain_text_syntax();
+            builder.add(
+                syntect::parsing::SyntaxDefinition::load_from_str(
+                    include_str!("../assets/syntaxes/TOML.sublime-syntax"),
+                    true,
+                    None,
+                )
+                .expect("bundled TOML grammar"),
+            );
+            builder.build()
+        })
     } else {
-        "base16-ocean.light"
-    }];
-    let mut highlight = syntect::easy::HighlightLines::new(syntax, theme);
-    for block in &mut data.blocks {
-        block.runs.clear();
-        // The grammar needs line endings, but selection and copy use the line's
-        // original text and the block separator. Never expose this extra byte.
-        if let Ok(ranges) = highlight.highlight_line(&format!("{}\n", block.text), syntaxes) {
+        DEFAULTS.get_or_init(SyntaxSet::load_defaults_newlines)
+    }
+}
+
+fn themes() -> &'static ThemeSet {
+    static T: OnceLock<ThemeSet> = OnceLock::new();
+    T.get_or_init(ThemeSet::load_defaults)
+}
+
+/// The one syntax highlighter, for the code view and for a document's code
+/// blocks alike. It runs on the worker that builds the `Display` and keeps
+/// the grammar's state from line to line (a multiline string, a comment).
+pub(crate) struct Highlighter {
+    syntaxes: &'static SyntaxSet,
+    lines: syntect::easy::HighlightLines<'static>,
+}
+
+impl Highlighter {
+    pub fn new(language: Option<&str>, dark: bool) -> Self {
+        let syntaxes = syntaxes(language);
+        let syntax = language
+            .and_then(|language| syntaxes.find_syntax_by_token(language))
+            .unwrap_or_else(|| syntaxes.find_syntax_plain_text());
+        let theme = &themes().themes[if dark {
+            "base16-ocean.dark"
+        } else {
+            "base16-ocean.light"
+        }];
+        Self {
+            syntaxes,
+            lines: syntect::easy::HighlightLines::new(syntax, theme),
+        }
+    }
+
+    /// The coloured runs of the next line, `text` without its line ending,
+    /// in the line's own coordinates. The grammar needs the ending, but
+    /// selection and copy use the text as it is: the extra byte never shows.
+    pub fn line(&mut self, text: &str) -> Vec<Run> {
+        let mut runs = Vec::new();
+        if let Ok(ranges) = self
+            .lines
+            .highlight_line(&format!("{text}\n"), self.syntaxes)
+        {
             let mut offset = 0;
-            for (style, text) in ranges {
-                let end = (offset + text.len()).min(block.text.len());
+            for (style, part) in ranges {
+                let end = (offset + part.len()).min(text.len());
                 if offset < end {
-                    block.runs.push(Run {
+                    runs.push(Run {
                         range: offset..end,
                         color: Some([style.foreground.r, style.foreground.g, style.foreground.b]),
                         ..Run::default()
                     });
                 }
-                offset += text.len();
+                offset += part.len();
             }
         }
+        runs
+    }
+
+    /// The runs of a block of several lines, in the block's coordinates.
+    pub fn text(&mut self, text: &str) -> Vec<Run> {
+        let mut runs = Vec::new();
+        let mut offset = 0;
+        for line in text.split('\n') {
+            runs.extend(self.line(line).into_iter().map(|mut run| {
+                run.range = run.range.start + offset..run.range.end + offset;
+                run
+            }));
+            offset += line.len() + 1;
+        }
+        runs
+    }
+}
+
+/// Highlight the code view: one block per line, parser state kept between
+/// them. Runs on the preview conversion worker, before any UI rows exist.
+pub fn highlight(data: &mut Inspection, dark: bool) {
+    let language = data.blocks.first().and_then(|b| b.language.clone());
+    let mut highlighter = Highlighter::new(language.as_deref(), dark);
+    for block in &mut data.blocks {
+        block.runs = highlighter.line(&block.text);
     }
 }
 
@@ -72,6 +144,8 @@ pub struct CodeRow<'a> {
     pub font_size: f32,
     pub mono: &'a gpui::SharedString,
     pub theme: &'a Theme,
+    /// The inspector's style for this frame, built once, not per row.
+    pub style: &'a crate::markdown::MarkdownStyle,
     pub pane: PaneId,
     pub entity: WeakEntity<Shell>,
 }
@@ -86,10 +160,10 @@ impl CodeRow<'_> {
             font_size,
             mono,
             theme,
+            style,
             pane,
             entity,
         } = self;
-        let style = crate::markdown::MarkdownStyle::new(theme, font_size, false);
         let fold = data
             .folds
             .binary_search_by_key(&line, |fold| fold.start)
@@ -137,9 +211,7 @@ impl CodeRow<'_> {
             .font_family(mono.clone())
             .text_size(px(font_size - 2.))
             .line_height(px(font_size + 4.))
-            .when(selected == Some(line), |d| {
-                d.bg(theme.selection_bg.opacity(0.5))
-            })
+            .when(selected == Some(line), |d| d.bg(theme.highlight))
             .child(gutter)
             .child(
                 div()
@@ -150,7 +222,7 @@ impl CodeRow<'_> {
                         &data.blocks[line],
                         line,
                         selection,
-                        &style,
+                        style,
                         pane,
                         entity,
                     )),

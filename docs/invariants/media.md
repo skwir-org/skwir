@@ -101,7 +101,10 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
   back when unpinned, so neither going away ends the other's session. The
   panel shows the pinned session again whenever its file is selected, taking
   its state and its frames live (`MediaState::show_live`, no poster to wait
-  behind): never a second player for one file. Starting another track while
+  behind, the pin's cover or last frame shown until the next): the preview
+  worker does not open a player for the pinned file at all, so there is
+  never a second player for one file. A pin set, moved or let go starts a
+  new generation, so a track still opening for the old one is dropped. Starting another track while
   one is pinned moves the pin: never two playing at once. One reader pulls a
   session's updates, the panel when it shows the session, otherwise the pin,
   which keeps a film's last frame for the dock. The pin walks a queue of

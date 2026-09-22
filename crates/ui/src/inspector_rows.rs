@@ -80,23 +80,43 @@ pub fn sort(rows: &[Row], visible: &mut [usize], column: usize, ascending: bool)
     let numeric = visible
         .iter()
         .all(|index| cell(*index).is_empty() || number(cell(*index)).is_some());
-    visible.sort_by(|a, b| {
-        let (a, b) = (cell(*a), cell(*b));
-        match (a.is_empty(), b.is_empty()) {
-            (true, true) => return std::cmp::Ordering::Equal,
-            (true, false) => return std::cmp::Ordering::Greater,
-            (false, true) => return std::cmp::Ordering::Less,
-            (false, false) => {}
-        }
-        let order = if numeric {
-            number(a)
-                .partial_cmp(&number(b))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        } else {
-            a.to_lowercase().cmp(&b.to_lowercase())
-        };
-        if ascending { order } else { order.reverse() }
+    // Keys are worked out once per row, not once per comparison.
+    if numeric {
+        let keys: Vec<Option<f64>> = visible.iter().map(|i| number(cell(*i))).collect();
+        order(visible, keys, f64::total_cmp, ascending);
+    } else {
+        let keys: Vec<Option<String>> = visible
+            .iter()
+            .map(|i| {
+                Some(cell(*i))
+                    .filter(|c| !c.is_empty())
+                    .map(str::to_lowercase)
+            })
+            .collect();
+        order(visible, keys, Ord::cmp, ascending);
+    }
+}
+
+/// Order `visible` by `keys` (one per entry, `None` for a blank cell):
+/// blanks last either way, equal keys in the order they came.
+fn order<K>(
+    visible: &mut [usize],
+    keys: Vec<Option<K>>,
+    compare: impl Fn(&K, &K) -> std::cmp::Ordering,
+    ascending: bool,
+) {
+    let mut keyed: Vec<(Option<K>, usize)> =
+        keys.into_iter().zip(visible.iter().copied()).collect();
+    keyed.sort_by(|(a, _), (b, _)| match (a, b) {
+        (None, None) => std::cmp::Ordering::Equal,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (Some(a), Some(b)) if ascending => compare(a, b),
+        (Some(a), Some(b)) => compare(a, b).reverse(),
     });
+    for (slot, (_, index)) in visible.iter_mut().zip(keyed) {
+        *slot = index;
+    }
 }
 
 /// The bytes of one row of the hex view, from its cell of hex pairs.

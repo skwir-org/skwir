@@ -26,13 +26,19 @@ Read this before touching `crates/pdf-worker`, `crates/poppler-worker`, `crates/
 - Continuous reading is how a document opens, unless the reader's own button
   was last used to say otherwise: the choice is the user's and outlives the
   document, so it is the `ui.reader_continuous` preference, written through
-  `settings.apply` like any other, and read when a session arrives.
+  `settings.apply` like any other (queued while another save runs), and
+  read when a document opens, never on a later page's arrival. A document
+  whose file changes is opened again where it was read (`reader_reopen`):
+  same page, zoom and mode.
 - Continuous reading virtualizes pages with a logical page/offset anchor. Size
-  changes and fit/zoom are resolved in prepaint; invalidate measured row heights
-  (`ListState::remeasure_items`) without resetting that anchor and without
-  splicing: a spliced row forgets its height, and a document that loses a page
-  every time one finishes rendering has a scrollbar that jumps while it is
-  being dragged. A page that arrives at the size its placeholder assumed needs
+  changes and fit/zoom are resolved in prepaint. They change every row's
+  height at once, so the rows are reset to a new uniform estimate and the
+  anchor is restored in the same prepaint (`continuous_element`): the old
+  heights would only mislead the scrollbar. A page that arrives invalidates
+  its own measured height (`ListState::remeasure_items`) without resetting
+  that anchor and without splicing: a spliced row forgets its height, and a
+  document that loses a page every time one finishes rendering has a
+  scrollbar that jumps while it is being dragged. A page that arrives at the size its placeholder assumed needs
   no invalidation at all. Render only demanded pages and neighbours,
   serialize requests, reject cancelled generations, and evict offscreen pixel
   buffers and their atlas entries together. Page interactions carry a page

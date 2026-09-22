@@ -22,7 +22,7 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui::{AnyElement, Context, CursorStyle, DragMoveEvent, Render, Window, div, prelude::*, px};
+use gpui::{AnyElement, Context, CursorStyle, DragMoveEvent, Window, div, prelude::*, px};
 
 use crate::media::{Flash, Scrub};
 use crate::shell::Shell;
@@ -52,14 +52,6 @@ const PANEL_KEEP: f32 = 220.;
 /// Marker type for dragging the dock's top edge.
 #[derive(Clone)]
 pub struct DockHandle;
-
-struct NoDrag;
-
-impl Render for NoDrag {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-    }
-}
 
 impl Shell {
     /// The tallest the dock may be in this window: the panel keeps the rest.
@@ -92,7 +84,11 @@ impl Shell {
 fn meter(spectrum: &[f32], playing: bool, tint: gpui::Hsla) -> AnyElement {
     let mut row = div().flex().items_end().gap(px(1.)).size_full();
     for level in spectrum {
-        let level = if playing { level.clamp(0., 1.) } else { 0. };
+        let level = if playing {
+            crate::elements::halo::level(*level)
+        } else {
+            0.
+        };
         row = row.child(
             div()
                 .flex_1()
@@ -114,16 +110,7 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
     let height = shell.player.height.min(limit);
     let tall = height >= TALL_FROM;
     let state = &pinned.state;
-    let name = pinned
-        .path
-        .file_stem()
-        .map(|stem| stem.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let title = if state.title.is_empty() {
-        name.clone()
-    } else {
-        state.title.clone()
-    };
+    let title = crate::media::track_title(state, &pinned.path);
     let by = [state.artist.as_str(), state.album.as_str()]
         .into_iter()
         .filter(|part| !part.is_empty())
@@ -139,8 +126,10 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
         .right_0()
         .h(px(6.))
         .cursor(CursorStyle::ResizeUpDown)
-        .hover(|style| style.bg(theme.accent.opacity(0.35)))
-        .on_drag(DockHandle, |_, _, _, cx| cx.new(|_| NoDrag))
+        .hover(|style| style.bg(theme.handle))
+        .on_drag(DockHandle, |_, _, _, cx| {
+            cx.new(|_| crate::preview::NoDragView)
+        })
         .on_click(cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
             if event.click_count() == 2 {
                 this.player.height = COMPACT;
@@ -166,7 +155,8 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
             .flex()
             .items_center()
             .justify_center()
-            .bg(gpui::black())
+            // The letterbox round a film is the panel's own surface.
+            .bg(theme.surface)
             .children(frame)
             .into_any_element();
         crate::media::surface("dock-film", film, Flash::Dock, shell, cx)
@@ -175,7 +165,8 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
             .children(crate::media::flash(Flash::Dock, shell, 1.));
         let square =
             crate::media::clickable("dock-cover", square, Flash::Dock, cx).tooltip(play_tip(shell));
-        let figure = crate::media::audio_figure(state, &name, square.into_any_element(), &theme);
+        let figure =
+            crate::media::audio_figure(state, title.clone(), square.into_any_element(), &theme);
         reveal(shell, "dock-figure", figure, cx).into_any_element()
     } else {
         let row = crate::elements::adaptive::AdaptiveRow {
@@ -196,9 +187,7 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
     };
 
     // The transport: the same requests the status bar and the desktop send.
-    let request = |id: &'static str, icon: &'static str, tip: &'static str, what: &str| {
-        Button::new(id, icon, tip, "ui.player").args(serde_json::json!({"request": what}))
-    };
+    let request = crate::player::request;
     let duration = state.duration.unwrap_or(0.);
     let position = pinned.scrub.unwrap_or(state.position);
     let fraction = if duration > 0. {
@@ -209,12 +198,12 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
     let scrub: Scrub = Rc::new(|this, phase, fraction, _, cx| {
         this.player_scrub(phase, fraction, cx);
     });
-    let time = |seconds: f64, muted: bool| {
+    let time = |text: String, muted: bool| {
         div()
             .flex_none()
             .text_xs()
             .when(muted, |d| d.text_color(theme.text_muted))
-            .child(crate::media::time(seconds))
+            .child(text)
     };
     let transport = div()
         .flex_none()
@@ -227,7 +216,7 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
             request(
                 "dock-previous",
                 "skip-previous",
-                "Previous track · Shift+Left",
+                "Previous track",
                 "previous",
             )
             .enabled(pinned.index > 0)
@@ -237,17 +226,17 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
             request(
                 "dock-play",
                 if state.playing() { "pause" } else { "play" },
-                "Play / pause · Space",
+                "Play / pause",
                 "play_pause",
             )
             .render(shell, cx),
         )
         .child(
-            request("dock-next", "skip-next", "Next track · Shift+Right", "next")
+            request("dock-next", "skip-next", "Next track", "next")
                 .enabled(pinned.index + 1 < pinned.queue.len())
                 .render(shell, cx),
         )
-        .child(time(position, false))
+        .child(time(crate::media::time(position), false))
         .when(state.seekable && duration > 0., |d| {
             d.child(crate::media::seek_bar_of(
                 "dock-seek",
@@ -260,16 +249,12 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
         .when(!(state.seekable && duration > 0.), |d| {
             d.child(div().flex_1())
         })
-        .child(time(duration, true))
+        .child(time(crate::media::duration(state), true))
         .child(
             Button::new(
                 "dock-mute",
                 if state.muted { "muted" } else { "volume" },
-                if state.muted {
-                    "Unmute · M"
-                } else {
-                    "Mute · M"
-                },
+                if state.muted { "Unmute" } else { "Mute" },
                 "ui.player_mute",
             )
             .render(shell, cx),

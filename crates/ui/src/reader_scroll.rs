@@ -25,9 +25,13 @@ pub struct DocumentScroll {
     pub continuous: bool,
     pub list: ListState,
     pub single: ScrollHandle,
-    pub(crate) pages: BTreeMap<u32, CachedPage>,
-    sizes: BTreeMap<u32, (f32, f32)>,
-    errors: BTreeMap<u32, String>,
+    /// Shared with each frame's rows, which only read them: a frame costs
+    /// a reference, not a copy of every page seen.
+    pub(crate) pages: Rc<BTreeMap<u32, CachedPage>>,
+    sizes: Rc<BTreeMap<u32, (f32, f32)>>,
+    /// The widest page seen, in page units, for the sideways scroll at a zoom.
+    widest: f32,
+    errors: Rc<BTreeMap<u32, String>>,
     wanted: Vec<u32>,
     pending: Option<(u32, CancelToken)>,
     generation: u64,
@@ -44,9 +48,10 @@ impl Default for DocumentScroll {
             continuous: false,
             list: ListState::new(0, ListAlignment::Top, px(100.)),
             single: ScrollHandle::new(),
-            pages: BTreeMap::new(),
-            sizes: BTreeMap::new(),
-            errors: BTreeMap::new(),
+            pages: Rc::default(),
+            sizes: Rc::default(),
+            widest: 0.,
+            errors: Rc::default(),
             wanted: Vec::new(),
             pending: None,
             generation: 0,
@@ -80,7 +85,7 @@ impl DocumentScroll {
             if bytes <= CACHE_BYTES {
                 break;
             }
-            if let Some(page) = self.pages.remove(&number) {
+            if let Some(page) = Rc::make_mut(&mut self.pages).remove(&number) {
                 bytes -= page.bytes;
                 evicted.push(page);
             }
@@ -97,10 +102,10 @@ impl DocumentScroll {
     /// explicitly or refreshes; then the page is requested again.
     fn forget_errors(&mut self, only: Option<u32>) -> bool {
         if let Some(number) = only {
-            return self.errors.remove(&number).is_some();
+            return Rc::make_mut(&mut self.errors).remove(&number).is_some();
         }
         let had = !self.errors.is_empty();
-        self.errors.clear();
+        self.errors = Rc::default();
         had
     }
 }
@@ -170,7 +175,7 @@ impl Shell {
         scroll.continuous = continuous;
         scroll.cancel();
         scroll.wanted.clear();
-        scroll.errors.clear();
+        scroll.errors = Rc::default();
         scroll.list.reset(count);
         // Forget the laid-out signature so the next build sizes the pages,
         // and with them the scrollbar, from scratch.
@@ -184,7 +189,9 @@ impl Shell {
         self.preview.reader.selection_page = None;
         self.preview.reader.cancel_search();
         if !self.preview.reader.scroll.continuous {
-            if let Some(page) = self.preview.reader.scroll.pages.remove(&self.preview.page) {
+            if let Some(page) =
+                Rc::make_mut(&mut self.preview.reader.scroll.pages).remove(&self.preview.page)
+            {
                 let size = page.image.size(0);
                 self.replace_preview_content(
                     Some(PreviewContent::Image {
@@ -206,6 +213,66 @@ impl Shell {
         }
         self.reader_mode_changed();
         cx.notify();
+    }
+
+    /// A document session arrived. One that just opened reads the way the
+    /// user last chose (`ui.reader_continuous`, or the choice not saved yet);
+    /// one read again after its file changed keeps the mode it had, over its
+    /// new number of pages, at the same place.
+    pub(crate) fn reader_opened(
+        &mut self,
+        session: Arc<dyn bibli_core::document::DocumentSession>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let first = self.preview.reader.session.is_none();
+        let reopened = std::mem::take(&mut self.preview.reader.reopened);
+        let count = session.info().pages as usize;
+        self.preview.reader.session = Some(session);
+        self.preview
+            .reader
+            .focus
+            .get_or_insert_with(|| cx.focus_handle());
+        if !first {
+            return;
+        }
+        let scroll = &mut self.preview.reader.scroll;
+        if reopened && scroll.continuous {
+            let mut top = scroll.list.logical_scroll_top();
+            top.item_ix = top.item_ix.min(count.saturating_sub(1));
+            scroll.list.reset(count);
+            scroll.layout.borrow_mut().take();
+            scroll.list.scroll_to(top);
+            return;
+        }
+        if reopened {
+            return;
+        }
+        let continuous = crate::settings::reader_mode(self);
+        self.set_reader_continuous(continuous, window, cx);
+    }
+
+    /// The document changed on disk (a PDF rebuilt by LaTeX): read it again
+    /// where the reader is. The page, the zoom, the mode and the place in
+    /// the column stay; the old session, its pages and its matches go.
+    pub(crate) fn reader_reopen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.preview.reader.session.is_none() {
+            return;
+        }
+        self.clear_document_pages(window, cx);
+        let reader = &mut self.preview.reader;
+        reader.cancel_search();
+        reader.hits.clear();
+        reader.active_hit = None;
+        reader.selection = None;
+        reader.selection_page = None;
+        reader.down = None;
+        reader.session = None;
+        reader.tried = false;
+        reader.reopened = true;
+        std::mem::take(&mut reader.lifetime).cancel();
+        reader.scroll.sizes = Rc::default();
+        reader.scroll.widest = 0.;
     }
 
     pub fn reader_wheel(
@@ -266,9 +333,9 @@ impl Shell {
         let scroll = &mut self.preview.reader.scroll;
         scroll.cancel();
         // Render failures describe pages that no longer exist here.
-        scroll.errors.clear();
-        for (_, page) in std::mem::take(&mut scroll.pages) {
-            cx.drop_image(page.image, Some(window));
+        scroll.errors = Rc::default();
+        for page in std::mem::take(&mut scroll.pages).values() {
+            cx.drop_image(page.image.clone(), Some(window));
         }
     }
 
@@ -393,8 +460,9 @@ impl Shell {
             match reply.result {
                 Ok(page) => {
                     let size = (page.content.width, page.content.height);
-                    let assumed = scroll.sizes.insert(reply.number, size);
-                    if let Some(old) = scroll.pages.insert(reply.number, page) {
+                    let assumed = Rc::make_mut(&mut scroll.sizes).insert(reply.number, size);
+                    scroll.widest = scroll.widest.max(size.0);
+                    if let Some(old) = Rc::make_mut(&mut scroll.pages).insert(reply.number, page) {
                         cx.drop_image(old.image, Some(window));
                     }
                     // The placeholder stood at the size we assumed for this
@@ -411,7 +479,7 @@ impl Shell {
                     }
                 }
                 Err(error) => {
-                    scroll.errors.insert(reply.number, error);
+                    Rc::make_mut(&mut scroll.errors).insert(reply.number, error);
                 }
             }
             self.request_document_page();
@@ -428,19 +496,13 @@ pub fn continuous_element(
 ) -> AnyElement {
     let reader = &shell.preview.reader;
     let scroll = &reader.scroll;
-    let mut pages = scroll.pages.clone();
-    pages.insert(
-        page.page,
-        CachedPage {
-            image,
-            content: page.clone(),
-            bytes: 0,
-        },
-    );
-    let mut sizes = scroll.sizes.clone();
-    sizes.insert(page.page, (page.width, page.height));
+    // The page the preview opened on stands beside the cache: it is drawn
+    // from the preview's content, without a copy of the cache to hold it.
+    let pages = Rc::clone(&scroll.pages);
+    let sizes = Rc::clone(&scroll.sizes);
     let fallback = (page.width, page.height);
-    let errors = scroll.errors.clone();
+    let widest = scroll.widest.max(page.width);
+    let errors = Rc::clone(&scroll.errors);
     let list = scroll.list.clone();
     let after_list = list.clone();
     let bar_list = list.clone();
@@ -480,13 +542,15 @@ pub fn continuous_element(
                 list.scroll_to(offset);
                 *layout.borrow_mut() = Some(signature);
             }
-            let content_width = zoom.map_or(width, |z| {
-                sizes.values().fold(width, |w, (pw, _)| w.max(pw * z))
-            });
+            let content_width = zoom.map_or(width, |z| width.max(widest * z));
             let rows = gpui::list(list, move |index, _, _| {
                 let number = index as u32 + 1;
                 seen.borrow_mut().push(number);
-                let (pw, ph) = sizes.get(&number).copied().unwrap_or(fallback);
+                let (pw, ph) = if number == page.page {
+                    fallback
+                } else {
+                    sizes.get(&number).copied().unwrap_or(fallback)
+                };
                 let scale = zoom.unwrap_or_else(|| {
                     if fit_width {
                         width / pw.max(1.)
@@ -502,17 +566,24 @@ pub fn continuous_element(
                     .pb(px(12.))
                     .flex()
                     .justify_center();
-                if let Some(page) = pages.get(&number) {
+                let shown = if number == page.page {
+                    Some((image.clone(), page.clone()))
+                } else {
+                    pages
+                        .get(&number)
+                        .map(|cached| (cached.image.clone(), cached.content.clone()))
+                };
+                if let Some((image, content)) = shown {
                     row = row.child(div().w(px(pw * scale)).h(px(row_height)).child(
                         crate::reader::surface(
-                            page.image.clone(),
-                            page.content.clone(),
+                            image,
+                            content,
                             None,
                             false,
                             selection_page,
                             selection,
                             hit.clone(),
-                            theme.accent,
+                            &theme,
                             entity.clone(),
                         ),
                     ));
@@ -636,7 +707,7 @@ mod tests {
     fn cache_releases_distant_pages_but_keeps_visible_pixels_and_geometry() {
         let mut state = DocumentScroll::default();
         for number in 1..=8 {
-            state.pages.insert(
+            Rc::make_mut(&mut state.pages).insert(
                 number,
                 CachedPage {
                     image: crate::thumbs::owned_render_image(1, 1, vec![0; 4]).unwrap(),
@@ -651,7 +722,7 @@ mod tests {
                     bytes: CACHE_BYTES / 4,
                 },
             );
-            state.sizes.insert(number, (600., 800.));
+            Rc::make_mut(&mut state.sizes).insert(number, (600., 800.));
         }
         state.wanted = vec![4, 5];
         assert_eq!(state.evict_offscreen(4).len(), 4);
@@ -746,8 +817,8 @@ mod tests {
         let mut state = DocumentScroll::default();
         assert!(!state.forget_errors(Some(3)));
         assert!(!state.forget_errors(None));
-        state.errors.insert(3, "boom".into());
-        state.errors.insert(7, "boom".into());
+        Rc::make_mut(&mut state.errors).insert(3, "boom".into());
+        Rc::make_mut(&mut state.errors).insert(7, "boom".into());
         assert!(state.forget_errors(Some(3)));
         assert!(!state.forget_errors(Some(3)));
         assert!(state.errors.contains_key(&7));

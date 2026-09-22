@@ -72,6 +72,14 @@ still to come are in `docs/preview-frame.md`.
   phase directly. Likewise a preview still on its way is not "nothing to
   preview": Details fills the body only when the phase is idle
   (`details::alone`), never for the instant before a picture replaces it.
+- **A changed file is read again in place.** A preview is identified by its
+  pane, entry, path and the providers (`PreviewKey`); a new one of those is
+  another preview and nothing of the last survives. The file's date, size
+  and the theme are its `Version`: when they change the same request is
+  asked again (`Shell::preview_changed`) and the reader stays where they
+  were: page, zoom, find field, folds, selection and place. A live player
+  keeps playing, and a theme change re-reads only text, the one thing drawn
+  in its colours.
 - **Surfaces.** What is read (text, code, tables, bytes, trees, prose, the
   facts about an entry) is on `theme.bg` in `theme.text`, like the file list
   beside it. `theme.surface` is chrome: the header, the toolbar, and the

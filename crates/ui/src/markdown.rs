@@ -123,17 +123,10 @@ pub fn block(
     entity: WeakEntity<crate::shell::Shell>,
 ) -> AnyElement {
     let id = ("inspect-block", index);
-    if block.kind == BlockKind::Rule {
-        return div()
-            .id(id)
-            .w_full()
-            .px(px(style.page_padding))
-            .py(px(style.section_spacing))
-            .child(div().h(px(1.)).w_full().bg(style.border))
-            .into_any_element();
-    }
     let mut row = div().id(id).w_full().px(px(style.page_padding));
-    row = if block.heading > 0 {
+    row = if block.kind == BlockKind::Rule {
+        row.py(px(style.section_spacing))
+    } else if block.heading > 0 {
         row.pt(px(style.heading_top)).pb(px(style.heading_bottom))
     } else if block.code {
         row.py(px(style.section_spacing))
@@ -147,11 +140,19 @@ pub fn block(
         row = row.border_l_2().border_color(style.quote_border).pl_4();
     }
     let content = match &block.kind {
+        // Only the middle differs: a rule inside a quote or a list item
+        // keeps the border and the indent like any other block.
+        BlockKind::Rule => div()
+            .flex_1()
+            .min_w_0()
+            .h(px(1.))
+            .bg(style.border)
+            .into_any_element(),
         BlockKind::TableRow { cells, header } => {
             table_row(block, index, cells, *header, selection, style, pane, entity)
         }
         _ if block.code => code_box(block, index, selection, style, mono, pane, entity),
-        _ => text_body(block, index, selection, style, pane, entity),
+        BlockKind::Text => text_body(block, index, selection, style, pane, entity),
     };
     let mut line = div().flex().flex_row().items_start().w_full().min_w_0();
     if block.list_depth > 0 {

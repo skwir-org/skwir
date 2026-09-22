@@ -113,11 +113,13 @@ impl Shell {
     /// hundred thousand documents with two songs in it is not scanned whole.
     const NEIGHBOUR_REACH: usize = 4000;
 
-    /// The audio files around entry `id` in the pane's order.
+    /// The audio files around entry `id` in the pane's order. They are kept
+    /// as entries, not positions, so a sort in between cannot turn a step
+    /// into a jump to whatever took their place.
     pub(crate) fn audio_neighbours(
         &self,
         id: bibli_core::EntryId,
-    ) -> (Option<usize>, Option<usize>) {
+    ) -> (Option<bibli_core::EntryId>, Option<bibli_core::EntryId>) {
         let sorted = self.ui().list.sorted.clone();
         let Some(here) = sorted.iter().position(|entry| *entry == id) else {
             return (None, None);
@@ -136,14 +138,14 @@ impl Shell {
         (
             (here.saturating_sub(Self::NEIGHBOUR_REACH)..here)
                 .rev()
-                .find(audio),
-            (here + 1..sorted.len().min(here + 1 + Self::NEIGHBOUR_REACH)).find(audio),
+                .find(audio)
+                .map(|index| sorted[index]),
+            (here + 1..sorted.len().min(here + 1 + Self::NEIGHBOUR_REACH))
+                .find(audio)
+                .map(|index| sorted[index]),
         )
     }
 
-    /// `ui.media_step { delta }`: the audio file after or before this one. It
-    /// is the pane's selection that moves; the preview follows it as always,
-    /// and keeps playing if it was.
     /// Whether there is a track before this one, and one after: in the
     /// playlist the panel went into, otherwise in the folder.
     pub(crate) fn track_neighbours(&self) -> (bool, bool) {
@@ -154,6 +156,9 @@ impl Shell {
         (previous.is_some(), next.is_some())
     }
 
+    /// `ui.media_step { delta }`: the audio file after or before this one. It
+    /// is the pane's selection that moves; the preview follows it as always,
+    /// and keeps playing if it was.
     pub fn media_step(&mut self, delta: i64, window: &mut Window, cx: &mut Context<Self>) {
         let playing = self.preview.media.state.playing() || self.preview.media.state.ended();
         if let Some(queue) = &mut self.preview.queue {
@@ -165,13 +170,22 @@ impl Shell {
                 return;
             };
             queue.index = index;
+            let target = queue.targets[index].clone();
             let args = serde_json::json!({
                 "action": "member",
                 "depth": queue.depth,
-                "target": queue.targets[index],
+                "target": target,
             });
-            self.preview.autoplay = playing;
             self.run("ui.inspect", args, window, cx);
+            // Set after the step, which forgets any earlier wish.
+            if playing && let Some(pane) = self.preview.pane() {
+                let id = self.preview.entry_id();
+                self.preview.autoplay = id.map(|id| crate::preview::Autoplay {
+                    pane,
+                    id,
+                    member: Some(target),
+                });
+            }
             return;
         }
         let (previous, next) = self.preview.audio_neighbours;
@@ -181,9 +195,15 @@ impl Shell {
         let Some(pane) = self.preview.pane() else {
             return;
         };
-        self.preview.autoplay = playing;
+        self.preview.autoplay = playing.then_some(crate::preview::Autoplay {
+            pane,
+            id: target,
+            member: None,
+        });
         self.with_pane(pane, |this| {
-            this.cursor_to(target as isize, false, window, cx);
+            if let Some(index) = this.ui().list.index_of(target) {
+                this.cursor_to(index as isize, false, window, cx);
+            }
         });
     }
 
@@ -195,16 +215,15 @@ impl Shell {
         if let Some(path) = update.advanced {
             self.preview.media.advanced = Some(path);
         }
+        // A track that plays to its end hands over to the next one, once
+        // what this update says (a notice, an error) has been heard.
+        let mut hand_over = false;
         if let Some(state) = update.state {
-            // A track that plays to its end hands over to the next one.
             let finished = state.ended() && !self.preview.media.state.ended();
             self.preview.media.state = state;
-            if finished && self.media_is_audio() && self.track_neighbours().1 {
-                self.media_step(1, window, cx);
-                return;
-            }
+            hand_over = finished && self.media_is_audio() && self.track_neighbours().1;
         }
-        let mut frame = update.frame;
+        let mut frame = update.frame.filter(|_| !hand_over);
         if !matches!(self.preview.media.poster, Poster::Dismissed) {
             if matches!(self.preview.media.poster, Poster::Waiting) {
                 use bibli_core::thumbs::ThumbState;
@@ -242,20 +261,13 @@ impl Shell {
                 frame = None;
             }
         }
-        if let Some(frame) = frame {
-            let Some(buffer) = image::RgbaImage::from_raw(frame.width, frame.height, frame.bgra)
-            else {
-                return;
-            };
-            let image = Arc::new(RenderImage::new(smallvec::SmallVec::from_buf([
-                image::Frame::new(buffer),
-            ])));
+        if let Some((image, width, height)) = frame.and_then(frame_image) {
             let state = &self.preview.media.state;
             self.replace_preview_content(
                 Some(PreviewContent::Image {
                     image,
-                    width: frame.width,
-                    height: frame.height,
+                    width,
+                    height,
                     detail: Some(bibli_core::preview::PreviewInfo::Video {
                         seconds: state.position,
                         duration: state.duration,
@@ -294,9 +306,19 @@ impl Shell {
             }
             self.set_status_about(error, "preview-media.backend", cx);
         }
+        if hand_over {
+            return self.media_step(1, window, cx);
+        }
         self.arm_media_hide(window, cx);
     }
+
+    /// The one way a control reaches the panel's session: whatever asked
+    /// (a button, a key, `ui.media_control` from a script), a value out of
+    /// range is refused here.
     pub fn media_send(&mut self, command: Control, cx: &mut Context<Self>) {
+        if !command.valid() {
+            return;
+        }
         if let Some(session) = &self.preview.media.session {
             match session.control(command) {
                 Ok(()) => {
@@ -436,15 +458,9 @@ impl Shell {
             .and_then(serde_json::Value::as_f64)
             .unwrap_or(0.)
             .clamp(0., 1.);
-        match args.get("phase").and_then(serde_json::Value::as_str) {
-            Some("down") => self.preview.media.scrub = Some(fraction * duration),
-            Some("move") if self.preview.media.scrub.is_some() => {
-                self.preview.media.scrub = Some(fraction * duration);
-            }
-            Some("up") if self.preview.media.scrub.take().is_some() => {
-                self.media_send(Control::Seek(fraction * duration), cx);
-            }
-            _ => {}
+        let phase = args.get("phase").and_then(serde_json::Value::as_str);
+        if let Some(seconds) = scrub(&mut self.preview.media.scrub, phase, fraction * duration) {
+            self.media_send(Control::Seek(seconds), cx);
         }
         cx.notify();
     }
@@ -614,8 +630,6 @@ impl Shell {
     }
 }
 
-/// A full-window canvas, independent of the preview card's chrome and zoom.
-/// The image fills its bounds with Contain, including upscaling small videos.
 /// How long the flash lasts. Longer than the entrance the rules allow
 /// elsewhere, on purpose: it is the one animation that answers a click, and
 /// players hold the glyph in view before it goes, so the eye can read it.
@@ -730,6 +744,8 @@ pub fn surface(
     .into_any_element()
 }
 
+/// A full-window canvas, independent of the preview card's chrome and zoom.
+/// The image fills its bounds with Contain, including upscaling small videos.
 pub fn fullscreen(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let hidden = shell
@@ -798,6 +814,47 @@ pub fn fullscreen(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
         .into_any_element()
 }
 
+/// A frame of a film as a picture for GPUI: the worker sends BGRA, which is
+/// what GPUI wants, so the buffer moves in without a copy.
+pub(crate) fn frame_image(frame: Frame) -> Option<(Arc<RenderImage>, u32, u32)> {
+    let (width, height) = (frame.width, frame.height);
+    let buffer = image::RgbaImage::from_raw(width, height, frame.bgra)?;
+    let image = Arc::new(RenderImage::new(smallvec::SmallVec::from_buf([
+        image::Frame::new(buffer),
+    ])));
+    Some((image, width, height))
+}
+
+/// One phase of dragging a seek bar's knob, for the panel's player and the
+/// dock's alike: the knob follows a press and its moves, and the release
+/// says where to seek. A move or a release without a press is ignored.
+pub(crate) fn scrub(knob: &mut Option<f64>, phase: Option<&str>, seconds: f64) -> Option<f64> {
+    match phase {
+        Some("down") => *knob = Some(seconds),
+        Some("move") if knob.is_some() => *knob = Some(seconds),
+        Some("up") if knob.take().is_some() => return Some(seconds),
+        _ => {}
+    }
+    None
+}
+
+/// What a track is called: its title, else its file's name without the
+/// extension. The panel, the dock, the status bar and the desktop agree.
+pub(crate) fn track_title(state: &Playback, path: &std::path::Path) -> String {
+    if state.title.is_empty() {
+        path.file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    } else {
+        state.title.clone()
+    }
+}
+
+/// A duration, or a dash while it is unknown.
+pub(crate) fn duration(state: &Playback) -> String {
+    state.duration.map_or_else(|| "—".into(), time)
+}
+
 pub(crate) fn time(seconds: f64) -> String {
     let total = seconds.max(0.) as u64;
     if total >= 3600 {
@@ -813,8 +870,14 @@ fn control(
     action: &str,
     value: serde_json::Value,
 ) -> Button {
-    Button::new(id, icon.to_owned(), title, "ui.media_control")
-        .args(serde_json::json!({"action": action, "value":value}))
+    // Without a value the arguments are the key binding's own, so the
+    // button's tooltip finds its shortcut (`Shell::keys_for`).
+    let args = if value.is_null() {
+        serde_json::json!({ "action": action })
+    } else {
+        serde_json::json!({ "action": action, "value": value })
+    };
+    Button::new(id, icon.to_owned(), title, "ui.media_control").args(args)
 }
 
 /// A phase of dragging a seek bar's knob, with the bar's fraction under the
@@ -946,7 +1009,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
             step(
                 "audio-previous",
                 "skip-previous",
-                "Previous track · Shift+Left",
+                "Previous track",
                 -1,
                 previous,
             ),
@@ -958,7 +1021,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         control(
             "video-play",
             if state.playing() { "pause" } else { "play" },
-            "Play / pause · Space",
+            "Play / pause",
             "play",
             serde_json::Value::Null,
         ),
@@ -967,13 +1030,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         bar.push(Item::button(
             Slot::Navigate,
             1,
-            step(
-                "audio-next",
-                "skip-next",
-                "Next track · Shift+Right",
-                1,
-                next,
-            ),
+            step("audio-next", "skip-next", "Next track", 1, next),
         ));
     }
     bar.push(Item::widget(Slot::Navigate, 1, |shell, _| {
@@ -997,14 +1054,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
             .text_xs()
             .flex_none()
             .text_color(muted)
-            .child(
-                shell
-                    .preview
-                    .media
-                    .state
-                    .duration
-                    .map_or_else(|| "—".into(), time),
-            )
+            .child(duration(&shell.preview.media.state))
             .into_any_element()
     }));
     bar.push(Item::button(
@@ -1013,11 +1063,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         control(
             "video-mute",
             if state.muted { "muted" } else { "volume" },
-            if state.muted {
-                "Unmute · M"
-            } else {
-                "Mute · M"
-            },
+            if state.muted { "Unmute" } else { "Mute" },
             "mute",
             serde_json::Value::Null,
         ),
@@ -1028,7 +1074,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         Button::new(
             "video-fullscreen",
             "fullscreen",
-            "Fullscreen · F",
+            "Fullscreen",
             "ui.media_fullscreen",
         )
         .active(shell.preview.media.fullscreen.is_some()),
@@ -1062,11 +1108,7 @@ fn settings(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
     let mut rows = vec![
         div()
             .text_xs()
-            .child(format!(
-                "{} / {}",
-                time(state.position),
-                state.duration.map_or_else(|| "—".into(), time)
-            ))
+            .child(format!("{} / {}", time(state.position), duration(state)))
             .into_any_element(),
         heading("Volume"),
     ];
@@ -1203,7 +1245,7 @@ pub(crate) fn halo_square(
 /// it. Drawn for the panel and, pinned, for a tall dock.
 pub(crate) fn audio_figure(
     state: &Playback,
-    name: &str,
+    title: String,
     picture: AnyElement,
     theme: &Theme,
 ) -> gpui::Div {
@@ -1225,13 +1267,14 @@ pub(crate) fn audio_figure(
         .justify_center()
         .gap_1()
         .child(picture)
-        .child(div().flex_none().max_w_full().truncate().text_lg().child(
-            if state.title.is_empty() {
-                name.to_owned()
-            } else {
-                state.title.clone()
-            },
-        ))
+        .child(
+            div()
+                .flex_none()
+                .max_w_full()
+                .truncate()
+                .text_lg()
+                .child(title),
+        )
         .child(line(&state.artist, true))
         .child(line(&state.album, true))
 }
@@ -1255,7 +1298,11 @@ pub fn audio_content(
     let square = halo_square(&p.media.state, cover, tint, theme)
         .children(flash(Flash::Preview, shell, 1.))
         .into_any_element();
-    let figure = audio_figure(&p.media.state, &p.info.name, square, theme);
+    let title = p
+        .playing_path()
+        .map(|path| track_title(&p.media.state, &path))
+        .unwrap_or_default();
+    let figure = audio_figure(&p.media.state, title, square, theme);
     if interactive {
         clickable("audio-surface", figure, Flash::Preview, cx).into_any_element()
     } else {
@@ -1266,6 +1313,19 @@ pub fn audio_content(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_seek_is_asked_for_on_release_of_a_press_it_saw() {
+        let mut knob = None;
+        assert_eq!(scrub(&mut knob, Some("move"), 3.), None);
+        assert_eq!(knob, None, "a move without a press is ignored");
+        assert_eq!(scrub(&mut knob, Some("up"), 3.), None);
+        assert_eq!(scrub(&mut knob, Some("down"), 1.), None);
+        assert_eq!(scrub(&mut knob, Some("move"), 2.), None);
+        assert_eq!(knob, Some(2.));
+        assert_eq!(scrub(&mut knob, Some("up"), 4.), Some(4.));
+        assert_eq!(knob, None);
+    }
 
     #[test]
     fn the_flash_holds_before_it_fades() {

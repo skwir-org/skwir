@@ -9,7 +9,7 @@ use std::time::SystemTime;
 use bibli_core::op::EntryRef;
 use bibli_core::preview::{PreviewInfo, PreviewRequest};
 use bibli_core::workspace::PaneId;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use bibli_core::entry::keys;
 use bibli_core::scheduler::Priority;
@@ -18,9 +18,6 @@ use gpui::{
     AnyElement, Context, CursorStyle, DragMoveEvent, FocusHandle, MouseButton, ObjectFit, Render,
     RenderImage, Window, div, img, prelude::*, px,
 };
-use smallvec::SmallVec;
-use syntect::highlighting::ThemeSet;
-use syntect::parsing::SyntaxSet;
 
 use crate::format;
 use crate::icons;
@@ -51,12 +48,21 @@ pub enum PreviewContent {
     Error(String),
 }
 
+/// The player a preview result brings.
+enum Media {
+    /// A session of its own, just opened.
+    Opened(Arc<dyn bibli_core::media::MediaSession>),
+    /// The file is the pinned track: the panel shows the session that plays
+    /// it rather than open a second one.
+    Pinned,
+}
+
 struct PreviewResult {
     generation: u64,
     content: PreviewContent,
     complete: bool,
     session: Option<Arc<dyn bibli_core::document::DocumentSession>>,
-    media: Option<Arc<dyn bibli_core::media::MediaSession>>,
+    media: Option<Media>,
     /// The type the worker read from the bytes when the name said nothing
     /// (`mime::by_content`): the header shows it and the next request of
     /// the same file carries it, so the bytes are asked once.
@@ -83,6 +89,8 @@ pub const NESTING: usize = 2;
 pub struct Nested {
     /// The member's own name, for the header's trail: a label, not a path.
     pub name: String,
+    /// What the container calls it, as its rows said when it was opened.
+    target: String,
     entry: EntryRef,
     mime: Option<String>,
     path: std::path::PathBuf,
@@ -100,28 +108,60 @@ pub struct Queue {
     pub index: usize,
 }
 
+/// A track the player stepped to while it was playing: it starts once the
+/// panel shows it. It names the entry and, inside a playlist, the row, so it
+/// is never taken by a preview of anything else.
+pub struct Autoplay {
+    pub pane: PaneId,
+    pub id: EntryId,
+    pub member: Option<String>,
+}
+
 /// Marker type for dragging the panel's edge.
 #[derive(Clone)]
 pub struct ResizeHandle;
 
-struct NoPreview;
+/// What an edge being dragged shows under the pointer: nothing, the edge
+/// itself follows. Shared by every drag handle of the panel and the dock.
+pub(crate) struct NoDragView;
 
-impl Render for NoPreview {
+impl Render for NoDragView {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
     }
 }
 
-/// Everything that can invalidate a preview without moving the cursor.
+/// Which preview the panel shows. A change is another preview: everything
+/// about the last one (page, zoom, find, folds, its player) goes with it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PreviewKey {
     pane: PaneId,
     id: EntryId,
     path: PathBuf,
+    providers: u64,
+}
+
+/// What the shown file is as the listing last said, and how it is drawn. A
+/// change reads the same file again and keeps the reader where they were
+/// (`Shell::preview_changed`): a log that grows, a PDF rebuilt, a song
+/// whose tags were saved, the desktop turning dark.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Version {
     modified: Option<SystemTime>,
     size: Option<u64>,
-    providers: u64,
     dark: bool,
+}
+
+impl Version {
+    /// Whether the file itself changed. A date or size learnt for the first
+    /// time (the entry's metadata arriving after it was selected) is no
+    /// change: the preview already read the file as it is.
+    fn rewritten(&self, now: &Version) -> bool {
+        fn differs<T: PartialEq>(before: Option<T>, after: Option<T>) -> bool {
+            before.is_some() && before != after
+        }
+        differs(self.modified, now.modified) || differs(self.size, now.size)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -148,10 +188,18 @@ pub struct PreviewState {
     /// what the "Loading…" text, the caption and the bar under the toolbar
     /// all read, so a preview that comes at once never flickers through them.
     busy: bool,
-    busy_timer: Option<gpui::Task<()>>,
+    /// The grace of one request: its generation, and the timer.
+    busy_timer: Option<(u64, gpui::Task<()>)>,
     cancel: Option<CancelToken>,
     pub(crate) generation: u64,
     key: Option<PreviewKey>,
+    version: Option<Version>,
+    /// The request in flight reads the shown file again after it changed:
+    /// what it brings keeps the folds, the selection and the place.
+    refresh: bool,
+    /// The reader's mode, chosen with its button and not saved yet
+    /// (`settings::remember_reader_mode`).
+    pub(crate) reader_mode: Option<bool>,
     pub(crate) page: u32,
     pub(crate) seconds: Option<f64>,
     pub(crate) zoom: Option<f32>,
@@ -159,13 +207,13 @@ pub struct PreviewState {
     tx: flume::Sender<PreviewResult>,
     rx: flume::Receiver<PreviewResult>,
     pub peek_focus: Option<FocusHandle>,
-    /// The audio files before and after this one in the pane's order, as
-    /// indices of its sorted list; found when the listing or the entry
-    /// changes (`details_at`), never while painting.
-    pub audio_neighbours: (Option<usize>, Option<usize>),
-    /// The next media session starts playing: the track before it ended, or
-    /// the user stepped to it while listening.
-    pub autoplay: bool,
+    /// The audio files before and after this one in the pane's order; found
+    /// when the listing, its order or the entry changes (`details_at`),
+    /// never while painting.
+    pub audio_neighbours: (Option<EntryId>, Option<EntryId>),
+    /// The track to start once shown: the one before it ended, or the user
+    /// stepped to it while listening.
+    pub autoplay: Option<Autoplay>,
     /// Set while the panel plays a track of a playlist.
     pub queue: Option<Queue>,
     /// The members the panel went down into, outermost first.
@@ -210,6 +258,9 @@ impl Default for PreviewState {
             cancel: None,
             generation: 0,
             key: None,
+            version: None,
+            refresh: false,
+            reader_mode: None,
             page: 1,
             seconds: None,
             zoom: None,
@@ -219,7 +270,7 @@ impl Default for PreviewState {
             peek_focus: None,
             audio_neighbours: (None, None),
             queue: None,
-            autoplay: false,
+            autoplay: None,
             nested: Vec::new(),
             descend: None,
             nested_tx,
@@ -255,6 +306,43 @@ impl PreviewState {
     pub fn pane(&self) -> Option<bibli_core::workspace::PaneId> {
         self.key.as_ref().map(|key| key.pane)
     }
+
+    /// The entry the panel is showing.
+    pub fn entry_id(&self) -> Option<EntryId> {
+        self.key.as_ref().map(|key| key.id)
+    }
+
+    /// A request for the file shown `depth` members deep (0 is the entry),
+    /// as a provider would be asked about it.
+    pub(crate) fn request_at(&self, depth: usize) -> Option<PreviewRequest> {
+        let (entry, mime) = match depth.checked_sub(1) {
+            None => {
+                let key = self.key.as_ref()?;
+                (EntryRef::new(key.id, &key.path), self.info.mime.clone())
+            }
+            Some(index) => {
+                let member = self.nested.get(index)?;
+                (member.entry.clone(), member.mime.clone())
+            }
+        };
+        Some(PreviewRequest {
+            entry,
+            mime,
+            page: 1,
+            seconds: None,
+            max_side: 0,
+        })
+    }
+
+    /// Whether a preview result is for the track the player stepped to.
+    fn autoplay_matches(&self) -> bool {
+        let (Some(wanted), Some(key)) = (&self.autoplay, &self.key) else {
+            return false;
+        };
+        wanted.pane == key.pane
+            && wanted.id == key.id
+            && wanted.member.as_ref() == self.nested.last().map(|member| &member.target)
+    }
 }
 
 impl Drop for PreviewState {
@@ -263,48 +351,6 @@ impl Drop for PreviewState {
             cancel.cancel();
         }
     }
-}
-
-pub(crate) fn syntaxes(language: Option<&str>) -> &'static SyntaxSet {
-    static DEFAULTS: OnceLock<SyntaxSet> = OnceLock::new();
-    static TOML: OnceLock<SyntaxSet> = OnceLock::new();
-    if language.is_some_and(|language| language.eq_ignore_ascii_case("toml")) {
-        TOML.get_or_init(|| {
-            // Keep the bundled grammar separate: rebuilding the precompiled
-            // default set would delay every language's first preview.
-            let mut builder = syntect::parsing::SyntaxSetBuilder::new();
-            builder.add_plain_text_syntax();
-            builder.add(
-                syntect::parsing::SyntaxDefinition::load_from_str(
-                    include_str!("../assets/syntaxes/TOML.sublime-syntax"),
-                    true,
-                    None,
-                )
-                .expect("bundled TOML grammar"),
-            );
-            builder.build()
-        })
-    } else {
-        DEFAULTS.get_or_init(SyntaxSet::load_defaults_newlines)
-    }
-}
-
-pub(crate) fn themes() -> &'static ThemeSet {
-    static T: OnceLock<ThemeSet> = OnceLock::new();
-    T.get_or_init(ThemeSet::load_defaults)
-}
-
-fn to_render_image(img: image::RgbaImage) -> Arc<RenderImage> {
-    let (w, h) = (img.width(), img.height());
-    let mut buf = img.into_raw();
-    for p in buf.as_chunks_mut::<4>().0 {
-        p.swap(0, 2);
-    }
-    let buffer = image::RgbaImage::from_raw(w, h, buf).expect("same size");
-    Arc::new(RenderImage::new(SmallVec::from_elem(
-        image::Frame::new(buffer),
-        1,
-    )))
 }
 
 fn decode_image(path: &Path, cancel: &CancelToken) -> anyhow::Result<PreviewContent> {
@@ -328,8 +374,10 @@ fn decode_image(path: &Path, cancel: &CancelToken) -> anyhow::Result<PreviewCont
     };
     let rgba = img.to_rgba8();
     let (width, height) = (rgba.width(), rgba.height());
+    let image = crate::thumbs::owned_render_image(width, height, rgba.into_raw())
+        .ok_or_else(|| anyhow::anyhow!("invalid image"))?;
     Ok(PreviewContent::Image {
-        image: to_render_image(rgba),
+        image,
         width,
         height,
         detail: None,
@@ -341,7 +389,7 @@ fn decode_image(path: &Path, cancel: &CancelToken) -> anyhow::Result<PreviewCont
 /// Where this process keeps the members it extracted: in the one deletable
 /// cache, under its own pid, so that what a killed process left behind can be
 /// told from what a running one still shows.
-fn members_dir(cache: &Path) -> PathBuf {
+pub(crate) fn members_dir(cache: &Path) -> PathBuf {
     cache
         .join("preview-members")
         .join(std::process::id().to_string())
@@ -395,6 +443,7 @@ fn extract_member(
     let entry = EntryRef::from_path(&member.path)
         .ok_or_else(|| anyhow::anyhow!("The extracted member is missing"))?;
     Ok(Some(Arc::new(Nested {
+        target: target.to_owned(),
         // Resolved once, here on the worker: by name, else by the bytes.
         mime: bibli_platform::mime::by_name(std::ffi::OsStr::new(&member.name))
             .or_else(|| bibli_platform::mime::by_content(&member.path))
@@ -499,6 +548,7 @@ impl Shell {
 
     /// Called on UI wake. Only a changed request schedules worker work.
     pub fn sync_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        crate::settings::flush_reader_mode(self, cx);
         if !(self.preview.open || self.preview.peek) {
             if self.preview.key.is_some() {
                 self.cancel_preview(window, cx);
@@ -510,16 +560,21 @@ impl Shell {
             self.cancel_preview(window, cx);
             return;
         };
+        let dark = cx.global::<Theme>().is_dark;
         let current = {
             let ws = self.app.workspace.read();
             ws.pane(self.pane).and_then(|pane| {
                 let e = pane.listing.get(id)?;
                 let path = pane.open.as_ref()?.path_of(id)?;
-                // What Details was collected for: the listing as it is, and
-                // how much of it is selected.
+                // What Details and the neighbouring tracks were collected
+                // for: the listing as it is, in the order shown (a new sort
+                // is a new order), and how much of it is selected.
+                let order = std::sync::Arc::as_ptr(&self.ui().list.sorted).cast::<()>() as u64;
                 let seen = pane
                     .listing
                     .version()
+                    .wrapping_mul(31)
+                    .wrapping_add(order)
                     .wrapping_mul(31)
                     .wrapping_add(pane.selection.len() as u64)
                     .wrapping_mul(2)
@@ -530,6 +585,9 @@ impl Shell {
                         pane: self.pane,
                         id,
                         path,
+                        providers: self.app.previews.revision(),
+                    },
+                    Version {
                         modified: e
                             .metadata
                             .value(keys::MODIFIED)
@@ -538,20 +596,36 @@ impl Shell {
                             .metadata
                             .value(keys::SIZE)
                             .and_then(bibli_core::Value::as_u64),
-                        providers: self.app.previews.revision(),
-                        dark: cx.global::<Theme>().is_dark,
+                        dark,
                     },
                     e.clone(),
                 ))
             })
         };
-        let Some((seen, key, entry)) = current else {
+        let Some((seen, key, version, entry)) = current else {
             self.cancel_preview(window, cx);
             return;
         };
         // Invalidate before draining results: an old result must never land on
-        // a newly selected file, a changed file, or a different pane.
-        if self.preview.key.as_ref() != Some(&key) {
+        // a newly selected file, a changed file, or a different pane. Inside a
+        // container, a changed container is another preview: what was
+        // extracted from it is stale.
+        let changed = self.preview.version.as_ref() != Some(&version);
+        let rewritten = self
+            .preview
+            .version
+            .as_ref()
+            .is_some_and(|before| before.rewritten(&version));
+        if self.preview.key.as_ref() != Some(&key) || (rewritten && !self.preview.nested.is_empty())
+        {
+            if self
+                .preview
+                .autoplay
+                .as_ref()
+                .is_some_and(|wanted| wanted.pane != key.pane || wanted.id != key.id)
+            {
+                self.preview.autoplay = None;
+            }
             self.cancel_preview(window, cx);
             self.preview.key = Some(key.clone());
             self.preview.phase = PreviewPhase::Queued;
@@ -570,15 +644,20 @@ impl Shell {
             self.preview.info = Info {
                 name: entry.name_str().into_owned(),
                 mime,
-                // A folder's own size says nothing about what it holds.
-                size: key.size.filter(|_| !entry.is_dir()).map(format::size),
-                modified: key.modified.map(format::time),
+                size: None,
+                modified: None,
                 is_dir: entry.is_dir(),
                 icon: self.icons.for_entry(&entry, 48),
             };
+            self.preview.version = Some(version.clone());
+            self.describe_version(&version, entry.is_dir());
             if !entry.metadata.is_hydrated() {
                 self.request_hydrate(vec![id]);
             }
+        } else if changed {
+            let before = self.preview.version.replace(version.clone());
+            self.describe_version(&version, entry.is_dir());
+            self.preview_changed(before, &version, window, cx);
         }
         if self.preview.details_at != Some(seen) {
             self.preview.details_at = Some(seen);
@@ -607,131 +686,234 @@ impl Shell {
         }
         while let Ok(result) = self.preview.rx.try_recv() {
             if result.generation == self.preview.generation {
-                // What the bytes said: the header names it, and the file's
-                // next request (a page, a search) carries it instead of
-                // asking the bytes again. A member the panel went down into
-                // resolved its own type when it was extracted.
-                if let Some(sniffed) = result.sniffed
-                    && self.preview.info.mime.is_none()
-                    && self.preview.nested.is_empty()
-                {
-                    let mime = bibli_platform::mime::Mime(sniffed);
-                    self.type_names.get(&mime);
-                    self.type_names.request(&Arc::clone(&self.app));
-                    self.preview.info.mime = Some(mime.0);
-                }
-                if result.complete {
-                    self.preview.reader.tried = true;
-                    if let Some(session) = result.media {
-                        // The pinned track selected again: the panel shows the
-                        // session that is playing, not a second one beside it.
-                        let playing = self.preview.playing_path();
-                        let session = match &self.player.pinned {
-                            Some(pinned) if Some(&pinned.path) == playing.as_ref() => {
-                                // It has been playing all along: the panel
-                                // takes its state and its frames as they
-                                // are, with no poster to wait behind.
-                                self.preview.media.state = pinned.state.clone();
-                                self.preview.media.show_live();
-                                Arc::clone(&pinned.session)
-                            }
-                            _ => session,
-                        };
-                        if std::mem::take(&mut self.preview.autoplay) {
-                            let _ = session.control(bibli_core::media::Control::Play(true));
-                        }
-                        self.preview.media.session = Some(session);
-                        let focus = cx.focus_handle();
-                        if self.preview.peek
-                            && self
-                                .preview
-                                .peek_focus
-                                .as_ref()
-                                .is_some_and(|f| f.contains_focused(window, cx))
-                        {
-                            window.focus(&focus);
-                        }
-                        self.preview.media.focus = Some(focus);
-                    }
-                    if let Some(session) = result.session {
-                        self.preview.reader.session = Some(session);
-                        self.preview
-                            .reader
-                            .focus
-                            .get_or_insert_with(|| cx.focus_handle());
-                        // A document opens the way the last one was read.
-                        let continuous = self
-                            .app
-                            .settings
-                            .get::<bool>(crate::settings::READER_CONTINUOUS_KEY)
-                            .unwrap_or(true);
-                        self.set_reader_continuous(continuous, window, cx);
-                    }
-                    if matches!(result.content, PreviewContent::Image { .. }) {
-                        self.preview
-                            .image_focus
-                            .get_or_insert_with(|| cx.focus_handle());
-                    }
-                    self.preview.reader.selection = None;
-                    self.preview.reader.selection_page = None;
-                    self.preview.reader.down = None;
-                }
-                if let PreviewContent::Image {
-                    detail: Some(detail),
-                    ..
-                } = &result.content
-                {
-                    match detail {
-                        PreviewInfo::Document { page, .. } => {
-                            self.preview.page = *page;
-                            if std::mem::take(&mut self.preview.reader.scroll.bottom_on_load) {
-                                self.preview.reader.scroll.single.scroll_to_bottom();
-                            }
-                        }
-                        PreviewInfo::Video { seconds, .. } => self.preview.seconds = Some(*seconds),
-                    }
-                }
-                if let PreviewContent::Error(error) = &result.content
-                    && let Some(PreviewContent::Image {
-                        detail: Some(PreviewInfo::Document { page, .. }),
-                        ..
-                    }) = &self.preview.content
-                {
-                    // Keep the last usable page and its controls on a failed turn.
-                    self.preview.page = *page;
-                    self.preview.phase = PreviewPhase::Idle;
-                    self.set_status(error.clone(), true, cx);
-                    continue;
-                }
-                // Opening a player must not replace its thumbnail with a generic
-                // card while the initial paused pipeline is warming up.
-                let poster = matches!(
-                    &result.content,
-                    PreviewContent::Image {
-                        detail: Some(PreviewInfo::Video { .. }),
-                        ..
-                    }
-                ) && self.preview.media.accept_poster();
-                if self.preview.media.session.is_none() || poster {
-                    self.replace_preview_content(Some(result.content), window, cx);
-                }
-                self.preview.phase = if result.complete {
-                    PreviewPhase::Idle
-                } else {
-                    PreviewPhase::Loading
-                };
+                self.preview_arrived(result, window, cx);
             }
         }
         if self.preview.phase != PreviewPhase::Queued {
             return;
         }
+        self.preview_request(&key, &version, &entry);
+    }
 
+    /// The header's size and date, from the listing's metadata.
+    fn describe_version(&mut self, version: &Version, is_dir: bool) {
+        // A folder's own size says nothing about what it holds.
+        self.preview.info.size = version.size.filter(|_| !is_dir).map(format::size);
+        self.preview.info.modified = version.modified.map(format::time);
+        self.preview.details_at = None;
+    }
+
+    /// The shown file changed, or the theme did: read it again without
+    /// losing the reader's place. The page, the zoom, the find field, the
+    /// folds and the place in the text stay (`refresh`); a document is
+    /// opened again at the page it was on. A player that is live keeps
+    /// playing: what it holds open is what it plays. Only text is drawn in
+    /// the theme's colours, so a theme change re-reads nothing else.
+    fn preview_changed(
+        &mut self,
+        before: Option<Version>,
+        now: &Version,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.preview.media.session.is_some() {
+            return;
+        }
+        let content = before.is_some_and(|before| before.rewritten(now));
+        let text = matches!(self.preview.content, Some(PreviewContent::Inspection(_)));
+        if !content && !text {
+            return;
+        }
+        if content {
+            self.reader_reopen(window, cx);
+        }
+        self.cancel_pending_preview();
+        self.preview.refresh = true;
+        self.preview.phase = PreviewPhase::Queued;
+        cx.notify();
+    }
+
+    /// A result for the current request.
+    fn preview_arrived(
+        &mut self,
+        result: PreviewResult,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // What the bytes said: the header names it, and the file's next
+        // request (a page, a search) carries it instead of asking the bytes
+        // again. A member the panel went down into resolved its own type
+        // when it was extracted.
+        if let Some(sniffed) = result.sniffed
+            && self.preview.info.mime.is_none()
+            && self.preview.nested.is_empty()
+        {
+            let mime = bibli_platform::mime::Mime(sniffed);
+            self.type_names.get(&mime);
+            self.type_names.request(&Arc::clone(&self.app));
+            self.preview.info.mime = Some(mime.0);
+        }
+        if result.complete {
+            self.preview.reader.tried = true;
+            // The track stepped to is shown now, playable or not: the wish
+            // ends here either way.
+            let autoplay = self.preview.autoplay_matches();
+            if autoplay {
+                self.preview.autoplay = None;
+            }
+            match result.media {
+                Some(Media::Opened(session)) => {
+                    self.show_media(session, autoplay, window, cx);
+                }
+                Some(Media::Pinned) if !self.show_pinned(autoplay, window, cx) => {
+                    // The pin moved on while this was on its way.
+                    self.cancel_pending_preview();
+                    self.preview.phase = PreviewPhase::Queued;
+                    return;
+                }
+                Some(Media::Pinned) | None => {}
+            }
+            if let Some(session) = result.session {
+                self.reader_opened(session, window, cx);
+            }
+            if matches!(result.content, PreviewContent::Image { .. }) {
+                self.preview
+                    .image_focus
+                    .get_or_insert_with(|| cx.focus_handle());
+            }
+            self.preview.reader.selection = None;
+            self.preview.reader.selection_page = None;
+            self.preview.reader.down = None;
+        }
+        if let PreviewContent::Image {
+            detail: Some(detail),
+            ..
+        } = &result.content
+        {
+            match detail {
+                PreviewInfo::Document { page, .. } => {
+                    self.preview.page = *page;
+                    if std::mem::take(&mut self.preview.reader.scroll.bottom_on_load) {
+                        self.preview.reader.scroll.single.scroll_to_bottom();
+                    }
+                }
+                PreviewInfo::Video { seconds, .. } => self.preview.seconds = Some(*seconds),
+            }
+        }
+        if let PreviewContent::Error(error) = &result.content
+            && let Some(PreviewContent::Image {
+                detail: Some(PreviewInfo::Document { page, .. }),
+                ..
+            }) = &self.preview.content
+        {
+            // Keep the last usable page and its controls on a failed turn.
+            self.preview.page = *page;
+            self.preview.phase = PreviewPhase::Idle;
+            self.set_status(error.clone(), true, cx);
+            return;
+        }
+        // Opening a player must not replace its thumbnail with a generic
+        // card while the initial paused pipeline is warming up.
+        let poster = matches!(
+            &result.content,
+            PreviewContent::Image {
+                detail: Some(PreviewInfo::Video { .. }),
+                ..
+            }
+        ) && self.preview.media.accept_poster();
+        if self.preview.media.session.is_none() || poster {
+            self.replace_preview_content(Some(result.content), window, cx);
+        }
+        self.preview.phase = if result.complete {
+            PreviewPhase::Idle
+        } else {
+            PreviewPhase::Loading
+        };
+    }
+
+    /// A player opened for the shown file.
+    fn show_media(
+        &mut self,
+        session: Arc<dyn bibli_core::media::MediaSession>,
+        play: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if play {
+            let _ = session.control(bibli_core::media::Control::Play(true));
+        }
+        self.preview.media.session = Some(session);
+        let focus = cx.focus_handle();
+        if self.preview.peek
+            && self
+                .preview
+                .peek_focus
+                .as_ref()
+                .is_some_and(|f| f.contains_focused(window, cx))
+        {
+            window.focus(&focus);
+        }
+        self.preview.media.focus = Some(focus);
+    }
+
+    /// The pinned track selected again: the panel shows the session that is
+    /// playing, not a second one beside it, with its state and its frames as
+    /// they are and no poster to wait behind. Its picture comes from the pin
+    /// (the cover, a film's last frame) until the session sends another.
+    /// False when the pin is no longer this file.
+    fn show_pinned(&mut self, play: bool, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let playing = self.preview.playing_path();
+        let Some(pinned) = self
+            .player
+            .pinned
+            .as_ref()
+            .filter(|pinned| Some(&pinned.path) == playing.as_ref())
+        else {
+            return false;
+        };
+        let session = Arc::clone(&pinned.session);
+        let picture = match (&pinned.frame, &pinned.cover) {
+            (Some((image, width, height)), _) if pinned.video => {
+                Some((Arc::clone(image), *width, *height))
+            }
+            (_, Some(cover)) if !pinned.video => {
+                let size = cover.size(0);
+                Some((
+                    Arc::clone(cover),
+                    u32::try_from(size.width.0).unwrap_or(0),
+                    u32::try_from(size.height.0).unwrap_or(0),
+                ))
+            }
+            _ => None,
+        };
+        self.preview.media.state = pinned.state.clone();
+        self.preview.media.show_live();
+        if let Some((image, width, height)) = picture {
+            self.replace_preview_content(
+                Some(PreviewContent::Image {
+                    image,
+                    width,
+                    height,
+                    detail: None,
+                    document: None,
+                    facts: Vec::new(),
+                }),
+                window,
+                cx,
+            );
+        }
+        self.show_media(session, play, window, cx);
+        true
+    }
+
+    /// Ask a worker for the preview of what the panel shows now.
+    fn preview_request(&mut self, key: &PreviewKey, version: &Version, entry: &bibli_core::Entry) {
         let cancel = self.app.lifetime().child();
         self.preview.cancel = Some(cancel.clone());
         self.preview.phase = PreviewPhase::Loading;
         let generation = self.preview.generation;
         let request = PreviewRequest {
-            entry: EntryRef::new(id, &key.path),
+            entry: EntryRef::new(key.id, &key.path),
             mime: self.preview.info.mime.clone(),
             page: self.preview.page,
             seconds: self.preview.seconds,
@@ -750,16 +932,51 @@ impl Shell {
         let open_document = !is_dir && !self.preview.reader.tried;
         let lifetime = self.preview.reader.lifetime.clone();
         let media_lifetime = self.preview.media.lifetime();
+        // Never a second player for one file: the pinned track is shown
+        // with the session that plays it.
+        let pinned = self
+            .player
+            .pinned
+            .as_ref()
+            .map(|pinned| pinned.path.clone());
+        let (mut path, modified, dark) = (key.path.clone(), version.modified, version.dark);
         // A desktop thumbnail represents the file, not the requested page or
         // timestamp. Only use it before this file has any preview content.
         let show_thumbnail = !is_dir && self.preview.content.is_none();
         self.app
             .scheduler
             .spawn(Priority::Visible, "preview", cancel.clone(), move || {
+                // What the bytes said, once they were asked.
+                let sniffed = std::cell::RefCell::new(None::<String>);
+                // Every reply goes this one way: nothing after a cancel, and
+                // the UI woken after each.
+                let send = |content: PreviewContent,
+                            complete: bool,
+                            session: Option<Arc<dyn bibli_core::document::DocumentSession>>,
+                            media: Option<Media>| {
+                    if !cancel.is_cancelled() {
+                        let _ = tx.send(PreviewResult {
+                            generation,
+                            content,
+                            complete,
+                            session,
+                            media,
+                            sniffed: sniffed.borrow().clone(),
+                        });
+                        wake();
+                    }
+                };
+                let fail = |error: anyhow::Error| {
+                    send(
+                        PreviewContent::Error(format!("{error:#}")),
+                        true,
+                        None,
+                        None,
+                    );
+                };
                 // What is previewed: the entry, or the member of it the panel
                 // went down into. Everything below treats it as any file.
                 let mut request = request;
-                let mut path = key.path.clone();
                 let source = |member: &Nested, request: &mut PreviewRequest, path: &mut PathBuf| {
                     request.entry = member.entry.clone();
                     request.mime.clone_from(&member.mime);
@@ -776,32 +993,17 @@ impl Shell {
                         }
                         // Not a file here: the provider shows the target itself.
                         Ok(None) => inspection.target = Some(target),
-                        Err(error) => {
-                            if !cancel.is_cancelled() {
-                                let _ = tx.send(PreviewResult {
-                                    generation,
-                                    content: PreviewContent::Error(format!("{error:#}")),
-                                    complete: true,
-                                    session: None,
-                                    media: None,
-                                    sniffed: None,
-                                });
-                                wake();
-                            }
-                            return;
-                        }
+                        Err(error) => return fail(error),
                     }
                 }
                 // A name that says nothing (`settings.cfg`, `README`) is not
                 // a binary file: the bytes are asked, here on the worker,
                 // before any provider is. From here on an
                 // `application/octet-stream` request means binary bytes.
-                let sniffed = if is_dir || request.mime.is_some() {
-                    None
-                } else {
+                if !is_dir && request.mime.is_none() {
                     request.mime = bibli_platform::mime::by_content(&path).map(|m| m.to_string());
-                    request.mime.clone()
-                };
+                    sniffed.replace(request.mime.clone());
+                }
                 if !is_dir {
                     let result =
                         previews
@@ -820,35 +1022,10 @@ impl Shell {
                             });
                     match result {
                         Ok(Some(data)) => {
-                            if !cancel.is_cancelled() {
-                                let _ = tx.send(PreviewResult {
-                                    generation,
-                                    content: PreviewContent::Inspection(
-                                        crate::inspector::Display::new(data, key.dark),
-                                    ),
-                                    complete: true,
-                                    session: None,
-                                    media: None,
-                                    sniffed: sniffed.clone(),
-                                });
-                                wake();
-                            }
-                            return;
+                            let display = crate::inspector::Display::new(data, dark);
+                            return send(PreviewContent::Inspection(display), true, None, None);
                         }
-                        Err(error) => {
-                            if !cancel.is_cancelled() {
-                                let _ = tx.send(PreviewResult {
-                                    generation,
-                                    content: PreviewContent::Error(error.to_string()),
-                                    complete: true,
-                                    session: None,
-                                    media: None,
-                                    sniffed: sniffed.clone(),
-                                });
-                                wake();
-                            }
-                            return;
-                        }
+                        Err(error) => return fail(error),
                         Ok(None) => {}
                     }
                 }
@@ -859,45 +1036,35 @@ impl Shell {
                     let thumb = ThumbRequest {
                         entry: request.entry.clone(),
                         mime: request.mime.clone().map(Into::into),
-                        mtime: key.modified,
+                        mtime: modified,
                         size: ThumbSize::Large,
                     };
                     if let Ok(Some(image)) = cached.thumbnail(&thumb, &cancel)
                         && let Some(render) = crate::thumbs::to_render_image(&image)
-                        && !cancel.is_cancelled()
                     {
-                        let _ = tx.send(PreviewResult {
-                            generation,
-                            complete: false,
-                            session: None,
-                            media: None,
-                            sniffed: sniffed.clone(),
-                            content: PreviewContent::Image {
-                                image: render,
-                                width: image.width,
-                                height: image.height,
-                                detail: None,
-                                document: None,
-                                facts: Vec::new(),
-                            },
-                        });
-                        wake();
+                        let content = PreviewContent::Image {
+                            image: render,
+                            width: image.width,
+                            height: image.height,
+                            detail: None,
+                            document: None,
+                            facts: Vec::new(),
+                        };
+                        send(content, false, None, None);
                     }
+                }
+                if !is_dir && pinned.as_ref() == Some(&path) {
+                    return send(PreviewContent::Generic, true, None, Some(Media::Pinned));
                 }
                 // Provider registration owns media recognition, including container MIME types.
                 match previews.open_media(&request, &media_lifetime, wake.clone()) {
                     Ok(Some(media)) => {
-                        if !cancel.is_cancelled() {
-                            let _ = tx.send(PreviewResult {
-                                generation,
-                                content: PreviewContent::Generic,
-                                complete: true,
-                                session: None,
-                                media: Some(media),
-                                sniffed: sniffed.clone(),
-                            });
-                            wake();
-                        }
+                        send(
+                            PreviewContent::Generic,
+                            true,
+                            None,
+                            Some(Media::Opened(media)),
+                        );
                         // Keep startup/playback independent of optional poster
                         // extraction. The same cancellation token stops FFmpeg
                         // when Play/Seek, selection or provider changes supersede it.
@@ -905,41 +1072,20 @@ impl Shell {
                         poster.max_side = u32::MAX;
                         if let Ok(Some(preview)) = previews.render(&poster, &cancel)
                             && let Some(image) = crate::thumbs::to_render_image(&preview.image)
-                            && !cancel.is_cancelled()
                         {
-                            let _ = tx.send(PreviewResult {
-                                generation,
-                                content: PreviewContent::Image {
-                                    image,
-                                    width: preview.image.width,
-                                    height: preview.image.height,
-                                    detail: Some(preview.info),
-                                    document: None,
-                                    facts: Vec::new(),
-                                },
-                                complete: true,
-                                session: None,
-                                media: None,
-                                sniffed: sniffed.clone(),
-                            });
-                            wake();
+                            let content = PreviewContent::Image {
+                                image,
+                                width: preview.image.width,
+                                height: preview.image.height,
+                                detail: Some(preview.info),
+                                document: None,
+                                facts: Vec::new(),
+                            };
+                            send(content, true, None, None);
                         }
                         return;
                     }
-                    Err(error) => {
-                        if !cancel.is_cancelled() {
-                            let _ = tx.send(PreviewResult {
-                                generation,
-                                content: PreviewContent::Error(error.to_string()),
-                                complete: true,
-                                session: None,
-                                media: None,
-                                sniffed: sniffed.clone(),
-                            });
-                            wake();
-                        }
-                        return;
-                    }
+                    Err(error) => return fail(error),
                     Ok(None) => {}
                 }
                 let reader = if let Some(session) = session {
@@ -973,33 +1119,9 @@ impl Shell {
                                 })
                             })
                             .unwrap_or_else(|e| PreviewContent::Error(format!("{e:#}")));
-                        if !cancel.is_cancelled() {
-                            let _ = tx.send(PreviewResult {
-                                generation,
-                                content,
-                                complete: true,
-                                session: Some(session),
-                                media: None,
-                                sniffed: sniffed.clone(),
-                            });
-                            wake();
-                        }
-                        return;
+                        return send(content, true, Some(session), None);
                     }
-                    Err(error) => {
-                        if !cancel.is_cancelled() {
-                            let _ = tx.send(PreviewResult {
-                                generation,
-                                content: PreviewContent::Error(format!("{error:#}")),
-                                complete: true,
-                                session: None,
-                                media: None,
-                                sniffed: sniffed.clone(),
-                            });
-                            wake();
-                        }
-                        return;
-                    }
+                    Err(error) => return fail(error),
                     Ok(None) => {}
                 }
                 let result = if is_dir {
@@ -1023,23 +1145,13 @@ impl Shell {
                         &path,
                         is_dir,
                         request.mime.as_deref(),
-                        key.dark,
+                        dark,
                         inspection.offset,
                         &cancel,
                     ),
                     Err(e) => PreviewContent::Error(format!("{e:#}")),
                 };
-                if !cancel.is_cancelled() {
-                    let _ = tx.send(PreviewResult {
-                        generation,
-                        content,
-                        complete: true,
-                        session: None,
-                        media: None,
-                        sniffed: sniffed.clone(),
-                    });
-                    wake();
-                }
+                send(content, true, None, None);
             });
     }
 
@@ -1048,6 +1160,8 @@ impl Shell {
             cancel.cancel();
         }
         self.preview.generation = self.preview.generation.wrapping_add(1);
+        // Whatever asks next says for itself whether it is a refresh.
+        self.preview.refresh = false;
     }
 
     /// How long a preview may take before the panel says it is waiting.
@@ -1066,22 +1180,34 @@ impl Shell {
             self.preview.busy_timer = None;
             return;
         }
-        if self.preview.busy || self.preview.busy_timer.is_some() {
+        // A request started while another's grace ran gets a grace of its
+        // own: the old timer, which would find the generation changed and
+        // do nothing, is replaced.
+        let generation = self.preview.generation;
+        if self.preview.busy
+            || self
+                .preview
+                .busy_timer
+                .as_ref()
+                .is_some_and(|(timing, _)| *timing == generation)
+        {
             return;
         }
-        let generation = self.preview.generation;
-        self.preview.busy_timer = Some(cx.spawn(async move |this, cx| {
+        let timer = cx.spawn(async move |this, cx| {
             cx.background_executor().timer(Self::BUSY_AFTER).await;
             let _ = this.update(cx, |shell, cx| {
-                let waiting = shell.preview.generation == generation
-                    && shell.preview.phase != PreviewPhase::Idle;
+                if shell.preview.generation != generation {
+                    return;
+                }
+                let waiting = shell.preview.phase != PreviewPhase::Idle;
                 shell.preview.busy_timer = None;
                 if waiting {
                     shell.preview.busy = true;
                     cx.notify();
                 }
             });
-        }));
+        });
+        self.preview.busy_timer = Some((generation, timer));
     }
 
     /// Whether the panel is visibly waiting for its preview.
@@ -1102,14 +1228,15 @@ impl Shell {
                 cx.drop_image(image, Some(window));
             }
             Some(PreviewContent::Inspection(display)) => {
-                for image in display.images.into_iter().flatten() {
-                    cx.drop_image(image, Some(window));
+                for image in display.images.iter().flatten() {
+                    cx.drop_image(Arc::clone(image), Some(window));
                 }
             }
             _ => {}
         }
+        let refresh = std::mem::take(&mut self.preview.refresh);
         if let Some(PreviewContent::Inspection(display)) = &content {
-            self.preview.inspection.arrived(display);
+            self.preview.inspection.arrived(display, refresh);
             self.preview
                 .inspection
                 .focus
@@ -1120,14 +1247,36 @@ impl Shell {
 
     fn cancel_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_pending_preview();
-        if let Some(menu) = self.preview.menu.take()
-            && menu.focus.contains_focused(window, cx)
-        {
-            // The old preview's trigger is about to disappear. Keep an
-            // existing address/pane focus, or return popup focus to the pane.
-            window.focus(&self.ui().focus);
+        // Everything that can hold the keyboard goes with the preview: its
+        // menu, its find fields, its content. Keys held there go back to
+        // the peek overlay while it is open, else to the pane, so they are
+        // never left with an element that no longer exists. An existing
+        // address or pane focus is kept.
+        let menu = self
+            .preview
+            .menu
+            .take()
+            .is_some_and(|menu| menu.focus.contains_focused(window, cx));
+        let held = menu
+            || self.preview.reader.holds_focus(window, cx)
+            || self.preview.inspection.holds_focus(window, cx)
+            || [&self.preview.media.focus, &self.preview.image_focus]
+                .into_iter()
+                .flatten()
+                .any(|focus| focus.contains_focused(window, cx));
+        if held {
+            match self
+                .preview
+                .peek_focus
+                .as_ref()
+                .filter(|_| self.preview.peek)
+            {
+                Some(peek) => window.focus(peek),
+                None => window.focus(&self.ui().focus),
+            }
         }
         self.preview.key = None;
+        self.preview.version = None;
         self.preview.info = Info::default();
         while self.preview.rx.try_recv().is_ok() {}
         self.replace_preview_content(None, window, cx);
@@ -1391,7 +1540,7 @@ impl Shell {
             ThumbRequest {
                 entry: EntryRef::new(key.id, &key.path),
                 mime: self.preview.info.mime.clone().map(Into::into),
-                mtime: key.modified,
+                mtime: self.preview.version.as_ref().and_then(|v| v.modified),
                 size: ThumbSize::Large,
             },
             Priority::Visible,
@@ -1554,7 +1703,8 @@ pub fn active_popup(shell: &Shell) -> Option<&'static str> {
 }
 
 /// One line under the toolbar for what a preview has to say about itself:
-/// how the content is shown, what was left out, why there is none.
+/// how the content is shown and what was left out. Why there is no preview
+/// at all is the body's to say (`failure`).
 fn notice_strip(text: String, theme: &Theme) -> gpui::Div {
     div()
         .flex_none()
@@ -1738,8 +1888,6 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
     }
 }
 
-/// What stands for an entry that has no preview: its icon and, when there
-/// should have been one, why there is none. Details says the rest.
 /// Why there is no preview, in the content's place; the entry itself is
 /// already in the header.
 fn failure(error: &str, theme: &Theme) -> AnyElement {
@@ -1931,7 +2079,6 @@ fn type_label(shell: &Shell, info: &Info) -> Option<String> {
     ))
 }
 
-/// The side panel, or `None` when closed.
 /// The narrowest the panel gets, and the width a double click returns it to.
 const MIN_WIDTH: f32 = 200.;
 const DEFAULT_WIDTH: f32 = 320.;
@@ -1946,6 +2093,7 @@ pub fn max_width(window: f32, panes: usize, sidebar: bool) -> f32 {
     (window - kept).max(MIN_WIDTH)
 }
 
+/// The side panel, or `None` when closed.
 /// `limit` is `Shell::preview_width_limit`: the remembered width is kept as
 /// the user left it and only drawn narrower while the window is too small.
 pub fn render_panel(
@@ -1966,8 +2114,8 @@ pub fn render_panel(
         .h_full()
         .w(px(6.))
         .cursor(CursorStyle::ResizeLeftRight)
-        .hover(|style| style.bg(theme.accent.opacity(0.35)))
-        .on_drag(ResizeHandle, |_, _, _, cx| cx.new(|_| NoPreview))
+        .hover(|style| style.bg(theme.handle))
+        .on_drag(ResizeHandle, |_, _, _, cx| cx.new(|_| NoDragView))
         .on_click(cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
             if event.click_count() == 2 {
                 this.preview.width = DEFAULT_WIDTH;
@@ -2012,7 +2160,7 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
             .flex()
             .items_center()
             .justify_center()
-            .bg(gpui::black().opacity(0.4))
+            .bg(theme.scrim)
             .occlude()
             .on_mouse_down(
                 MouseButton::Left,
@@ -2056,7 +2204,20 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
 
 #[cfg(test)]
 mod tests {
-    use super::max_width;
+    use super::{Version, max_width};
+
+    #[test]
+    fn metadata_learnt_late_is_not_a_changed_file() {
+        let at = |modified: Option<u64>, size: Option<u64>, dark: bool| Version {
+            modified: modified.map(|s| std::time::UNIX_EPOCH + std::time::Duration::from_secs(s)),
+            size,
+            dark,
+        };
+        assert!(!at(None, None, false).rewritten(&at(Some(5), Some(9), false)));
+        assert!(at(Some(5), Some(9), false).rewritten(&at(Some(6), Some(9), false)));
+        assert!(at(Some(5), Some(9), false).rewritten(&at(Some(5), Some(10), false)));
+        assert!(!at(Some(5), Some(9), false).rewritten(&at(Some(5), Some(9), true)));
+    }
 
     #[test]
     fn the_panel_may_take_what_the_panes_do_not_need() {

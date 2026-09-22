@@ -1,20 +1,14 @@
 //! Stateful document reader: selection, search, outline and link navigation.
 //! Engine operations run on the scheduler; this module only owns UI state.
 
-use crate::{
-    input::{InputEvent, TextInput},
-    preview::PreviewContent,
-    shell::Shell,
-    theme::Theme,
-};
+use crate::{preview::PreviewContent, preview_bar::Field, shell::Shell, theme::Theme};
 use bibli_core::{
     CancelToken,
     document::{Destination, DocumentSession, PageContent, Rect, SearchHit},
     scheduler::Priority,
 };
 use gpui::{
-    AnyElement, ClipboardItem, Context, Entity, FocusHandle, RenderImage, Subscription, Window,
-    div, prelude::*, px,
+    AnyElement, ClipboardItem, Context, FocusHandle, RenderImage, Window, div, prelude::*, px,
 };
 use std::{rc::Rc, sync::Arc};
 
@@ -22,21 +16,22 @@ struct SearchResult {
     generation: u64,
     result: Result<Vec<SearchHit>, String>,
 }
-pub struct FindInput {
-    input: Entity<TextInput>,
-    _subscription: Subscription,
-}
+// Independent switches of one reader, not a state machine in disguise.
+#[allow(clippy::struct_excessive_bools)]
 pub struct ReaderState {
     pub scroll: crate::reader_scroll::DocumentScroll,
     pub selection_page: Option<u32>,
     pub session: Option<Arc<dyn DocumentSession>>,
     pub lifetime: CancelToken,
     pub tried: bool,
+    /// The session was let go because its file changed; the next one is
+    /// the same document read again (`Shell::reader_opened`).
+    pub(crate) reopened: bool,
     pub focus: Option<FocusHandle>,
     pub selection: Option<(usize, usize)>,
     pub outlines: bool,
-    find: Option<FindInput>,
-    pub page_input: Option<FindInput>,
+    find: Option<Field>,
+    pub page_input: Option<Field>,
     pub(crate) hits: Vec<SearchHit>,
     pub(crate) active_hit: Option<usize>,
     search_cancel: Option<CancelToken>,
@@ -55,6 +50,7 @@ impl Default for ReaderState {
             session: None,
             lifetime: CancelToken::new(),
             tried: false,
+            reopened: false,
             focus: None,
             selection: None,
             outlines: false,
@@ -81,6 +77,17 @@ impl ReaderState {
     /// Whether the find field is open.
     pub fn finding(&self) -> bool {
         self.find.is_some()
+    }
+    /// Whether the keyboard is in the reader: its pages, its find field or
+    /// its page number, which go when the preview does.
+    pub fn holds_focus(&self, window: &gpui::Window, cx: &gpui::App) -> bool {
+        self.focus
+            .as_ref()
+            .is_some_and(|focus| focus.contains_focused(window, cx))
+            || [&self.find, &self.page_input]
+                .into_iter()
+                .flatten()
+                .any(|field| field.is_focused(window, cx))
     }
     pub fn cancel_search(&mut self) {
         if let Some(cancel) = self.search_cancel.take() {
@@ -146,28 +153,19 @@ impl Shell {
         ) {
             return;
         }
-        let input = cx.new(|cx| TextInput::new("Page", cx));
-        input.update(cx, |input, cx| {
+        let field = Field::new(
+            "Page",
+            "ui.reader_page_submit",
+            "ui.reader_page_cancel",
+            window,
+            cx,
+        );
+        field.input.update(cx, |input, cx| {
             input.set_text(self.preview.page.to_string(), cx);
             input.select_all_now(cx);
             input.focus(window);
         });
-        let subscription =
-            cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
-                let command = match event {
-                    InputEvent::Submit => "ui.reader_page_submit",
-                    InputEvent::Cancel => "ui.reader_page_cancel",
-                    InputEvent::Changed => {
-                        cx.notify();
-                        return;
-                    }
-                };
-                this.run(command, serde_json::json!({}), window, cx);
-            });
-        self.preview.reader.page_input = Some(FindInput {
-            input,
-            _subscription: subscription,
-        });
+        self.preview.reader.page_input = Some(field);
         cx.notify();
     }
 
@@ -177,7 +175,7 @@ impl Shell {
             .reader
             .page_input
             .as_ref()
-            .and_then(|p| p.input.read(cx).text().trim().parse::<u32>().ok());
+            .and_then(|p| p.text(cx).trim().parse::<u32>().ok());
         if let Some(number) = number.filter(|n| *n > 0 && *n <= document_pages(self)) {
             self.reader_page_cancel(window, cx);
             self.run(
@@ -323,23 +321,13 @@ impl Shell {
             return;
         }
         if self.preview.reader.find.is_none() {
-            let input = cx.new(|cx| TextInput::new("Find in document…", cx));
-            let subscription =
-                cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
-                    match event {
-                        InputEvent::Submit => {
-                            this.run("ui.reader_search", serde_json::json!({}), window, cx);
-                        }
-                        InputEvent::Cancel => {
-                            this.run("ui.reader_find_close", serde_json::json!({}), window, cx);
-                        }
-                        InputEvent::Changed => cx.notify(),
-                    }
-                });
-            self.preview.reader.find = Some(FindInput {
-                input,
-                _subscription: subscription,
-            });
+            self.preview.reader.find = Some(Field::new(
+                "Find in document…",
+                "ui.reader_search",
+                "ui.reader_find_close",
+                window,
+                cx,
+            ));
         }
         if let Some(find) = &self.preview.reader.find {
             find.input.read(cx).focus(window);
@@ -369,7 +357,7 @@ impl Shell {
         let Some(find) = &reader.find else {
             return;
         };
-        let query = find.input.read(cx).text().to_owned();
+        let query = find.text(cx);
         if let Some(cancel) = reader.search_cancel.take() {
             cancel.cancel();
         }
@@ -481,7 +469,7 @@ pub(crate) fn page_surface(
             .active_hit
             .and_then(|i| shell.preview.reader.hits.get(i))
             .cloned(),
-        cx.global::<Theme>().accent,
+        cx.global::<Theme>(),
         cx.entity().downgrade(),
     )
 }
@@ -496,7 +484,7 @@ pub(crate) fn surface(
     selection_page: Option<u32>,
     selection: Option<(usize, usize)>,
     hit: Option<SearchHit>,
-    color: gpui::Hsla,
+    theme: &Theme,
     entity: gpui::WeakEntity<Shell>,
 ) -> AnyElement {
     let number = page.page;
@@ -520,7 +508,7 @@ pub(crate) fn surface(
         highlights,
         zoom,
         fit_width,
-        color,
+        colors: (theme.page_match, theme.page_selection),
         on_pointer: Rc::new(move |phase, x, y, window, cx| {
             if let Some(entity) = entity.upgrade() {
                 entity.update(cx, |shell, cx| {
@@ -596,14 +584,9 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     bar.push(Item::button(
         Slot::Navigate,
         2,
-        Button::new(
-            "preview-prev",
-            "left",
-            "Previous page · Alt+Page Up",
-            "ui.preview_page",
-        )
-        .args(serde_json::json!({"delta":-1}))
-        .enabled(current > 1),
+        Button::new("preview-prev", "left", "Previous page", "ui.preview_page")
+            .args(serde_json::json!({"delta":-1}))
+            .enabled(current > 1),
     ));
     let (accent, border, paper, muted) = (theme.accent, theme.border, theme.bg, theme.text_muted);
     bar.push(Item::widget(
@@ -646,14 +629,9 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     bar.push(Item::button(
         Slot::Navigate,
         2,
-        Button::new(
-            "preview-next",
-            "right",
-            "Next page · Alt+Page Down",
-            "ui.preview_page",
-        )
-        .args(serde_json::json!({"delta":1}))
-        .enabled(current < pages),
+        Button::new("preview-next", "right", "Next page", "ui.preview_page")
+            .args(serde_json::json!({"delta":1}))
+            .enabled(current < pages),
     ));
 
     crate::preview_toolbar::zoom_tools(&mut bar, shell);
@@ -708,57 +686,25 @@ fn find_panel(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
             .args(serde_json::json!({"delta":delta}))
             .enabled(!reader.hits.is_empty())
     };
-    Some(
-        div()
-            .tab_group()
-            .key_context("DocumentFind")
-            .w(px(280.))
-            .p_2()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .rounded_lg()
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.bg)
-            .shadow_lg()
-            .occlude()
-            .child(
-                div()
-                    .px_2()
-                    .py_1()
-                    .border_1()
-                    .border_color(theme.accent)
-                    .rounded_md()
-                    .child(find.input.clone()),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .text_xs()
-                    .child(div().flex_1().text_color(theme.text_muted).child(count))
-                    .child(
-                        matches("reader-prev-match", "left", "Previous match · Shift+F3", -1)
-                            .render(shell, cx),
-                    )
-                    .child(
-                        matches("reader-next-match", "right", "Next match · F3", 1)
-                            .render(shell, cx),
-                    )
-                    .child(
-                        Button::new(
-                            "reader-close-find",
-                            "close",
-                            "Close find · Escape",
-                            "ui.reader_find_close",
-                        )
-                        .render(shell, cx),
-                    ),
-            )
-            .into_any_element(),
-    )
+    let buttons = vec![
+        matches("reader-prev-match", "left", "Previous match", -1),
+        matches("reader-next-match", "right", "Next match", 1),
+        Button::new(
+            "reader-close-find",
+            "close",
+            "Close find",
+            "ui.reader_find_close",
+        ),
+    ];
+    Some(crate::preview_bar::find_popup(
+        find,
+        "DocumentFind",
+        count,
+        buttons,
+        shell,
+        theme,
+        cx,
+    ))
 }
 
 pub fn outline_drawer(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {

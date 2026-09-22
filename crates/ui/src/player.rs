@@ -34,8 +34,9 @@ pub const COVERS: &str = "player-covers";
 
 pub struct Pinned {
     pub session: Arc<dyn MediaSession>,
-    /// The track the session was told to go on with, so that it is told
-    /// again only when the queue changes.
+    /// The track the session was last asked to go on with, whether or not
+    /// it could: it is asked again only when the queue changes, not on
+    /// every wake after a refusal.
     queued: Option<usize>,
     /// Ends the worker when the pin goes.
     lifetime: CancelToken,
@@ -78,13 +79,16 @@ impl Pinned {
 /// A track opened for the pin, back from its worker.
 pub struct Opened {
     generation: u64,
-    index: usize,
+    /// The track opened: the queue may have changed since it was asked for.
+    path: PathBuf,
     lifetime: CancelToken,
     session: anyhow::Result<Option<Arc<dyn MediaSession>>>,
 }
 
 /// The shell's part of the pin that is not the pin itself.
 pub struct PlayerState {
+    /// Set and cleared through `Shell::set_pin` only, which starts a new
+    /// generation: a track opened for one pin never lands on another.
     pub pinned: Option<Pinned>,
     generation: u64,
     tx: flume::Sender<Opened>,
@@ -150,6 +154,13 @@ fn same(a: &Arc<dyn MediaSession>, b: &Arc<dyn MediaSession>) -> bool {
 }
 
 impl Shell {
+    /// Pin `pin`, or let go of the pin: whatever was being opened for the
+    /// old one is now late. Returns the pin that was.
+    fn set_pin(&mut self, pin: Option<Pinned>) -> Option<Pinned> {
+        self.player.generation += 1;
+        std::mem::replace(&mut self.player.pinned, pin)
+    }
+
     /// Whether the panel shows the pinned session itself.
     pub fn preview_is_pinned(&self) -> bool {
         match (&self.player.pinned, &self.preview.media.session) {
@@ -163,7 +174,7 @@ impl Shell {
     pub fn media_pin(&mut self, cx: &mut Context<Self>) {
         if self.preview_is_pinned() {
             // The panel keeps its session; it is a preview again.
-            if let Some(mut pinned) = self.player.pinned.take() {
+            if let Some(mut pinned) = self.set_pin(None) {
                 self.preview
                     .media
                     .adopt_lifetime(std::mem::take(&mut pinned.lifetime));
@@ -187,7 +198,7 @@ impl Shell {
             }) => Some((Arc::clone(image), *width, *height)),
             _ => None,
         };
-        self.player.pinned = Some(Pinned {
+        let pin = Pinned {
             session,
             queued: None,
             lifetime: self.preview.media.release_lifetime(),
@@ -203,7 +214,8 @@ impl Shell {
             frame: picture.filter(|_| video),
             scrub: None,
             icon: None,
-        });
+        };
+        self.set_pin(Some(pin));
         // A film needs room to be seen; music is fine in a row.
         if video && self.player.height < crate::dock::TALL_FROM {
             self.player.height = crate::dock::VIDEO_HEIGHT;
@@ -217,45 +229,47 @@ impl Shell {
     /// in the folder, known at once; a playlist's are resolved by its
     /// provider on a worker and arrive later.
     fn pin_queue(&mut self, path: &std::path::Path, video: bool) -> (Vec<PathBuf>, usize) {
-        if let (Some(queue), Some(key)) = (&self.preview.queue, self.preview.path()) {
+        if let Some(queue) = &self.preview.queue
+            && let Some(request) = self.preview.request_at(queue.depth)
+        {
             let (previews, tx, wake) = (
                 Arc::clone(&self.app.previews),
                 self.player.queue_tx.clone(),
                 self.app.waker_handle(),
             );
-            let (playlist, targets, current) =
-                (key.to_owned(), queue.targets.clone(), path.to_owned());
-            self.app.scheduler.spawn(
-                Priority::Normal,
-                "player-queue",
-                self.app.lifetime().child(),
-                move || {
-                    let Some(entry) = EntryRef::from_path(&playlist) else {
+            let (targets, current) = (queue.targets.clone(), path.to_owned());
+            let members = crate::preview::members_dir(self.app.cache.root());
+            let cancel = self.app.lifetime().child();
+            let job = cancel.clone();
+            self.app
+                .scheduler
+                .spawn(Priority::Normal, "player-queue", cancel, move || {
+                    // Only files of their own are taken, so nothing should be
+                    // written; a directory of its own, gone with the job,
+                    // makes sure of it.
+                    let Ok(scratch) = std::fs::create_dir_all(&members).and_then(|()| {
+                        tempfile::Builder::new()
+                            .prefix("queue-")
+                            .tempdir_in(&members)
+                    }) else {
                         return;
                     };
-                    let request = PreviewRequest {
-                        entry,
-                        mime: None,
-                        page: 1,
-                        seconds: None,
-                        max_side: 0,
-                    };
-                    let cancel = CancelToken::new();
-                    let scratch = std::env::temp_dir();
                     let paths = targets
                         .iter()
-                        .filter_map(|target| {
-                            let member = previews
-                                .extract(&request, target, &scratch, &cancel)
-                                .ok()??;
-                            // Only files of their own: nothing is extracted for a queue.
-                            member.own_file.then_some(member.path)
+                        .map_while(|target| {
+                            (!job.is_cancelled()).then(|| {
+                                let member =
+                                    previews.extract(&request, target, scratch.path(), &job);
+                                member.ok().flatten().filter(|m| m.own_file).map(|m| m.path)
+                            })
                         })
+                        .flatten()
                         .collect();
-                    let _ = tx.send((current, paths));
-                    wake();
-                },
-            );
+                    if !job.is_cancelled() {
+                        let _ = tx.send((current, paths));
+                        wake();
+                    }
+                });
             return (vec![path.to_owned()], 0);
         }
         let sorted = self.ui().list.sorted.clone();
@@ -296,7 +310,6 @@ impl Shell {
         else {
             return;
         };
-        self.player.generation += 1;
         let generation = self.player.generation;
         let (previews, tx, wake) = (
             Arc::clone(&self.app.previews),
@@ -324,7 +337,7 @@ impl Shell {
                     });
                 let _ = tx.send(Opened {
                     generation,
-                    index,
+                    path,
                     lifetime,
                     session,
                 });
@@ -343,12 +356,12 @@ impl Shell {
             .checked_add_signed(delta.signum() as isize)
             .filter(|index| *index < pinned.queue.len());
         if let Some(index) = target {
+            // A newer step supersedes one still opening.
+            self.player.generation += 1;
             self.pinned_open(index);
         }
     }
 
-    /// Once per wake: tracks that finished opening, the pin's state, what
-    /// others asked for, and the record of what plays.
     /// Write the cover of `track` where others can read it, on a worker.
     fn request_cover(&mut self, track: PathBuf) {
         self.player.cover = Some((track.clone(), None));
@@ -397,6 +410,8 @@ impl Shell {
         );
     }
 
+    /// Once per wake: tracks that finished opening, the pin's state, what
+    /// others asked for, and the record of what plays.
     pub fn sync_player(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         while let Ok((track, file, image)) = self.player.cover_rx.try_recv() {
             if let Some((wanted, cover)) = &mut self.player.cover
@@ -438,8 +453,10 @@ impl Shell {
                     old.cancel();
                     pinned.session = session;
                     pinned.queued = None;
-                    pinned.index = opened.index;
-                    pinned.path.clone_from(&pinned.queue[opened.index]);
+                    if let Some(index) = pinned.queue.iter().position(|t| *t == opened.path) {
+                        pinned.index = index;
+                    }
+                    pinned.path = opened.path;
                     pinned.state = Playback {
                         volume: pinned.state.volume,
                         ..Playback::default()
@@ -470,11 +487,13 @@ impl Shell {
             // switches to it at the sample boundary; the pin only follows.
             let next = (pinned.index + 1 < pinned.queue.len()).then_some(pinned.index + 1);
             if pinned.queued != next {
-                let result = pinned
+                pinned.queued = next;
+                if let Err(error) = pinned
                     .session
-                    .play_next(next.map(|index| pinned.queue[index].clone()));
-                if result.is_ok() {
-                    pinned.queued = next;
+                    .play_next(next.map(|index| pinned.queue[index].clone()))
+                {
+                    // It opens the next track itself at the end, with a gap.
+                    tracing::debug!("no gapless hand-over: {error:#}");
                 }
             }
             if shown {
@@ -496,14 +515,12 @@ impl Shell {
                 }
                 // A film's frames go to the dock while the panel shows
                 // something else; the slot is bounded by the worker.
-                if let Some(frame) = update.frame.filter(|_| pinned.video)
-                    && let Some(buffer) =
-                        image::RgbaImage::from_raw(frame.width, frame.height, frame.bgra)
+                if let Some(frame) = update
+                    .frame
+                    .filter(|_| pinned.video)
+                    .and_then(crate::media::frame_image)
                 {
-                    let image = Arc::new(RenderImage::new(smallvec::SmallVec::from_buf([
-                        image::Frame::new(buffer),
-                    ])));
-                    pinned.frame = Some((image, frame.width, frame.height));
+                    pinned.frame = Some(frame);
                     cx.notify();
                 }
                 failed = update.error;
@@ -526,7 +543,7 @@ impl Shell {
             self.media_fullscreen(window, cx);
         }
         if let Some(error) = failed {
-            self.player.pinned = None;
+            self.set_pin(None);
             self.set_status(error, true, cx);
         } else if finished {
             self.player_step(1, window, cx);
@@ -556,14 +573,9 @@ impl Shell {
             return;
         };
         let seconds = f64::from(fraction.clamp(0., 1.)) * duration;
-        match phase {
-            "down" => pinned.scrub = Some(seconds),
-            "move" if pinned.scrub.is_some() => pinned.scrub = Some(seconds),
-            "up" if pinned.scrub.take().is_some() => {
-                pinned.state.position = seconds;
-                let _ = pinned.session.control(Control::Seek(seconds));
-            }
-            _ => {}
+        if let Some(seconds) = crate::media::scrub(&mut pinned.scrub, Some(phase), seconds) {
+            pinned.state.position = seconds;
+            let _ = pinned.session.control(Control::Seek(seconds));
         }
         cx.notify();
     }
@@ -609,7 +621,7 @@ impl Shell {
                     // being a preview rather than ending under the user.
                     return self.media_pin(cx);
                 }
-                self.player.pinned = None;
+                self.set_pin(None);
                 return cx.notify();
             }
             PlayerRequest::Raise => {
@@ -680,13 +692,7 @@ impl Shell {
                 )
             };
             NowPlaying {
-                title: if state.title.is_empty() {
-                    path.file_stem()
-                        .map(|stem| stem.to_string_lossy().into_owned())
-                        .unwrap_or_default()
-                } else {
-                    state.title.clone()
-                },
+                title: crate::media::track_title(state, &path),
                 path,
                 artist: state.artist.clone(),
                 album: state.album.clone(),
@@ -719,19 +725,11 @@ pub fn render_status(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> O
         .as_ref()
         .filter(|_| !shell.preview.open)?;
     let state = &pinned.state;
-    let title = if state.title.is_empty() {
-        pinned
-            .path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default()
-    } else if state.artist.is_empty() {
-        state.title.clone()
+    let title = crate::media::track_title(state, &pinned.path);
+    let title = if state.artist.is_empty() {
+        title
     } else {
-        format!("{} · {}", state.title, state.artist)
-    };
-    let request = |id: &'static str, icon: &'static str, tip: &'static str, what: &str| {
-        Button::new(id, icon, tip, "ui.player").args(serde_json::json!({"request": what}))
+        format!("{title} · {}", state.artist)
     };
     let font = shell.font.clone();
     Some(
@@ -772,7 +770,9 @@ pub fn render_status(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> O
                     .min_w_0()
                     .px_1()
                     .rounded_md()
-                    .truncate()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis_middle()
                     .cursor_pointer()
                     .hover(|d| d.bg(theme.hover))
                     .tooltip(move |_, cx| {
@@ -790,4 +790,15 @@ pub fn render_status(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> O
             .child(request("pin-stop", "close", "Stop and let go", "stop").render(shell, cx))
             .into_any_element(),
     )
+}
+
+/// A button of the pin's transport: it sends `what` as a `PlayerRequest`,
+/// the same the desktop's media keys send, from the dock and the status bar.
+pub(crate) fn request(
+    id: &'static str,
+    icon: &'static str,
+    tip: &'static str,
+    what: &str,
+) -> Button {
+    Button::new(id, icon, tip, "ui.player").args(serde_json::json!({ "request": what }))
 }

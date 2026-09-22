@@ -570,7 +570,7 @@ impl SettingsView {
         let highlighted = self.highlight.as_deref() == Some(key.as_str());
         items.push(
             Self::card_row(theme, edge)
-                .when(highlighted, |d| d.bg(theme.selection_bg.opacity(0.45)))
+                .when(highlighted, |d| d.bg(theme.highlight))
                 .child(texts)
                 .children(revert)
                 .child(control)

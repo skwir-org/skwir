@@ -71,7 +71,7 @@ pub fn zoom_tools(bar: &mut Bar, shell: &Shell) {
     bar.push(Item::button(
         Slot::View,
         1,
-        step("preview-zoom-out", "minus", "Zoom out · Ctrl+-", "out"),
+        step("preview-zoom-out", "minus", "Zoom out", "out"),
     ));
     bar.push(
         Item::button(
@@ -91,7 +91,7 @@ pub fn zoom_tools(bar: &mut Bar, shell: &Shell) {
     bar.push(Item::button(
         Slot::View,
         1,
-        step("preview-zoom-in", "plus", "Zoom in · Ctrl++", "in"),
+        step("preview-zoom-in", "plus", "Zoom in", "in"),
     ));
     bar.push(Item::button(
         Slot::View,
@@ -132,9 +132,10 @@ pub(crate) fn hex_available(shell: &Shell) -> bool {
     hex
 }
 
+/// What the bar says about content with no bar of its own. An inspection
+/// has its own (`inspector::toolbar`), so it never comes here.
 fn caption(shell: &Shell) -> String {
     match &shell.preview.content {
-        Some(PreviewContent::Inspection(display)) => display.data.title.clone(),
         Some(PreviewContent::Image {
             width,
             height,
@@ -147,7 +148,7 @@ fn caption(shell: &Shell) -> String {
         Some(PreviewContent::Generic) => "No preview".into(),
         // Only once the wait has lasted: a caption that flashes by is noise.
         None if shell.preview_busy() => "Loading…".into(),
-        None => String::new(),
+        None | Some(PreviewContent::Inspection(_)) => String::new(),
     }
 }
 

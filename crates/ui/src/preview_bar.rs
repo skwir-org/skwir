@@ -30,7 +30,7 @@ pub mod label {
     pub const FIT: &str = "Fit";
     pub const FIT_WIDTH: &str = "Fit width";
     pub const CONTENTS: &str = "Contents";
-    pub const FIND: &str = "Find · Ctrl+F";
+    pub const FIND: &str = "Find";
     pub const HEX: &str = "View as hex";
     pub const ZOOM: &str = "Zoom and fit";
     pub const MORE: &str = "More";
@@ -327,4 +327,104 @@ pub fn render(
         root = root.child(anchor.popup(panel));
     }
     root.into_any_element()
+}
+
+/// A text field of a preview's bar (find, a page number): Enter and Escape
+/// run commands of the shell, so a field does what its buttons do.
+pub struct Field {
+    pub input: gpui::Entity<crate::input::TextInput>,
+    _subscription: gpui::Subscription,
+}
+
+impl Field {
+    pub fn new(
+        placeholder: &'static str,
+        submit: &'static str,
+        cancel: &'static str,
+        window: &mut gpui::Window,
+        cx: &mut Context<Shell>,
+    ) -> Self {
+        use crate::input::{InputEvent, TextInput};
+        let input = cx.new(|cx| TextInput::new(placeholder, cx));
+        let subscription = cx.subscribe_in(
+            &input,
+            window,
+            move |this, _, event: &InputEvent, window, cx| {
+                let (command, args) = match event {
+                    InputEvent::Submit => split(submit),
+                    InputEvent::Cancel => split(cancel),
+                    InputEvent::Changed => return cx.notify(),
+                };
+                this.run(command, args, window, cx);
+            },
+        );
+        Field {
+            input,
+            _subscription: subscription,
+        }
+    }
+
+    pub fn text(&self, cx: &gpui::App) -> String {
+        self.input.read(cx).text().to_owned()
+    }
+
+    pub fn is_focused(&self, window: &gpui::Window, cx: &gpui::App) -> bool {
+        self.input.read(cx).is_focused(window)
+    }
+}
+
+/// `"ui.inspect find_next"`: a command and the `action` it is given, if any.
+fn split(command: &'static str) -> (&'static str, serde_json::Value) {
+    match command.split_once(' ') {
+        Some((command, action)) => (command, serde_json::json!({ "action": action })),
+        None => (command, serde_json::json!({})),
+    }
+}
+
+/// The find field under its button, the same in the reader and in a
+/// structured preview: the field, a line saying where the search stands,
+/// and the buttons that step through the matches and close it. `context`
+/// names its keys (`DocumentFind`, `InspectorFind`).
+pub fn find_popup(
+    field: &Field,
+    context: &'static str,
+    status: String,
+    buttons: Vec<Button>,
+    shell: &Shell,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    div()
+        .tab_group()
+        .key_context(context)
+        .w(px(280.))
+        .p_2()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .rounded_lg()
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.bg)
+        .shadow_lg()
+        .occlude()
+        .child(
+            div()
+                .px_2()
+                .py_1()
+                .border_1()
+                .border_color(theme.accent)
+                .rounded_md()
+                .child(field.input.clone()),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .text_xs()
+                .child(div().flex_1().text_color(theme.text_muted).child(status))
+                .children(buttons.into_iter().map(|button| button.render(shell, cx))),
+        )
+        .into_any_element()
 }

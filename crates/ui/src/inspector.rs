@@ -12,7 +12,9 @@ use gpui::{
 use std::{collections::BTreeSet, sync::Arc};
 pub struct Display {
     pub data: Arc<Inspection>,
-    pub images: Vec<Option<Arc<RenderImage>>>,
+    /// The inspection's own picture, then one per block. Shared with every
+    /// frame's list closure, never copied per frame.
+    pub images: Arc<[Option<Arc<RenderImage>>]>,
     row_icons: Arc<Vec<Option<Arc<std::path::Path>>>>,
     /// Case-folded search text per block, then per row, prepared on the
     /// worker so Find never lowercases a document on the UI thread.
@@ -51,39 +53,28 @@ impl Display {
             if !block.code || data.kind == InspectionKind::Code {
                 continue;
             }
-            let syntaxes = crate::preview::syntaxes(block.language.as_deref());
-            let syntax = block
-                .language
-                .as_deref()
-                .and_then(|language| syntaxes.find_syntax_by_token(language))
-                .unwrap_or_else(|| syntaxes.find_syntax_plain_text());
-            let theme = &crate::preview::themes().themes[if dark {
-                "base16-ocean.dark"
+            let mut highlighter =
+                crate::code_preview::Highlighter::new(block.language.as_deref(), dark);
+            block.runs = highlighter
+                .text(&block.text)
+                .into_iter()
+                .map(|run| bibli_core::inspection::Run { code: true, ..run })
+                .collect();
+        }
+        if data.kind == InspectionKind::Archive {
+            // What an archive says about itself goes in the frame's strip,
+            // with what its members weigh unpacked.
+            let total = data
+                .rows
+                .iter()
+                .filter_map(|r| r.bytes)
+                .fold(0u64, u64::saturating_add);
+            let unpacked = format!("{} unpacked", crate::format::size(total));
+            data.notice = if data.notice.is_empty() {
+                unpacked
             } else {
-                "base16-ocean.light"
-            }];
-            let mut highlight = syntect::easy::HighlightLines::new(syntax, theme);
-            let mut offset = 0;
-            block.runs.clear();
-            for line in syntect::util::LinesWithEndings::from(&block.text) {
-                if let Ok(ranges) = highlight.highlight_line(line, syntaxes) {
-                    for (style, text) in ranges {
-                        block.runs.push(bibli_core::inspection::Run {
-                            range: offset..offset + text.len(),
-                            color: Some([
-                                style.foreground.r,
-                                style.foreground.g,
-                                style.foreground.b,
-                            ]),
-                            code: true,
-                            ..bibli_core::inspection::Run::default()
-                        });
-                        offset += text.len();
-                    }
-                } else {
-                    offset += line.len();
-                }
-            }
+                format!("{} · {unpacked}", data.notice)
+            };
         }
         let images = std::iter::once(data.image.take())
             .chain(data.blocks.iter_mut().map(|b| b.image.take()))
@@ -139,14 +130,15 @@ pub struct State {
     pub request: InspectRequest,
     list: ListState,
     visible: Arc<Vec<usize>>,
-    collapsed: BTreeSet<usize>,
+    /// Shared with the frame's list closure: changed only by a click.
+    collapsed: Arc<BTreeSet<usize>>,
     selected: Option<usize>,
     selection: Option<crate::inspector_text::Selection>,
     dragging: bool,
     font_size: f32,
     outline: bool,
     /// The find field, open under its button like the document reader's.
-    find: Option<FindInput>,
+    find: Option<crate::preview_bar::Field>,
     /// The column a table is ordered by, and whether ascending.
     sort: Option<(usize, bool)>,
     /// Scrolling past the end of a section goes to the next one: the wheel
@@ -156,10 +148,6 @@ pub struct State {
     /// The section before was asked for by scrolling up: show its end.
     land_at_end: bool,
 }
-struct FindInput {
-    input: gpui::Entity<crate::input::TextInput>,
-    _subscription: gpui::Subscription,
-}
 impl Default for State {
     fn default() -> Self {
         Self {
@@ -167,7 +155,7 @@ impl Default for State {
             focus: None,
             list: ListState::new(0, ListAlignment::Top, px(100.)),
             visible: Arc::new(Vec::new()),
-            collapsed: BTreeSet::new(),
+            collapsed: Arc::default(),
             selected: None,
             selection: None,
             dragging: false,
@@ -181,13 +169,33 @@ impl Default for State {
         }
     }
 }
+/// What the list shows at the top of the view, in the data's terms, so the
+/// same place can be found again after the visible rows changed.
+#[derive(Clone, Copy)]
+struct Place {
+    /// A block or a row, as `find` numbers them (rows after the blocks);
+    /// `None` for the inspection's picture, the first item.
+    index: Option<usize>,
+    offset: gpui::Pixels,
+}
 impl State {
     /// Whether the find field is open.
     pub fn finding(&self) -> bool {
         self.find.is_some()
     }
+    /// Whether the keyboard is in this preview: its content or its find
+    /// field, which go when the preview does.
+    pub fn holds_focus(&self, window: &Window, cx: &gpui::App) -> bool {
+        self.focus
+            .as_ref()
+            .is_some_and(|focus| focus.contains_focused(window, cx))
+            || self
+                .find
+                .as_ref()
+                .is_some_and(|find| find.is_focused(window, cx))
+    }
     pub fn reset(&mut self, data: &Inspection) {
-        self.collapsed.clear();
+        self.collapsed = Arc::default();
         self.selected = None;
         self.selection = None;
         self.dragging = false;
@@ -197,39 +205,150 @@ impl State {
     /// A new inspection replaced the content. Its `position` becomes the
     /// request offset so paging and search continue from what is shown; a
     /// book chapter found by search also reveals its first matching block.
-    pub fn arrived(&mut self, display: &Display) {
-        self.reset(&display.data);
-        self.request.offset = display.data.position;
+    /// `refresh` says it is the same section read again because the file
+    /// changed (a log that grew, a file saved elsewhere): the reader keeps
+    /// the folds, the selection and the place they were at.
+    pub fn arrived(&mut self, display: &Display, refresh: bool) {
+        let data = &display.data;
+        if refresh {
+            let top = self.place(data);
+            let folds: BTreeSet<usize> = if data.kind == InspectionKind::Code {
+                data.folds.iter().map(|fold| fold.start).collect()
+            } else {
+                (0..data.rows.len())
+                    .filter(|&i| data.rows[i].branch)
+                    .collect()
+            };
+            self.collapsed = Arc::new(self.collapsed.intersection(&folds).copied().collect());
+            let items = data.blocks.len() + data.rows.len();
+            self.selected = self.selected.filter(|&i| i < items);
+            self.selection = None;
+            self.dragging = false;
+            self.reindex(data);
+            self.go_to(data, top);
+        } else {
+            self.reset(data);
+        }
+        self.request.offset = data.position;
         (self.at_edge, self.turn) = (0, crate::reader_scroll::WheelTurn::default());
         if std::mem::take(&mut self.land_at_end) {
             // Scrolled up out of the next section: read on from this one's end.
             self.list.scroll_to(gpui::ListOffset {
-                item_ix: display.data.blocks.len() + self.visible.len(),
+                item_ix: self.list.item_count().saturating_sub(1),
                 offset_in_item: px(0.),
             });
         }
-        if display.data.kind == InspectionKind::Book
+        // A link into a chapter lands where its fragment points.
+        if data.kind == InspectionKind::Book
+            && !refresh
+            && let Some((_, fragment)) = self
+                .request
+                .target
+                .as_deref()
+                .and_then(|target| target.split_once('#'))
+            && let Some(item) = data
+                .blocks
+                .iter()
+                .position(|block| block.anchor.as_deref() == Some(fragment))
+                .and_then(|index| self.item_of(data, index))
+        {
+            scroll_into_view(&self.list, item);
+        }
+        if data.kind == InspectionKind::Book
+            && !refresh
             && let Some(query) = self.request.query.as_deref()
             && let Some(i) = display.find(&query.to_lowercase(), None, false)
         {
-            self.reveal(&display.data, i);
+            self.reveal(data, i);
         }
+    }
+    /// The list item that shows block or row `index` (as `find` numbers
+    /// them), if it is shown: the code view and a table's rows go through
+    /// `visible`, which folds and sorting reorder.
+    fn item_of(&self, data: &Inspection, index: usize) -> Option<usize> {
+        if data.kind == InspectionKind::Code {
+            return self
+                .visible
+                .iter()
+                .position(|&line| line == index)
+                .map(|i| i + 1);
+        }
+        if index < data.blocks.len() {
+            return Some(index + 1);
+        }
+        let row = index - data.blocks.len();
+        self.visible
+            .iter()
+            .position(|&r| r == row)
+            .map(|i| data.blocks.len() + i + 1)
+    }
+    /// What is at the top of the view now.
+    fn place(&self, data: &Inspection) -> Place {
+        let top = self.list.logical_scroll_top();
+        let index = top.item_ix.checked_sub(1).and_then(|i| {
+            if data.kind == InspectionKind::Code {
+                self.visible.get(i).copied()
+            } else if i < data.blocks.len() {
+                Some(i)
+            } else {
+                self.visible
+                    .get(i - data.blocks.len())
+                    .map(|r| r + data.blocks.len())
+            }
+        });
+        Place {
+            index,
+            offset: top.offset_in_item,
+        }
+    }
+    /// Scroll back to `place` after the visible rows changed. A line or row
+    /// that a fold now hides is stood in for by the nearest one before it,
+    /// which is the fold that hides it.
+    fn go_to(&self, data: &Inspection, place: Place) {
+        let Some(index) = place.index else {
+            return self.list.scroll_to(gpui::ListOffset {
+                item_ix: 0,
+                offset_in_item: place.offset,
+            });
+        };
+        let (item, exact) = if let Some(item) = self.item_of(data, index) {
+            (item, true)
+        } else {
+            let rows = data.kind != InspectionKind::Code;
+            let base = if rows { data.blocks.len() } else { 0 };
+            let wanted = index.saturating_sub(base);
+            let before = self
+                .visible
+                .iter()
+                .enumerate()
+                .filter(|(_, v)| **v <= wanted)
+                .max_by_key(|(_, v)| **v)
+                .map_or(base, |(i, _)| base + i);
+            (before + 1, false)
+        };
+        self.list.scroll_to(gpui::ListOffset {
+            item_ix: item.min(self.list.item_count().saturating_sub(1)),
+            offset_in_item: if exact { place.offset } else { px(0.) },
+        });
     }
     /// Select and scroll to a block or row, expanding anything that hides it.
     fn reveal(&mut self, data: &Inspection, index: usize) {
         self.selected = Some(index);
-        self.collapsed.clear();
+        self.collapsed = Arc::default();
         self.reindex(data);
-        scroll_into_view(&self.list, index + 1);
+        if let Some(item) = self.item_of(data, index) {
+            scroll_into_view(&self.list, item);
+        }
     }
     fn toggle_collapsed(&mut self, data: &Inspection, index: usize) {
-        if !self.collapsed.remove(&index) {
-            self.collapsed.insert(index);
+        let collapsed = Arc::make_mut(&mut self.collapsed);
+        if !collapsed.remove(&index) {
+            collapsed.insert(index);
         }
-        self.reindex(data);
+        self.relayout(data);
     }
     fn collapse_all(&mut self, data: &Inspection, collapse: bool) {
-        self.collapsed = if !collapse {
+        self.collapsed = Arc::new(if !collapse {
             BTreeSet::new()
         } else if data.kind == InspectionKind::Code {
             data.folds.iter().map(|fold| fold.start).collect()
@@ -239,18 +358,17 @@ impl State {
                 .enumerate()
                 .filter_map(|(i, r)| r.branch.then_some(i))
                 .collect()
-        };
-        self.reindex(data);
+        });
+        self.relayout(data);
     }
-    pub fn visible(&self) -> &[usize] {
+    #[cfg(test)]
+    fn visible(&self) -> &[usize] {
         &self.visible
     }
-    /// Whether the hex provider owns the shown file: explicitly selected, or
-    /// the automatic byte view of a whole file. A container member's byte page
-    /// (`target` set) belongs to its container provider, which cannot search.
+    /// Whether the hex provider owns the shown file, which it searches
+    /// whole: explicitly selected, or the automatic byte view.
     fn hex_file(&self, kind: InspectionKind) -> bool {
-        self.request.provider.as_deref() == Some("preview-hex")
-            || (kind == InspectionKind::Hex && self.request.target.is_none())
+        self.request.provider.as_deref() == Some("preview-hex") || kind == InspectionKind::Hex
     }
     /// What a row is worth before it has been drawn. A list only measures
     /// what it renders, so without an estimate for the rest the scrollbar
@@ -266,6 +384,15 @@ impl State {
             _ => self.font_size * 1.5 * 2.5 + 16.,
         })
     }
+    /// The visible rows changed under the reader (a fold, a sort): rebuild
+    /// them and stay where the reader was, instead of the top.
+    fn relayout(&mut self, data: &Inspection) {
+        let place = self.place(data);
+        self.reindex(data);
+        self.go_to(data, place);
+    }
+    /// Work out the visible rows and give the list one item per block and
+    /// row. The list forgets where it was: callers say where to go.
     fn reindex(&mut self, data: &Inspection) {
         let estimate = self.row_estimate(data);
         if data.kind == InspectionKind::Code {
@@ -275,28 +402,26 @@ impl State {
             return;
         }
         let mut hidden = None;
-        self.visible = Arc::new(
-            data.rows
-                .iter()
-                .enumerate()
-                .filter_map(|(i, r)| {
-                    if hidden.is_some_and(|d| r.depth > d) {
-                        return None;
-                    }
-                    hidden = None;
-                    if self.collapsed.contains(&i) {
-                        hidden = Some(r.depth);
-                    }
-                    Some(i)
-                })
-                .collect(),
-        );
+        let mut visible: Vec<usize> = data
+            .rows
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| {
+                if hidden.is_some_and(|d| r.depth > d) {
+                    return None;
+                }
+                hidden = None;
+                if self.collapsed.contains(&i) {
+                    hidden = Some(r.depth);
+                }
+                Some(i)
+            })
+            .collect();
         if let Some((column, ascending)) = self.sort.filter(|_| data.kind == InspectionKind::Table)
         {
-            let mut visible = (*self.visible).clone();
             crate::inspector_rows::sort(&data.rows, &mut visible, column, ascending);
-            self.visible = Arc::new(visible);
         }
+        self.visible = Arc::new(visible);
         self.list
             .reset_with_uniform_height(data.blocks.len() + self.visible.len() + 1, estimate);
     }
@@ -315,7 +440,7 @@ impl Shell {
                 let Some(find) = &self.preview.inspection.find else {
                     return self.inspect_find_open(window, cx);
                 };
-                let value = find.input.read(cx).text().to_owned();
+                let value = find.text(cx);
                 if !value.is_empty() {
                     let args = serde_json::json!({"action":"find","value":value});
                     self.inspect_command(&args, window, cx);
@@ -426,7 +551,7 @@ impl Shell {
                     };
                     state.selected = None;
                     let data = display.data.clone();
-                    state.reindex(&data);
+                    state.relayout(&data);
                     cx.notify();
                     return;
                 }
@@ -460,15 +585,13 @@ impl Shell {
                     return;
                 }
                 "larger" | "smaller" => {
-                    let data = display.data.clone();
                     let state = &mut self.preview.inspection;
                     state.font_size = (state.font_size + if action == "larger" { 2. } else { -2. })
                         .clamp(10., 40.);
-                    // Every row is a different height now, estimate included.
-                    let estimate = state.row_estimate(&data);
-                    state
-                        .list
-                        .reset_with_uniform_height(state.list.item_count(), estimate);
+                    // Every row is a different height now: measure them
+                    // again where they stand, without leaving the place.
+                    let count = state.list.item_count();
+                    state.list.remeasure_items(0..count);
                     cx.notify();
                     return;
                 }
@@ -478,17 +601,20 @@ impl Shell {
                     return;
                 }
                 "block" => {
-                    if let Some(i) = args["index"].as_u64() {
-                        scroll_into_view(&self.preview.inspection.list, i as usize + 1);
+                    let state = &self.preview.inspection;
+                    if let Some(item) = args["index"]
+                        .as_u64()
+                        .and_then(|i| state.item_of(&display.data, i as usize))
+                    {
+                        scroll_into_view(&state.list, item);
                     }
                     cx.notify();
                     return;
                 }
                 // The hex provider searches the whole file itself; Find sets a
-                // font's specimen text. Everything else, including a container
-                // member's byte page, searches the loaded section after the
-                // selected item. A book falls back to its provider for the
-                // following chapters.
+                // font's specimen text. Everything else searches the loaded
+                // section after the selected item. A book falls back to its
+                // provider for the following chapters.
                 "find"
                     if !self.preview.inspection.hex_file(display.data.kind)
                         && display.data.kind != InspectionKind::Font =>
@@ -521,13 +647,14 @@ impl Shell {
             }
             if let Some(anchor) = args["target"].as_str().and_then(|s| s.strip_prefix('#')) {
                 if let Some(PreviewContent::Inspection(display)) = &self.preview.content
-                    && let Some(i) = display
+                    && let Some(item) = display
                         .data
                         .blocks
                         .iter()
                         .position(|b| b.anchor.as_deref() == Some(anchor))
+                        .and_then(|i| self.preview.inspection.item_of(&display.data, i))
                 {
-                    scroll_into_view(&self.preview.inspection.list, i + 1);
+                    scroll_into_view(&self.preview.inspection.list, item);
                     cx.notify();
                 }
                 return;
@@ -599,7 +726,6 @@ impl Shell {
                             index,
                         });
                 }
-                self.preview.inspection.request = InspectRequest::default();
             }
             // The player stepping through a playlist: back up to it, down
             // into another of its tracks.
@@ -609,7 +735,6 @@ impl Shell {
                 self.preview_ascend(depth);
                 self.preview.queue = queue;
                 self.preview.descend = args["target"].as_str().map(str::to_owned);
-                self.preview.inspection.request = InspectRequest::default();
             }
             "back"
                 if !self.preview.nested.is_empty()
@@ -628,9 +753,12 @@ impl Shell {
             || action == "ascend"
             || action == "member"
             || (action == "back" && self.preview.inspection.request.target.is_none());
-        if action == "back" && nested && self.preview.descend.is_none() {
-            // Nothing above a file that is not inside anything.
+        if nested {
+            // Another file is shown, or the container again: how the last
+            // one was looked at (a provider, a page, a search) was its own.
             self.preview.inspection.request = InspectRequest::default();
+            // A track stepped to by the player says so after this.
+            self.preview.autoplay = None;
         }
         let hex = crate::preview_toolbar::hex_available(self);
         let state = &mut self.preview.inspection;
@@ -762,7 +890,6 @@ impl Shell {
     }
 
     fn inspect_find_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        use crate::input::{InputEvent, TextInput};
         if self.preview.inspection.find.is_none() {
             let hex = matches!(
                 &self.preview.content,
@@ -773,33 +900,13 @@ impl Shell {
             } else {
                 "Find…"
             };
-            let input = cx.new(|cx| TextInput::new(placeholder, cx));
-            let subscription =
-                cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
-                    match event {
-                        InputEvent::Submit => {
-                            this.run(
-                                "ui.inspect",
-                                serde_json::json!({"action":"find_next"}),
-                                window,
-                                cx,
-                            );
-                        }
-                        InputEvent::Cancel => {
-                            this.run(
-                                "ui.inspect",
-                                serde_json::json!({"action":"find_close"}),
-                                window,
-                                cx,
-                            );
-                        }
-                        InputEvent::Changed => cx.notify(),
-                    }
-                });
-            self.preview.inspection.find = Some(FindInput {
-                input,
-                _subscription: subscription,
-            });
+            self.preview.inspection.find = Some(crate::preview_bar::Field::new(
+                placeholder,
+                "ui.inspect find_next",
+                "ui.inspect find_close",
+                window,
+                cx,
+            ));
         }
         if let Some(find) = &self.preview.inspection.find {
             find.input.read(cx).focus(window);
@@ -993,17 +1100,12 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         bar.push(Item::button(
             Slot::View,
             0,
-            button(
-                "inspect-smaller",
-                "minus",
-                "Smaller text · Ctrl+-",
-                "smaller",
-            ),
+            button("inspect-smaller", "minus", "Smaller text", "smaller"),
         ));
         bar.push(Item::button(
             Slot::View,
             0,
-            button("inspect-larger", "plus", "Larger text · Ctrl++", "larger"),
+            button("inspect-larger", "plus", "Larger text", "larger"),
         ));
     }
 
@@ -1024,70 +1126,26 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
 /// F3 move to the next match and wrap.
 pub fn find_panel(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let find = shell.preview.inspection.find.as_ref()?;
-    Some(
-        div()
-            .tab_group()
-            .key_context("InspectorFind")
-            .w(px(280.))
-            .p_2()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .rounded_lg()
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.bg)
-            .shadow_lg()
-            .occlude()
-            .child(
-                div()
-                    .px_2()
-                    .py_1()
-                    .border_1()
-                    .border_color(theme.accent)
-                    .rounded_md()
-                    .child(find.input.clone()),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .text_xs()
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_color(theme.text_muted)
-                            .child("Enter for the next match"),
-                    )
-                    .child(
-                        button(
-                            "inspect-next-match",
-                            "right",
-                            "Next match · F3",
-                            "find_next",
-                        )
-                        .render(shell, cx),
-                    )
-                    .child(
-                        button(
-                            "inspect-close-find",
-                            "close",
-                            "Close find · Escape",
-                            "find_close",
-                        )
-                        .render(shell, cx),
-                    ),
-            )
-            .into_any_element(),
-    )
+    let buttons = vec![
+        button("inspect-next-match", "right", "Next match", "find_next"),
+        button("inspect-close-find", "close", "Close find", "find_close"),
+    ];
+    Some(crate::preview_bar::find_popup(
+        find,
+        "InspectorFind",
+        "Enter for the next match".into(),
+        buttons,
+        shell,
+        theme,
+        cx,
+    ))
 }
 
 /// What the frame's notice strip says about this inspection: how it is shown
-/// and what was left out. An archive says it in its footer instead.
+/// and what was left out.
 pub fn notice(display: &Display) -> Option<String> {
     let data = &display.data;
-    (!data.notice.is_empty() && data.kind != InspectionKind::Archive).then(|| data.notice.clone())
+    (!data.notice.is_empty()).then(|| data.notice.clone())
 }
 
 /// Headings of what is shown, and a book's chapters, in the shared drawer.
@@ -1199,6 +1257,7 @@ pub fn content(
                 font_size,
                 mono: &mono,
                 theme,
+                style: &list_style,
                 pane,
                 entity: entity.clone(),
             }
@@ -1421,7 +1480,7 @@ pub fn content(
     // column stops at a comfortable measure and sits in the middle of the
     // pane. This is a maximum, not a measurement: a narrow pane keeps all of
     // its width.
-    let mut body = body.child(
+    let body = body.child(
         div()
             .relative()
             .flex_1()
@@ -1440,29 +1499,6 @@ pub fn content(
                 crate::elements::scrollbar::Scrolls::Items(shell.preview.inspection.list.clone()),
             )),
     );
-    if display.data.kind == InspectionKind::Archive {
-        let total = display
-            .data
-            .rows
-            .iter()
-            .filter_map(|r| r.bytes)
-            .fold(0u64, u64::saturating_add);
-        body = body.child(
-            div()
-                .flex_none()
-                .px_2()
-                .py_1()
-                .text_xs()
-                .text_color(theme.text_muted)
-                .border_t_1()
-                .border_color(theme.border)
-                .child(format!(
-                    "{} · {} unpacked",
-                    display.data.notice,
-                    crate::format::size(total)
-                )),
-        );
-    }
     let mut decoded = None;
     if display.data.kind == InspectionKind::Hex
         && let Some(row) = shell
@@ -1697,7 +1733,7 @@ mod tests {
         state.toggle_collapsed(&display.data, 3);
         assert_eq!(state.visible(), [0, 1, 2, 3, 5, 6]);
         state.collapse_all(&display.data, true);
-        assert_eq!(state.collapsed, BTreeSet::from([0, 2, 3]));
+        assert_eq!(*state.collapsed, BTreeSet::from([0, 2, 3]));
         assert_eq!(state.visible(), [0, 2, 6]);
         state.collapse_all(&display.data, false);
         assert_eq!(state.visible(), [0, 1, 2, 3, 4, 5, 6]);
@@ -1733,6 +1769,88 @@ mod tests {
     }
 
     #[test]
+    fn folding_above_the_view_keeps_the_line_at_the_top() {
+        let lines: Vec<String> = (0..12).map(|i| format!("line {i}")).collect();
+        let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let display = code(&lines, vec![2..6, 8..11]);
+        let mut state = State::default();
+        state.reset(&display.data);
+        // Line 7 at the top of the view (item 0 is the picture).
+        state.list.scroll_to(gpui::ListOffset {
+            item_ix: 8,
+            offset_in_item: px(3.),
+        });
+        state.toggle_collapsed(&display.data, 2);
+        let top = state.list.logical_scroll_top();
+        assert_eq!(state.visible[top.item_ix - 1], 7, "still line 7");
+        assert_eq!(top.offset_in_item, px(3.));
+        // Folding the line on top away lands on the fold that hides it.
+        state.toggle_collapsed(&display.data, 2);
+        state.list.scroll_to(gpui::ListOffset {
+            item_ix: 10,
+            offset_in_item: px(0.),
+        });
+        state.toggle_collapsed(&display.data, 8);
+        let top = state.list.logical_scroll_top();
+        assert_eq!(state.visible[top.item_ix - 1], 8);
+    }
+
+    #[test]
+    fn find_in_a_sorted_table_scrolls_to_where_the_row_is_drawn() {
+        let rows = ["pear", "apple", "fig", "banana"]
+            .into_iter()
+            .map(|name| Row {
+                cells: vec![name.into()],
+                ..Row::default()
+            })
+            .collect();
+        let display = Display::new(
+            Inspection {
+                kind: InspectionKind::Table,
+                columns: vec!["Name".into()],
+                rows,
+                ..Inspection::default()
+            },
+            false,
+        );
+        let mut state = State {
+            sort: Some((0, true)),
+            ..State::default()
+        };
+        state.reset(&display.data);
+        assert_eq!(state.visible(), [1, 3, 2, 0]);
+        // "pear" is row 0 of the file and drawn last.
+        state.reveal(&display.data, 0);
+        assert_eq!(state.selected, Some(0));
+        assert_eq!(state.list.logical_scroll_top().item_ix, 4);
+    }
+
+    #[test]
+    fn a_refresh_keeps_the_folds_that_still_exist_and_the_place() {
+        let display = code(&["{", "  1", "}", "[", "  2", "]"], vec![0..2, 3..5]);
+        let mut state = State::default();
+        state.reset(&display.data);
+        state.collapse_all(&display.data, true);
+        state.list.scroll_to(gpui::ListOffset {
+            item_ix: 3,
+            offset_in_item: px(0.),
+        });
+        // The file changed: the second fold is gone.
+        let fold = 0..2;
+        let changed = code(
+            &["{", "  1", "}", "3", "4", "5"],
+            std::iter::once(fold).collect(),
+        );
+        state.arrived(&changed, true);
+        assert_eq!(*state.collapsed, BTreeSet::from([0]));
+        let top = state.list.logical_scroll_top();
+        assert_eq!(state.visible[top.item_ix - 1], 3);
+        // Another file starts over.
+        state.arrived(&changed, false);
+        assert!(state.collapsed.is_empty());
+    }
+
+    #[test]
     fn rows_are_searchable_after_blocks_and_a_book_selects_its_match_on_arrival() {
         let display = archive();
         assert_eq!(display.find("zoo's", None, true), Some(2));
@@ -1763,11 +1881,11 @@ mod tests {
             },
             ..State::default()
         };
-        state.arrived(&book);
+        state.arrived(&book, false);
         assert_eq!(state.request.offset, 3);
         assert_eq!(state.selected, Some(1));
         state.request.query = None;
-        state.arrived(&book);
+        state.arrived(&book, false);
         assert_eq!(state.selected, None);
     }
 }

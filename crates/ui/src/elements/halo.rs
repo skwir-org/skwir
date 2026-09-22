@@ -90,6 +90,16 @@ pub fn vivid((red, green, blue): (f32, f32, f32)) -> Hsla {
 }
 
 /// Between two colours, the short way round the hue circle.
+/// A band's level as drawn: within 0 and 1, and nothing for a value that
+/// is not a number, so a bad spectrum cannot blow up a quad.
+pub fn level(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(0., 1.)
+    } else {
+        0.
+    }
+}
+
 fn blend(from: Hsla, to: Hsla, along: f32) -> Hsla {
     let mut turn = to.h - from.h;
     if turn > 0.5 {
@@ -167,8 +177,8 @@ impl Element for Halo {
         let disc = half * DISC;
         let reach = (half - disc - GAP - 2.).max(4.);
         let bands = self.spectrum.len().max(1);
-        let level = if self.playing {
-            self.spectrum.iter().sum::<f32>() / bands as f32
+        let swell = if self.playing {
+            self.spectrum.iter().copied().map(level).sum::<f32>() / bands as f32
         } else {
             0.
         };
@@ -182,11 +192,11 @@ impl Element for Halo {
             )
         };
         for (spread, strength) in [(1.62, 0.05), (1.38, 0.08), (1.18, 0.12)] {
-            let radius = disc * (1. + (spread - 1.) * (0.55 + level));
+            let radius = disc * (1. + (spread - 1.) * (0.55 + swell));
             window.paint_quad(gpui::quad(
                 circle(radius),
                 px(radius),
-                self.tint.opacity(strength * (0.6 + level * 1.4).min(1.6)),
+                self.tint.opacity(strength * (0.6 + swell * 1.4).min(1.6)),
                 px(0.),
                 gpui::transparent_black(),
                 gpui::BorderStyle::default(),
@@ -201,7 +211,7 @@ impl Element for Halo {
         let pitch = dot + 1.5;
         for (index, value) in self.spectrum.iter().enumerate() {
             let length = if self.playing {
-                value.clamp(0., 1.) * reach
+                level(*value) * reach
             } else {
                 0.
             };

@@ -113,12 +113,30 @@ pub fn declare(app: &App) {
 
 /// Record how the user chose to read documents. The reader's button is the
 /// same choice as the one in the dialog, so it goes the same way: through
-/// `settings.apply`, which saves on a worker and tells everyone else.
+/// `settings.apply`, which saves on a worker and tells everyone else. The
+/// core takes one save at a time: while another runs, the choice waits
+/// (`flush_reader_mode`, on every wake) instead of failing.
 pub fn remember_reader_mode(
     shell: &mut crate::shell::Shell,
     continuous: bool,
     cx: &mut gpui::Context<crate::shell::Shell>,
 ) {
+    shell.preview.reader_mode = Some(continuous);
+    flush_reader_mode(shell, cx);
+}
+
+/// Send the reader's waiting choice, unless a save is running.
+pub fn flush_reader_mode(
+    shell: &mut crate::shell::Shell,
+    cx: &mut gpui::Context<crate::shell::Shell>,
+) {
+    let Some(continuous) = shell.preview.reader_mode else {
+        return;
+    };
+    if shell.app.settings.save_status().1 == SaveState::Saving {
+        return;
+    }
+    shell.preview.reader_mode = None;
     if shell
         .app
         .settings
@@ -133,6 +151,18 @@ pub fn remember_reader_mode(
     )) {
         shell.set_status(format!("{error:#}"), true, cx);
     }
+}
+
+/// How the next document opens: the choice waiting to be saved, else the
+/// stored one.
+pub fn reader_mode(shell: &crate::shell::Shell) -> bool {
+    shell.preview.reader_mode.unwrap_or_else(|| {
+        shell
+            .app
+            .settings
+            .get::<bool>(READER_CONTINUOUS_KEY)
+            .unwrap_or(true)
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -441,7 +471,7 @@ impl SettingsView {
             subscriptions.push(cx.subscribe_in(
                 &input,
                 window,
-                move |this, input, event: &InputEvent, window, cx| match event {
+                move |this, input, event: &InputEvent, _, cx| match event {
                     InputEvent::Changed => {
                         this.errors.remove(&key);
                         this.highlight = None;
@@ -455,7 +485,6 @@ impl SettingsView {
                         } else if let Some(shown) = shown {
                             input.update(cx, |input, cx| input.set_text(shown, cx));
                             this.errors.remove(&key);
-                            let _ = window;
                             cx.notify();
                         }
                     }
@@ -485,11 +514,16 @@ impl SettingsView {
     /// Called by the host whenever the core woke the UI.
     pub fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mut changed = false;
-        if let Some((id, _)) = &self.inflight {
+        if let Some(id) = self.inflight.as_ref().map(|(id, _)| *id) {
             let (current, state) = self.app.settings.save_status();
-            if current == *id && state != SaveState::Saving {
+            // The core keeps the latest save only, and ids only grow: another
+            // id means ours ended and another surface saved since. How ours
+            // went is unknown; the live values below say what holds.
+            let ended = current != id || state != SaveState::Saving;
+            if ended {
                 let (_, sent) = self.inflight.take().expect("checked above");
                 match state {
+                    _ if current != id => {}
                     SaveState::Failed(error) => {
                         for key in sent.keys() {
                             self.errors.insert(key.clone(), error.clone());
@@ -671,6 +705,17 @@ impl SettingsView {
                     .saturating_add(delta.saturating_mul(row.spec.constraints.step.max(1)))
                     .clamp(min, max)
                     .to_string()
+            }
+            SettingKind::Number => {
+                let shown = row
+                    .input
+                    .as_ref()
+                    .and_then(|input| input.read(cx).text().trim().parse::<f64>().ok())
+                    .or_else(|| row.value.parse().ok())
+                    .or_else(|| row.spec.default.as_float())
+                    .unwrap_or(0.);
+                let step = row.spec.constraints.step.max(1) as f64;
+                SettingSpec::format_value(&toml::Value::Float(shown + delta as f64 * step))
             }
             _ => return,
         };

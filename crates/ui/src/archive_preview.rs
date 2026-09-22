@@ -83,8 +83,9 @@ pub fn row(row: &Row, icon: Option<&Path>, collapsed: bool, selected: bool, them
             div()
                 .flex_1()
                 .min_w_0()
-                .line_clamp(1)
-                .text_ellipsis()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis_middle()
                 .child(row.cells.first().cloned().unwrap_or_default()),
         );
     if let Some(status) = row.cells.get(2).filter(|s| !s.is_empty()) {
