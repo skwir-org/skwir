@@ -1500,7 +1500,12 @@ fn on_paper(shell: &Shell) -> bool {
 fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>) -> AnyElement {
     let p = &shell.preview;
     if p.media.session.is_some() && shell.media_is_audio() {
-        return crate::media::audio_content(shell, theme);
+        let figure = crate::media::audio_content(shell, theme);
+        return if interactive {
+            crate::media::surface("audio-surface", figure, shell, cx)
+        } else {
+            figure
+        };
     }
     match &p.content {
         Some(PreviewContent::Inspection(display)) => div()
@@ -1594,6 +1599,12 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                             .object_fit(ObjectFit::Contain),
                     )
                     .into_any_element()
+            };
+            // A film answers a click like a player does.
+            let picture = if p.media.session.is_some() && interactive {
+                crate::media::surface("video-surface", picture, shell, cx)
+            } else {
+                picture
             };
             div()
                 .flex_1()

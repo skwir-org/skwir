@@ -2,8 +2,8 @@
 use crate::{preview::PreviewContent, shell::Shell, theme::Theme, toolbar::Button};
 use bibli_core::media::{Control, Frame, MediaSession, Playback};
 use gpui::{
-    AnyElement, Bounds, Context, FocusHandle, MouseButton, Pixels, RenderImage, Window, div,
-    prelude::*, px,
+    AnimationExt, AnyElement, Bounds, Context, FocusHandle, MouseButton, Pixels, RenderImage,
+    Window, div, prelude::*, px,
 };
 use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
 
@@ -60,6 +60,11 @@ pub struct MediaState {
     /// The colour of the cover shown, by image: worked out once, when the
     /// cover changes, not per frame.
     tint: std::cell::Cell<Option<(gpui::ImageId, Option<gpui::Hsla>)>>,
+    /// The answer to a click on the picture: which way playback went, shown
+    /// in the middle for an instant. The number restarts the entrance for
+    /// every click.
+    flash: Option<(u64, bool)>,
+    flashes: u64,
 }
 
 impl Drop for MediaState {
@@ -305,6 +310,54 @@ impl Shell {
         }
         cx.notify();
     }
+    /// A click on the picture, as on any video site: one toggles playback and
+    /// says so with a flash in the middle; a double click on a film also
+    /// goes fullscreen (or comes back), after the second click undid the
+    /// first, so the film plays as it did before.
+    pub fn media_clicked(
+        &mut self,
+        event: &gpui::ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.preview.media.session.is_none() {
+            return;
+        }
+        let playing = !self.preview.media.state.playing();
+        self.media_control(&serde_json::json!({"action": "play"}), cx);
+        if event.click_count() == 2 {
+            if !self.media_is_audio() {
+                self.media_fullscreen(window, cx);
+            }
+            self.preview.media.flash = None;
+            cx.notify();
+            return;
+        }
+        self.preview.media.flashes += 1;
+        let flash = self.preview.media.flashes;
+        self.preview.media.flash = Some((flash, playing));
+        // Gone once its entrance has ended; one repaint, not a loop.
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(FLASH_MS + 60))
+                .await;
+            this.update(cx, |shell, cx| {
+                if shell
+                    .preview
+                    .media
+                    .flash
+                    .is_some_and(|(seq, _)| seq == flash)
+                {
+                    shell.preview.media.flash = None;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
     pub fn media_control(&mut self, args: &serde_json::Value, cx: &mut Context<Self>) {
         let state = &self.preview.media.state;
         let value = args.get("value").and_then(serde_json::Value::as_f64);
@@ -533,6 +586,68 @@ impl Shell {
 
 /// A full-window canvas, independent of the preview card's chrome and zoom.
 /// The image fills its bounds with Contain, including upscaling small videos.
+/// How long the flash takes to grow and fade: a bounded entrance.
+const FLASH_MS: u64 = 190;
+
+/// The picture with the click behaviour of a player on it: `inner` is the
+/// film or the audio figure, laid out as it was, and the flash sits over its
+/// middle while it lasts.
+pub fn surface(
+    id: &'static str,
+    inner: AnyElement,
+    shell: &Shell,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let flash = shell.preview.media.flash.map(|(seq, playing)| {
+        div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .bg(gpui::black().opacity(0.55))
+                    .child(
+                        gpui::svg()
+                            .path(if playing {
+                                "toolbar/play.svg"
+                            } else {
+                                "toolbar/pause.svg"
+                            })
+                            .size(px(28.))
+                            .text_color(gpui::white()),
+                    )
+                    .with_animation(
+                        ("media-flash", seq),
+                        gpui::Animation::new(Duration::from_millis(FLASH_MS))
+                            .with_easing(gpui::ease_out_quint()),
+                        |disc, delta| {
+                            let side = px(56. + 28. * delta);
+                            disc.w(side).h(side).opacity(1. - delta)
+                        },
+                    ),
+            )
+    });
+    div()
+        .id(id)
+        .relative()
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .child(inner)
+        .children(flash)
+        .on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
+            this.media_clicked(event, window, cx);
+        }))
+        .into_any_element()
+}
+
 pub fn fullscreen(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let hidden = shell
@@ -560,11 +675,18 @@ pub fn fullscreen(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
         })
         .when_some(shell.preview.content.as_ref(), |d, content| {
             if let PreviewContent::Image { image, .. } = content {
+                // The surface is a flex child: give it a column to fill.
                 d.child(
-                    gpui::img(image.clone())
-                        .absolute()
-                        .size_full()
-                        .object_fit(gpui::ObjectFit::Contain),
+                    div().absolute().inset_0().flex().flex_col().child(surface(
+                        "video-fullscreen-surface",
+                        gpui::img(image.clone())
+                            .absolute()
+                            .size_full()
+                            .object_fit(gpui::ObjectFit::Contain)
+                            .into_any_element(),
+                        shell,
+                        cx,
+                    )),
                 )
             } else {
                 d
