@@ -13,6 +13,15 @@ use crate::entry::Entry;
 /// The field that holds tags in memory is [`crate::entry::keys::TAGS`].
 pub const TAGS_XATTR: &str = "user.xdg.tags";
 
+/// Whether two tags are the same tag. Tags ignore case ("Work" and "work"
+/// are one tag; the spelling first written is kept), so adding, removing
+/// and searching all agree. Unicode lowercase, no allocation.
+pub fn same_tag(a: &str, b: &str) -> bool {
+    a.chars()
+        .flat_map(char::to_lowercase)
+        .eq(b.chars().flat_map(char::to_lowercase))
+}
+
 /// Fills fields on freshly stat-ed entries.
 pub trait MetadataProvider: Send + Sync {
     fn id(&self) -> &'static str;

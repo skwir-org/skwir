@@ -12,12 +12,15 @@ pub mod provider;
 use std::sync::Arc;
 
 use bibli_core::app::App;
-use bibli_core::command::{Invocation, Outcome};
+use bibli_core::cancel::CancelToken;
+use bibli_core::command::{Invocation, NoArgs, Outcome};
 use bibli_core::location::Location;
+use bibli_core::os_path::PathArg;
 use bibli_core::plugin::Plugin;
 use bibli_core::registry::{KeyBinding, MenuItem, Place};
 use bibli_core::settings::SettingSpec;
 use bibli_core::workspace::PaneId;
+use parking_lot::Mutex;
 
 pub use provider::{QueryProvider, SCHEME};
 
@@ -26,7 +29,13 @@ const SAVED_KEY: &str = "query.saved";
 
 /// The query plugin.
 #[derive(Debug, Default)]
-pub struct QueryPlugin;
+pub struct QueryPlugin {
+    /// Cancelled on disable: every walk and stat the provider started ends.
+    lifetime: Mutex<Option<CancelToken>>,
+    /// Held across a read-modify-write of the saved queries, so two saves
+    /// never drop each other's change.
+    saving: Arc<Mutex<()>>,
+}
 
 #[derive(
     Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema, PartialEq, Eq,
@@ -42,7 +51,7 @@ struct SearchArgs {
     expr: String,
     /// Subtree to search; the pane's current directory when omitted.
     #[serde(default)]
-    root: Option<String>,
+    root: Option<PathArg>,
     #[serde(default)]
     pane: Option<PaneId>,
 }
@@ -58,15 +67,12 @@ struct ForgetArgs {
     name: String,
 }
 
-fn pane_of(app: &App, pane: Option<PaneId>) -> PaneId {
-    pane.unwrap_or_else(|| app.workspace.read().active_id())
-}
-
-/// The location string for `expr` rooted at `root` (unless `expr` names a root).
+/// The location string for `expr` rooted at `root` (unless `expr` names a
+/// root with `in:`, as the parser reads it).
 pub fn location_for(expr: &str, root: Option<&std::path::Path>) -> Location {
-    let has_root = expr.split_whitespace().any(|t| t.starts_with("in:"));
+    let has_root = lang::parse(expr).is_ok_and(|q| q.root_given);
     let rest = match root {
-        Some(r) if !has_root => format!("{expr} in:{}", lang::quote(&r.to_string_lossy())),
+        Some(r) if !has_root => format!("{expr} in:{}", lang::quote_os(r.as_os_str())),
         _ => expr.to_owned(),
     };
     Location::new(SCHEME, rest)
@@ -79,7 +85,15 @@ pub fn saved(app: &App) -> Vec<SavedQuery> {
         .unwrap_or_default()
 }
 
-fn store_saved(app: &App, list: &[SavedQuery]) {
+/// Change the saved queries and persist them, one change at a time.
+fn edit_saved(
+    app: &App,
+    saving: &Mutex<()>,
+    edit: impl FnOnce(&mut Vec<SavedQuery>) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let _saving = saving.lock();
+    let mut list = saved(app);
+    edit(&mut list)?;
     let arr = list
         .iter()
         .map(|s| {
@@ -90,25 +104,26 @@ fn store_saved(app: &App, list: &[SavedQuery]) {
         })
         .collect();
     app.settings.set(SAVED_KEY, toml::Value::Array(arr));
-    let _ = app.settings.save();
+    app.settings
+        .save()
+        .map_err(|e| anyhow::anyhow!("the saved queries were not written: {e:#}"))?;
+    register_places(app);
+    Ok(())
 }
 
 fn register_places(app: &App) {
-    app.registry.places.remove_owner(ID);
-    for s in saved(app) {
-        app.registry.places.add(
-            ID,
-            Place {
-                title: s.name,
-                location: Location::new(SCHEME, s.expr),
-                icon: Some("folder-saved-search".into()),
-                group: "queries".into(),
-                space: None,
-                eject: None,
-                activate: None,
-            },
-        );
-    }
+    app.registry.places.replace_owner(
+        ID,
+        saved(app).into_iter().map(|s| Place {
+            title: s.name,
+            location: Location::new(SCHEME, s.expr),
+            icon: Some("folder-saved-search".into()),
+            group: "queries".into(),
+            space: None,
+            eject: None,
+            activate: None,
+        }),
+    );
 }
 
 impl Plugin for QueryPlugin {
@@ -131,8 +146,18 @@ impl Plugin for QueryPlugin {
         )]
     }
 
+    fn on_disable(&self, _app: &App) {
+        if let Some(lifetime) = self.lifetime.lock().take() {
+            lifetime.cancel();
+        }
+    }
+
     fn register(&self, app: &App) {
-        app.register_provider(ID, Arc::new(QueryProvider));
+        let lifetime = app.lifetime().child();
+        if let Some(previous) = self.lifetime.lock().replace(lifetime.clone()) {
+            previous.cancel();
+        }
+        app.register_provider(ID, Arc::new(QueryProvider::new(lifetime)));
         app.settings.declare(SettingSpec::data(
             SAVED_KEY,
             "Saved queries shown in the sidebar: [{ name, expr }]",
@@ -146,52 +171,55 @@ impl Plugin for QueryPlugin {
             "Search",
             "Open a query as the pane's location (`*.pdf modified<7d size>10M`; `in:` picks the root)",
             |a, app| {
-                let pane = pane_of(app, a.pane);
+                let pane = app.pane_or_active(a.pane);
                 lang::parse(&a.expr).map_err(|e| anyhow::anyhow!("query: {e}"))?;
-                let root = if let Some(r) = a.root {
-                    Some(Location::parse(&r).path().ok_or_else(|| anyhow::anyhow!("root must be a path"))?)
-                } else {
-                    let ws = app.workspace.read();
-                    ws.pane(pane).and_then(|p| p.location().and_then(Location::path))
+                let root = match a.root {
+                    Some(r) => Some(
+                        Location::parse_os(r.as_os_str())
+                            .path()
+                            .ok_or_else(|| anyhow::anyhow!("root must be a path"))?,
+                    ),
+                    // A pane showing another query searches from home.
+                    None => app.pane_dir(pane).ok(),
                 };
                 app.navigate(pane, &location_for(&a.expr, root.as_deref()))?;
                 Ok(Outcome::Done)
             },
         );
 
+        let saving = Arc::clone(&self.saving);
         app.commands.register::<SaveArgs, _>(
             ID,
             "query.save",
             "Save query",
             "Keep a query as a smart folder in the sidebar",
-            |a, app| {
+            move |a, app| {
                 lang::parse(&a.expr).map_err(|e| anyhow::anyhow!("query: {e}"))?;
-                let mut list = saved(app);
-                list.retain(|s| s.name != a.name);
-                list.push(SavedQuery {
-                    name: a.name,
-                    expr: a.expr,
-                });
-                store_saved(app, &list);
-                register_places(app);
+                edit_saved(app, &saving, |list| {
+                    list.retain(|s| s.name != a.name);
+                    list.push(SavedQuery {
+                        name: a.name,
+                        expr: a.expr,
+                    });
+                    Ok(())
+                })?;
                 Ok(Outcome::Done)
             },
         );
 
+        let saving = Arc::clone(&self.saving);
         app.commands.register::<ForgetArgs, _>(
             ID,
             "query.forget",
             "Forget saved query",
             "Remove a saved query from the sidebar",
-            |a, app| {
-                let mut list = saved(app);
-                let before = list.len();
-                list.retain(|s| s.name != a.name);
-                if list.len() == before {
-                    anyhow::bail!("no saved query named `{}`", a.name);
-                }
-                store_saved(app, &list);
-                register_places(app);
+            move |a, app| {
+                edit_saved(app, &saving, |list| {
+                    let before = list.len();
+                    list.retain(|s| s.name != a.name);
+                    anyhow::ensure!(list.len() != before, "no saved query named `{}`", a.name);
+                    Ok(())
+                })?;
                 Ok(Outcome::Done)
             },
         );
@@ -226,9 +254,6 @@ impl Plugin for QueryPlugin {
         );
     }
 }
-
-#[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
-struct NoArgs {}
 
 #[cfg(test)]
 mod tests {
@@ -321,7 +346,7 @@ mod tests {
         std::fs::create_dir(&root).unwrap();
         tree(&root);
         let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
-        app.plugins.add(Arc::new(QueryPlugin), &app);
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
 
         assert_eq!(
             run(&app, "*.txt", &root),
@@ -408,7 +433,7 @@ mod tests {
         std::fs::create_dir(&root).unwrap();
         tree(&root);
         let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
-        app.plugins.add(Arc::new(QueryPlugin), &app);
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
         let open = app
             .open_location(&location_for("*.png", Some(&root)))
             .unwrap();
@@ -440,7 +465,7 @@ mod tests {
     fn saved_queries_become_places_and_disable_withdraws_everything() {
         let tmp = tempfile::tempdir().unwrap();
         let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
-        app.plugins.add(Arc::new(QueryPlugin), &app);
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
         assert!(app.provider(SCHEME).is_some());
         app.dispatch(&Invocation::with_args(
             "query.save",
@@ -498,7 +523,7 @@ mod tests {
         std::fs::create_dir(&root).unwrap();
         tree(&root);
         let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
-        app.plugins.add(Arc::new(QueryPlugin), &app);
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
         let pane = app.workspace.read().active_id();
         app.navigate(pane, &Location::from_path(&root)).unwrap();
         assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
@@ -532,7 +557,8 @@ mod tests {
             .unwrap();
         let q = lang::parse("report in:/").unwrap();
         let paths =
-            plocate::locate_with(&bin.join("plocate"), &q.name_substrings(), false).unwrap();
+            plocate::locate_with(&bin.join("plocate"), &q.name_substrings().unwrap(), false)
+                .unwrap();
         assert_eq!(
             paths,
             vec![
@@ -548,5 +574,141 @@ mod tests {
             plocate::try_locate(&lang::parse("report size>1k in:/").unwrap()).is_none(),
             "only name-only"
         );
+        // A database that cannot answer (it says why) is not "no matches".
+        std::fs::write(
+            bin.join("broken"),
+            "#!/bin/sh\necho 'no database' >&2\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(bin.join("broken"), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+        assert!(plocate::locate_with(&bin.join("broken"), &["x".into()], false).is_none());
+        std::fs::write(bin.join("empty"), "#!/bin/sh\nexit 1\n").unwrap();
+        std::fs::set_permissions(bin.join("empty"), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+        assert_eq!(
+            plocate::locate_with(&bin.join("empty"), &["x".into()], false),
+            Some(Vec::new())
+        );
+    }
+
+    #[test]
+    fn a_folder_whose_name_is_not_utf8_can_be_searched() {
+        use std::os::unix::ffi::OsStrExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join(std::ffi::OsStr::from_bytes(b"caf\xe9 (x)"));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("a.pdf"), b"x").unwrap();
+        std::fs::write(root.join("b.txt"), b"x").unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+        let pane = app.workspace.read().active_id();
+        app.dispatch(&Invocation::with_args(
+            "query.search",
+            &serde_json::json!({"expr": "ext:pdf", "root": PathArg::from(root.as_path())}),
+        ))
+        .unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        assert_eq!(lang::parse(&p.location().unwrap().rest).unwrap().root, root);
+        assert_eq!(p.listing.len(), 1);
+        assert_eq!(p.listing.iter().next().unwrap().name_str(), "a.pdf");
+    }
+
+    #[test]
+    fn a_root_that_is_not_a_folder_is_a_listing_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+        let open = app
+            .open_location(&location_for("x", Some(&tmp.path().join("missing"))))
+            .expect("opening does no I/O");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        match open.events().recv_deadline(deadline).unwrap() {
+            ListingEvent::Error(e) => assert!(e.contains("not a folder"), "{e}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn location_for_reads_in_like_the_parser() {
+        let root = Path::new("/r");
+        // A quoted `in:` is part of a name: the root is still added.
+        let l = location_for("name:\"a in:b\"", Some(root));
+        assert_eq!(lang::parse(&l.rest).unwrap().root, root);
+        let l = location_for("x in:/other", Some(root));
+        assert_eq!(lang::parse(&l.rest).unwrap().root, Path::new("/other"));
+    }
+
+    #[test]
+    fn tags_are_matched_in_batches_per_folder() {
+        use bibli_core::entry::{Entry, Provenance, Value, keys};
+        use bibli_core::metadata::MetadataProvider;
+        /// Tags every `*.tagged` file, counting calls and entries.
+        #[derive(Default)]
+        struct Fake(parking_lot::Mutex<(usize, usize)>);
+        impl MetadataProvider for Fake {
+            fn id(&self) -> &'static str {
+                "fake"
+            }
+            fn fill(&self, _: &Path, entries: &mut [Entry]) {
+                let mut n = self.0.lock();
+                n.0 += 1;
+                n.1 += entries.len();
+                for e in entries {
+                    if e.name_str().ends_with(".tagged") {
+                        e.metadata.set(
+                            keys::TAGS,
+                            Value::List(vec![Value::Text("Work".into())]),
+                            Provenance::User,
+                        );
+                    }
+                }
+            }
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("t");
+        std::fs::create_dir(&root).unwrap();
+        for i in 0..100 {
+            let ext = if i % 10 == 0 { "tagged" } else { "plain" };
+            std::fs::write(root.join(format!("f{i}.{ext}")), b"x").unwrap();
+        }
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        let fake = Arc::new(Fake::default());
+        app.metadata.register("fake", fake.clone());
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+        assert_eq!(run(&app, "tag:work", &root).len(), 10);
+        let (calls, entries) = *fake.0.lock();
+        assert_eq!(entries, 100);
+        assert!(calls <= 10, "{calls} provider calls for 100 files");
+    }
+
+    #[test]
+    fn disabling_the_plugin_stops_its_walks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("t");
+        std::fs::create_dir(&root).unwrap();
+        tree(&root);
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+        let open = app
+            .open_location(&location_for("txt", Some(&root)))
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !matches!(
+            open.events().recv_deadline(deadline).unwrap(),
+            ListingEvent::Complete
+        ) {}
+        assert!(app.plugins.set_enabled(ID, false, &app));
+        // A location that outlives the plugin walks no more.
+        open.refresh();
+        let deadline = std::time::Instant::now() + Duration::from_millis(300);
+        while let Ok(ev) = open.events().recv_deadline(deadline) {
+            assert!(
+                !matches!(ev, ListingEvent::Complete | ListingEvent::Added(_)),
+                "walked after disable: {ev:?}"
+            );
+        }
     }
 }

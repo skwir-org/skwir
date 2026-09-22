@@ -7,7 +7,7 @@ fn main() {
     let tmp = tempfile::tempdir().unwrap();
     let app = bibli_core::App::new(bibli_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
     app.plugins
-        .add(Arc::new(bibli_plugin_query::QueryPlugin), &app);
+        .add(Arc::new(bibli_plugin_query::QueryPlugin::default()), &app);
     let t = Instant::now();
     let open = app
         .open_location(&bibli_core::Location::parse(&format!("query:{expr}")))

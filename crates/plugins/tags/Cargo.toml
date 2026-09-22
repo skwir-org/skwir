@@ -13,6 +13,7 @@ serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
 xattr.workspace = true
+rustix.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

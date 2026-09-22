@@ -7,10 +7,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use bibli_core::app::App;
+use bibli_core::app::{App, PaneArg};
 use bibli_core::command::{Invocation, Outcome};
-use bibli_core::entry::{Entry, Metadata, Provenance, Value};
-use bibli_core::metadata::MetadataProvider;
+use bibli_core::entry::{Entry, Metadata, Provenance, Value, keys};
+use bibli_core::metadata::{MetadataProvider, same_tag};
 use bibli_core::op::{Change, EntryRef, Operation, Plan, ResolveError, StepContext, StepStatus};
 use bibli_core::plugin::Plugin;
 use bibli_core::registry::{KeyBinding, MenuItem};
@@ -18,7 +18,7 @@ use bibli_core::workspace::PaneId;
 
 const ID: &str = "tags";
 /// The metadata field key.
-pub const FIELD: &str = "tags";
+pub const FIELD: &str = keys::TAGS;
 /// Read-only companion field from `user.xdg.comment`.
 pub const COMMENT_FIELD: &str = "comment";
 use bibli_core::metadata::TAGS_XATTR as XATTR_TAGS;
@@ -33,12 +33,13 @@ pub fn read_tags(path: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Split a comma-separated tag list, trimming and dropping empties and duplicates.
+/// Split a comma-separated tag list, trimming and dropping empties and
+/// duplicates (tags ignore case: [`same_tag`]; the first spelling stays).
 pub fn parse_tags(s: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for t in s.split(',') {
         let t = t.trim();
-        if !t.is_empty() && !out.iter().any(|x| x == t) {
+        if !t.is_empty() && !out.iter().any(|x| same_tag(x, t)) {
             out.push(t.to_owned());
         }
     }
@@ -49,7 +50,11 @@ pub fn parse_tags(s: &str) -> Vec<String> {
 pub fn write_tags(path: &Path, tags: &[String]) -> std::io::Result<()> {
     if tags.is_empty() {
         match xattr::remove(path, XATTR_TAGS) {
-            Err(e) if e.raw_os_error() == Some(61) || e.kind() == std::io::ErrorKind::NotFound => {
+            // ENODATA: the attribute was not there, which is what we wanted.
+            Err(e)
+                if rustix::io::Errno::from_io_error(&e) == Some(rustix::io::Errno::NODATA)
+                    || e.kind() == std::io::ErrorKind::NotFound =>
+            {
                 Ok(())
             }
             r => r,
@@ -136,11 +141,9 @@ impl Operation for SetTags {
         serde_json::to_value(self).expect("serializable")
     }
     fn describe(&self) -> Change {
-        // No dedicated variant exists; "rename" to the same path with the tags
-        // would mislead, so describe as a create-less change on the path.
         Change::Metadata {
             path: self.entry.path.clone(),
-            field: "tags".into(),
+            field: FIELD.into(),
         }
     }
     fn check(&self, _ctx: &StepContext) -> StepStatus {
@@ -177,16 +180,6 @@ struct TagsArgs {
     pane: Option<PaneId>,
 }
 
-#[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
-struct PaneArgs {
-    #[serde(default)]
-    pane: Option<PaneId>,
-}
-
-fn pane_of(app: &App, pane: Option<PaneId>) -> PaneId {
-    pane.unwrap_or_else(|| app.workspace.read().active_id())
-}
-
 /// Current tags of a selected entry, read from the xattr: the listing's
 /// field can be stale (a watcher re-stat replaces metadata without running
 /// providers) and one getxattr per selected entry is cheap.
@@ -202,7 +195,7 @@ enum Mode {
 }
 
 fn tag_plan(app: &App, a: &TagsArgs, mode: Mode) -> anyhow::Result<Outcome> {
-    let pane = pane_of(app, a.pane);
+    let pane = app.pane_or_active(a.pane);
     let refs = app.selected_refs(pane);
     if refs.is_empty() {
         anyhow::bail!("nothing selected");
@@ -218,10 +211,11 @@ fn tag_plan(app: &App, a: &TagsArgs, mode: Mode) -> anyhow::Result<Outcome> {
         let current = current_tags(&r);
         let tags = match mode {
             Mode::Set => wanted.clone(),
+            // A tag already there under another case is kept as spelled.
             Mode::Add => {
                 let mut t = current.clone();
                 for w in &wanted {
-                    if !t.contains(w) {
+                    if !t.iter().any(|x| same_tag(x, w)) {
                         t.push(w.clone());
                     }
                 }
@@ -229,7 +223,7 @@ fn tag_plan(app: &App, a: &TagsArgs, mode: Mode) -> anyhow::Result<Outcome> {
             }
             Mode::Remove => current
                 .iter()
-                .filter(|t| !wanted.contains(t))
+                .filter(|t| !wanted.iter().any(|w| same_tag(w, t)))
                 .cloned()
                 .collect(),
         };
@@ -276,21 +270,23 @@ impl Plugin for TagsPlugin {
             "Remove tags from the selection (plan)",
             |a, app| tag_plan(app, &a, Mode::Remove),
         );
-        app.commands.register::<PaneArgs, _>(
+        app.commands.register::<PaneArg, _>(
             ID,
             "tags.list",
             "List tags",
-            "Tags used in the pane's listing, with counts",
+            "Tags used in the pane's listing, with counts (tags that differ only in case count as one)",
             |a, app| {
-                let pane = pane_of(app, a.pane);
-                let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+                let pane = app.pane_or_active(a.pane);
+                // Keyed by the lowercase form, shown as first spelled.
+                let mut counts: BTreeMap<String, (String, usize)> = BTreeMap::new();
                 if let Some(p) = app.workspace.read().pane(pane) {
                     for e in p.listing.iter() {
                         for t in tags_of(&e.metadata).unwrap_or_default() {
-                            *counts.entry(t).or_insert(0) += 1;
+                            counts.entry(t.to_lowercase()).or_insert((t, 0)).1 += 1;
                         }
                     }
                 }
+                let counts: BTreeMap<String, usize> = counts.into_values().collect();
                 Ok(Outcome::Value(serde_json::to_value(counts)?))
             },
         );
@@ -369,6 +365,7 @@ mod tests {
     #[test]
     fn parse_and_roundtrip() {
         assert_eq!(parse_tags(" a, b ,a,,c "), ["a", "b", "c"]);
+        assert_eq!(parse_tags("Work, work,WORK, Été, été"), ["Work", "Été"]);
         let tmp = home_tempdir();
         let f = tmp.path().join("f");
         std::fs::write(&f, b"x").unwrap();
@@ -439,6 +436,32 @@ mod tests {
             panic!("plan")
         };
         app.executor.execute_blocking(&plan, app.lifetime());
+        assert_eq!(read_tags(&f), ["new"]);
+        // Tags ignore case: adding "NEW" keeps "new", removing "NEW" removes it.
+        let Outcome::Plan(plan) = app
+            .dispatch(&Invocation::with_args(
+                "tags.add",
+                &serde_json::json!({ "tags": ["NEW"] }),
+            ))
+            .unwrap()
+        else {
+            panic!("plan")
+        };
+        let r = app.executor.execute_blocking(&plan, app.lifetime());
+        assert_eq!((r.applied, r.skipped), (0, 1));
+        assert_eq!(read_tags(&f), ["new"]);
+        let Outcome::Plan(plan) = app
+            .dispatch(&Invocation::with_args(
+                "tags.remove",
+                &serde_json::json!({ "tags": ["NEW"] }),
+            ))
+            .unwrap()
+        else {
+            panic!("plan")
+        };
+        app.executor.execute_blocking(&plan, app.lifetime());
+        assert!(read_tags(&f).is_empty());
+        app.executor.undo_blocking(app.lifetime()).unwrap();
         assert_eq!(read_tags(&f), ["new"]);
         let Outcome::Plan(plan) = app
             .dispatch(&Invocation::with_args(

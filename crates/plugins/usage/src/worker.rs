@@ -52,7 +52,8 @@ type Key = (bool, Reverse<usize>, u64);
 
 #[derive(Default)]
 struct Cache {
-    dirs: HashMap<PathBuf, (Node, Key)>,
+    /// Ordered by path so a folder's descendants are one range (see [`below`]).
+    dirs: BTreeMap<PathBuf, (Node, Key)>,
     order: BTreeMap<Key, PathBuf>,
     /// Canonical paths of the active requests.
     roots: Vec<PathBuf>,
@@ -109,16 +110,23 @@ impl Cache {
         }
     }
     /// Drop `path` and its ancestors (their totals include it); with
-    /// `descendants`, also everything below it.
+    /// `descendants`, also everything below it. Lookups, not a scan: a
+    /// deleted tree sends an event per folder.
     fn invalidate(&mut self, path: &Path, descendants: bool) {
-        self.dirs.retain(|p, (node, stamp)| {
-            let remove = path.starts_with(p) || (descendants && p.starts_with(path));
-            if remove {
-                self.bytes -= cost(node);
-                self.order.remove(stamp);
+        let mut doomed: Vec<PathBuf> = path
+            .ancestors()
+            .filter(|a| self.dirs.contains_key(*a))
+            .map(Path::to_path_buf)
+            .collect();
+        if descendants {
+            doomed.extend(below(&self.dirs, path).filter(|p| *p != path).cloned());
+        }
+        for p in doomed {
+            if let Some((node, stamp)) = self.dirs.remove(&p) {
+                self.bytes -= cost(&node);
+                self.order.remove(&stamp);
             }
-            !remove
-        });
+        }
     }
     fn set_roots(&mut self, mut roots: Vec<PathBuf>) {
         roots.sort();
@@ -235,7 +243,20 @@ struct Use {
     scan: bool,
     alias: u32,
 }
-type Registrations = HashMap<PathBuf, Use>;
+/// Ordered by path so a folder's registrations are one range (see [`below`]).
+type Registrations = BTreeMap<PathBuf, Use>;
+
+/// The keys of `map` that are `path` or below it. Paths order component by
+/// component, so these follow `path` contiguously.
+fn below<'a, V>(
+    map: &'a BTreeMap<PathBuf, V>,
+    path: &'a Path,
+) -> impl Iterator<Item = &'a PathBuf> + 'a {
+    use std::ops::Bound;
+    map.range::<Path, _>((Bound::Included(path), Bound::Unbounded))
+        .map(|(p, _)| p)
+        .take_while(move |p| p.starts_with(path))
+}
 
 enum Registration {
     Watched,
@@ -249,7 +270,12 @@ fn register(watcher: &mut dyn Watcher, path: &Path) -> Registration {
         Ok(()) => Registration::Watched,
         Err(error) => match &error.kind {
             ErrorKind::MaxFilesWatch => Registration::Exhausted,
-            ErrorKind::Io(io) if matches!(io.raw_os_error(), Some(28 | 12)) => {
+            ErrorKind::Io(io)
+                if matches!(
+                    rustix::io::Errno::from_io_error(io),
+                    Some(rustix::io::Errno::NOSPC | rustix::io::Errno::NOMEM)
+                ) =>
+            {
                 // ENOSPC: inotify budget; ENOMEM: kernel watch allocation.
                 Registration::Exhausted
             }
@@ -1015,20 +1041,20 @@ impl Worker {
         self.cache.invalidate(path, true);
     }
     fn unwatch(&mut self, prefix: &Path) {
-        let watcher = &mut self.watcher;
-        self.registrations.retain(|path, r| {
-            if !path.starts_with(prefix) {
-                return true;
-            }
+        let paths: Vec<PathBuf> = below(&self.registrations, prefix).cloned().collect();
+        for path in paths {
+            let Some(r) = self.registrations.get_mut(&path) else {
+                continue;
+            };
             r.scan = false;
             if r.alias > 0 {
-                return true;
+                continue;
             }
-            if let Some(watcher) = watcher.as_mut() {
-                let _ = watcher.unwatch(path);
+            self.registrations.remove(&path);
+            if let Some(watcher) = self.watcher.as_mut() {
+                let _ = watcher.unwatch(&path);
             }
-            false
-        });
+        }
     }
     /// The watch budget is spent: give the registrations back to the rest of
     /// the application and stop retrying for a growing interval.
@@ -1302,6 +1328,26 @@ pub(super) fn run(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn invalidation_takes_ancestors_and_descendants_only() {
+        let mut cache = Cache::default();
+        for path in ["/a", "/a/b", "/a/b/c", "/a/b/c/d", "/a/b-c", "/a/bb", "/x"] {
+            cache.insert(Node {
+                path: PathBuf::from(path),
+                ..Node::default()
+            });
+        }
+        let bytes = cache.bytes;
+        cache.invalidate(Path::new("/a/b/c"), false);
+        let left: Vec<&str> = cache.dirs.keys().map(|p| p.to_str().unwrap()).collect();
+        assert_eq!(left, ["/a/b/c/d", "/a/b-c", "/a/bb", "/x"]);
+        cache.invalidate(Path::new("/a/b"), true);
+        let left: Vec<&str> = cache.dirs.keys().map(|p| p.to_str().unwrap()).collect();
+        assert_eq!(left, ["/a/b-c", "/a/bb", "/x"]);
+        assert_eq!(cache.order.len(), 3);
+        assert!(cache.bytes < bytes);
+    }
     use super::*;
     use notify::event::{CreateKind, MetadataKind, RemoveKind, RenameMode};
     use std::sync::atomic::{AtomicUsize, Ordering};

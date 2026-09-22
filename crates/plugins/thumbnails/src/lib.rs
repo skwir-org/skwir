@@ -5,18 +5,79 @@
 //! Settings: `thumbnails.write_cache` (bool, default true) and
 //! `thumbnails.budget_mb` (integer, default 64).
 
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use bibli_core::App;
+use bibli_core::cancel::CancelToken;
 use bibli_core::plugin::Plugin;
+use bibli_core::scheduler::Priority;
 use bibli_core::settings::SettingSpec;
+use bibli_core::thumbs::{Image, ThumbRequest, ThumbnailProvider};
 use bibli_platform::thumb_providers::{FreedesktopCache, ImageDecoder, Thumbnailers};
 
 const ID: &str = "thumbnails";
+const WRITE_CACHE: &str = "thumbnails.write_cache";
+const BUDGET_MB: &str = "thumbnails.budget_mb";
 
 /// The plugin.
-#[derive(Debug, Default)]
-pub struct ThumbnailsPlugin;
+#[derive(Default)]
+pub struct ThumbnailsPlugin {
+    thumbnailers: Arc<Discovered>,
+}
+
+/// The desktop's thumbnailers. Finding them reads every `.thumbnailer`
+/// file, which registration must not do: a worker fills this once, and
+/// until then the provider accepts nothing. Kept across settings changes
+/// and re-enabling.
+#[derive(Default)]
+struct Discovered {
+    started: AtomicBool,
+    found: OnceLock<Thumbnailers>,
+}
+
+impl ThumbnailProvider for Discovered {
+    fn id(&self) -> &'static str {
+        "thumbnailers"
+    }
+
+    fn accepts(&self, req: &ThumbRequest) -> bool {
+        self.found.get().is_some_and(|t| t.accepts(req))
+    }
+
+    fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
+        match self.found.get() {
+            Some(t) => t.thumbnail(req, cancel),
+            None => Ok(None),
+        }
+    }
+}
+
+fn budget(app: &App) {
+    let budget_mb = app
+        .settings
+        .get::<i64>(BUDGET_MB)
+        .unwrap_or(64)
+        .clamp(4, 4096);
+    app.thumbnails
+        .set_budget(usize::try_from(budget_mb).unwrap_or(64) << 20);
+}
+
+impl ThumbnailsPlugin {
+    /// The providers, in order: the cache first, then the decoder, then
+    /// the desktop's thumbnailers.
+    fn providers(&self, app: &App) {
+        let write_back = app.settings.get::<bool>(WRITE_CACHE).unwrap_or(true);
+        app.thumbnails.unregister_owner(ID);
+        app.thumbnails
+            .register(ID, Arc::new(FreedesktopCache::desktop(write_back)));
+        app.thumbnails.register(ID, Arc::new(ImageDecoder));
+        app.thumbnails.register(
+            ID,
+            Arc::clone(&self.thumbnailers) as Arc<dyn ThumbnailProvider>,
+        );
+    }
+}
 
 impl Plugin for ThumbnailsPlugin {
     fn id(&self) -> &'static str {
@@ -31,21 +92,27 @@ impl Plugin for ThumbnailsPlugin {
         "Thumbnails from the desktop cache, an image decoder, and installed thumbnailers"
     }
 
-    fn on_settings_changed(&self, app: &App, _keys: &[String]) {
-        app.thumbnails.unregister_owner(self.id());
-        self.register(app);
+    fn on_settings_changed(&self, app: &App, keys: &[String]) {
+        if keys.iter().any(|k| k == BUDGET_MB) {
+            budget(app);
+        }
+        // Only the cache provider depends on it, but the order matters, so
+        // the list is registered again; nothing is discovered again.
+        if keys.iter().any(|k| k == WRITE_CACHE) {
+            self.providers(app);
+        }
     }
 
     fn register(&self, app: &App) {
         app.settings.declare(SettingSpec::toggle(
-            "thumbnails.write_cache",
+            WRITE_CACHE,
             "Share generated thumbnails",
             "Store new thumbnails in the desktop's thumbnail cache so other applications reuse them.",
             true,
         ));
         app.settings.declare(
             SettingSpec::integer(
-                "thumbnails.budget_mb",
+                BUDGET_MB,
                 "Memory budget",
                 "Decoded thumbnails kept in memory. Higher values scroll large image folders more smoothly.",
                 64,
@@ -54,23 +121,18 @@ impl Plugin for ThumbnailsPlugin {
             .unit("MB")
             .step(16),
         );
-        let write_back = app
-            .settings
-            .get::<bool>("thumbnails.write_cache")
-            .unwrap_or(true);
-        let budget_mb = app
-            .settings
-            .get::<i64>("thumbnails.budget_mb")
-            .unwrap_or(64)
-            .clamp(4, 4096);
-        app.thumbnails
-            .set_budget(usize::try_from(budget_mb).unwrap_or(64) << 20);
-        app.thumbnails
-            .register(ID, Arc::new(FreedesktopCache::desktop(write_back)));
-        app.thumbnails.register(ID, Arc::new(ImageDecoder));
-        let thumbnailers = Thumbnailers::from_system();
-        if !thumbnailers.is_empty() {
-            app.thumbnails.register(ID, Arc::new(thumbnailers));
+        budget(app);
+        self.providers(app);
+        if !self.thumbnailers.started.swap(true, Ordering::AcqRel) {
+            let discovered = Arc::clone(&self.thumbnailers);
+            app.scheduler.spawn(
+                Priority::Background,
+                "thumbnailers.discover",
+                app.lifetime().child(),
+                move || {
+                    let _ = discovered.found.set(Thumbnailers::from_system());
+                },
+            );
         }
     }
 }
@@ -118,7 +180,7 @@ mod tests {
         unsafe { std::env::set_var("XDG_CACHE_HOME", cache.path()) };
         let tmp = tempfile::tempdir().unwrap();
         let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
-        app.plugins.add(Arc::new(ThumbnailsPlugin), &app);
+        app.plugins.add(Arc::new(ThumbnailsPlugin::default()), &app);
         assert!(
             app.thumbnails
                 .provider_ids()

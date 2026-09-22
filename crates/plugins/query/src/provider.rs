@@ -3,6 +3,7 @@
 //! (and always once for their identity when they match).
 
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -21,9 +22,19 @@ use crate::lang::{self, Candidate, Query, Verdict};
 
 pub const SCHEME: &str = "query";
 
-/// Provider for `query:<expression>` locations.
-#[derive(Debug, Default)]
-pub struct QueryProvider;
+/// Provider for `query:<expression>` locations. Every walk and stat it
+/// starts ends when the plugin is disabled (`lifetime`), not only when its
+/// pane moves on.
+#[derive(Debug)]
+pub struct QueryProvider {
+    lifetime: CancelToken,
+}
+
+impl QueryProvider {
+    pub fn new(lifetime: CancelToken) -> Self {
+        QueryProvider { lifetime }
+    }
+}
 
 impl LocationProvider for QueryProvider {
     fn scheme(&self) -> &str {
@@ -32,22 +43,31 @@ impl LocationProvider for QueryProvider {
 
     fn open(&self, location: &Location, ctx: OpenContext) -> anyhow::Result<Arc<dyn OpenLocation>> {
         let query = lang::parse(&location.rest).map_err(|e| anyhow::anyhow!("query: {e}"))?;
+        // Whether the root is a folder is I/O (a sleeping disk can block
+        // it): the walk checks, and reports a listing error.
         anyhow::ensure!(
-            query.root.is_dir(),
-            "query root {} is not a directory",
+            query.root.is_absolute(),
+            "query root {} is not an absolute path",
             query.root.display()
         );
-        Ok(QueryLocation::open(location.clone(), query, &ctx))
+        Ok(QueryLocation::open(
+            location.clone(),
+            query,
+            &ctx,
+            &self.lifetime,
+        ))
     }
 }
 
 struct Shared {
-    query: Query,
     ctx: OpenContext,
     tx: EventSink,
     paths: Mutex<HashMap<EntryId, PathBuf>>,
-    /// Cancelled to abort the current walk (refresh, close).
+    /// The current walk's token. Results are published while holding it, so
+    /// once a refresh has swapped it no batch of the old walk can land.
     walk: Mutex<CancelToken>,
+    /// The pane's and the plugin's lifetimes together.
+    lifetime: CancelToken,
 }
 
 pub struct QueryLocation {
@@ -58,9 +78,9 @@ pub struct QueryLocation {
 
 /// Batches results and flushes by size or age so the first ones show early.
 struct Batcher<'a> {
-    tx: &'a EventSink,
-    paths: &'a Mutex<HashMap<EntryId, PathBuf>>,
-    pending: Mutex<(Vec<Entry>, Instant)>,
+    shared: &'a Shared,
+    cancel: &'a CancelToken,
+    pending: Mutex<(Vec<(Entry, PathBuf)>, Instant)>,
     batch_size: usize,
 }
 
@@ -68,10 +88,12 @@ impl Batcher<'_> {
     const MAX_AGE: Duration = Duration::from_millis(100);
 
     fn push(&self, entry: Entry, path: PathBuf) {
-        self.paths.lock().insert(entry.id, path);
+        if self.cancel.is_cancelled() {
+            return;
+        }
         let flush = {
             let mut p = self.pending.lock();
-            p.0.push(entry);
+            p.0.push((entry, path));
             if p.0.len() >= self.batch_size || p.1.elapsed() >= Self::MAX_AGE {
                 p.1 = Instant::now();
                 Some(std::mem::take(&mut p.0))
@@ -80,14 +102,56 @@ impl Batcher<'_> {
             }
         };
         if let Some(batch) = flush {
-            self.tx.send(ListingEvent::Added(batch));
+            self.shared.publish(self.cancel, batch, false);
         }
     }
 
     fn finish(&self) {
         let batch = std::mem::take(&mut self.pending.lock().0);
-        if !batch.is_empty() {
-            self.tx.send(ListingEvent::Added(batch));
+        self.shared.publish(self.cancel, batch, true);
+    }
+}
+
+/// Matches that wait for the metadata providers (tag terms), grouped by
+/// folder so each provider gets a batch, not a call per file. One per walker
+/// thread; what is left is decided when the thread ends (on drop).
+struct Deferred<'a> {
+    shared: &'a Shared,
+    query: &'a Query,
+    batcher: &'a Batcher<'a>,
+    by_dir: HashMap<PathBuf, Vec<Entry>>,
+}
+
+impl Deferred<'_> {
+    const BATCH: usize = 64;
+
+    fn add(&mut self, dir: &Path, entry: Entry) {
+        let group = self.by_dir.entry(dir.to_path_buf()).or_default();
+        group.push(entry);
+        if group.len() >= Self::BATCH {
+            let entries = std::mem::take(group);
+            self.decide(dir, entries);
+        }
+    }
+
+    fn decide(&self, dir: &Path, mut entries: Vec<Entry>) {
+        if self.batcher.cancel.is_cancelled() {
+            return;
+        }
+        self.shared.ctx.metadata.fill(dir, &mut entries);
+        for entry in entries {
+            let path = dir.join(&entry.name);
+            if full_match(self.query, &entry, &path) {
+                self.batcher.push(entry, path);
+            }
+        }
+    }
+}
+
+impl Drop for Deferred<'_> {
+    fn drop(&mut self) {
+        for (dir, entries) in std::mem::take(&mut self.by_dir) {
+            self.decide(&dir, entries);
         }
     }
 }
@@ -103,102 +167,166 @@ fn kind_of(ft: Option<std::fs::FileType>) -> EntryKind {
 }
 
 impl QueryLocation {
-    fn open(location: Location, query: Query, ctx: &OpenContext) -> Arc<Self> {
+    fn open(
+        location: Location,
+        query: Query,
+        ctx: &OpenContext,
+        plugin: &CancelToken,
+    ) -> Arc<Self> {
         let (tx, rx) = ctx.channel();
+        let lifetime = ctx.cancel.linked(plugin);
         let shared = Arc::new(Shared {
-            query,
             ctx: ctx.clone(),
             tx,
             paths: Mutex::new(HashMap::new()),
-            walk: Mutex::new(ctx.cancel.child()),
+            walk: Mutex::new(lifetime.child()),
+            lifetime,
         });
         let this = Arc::new(QueryLocation {
             location,
             shared,
             rx,
         });
-        this.start();
+        this.start(query);
         this
     }
 
-    fn start(&self) {
+    fn start(&self, query: Query) {
         let s = Arc::clone(&self.shared);
         let cancel = s.walk.lock().clone();
         self.shared.ctx.scheduler.spawn(
             Priority::Normal,
             "query.walk",
             cancel.clone(),
-            move || s.run(&cancel),
+            move || s.run(&query, &cancel),
         );
     }
 }
 
+/// Decide with the entry's stat and metadata, reading content last.
+fn full_match(q: &Query, entry: &Entry, path: &Path) -> bool {
+    let Some(expr) = &q.expr else {
+        return true;
+    };
+    let c = Candidate::new(&entry.name, entry.kind, path, Some(&entry.metadata));
+    match expr.eval(&c, false) {
+        Verdict::No => false,
+        Verdict::Yes => true,
+        Verdict::Unknown => expr.eval(&c, true) == Verdict::Yes,
+    }
+}
+
+/// Evaluate one path as far as the dirent and a stat allow.
+fn first(q: &Query, path: &Path, name: &OsStr, kind: EntryKind) -> First {
+    let Some(expr) = &q.expr else {
+        return stat_path(path).map_or(First::No, First::Yes);
+    };
+    // 1. Cheap terms from the dirent.
+    match expr.eval(&Candidate::new(name, kind, path, None), false) {
+        Verdict::No => return First::No,
+        Verdict::Yes => return stat_path(path).map_or(First::No, First::Yes),
+        Verdict::Unknown => {}
+    }
+    // 2. Stat; metadata comes later, in batches.
+    let Some(entry) = stat_path(path) else {
+        return First::No;
+    };
+    if q.needs_metadata() {
+        return First::NeedsMetadata(entry);
+    }
+    if full_match(q, &entry, path) {
+        First::Yes(entry)
+    } else {
+        First::No
+    }
+}
+
+fn consider(
+    q: &Query,
+    path: &Path,
+    name: &OsStr,
+    kind: EntryKind,
+    batcher: &Batcher<'_>,
+    deferred: &mut Deferred<'_>,
+) {
+    match first(q, path, name, kind) {
+        First::No => {}
+        First::Yes(entry) => batcher.push(entry, path.to_path_buf()),
+        First::NeedsMetadata(entry) => {
+            if let Some(dir) = path.parent() {
+                deferred.add(dir, entry);
+            }
+        }
+    }
+}
+
+/// What the cheap checks decided about a path.
+enum First {
+    No,
+    Yes(Entry),
+    /// Stat-ed; the metadata providers must run before it can be decided.
+    NeedsMetadata(Entry),
+}
+
 impl Shared {
-    /// Evaluate one path. Returns the entry to emit when it matches.
-    fn consider(&self, path: &Path, name: &std::ffi::OsStr, kind: EntryKind) -> Option<Entry> {
-        let q = &self.query;
-        let Some(expr) = &q.expr else {
-            return stat_path(path);
-        };
-        // 1. Cheap terms from the dirent.
-        let c = Candidate {
-            name,
-            kind,
-            path,
-            metadata: None,
-        };
-        match expr.eval(&c, false) {
-            Verdict::No => return None,
-            Verdict::Yes => return stat_path(path),
-            Verdict::Unknown => {}
+    /// Send a batch of matches (and `Complete` after the last one) unless
+    /// the walk was cancelled; see `walk`.
+    fn publish(&self, cancel: &CancelToken, batch: Vec<(Entry, PathBuf)>, complete: bool) {
+        let _walk = self.walk.lock();
+        if cancel.is_cancelled() {
+            return;
         }
-        // 2. Stat and metadata.
-        let mut entry = stat_path(path)?;
-        if q.needs_metadata()
-            && let Some(parent) = path.parent()
-        {
-            self.ctx
-                .metadata
-                .fill(parent, std::slice::from_mut(&mut entry));
+        if !batch.is_empty() {
+            let mut paths = self.paths.lock();
+            let entries = batch
+                .into_iter()
+                .map(|(entry, path)| {
+                    paths.insert(entry.id, path);
+                    entry
+                })
+                .collect();
+            drop(paths);
+            self.tx.send(ListingEvent::Added(entries));
         }
-        let c = Candidate {
-            name,
-            kind: entry.kind,
-            path,
-            metadata: Some(&entry.metadata),
-        };
-        match expr.eval(&c, false) {
-            Verdict::No => return None,
-            Verdict::Yes => return Some(entry),
-            Verdict::Unknown => {}
-        }
-        // 3. Content, last.
-        match expr.eval(&c, true) {
-            Verdict::Yes => Some(entry),
-            _ => None,
+        if complete {
+            self.tx.send(ListingEvent::Complete);
         }
     }
 
-    fn run(&self, cancel: &CancelToken) {
+    fn run(&self, q: &Query, cancel: &CancelToken) {
+        if !q.root.is_dir() {
+            let _walk = self.walk.lock();
+            if !cancel.is_cancelled() {
+                self.tx.send(ListingEvent::Error(format!(
+                    "query root {} is not a folder",
+                    q.root.display()
+                )));
+            }
+            return;
+        }
         let batcher = Batcher {
-            tx: &self.tx,
-            paths: &self.paths,
+            shared: self,
+            cancel,
             pending: Mutex::new((Vec::new(), Instant::now())),
             batch_size: self.ctx.batch_size.max(1),
         };
-        if let Some(paths) = crate::plocate::try_locate(&self.query) {
+        let deferred = || Deferred {
+            shared: self,
+            query: q,
+            batcher: &batcher,
+            by_dir: HashMap::new(),
+        };
+        if let Some(paths) = crate::plocate::try_locate(q) {
+            let mut deferred = deferred();
             for p in paths {
                 if cancel.is_cancelled() {
                     return;
                 }
                 let Some(name) = p.file_name() else { continue };
                 let kind = kind_of(std::fs::symlink_metadata(&p).ok().map(|m| m.file_type()));
-                if let Some(e) = self.consider(&p, name, kind) {
-                    batcher.push(e, p);
-                }
+                consider(q, &p, name, kind, &batcher, &mut deferred);
             }
         } else {
-            let q = &self.query;
             let mut builder = ignore::WalkBuilder::new(&q.root);
             builder
                 .hidden(!q.hidden)
@@ -210,7 +338,10 @@ impl Shared {
                 .follow_links(false)
                 .max_depth(q.depth);
             builder.build_parallel().run(|| {
-                Box::new(|result| {
+                // Dropped when this walker thread ends, which decides the rest.
+                let mut deferred = deferred();
+                let batcher = &batcher;
+                Box::new(move |result| {
                     if cancel.is_cancelled() {
                         return ignore::WalkState::Quit;
                     }
@@ -225,53 +356,27 @@ impl Shared {
                         return ignore::WalkState::Continue;
                     };
                     let kind = kind_of(dent.file_type());
-                    if let Some(e) = self.consider(path, name, kind) {
-                        batcher.push(e, path.to_path_buf());
-                    }
+                    consider(q, path, name, kind, batcher, &mut deferred);
                     ignore::WalkState::Continue
                 })
             });
         }
-        if cancel.is_cancelled() {
-            return;
-        }
         batcher.finish();
-        self.tx.send(ListingEvent::Complete);
     }
 
-    fn hydrate(&self, ids: &[EntryId]) {
-        let mut updated = Vec::new();
-        let mut gone = Vec::new();
-        let mut by_dir: HashMap<PathBuf, Vec<Entry>> = HashMap::new();
-        for &id in ids {
-            let Some(path) = self.paths.lock().get(&id).cloned() else {
-                continue;
-            };
-            match stat_path(&path) {
-                Some(mut e) => {
-                    e.id = id;
-                    by_dir
-                        .entry(path.parent().map(Path::to_path_buf).unwrap_or_default())
-                        .or_default()
-                        .push(e);
-                }
-                None => gone.push(id),
-            }
-        }
-        for (dir, mut entries) in by_dir {
-            self.ctx.metadata.fill(&dir, &mut entries);
-            updated.extend(entries);
-        }
-        if !updated.is_empty() {
-            self.tx.send(ListingEvent::Updated(updated));
-        }
+    fn hydrate(&self, ids: &[EntryId], cancel: &CancelToken) {
+        let items: Vec<(EntryId, PathBuf)> = {
+            let paths = self.paths.lock();
+            ids.iter()
+                .filter_map(|id| paths.get(id).map(|p| (*id, p.clone())))
+                .collect()
+        };
+        let gone = bibli_core::fs::hydrate_paths(&items, &self.ctx.metadata, &self.tx, cancel);
         if !gone.is_empty() {
             let mut paths = self.paths.lock();
             for id in &gone {
                 paths.remove(id);
             }
-            drop(paths);
-            self.tx.send(ListingEvent::Removed(gone));
         }
     }
 }
@@ -291,11 +396,12 @@ impl OpenLocation for QueryLocation {
         }
         let s = Arc::clone(&self.shared);
         let ids = ids.to_vec();
+        let cancel = s.lifetime.child();
         self.shared
             .ctx
             .scheduler
-            .spawn(priority, "query.stat", s.ctx.cancel.child(), move || {
-                s.hydrate(&ids);
+            .spawn(priority, "query.stat", cancel.clone(), move || {
+                s.hydrate(&ids, &cancel);
             });
     }
 
@@ -304,16 +410,26 @@ impl OpenLocation for QueryLocation {
     }
 
     fn refresh(&self) {
+        // Parse again: relative dates (`modified<7d`) mean "before now".
+        let query = match lang::parse(&self.location.rest) {
+            Ok(query) => query,
+            Err(e) => {
+                self.shared
+                    .tx
+                    .send(ListingEvent::Error(format!("query: {e}")));
+                return;
+            }
+        };
         let old: Vec<EntryId> = {
             let mut walk = self.shared.walk.lock();
             walk.cancel();
-            *walk = self.shared.ctx.cancel.child();
+            *walk = self.shared.lifetime.child();
             self.shared.paths.lock().drain().map(|(id, _)| id).collect()
         };
         if !old.is_empty() {
             self.shared.tx.send(ListingEvent::Removed(old));
         }
-        self.start();
+        self.start(query);
     }
 
     fn close(&self) {

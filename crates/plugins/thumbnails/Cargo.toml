@@ -9,12 +9,11 @@ rust-version.workspace = true
 [dependencies]
 bibli-core.workspace = true
 bibli-platform.workspace = true
-toml.workspace = true
+anyhow.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
 parking_lot.workspace = true
-anyhow.workspace = true
 
 [lints]
 workspace = true

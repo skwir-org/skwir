@@ -7,9 +7,9 @@ rust-version.workspace = true
 
 [dependencies]
 bibli-core.workspace = true
+bibli-platform.workspace = true
 anyhow.workspace = true
 parking_lot.workspace = true
-percent-encoding = "2"
 tracing.workspace = true
 zbus = "5"
 

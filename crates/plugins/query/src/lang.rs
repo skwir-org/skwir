@@ -18,14 +18,30 @@
 //! `k`, `M`, `G` (1024-based). Times take dates (`2026`, `2026-05`,
 //! `2026-05-01`) or durations relative to now (`7d`, `2h30m`, `3w`).
 //! `modified<7d` means within the last 7 days; `modified>7d` older than that.
+//!
+//! Quoting: a quote opens only at the start of a word, after a leading `-`,
+//! or right after one of the keys above (`name:"a b"`), so `don't` is an
+//! ordinary word. A quoted word is always literal: `"OR"`, `"-draft"` and
+//! `"in:x"` are names, not an operator, a negation or an option. Inside
+//! quotes `\` escapes the next character, and `\xNN` stands for one byte, so
+//! `in:` can name a folder whose name is not UTF-8. [`quote`] and
+//! [`quote_os`] write a literal back in this form.
+//!
+//! Regexes: `content:/re/` runs to the first `/` not escaped with `\` (so
+//! it may hold spaces and parentheses), followed by flags: `i` ignores
+//! case, `c` matches it; without a flag `case:` decides. The printer always
+//! writes the flag, so a query prints and parses back to the same meaning.
 
-use std::ffi::OsStr;
-use std::fmt;
+use std::borrow::Cow;
+use std::cell::OnceCell;
+use std::ffi::{OsStr, OsString};
+use std::fmt::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bibli_core::entry::{EntryKind, Metadata, Value, keys};
 use globset::{Glob, GlobMatcher};
+use grep_regex::RegexMatcher;
 
 /// A parsed query: the boolean expression plus walk options.
 #[derive(Clone, Debug)]
@@ -56,6 +72,8 @@ pub enum TimeField {
 }
 
 impl TimeField {
+    const ALL: [TimeField; 3] = [TimeField::Modified, TimeField::Created, TimeField::Accessed];
+
     fn key(self) -> &'static str {
         match self {
             TimeField::Modified => keys::MODIFIED,
@@ -89,45 +107,71 @@ pub struct NamePat {
 }
 
 impl NamePat {
-    fn new(text: &str, case_sensitive: bool) -> Result<Self, ParseError> {
-        let is_glob = text.contains(['*', '?', '[']);
-        let glob = if is_glob {
-            let g = globset::GlobBuilder::new(text)
-                .case_insensitive(!case_sensitive)
-                .literal_separator(false)
-                .build()
-                .map_err(|e| ParseError(format!("bad glob `{text}`: {e}")))?;
-            Some(g.compile_matcher())
-        } else {
-            None
-        };
-        Ok(NamePat {
+    /// A pattern with glob characters is a glob; one that does not compile
+    /// as a glob (a name like `a[b`) is searched for as written.
+    fn new(text: &str, case_sensitive: bool) -> Self {
+        let glob = text
+            .contains(['*', '?', '['])
+            .then(|| {
+                globset::GlobBuilder::new(text)
+                    .case_insensitive(!case_sensitive)
+                    .literal_separator(false)
+                    .build()
+                    .ok()
+            })
+            .flatten()
+            .map(|g| g.compile_matcher());
+        NamePat {
             text: text.to_owned(),
             glob,
             case_sensitive,
             lowered: text.to_lowercase(),
-        })
+        }
     }
 
-    fn matches(&self, name: &str) -> bool {
+    fn matches(&self, c: &Candidate<'_>) -> bool {
         match &self.glob {
-            Some(g) => g.is_match(name),
-            None if self.case_sensitive => name.contains(&self.text),
-            None => name.to_lowercase().contains(&self.lowered),
+            Some(g) => g.is_match(&*c.text),
+            None if self.case_sensitive => c.text.contains(&self.text),
+            None => c.lowered().contains(&self.lowered),
         }
     }
 }
 
+/// Text or a regex to find in a file, compiled once when the query is parsed.
 #[derive(Clone, Debug)]
-pub enum ContentPat {
-    Text {
-        needle: String,
-        case_sensitive: bool,
-    },
-    Regex {
-        pattern: String,
-        case_insensitive: bool,
-    },
+pub struct ContentPat {
+    /// The needle, or the regex's source.
+    pub text: String,
+    pub regex: bool,
+    pub case_sensitive: bool,
+    matcher: RegexMatcher,
+}
+
+impl ContentPat {
+    /// A literal needle.
+    pub fn text(needle: &str, case_sensitive: bool) -> Result<Self, ParseError> {
+        Self::build(needle, false, case_sensitive)
+    }
+
+    /// A regular expression (the `regex` crate's syntax).
+    pub fn regex(pattern: &str, case_sensitive: bool) -> Result<Self, ParseError> {
+        Self::build(pattern, true, case_sensitive)
+    }
+
+    fn build(text: &str, regex: bool, case_sensitive: bool) -> Result<Self, ParseError> {
+        let matcher = grep_regex::RegexMatcherBuilder::new()
+            .case_insensitive(!case_sensitive)
+            .fixed_strings(!regex)
+            .build(text)
+            .map_err(|e| ParseError(format!("bad regex `{text}`: {e}")))?;
+        Ok(ContentPat {
+            text: text.to_owned(),
+            regex,
+            case_sensitive,
+            matcher,
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -163,55 +207,158 @@ impl std::error::Error for ParseError {}
 
 // ---------------------------------------------------------------- tokenizer
 
+/// The keys a word can start with. Only these open a quote after their
+/// colon; any other word with a colon (`http://x`, `a:'b`) is a name.
+const KEYS: [&str; 14] = [
+    "name", "ext", "type", "mime", "tag", "content", "size", "modified", "created", "accessed",
+    "in", "depth", "hidden", "case",
+];
+
 #[derive(Debug, Clone, PartialEq)]
 enum Tok {
-    Word(String),
+    Word(Word),
+    /// `NOT`, or a `-` in front of a word or a group.
+    Not,
+    Or,
     LParen,
     RParen,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct Word {
+    /// The key before the colon, as written outside quotes.
+    key: Option<&'static str>,
+    /// Bytes, because `\xNN` can name bytes that are not UTF-8.
+    value: Vec<u8>,
+    /// Some of the value was quoted: it is a literal, never an operator,
+    /// an option or a comparison.
+    quoted: bool,
+}
+
+impl Word {
+    fn text(&self) -> Result<&str, ParseError> {
+        std::str::from_utf8(&self.value)
+            .map_err(|_| ParseError("only in: accepts bytes that are not UTF-8 (\\xNN)".into()))
+    }
+}
+
+fn is_break(c: char) -> bool {
+    c.is_whitespace() || c == '(' || c == ')'
+}
+
+fn push_char(out: &mut Vec<u8>, c: char) {
+    out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
+}
+
+fn hex_byte(hi: Option<&char>, lo: Option<&char>) -> Option<u8> {
+    let hi = hi?.to_digit(16)?;
+    let lo = lo?.to_digit(16)?;
+    u8::try_from(hi * 16 + lo).ok()
+}
+
+/// The index of the `/` closing a regex whose body starts at `from`: the
+/// first one not escaped with `\`.
+fn regex_end(cs: &[char], from: usize) -> Option<usize> {
+    let mut i = from;
+    while let Some(&c) = cs.get(i) {
+        match c {
+            '\\' => i += 2,
+            '/' => return Some(i),
+            _ => i += 1,
+        }
+    }
+    None
+}
+
 fn tokenize(s: &str) -> Result<Vec<Tok>, ParseError> {
+    let cs: Vec<char> = s.chars().collect();
     let mut out = Vec::new();
-    let mut chars = s.chars().peekable();
-    while let Some(&c) = chars.peek() {
+    let mut i = 0;
+    while let Some(&c) = cs.get(i) {
         if c.is_whitespace() {
-            chars.next();
-        } else if c == '(' {
-            chars.next();
-            out.push(Tok::LParen);
-        } else if c == ')' {
-            chars.next();
-            out.push(Tok::RParen);
-        } else {
-            let mut word = String::new();
-            let mut quote: Option<char> = None;
-            while let Some(&c) = chars.peek() {
-                if let Some(q) = quote {
-                    chars.next();
-                    if c == q {
-                        quote = None;
-                    } else if c == '\\' {
-                        if let Some(n) = chars.next() {
-                            word.push(n);
-                        }
-                    } else {
-                        word.push(c);
+            i += 1;
+            continue;
+        }
+        if c == '(' || c == ')' {
+            out.push(if c == '(' { Tok::LParen } else { Tok::RParen });
+            i += 1;
+            continue;
+        }
+        if c == '-'
+            && cs
+                .get(i + 1)
+                .is_some_and(|&n| !n.is_whitespace() && n != ')')
+        {
+            out.push(Tok::Not);
+            i += 1;
+            continue;
+        }
+        let mut word = Word {
+            key: None,
+            value: Vec::new(),
+            quoted: false,
+        };
+        if let Some(key) = KEYS.iter().find(|k| {
+            let n = k.len();
+            cs.get(i..i + n)
+                .is_some_and(|w| w.iter().copied().eq(k.chars()))
+                && cs.get(i + n) == Some(&':')
+        }) {
+            word.key = Some(key);
+            i += key.len() + 1;
+        }
+        let first = cs.get(i).copied();
+        if word.key == Some("content")
+            && first == Some('/')
+            && let Some(end) = regex_end(&cs, i + 1)
+        {
+            // The regex, delimiters included, as written; flags follow.
+            for &c in &cs[i..=end] {
+                push_char(&mut word.value, c);
+            }
+            i = end + 1;
+        } else if let Some(q @ ('"' | '\'')) = first {
+            word.quoted = true;
+            i += 1;
+            loop {
+                match cs.get(i) {
+                    None => return Err(ParseError("unterminated quote".into())),
+                    Some(&c) if c == q => {
+                        i += 1;
+                        break;
                     }
-                } else if c == '"' || c == '\'' {
-                    chars.next();
-                    quote = Some(c);
-                } else if c.is_whitespace() || c == '(' || c == ')' {
-                    break;
-                } else {
-                    chars.next();
-                    word.push(c);
+                    Some('\\') => {
+                        if let Some(b) = (cs.get(i + 1) == Some(&'x'))
+                            .then(|| hex_byte(cs.get(i + 2), cs.get(i + 3)))
+                            .flatten()
+                        {
+                            word.value.push(b);
+                            i += 4;
+                        } else if let Some(&n) = cs.get(i + 1) {
+                            push_char(&mut word.value, n);
+                            i += 2;
+                        } else {
+                            return Err(ParseError("unterminated quote".into()));
+                        }
+                    }
+                    Some(&c) => {
+                        push_char(&mut word.value, c);
+                        i += 1;
+                    }
                 }
             }
-            if quote.is_some() {
-                return Err(ParseError("unterminated quote".into()));
-            }
-            out.push(Tok::Word(word));
         }
+        // The rest of the word is literal: quotes inside a word are characters.
+        while let Some(&c) = cs.get(i).filter(|c| !is_break(**c)) {
+            push_char(&mut word.value, c);
+            i += 1;
+        }
+        let bare = !word.quoted && word.key.is_none();
+        out.push(match &word.value[..] {
+            b"OR" if bare => Tok::Or,
+            b"NOT" if bare => Tok::Not,
+            _ => Tok::Word(word),
+        });
     }
     Ok(out)
 }
@@ -241,32 +388,39 @@ pub fn parse_at(text: &str, now: SystemTime) -> Result<Query, ParseError> {
     let mut rest: Vec<Tok> = Vec::with_capacity(toks.len());
     for t in toks {
         if let Tok::Word(w) = &t {
-            if let Some(v) = w.strip_prefix("in:") {
-                root = Some(expand_root(v));
-                continue;
-            }
-            if let Some(v) = w.strip_prefix("depth:") {
-                depth = Some(
-                    v.parse::<usize>()
-                        .map_err(|_| ParseError(format!("depth: expects a number, got `{v}`")))?,
-                );
-                continue;
-            }
-            if let Some(v) = w.strip_prefix("hidden:") {
-                hidden = parse_bool(v)?;
-                continue;
-            }
-            if let Some(v) = w.strip_prefix("case:") {
-                case_sensitive = match v {
-                    "sensitive" | "true" | "yes" => true,
-                    "insensitive" | "false" | "no" => false,
-                    _ => {
-                        return Err(ParseError(format!(
-                            "case: expects sensitive or insensitive, got `{v}`"
-                        )));
+            match w.key {
+                Some("in") => {
+                    if w.value.is_empty() {
+                        return Err(ParseError("in: expects a folder".into()));
                     }
-                };
-                continue;
+                    root = Some(expand_root(w));
+                    continue;
+                }
+                Some("depth") => {
+                    let v = w.text()?;
+                    depth =
+                        Some(v.parse::<usize>().map_err(|_| {
+                            ParseError(format!("depth: expects a number, got `{v}`"))
+                        })?);
+                    continue;
+                }
+                Some("hidden") => {
+                    hidden = parse_bool(w.text()?)?;
+                    continue;
+                }
+                Some("case") => {
+                    case_sensitive = match w.text()? {
+                        "sensitive" | "true" | "yes" => true,
+                        "insensitive" | "false" | "no" => false,
+                        v => {
+                            return Err(ParseError(format!(
+                                "case: expects sensitive or insensitive, got `{v}`"
+                            )));
+                        }
+                    };
+                    continue;
+                }
+                _ => {}
             }
         }
         rest.push(t);
@@ -299,14 +453,32 @@ pub fn parse_at(text: &str, now: SystemTime) -> Result<Query, ParseError> {
     })
 }
 
-fn expand_root(v: &str) -> PathBuf {
-    if (v == "~" || v.starts_with("~/"))
+#[cfg(unix)]
+fn os_from_bytes(bytes: Vec<u8>) -> OsString {
+    use std::os::unix::ffi::OsStringExt;
+    OsString::from_vec(bytes)
+}
+
+#[cfg(not(unix))]
+fn os_from_bytes(bytes: Vec<u8>) -> OsString {
+    OsString::from(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// The `in:` folder; an unquoted `~` is the home folder.
+fn expand_root(w: &Word) -> PathBuf {
+    let v = &w.value[..];
+    if !w.quoted
+        && (v == b"~" || v.starts_with(b"~/"))
         && let Some(home) = std::env::var_os("HOME")
     {
         let home = PathBuf::from(home);
-        return if v == "~" { home } else { home.join(&v[2..]) };
+        return if v == b"~" {
+            home
+        } else {
+            home.join(os_from_bytes(v[2..].to_vec()))
+        };
     }
-    PathBuf::from(v)
+    PathBuf::from(os_from_bytes(v.to_vec()))
 }
 
 fn parse_bool(v: &str) -> Result<bool, ParseError> {
@@ -324,7 +496,7 @@ impl Parser<'_> {
 
     fn or_expr(&mut self) -> Result<Expr, ParseError> {
         let mut alts = vec![self.and_expr()?];
-        while matches!(self.peek(), Some(Tok::Word(w)) if w == "OR") {
+        while matches!(self.peek(), Some(Tok::Or)) {
             self.pos += 1;
             alts.push(self.and_expr()?);
         }
@@ -339,8 +511,7 @@ impl Parser<'_> {
         let mut items = Vec::new();
         loop {
             match self.peek() {
-                None | Some(Tok::RParen) => break,
-                Some(Tok::Word(w)) if w == "OR" => break,
+                None | Some(Tok::RParen | Tok::Or) => break,
                 _ => items.push(self.unary()?),
             }
         }
@@ -355,17 +526,15 @@ impl Parser<'_> {
     }
 
     fn unary(&mut self) -> Result<Expr, ParseError> {
-        match self.peek().cloned() {
-            Some(Tok::Word(w)) if w == "NOT" => {
+        let Some(tok) = self.peek() else {
+            return Err(ParseError("expected a term".into()));
+        };
+        match tok {
+            Tok::Not => {
                 self.pos += 1;
                 Ok(Expr::Not(Box::new(self.unary()?)))
             }
-            Some(Tok::Word(w)) if w.len() > 1 && w.starts_with('-') => {
-                self.pos += 1;
-                let inner = self.term(&w[1..])?;
-                Ok(Expr::Not(Box::new(Expr::Term(inner))))
-            }
-            Some(Tok::LParen) => {
+            Tok::LParen => {
                 self.pos += 1;
                 let e = self.or_expr()?;
                 match self.peek() {
@@ -376,95 +545,110 @@ impl Parser<'_> {
                     _ => Err(ParseError("missing `)`".into())),
                 }
             }
-            Some(Tok::RParen) => Err(ParseError("unexpected `)`".into())),
-            Some(Tok::Word(w)) => {
+            Tok::RParen => Err(ParseError("unexpected `)`".into())),
+            Tok::Or => Err(ParseError("expected a term".into())),
+            Tok::Word(w) => {
+                let term = self.term(w)?;
                 self.pos += 1;
-                Ok(Expr::Term(self.term(&w)?))
+                Ok(Expr::Term(term))
             }
-            None => Err(ParseError("expected a term".into())),
         }
     }
 
-    fn term(&self, w: &str) -> Result<Term, ParseError> {
+    fn term(&self, w: &Word) -> Result<Term, ParseError> {
         let cs = self.case_sensitive;
-        if let Some(v) = w.strip_prefix("name:") {
-            return Ok(Term::Name(NamePat::new(v, cs)?));
-        }
-        if let Some(v) = w.strip_prefix("ext:") {
-            let exts: Vec<String> = v
-                .split(',')
-                .filter(|e| !e.is_empty())
-                .map(|e| e.trim_start_matches('.').to_lowercase())
-                .collect();
-            if exts.is_empty() {
-                return Err(ParseError("ext: expects at least one extension".into()));
+        let v = w.text()?;
+        let Some(key) = w.key else {
+            if !w.quoted {
+                if let Some(rest) = v.strip_prefix("size")
+                    && rest.starts_with(['<', '>', '='])
+                {
+                    return parse_size(rest);
+                }
+                for field in TimeField::ALL {
+                    if let Some(rest) = v.strip_prefix(field.name())
+                        && rest.starts_with(['<', '>', '='])
+                    {
+                        return parse_time(field, rest, self.now);
+                    }
+                }
             }
-            return Ok(Term::Ext(exts));
+            return Ok(Term::Name(NamePat::new(v, cs)));
+        };
+        if v.is_empty() {
+            return Err(ParseError(format!("{key}: expects a value")));
         }
-        if let Some(v) = w.strip_prefix("type:") {
-            return match v {
+        match key {
+            "name" => Ok(Term::Name(NamePat::new(v, cs))),
+            "ext" => {
+                let exts: Vec<String> = v
+                    .split(',')
+                    .filter(|e| !e.is_empty())
+                    .map(|e| e.trim_start_matches('.').to_lowercase())
+                    .collect();
+                if exts.is_empty() {
+                    return Err(ParseError("ext: expects at least one extension".into()));
+                }
+                Ok(Term::Ext(exts))
+            }
+            "type" => match v {
                 "file" | "f" => Ok(Term::Type(KindSel::File)),
                 "dir" | "d" | "directory" | "folder" => Ok(Term::Type(KindSel::Dir)),
                 "symlink" | "link" | "l" => Ok(Term::Type(KindSel::Symlink)),
                 _ => Err(ParseError(format!(
                     "type: expects file, dir, or symlink, got `{v}`"
                 ))),
-            };
-        }
-        if let Some(v) = w.strip_prefix("mime:") {
-            let g = Glob::new(v).map_err(|e| ParseError(format!("bad mime glob `{v}`: {e}")))?;
-            return Ok(Term::Mime(g.compile_matcher(), v.to_owned()));
-        }
-        if let Some(v) = w.strip_prefix("tag:") {
-            if v.is_empty() {
-                return Err(ParseError("tag: expects a tag".into()));
+            },
+            "mime" => {
+                let g =
+                    Glob::new(v).map_err(|e| ParseError(format!("bad mime glob `{v}`: {e}")))?;
+                Ok(Term::Mime(g.compile_matcher(), v.to_owned()))
             }
-            return Ok(Term::Tag(v.to_owned()));
-        }
-        if let Some(v) = w.strip_prefix("content:") {
-            return Ok(Term::Content(parse_content(v, cs)?));
-        }
-        if let Some(rest) = w.strip_prefix("size") {
-            return parse_size(rest, w);
-        }
-        for field in [TimeField::Modified, TimeField::Created, TimeField::Accessed] {
-            if let Some(rest) = w.strip_prefix(field.name()) {
-                if rest.is_empty() || !rest.starts_with(['<', '>', '=', ':']) {
-                    continue;
-                }
-                return parse_time(field, rest, w, self.now);
+            "tag" => Ok(Term::Tag(v.to_owned())),
+            "content" => Ok(Term::Content(parse_content(v, w.quoted, cs)?)),
+            "size" => parse_size(&format!(":{v}")),
+            _ => {
+                let field = TimeField::ALL
+                    .into_iter()
+                    .find(|f| f.name() == key)
+                    .ok_or_else(|| ParseError(format!("{key}: is not allowed here")))?;
+                parse_time(field, &format!(":{v}"), self.now)
             }
         }
-        Ok(Term::Name(NamePat::new(w, cs)?))
     }
 }
 
-fn parse_content(v: &str, cs: bool) -> Result<ContentPat, ParseError> {
-    if v.is_empty() {
-        return Err(ParseError("content: expects text or /regex/".into()));
-    }
-    if let Some(rest) = v.strip_prefix('/')
-        && let Some(end) = rest.rfind('/')
-    {
-        let pattern = &rest[..end];
-        let flags = &rest[end + 1..];
-        if pattern.is_empty() {
-            return Err(ParseError("content: empty regex".into()));
-        }
-        let case_insensitive = flags.contains('i') || (!cs && !flags.contains('c'));
-        grep_regex::RegexMatcherBuilder::new()
-            .case_insensitive(case_insensitive)
-            .build(pattern)
-            .map_err(|e| ParseError(format!("bad regex `{pattern}`: {e}")))?;
-        return Ok(ContentPat::Regex {
-            pattern: pattern.to_owned(),
-            case_insensitive,
+fn parse_content(v: &str, quoted: bool, cs: bool) -> Result<ContentPat, ParseError> {
+    let regex = (!quoted)
+        .then(|| v.strip_prefix('/'))
+        .flatten()
+        .and_then(|rest| {
+            let body: Vec<char> = rest.chars().collect();
+            let end = regex_end(&body, 0)?;
+            Some((
+                body[..end].iter().collect::<String>(),
+                body[end + 1..].iter().collect::<String>(),
+            ))
         });
+    let Some((pattern, flags)) = regex else {
+        return ContentPat::text(v, cs);
+    };
+    if pattern.is_empty() {
+        return Err(ParseError("content: empty regex".into()));
     }
-    Ok(ContentPat::Text {
-        needle: v.to_owned(),
-        case_sensitive: cs,
-    })
+    let mut case_sensitive = cs;
+    for flag in flags.chars() {
+        case_sensitive = match flag {
+            'i' => false,
+            'c' => true,
+            _ => {
+                return Err(ParseError(format!(
+                    "content: unknown regex flag `{flag}` (i ignores case, c matches it; quote text that starts with /)"
+                )));
+            }
+        };
+    }
+    ContentPat::regex(&pattern, case_sensitive)
 }
 
 fn split_cmp(rest: &str) -> Result<(&str, &str), ParseError> {
@@ -490,54 +674,42 @@ pub fn parse_bytes(s: &str) -> Result<u64, ParseError> {
     let n: f64 = num
         .parse()
         .map_err(|_| ParseError(format!("bad size `{s}`")))?;
-    if n < 0.0 {
+    // `inf` and `nan` parse as floats; they are not sizes.
+    if !n.is_finite() || n < 0.0 {
         return Err(ParseError(format!("bad size `{s}`")));
     }
+    // Saturating: a size beyond u64 is "as large as it gets".
     Ok((n * mult as f64) as u64)
 }
 
-fn parse_size(rest: &str, whole: &str) -> Result<Term, ParseError> {
+/// `rest` is what follows `size`: an operator and a value.
+fn parse_size(rest: &str) -> Result<Term, ParseError> {
     let (op, v) = split_cmp(rest)?;
-    let text = whole.to_owned();
-    let term = match op {
-        ">" => Term::Size {
-            min: Some(parse_bytes(v)?.saturating_add(1)),
-            max: None,
-            text,
-        },
-        ">=" => Term::Size {
-            min: Some(parse_bytes(v)?),
-            max: None,
-            text,
-        },
-        "<" => Term::Size {
-            min: None,
-            max: Some(parse_bytes(v)?.saturating_sub(1)),
-            text,
-        },
-        "<=" => Term::Size {
-            min: None,
-            max: Some(parse_bytes(v)?),
-            text,
-        },
+    let (min, max) = match op {
+        ">" => (Some(parse_bytes(v)?.saturating_add(1)), None),
+        ">=" => (Some(parse_bytes(v)?), None),
+        "<" => {
+            let n = parse_bytes(v)?;
+            if n == 0 {
+                return Err(ParseError("size<0 matches nothing".into()));
+            }
+            (None, Some(n - 1))
+        }
+        "<=" => (None, Some(parse_bytes(v)?)),
         _ => {
             if let Some((a, b)) = v.split_once("..") {
-                Term::Size {
-                    min: Some(parse_bytes(a)?),
-                    max: Some(parse_bytes(b)?),
-                    text,
-                }
+                (Some(parse_bytes(a)?), Some(parse_bytes(b)?))
             } else {
                 let n = parse_bytes(v)?;
-                Term::Size {
-                    min: Some(n),
-                    max: Some(n),
-                    text,
-                }
+                (Some(n), Some(n))
             }
         }
     };
-    Ok(term)
+    Ok(Term::Size {
+        min,
+        max,
+        text: format!("size{rest}"),
+    })
 }
 
 /// Days since the epoch for a civil date (Howard Hinnant's algorithm).
@@ -555,6 +727,10 @@ fn civil_to_time(y: i64, m: u32, d: u32) -> SystemTime {
     UNIX_EPOCH + Duration::from_secs((days_from_civil(y, m, d) * 86_400).max(0) as u64)
 }
 
+fn next_month(y: i64, m: u32) -> (i64, u32) {
+    if m == 12 { (y + 1, 1) } else { (y, m + 1) }
+}
+
 /// A date literal and the exclusive end of the period it denotes.
 fn parse_date(s: &str) -> Option<(SystemTime, SystemTime)> {
     let parts: Vec<&str> = s.split('-').collect();
@@ -569,13 +745,19 @@ fn parse_date(s: &str) -> Option<(SystemTime, SystemTime)> {
             if !(1..=12).contains(&m) {
                 return None;
             }
-            let (ny, nm) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
+            let (ny, nm) = next_month(y, m);
             Some((civil_to_time(y, m, 1), civil_to_time(ny, nm, 1)))
         }
         3 => {
             let m: u32 = parts[1].parse().ok()?;
             let d: u32 = parts[2].parse().ok()?;
-            if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+            if !(1..=12).contains(&m) || d == 0 {
+                return None;
+            }
+            // `2026-02-31` is not a day; it must not roll into March.
+            let (ny, nm) = next_month(y, m);
+            let month_days = days_from_civil(ny, nm, 1) - days_from_civil(y, m, 1);
+            if i64::from(d) > month_days {
                 return None;
             }
             let start = civil_to_time(y, m, d);
@@ -604,14 +786,10 @@ fn parse_time_lit(s: &str, now: SystemTime) -> Result<TimeLit, ParseError> {
     )))
 }
 
-fn parse_time(
-    field: TimeField,
-    rest: &str,
-    whole: &str,
-    now: SystemTime,
-) -> Result<Term, ParseError> {
+/// `rest` is what follows the field's name: an operator and a value.
+fn parse_time(field: TimeField, rest: &str, now: SystemTime) -> Result<Term, ParseError> {
     let (op, v) = split_cmp(rest)?;
-    let text = whole.to_owned();
+    let text = format!("{}{rest}", field.name());
     let mk = |after, before| Term::Time {
         field,
         after,
@@ -649,40 +827,108 @@ impl fmt::Display for Term {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Term::Name(p) => write!(f, "name:{}", quote(&p.text)),
-            Term::Ext(e) => write!(f, "ext:{}", e.join(",")),
+            Term::Ext(e) => write!(f, "ext:{}", quote(&e.join(","))),
             Term::Type(KindSel::File) => f.write_str("type:file"),
             Term::Type(KindSel::Dir) => f.write_str("type:dir"),
             Term::Type(KindSel::Symlink) => f.write_str("type:symlink"),
-            Term::Mime(_, s) => write!(f, "mime:{s}"),
+            Term::Mime(_, s) => write!(f, "mime:{}", quote(s)),
             Term::Size { text, .. } | Term::Time { text, .. } => f.write_str(text),
             Term::Tag(t) => write!(f, "tag:{}", quote(t)),
-            Term::Content(ContentPat::Text { needle, .. }) => {
-                write!(f, "content:{}", quote(needle))
+            Term::Content(p) if p.regex => {
+                // Escape a `/` the source left bare, so the regex ends where it should.
+                f.write_str("content:/")?;
+                let mut chars = p.text.chars();
+                while let Some(c) = chars.next() {
+                    match c {
+                        '\\' => {
+                            f.write_str("\\")?;
+                            if let Some(n) = chars.next() {
+                                write!(f, "{n}")?;
+                            }
+                        }
+                        '/' => f.write_str("\\/")?,
+                        c => write!(f, "{c}")?,
+                    }
+                }
+                write!(f, "/{}", if p.case_sensitive { "c" } else { "i" })
             }
-            Term::Content(ContentPat::Regex {
-                pattern,
-                case_insensitive,
-            }) => {
-                write!(
-                    f,
-                    "content:/{pattern}/{}",
-                    if *case_insensitive { "i" } else { "" }
-                )
+            // Unquoted, a needle starting with `/` would read as a regex.
+            Term::Content(p) if p.text.starts_with('/') => {
+                write!(f, "content:{}", quoted(p.text.as_bytes()))
             }
+            Term::Content(p) => write!(f, "content:{}", quote(&p.text)),
         }
     }
 }
 
-/// Encode a literal using the tokenizer's quoting and escape rules. All query
-/// builders must use this so paths and values survive parsing unchanged.
-pub(crate) fn quote(s: &str) -> String {
-    if s.is_empty()
-        || s.contains(|c: char| c.is_whitespace() || matches!(c, '(' | ')' | '"' | '\''))
-    {
-        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
-    } else {
-        s.to_owned()
+/// Whether `s` reads back as itself, unquoted, as a word or after a key.
+fn is_plain(s: &str) -> bool {
+    let Some(first) = s.chars().next() else {
+        return false;
+    };
+    let comparison = |prefix: &str| {
+        s.strip_prefix(prefix)
+            .is_some_and(|rest| rest.starts_with(['<', '>', '=']))
+    };
+    !s.contains(is_break)
+        && !matches!(first, '"' | '\'' | '-' | '~')
+        && s != "OR"
+        && s != "NOT"
+        && !KEYS
+            .iter()
+            .any(|k| s.strip_prefix(k).is_some_and(|rest| rest.starts_with(':')))
+        && !comparison("size")
+        && !TimeField::ALL.iter().any(|f| comparison(f.name()))
+}
+
+/// `bytes` in double quotes: `\` and `"` escaped, bytes that are not UTF-8
+/// written `\xNN`.
+fn quoted(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() + 2);
+    out.push('"');
+    for chunk in bytes.utf8_chunks() {
+        for c in chunk.valid().chars() {
+            if matches!(c, '\\' | '"') {
+                out.push('\\');
+            }
+            out.push(c);
+        }
+        for b in chunk.invalid() {
+            let _ = write!(out, "\\x{b:02x}");
+        }
     }
+    out.push('"');
+    out
+}
+
+/// Encode a literal using the tokenizer's quoting and escape rules. All query
+/// builders must use this so paths and values survive parsing unchanged:
+/// `quote(x)` always parses back to the word `x`, whatever it contains.
+pub fn quote(s: &str) -> String {
+    if is_plain(s) {
+        s.to_owned()
+    } else {
+        quoted(s.as_bytes())
+    }
+}
+
+/// [`quote`] for a path or a name that may not be UTF-8 (`in:` roots).
+pub fn quote_os(s: &OsStr) -> String {
+    match s.to_str() {
+        Some(text) => quote(text),
+        None => quoted(os_bytes(s)),
+    }
+}
+
+#[cfg(unix)]
+fn os_bytes(s: &OsStr) -> &[u8] {
+    use std::os::unix::ffi::OsStrExt;
+    s.as_bytes()
+}
+
+#[cfg(not(unix))]
+fn os_bytes(s: &OsStr) -> &[u8] {
+    s.as_encoded_bytes()
 }
 
 impl fmt::Display for Expr {
@@ -725,7 +971,7 @@ impl fmt::Display for Query {
             parts.push(e.to_string());
         }
         if self.root_given {
-            parts.push(format!("in:{}", quote(&self.root.to_string_lossy())));
+            parts.push(format!("in:{}", quote_os(self.root.as_os_str())));
         }
         if let Some(d) = self.depth {
             parts.push(format!("depth:{d}"));
@@ -772,25 +1018,21 @@ impl Query {
         self.any(&|t| matches!(t, Term::Content(_)))
     }
 
-    /// Only name terms (and boolean structure): a locate database can answer it.
-    pub fn is_name_only(&self) -> bool {
-        self.expr.is_some() && !self.any(&|t| !matches!(t, Term::Name(_)))
-    }
-
-    /// Substring name patterns, for handing to `plocate`.
-    pub fn name_substrings(&self) -> Vec<String> {
-        fn walk(e: &Expr, out: &mut Vec<String>) {
-            match e {
-                Expr::Term(Term::Name(p)) if p.glob.is_none() => out.push(p.text.clone()),
-                Expr::Term(_) | Expr::Not(_) => {}
-                Expr::And(v) | Expr::Or(v) => v.iter().for_each(|e| walk(e, out)),
+    /// The substrings every match's name contains, when the expression is
+    /// exactly that: one substring, or an AND of them. This is what a
+    /// locate database answers (it ANDs its patterns); an OR, a NOT, a
+    /// glob or any other term needs the walk.
+    pub fn name_substrings(&self) -> Option<Vec<String>> {
+        let substring = |e: &Expr| match e {
+            Expr::Term(Term::Name(p)) if p.glob.is_none() && !p.text.is_empty() => {
+                Some(p.text.clone())
             }
+            _ => None,
+        };
+        match self.expr.as_ref()? {
+            Expr::And(items) => items.iter().map(substring).collect(),
+            e => substring(e).map(|s| vec![s]),
         }
-        let mut out = Vec::new();
-        if let Some(e) = &self.expr {
-            walk(e, &mut out);
-        }
-        out
     }
 }
 
@@ -802,6 +1044,31 @@ pub struct Candidate<'a> {
     pub kind: EntryKind,
     pub path: &'a Path,
     pub metadata: Option<&'a Metadata>,
+    /// The name as text, and lowercased, computed once for all the terms.
+    text: Cow<'a, str>,
+    lowered: OnceCell<String>,
+}
+
+impl<'a> Candidate<'a> {
+    pub fn new(
+        name: &'a OsStr,
+        kind: EntryKind,
+        path: &'a Path,
+        metadata: Option<&'a Metadata>,
+    ) -> Self {
+        Candidate {
+            name,
+            kind,
+            path,
+            metadata,
+            text: name.to_string_lossy(),
+            lowered: OnceCell::new(),
+        }
+    }
+
+    fn lowered(&self) -> &str {
+        self.lowered.get_or_init(|| self.text.to_lowercase())
+    }
 }
 
 /// Three-valued: some terms cannot be decided before stat/content.
@@ -822,22 +1089,20 @@ impl Verdict {
     }
 }
 
-fn ext_of(name: &str) -> Option<String> {
-    let (stem, ext) = name.rsplit_once('.')?;
-    if stem.is_empty() {
-        None
-    } else {
-        Some(ext.to_lowercase())
-    }
+/// The lowercase extension of a lowercased name.
+fn ext_of(lowered: &str) -> Option<&str> {
+    let (stem, ext) = lowered.rsplit_once('.')?;
+    (!stem.is_empty()).then_some(ext)
 }
 
 impl Term {
     /// Decide the term for `c`. `content` says whether reading files is allowed now.
     pub fn eval(&self, c: &Candidate<'_>, content: bool) -> Verdict {
-        let name = c.name.to_string_lossy();
         match self {
-            Term::Name(p) => yes_no(p.matches(&name)),
-            Term::Ext(exts) => yes_no(ext_of(&name).is_some_and(|e| exts.contains(&e))),
+            Term::Name(p) => yes_no(p.matches(c)),
+            Term::Ext(exts) => {
+                yes_no(ext_of(c.lowered()).is_some_and(|e| exts.iter().any(|x| x == e)))
+            }
             Term::Type(sel) => yes_no(match sel {
                 KindSel::File => c.kind == EntryKind::File,
                 KindSel::Dir => c.kind == EntryKind::Directory,
@@ -878,13 +1143,13 @@ impl Term {
                 let Some(m) = c.metadata else {
                     return Verdict::Unknown;
                 };
-                let Some(Value::List(tags)) = m.value("tags") else {
+                let Some(Value::List(tags)) = m.value(keys::TAGS) else {
                     return Verdict::No;
                 };
-                yes_no(
-                    tags.iter()
-                        .any(|v| v.as_str().is_some_and(|s| s.eq_ignore_ascii_case(tag))),
-                )
+                yes_no(tags.iter().any(|v| {
+                    v.as_str()
+                        .is_some_and(|s| bibli_core::metadata::same_tag(s, tag))
+                }))
             }
             Term::Content(p) => {
                 if c.kind != EntryKind::File {
@@ -945,39 +1210,24 @@ impl Expr {
 /// Files larger than this are not content-searched.
 pub const CONTENT_LIMIT: u64 = 8 << 20;
 
-/// Does the file's content match? Binary files (NUL byte) and large files never do.
+/// Does the file's content match? Binary files (NUL byte), large files and
+/// anything that is not a regular file once opened (a FIFO would block) never do.
 pub fn content_matches(path: &Path, pat: &ContentPat) -> bool {
     use grep_searcher::{BinaryDetection, SearcherBuilder, sinks};
-    let Ok(meta) = std::fs::metadata(path) else {
+    let Ok(file) = bibli_platform::file::open_regular(path) else {
         return false;
     };
-    if !meta.is_file() || meta.len() > CONTENT_LIMIT {
+    if file.metadata().map_or(true, |m| m.len() > CONTENT_LIMIT) {
         return false;
     }
-    let matcher = match pat {
-        ContentPat::Text {
-            needle,
-            case_sensitive,
-        } => grep_regex::RegexMatcherBuilder::new()
-            .case_insensitive(!case_sensitive)
-            .fixed_strings(true)
-            .build(needle),
-        ContentPat::Regex {
-            pattern,
-            case_insensitive,
-        } => grep_regex::RegexMatcherBuilder::new()
-            .case_insensitive(*case_insensitive)
-            .build(pattern),
-    };
-    let Ok(matcher) = matcher else { return false };
     let mut searcher = SearcherBuilder::new()
         .binary_detection(BinaryDetection::quit(b'\x00'))
         .build();
     let mut found = false;
-    let r = searcher.search_path(
-        &matcher,
-        path,
-        sinks::UTF8(|_, _| {
+    let r = searcher.search_file(
+        &pat.matcher,
+        &file,
+        sinks::Bytes(|_, _| {
             found = true;
             Ok(false)
         }),
@@ -1000,12 +1250,7 @@ mod tests {
     }
 
     fn cand<'a>(name: &'a str, kind: EntryKind, md: Option<&'a Metadata>) -> Candidate<'a> {
-        Candidate {
-            name: OsStr::new(name),
-            kind,
-            path: Path::new(name),
-            metadata: md,
-        }
+        Candidate::new(OsStr::new(name), kind, Path::new(name), md)
     }
 
     fn md(size: u64, mtime: SystemTime, tags: &[&str]) -> Metadata {
@@ -1014,7 +1259,7 @@ mod tests {
         m.set(keys::MODIFIED, Value::Time(mtime), Provenance::Filesystem);
         if !tags.is_empty() {
             m.set(
-                "tags",
+                keys::TAGS,
                 Value::List(tags.iter().map(|t| Value::Text((*t).into())).collect()),
                 Provenance::User,
             );
@@ -1022,21 +1267,118 @@ mod tests {
         m
     }
 
+    fn word(key: Option<&'static str>, value: &str, quoted: bool) -> Tok {
+        Tok::Word(Word {
+            key,
+            value: value.as_bytes().to_vec(),
+            quoted,
+        })
+    }
+
     #[test]
     fn tokenizer_handles_quotes_and_parens() {
         assert_eq!(
-            tokenize(r#"a "b c" (d OR 'e f')"#).unwrap(),
+            tokenize(r#"a "b c" (d OR 'e f') -x -(y) name:"OR" don't"#).unwrap(),
             vec![
-                Tok::Word("a".into()),
-                Tok::Word("b c".into()),
+                word(None, "a", false),
+                word(None, "b c", true),
                 Tok::LParen,
-                Tok::Word("d".into()),
-                Tok::Word("OR".into()),
-                Tok::Word("e f".into()),
-                Tok::RParen
+                word(None, "d", false),
+                Tok::Or,
+                word(None, "e f", true),
+                Tok::RParen,
+                Tok::Not,
+                word(None, "x", false),
+                Tok::Not,
+                Tok::LParen,
+                word(None, "y", false),
+                Tok::RParen,
+                word(Some("name"), "OR", true),
+                word(None, "don't", false),
             ]
         );
         assert!(tokenize("\"open").is_err());
+        // A regex runs to its closing slash, spaces and parentheses included.
+        assert_eq!(
+            tokenize(r"content:/(a b)\/c/i x").unwrap(),
+            vec![
+                word(Some("content"), r"/(a b)\/c/i", false),
+                word(None, "x", false)
+            ]
+        );
+    }
+
+    #[test]
+    fn ordinary_words_are_names() {
+        for (s, name) in [
+            ("sizes", "sizes"),
+            ("size_chart.png", "size_chart.png"),
+            ("size", "size"),
+            ("don't", "don't"),
+            ("modified", "modified"),
+            ("http://x", "http://x"),
+            ("a:'b", "a:'b"),
+            ("\"OR\"", "OR"),
+            ("\"NOT\"", "NOT"),
+            ("\"-draft\"", "-draft"),
+            ("\"in:x\"", "in:x"),
+            ("\"size>1\"", "size>1"),
+            ("name:\"a b\"", "a b"),
+            ("a[b", "a[b"),
+        ] {
+            let Some(Expr::Term(Term::Name(p))) = q(s).expr else {
+                panic!("`{s}` is not a name");
+            };
+            assert_eq!(p.text, name, "{s}");
+        }
+        // Mid-word quotes are characters: nothing is dropped.
+        let Some(Expr::And(items)) = q("it's bob's").expr else {
+            panic!()
+        };
+        assert_eq!(items.len(), 2);
+        assert!(matches!(&items[0], Expr::Term(Term::Name(p)) if p.text == "it's"));
+        assert!(matches!(&items[1], Expr::Term(Term::Name(p)) if p.text == "bob's"));
+    }
+
+    #[test]
+    fn negation_applies_to_groups() {
+        let p = q("-(a OR b)");
+        let Some(Expr::Not(inner)) = &p.expr else {
+            panic!("{p:?}")
+        };
+        assert!(matches!(&**inner, Expr::Or(v) if v.len() == 2));
+        assert_eq!(p.to_string(), "NOT (name:a OR name:b)");
+        let f = cand("a.txt", EntryKind::File, None);
+        assert_eq!(p.expr.unwrap().eval(&f, false), Verdict::No);
+    }
+
+    #[test]
+    fn regexes_keep_their_text_and_case() {
+        for (s, printed) in [
+            ("content:/a b/", "content:/a b/i"),
+            ("content:/(x|y)/c", "content:/(x|y)/c"),
+            ("content:/a\\/b/i", "content:/a\\/b/i"),
+            ("content:/x/ case:sensitive", "content:/x/c case:sensitive"),
+            ("content:/x/i case:sensitive", "content:/x/i case:sensitive"),
+            ("content:\"/etc/\"", "content:\"/etc/\""),
+        ] {
+            let parsed = q(s);
+            assert_eq!(parsed.to_string(), printed, "{s}");
+            let again = q(printed);
+            assert_eq!(again.to_string(), printed, "{s}");
+        }
+        let Some(Expr::Term(Term::Content(p))) = q("content:/x/c").expr else {
+            panic!()
+        };
+        assert!(p.regex && p.case_sensitive);
+        let Some(Expr::Term(Term::Content(p))) = q("content:\"/etc/\"").expr else {
+            panic!()
+        };
+        assert!(!p.regex && p.text == "/etc/");
+        assert!(
+            parse_at("content:/usr/bin", now()).is_err(),
+            "unknown flags"
+        );
     }
 
     #[test]
@@ -1088,6 +1430,13 @@ mod tests {
             ("type:blob", "type:"),
             ("content:/[/", "bad regex"),
             ("OR a", "term"),
+            ("a OR", "term"),
+            ("size<0", "nothing"),
+            ("size>inf", "bad size"),
+            ("size>nan", "bad size"),
+            ("modified:2026-02-31", "bad date"),
+            ("tag:", "expects"),
+            ("in:", "folder"),
         ] {
             let e = parse_at(s, now()).unwrap_err().to_string();
             assert!(
@@ -1106,9 +1455,12 @@ mod tests {
         assert!(p.needs_stat() && !p.needs_metadata() && !p.needs_content());
         assert!(q("tag:x").needs_metadata());
         assert!(q("content:x").needs_content());
-        assert!(q("foo *.png").is_name_only());
-        assert!(!q("foo ext:png").is_name_only());
-        assert_eq!(q("foo bar *.png").name_substrings(), vec!["foo", "bar"]);
+        assert_eq!(q("foo").name_substrings().unwrap(), ["foo"]);
+        assert_eq!(q("foo bar").name_substrings().unwrap(), ["foo", "bar"]);
+        // A locate database ANDs its patterns: anything else needs the walk.
+        for s in ["foo OR bar", "foo *.png", "foo ext:png", "NOT foo", "-foo"] {
+            assert!(q(s).name_substrings().is_none(), "{s}");
+        }
     }
 
     #[test]
@@ -1178,6 +1530,7 @@ mod tests {
             Verdict::Yes
         );
         assert_eq!(q("tag:WORK").expr.unwrap().eval(&f, false), Verdict::Yes);
+        assert_eq!(q("size<=2k").expr.unwrap().eval(&f, false), Verdict::Yes);
         assert_eq!(q("tag:home").expr.unwrap().eval(&f, false), Verdict::No);
         // AND with an unknown stays unknown; a definite No short-circuits.
         assert_eq!(
@@ -1203,33 +1556,21 @@ mod tests {
         std::fs::write(&p, "Hello World\nsecond line\n").unwrap();
         assert!(content_matches(
             &p,
-            &ContentPat::Text {
-                needle: "world".into(),
-                case_sensitive: false
-            }
+            &ContentPat::text("world", false).unwrap()
         ));
         assert!(!content_matches(
             &p,
-            &ContentPat::Text {
-                needle: "world".into(),
-                case_sensitive: true
-            }
+            &ContentPat::text("world", true).unwrap()
         ));
         assert!(content_matches(
             &p,
-            &ContentPat::Regex {
-                pattern: "^second".into(),
-                case_insensitive: false
-            }
+            &ContentPat::regex("^second", true).unwrap()
         ));
         let b = tmp.path().join("b.bin");
         std::fs::write(&b, b"Hello\x00World").unwrap();
         assert!(!content_matches(
             &b,
-            &ContentPat::Text {
-                needle: "Hello".into(),
-                case_sensitive: false
-            }
+            &ContentPat::text("Hello", false).unwrap()
         ));
     }
 
@@ -1242,5 +1583,61 @@ mod tests {
         let (a, b) = parse_date("2024").unwrap();
         assert_eq!(b.duration_since(a).unwrap().as_secs(), 366 * 86_400);
         assert!(parse_date("2026-13").is_none());
+        assert!(parse_date("2026-02-31").is_none());
+        assert!(parse_date("2026-02-29").is_none());
+        assert!(parse_date("2024-02-29").is_some());
+        assert!(parse_date("2026-04-31").is_none());
+        assert!(parse_date("2026-12-31").is_some());
+    }
+
+    #[test]
+    fn non_utf8_roots_round_trip() {
+        use std::os::unix::ffi::OsStrExt;
+        let root = Path::new(OsStr::from_bytes(b"/data/caf\xe9 \"x\"\\y"));
+        let text = format!("type:file in:{}", quote_os(root.as_os_str()));
+        let parsed = q(&text);
+        assert_eq!(parsed.root, root);
+        assert_eq!(q(&parsed.to_string()).root, root);
+        // A name term cannot hold such bytes; the error says where they can go.
+        assert!(parse_at("\"\\xff\"", now()).is_err());
+        // `\x41` is a byte in quotes, and a literal backslash survives quoting.
+        assert_eq!(q("in:\"/\\x41\"").root, Path::new("/A"));
+        assert_eq!(
+            q(&format!("in:{}", quote("/\\x41"))).root,
+            Path::new("/\\x41")
+        );
+        // Only an unquoted `~` is home.
+        assert_eq!(q("in:\"~\"").root, Path::new("~"));
+    }
+
+    proptest::proptest! {
+        /// Whatever a name contains, quoting it and parsing it back yields
+        /// the same name: keywords, dashes, keys, quotes, backslashes.
+        #[test]
+        fn quote_round_trips(
+            s in "(OR|NOT|-|in:|name:|content:/|size>|modified<|~|\"|'|\\\\|\\\\x41|\\\\xff|\\(|\\)| |\t|\n|a|é|\\*|/){1,8}"
+        ) {
+            let parsed = parse_at(&quote(&s), now()).unwrap();
+            let Some(Expr::Term(Term::Name(p))) = parsed.expr else {
+                panic!("`{s}` quoted as `{}` is not a name", quote(&s));
+            };
+            proptest::prop_assert_eq!(&p.text, &s);
+            // After a key too, and as an `in:` root.
+            let parsed = parse_at(&format!("name:{}", quote(&s)), now()).unwrap();
+            let Some(Expr::Term(Term::Name(p))) = parsed.expr else { panic!() };
+            proptest::prop_assert_eq!(&p.text, &s);
+            let root = format!("/{s}");
+            let parsed = parse_at(&format!("x in:{}", quote(&root)), now()).unwrap();
+            proptest::prop_assert_eq!(parsed.root, PathBuf::from(&root));
+        }
+
+        #[test]
+        fn quote_round_trips_any_text(s in "\\PC{1,12}") {
+            let parsed = parse_at(&quote(&s), now()).unwrap();
+            let Some(Expr::Term(Term::Name(p))) = parsed.expr else {
+                panic!("`{s}` quoted as `{}` is not a name", quote(&s));
+            };
+            proptest::prop_assert_eq!(&p.text, &s);
+        }
     }
 }

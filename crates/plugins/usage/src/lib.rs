@@ -6,15 +6,16 @@
 
 mod worker;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use bibli_core::app::App;
+use bibli_core::app::{App, PaneArg};
 use bibli_core::cancel::CancelToken;
 use bibli_core::command::{Invocation, Outcome};
 use bibli_core::location::Location;
+use bibli_core::os_path::PathArg;
 use bibli_core::plugin::Plugin;
 use bibli_core::registry::ViewSpec;
 use bibli_core::workspace::PaneId;
@@ -125,29 +126,25 @@ pub struct UsagePlugin {
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct ScanArgs {
-    pub path: Option<String>,
+    /// The folder; the pane's own when omitted.
+    pub path: Option<PathArg>,
     pub pane: Option<PaneId>,
     /// Ignore cached sizes in this subtree (manual Refresh).
     #[serde(default)]
     pub force: bool,
 }
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct PaneArgs {
-    pub pane: Option<PaneId>,
-}
-
-fn target(app: &App, pane: Option<PaneId>) -> PaneId {
-    pane.unwrap_or_else(|| app.workspace.read().active_id())
-}
 
 impl UsagePlugin {
     fn start(&self, app: &App, pane: PaneId, path: PathBuf, force: bool) -> anyhow::Result<()> {
-        let location_lifetime = app
-            .workspace
-            .read()
-            .pane(pane)
-            .ok_or_else(|| anyhow::anyhow!("no such pane"))?
-            .location_lifetime();
+        let (location_lifetime, open_panes) = {
+            let ws = app.workspace.read();
+            let lifetime = ws
+                .pane(pane)
+                .ok_or_else(|| anyhow::anyhow!("no such pane"))?
+                .location_lifetime();
+            let open: HashSet<PaneId> = ws.panes().iter().map(|p| p.id).collect();
+            (lifetime, open)
+        };
         let mut runtime = self.runtime.lock();
         if runtime.is_none() {
             let (tx, rx) = crossbeam_channel::unbounded();
@@ -183,6 +180,8 @@ impl UsagePlugin {
         let generation = r.generation;
         {
             let mut statuses = r.shared.statuses.lock();
+            // A pane closed after `usage.cancel` left its status behind.
+            statuses.retain(|p, _| open_panes.contains(p));
             let s = statuses.entry(pane).or_default();
             if s.root.as_ref() != Some(&path) {
                 *s = Status::default();
@@ -232,14 +231,10 @@ impl Plugin for UsagePlugin {
             "Scan disk usage",
             "Show cached directory sizes, computing missing or changed branches in the background",
             move |a, app| {
-                let pane = target(app, a.pane);
+                let pane = app.pane_or_active(a.pane);
                 let path = match a.path {
-                    Some(path) => Location::parse(&path).path(),
-                    None => app
-                        .workspace
-                        .read()
-                        .pane(pane)
-                        .and_then(|p| p.location().and_then(Location::path)),
+                    Some(path) => Location::parse_os(path.as_os_str()).path(),
+                    None => app.pane_dir(pane).ok(),
                 }
                 .ok_or_else(|| anyhow::anyhow!("disk usage needs a filesystem directory"))?;
                 t.start(app, pane, path, a.force)?;
@@ -247,13 +242,13 @@ impl Plugin for UsagePlugin {
             },
         );
         let t = Arc::clone(&this);
-        app.commands.register::<PaneArgs, _>(
+        app.commands.register::<PaneArg, _>(
             ID,
             "usage.status",
             "Disk usage status",
             "The selected pane's latest size breakdown",
             move |a, app| {
-                let pane = target(app, a.pane);
+                let pane = app.pane_or_active(a.pane);
                 let status = t
                     .runtime
                     .lock()
@@ -270,8 +265,8 @@ impl Plugin for UsagePlugin {
         ] {
             let t = Arc::clone(&this);
             app.commands
-                .register::<PaneArgs, _>(ID, name, title, title, move |a, app| {
-                    let pane = target(app, a.pane);
+                .register::<PaneArg, _>(ID, name, title, title, move |a, app| {
+                    let pane = app.pane_or_active(a.pane);
                     let shared = {
                         let mut runtime = t.runtime.lock();
                         if let Some(r) = runtime.as_mut() {

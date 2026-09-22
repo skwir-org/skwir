@@ -135,20 +135,6 @@ fn track_id(now: &NowPlaying) -> String {
     format!("/org/bibli/track/{:016x}", hasher.finish())
 }
 
-fn file_url(path: &std::path::Path) -> String {
-    use std::os::unix::ffi::OsStrExt;
-    const KEEP: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
-        .remove(b'/')
-        .remove(b'-')
-        .remove(b'_')
-        .remove(b'.')
-        .remove(b'~');
-    format!(
-        "file://{}",
-        percent_encoding::percent_encode(path.as_os_str().as_bytes(), KEEP)
-    )
-}
-
 fn metadata(now: Option<&NowPlaying>) -> HashMap<String, OwnedValue> {
     let mut map = HashMap::new();
     let mut put = |key: &str, value: Value<'_>| {
@@ -166,7 +152,7 @@ fn metadata(now: Option<&NowPlaying>) -> HashMap<String, OwnedValue> {
         put("mpris:trackid", path.into());
     }
     put("xesam:title", now.title.as_str().into());
-    put("xesam:url", file_url(&now.path).into());
+    put("xesam:url", bibli_platform::uri::file_uri(&now.path).into());
     if !now.artist.is_empty() {
         put("xesam:artist", vec![now.artist.as_str()].into());
     }
@@ -177,7 +163,7 @@ fn metadata(now: Option<&NowPlaying>) -> HashMap<String, OwnedValue> {
         put("mpris:length", micros(duration).into());
     }
     if let Some(cover) = &now.cover {
-        put("mpris:artUrl", file_url(cover).into());
+        put("mpris:artUrl", bibli_platform::uri::file_uri(cover).into());
     }
     map
 }
@@ -383,10 +369,10 @@ mod tests {
         assert!(text("xesam:artist").unwrap().contains("Someone"));
         assert!(text("mpris:length").unwrap().contains("200250000"));
         assert!(!map.contains_key("xesam:album"), "a blank is not a value");
-        // A path is a URL on the bus: spaces, quotes and accents are escaped.
+        // A path is a URL on the bus, escaped the way the desktop escapes it.
         assert_eq!(
-            file_url(&now.path),
-            "file:///music/it%27s%20a%20caf%C3%A9/01%20%E2%80%93%20song.flac"
+            bibli_platform::uri::file_uri(&now.path),
+            "file:///music/it's%20a%20caf%C3%A9/01%20%E2%80%93%20song.flac"
         );
         // The same file is the same track; nothing playing is no track.
         assert_eq!(track_id(&now), track_id(&track()));

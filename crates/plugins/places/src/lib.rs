@@ -1,19 +1,44 @@
 //! bibli plugin: places. Fills the sidebar from what the desktop already
 //! knows: home, XDG user dirs, GTK bookmarks, mounted volumes.
 
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+
 use bibli_core::app::App;
-use bibli_core::command::Outcome;
+use bibli_core::cancel::CancelToken;
+use bibli_core::command::{NoArgs, Outcome};
 use bibli_core::location::Location;
+use bibli_core::os_path::PathArg;
 use bibli_core::plugin::Plugin;
 use bibli_core::registry::Place;
+use bibli_core::scheduler::Priority;
+use parking_lot::Mutex;
 
 const ID: &str = "places";
+/// A disk brings several partitions: events this close together are one change.
+const SETTLE: Duration = Duration::from_millis(400);
 
 /// The places plugin.
 #[derive(Default)]
 pub struct PlacesPlugin {
+    places: Places,
     /// Watches for volumes being plugged, unplugged, mounted or unmounted.
-    watcher: parking_lot::Mutex<Option<notify::RecommendedWatcher>>,
+    watcher: Mutex<Option<notify::RecommendedWatcher>>,
+}
+
+/// What the plugin's workers share: which scan is the latest, and the
+/// plugin's lifetime.
+#[derive(Clone, Default)]
+struct Places(Arc<Mutex<Publisher>>);
+
+#[derive(Default)]
+struct Publisher {
+    /// Bumped by every scan; only the latest one may publish, so a slow
+    /// scan from before a mount cannot overwrite the list from after it.
+    generation: u64,
+    /// Cancelled on disable: nothing the plugin started publishes after.
+    lifetime: Option<CancelToken>,
 }
 
 /// `4.0 TB`, for a volume without a label.
@@ -69,9 +94,6 @@ fn volume_place(volume: &bibli_platform::places::Volume) -> Place {
         activate: Some(activate),
     }
 }
-
-#[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
-struct NoArgs {}
 
 fn icon_for_user_dir(kind: &str) -> &'static str {
     match kind {
@@ -139,7 +161,7 @@ pub fn scan() -> Vec<Place> {
             eject: m.removable.then(|| {
                 bibli_core::command::Invocation::with_args(
                     "places.unmount",
-                    &serde_json::json!({ "path": m.path }),
+                    &serde_json::json!({ "path": PathArg::from(m.path.as_path()) }),
                 )
             }),
             activate: None,
@@ -148,52 +170,88 @@ pub fn scan() -> Vec<Place> {
     out
 }
 
-/// Publish the places now; ask each volume for its free space on a worker
-/// (a sleeping or unreachable volume can block that call) and publish again
-/// with the answers.
-fn populate(app: &App) {
-    let places = scan();
-    app.registry.places.remove_owner(ID);
-    for place in places.clone() {
-        app.registry.places.add(ID, place);
+impl Places {
+    /// The plugin's lifetime, for the jobs it starts; `None` once disabled.
+    fn lifetime(&self) -> Option<CancelToken> {
+        self.0.lock().lifetime.as_ref().map(CancelToken::child)
     }
-    let weak = app.weak();
-    app.scheduler.spawn(
-        bibli_core::scheduler::Priority::Background,
-        "places-space",
-        app.lifetime().child(),
-        move || {
-            let mut measured: Vec<Place> = places
-                .into_iter()
-                .map(|mut place| {
-                    if place.group == "devices" {
-                        place.space = place
-                            .location
-                            .path()
-                            .and_then(|path| bibli_platform::places::space(&path));
-                    }
-                    place
-                })
-                .collect();
-            // Volumes that are plugged in but not mounted: `lsblk` is a
-            // process, so it belongs here and not in the synchronous scan.
-            measured.extend(
-                bibli_platform::places::unmounted_volumes()
-                    .iter()
-                    .map(volume_place),
-            );
-            let Some(app) = weak.upgrade() else { return };
-            // Disabled meanwhile: a late answer must not bring the places back.
-            if !app.plugins.is_enabled(ID) {
-                return;
-            }
-            app.registry.places.remove_owner(ID);
-            for place in measured {
-                app.registry.places.add(ID, place);
-            }
-            app.wake();
-        },
-    );
+
+    /// Publish `places` if the scan numbered `generation` is still the latest
+    /// and the plugin is enabled. Under the lock, so a newer scan cannot slip
+    /// in between the check and the publication (the registry itself refuses
+    /// a disabled owner).
+    fn publish(&self, app: &App, generation: u64, places: Vec<Place>) {
+        let publisher = self.0.lock();
+        if publisher.generation != generation
+            || publisher
+                .lifetime
+                .as_ref()
+                .is_none_or(CancelToken::is_cancelled)
+        {
+            return;
+        }
+        app.registry.places.replace_owner(ID, places);
+        drop(publisher);
+        app.wake();
+    }
+
+    /// Publish the places now; ask each volume for its free space on a
+    /// worker (a sleeping or unreachable volume can block that call) and
+    /// publish again with the answers.
+    fn populate(&self, app: &App) {
+        let places = scan();
+        let (generation, lifetime) = {
+            let mut publisher = self.0.lock();
+            publisher.generation += 1;
+            (publisher.generation, publisher.lifetime.clone())
+        };
+        let Some(lifetime) = lifetime else { return };
+        self.publish(app, generation, places.clone());
+        let (this, weak) = (self.clone(), app.weak());
+        app.scheduler.spawn(
+            Priority::Background,
+            "places-space",
+            lifetime.child(),
+            move || {
+                let mut measured: Vec<Place> = places
+                    .into_iter()
+                    .map(|mut place| {
+                        if place.group == "devices" {
+                            place.space = place
+                                .location
+                                .path()
+                                .and_then(|path| bibli_platform::places::space(&path));
+                        }
+                        place
+                    })
+                    .collect();
+                // Volumes that are plugged in but not mounted: `lsblk` is a
+                // process, so it belongs here and not in the synchronous scan.
+                measured.extend(
+                    bibli_platform::places::unmounted_volumes()
+                        .iter()
+                        .map(volume_place),
+                );
+                if let Some(app) = weak.upgrade() {
+                    this.publish(&app, generation, measured);
+                }
+            },
+        );
+    }
+
+    /// Run `job` on a worker for as long as the plugin is enabled.
+    fn spawn(&self, app: &App, label: &'static str, job: impl FnOnce(&App) + Send + 'static) {
+        let Some(lifetime) = self.lifetime() else {
+            return;
+        };
+        let weak = app.weak();
+        app.scheduler
+            .spawn(Priority::Normal, label, lifetime, move || {
+                if let Some(app) = weak.upgrade() {
+                    job(&app);
+                }
+            });
+    }
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -218,82 +276,75 @@ struct UnlockArgs {
 /// volume in the pane that asked. Everything blocks, so it runs on a worker;
 /// the pane is resolved now, not when the work ends.
 fn attach(
+    places: &Places,
     app: &App,
     device: String,
     passphrase: Option<String>,
     pane: Option<bibli_core::workspace::PaneId>,
 ) {
-    let pane = pane.unwrap_or_else(|| app.workspace.read().active_id());
-    let weak = app.weak();
-    app.scheduler.spawn(
-        bibli_core::scheduler::Priority::Normal,
-        "places-attach",
-        app.lifetime().child(),
-        move || {
-            use bibli_core::app::NotifyLevel;
-            let Some(app) = weak.upgrade() else { return };
-            let mounted = passphrase
-                .map_or_else(
-                    || Ok(device.clone()),
-                    |passphrase| bibli_platform::places::unlock(&device, &passphrase),
-                )
-                .and_then(|cleartext| bibli_platform::places::mount(&cleartext));
-            // Whatever happened, the set of volumes may have changed (a
-            // container can unlock and its filesystem still fail to mount).
-            populate(&app);
-            match mounted {
-                Ok(path) => {
-                    let name = path.file_name().map_or_else(
-                        || path.display().to_string(),
-                        |name| name.to_string_lossy().into_owned(),
-                    );
-                    match app.navigate(pane, &Location::from_path(&path)) {
-                        Ok(()) => app.notify(NotifyLevel::Info, format!("Mounted “{name}”")),
-                        Err(error) => app.notify(NotifyLevel::Error, format!("{error:#}")),
-                    }
+    let pane = app.pane_or_active(pane);
+    let this = places.clone();
+    places.spawn(app, "places-attach", move |app| {
+        use bibli_core::app::NotifyLevel;
+        let mounted = passphrase
+            .map_or_else(
+                || Ok(device.clone()),
+                |passphrase| bibli_platform::places::unlock(&device, &passphrase),
+            )
+            .and_then(|cleartext| bibli_platform::places::mount(&cleartext));
+        // Whatever happened, the set of volumes may have changed (a
+        // container can unlock and its filesystem still fail to mount).
+        this.populate(app);
+        match mounted {
+            Ok(path) => {
+                let name = path.file_name().map_or_else(
+                    || path.display().to_string(),
+                    |name| name.to_string_lossy().into_owned(),
+                );
+                match app.navigate(pane, &Location::from_path(&path)) {
+                    Ok(()) => app.notify(NotifyLevel::Info, format!("Mounted “{name}”")),
+                    Err(error) => app.notify(NotifyLevel::Error, format!("{error:#}")),
                 }
-                Err(error) => app.notify(
-                    NotifyLevel::Error,
-                    format!("The volume was not mounted: {error:#}"),
-                ),
             }
-        },
-    );
+            Err(error) => app.notify(
+                NotifyLevel::Error,
+                format!("The volume was not mounted: {error:#}"),
+            ),
+        }
+    });
 }
 
 impl PlacesPlugin {
     /// Republish when a volume appears, disappears, or is mounted by anyone:
     /// udev keeps `/dev/disk/by-uuid` and udisks keeps `/run/media/<user>`.
-    /// Bursts (a disk brings several partitions) collapse into one refresh.
+    /// Bursts (a disk brings several partitions) collapse into one refresh:
+    /// the plugin's own thread waits for the events to settle, so no shared
+    /// worker sleeps. It ends when the watcher (and its sender) is dropped.
     fn watch(&self, app: &App) {
         use notify::Watcher as _;
-        let weak = app.weak();
-        let scheduled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (tx, rx) = crossbeam_channel::unbounded::<()>();
         let handler = move |event: notify::Result<notify::Event>| {
-            if event.is_err() || scheduled.swap(true, std::sync::atomic::Ordering::AcqRel) {
-                return;
+            if event.is_ok() {
+                let _ = tx.send(());
             }
-            let Some(app) = weak.upgrade() else { return };
-            let (weak, scheduled) = (weak.clone(), std::sync::Arc::clone(&scheduled));
-            app.scheduler.spawn(
-                bibli_core::scheduler::Priority::Background,
-                "places-changed",
-                app.lifetime().child(),
-                move || {
-                    std::thread::sleep(std::time::Duration::from_millis(400));
-                    scheduled.store(false, std::sync::atomic::Ordering::Release);
-                    if let Some(app) = weak.upgrade()
-                        && app.plugins.is_enabled(ID)
-                    {
-                        populate(&app);
-                    }
-                },
-            );
         };
         let Ok(mut watcher) = notify::recommended_watcher(handler) else {
             return;
         };
-        let mut folders = vec![std::path::PathBuf::from("/dev/disk/by-uuid")];
+        let (places, weak) = (self.places.clone(), app.weak());
+        let settle = std::thread::Builder::new()
+            .name("bibli-places".into())
+            .spawn(move || {
+                while rx.recv().is_ok() {
+                    while rx.recv_timeout(SETTLE).is_ok() {}
+                    let Some(app) = weak.upgrade() else { return };
+                    places.populate(&app);
+                }
+            });
+        if settle.is_err() {
+            return;
+        }
+        let mut folders = vec![PathBuf::from("/dev/disk/by-uuid")];
         if let Some(user) = std::env::var_os("USER") {
             folders.push(std::path::Path::new("/run/media").join(user));
         }
@@ -309,14 +360,14 @@ impl PlacesPlugin {
 struct PathArgs {
     /// A folder; the single selected folder of the active pane when omitted.
     #[serde(default)]
-    path: Option<std::path::PathBuf>,
+    path: Option<PathArg>,
 }
 
-fn target(app: &App, path: Option<std::path::PathBuf>) -> anyhow::Result<std::path::PathBuf> {
+fn target(app: &App, path: Option<PathArg>) -> anyhow::Result<PathBuf> {
     if let Some(path) = path {
-        return Ok(path);
+        return Ok(path.into_inner());
     }
-    let pane = app.workspace.read().active_id();
+    let pane = app.pane_or_active(None);
     let selected = app.selected_refs(pane);
     anyhow::ensure!(selected.len() == 1, "select one folder");
     let path = selected[0].resolve()?;
@@ -346,114 +397,121 @@ impl Plugin for PlacesPlugin {
 
     fn on_disable(&self, _app: &App) {
         *self.watcher.lock() = None;
+        if let Some(lifetime) = self.places.0.lock().lifetime.take() {
+            lifetime.cancel();
+        }
     }
 
     fn register(&self, app: &App) {
-        populate(app);
+        if let Some(previous) = self
+            .places
+            .0
+            .lock()
+            .lifetime
+            .replace(app.lifetime().child())
+        {
+            previous.cancel();
+        }
+        self.places.populate(app);
+        let places = self.places.clone();
         app.commands.register::<NoArgs, _>(
             ID,
             "places.refresh",
             "Refresh places",
             "Re-scan user folders, bookmarks, and mounts",
-            |_, app| {
-                populate(app);
+            move |_, app| {
+                places.populate(app);
                 Ok(Outcome::Done)
             },
         );
+        let places = self.places.clone();
         app.commands.register::<PathArgs, _>(
             ID,
             "places.bookmark",
             "Add to bookmarks",
             "Add a folder to the desktop's shared bookmarks (the GTK bookmarks file)",
-            |args, app| {
+            move |args, app| {
                 let path = target(app, args.path)?;
-                let weak = app.weak();
-                app.scheduler.spawn(
-                    bibli_core::scheduler::Priority::Normal,
-                    "places-bookmark",
-                    app.lifetime().child(),
-                    move || {
-                        use bibli_core::app::NotifyLevel;
-                        let Some(app) = weak.upgrade() else { return };
-                        let name = path.file_name().map_or_else(
-                            || path.display().to_string(),
-                            |name| name.to_string_lossy().into_owned(),
-                        );
-                        match bibli_platform::places::add_bookmark(&path) {
-                            Ok(true) => {
-                                populate(&app);
-                                app.notify(NotifyLevel::Info, format!("Bookmarked “{name}”"));
-                            }
-                            Ok(false) => app.notify(
+                let this = places.clone();
+                places.spawn(app, "places-bookmark", move |app| {
+                    use bibli_core::app::NotifyLevel;
+                    let name = path.file_name().map_or_else(
+                        || path.display().to_string(),
+                        |name| name.to_string_lossy().into_owned(),
+                    );
+                    match bibli_platform::places::add_bookmark(&path) {
+                        Ok(true) => {
+                            this.populate(app);
+                            app.notify(NotifyLevel::Info, format!("Bookmarked “{name}”"));
+                        }
+                        Ok(false) => {
+                            app.notify(
                                 NotifyLevel::Info,
                                 format!("“{name}” is already bookmarked"),
-                            ),
-                            Err(error) => app.notify(
-                                NotifyLevel::Error,
-                                format!("The bookmark was not saved: {error:#}"),
-                            ),
+                            );
                         }
-                    },
-                );
+                        Err(error) => app.notify(
+                            NotifyLevel::Error,
+                            format!("The bookmark was not saved: {error:#}"),
+                        ),
+                    }
+                });
                 Ok(Outcome::Done)
             },
         );
+        let places = self.places.clone();
         app.commands.register::<PathArgs, _>(
             ID,
             "places.unmount",
             "Unmount volume",
             "Detach a removable volume through udisks so it can be unplugged",
-            |args, app| {
+            move |args, app| {
                 let path = args
                     .path
                     .ok_or_else(|| anyhow::anyhow!("which volume? pass its mount point"))?;
                 let mount = bibli_platform::places::mounts()
                     .into_iter()
-                    .find(|mount| mount.path == path && mount.removable)
+                    .find(|mount| mount.path == *path && mount.removable)
                     .ok_or_else(|| anyhow::anyhow!("not a removable volume"))?;
-                let weak = app.weak();
-                app.scheduler.spawn(
-                    bibli_core::scheduler::Priority::Normal,
-                    "places-unmount",
-                    app.lifetime().child(),
-                    move || {
-                        use bibli_core::app::NotifyLevel;
-                        let Some(app) = weak.upgrade() else { return };
-                        match bibli_platform::places::unmount(&mount.source) {
-                            Ok(()) => {
-                                populate(&app);
-                                app.notify(
-                                    NotifyLevel::Info,
-                                    format!("“{}” can be removed", mount.label),
-                                );
-                            }
-                            Err(error) => app.notify(
-                                NotifyLevel::Error,
-                                format!("“{}” was not unmounted: {error:#}", mount.label),
-                            ),
+                let this = places.clone();
+                places.spawn(app, "places-unmount", move |app| {
+                    use bibli_core::app::NotifyLevel;
+                    match bibli_platform::places::unmount(&mount.source) {
+                        Ok(()) => {
+                            this.populate(app);
+                            app.notify(
+                                NotifyLevel::Info,
+                                format!("“{}” can be removed", mount.label),
+                            );
                         }
-                    },
-                );
+                        Err(error) => app.notify(
+                            NotifyLevel::Error,
+                            format!("“{}” was not unmounted: {error:#}", mount.label),
+                        ),
+                    }
+                });
                 Ok(Outcome::Done)
             },
         );
+        let places = self.places.clone();
         app.commands.register::<MountArgs, _>(
             ID,
             "places.mount",
             "Mount volume",
             "Mount a present volume through udisks and open it",
-            |args, app| {
-                attach(app, args.device, None, args.pane);
+            move |args, app| {
+                attach(&places, app, args.device, None, args.pane);
                 Ok(Outcome::Done)
             },
         );
+        let places = self.places.clone();
         app.commands.register::<UnlockArgs, _>(
             ID,
             "places.unlock",
             "Unlock volume",
             "Unlock an encrypted volume with its passphrase, mount it and open it. The passphrase is a secret: it is handed to udisks on standard input and never stored or logged",
-            |args, app| {
-                attach(app, args.device, Some(args.passphrase), args.pane);
+            move |args, app| {
+                attach(&places, app, args.device, Some(args.passphrase), args.pane);
                 Ok(Outcome::Done)
             },
         );
@@ -477,7 +535,6 @@ impl Plugin for PlacesPlugin {
 mod tests {
     use super::*;
     use bibli_core::app::AppConfig;
-    use std::sync::Arc;
 
     #[test]
     fn registers_places_and_withdraws_them() {
@@ -494,5 +551,53 @@ mod tests {
         app.plugins.set_enabled(ID, false, &app);
         assert!(app.registry.places.all().is_empty());
         assert!(app.commands.get("places.refresh").is_none());
+    }
+
+    #[test]
+    fn only_the_latest_scan_publishes_and_nothing_after_disable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        let places = Places::default();
+        let place = |title: &str| Place {
+            title: title.into(),
+            location: Location::from_path("/"),
+            icon: None,
+            group: "places".into(),
+            space: None,
+            eject: None,
+            activate: None,
+        };
+        places.0.lock().lifetime = Some(CancelToken::new());
+        places.0.lock().generation = 2;
+        places.publish(&app, 2, vec![place("new")]);
+        // A scan started before the latest one finishes last: ignored.
+        places.publish(&app, 1, vec![place("old")]);
+        let titles: Vec<String> = app
+            .registry
+            .places
+            .all()
+            .into_iter()
+            .map(|p| p.title)
+            .collect();
+        assert_eq!(titles, ["new"]);
+        places.0.lock().lifetime.take().unwrap().cancel();
+        places.publish(&app, 2, vec![place("late")]);
+        assert_eq!(app.registry.places.all()[0].title, "new");
+    }
+
+    #[test]
+    fn unmount_takes_a_path_that_is_not_utf8() {
+        use std::os::unix::ffi::OsStrExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(PlacesPlugin::default()), &app);
+        let path = std::path::Path::new(std::ffi::OsStr::from_bytes(b"/run/media/x/caf\xe9"));
+        let invocation = bibli_core::command::Invocation::try_with_args(
+            "places.unmount",
+            &serde_json::json!({ "path": PathArg::from(path) }),
+        )
+        .unwrap();
+        let error = app.dispatch(&invocation).unwrap_err().to_string();
+        assert!(error.contains("not a removable volume"), "{error}");
     }
 }

@@ -13,7 +13,7 @@ fn timeline_selection_preserves_paths_and_filters_the_period() {
     let tmp = tempfile::tempdir().unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(bibli_plugin_query::QueryPlugin), &app);
+        .add(Arc::new(bibli_plugin_query::QueryPlugin::default()), &app);
     app.plugins.add(
         Arc::new(bibli_plugin_timeline::TimelinePlugin::default()),
         &app,
