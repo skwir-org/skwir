@@ -63,12 +63,17 @@ impl IconCache {
         self.for_name(&e.name, size)
     }
 
-    /// The icon of a file's MIME type, by its name.
+    /// The icon of a file's MIME type, by its name; the unknown-file icon
+    /// when the name says nothing.
     pub fn for_name(&mut self, name: &std::ffi::OsStr, size: u16) -> Option<Arc<Path>> {
-        let m = mime::by_name(name)?;
+        let m = mime::by_name(name);
+        let key = m.as_ref().map_or("", mime::Mime::as_str).to_owned();
         self.by_mime
-            .entry((m.as_str().to_owned(), size))
-            .or_insert_with(|| icons::for_mime(&m, size).map(PathBuf::into))
+            .entry((key, size))
+            .or_insert_with(|| {
+                m.map_or_else(|| icons::unknown(size), |m| icons::for_mime(&m, size))
+                    .map(PathBuf::into)
+            })
             .clone()
     }
 }

@@ -30,6 +30,10 @@ impl PreviewProvider for Provider {
     fn id(&self) -> &'static str {
         "preview-hex"
     }
+    /// A request says `application/octet-stream` only once the bytes were
+    /// read and found binary (`bibli_platform::mime::by_content`): a name
+    /// the database does not know is not a claim (`mime::by_name` says
+    /// nothing for it), so a `settings.cfg` of text is read as text.
     fn accepts(&self, req: &PreviewRequest) -> bool {
         req.mime.as_deref() == Some("application/octet-stream")
     }

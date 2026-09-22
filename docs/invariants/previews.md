@@ -115,6 +115,17 @@ still to come are in `docs/preview-frame.md`.
   block of plain text. There is no second, poorer text renderer in the UI.
   HTML files open in the inert reading mode, like Markdown, with their source
   one toggle away.
+- **A name that says nothing is not a binary file.** `mime::by_name` answers
+  `None` for a name the database has no glob for (`settings.cfg`, `README`,
+  `.env`); the preview worker then asks the bytes (`mime::by_content`: the
+  database's magic, else text or binary by `inspection::text_prefix`) before
+  any provider is, and the header takes what they said. A request says
+  `application/octet-stream` only when the bytes were read and are binary;
+  that, and nothing about the name, is what the hexadecimal preview accepts.
+  A declared type is trusted only as far as the bytes bear it out, by the
+  same rule (`preview::compute`): text is read as text whatever it is called.
+  The unknown-file icon (`icons::unknown`) is the one place the desktop's
+  octet-stream stands for "unknown"; it is a picture, never a claim.
 - **The header is a card** (`preview::header`): the entry's icon, its name
   (a trail inside a container) and one line of type, size and date. It is
   the one place that says what the panel shows, and clicking it opens

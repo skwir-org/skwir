@@ -41,13 +41,43 @@ impl fmt::Display for Mime {
 }
 
 /// Guess from the file name only. No I/O; cheap enough for every row.
+///
+/// `None` means the name says nothing (`settings.cfg`, `README`, `.env`):
+/// not that the file is binary. Only `by_content` can say that.
 pub fn by_name(name: &OsStr) -> Option<Mime> {
     imp::by_name(name)
 }
 
-/// Sniff the content (reads the head of the file).
+/// What the bytes say, for a file whose name says nothing. Reads the head
+/// of the file: call from a worker. The database's magic first (a PNG named
+/// `picture.cfg` is a PNG); without a match, `text/plain` when the head is
+/// UTF-8 without NUL, else `application/octet-stream`, which from here, and
+/// only from here, means the bytes were looked at and are binary. `None`
+/// when the file cannot be read.
 pub fn by_content(path: &Path) -> Option<Mime> {
     imp::by_content(path)
+}
+
+/// Bytes read to decide what a file without a known name holds. The
+/// database's deepest magic rules look further, but at that distance the
+/// name usually says it first; the text rule is git's (a NUL in the first
+/// 8000 bytes).
+#[cfg(target_os = "linux")]
+const SNIFF: usize = 8 * 1024;
+
+/// `text/plain` or `application/octet-stream` from a file's head: the one
+/// text-or-binary rule, the same one the preview applies to a declared type
+/// (`crate::inspection::text_prefix`).
+#[cfg(any(target_os = "linux", test))]
+fn text_or_binary(head: &[u8]) -> Mime {
+    Mime(
+        if crate::inspection::text_prefix(head).is_some() {
+            "text/plain"
+        } else {
+            "application/octet-stream"
+        }
+        .to_owned(),
+    )
 }
 
 /// The untranslated `<comment>` of a shared-mime-info type file, capitalized.
@@ -95,18 +125,29 @@ mod imp {
 
     pub fn by_name(name: &OsStr) -> Option<Mime> {
         let name = name.to_str()?;
-        let mut v = db().get_mime_types_from_file_name(name);
-        if v.is_empty() {
-            return None;
-        }
-        Some(to_mime(&v.remove(0)))
+        // The database answers application/octet-stream for a name that
+        // matches no glob: its "no idea", never a type the name said.
+        db().get_mime_types_from_file_name(name)
+            .first()
+            .filter(|m| **m != mime::APPLICATION_OCTET_STREAM)
+            .map(to_mime)
     }
 
     pub fn by_content(path: &Path) -> Option<Mime> {
-        let guess = db().guess_mime_type().path(path).guess();
-        // application/octet-stream with uncertainty means "no idea".
-        (!(guess.uncertain() && guess.mime_type().essence_str() == "application/octet-stream"))
-            .then(|| to_mime(guess.mime_type()))
+        use std::io::Read;
+        let mut head = Vec::with_capacity(super::SNIFF);
+        std::fs::File::open(path)
+            .ok()?
+            .take(super::SNIFF as u64)
+            .read_to_end(&mut head)
+            .ok()?;
+        // Magic, which also names an empty file (application/x-zerosize).
+        // There is no magic for text/plain: what it does not know is text
+        // or binary by the bytes.
+        Some(
+            db().get_mime_type_for_data(&head)
+                .map_or_else(|| super::text_or_binary(&head), |(m, _)| to_mime(&m)),
+        )
     }
 
     pub fn generic_icon_name(m: &Mime) -> String {
@@ -167,6 +208,58 @@ mod tests {
         assert_eq!(m.top_level(), "image");
         assert_eq!(m.icon_name(), "image-png");
         assert_eq!(m.generic_icon_name(), "image-x-generic");
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn a_name_the_database_does_not_know_says_nothing() {
+        for name in ["settings.cfg", "app.ini", "README", ".env", "Cargo.lock"] {
+            assert_eq!(by_name(OsStr::new(name)), None, "{name}");
+        }
+        assert_eq!(
+            by_name(OsStr::new("notes.txt")).map(|m| m.0),
+            Some("text/plain".into())
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn the_bytes_decide_for_a_name_that_says_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = |name: &str, bytes: &[u8]| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, bytes).unwrap();
+            by_content(&path).map(|m| m.0)
+        };
+        assert_eq!(
+            file("settings.cfg", "[section]\nkey = valeur é\n".as_bytes()),
+            Some("text/plain".into())
+        );
+        assert_eq!(
+            file("blob.cfg", b"\x00\x01\x02text after a NUL"),
+            Some("application/octet-stream".into())
+        );
+        assert_eq!(
+            file("picture.cfg", b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR"),
+            Some("image/png".into())
+        );
+        assert_eq!(
+            file("script.cfg", b"#!/bin/sh\necho hi\n"),
+            Some("application/x-shellscript".into())
+        );
+        assert_eq!(
+            file("empty.cfg", b""),
+            Some("application/x-zerosize".into())
+        );
+        assert_eq!(by_content(&dir.path().join("missing.cfg")), None);
+    }
+
+    #[test]
+    fn a_head_cut_through_a_character_is_still_text() {
+        let text = "caf\u{e9}".repeat(3);
+        let cut = &text.as_bytes()[..text.len() - 1];
+        assert_eq!(text_or_binary(cut).0, "text/plain");
+        assert_eq!(text_or_binary(&[0xff, 0xfe]).0, "application/octet-stream");
     }
 
     #[test]

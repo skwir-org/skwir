@@ -48,6 +48,13 @@ pub fn for_mime(mime: &Mime, size: u16) -> Option<PathBuf> {
         .or_else(|| lookup("text-x-generic", size))
 }
 
+/// Icon for a file whose name says nothing (`mime::by_name` gave `None`):
+/// what the desktop draws for its unknown type. Only a picture; what the
+/// file holds is `mime::by_content`'s to say.
+pub fn unknown(size: u16) -> Option<PathBuf> {
+    for_mime(&Mime("application/octet-stream".into()), size)
+}
+
 pub fn folder(size: u16) -> Option<PathBuf> {
     lookup("folder", size).or_else(|| lookup("inode-directory", size))
 }

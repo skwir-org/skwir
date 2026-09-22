@@ -57,6 +57,10 @@ struct PreviewResult {
     complete: bool,
     session: Option<Arc<dyn bibli_core::document::DocumentSession>>,
     media: Option<Arc<dyn bibli_core::media::MediaSession>>,
+    /// The type the worker read from the bytes when the name said nothing
+    /// (`mime::by_content`): the header shows it and the next request of
+    /// the same file carries it, so the bytes are asked once.
+    sniffed: Option<String>,
 }
 
 /// Facts shown in the header, read from the entry's metadata.
@@ -391,7 +395,9 @@ fn extract_member(
     let entry = EntryRef::from_path(&member.path)
         .ok_or_else(|| anyhow::anyhow!("The extracted member is missing"))?;
     Ok(Some(Arc::new(Nested {
+        // Resolved once, here on the worker: by name, else by the bytes.
         mime: bibli_platform::mime::by_name(std::ffi::OsStr::new(&member.name))
+            .or_else(|| bibli_platform::mime::by_content(&member.path))
             .map(|mime| mime.to_string()),
         name: member.name,
         entry,
@@ -438,20 +444,10 @@ fn compute(
         Ok(h) => h,
         Err(e) => return PreviewContent::Error(e.to_string()),
     };
-    let textual = top == "text"
-        || matches!(
-            mime,
-            Some(
-                "application/json"
-                    | "application/xml"
-                    | "application/toml"
-                    | "application/x-shellscript"
-                    | "application/javascript"
-                    | "application/x-yaml"
-            )
-        )
-        || (!head.contains(&0) && std::str::from_utf8(&head).is_ok());
-    if textual && !head.contains(&0) {
+    // Whatever the name declared, the bytes decide, by the same rule that
+    // names an unknown file's bytes (`mime::by_content`): a `.txt` holding
+    // NULs is not text, and a PEM key named like a Keynote file is.
+    if bibli_platform::inspection::text_prefix(&head).is_some() {
         // Every text file is read the way structured code is: a gutter,
         // selection, find and copy. There is no second, poorer text view.
         return match bibli_platform::inspection::plain(path, offset, cancel) {
@@ -611,6 +607,19 @@ impl Shell {
         }
         while let Ok(result) = self.preview.rx.try_recv() {
             if result.generation == self.preview.generation {
+                // What the bytes said: the header names it, and the file's
+                // next request (a page, a search) carries it instead of
+                // asking the bytes again. A member the panel went down into
+                // resolved its own type when it was extracted.
+                if let Some(sniffed) = result.sniffed
+                    && self.preview.info.mime.is_none()
+                    && self.preview.nested.is_empty()
+                {
+                    let mime = bibli_platform::mime::Mime(sniffed);
+                    self.type_names.get(&mime);
+                    self.type_names.request(&Arc::clone(&self.app));
+                    self.preview.info.mime = Some(mime.0);
+                }
                 if result.complete {
                     self.preview.reader.tried = true;
                     if let Some(session) = result.media {
@@ -775,6 +784,7 @@ impl Shell {
                                     complete: true,
                                     session: None,
                                     media: None,
+                                    sniffed: None,
                                 });
                                 wake();
                             }
@@ -782,6 +792,16 @@ impl Shell {
                         }
                     }
                 }
+                // A name that says nothing (`settings.cfg`, `README`) is not
+                // a binary file: the bytes are asked, here on the worker,
+                // before any provider is. From here on an
+                // `application/octet-stream` request means binary bytes.
+                let sniffed = if is_dir || request.mime.is_some() {
+                    None
+                } else {
+                    request.mime = bibli_platform::mime::by_content(&path).map(|m| m.to_string());
+                    request.mime.clone()
+                };
                 if !is_dir {
                     let result =
                         previews
@@ -809,6 +829,7 @@ impl Shell {
                                     complete: true,
                                     session: None,
                                     media: None,
+                                    sniffed: sniffed.clone(),
                                 });
                                 wake();
                             }
@@ -822,6 +843,7 @@ impl Shell {
                                     complete: true,
                                     session: None,
                                     media: None,
+                                    sniffed: sniffed.clone(),
                                 });
                                 wake();
                             }
@@ -850,6 +872,7 @@ impl Shell {
                             complete: false,
                             session: None,
                             media: None,
+                            sniffed: sniffed.clone(),
                             content: PreviewContent::Image {
                                 image: render,
                                 width: image.width,
@@ -872,6 +895,7 @@ impl Shell {
                                 complete: true,
                                 session: None,
                                 media: Some(media),
+                                sniffed: sniffed.clone(),
                             });
                             wake();
                         }
@@ -897,6 +921,7 @@ impl Shell {
                                 complete: true,
                                 session: None,
                                 media: None,
+                                sniffed: sniffed.clone(),
                             });
                             wake();
                         }
@@ -910,6 +935,7 @@ impl Shell {
                                 complete: true,
                                 session: None,
                                 media: None,
+                                sniffed: sniffed.clone(),
                             });
                             wake();
                         }
@@ -955,6 +981,7 @@ impl Shell {
                                 complete: true,
                                 session: Some(session),
                                 media: None,
+                                sniffed: sniffed.clone(),
                             });
                             wake();
                         }
@@ -968,6 +995,7 @@ impl Shell {
                                 complete: true,
                                 session: None,
                                 media: None,
+                                sniffed: sniffed.clone(),
                             });
                             wake();
                         }
@@ -1009,6 +1037,7 @@ impl Shell {
                         complete: true,
                         session: None,
                         media: None,
+                        sniffed: sniffed.clone(),
                     });
                     wake();
                 }
