@@ -166,6 +166,8 @@ pub struct Frame {
 pub struct Update {
     pub state: Option<Playback>,
     pub frame: Option<Frame>,
+    /// The session moved on to the file queued with `play_next`.
+    pub advanced: Option<std::path::PathBuf>,
     /// A control the player could not carry out (for example seeking a
     /// non-seekable stream). Transient: the session stays usable and a
     /// `state` with the same generation restores the actual playback state.
@@ -177,6 +179,7 @@ impl Update {
     pub fn is_empty(&self) -> bool {
         self.state.is_none()
             && self.frame.is_none()
+            && self.advanced.is_none()
             && self.notice.is_none()
             && self.error.is_none()
     }
@@ -184,13 +187,27 @@ impl Update {
 pub trait MediaSession: Send + Sync {
     /// Enqueue only; never wait for a decoder or pipe on the UI thread.
     fn control(&self, command: Control) -> anyhow::Result<()>;
+    /// The file to go on with when this one ends, without a gap: the engine
+    /// pre-rolls it and switches at the sample boundary. `None` forgets it.
+    /// A session that cannot do this says so; the caller then opens the next
+    /// track itself when the end is reported.
+    fn play_next(&self, _path: Option<std::path::PathBuf>) -> anyhow::Result<()> {
+        anyhow::bail!("this session plays one file")
+    }
     /// Take the latest update, discarding intermediate frames on the producer.
     fn take_update(&self) -> Update;
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Request {
-    Control { generation: u64, command: Control },
+    Control {
+        generation: u64,
+        command: Control,
+    },
+    /// See `MediaSession::play_next`.
+    Next {
+        path: Option<std::path::PathBuf>,
+    },
     Consumed,
 }
 #[derive(Debug, Serialize, Deserialize)]
@@ -213,6 +230,10 @@ pub enum Reply {
     Rejected {
         generation: u64,
         message: String,
+    },
+    /// The queued file has taken over; the state that follows is its.
+    Advanced {
+        path: std::path::PathBuf,
     },
     /// The runtime is missing. Fatal after `Ready`.
     Unavailable(String),

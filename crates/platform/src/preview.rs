@@ -152,6 +152,7 @@ fn finish(
 pub struct MediaPreviews {
     audio: bool,
     backend: String,
+    tuning: crate::media::Tuning,
     cache: CacheSlot,
     gate: Mutex<()>,
 }
@@ -164,10 +165,15 @@ impl MediaPreviews {
         self.backend = backend;
         self
     }
+    pub fn with_replay_gain(mut self, replay_gain: crate::media::ReplayGain) -> Self {
+        self.tuning.replay_gain = replay_gain;
+        self
+    }
     pub fn new(cache: CacheSlot) -> Self {
         Self {
             cache,
             backend: "auto".into(),
+            tuning: crate::media::Tuning::default(),
             audio: false,
             gate: Mutex::new(()),
         }
@@ -184,7 +190,12 @@ impl PreviewProvider for MediaPreviews {
         if self.backend == "stills" {
             return Ok(None);
         }
-        let session = crate::media::WorkerSession::open(req.entry.resolve()?, lifetime, wake)?;
+        let session = crate::media::WorkerSession::open_tuned(
+            req.entry.resolve()?,
+            self.tuning,
+            lifetime,
+            wake,
+        )?;
         anyhow::ensure!(
             session.is_some() || self.backend == "auto",
             "Install bibli-media-worker and GStreamer playback plugins, or select the stills backend"

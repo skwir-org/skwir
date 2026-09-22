@@ -104,8 +104,9 @@ a plugin whose tracks open in the player, which then walks the playlist. Keep
 playing: a pin that lets playback outlive the selection, steered from the
 status bar. What plays is core data (`playing::NowPlaying`, `PlayerRequest`),
 which an `mpris` plugin mirrors onto the session bus: media keys, the
-desktop's widget, `playerctl`. Not done: ReplayGain, and gapless hand-over (a
-new worker starts per track, so there is a short gap). Verified in a window on
+desktop's widget, `playerctl`. ReplayGain is a
+setting, and a pinned player hands over without a gap: one worker carries the
+queue, told the next file ahead of time. Verified in a window on
 an isolated display and, for MPRIS, on a private session bus with `playerctl`.
 
 One preview frame (2026-09-21, `docs/preview-frame.md`): the structured

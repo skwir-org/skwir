@@ -19,7 +19,7 @@ Each format is enabled by an independent plugin in **Settings → Plugins**:
 
 | Plugin | Formats and controls |
 | --- | --- |
-| `preview-audio` | Audio playback, seeking, volume, speed, tags, embedded cover and live spectrum. Playback starts paused. |
+| `preview-audio` | Audio playback, seeking, volume, speed (pitch kept), tags, embedded cover and a spectrum ring in the cover's colour. Playback starts paused. Previous and Next step through the folder's audio files or a playlist; a track that ends hands over to the next. **Keep playing** pins the player so the music goes on while you browse, steered from the status bar and from the desktop's media keys (MPRIS), without a gap between tracks. ReplayGain is a setting. |
 | `preview-hex` | Read-only hexadecimal/ASCII ranges for binary files; available explicitly for any file. Jump to a decimal or `0x` offset; search text or `hex: 00 ff 7a` byte sequences. |
 | `preview-markdown` | Markdown and HTML reading mode with source toggle, headings, emphasis, lists, tables, code highlighting, links and local images. HTML is inert: no scripts, styles or remote content. |
 | `preview-archives` | File-list-style archive tree with themed icons, folders first, aligned sizes, expand/collapse controls and selected-member image/text previews; other members show paged hexadecimal bytes. |

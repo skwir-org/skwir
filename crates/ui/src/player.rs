@@ -31,6 +31,9 @@ pub const COVERS: &str = "player-covers";
 
 pub struct Pinned {
     pub session: Arc<dyn MediaSession>,
+    /// The track the session was told to go on with, so that it is told
+    /// again only when the queue changes.
+    queued: Option<usize>,
     /// Ends the worker when the pin goes.
     lifetime: CancelToken,
     pub state: Playback,
@@ -43,6 +46,17 @@ pub struct Pinned {
 impl Drop for Pinned {
     fn drop(&mut self) {
         self.lifetime.cancel();
+    }
+}
+
+impl Pinned {
+    /// The session went on to `path` by itself.
+    fn advance(&mut self, path: &std::path::Path) {
+        if let Some(index) = self.queue.iter().position(|track| track == path) {
+            self.index = index;
+            self.path = self.queue[index].clone();
+            self.queued = None;
+        }
     }
 }
 
@@ -138,6 +152,7 @@ impl Shell {
         let (queue, index) = self.pin_queue(&path);
         self.player.pinned = Some(Pinned {
             session,
+            queued: None,
             lifetime: self.preview.media.release_lifetime(),
             state: self.preview.media.state.clone(),
             path,
@@ -360,6 +375,7 @@ impl Shell {
                     let old = std::mem::replace(&mut pinned.lifetime, opened.lifetime);
                     old.cancel();
                     pinned.session = session;
+                    pinned.queued = None;
                     pinned.index = opened.index;
                     pinned.path.clone_from(&pinned.queue[opened.index]);
                     pinned.state = Playback {
@@ -385,13 +401,31 @@ impl Shell {
         let mut finished = false;
         let mut failed = None;
         if let Some(pinned) = &mut self.player.pinned {
+            // Gapless: the session is told the next track ahead of time and
+            // switches to it at the sample boundary; the pin only follows.
+            let next = (pinned.index + 1 < pinned.queue.len()).then_some(pinned.index + 1);
+            if pinned.queued != next {
+                let result = pinned
+                    .session
+                    .play_next(next.map(|index| pinned.queue[index].clone()));
+                if result.is_ok() {
+                    pinned.queued = next;
+                }
+            }
             if shown {
                 pinned.state = self.preview.media.state.clone();
+                if let Some(path) = self.preview.media.advanced.take() {
+                    pinned.advance(&path);
+                }
             } else {
                 let update = pinned.session.take_update();
                 if let Some(state) = update.state {
                     finished = state.ended() && !pinned.state.ended();
                     pinned.state = state;
+                    cx.notify();
+                }
+                if let Some(path) = update.advanced {
+                    pinned.advance(&path);
                     cx.notify();
                 }
                 failed = update.error;

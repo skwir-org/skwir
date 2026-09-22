@@ -116,3 +116,18 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
   a session bus logs once and does without. `player.request` and `player.now`
   are the same surface for scripts and agents. Test it on a private bus
   (`dbus-run-session`), never on the user's.
+- ReplayGain is a setting of the audio plugin (`preview-audio.replay_gain`:
+  off, per track, per album), carried to the worker as `Tuning` when a
+  session opens: it applies from the next track, never mid-stream. The
+  worker's audio filter is then `rgvolume` and `rglimiter` ahead of
+  `scaletempo` and `spectrum`; `rgvolume` reads the gain from the stream's
+  tag events itself once it flows (nothing is fed to it), and a track without
+  tags passes unchanged.
+- Gapless. `MediaSession::play_next` names the file to go on with; the worker
+  hands it to playbin3 in `about-to-finish`, from the streaming thread, taking
+  only what the loop left for it, and reports `Advanced` when the new stream
+  starts, clearing position and tags. The pin queues the next track as soon
+  as one starts and only follows the switch (`Pinned::advance`); a session
+  that cannot do this refuses `play_next` and the pin opens the next track
+  itself at the end, with a gap. Verified: one worker process carried three
+  tracks.

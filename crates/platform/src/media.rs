@@ -52,6 +52,16 @@ impl Shared {
             (self.wake)();
         }
     }
+    /// The worker went on to the queued file: what plays has a new name.
+    fn advanced(&self, path: PathBuf) {
+        let mut update = self.update.lock();
+        let empty = update.is_empty();
+        update.advanced = Some(path);
+        drop(update);
+        if empty {
+            (self.wake)();
+        }
+    }
     /// A control the worker declined. Stale generations are dropped like state.
     fn notice(&self, generation: u64, message: String) {
         let mut update = self.update.lock();
@@ -119,6 +129,12 @@ impl MediaSession for WorkerSession {
         update.state = None;
         Ok(())
     }
+    fn play_next(&self, path: Option<PathBuf>) -> anyhow::Result<()> {
+        anyhow::ensure!(!self.lifetime.is_cancelled(), "video session closed");
+        self.commands
+            .try_send(Request::Next { path })
+            .context("video controls busy or session closed")
+    }
     fn take_update(&self) -> Update {
         std::mem::take(&mut *self.shared.update.lock())
     }
@@ -135,9 +151,33 @@ impl WorkerSession {
         Self::open_with_worker(executable, path, lifetime, wake)
     }
 
+    /// `open`, with how the worker should treat the sound: settings it needs
+    /// when it builds its pipeline, not while it plays.
+    pub fn open_tuned(
+        path: PathBuf,
+        tuning: Tuning,
+        lifetime: &CancelToken,
+        wake: Waker,
+    ) -> anyhow::Result<Option<Arc<dyn MediaSession>>> {
+        let Some(executable) = worker_path() else {
+            return Ok(None);
+        };
+        Self::open_with_tuning(executable, path, tuning, lifetime, wake)
+    }
+
     fn open_with_worker(
         executable: PathBuf,
         path: PathBuf,
+        lifetime: &CancelToken,
+        wake: Waker,
+    ) -> anyhow::Result<Option<Arc<dyn MediaSession>>> {
+        Self::open_with_tuning(executable, path, Tuning::default(), lifetime, wake)
+    }
+
+    fn open_with_tuning(
+        executable: PathBuf,
+        path: PathBuf,
+        tuning: Tuning,
         lifetime: &CancelToken,
         wake: Waker,
     ) -> anyhow::Result<Option<Arc<dyn MediaSession>>> {
@@ -157,6 +197,7 @@ impl WorkerSession {
                 let result = manage(
                     executable,
                     path,
+                    tuning,
                     &manager_lifetime,
                     &manager_shared,
                     &rx,
@@ -193,9 +234,36 @@ impl WorkerSession {
     }
 }
 
+/// How loud tracks are made to sound alike, from the gain their tags carry.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ReplayGain {
+    #[default]
+    Off,
+    /// Every track to the same loudness.
+    Track,
+    /// An album keeps its own dynamics: quiet songs stay quiet.
+    Album,
+}
+
+impl ReplayGain {
+    pub fn from_setting(value: &str) -> Self {
+        match value {
+            "track" => Self::Track,
+            "album" => Self::Album,
+            _ => Self::Off,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Tuning {
+    pub replay_gain: ReplayGain,
+}
+
 fn manage(
     executable: PathBuf,
     path: PathBuf,
+    tuning: Tuning,
     lifetime: &CancelToken,
     shared: &Shared,
     commands: &crossbeam_channel::Receiver<Request>,
@@ -222,6 +290,15 @@ fn manage(
         .stderr(Stdio::null());
     if audio_only {
         command.env("BIBLI_MEDIA_AUDIO_ONLY", "1");
+    }
+    match tuning.replay_gain {
+        ReplayGain::Off => {}
+        ReplayGain::Track => {
+            command.env("BIBLI_MEDIA_REPLAYGAIN", "track");
+        }
+        ReplayGain::Album => {
+            command.env("BIBLI_MEDIA_REPLAYGAIN", "album");
+        }
     }
     // Decoder/overlay threads are recreated during track changes. glibc's
     // CPU-count-based arena limit otherwise retains hundreds of MB of freed
@@ -320,6 +397,7 @@ fn manage(
                 message,
             } => shared.notice(generation, message),
             Reply::Error(error) => anyhow::bail!("{error}"),
+            Reply::Advanced { path } => shared.advanced(path),
             Reply::State {
                 generation,
                 playback,

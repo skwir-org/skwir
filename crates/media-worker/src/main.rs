@@ -12,7 +12,7 @@ use std::{
     fs::OpenOptions,
     io::{BufRead, Read, Seek, SeekFrom, Write},
     sync::{
-        Arc,
+        Arc, Mutex, PoisonError,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
@@ -34,6 +34,10 @@ struct Player {
     sink: AppSink,
     spectrum: Option<gst::Element>,
     audio_only: bool,
+    /// The file to go on with, handed to playbin in `about-to-finish`, and
+    /// what it was handed (a switch is reported once its stream starts).
+    next: Arc<Mutex<Option<std::path::PathBuf>>>,
+    handed: Arc<Mutex<Option<std::path::PathBuf>>>,
     state: Playback,
     generation: u64,
     streams: Vec<gst::Stream>,
@@ -91,7 +95,10 @@ impl Player {
         }
         // The audio filter keeps the pitch when the speed changes, and for
         // audio measures the spectrum: compact bins, no visualization frames.
-        let (filter, spectrum) = audio_filter(audio_only);
+        let Filter {
+            element: filter,
+            spectrum,
+        } = audio_filter(audio_only);
         if let Some(filter) = &filter {
             pipeline.set_property("audio-filter", filter);
         }
@@ -116,6 +123,26 @@ impl Player {
                 .property("sync", true)
                 .build()?;
             pipeline.set_property("audio-sink", audio);
+        }
+        // Gapless: when the current file is nearly decoded, playbin asks for
+        // the next URI and pre-rolls it, switching at the sample boundary.
+        // The signal comes from a streaming thread: it only takes what the
+        // loop left for it.
+        let next: Arc<Mutex<Option<std::path::PathBuf>>> = Arc::default();
+        let handed: Arc<Mutex<Option<std::path::PathBuf>>> = Arc::default();
+        {
+            let (next, handed) = (next.clone(), handed.clone());
+            pipeline.connect("about-to-finish", false, move |values| {
+                let path = next.lock().unwrap_or_else(PoisonError::into_inner).take()?;
+                if let (Ok(pipeline), Ok(uri)) = (
+                    values[0].get::<gst::Element>(),
+                    gst::glib::filename_to_uri(&path, None),
+                ) {
+                    pipeline.set_property("uri", uri.as_str());
+                    *handed.lock().unwrap_or_else(PoisonError::into_inner) = Some(path);
+                }
+                None
+            });
         }
         // The sync handler runs on the posting thread and hands the message
         // itself to the loop: wake and payload are one object, so the loop can
@@ -145,6 +172,8 @@ impl Player {
             sink,
             spectrum,
             audio_only,
+            next,
+            handed,
             state: Playback {
                 audio_only,
                 ..Playback::default()
@@ -362,8 +391,28 @@ impl Events {
 /// it when there is one. `scaletempo` keeps the pitch when the speed changes:
 /// without it 1.25× raises every voice by four semitones. Either element may
 /// be missing from an installation; playback does without.
-fn audio_filter(measure: bool) -> (Option<gst::Element>, Option<gst::Element>) {
-    let tempo = gst::ElementFactory::make("scaletempo").build().ok();
+struct Filter {
+    element: Option<gst::Element>,
+    spectrum: Option<gst::Element>,
+}
+
+fn audio_filter(measure: bool) -> Filter {
+    let mut chain: Vec<gst::Element> = Vec::new();
+    // Loudness first, from the gain a track's tags carry (the element reads
+    // the tag events itself, once the stream flows); the limiter keeps a
+    // boosted quiet recording from clipping. Tracks without tags pass as is.
+    let mode = std::env::var("BIBLI_MEDIA_REPLAYGAIN").unwrap_or_default();
+    if matches!(mode.as_str(), "track" | "album")
+        && let (Ok(volume), Ok(limiter)) = (
+            gst::ElementFactory::make("rgvolume")
+                .property("album-mode", mode == "album")
+                .build(),
+            gst::ElementFactory::make("rglimiter").build(),
+        )
+    {
+        chain.extend([volume, limiter]);
+    }
+    chain.extend(gst::ElementFactory::make("scaletempo").build().ok());
     let spectrum = measure
         .then(|| {
             gst::ElementFactory::make("spectrum")
@@ -377,19 +426,24 @@ fn audio_filter(measure: bool) -> (Option<gst::Element>, Option<gst::Element>) {
                 .ok()
         })
         .flatten();
-    let filter = match (tempo, spectrum.clone()) {
-        (Some(tempo), Some(spectrum)) => {
+    chain.extend(spectrum.clone());
+    let filter = match chain.as_slice() {
+        [] => None,
+        [only] => Some(only.clone()),
+        [first, .., last] => {
             let bin = gst::Bin::new();
-            let linked = bin.add_many([&tempo, &spectrum]).is_ok()
-                && tempo.link(&spectrum).is_ok()
-                && ghost(&bin, &tempo, "sink")
-                && ghost(&bin, &spectrum, "src");
+            let linked = bin.add_many(&chain).is_ok()
+                && gst::Element::link_many(&chain).is_ok()
+                && ghost(&bin, first, "sink")
+                && ghost(&bin, last, "src");
             linked.then(|| bin.upcast::<gst::Element>())
         }
-        (tempo, spectrum) => tempo.or(spectrum),
     };
     let spectrum = spectrum.filter(|_| filter.is_some());
-    (filter, spectrum)
+    Filter {
+        element: filter,
+        spectrum,
+    }
 }
 
 fn ghost(bin: &gst::Bin, element: &gst::Element, pad: &str) -> bool {
@@ -472,6 +526,9 @@ fn run() -> anyhow::Result<()> {
             };
         match event {
             Ok(Event::Request(Request::Consumed)) => occupied = false,
+            Ok(Event::Request(Request::Next { path })) => {
+                *player.next.lock().unwrap_or_else(PoisonError::into_inner) = path;
+            }
             Ok(Event::Request(Request::Control {
                 generation,
                 command,
@@ -594,6 +651,24 @@ fn handle_message(
             player.pipeline.set_state(gst::State::Paused)?;
             player.state.status = PlaybackStatus::Ended;
             *dirty = true;
+        }
+        // The queued file's stream has started: what plays has a new name,
+        // a fresh position, and tags of its own to come.
+        gst::MessageView::StreamStart(_) => {
+            if let Some(path) = player
+                .handed
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take()
+            {
+                player.state.position = 0.;
+                player.state.title.clear();
+                player.state.artist.clear();
+                player.state.album.clear();
+                player.state.details.clear();
+                reply(&Reply::Advanced { path })?;
+                *dirty = true;
+            }
         }
         gst::MessageView::StreamsSelected(message) => {
             let actual: Vec<_> = message.streams().filter_map(|s| s.stream_id()).collect();
@@ -726,7 +801,10 @@ fn handle_message(
             // after stream discovery. Video pipelines retain no FFT filter.
             if player.state.audio_only
                 && player.spectrum.is_none()
-                && let (Some(filter), Some(spectrum)) = audio_filter(true)
+                && let Filter {
+                    element: Some(filter),
+                    spectrum: Some(spectrum),
+                } = audio_filter(true)
             {
                 player.pipeline.set_property("audio-filter", &filter);
                 player.spectrum = Some(spectrum);

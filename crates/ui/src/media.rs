@@ -50,6 +50,9 @@ pub struct MediaState {
     poster: Poster,
     initial_frame: Option<Frame>,
     scrub: Option<f64>,
+    /// The file the session went on to by itself (gapless), for whoever
+    /// follows the session's track: taken by the pin.
+    pub advanced: Option<std::path::PathBuf>,
     /// Ends this preview's media worker. A reader's lifetime ends with the
     /// preview; a session that is pinned must not, so it has its own, which
     /// the pin takes with it (`release_lifetime`).
@@ -177,6 +180,9 @@ impl Shell {
             return;
         };
         let update = session.take_update();
+        if let Some(path) = update.advanced {
+            self.preview.media.advanced = Some(path);
+        }
         if let Some(state) = update.state {
             // A track that plays to its end hands over to the next one.
             let finished = state.ended() && !self.preview.media.state.ended();
