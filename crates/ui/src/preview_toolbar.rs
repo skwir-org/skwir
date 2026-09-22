@@ -145,7 +145,9 @@ fn caption(shell: &Shell) -> String {
         Some(PreviewContent::Dir { items, .. }) => crate::format::count(*items, "item"),
         Some(PreviewContent::Error(_)) => "Preview unavailable".into(),
         Some(PreviewContent::Generic) => "No preview".into(),
-        None => "Loading…".into(),
+        // Only once the wait has lasted: a caption that flashes by is noise.
+        None if shell.preview_busy() => "Loading…".into(),
+        None => String::new(),
     }
 }
 

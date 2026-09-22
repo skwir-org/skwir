@@ -140,6 +140,11 @@ pub struct PreviewState {
     pub info: Info,
     pub content: Option<PreviewContent>,
     pub(crate) phase: PreviewPhase,
+    /// Whether the wait has gone on long enough to be shown (`sync_busy`):
+    /// what the "Loading…" text, the caption and the bar under the toolbar
+    /// all read, so a preview that comes at once never flickers through them.
+    busy: bool,
+    busy_timer: Option<gpui::Task<()>>,
     cancel: Option<CancelToken>,
     pub(crate) generation: u64,
     key: Option<PreviewKey>,
@@ -196,6 +201,8 @@ impl Default for PreviewState {
             info: Info::default(),
             content: None,
             phase: PreviewPhase::Idle,
+            busy: false,
+            busy_timer: None,
             cancel: None,
             generation: 0,
             key: None,
@@ -1015,6 +1022,45 @@ impl Shell {
         self.preview.generation = self.preview.generation.wrapping_add(1);
     }
 
+    /// How long a preview may take before the panel says it is waiting.
+    const BUSY_AFTER: std::time::Duration = std::time::Duration::from_millis(200);
+
+    /// The one delayed "still loading" signal of the panel, like the pane's
+    /// (`loading.rs`): a wait is shown only once it has lasted `BUSY_AFTER`,
+    /// and each request (generation) gets a grace of its own. Called once
+    /// per wake, after the results were drained.
+    pub(crate) fn sync_busy(&mut self, cx: &mut Context<Self>) {
+        if self.preview.phase == PreviewPhase::Idle {
+            if self.preview.busy {
+                cx.notify();
+            }
+            self.preview.busy = false;
+            self.preview.busy_timer = None;
+            return;
+        }
+        if self.preview.busy || self.preview.busy_timer.is_some() {
+            return;
+        }
+        let generation = self.preview.generation;
+        self.preview.busy_timer = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Self::BUSY_AFTER).await;
+            let _ = this.update(cx, |shell, cx| {
+                let waiting = shell.preview.generation == generation
+                    && shell.preview.phase != PreviewPhase::Idle;
+                shell.preview.busy_timer = None;
+                if waiting {
+                    shell.preview.busy = true;
+                    cx.notify();
+                }
+            });
+        }));
+    }
+
+    /// Whether the panel is visibly waiting for its preview.
+    pub fn preview_busy(&self) -> bool {
+        self.preview.busy
+    }
+
     pub(crate) fn replace_preview_content(
         &mut self,
         content: Option<PreviewContent>,
@@ -1420,7 +1466,7 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
             crate::preview_toolbar::render(shell, theme, cx)
         };
         frame = frame.child(div().relative().flex_none().child(controls).when(
-            shell.preview.phase != PreviewPhase::Idle,
+            shell.preview_busy(),
             |d| {
                 d.child(
                     div()
@@ -1534,7 +1580,9 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                     .and_then(|()| crate::inspector::outline_drawer(shell, display, theme, cx)),
             )
             .into_any_element(),
-        None if p.phase != PreviewPhase::Idle => div()
+        // A wait that has lasted says so; a shorter one shows nothing yet,
+        // so a preview that comes at once never flickers through "Loading…".
+        None if shell.preview_busy() => div()
             .flex_1()
             .flex()
             .items_center()

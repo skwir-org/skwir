@@ -1249,6 +1249,7 @@ impl Shell {
             );
         }
         self.sync_preview(window, cx);
+        self.sync_busy(cx);
         self.sync_reader(cx);
         self.sync_document_scroll(window, cx);
         self.sync_media(window, cx);

@@ -63,6 +63,15 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
 Every preview fills one frame; none builds its own. The design and what is
 still to come are in `docs/preview-frame.md`.
 
+- **A wait is shown only once it has lasted.** The panel has one delayed
+  "still loading" signal (`Shell::sync_busy`, `preview_busy`), like the
+  pane's (`loading.rs`): a request that takes longer than `BUSY_AFTER`
+  (200 ms) shows "Loading…" in the body and the caption and the bar under
+  the toolbar; a quicker one shows nothing at all in between, and each
+  request (generation) gets a grace of its own. Nothing draws from the
+  phase directly. Likewise a preview still on its way is not "nothing to
+  preview": Details fills the body only when the phase is idle
+  (`details::alone`), never for the instant before a picture replaces it.
 - **Surfaces.** What is read (text, code, tables, bytes, trees, prose, the
   facts about an entry) is on `theme.bg` in `theme.text`, like the file list
   beside it. `theme.surface` is chrome: the header, the toolbar, and the

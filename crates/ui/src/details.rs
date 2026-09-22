@@ -269,15 +269,18 @@ fn preview_group(shell: &Shell) -> Option<Group> {
     group("Content", rows)
 }
 
-/// Whether there is nothing to show but the details.
+/// Whether there is nothing to show but the details. A preview still on
+/// its way is not nothing: Details waits for the answer rather than
+/// filling the body for the instant before a picture replaces it.
 pub fn alone(shell: &Shell) -> bool {
     shell.preview.media.session.is_none()
-        && matches!(
-            shell.preview.content,
-            None | Some(
-                PreviewContent::Generic | PreviewContent::Dir { .. } | PreviewContent::Error(_)
-            )
-        )
+        && match &shell.preview.content {
+            None => shell.preview.phase == crate::preview::PreviewPhase::Idle,
+            Some(
+                PreviewContent::Generic | PreviewContent::Dir { .. } | PreviewContent::Error(_),
+            ) => true,
+            Some(_) => false,
+        }
 }
 
 /// The section: open on demand right under the header's card, above the
