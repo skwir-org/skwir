@@ -130,20 +130,24 @@ current source before assuming a planned crate, command, or API exists.
   releases before the repaint that would register it.
 - **Grid.** A tile is what the pointer can hit: the picture standing on the
   bottom of its box, so the name is always right under it, and up to three
-  lines of name. Tiles sit in slots (`elements/uniform_grid.rs::math::Slots`):
+  lines of name. An icon fills its box like a square thumbnail
+  (`GridView::icon`): drawn smaller, it floats above its name with a blank
+  on top. Tiles sit in slots (`elements/uniform_grid.rs::math::Slots`):
   a slot is a tile plus the least gutter, spare width widens the gutters up
   to a cap in prepaint, and the rest becomes the margins. Columns are uniform,
   rows are not: a row is as tall as its longest name needs, so rows of short
-  names give the space back. The grid places tiles with `Slots` and the rubber
-  band hit-tests with the same value, so a press in a gutter always starts a
-  band. Row heights need the lines each name wraps to before anything is
+  names give the space back, and a tile keeps its own height inside a taller
+  row, hanging from the top, so its highlight and hit area hug its own
+  picture and name. The grid places tiles with `Slots` and the rubber
+  band hit-tests with the same value, so a press in a gutter, or under a
+  short name beside a long one, always starts a band. Row heights need the lines each name wraps to before anything is
   drawn: `GridView::measure` counts them with the text system's line wrapper
   when the names (`Listing::names_version`, which hydration leaves alone),
   their order or the zoom change, never per frame or per metadata batch, and
   the label is clamped to that count so a disagreement with the shaper costs
   an ellipsis, not an overlap. A name too long keeps both ends
   (`text_ellipsis_middle`, vendored patch 0005): the extension tells files
-  apart. Icons grow with the zoom (`GridView::icon`); "Fill thumbnails"
+  apart. "Fill thumbnails"
   (`ui.grid_fill`, in Sort and display) crops pictures to the box. Ctrl+wheel
   zooms through a capture-phase listener over the grid, which keeps the first
   visible item in place; the keys follow the cursor instead. A wheel listener

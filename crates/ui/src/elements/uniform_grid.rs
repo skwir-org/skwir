@@ -104,13 +104,17 @@ pub mod math {
     /// with it and the rubber band hit-tests with it, so they cannot disagree.
     ///
     /// A row is as tall as its tallest tile, so rows differ: `tops` holds
-    /// where each slot row begins, and one more entry for the end.
+    /// where each slot row begins, and one more entry for the end. A tile
+    /// keeps its own height inside the row, hanging from the row's top: the
+    /// pictures of a row line up, and a tile beside a long name is not
+    /// stretched to it, so its highlight hugs its own picture and name.
     #[derive(Clone, Debug, Default, PartialEq)]
     pub struct Slots {
         pub columns: Columns,
         /// Between the tiles of two rows.
         pub gap: f32,
         tops: Rc<[f32]>,
+        heights: Rc<[f32]>,
     }
 
     impl Slots {
@@ -123,13 +127,12 @@ pub mod math {
             height_of: impl Fn(usize) -> f32,
         ) -> Self {
             let cols = columns.cols.max(1);
+            let heights: Rc<[f32]> = (0..count).map(height_of).collect();
             let mut tops = Vec::with_capacity(count.div_ceil(cols) + 1);
             let mut top = 0.;
             tops.push(top);
-            for first in (0..count).step_by(cols) {
-                let tallest = (first..count.min(first + cols))
-                    .map(&height_of)
-                    .fold(0., f32::max);
+            for row in heights.chunks(cols) {
+                let tallest = row.iter().copied().fold(0., f32::max);
                 top += tallest + gap;
                 tops.push(top);
             }
@@ -137,6 +140,7 @@ pub mod math {
                 columns,
                 gap,
                 tops: tops.into(),
+                heights,
             }
         }
 
@@ -160,13 +164,17 @@ pub mod math {
                 .min(self.rows().saturating_sub(1))
         }
 
-        /// Height of the tiles of `row`: every tile of a row is as tall as
-        /// the row, so a row highlights evenly.
-        pub fn tile_height(&self, row: usize) -> f32 {
+        /// Height of `row`: what its tallest tile needs.
+        pub fn row_height(&self, row: usize) -> f32 {
             match (self.tops.get(row), self.tops.get(row + 1)) {
                 (Some(top), Some(next)) => next - top - self.gap,
                 _ => 0.,
             }
+        }
+
+        /// Height of tile `ix`, its own, not its row's.
+        pub fn tile_height(&self, ix: usize) -> f32 {
+            self.heights.get(ix).copied().unwrap_or(0.)
         }
 
         /// Top left corner of tile `ix`.
@@ -186,9 +194,8 @@ pub mod math {
             let row = self.row_at(y);
             let dy = y - self.tops[row] - self.inset();
             let col = self.columns.at(x)?;
-            (0. ..self.tile_height(row))
-                .contains(&dy)
-                .then(|| row * self.columns.cols + col)
+            let ix = row * self.columns.cols + col;
+            (0. ..self.tile_height(ix)).contains(&dy).then_some(ix)
         }
 
         /// Tiles a rectangle touches, given by its two extremes on each axis.
@@ -199,14 +206,14 @@ pub mod math {
             if self.rows() == 0 || y.1 < 0. || y.0 >= self.height() {
                 return Vec::new();
             }
-            let touches = |row: usize| {
-                let top = self.tops[row] + self.inset();
-                top <= y.1 && top + self.tile_height(row) > y.0
-            };
             let cols = self.columns.cols;
+            let touches = |ix: usize| {
+                let top = self.tops[ix / cols] + self.inset();
+                top <= y.1 && top + self.tile_height(ix) > y.0
+            };
             (self.row_at(y.0.max(0.))..=self.row_at(y.1))
-                .filter(|row| touches(*row))
                 .flat_map(|row| (c0..=c1).map(move |col| row * cols + col))
+                .filter(|ix| touches(*ix))
                 .collect()
         }
 
@@ -285,8 +292,8 @@ pub struct TileHeights {
 }
 
 /// Create a grid of `item_count` tiles `tile_width` wide. `f` renders the
-/// items in a range given the column count; each is laid out at the height
-/// of its row.
+/// items in a range given the column count; each is laid out at its own
+/// height, at the top of its row.
 #[track_caller]
 pub fn uniform_grid<R>(
     id: impl Into<ElementId>,
@@ -590,7 +597,7 @@ impl Element for UniformGrid {
                             );
                         let available = size(
                             AvailableSpace::Definite(px(columns.tile)),
-                            AvailableSpace::Definite(px(slots.tile_height(ix / cols))),
+                            AvailableSpace::Definite(px(slots.tile_height(ix))),
                         );
                         item.layout_as_root(available, window, cx);
                         item.prepaint_at(origin, window, cx);
@@ -663,12 +670,15 @@ mod tests {
         let slots = slots(12);
         assert_eq!(
             (
-                slots.tile_height(0),
-                slots.tile_height(1),
-                slots.tile_height(2)
+                slots.row_height(0),
+                slots.row_height(1),
+                slots.row_height(2)
             ),
             (170., 170., 140.)
         );
+        // A tile keeps its own height inside a taller row.
+        assert_eq!((slots.tile_height(0), slots.tile_height(1)), (170., 140.));
+        assert!(slots.tile_height(12) < 1., "past the last tile");
         assert_eq!((slots.rows(), slots.height()), (3, 178. + 178. + 148.));
         assert_eq!(slots.origin(0), (10., 4.));
         assert_eq!(slots.origin(6), (130., 182.));
@@ -685,6 +695,8 @@ mod tests {
         assert_eq!(slots.tile_at(9., 50.), None, "left of the tile");
         assert_eq!(slots.tile_at(115., 50.), None, "between two tiles");
         assert_eq!(slots.tile_at(50., 176.), None, "between two rows");
+        assert_eq!(slots.tile_at(130., 143.), Some(1));
+        assert_eq!(slots.tile_at(130., 150.), None, "below a short tile");
         assert_eq!(slots.tile_at(130., 182.), Some(6));
         assert_eq!(slots.tile_at(50., 499.), Some(10), "the short last row");
         assert_eq!(slots.tile_at(50., 501.), None);
@@ -705,6 +717,11 @@ mod tests {
             "in a gutter"
         );
         assert_eq!(slots.covered((105., 135.), (100., 176.)), vec![0, 1]);
+        assert_eq!(
+            slots.covered((105., 135.), (150., 176.)),
+            vec![0],
+            "under the short tile, beside the tall one"
+        );
         assert_eq!(slots.covered((105., 135.), (100., 182.)), vec![0, 1, 5, 6]);
         assert_eq!(slots.covered((-50., 5000.), (0., 10.)), vec![0, 1, 2, 3, 4]);
         assert_eq!(slots.covered((0., 50.), (175., 9000.)), vec![5, 10]);

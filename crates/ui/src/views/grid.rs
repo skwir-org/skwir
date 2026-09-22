@@ -4,10 +4,14 @@
 //!
 //! A tile is what the pointer can hit: the picture, standing on the bottom of
 //! its box so the name is always right under it, and up to three lines of
-//! name. The gutters between tiles belong to the rubber band.
+//! name. An icon fills the box like a square thumbnail does; smaller, it
+//! would float above its name with a blank on top. The gutters between tiles
+//! belong to the rubber band.
 //!
 //! A row is as tall as its longest name needs, so a row of short names gives
-//! its space back. That takes knowing how many lines each name wraps to
+//! its space back; a tile beside a longer name keeps its own height, hanging
+//! from the top of the row, so its highlight hugs its own picture and name
+//! (as Dolphin's does). That takes knowing how many lines each name wraps to
 //! before anything is drawn: `GridView::measure` counts them with the text
 //! system's line wrapper, once per change of the listing, the order or the
 //! zoom, never per frame. The label is then clamped to that count, so a
@@ -115,16 +119,18 @@ impl GridView {
         );
     }
 
-    /// An icon grows with the zoom but leaves the box to thumbnails: the size
-    /// to draw at, and the theme size to ask for (never smaller, so a raster
-    /// theme is scaled down, not up).
+    /// An icon fills its box, like a square thumbnail does: a theme's glyph
+    /// already keeps a margin inside its canvas, so an icon drawn smaller
+    /// than the box floats above its name with a blank on top. The theme
+    /// size asked for is never smaller than the box, so a raster theme is
+    /// scaled down, not up.
     fn icon(zoom: u32) -> (f32, u16) {
-        match zoom {
-            0..=96 => (64., 64),
-            97..=128 => (96., 96),
-            129..=192 => (128., 128),
-            _ => (192., 256),
-        }
+        let theme = match zoom {
+            0..=96 => 96,
+            97..=128 => 128,
+            _ => 256,
+        };
+        (zoom as f32, theme)
     }
 }
 
