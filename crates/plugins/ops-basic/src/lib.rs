@@ -10,6 +10,8 @@
 //! - `single`: exactly one entry is selected
 //! - `dir`: every selected entry is a directory
 //! - `file`: every selected entry is a regular file
+//! - `empty`: nothing is selected; for a menu, the one opened on the
+//!   folder's background, about the folder itself
 //!
 //! Absent (`None`) means always. For key bindings the UI also filters by
 //! focus context: `pane` (the file list), `address`, `palette`, or none
@@ -18,10 +20,9 @@
 
 use std::sync::Arc;
 
-use bibli_core::app::App;
+use bibli_core::app::{App, PaneArg};
 use bibli_core::command::{Invocation, Outcome};
-use bibli_core::location::Location;
-use bibli_core::op::{Copy, EntryRef, Move, Operation, Plan};
+use bibli_core::op::{Change, Copy, EntryRef, Followed, Move, Operation, Plan};
 use bibli_core::plugin::Plugin;
 use bibli_core::registry::{KeyBinding, MenuItem};
 use bibli_core::workspace::PaneId;
@@ -41,18 +42,8 @@ pub struct OpsBasicPlugin {
     clipboard: Arc<Mutex<Clipboard>>,
 }
 
-#[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
-struct PaneArgs {
-    #[serde(default)]
-    pane: Option<PaneId>,
-}
-
-fn pane_of(app: &App, pane: Option<PaneId>) -> PaneId {
-    pane.unwrap_or_else(|| app.workspace.read().active_id())
-}
-
 fn take_selection(app: &App, pane: Option<PaneId>) -> anyhow::Result<Vec<EntryRef>> {
-    let refs = app.selected_refs(pane_of(app, pane));
+    let refs = app.selected_refs(app.pane_or_active(pane));
     if refs.is_empty() {
         anyhow::bail!("nothing selected");
     }
@@ -66,34 +57,52 @@ fn publish(app: &App, entries: &[EntryRef], cut: bool) {
     app.wake();
 }
 
+/// Follow what the clipboard holds through applied changes. A cut entry
+/// that was moved (by its paste or otherwise), trashed or deleted leaves
+/// it; once none is left, nothing waits for a paste. So a paste that is
+/// refused, fails or is cancelled keeps what was cut.
+fn follow(clipboard: &Mutex<Clipboard>, changes: &[Change], app: &App) {
+    let mut c = clipboard.lock();
+    if c.entries.is_empty() {
+        return;
+    }
+    let before = c.entries.len();
+    let cut = c.cut;
+    c.entries.retain_mut(|entry| {
+        let mut kept = true;
+        for change in changes {
+            match change.follow(&entry.path) {
+                Followed::Same => {}
+                // A cut entry that moved went where it was going.
+                Followed::Moved(_) if cut => kept = false,
+                Followed::Moved(to) => entry.path = to,
+                Followed::Gone => kept = false,
+            }
+            if !kept {
+                break;
+            }
+        }
+        kept
+    });
+    if c.entries.len() != before {
+        if c.entries.is_empty() {
+            *c = Clipboard::default();
+            app.pending.clear();
+            app.wake();
+        } else {
+            publish(app, &c.entries, cut);
+        }
+    }
+}
+
 fn paste(clipboard: &Mutex<Clipboard>, pane: Option<PaneId>, app: &App) -> anyhow::Result<Outcome> {
-    let pane = pane_of(app, pane);
-    let dest = {
-        let ws = app.workspace.read();
-        let p = ws
-            .pane(pane)
-            .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-        p.location()
-            .and_then(Location::path)
-            .ok_or_else(|| anyhow::anyhow!("pane is not showing a directory"))?
-    };
+    let dest = app.pane_dir(app.pane_or_active(pane))?;
     let (entries, cut) = {
-        let mut c = clipboard.lock();
+        let c = clipboard.lock();
         if c.entries.is_empty() {
             anyhow::bail!("clipboard is empty");
         }
-        let cut = c.cut;
-        let entries = if cut {
-            std::mem::take(&mut c.entries)
-        } else {
-            c.entries.clone()
-        };
-        if cut {
-            c.cut = false;
-            // Moved away: nothing is waiting any more.
-            app.pending.clear();
-        }
-        (entries, cut)
+        (c.entries.clone(), c.cut)
     };
     let steps: Vec<Box<dyn Operation>> = entries
         .into_iter()
@@ -116,15 +125,15 @@ fn paste(clipboard: &Mutex<Clipboard>, pane: Option<PaneId>, app: &App) -> anyho
     Ok(Outcome::Plan(Plan::with_steps(title, steps)))
 }
 
+// Keys for the plugin's own and core commands. Keys for the shell's `ui.*`
+// commands live in the shell's builtin table, so they outlive this plugin.
 const BINDINGS: &[(&str, &str, Option<&str>)] = &[
     ("enter", "open", Some("pane")),
     ("backspace", "up", Some("pane")),
     ("alt-up", "up", None),
     ("alt-left", "back", None),
     ("alt-right", "forward", None),
-    ("f2", "ui.rename_prompt", Some("pane single")),
     ("delete", "trash", Some("pane selection")),
-    ("shift-delete", "ui.confirm_delete", Some("pane selection")),
     ("ctrl-c", "clipboard_copy", Some("pane selection")),
     ("ctrl-x", "clipboard_cut", Some("pane selection")),
     ("ctrl-v", "clipboard_paste", Some("pane")),
@@ -133,15 +142,10 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
     ("ctrl-a", "select_all", Some("pane")),
     ("escape", "select_none", Some("pane")),
     // With nothing selected Escape has one thing left to cancel: a pending
-    // cut or copy. Later bindings win, and `none` holds only then.
-    ("escape", "clipboard_clear", Some("pane none")),
+    // cut or copy. Later bindings win, and `empty` holds only then.
+    ("escape", "clipboard_clear", Some("pane empty")),
     ("f5", "refresh", None),
-    ("ctrl-shift-n", "ui.mkdir_prompt", None),
-    ("ctrl-l", "ui.focus_address", None),
-    ("ctrl-shift-p", "ui.palette", None),
     ("ctrl-t", "open_terminal", None),
-    ("ctrl-q", "ui.quit", None),
-    ("ctrl-h", "ui.toggle_hidden", None),
 ];
 
 // Context menu items: (title, command, when, order). Order follows the
@@ -188,7 +192,7 @@ impl Plugin for OpsBasicPlugin {
 
     fn register(&self, app: &App) {
         let cb = Arc::clone(&self.clipboard);
-        app.commands.register::<PaneArgs, _>(
+        app.commands.register::<PaneArg, _>(
             ID,
             "clipboard_copy",
             "Copy",
@@ -204,7 +208,7 @@ impl Plugin for OpsBasicPlugin {
             },
         );
         let cb = Arc::clone(&self.clipboard);
-        app.commands.register::<PaneArgs, _>(
+        app.commands.register::<PaneArg, _>(
             ID,
             "clipboard_cut",
             "Cut",
@@ -217,7 +221,7 @@ impl Plugin for OpsBasicPlugin {
             },
         );
         let cb = Arc::clone(&self.clipboard);
-        app.commands.register::<PaneArgs, _>(
+        app.commands.register::<PaneArg, _>(
             ID,
             "clipboard_clear",
             "Forget cut or copied files",
@@ -230,12 +234,22 @@ impl Plugin for OpsBasicPlugin {
             },
         );
         let cb = Arc::clone(&self.clipboard);
-        app.commands.register::<PaneArgs, _>(
+        app.commands.register::<PaneArg, _>(
             ID,
             "clipboard_paste",
             "Paste",
             "Copy or move the clipboard into the current directory (plan)",
             move |a, app| paste(&cb, a.pane, app),
+        );
+        let cb = Arc::clone(&self.clipboard);
+        let weak = app.weak();
+        app.executor.observe(
+            ID,
+            Arc::new(move |changes| {
+                if let Some(app) = weak.upgrade() {
+                    follow(&cb, changes, &app);
+                }
+            }),
         );
 
         for (keys, command, when) in BINDINGS {
@@ -273,6 +287,7 @@ impl Plugin for OpsBasicPlugin {
 mod tests {
     use super::*;
     use bibli_core::app::AppConfig;
+    use bibli_core::location::Location;
     use std::time::Duration;
 
     #[test]
@@ -348,5 +363,52 @@ mod tests {
             app.pending.get().entries.is_empty(),
             "nothing is waiting after the move"
         );
+    }
+
+    #[test]
+    fn a_cut_survives_a_paste_that_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        let dst = tmp.path().join("dst");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::write(src.join("a.txt"), b"a").unwrap();
+        std::fs::write(dst.join("a.txt"), b"in the way").unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(OpsBasicPlugin::default()), &app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&src)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        app.dispatch(&Invocation::with_args(
+            "select",
+            &serde_json::json!({ "names": ["a.txt"] }),
+        ))
+        .unwrap();
+        app.dispatch(&Invocation::new("clipboard_cut")).unwrap();
+        app.navigate(pane, &Location::from_path(&dst)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        let Outcome::Plan(plan) = app.dispatch(&Invocation::new("clipboard_paste")).unwrap() else {
+            panic!("expected plan")
+        };
+        assert!(
+            app.pending.get().cut,
+            "building the plan keeps the cut until it is applied"
+        );
+        let r = app.executor.execute_blocking(&plan, app.lifetime());
+        assert!(r.error.is_some(), "the name is taken");
+        assert_eq!(app.pending.get().entries.len(), 1, "still waiting");
+
+        std::fs::remove_file(dst.join("a.txt")).unwrap();
+        let Outcome::Plan(plan) = app.dispatch(&Invocation::new("clipboard_paste")).unwrap() else {
+            panic!("expected plan")
+        };
+        assert!(
+            app.executor
+                .execute_blocking(&plan, app.lifetime())
+                .error
+                .is_none()
+        );
+        assert!(dst.join("a.txt").exists());
+        assert!(app.pending.get().entries.is_empty());
     }
 }

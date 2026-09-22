@@ -16,9 +16,8 @@ schemars.workspace = true
 thiserror.workspace = true
 parking_lot.workspace = true
 tracing.workspace = true
-
-[dev-dependencies]
 tempfile.workspace = true
+dirs.workspace = true
 
 [lints]
 workspace = true

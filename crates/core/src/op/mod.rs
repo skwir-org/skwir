@@ -14,7 +14,7 @@ mod order;
 
 use std::ffi::OsStr;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -26,7 +26,9 @@ pub use builtin::{
 };
 pub use context::{Cancelled, StepContext};
 pub use entry_ref::{EntryRef, ResolveError};
-pub use executor::{ExecEvent, ExecResult, Executor, JournalEntry, Progress, Transfer};
+pub use executor::{
+    ChangeObserver, ExecEvent, ExecResult, Executor, JournalEntry, Progress, RunKind, Transfer,
+};
 pub use order::{RenameOrderError, RenameRequest, order_renames};
 
 /// Whether `name` can name an entry inside a directory: not empty, not `.`
@@ -146,6 +148,55 @@ impl fmt::Display for Change {
             } => write!(f, "create {}", path.display()),
             Change::Remove { path } => write!(f, "rmdir {}", path.display()),
             Change::Metadata { path, field } => write!(f, "set {field} on {}", path.display()),
+        }
+    }
+}
+
+/// Where a path is after a [`Change`] that holds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Followed {
+    /// The change did not touch it.
+    Same,
+    /// It, or a folder above it, was renamed, moved or swapped.
+    Moved(PathBuf),
+    /// It, or a folder above it, was trashed or deleted.
+    Gone,
+}
+
+impl Change {
+    /// Where `path` is once this change holds: what a holder of paths (the
+    /// shelf, a clipboard) does with each change a
+    /// [`ChangeObserver`](executor::ChangeObserver) hears.
+    pub fn follow(&self, path: &Path) -> Followed {
+        let under = |root: &Path| path.strip_prefix(root).ok();
+        let moved = |from: &Path, to: &Path| {
+            under(from).map_or(Followed::Same, |rest| {
+                Followed::Moved(if rest.as_os_str().is_empty() {
+                    to.to_path_buf()
+                } else {
+                    to.join(rest)
+                })
+            })
+        };
+        match self {
+            Change::Rename { from, to } | Change::Move { from, to } => moved(from, to),
+            Change::Swap { a, b } => match moved(a, b) {
+                Followed::Same => moved(b, a),
+                followed => followed,
+            },
+            Change::Trash { path: gone }
+            | Change::Delete { path: gone }
+            | Change::Remove { path: gone } => {
+                if under(gone).is_some() {
+                    Followed::Gone
+                } else {
+                    Followed::Same
+                }
+            }
+            Change::Copy { .. }
+            | Change::Restore { .. }
+            | Change::Create { .. }
+            | Change::Metadata { .. } => Followed::Same,
         }
     }
 }
@@ -324,5 +375,40 @@ impl Plan {
             .map(|d| registry.build(d))
             .collect::<anyhow::Result<Vec<_>>>()?;
         Ok(Plan::with_steps(data.title.clone(), steps))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Change, Followed};
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn a_path_follows_changes_to_itself_and_its_folders() {
+        let p = |s: &str| PathBuf::from(s);
+        let mv = Change::Move {
+            from: p("/a/d"),
+            to: p("/b/d"),
+        };
+        assert_eq!(mv.follow(Path::new("/a/d")), Followed::Moved(p("/b/d")));
+        assert_eq!(mv.follow(Path::new("/a/d/x")), Followed::Moved(p("/b/d/x")));
+        assert_eq!(
+            mv.follow(Path::new("/a/dx")),
+            Followed::Same,
+            "components, not bytes"
+        );
+        let swap = Change::Swap {
+            a: p("/a"),
+            b: p("/b"),
+        };
+        assert_eq!(swap.follow(Path::new("/b/x")), Followed::Moved(p("/a/x")));
+        let trash = Change::Trash { path: p("/a") };
+        assert_eq!(trash.follow(Path::new("/a/x")), Followed::Gone);
+        assert_eq!(trash.follow(Path::new("/ab")), Followed::Same);
+        let copy = Change::Copy {
+            from: p("/a"),
+            to: p("/b"),
+        };
+        assert_eq!(copy.follow(Path::new("/a")), Followed::Same);
     }
 }

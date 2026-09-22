@@ -15,17 +15,17 @@
 //! Case rules (`lower`, `upper`, `title`, `sentence`) apply to the stem and
 //! leave the extension alone.
 
-#![allow(clippy::implicit_hasher)]
-
-use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::SystemTime;
 
 use bibli_core::app::App;
 use bibli_core::command::{Invocation, Outcome};
 use bibli_core::entry::{Value, keys};
-use bibli_core::op::{Change, EntryRef, Operation, Plan, Rename};
+use bibli_core::op::{
+    Change, EntryRef, Operation, Plan, RenameOrderError, RenameRequest, order_renames,
+};
 use bibli_core::plugin::Plugin;
 use bibli_core::registry::{KeyBinding, MenuItem};
 use bibli_core::workspace::PaneId;
@@ -91,8 +91,14 @@ pub enum BulkRenameError {
     Regex(String),
     #[error("invalid template: {0}")]
     Template(String),
-    #[error("`{item}` would become an invalid name `{name}`")]
-    InvalidName { item: String, name: String },
+    #[error("`{item}` would become an invalid name `{name}`: {reason}")]
+    InvalidName {
+        item: String,
+        name: String,
+        reason: String,
+    },
+    #[error("`{item}` is not a name made of text; rename it on its own")]
+    NotText { item: String },
     #[error("several items would become `{name}`: {}", items.join(", "))]
     Duplicate { name: String, items: Vec<String> },
     #[error("`{item}` would become `{name}`, which already exists")]
@@ -104,7 +110,7 @@ pub enum BulkRenameError {
 }
 
 /// One input item: where it is, what it is called, and when it changed.
-pub type Item = (EntryRef, String, Option<SystemTime>);
+pub type Item = (EntryRef, OsString, Option<SystemTime>);
 
 fn split_ext(name: &str) -> (&str, &str) {
     match name.rsplit_once('.') {
@@ -222,12 +228,11 @@ fn render(
                         let ts = jiff::Timestamp::try_from(t)
                             .map_err(|e| BulkRenameError::Template(e.to_string()))?;
                         let zoned = ts.to_zoned(jiff::tz::TimeZone::system());
-                        let s = zoned.strftime(fmt).to_string();
-                        if s.is_empty() && !fmt.is_empty() {
-                            return Err(BulkRenameError::Template(format!(
-                                "bad date format `{fmt}`"
-                            )));
-                        }
+                        // `strftime(..).to_string()` would panic on a
+                        // format it cannot write; this says why instead.
+                        let s = jiff::fmt::strtime::format(fmt, &zoned).map_err(|e| {
+                            BulkRenameError::Template(format!("bad date format `{fmt}`: {e}"))
+                        })?;
                         out.push_str(&s);
                     }
                     other => {
@@ -243,20 +248,19 @@ fn render(
     Ok(out)
 }
 
-fn valid_name(name: &str) -> bool {
-    !name.is_empty() && name != "." && name != ".." && !name.contains('/') && !name.contains('\0')
-}
-
-/// Compute the new name of every item (unchanged names included).
-pub fn new_names(items: &[Item], spec: &RenameSpec) -> Result<Vec<String>, BulkRenameError> {
+/// Compute the new name of every item (unchanged names included). The
+/// rules work on text: a name that is not valid UTF-8 may only come out
+/// unchanged, never with its bytes replaced.
+pub fn new_names(items: &[Item], spec: &RenameSpec) -> Result<Vec<OsString>, BulkRenameError> {
     let re = match &spec.regex {
         Some(r) => Some(regex::Regex::new(r).map_err(|e| BulkRenameError::Regex(e.to_string()))?),
         None => None,
     };
     let replacement = spec.replacement.clone().unwrap_or_default();
     let mut out = Vec::with_capacity(items.len());
-    for (i, (entry, name, mtime)) in items.iter().enumerate() {
-        let mut n = name.clone();
+    for (i, (entry, original, mtime)) in items.iter().enumerate() {
+        let name = original.to_string_lossy();
+        let mut n = name.clone().into_owned();
         if let Some(re) = &re {
             n = re.replace_all(&n, replacement.as_str()).into_owned();
         }
@@ -267,160 +271,94 @@ pub fn new_names(items: &[Item], spec: &RenameSpec) -> Result<Vec<String>, BulkR
                 .and_then(Path::file_name)
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            let counter = spec.start + i as u64 * spec.step;
-            n = render(t, &n, &parent, counter, *mtime, name)?;
+            let counter = (i as u64)
+                .checked_mul(spec.step)
+                .and_then(|k| k.checked_add(spec.start))
+                .ok_or_else(|| BulkRenameError::Template("the counter overflows".into()))?;
+            n = render(t, &n, &parent, counter, *mtime, &name)?;
         }
         if let Some(case) = spec.case {
             n = apply_case(&n, case);
         }
-        out.push(n);
+        if original.to_str().is_some() {
+            out.push(n.into());
+        } else if n == name {
+            out.push(original.clone());
+        } else {
+            return Err(BulkRenameError::NotText {
+                item: name.into_owned(),
+            });
+        }
     }
     Ok(out)
 }
 
-/// Order renames so every target is free when its step runs, breaking
-/// cycles with a temporary name. `renames` maps item index → new name.
-/// Returns the steps as (item index, new name) pairs.
-pub fn order_renames(
-    old_names: &[String],
-    renames: &HashMap<usize, String>,
-) -> Vec<(usize, String)> {
-    let index_of_old: HashMap<&str, usize> = old_names
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.as_str(), i))
-        .collect();
-    // i depends on j when i's target is j's current name and j also moves.
-    let dep: HashMap<usize, usize> = renames
-        .iter()
-        .filter_map(|(&i, target)| {
-            index_of_old
-                .get(target.as_str())
-                .filter(|&&j| j != i && renames.contains_key(&j))
-                .map(|&j| (i, j))
-        })
-        .collect();
-    let mut done: HashSet<usize> = HashSet::new();
-    let mut steps = Vec::new();
-    let mut pending: Vec<usize> = renames.keys().copied().collect();
-    pending.sort_unstable();
-    let mut temp_counter = 0;
-    let mut parked: Vec<(usize, String)> = Vec::new(); // items moved to a temp name, awaiting their final name
-    while !pending.is_empty() {
-        let mut progressed = false;
-        let mut i = 0;
-        while i < pending.len() {
-            let item = pending[i];
-            let free = dep.get(&item).is_none_or(|j| done.contains(j));
-            if free {
-                steps.push((item, renames[&item].clone()));
-                done.insert(item);
-                pending.remove(i);
-                progressed = true;
-            } else {
-                i += 1;
-            }
-        }
-        if !progressed {
-            // A cycle: park the first pending item under a temp name, which
-            // frees its current name for whoever waits on it.
-            let item = pending.remove(0);
-            temp_counter += 1;
-            let tmp = format!(".bibli-rename-tmp-{temp_counter}");
-            steps.push((item, tmp.clone()));
-            done.insert(item);
-            parked.push((item, renames[&item].clone()));
-        }
-    }
-    for (item, final_name) in parked {
-        steps.push((item, final_name));
-    }
-    steps
-}
-
-/// Build the plan. `occupied` are names present in the directory that are
-/// not part of `items`; a target among them is a conflict.
+/// Build the plan. `exists` says whether a path that none of `items`
+/// holds is taken; a target there is a conflict. Ordering (chains, swaps,
+/// cycles) is [`order_renames`]'s.
 pub fn plan_bulk_rename_in(
     items: &[Item],
-    occupied: &HashSet<String>,
+    exists: impl Fn(&Path) -> bool,
     spec: &RenameSpec,
 ) -> Result<BulkRename, BulkRenameError> {
     if items.is_empty() {
         return Err(BulkRenameError::Empty);
     }
     let new = new_names(items, spec)?;
-    let old: Vec<String> = items.iter().map(|(_, n, _)| n.clone()).collect();
-    let mut renames: HashMap<usize, String> = HashMap::new();
-    let mut seen: HashMap<&str, Vec<usize>> = HashMap::new();
-    for (i, n) in new.iter().enumerate() {
-        if !valid_name(n) {
-            return Err(BulkRenameError::InvalidName {
-                item: old[i].clone(),
-                name: n.clone(),
-            });
-        }
-        seen.entry(n.as_str()).or_default().push(i);
-        if *n != old[i] {
-            renames.insert(i, n.clone());
-        }
-    }
-    for (name, idx) in &seen {
-        if idx.len() > 1 {
-            return Err(BulkRenameError::Duplicate {
-                name: (*name).to_owned(),
-                items: idx.iter().map(|&i| old[i].clone()).collect(),
-            });
-        }
-    }
-    for (&i, target) in &renames {
-        if occupied.contains(target) {
-            return Err(BulkRenameError::Conflict {
-                item: old[i].clone(),
-                name: target.clone(),
-            });
-        }
-    }
-    let steps = order_renames(&old, &renames);
-    let mut current_path: Vec<PathBuf> = items.iter().map(|(e, _, _)| e.path.clone()).collect();
-    let mut ops: Vec<Box<dyn Operation>> = Vec::with_capacity(steps.len());
-    for (i, name) in steps {
-        let entry = EntryRef::new(items[i].0.id, current_path[i].clone());
-        let parent = current_path[i]
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_default();
-        current_path[i] = parent.join(&name);
-        ops.push(Box::new(Rename {
-            entry,
-            new_name: name.into(),
-        }));
-    }
-    let mut idx: Vec<usize> = renames.keys().copied().collect();
-    idx.sort_unstable();
-    let preview = idx
+    let requests: Vec<RenameRequest> = items
         .iter()
-        .map(|&i| {
-            let parent = items[i]
-                .0
-                .path
-                .parent()
-                .map(Path::to_path_buf)
-                .unwrap_or_default();
-            Change::Rename {
-                from: items[i].0.path.clone(),
-                to: parent.join(&renames[&i]),
-            }
+        .zip(new)
+        .map(|((entry, _, _), new_name)| RenameRequest {
+            entry: entry.clone(),
+            new_name,
+        })
+        .collect();
+    let old = |i: usize| items[i].1.to_string_lossy().into_owned();
+    let steps = order_renames(&requests, exists).map_err(|e| match e {
+        RenameOrderError::InvalidName { item, reason } => BulkRenameError::InvalidName {
+            item: old(item),
+            name: requests[item].new_name.to_string_lossy().into_owned(),
+            reason,
+        },
+        RenameOrderError::Duplicate { items, target } => BulkRenameError::Duplicate {
+            name: file_name(&target),
+            items: items.into_iter().map(old).collect(),
+        },
+        RenameOrderError::Conflict { item, target } => BulkRenameError::Conflict {
+            item: old(item),
+            name: file_name(&target),
+        },
+    })?;
+    let preview: Vec<Change> = requests
+        .iter()
+        .filter(|r| r.entry.path.file_name() != Some(r.new_name.as_os_str()))
+        .map(|r| Change::Rename {
+            from: r.entry.path.clone(),
+            to: r.entry.path.with_file_name(&r.new_name),
         })
         .collect();
     Ok(BulkRename {
-        plan: Plan::with_steps(format!("rename {} items", idx.len()), ops),
+        plan: Plan::with_steps(
+            format!("rename {} items", preview.len()),
+            steps
+                .into_iter()
+                .map(|r| Box::new(r) as Box<dyn Operation>)
+                .collect(),
+        ),
         preview,
     })
 }
 
-/// [`plan_bulk_rename_in`] with no other names in the directory.
+fn file_name(path: &Path) -> String {
+    path.file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// [`plan_bulk_rename_in`] with no other names taken.
 pub fn plan_bulk_rename(items: &[Item], spec: &RenameSpec) -> Result<BulkRename, BulkRenameError> {
-    plan_bulk_rename_in(items, &HashSet::new(), spec)
+    plan_bulk_rename_in(items, |_| false, spec)
 }
 
 // ------------------------------------------------------------------ plugin
@@ -433,9 +371,17 @@ struct Args {
     spec: RenameSpec,
 }
 
-/// Selection in sorted order with names and mtimes, plus the other names in the directory.
-fn gather(app: &App, pane: Option<PaneId>) -> anyhow::Result<(Vec<Item>, HashSet<String>)> {
-    let pane = pane.unwrap_or_else(|| app.workspace.read().active_id());
+/// Plan a bulk rename of the pane's selection, in its sorted order. What
+/// else is taken is read from the listing, never from the disk: the
+/// preview runs on every keystroke. In a folder a target is taken when an
+/// entry not selected has that name; elsewhere (search results, the
+/// shelf) the listing cannot say, and applying finds out.
+fn plan_selection(
+    app: &App,
+    pane: Option<PaneId>,
+    spec: &RenameSpec,
+) -> anyhow::Result<BulkRename> {
+    let pane = app.pane_or_active(pane);
     let ws = app.workspace.read();
     let p = ws
         .pane(pane)
@@ -444,26 +390,30 @@ fn gather(app: &App, pane: Option<PaneId>) -> anyhow::Result<(Vec<Item>, HashSet
         .open
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("pane has no open location"))?;
-    let order = p.listing.sorted(p.sort);
+    let dir = p.location().and_then(bibli_core::Location::path);
     let mut items = Vec::new();
-    for id in order.iter().copied().filter(|id| p.selection.contains(*id)) {
+    for id in p.listing.sorted(p.sort).iter().copied() {
+        if !p.selection.contains(id) {
+            continue;
+        }
         let Some(e) = p.listing.get(id) else { continue };
         let Some(path) = open.path_of(id) else {
             continue;
         };
         let mtime = e.metadata.value(keys::MODIFIED).and_then(Value::as_time);
-        items.push((EntryRef::new(id, path), e.name_str().into_owned(), mtime));
+        items.push((EntryRef::new(id, path), e.name.clone(), mtime));
     }
     if items.is_empty() {
         anyhow::bail!("nothing selected");
     }
-    let occupied: HashSet<String> = p
-        .listing
-        .iter()
-        .filter(|e| !p.selection.contains(e.id))
-        .map(|e| e.name_str().into_owned())
-        .collect();
-    Ok((items, occupied))
+    let exists = |path: &Path| {
+        dir.as_deref().is_some_and(|dir| path.parent() == Some(dir))
+            && path
+                .file_name()
+                .and_then(|name| p.listing.find_by_name(name))
+                .is_some_and(|e| !p.selection.contains(e.id))
+    };
+    Ok(plan_bulk_rename_in(&items, exists, spec)?)
 }
 
 /// The rename-bulk plugin.
@@ -489,15 +439,11 @@ impl Plugin for RenameBulkPlugin {
             "rename_bulk",
             "Rename several…",
             "Rename the selection from a template, regex, and case rule (plan)",
-            |a, app| {
-                let (items, occupied) = gather(app, a.pane)?;
-                let r = plan_bulk_rename_in(&items, &occupied, &a.spec)?;
-                Ok(Outcome::Plan(r.plan))
-            },
+            |a, app| Ok(Outcome::Plan(plan_selection(app, a.pane, &a.spec)?.plan)),
         );
         app.commands.register::<Args, _>(ID, "rename_bulk.preview", "Preview bulk rename", "Return the old → new names a bulk rename would produce", |a, app| {
-            let (items, occupied) = gather(app, a.pane)?;
-            let r = plan_bulk_rename_in(&items, &occupied, &a.spec)?;
+            let r = plan_selection(app, a.pane, &a.spec)?;
+            // Display names for the dialog; the plan itself is lossless.
             let list: Vec<serde_json::Value> = r
                 .preview
                 .iter()
@@ -551,7 +497,7 @@ mod tests {
         )
     }
 
-    fn names(items: &[Item], spec: &RenameSpec) -> Vec<String> {
+    fn names(items: &[Item], spec: &RenameSpec) -> Vec<OsString> {
         new_names(items, spec).unwrap()
     }
 
@@ -632,7 +578,7 @@ mod tests {
         let t = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
         let items = [(
             EntryRef::new(EntryId { dev: 1, ino: 1 }, "/d/a.txt"),
-            "a.txt".to_string(),
+            "a.txt".into(),
             Some(t),
         )];
         let spec = RenameSpec {
@@ -661,10 +607,9 @@ mod tests {
             },
         );
         assert!(matches!(bad, Err(BulkRenameError::InvalidName { .. })));
-        let occupied: HashSet<String> = ["a-1".to_string()].into();
         let conflict = plan_bulk_rename_in(
             &items,
-            &occupied,
+            |p| p == Path::new("/d/a-1"),
             &RenameSpec {
                 template: Some("{name}-{n}".into()),
                 ..Default::default()
@@ -676,18 +621,53 @@ mod tests {
     }
 
     #[test]
-    fn ordering_handles_chains_and_cycles() {
-        // chain: a -> b, b -> c (c free): b must go first.
-        let old = ["a".to_string(), "b".to_string()];
-        let renames: HashMap<usize, String> = [(0, "b".to_string()), (1, "c".to_string())].into();
-        let steps = order_renames(&old, &renames);
-        assert_eq!(steps, [(1, "c".to_string()), (0, "b".to_string())]);
-        // cycle: a <-> b needs a temp.
-        let renames: HashMap<usize, String> = [(0, "b".to_string()), (1, "a".to_string())].into();
-        let steps = order_renames(&old, &renames);
-        assert_eq!(steps.len(), 3);
-        assert!(steps[0].1.starts_with(".bibli-rename-tmp-"));
-        assert_eq!(steps[2], (0, "b".to_string()));
+    fn large_counters_are_refused_not_wrapped() {
+        let items = [item("a"), item("b")];
+        let spec = RenameSpec {
+            template: Some("{n}".into()),
+            start: u64::MAX,
+            ..Default::default()
+        };
+        assert!(matches!(
+            new_names(&items, &spec),
+            Err(BulkRenameError::Template(_))
+        ));
+        let spec = RenameSpec {
+            template: Some("{date:x%}".into()),
+            ..Default::default()
+        };
+        let dated = [(
+            EntryRef::new(EntryId { dev: 1, ino: 1 }, "/d/a"),
+            "a".into(),
+            Some(SystemTime::UNIX_EPOCH),
+        )];
+        assert!(matches!(
+            new_names(&dated, &spec),
+            Err(BulkRenameError::Template(_))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn names_that_are_not_text_are_never_mangled() {
+        use std::os::unix::ffi::OsStringExt;
+        let raw = OsString::from_vec(b"caf\xe9".to_vec());
+        let items = [(
+            EntryRef::new(EntryId { dev: 1, ino: 1 }, Path::new("/d").join(&raw)),
+            raw.clone(),
+            None,
+        )];
+        assert_eq!(names(&items, &RenameSpec::default()), [raw]);
+        assert!(matches!(
+            new_names(
+                &items,
+                &RenameSpec {
+                    case: Some(Case::Upper),
+                    ..Default::default()
+                }
+            ),
+            Err(BulkRenameError::NotText { .. })
+        ));
     }
 
     fn setup(names: &[&str]) -> (tempfile::TempDir, Vec<Item>, Arc<App>) {
@@ -696,7 +676,7 @@ mod tests {
         for n in names {
             let p = tmp.path().join(n);
             std::fs::write(&p, n.as_bytes()).unwrap();
-            items.push((EntryRef::from_path(&p).unwrap(), (*n).to_string(), None));
+            items.push((EntryRef::from_path(&p).unwrap(), (*n).into(), None));
         }
         let app = App::new(bibli_core::app::AppConfig::ephemeral(
             tmp.path().join("app"),
@@ -721,56 +701,49 @@ mod tests {
         v
     }
 
+    fn apply(app: &App, plan: &Plan) {
+        let r = app.executor.execute_blocking(plan, app.lifetime());
+        assert!(r.error.is_none(), "{:?}", r.error);
+    }
+
     #[test]
-    fn swap_and_chain_apply_for_real_and_undo() {
-        let (tmp, items, app) = setup(&["a", "b", "c"]);
-        // a -> b, b -> a (swap), c -> d (free)
+    fn swaps_and_shifts_apply_for_real_and_undo() {
+        // Listed as 2, 1: numbering them 1, 2 swaps the two names.
+        let (tmp, items, app) = setup(&["2", "1"]);
         let spec = RenameSpec {
-            regex: Some("^(a|b|c)$".into()),
-            replacement: Some("$1".into()),
+            template: Some("{n}".into()),
             ..Default::default()
         };
-        assert_eq!(
-            new_names(&items, &spec).unwrap(),
-            ["a", "b", "c"],
-            "identity regex"
-        );
-        let renames: Vec<String> = vec!["b".into(), "a".into(), "d".into()];
-        let map: HashMap<usize, String> = renames
-            .iter()
-            .enumerate()
-            .map(|(i, n)| (i, n.clone()))
-            .collect();
-        let old: Vec<String> = items.iter().map(|i| i.1.clone()).collect();
-        let steps = order_renames(&old, &map);
-        let mut current: Vec<PathBuf> = items.iter().map(|i| i.0.path.clone()).collect();
-        let mut ops: Vec<Box<dyn Operation>> = Vec::new();
-        for (i, name) in steps {
-            ops.push(Box::new(Rename {
-                entry: EntryRef::new(items[i].0.id, current[i].clone()),
-                new_name: name.clone().into(),
-            }));
-            current[i] = tmp.path().join(name);
-        }
-        let plan = Plan::with_steps("t", ops);
-        let r = app.executor.execute_blocking(&plan, app.lifetime());
-        assert!(r.error.is_none(), "{:?}", r.error);
+        let r = plan_bulk_rename(&items, &spec).unwrap();
+        assert_eq!(r.plan.len(), 3, "one parked under a free name");
+        apply(&app, &r.plan);
         assert_eq!(
             contents(tmp.path()),
-            [
-                ("a".into(), "b".into()),
-                ("b".into(), "a".into()),
-                ("d".into(), "c".into())
-            ]
+            [("1".into(), "2".into()), ("2".into(), "1".into())]
         );
         let u = app.executor.undo_blocking(app.lifetime()).unwrap();
         assert!(u.error.is_none(), "{:?}", u.error);
         assert_eq!(
             contents(tmp.path()),
+            [("1".into(), "1".into()), ("2".into(), "2".into())]
+        );
+
+        // 1, 2, 3 -> 2, 3, 4: each waits for the next to move.
+        let (tmp, items, app) = setup(&["1", "2", "3"]);
+        let spec = RenameSpec {
+            template: Some("{n}".into()),
+            start: 2,
+            ..Default::default()
+        };
+        let r = plan_bulk_rename(&items, &spec).unwrap();
+        assert_eq!(r.plan.len(), 3, "a chain needs no parking");
+        apply(&app, &r.plan);
+        assert_eq!(
+            contents(tmp.path()),
             [
-                ("a".into(), "a".into()),
-                ("b".into(), "b".into()),
-                ("c".into(), "c".into())
+                ("2".into(), "1".into()),
+                ("3".into(), "2".into()),
+                ("4".into(), "3".into())
             ]
         );
     }

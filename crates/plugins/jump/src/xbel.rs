@@ -18,42 +18,6 @@ pub fn default_path() -> Option<PathBuf> {
     dirs::data_dir().map(|d| d.join("recently-used.xbel"))
 }
 
-/// Decode `%XX` escapes; invalid sequences are kept verbatim.
-pub fn percent_decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%'
-            && i + 2 < bytes.len()
-            && let (Some(h), Some(l)) = (
-                bytes.get(i + 1).and_then(|b| (*b as char).to_digit(16)),
-                bytes.get(i + 2).and_then(|b| (*b as char).to_digit(16)),
-            )
-        {
-            out.push((h * 16 + l) as u8);
-            i += 3;
-            continue;
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-/// `file:///a/b%20c` → `/a/b c`. Non-file URIs yield `None`.
-pub fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
-    let rest = uri.strip_prefix("file://")?;
-    // Strip an optional host (`file://localhost/x`).
-    let rest = if rest.starts_with('/') {
-        rest
-    } else {
-        let slash = rest.find('/')?;
-        &rest[slash..]
-    };
-    Some(PathBuf::from(percent_decode(rest)))
-}
-
 /// Parse the document. Entries are returned most recently visited first.
 pub fn parse(xml: &str) -> Vec<Recent> {
     let Ok(doc) = roxmltree::Document::parse(xml) else {
@@ -64,7 +28,7 @@ pub fn parse(xml: &str) -> Vec<Recent> {
         let Some(href) = b.attribute("href") else {
             continue;
         };
-        let Some(path) = file_uri_to_path(href) else {
+        let Some(path) = bibli_platform::uri::path_of(href) else {
             continue;
         };
         let time = ["visited", "modified", "added"]
@@ -94,7 +58,7 @@ pub fn load(path: &Path) -> Vec<Recent> {
         .unwrap_or_default()
 }
 
-/// Entries whose file still exists.
+/// Entries whose file still exists. Stats each one: worker-only.
 pub fn existing(items: Vec<Recent>) -> Vec<Recent> {
     items.into_iter().filter(|r| r.path.exists()).collect()
 }
@@ -126,13 +90,17 @@ mod tests {
     }
 
     #[test]
-    fn decodes_percent_escapes_and_hosts() {
-        assert_eq!(percent_decode("a%20b%C3%A9%zz"), "a bé%zz");
-        assert_eq!(
-            file_uri_to_path("file://localhost/x/y").unwrap(),
-            PathBuf::from("/x/y")
+    fn reads_local_hosts_and_raw_bytes() {
+        let r = parse(
+            r#"<xbel><bookmark href="file://localhost/x/y%20z" added="2026-03-01T08:00:00Z"/><bookmark href="file://elsewhere/x" added="2026-03-01T08:00:00Z"/><bookmark href="file:///x/caf%E9" added="2026-03-01T08:00:00Z"/></xbel>"#,
         );
-        assert!(file_uri_to_path("http://x/y").is_none());
+        assert_eq!(r.len(), 2, "another host is not a local file");
+        assert_eq!(r[0].path, PathBuf::from("/x/y z"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            assert_eq!(r[1].path.as_os_str().as_bytes(), b"/x/caf\xe9");
+        }
     }
 
     #[test]

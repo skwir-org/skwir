@@ -8,14 +8,17 @@ pub mod zoxide;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
-use bibli_core::app::App;
+use bibli_core::CancelToken;
+use bibli_core::app::{App, NotifyLevel};
 use bibli_core::command::{Invocation, Outcome};
-use bibli_core::entry::{Entry, EntryId};
+use bibli_core::entry::EntryId;
+use bibli_core::fs::hydrate_paths;
 use bibli_core::location::{
     EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
 };
+use bibli_core::os_path::PathArg;
 use bibli_core::plugin::Plugin;
 use bibli_core::registry::{KeyBinding, Place};
 use bibli_core::scheduler::Priority;
@@ -30,6 +33,7 @@ const ID: &str = "jump";
 /// A ranked jump target.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct Candidate {
+    #[serde(with = "bibli_core::os_path")]
     pub path: PathBuf,
     pub score: f64,
     /// `dir` or `file`.
@@ -94,10 +98,57 @@ pub fn rank(
     out
 }
 
+/// What the candidates are ranked from, gathered on a worker: ranking must
+/// be quick, and asking zoxide runs a process and checking recent files
+/// stats each one.
+#[derive(Default)]
+struct Index {
+    dirs: Vec<zoxide::ZEntry>,
+    files: Vec<xbel::Recent>,
+    /// When the last refresh started.
+    asked: Option<Instant>,
+}
+
+impl Index {
+    /// How long a refresh answers for before the next query starts another.
+    const TTL: Duration = Duration::from_secs(10);
+}
+
 /// The jump plugin.
 #[derive(Default)]
 pub struct JumpPlugin {
-    zoxide: Arc<zoxide::ZoxideCache>,
+    index: Arc<Mutex<Index>>,
+    /// Cancelled on disable: a refresh in flight stops and publishes nothing.
+    lifetime: Mutex<CancelToken>,
+}
+
+/// Start gathering the index again unless a refresh started less than
+/// [`Index::TTL`] ago (or is still running).
+fn refresh(index: &Arc<Mutex<Index>>, lifetime: &CancelToken, app: &App) {
+    {
+        let mut ix = index.lock();
+        if ix.asked.is_some_and(|at| at.elapsed() < Index::TTL) {
+            return;
+        }
+        ix.asked = Some(Instant::now());
+    }
+    let index = Arc::clone(index);
+    let cancel = lifetime.child();
+    app.scheduler.spawn(
+        Priority::Background,
+        "jump.index",
+        cancel.clone(),
+        move || {
+            let dirs = zoxide::query(&cancel);
+            let files = recent_files();
+            if cancel.is_cancelled() {
+                return;
+            }
+            let mut ix = index.lock();
+            ix.dirs = dirs;
+            ix.files = files;
+        },
+    );
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -110,39 +161,59 @@ struct CandidatesArgs {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct ToArgs {
-    path: String,
+    path: PathArg,
     #[serde(default)]
     pane: Option<PaneId>,
 }
 
+/// Recently used files that still exist. Worker-only.
 fn recent_files() -> Vec<xbel::Recent> {
     xbel::default_path()
         .map(|p| xbel::existing(xbel::load(&p)))
         .unwrap_or_default()
 }
 
-fn jump_to(path: &Path, pane: Option<PaneId>, app: &App) -> anyhow::Result<Outcome> {
-    let pane = pane.unwrap_or_else(|| app.workspace.read().active_id());
-    if path.is_dir() {
-        app.navigate(pane, &Location::from_path(path))?;
-        return Ok(Outcome::Done);
-    }
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("{} has no parent", path.display()))?;
-    let name = path
-        .file_name()
-        .ok_or_else(|| anyhow::anyhow!("{} has no name", path.display()))?;
-    app.navigate(pane, &Location::from_path(parent))?;
-    // Select the file once the listing has it; the listing streams, so wait briefly.
-    if app.pump_until_complete(pane, std::time::Duration::from_secs(5)) {
-        let inv = Invocation::with_args(
-            "select",
-            &serde_json::json!({ "names": [name.to_string_lossy()], "pane": pane }),
-        );
-        let _ = app.dispatch(&inv);
-    }
+/// Open a folder, or a file's folder with the file selected. Whether the
+/// path is a folder is asked on a worker (a sleeping disk can take a
+/// while); the name is selected when the listing brings it.
+fn jump_to(path: PathBuf, pane: Option<PaneId>, app: &App) -> anyhow::Result<Outcome> {
+    anyhow::ensure!(
+        path.is_absolute(),
+        "{} is not an absolute path",
+        path.display()
+    );
+    let pane = app.pane_or_active(pane);
+    let weak = app.weak();
+    app.scheduler.spawn(
+        Priority::Normal,
+        "jump.to",
+        app.lifetime().child(),
+        move || {
+            let Some(app) = weak.upgrade() else { return };
+            if let Err(e) = go(&app, pane, &path) {
+                app.notify(NotifyLevel::Error, format!("{e:#}"));
+            }
+        },
+    );
     Ok(Outcome::Done)
+}
+
+fn go(app: &App, pane: PaneId, path: &Path) -> anyhow::Result<()> {
+    let is_dir = std::fs::metadata(path)
+        .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?
+        .is_dir();
+    if is_dir {
+        return app.navigate(pane, &Location::from_path(path));
+    }
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        anyhow::bail!("{} has no folder", path.display());
+    };
+    app.navigate(pane, &Location::from_path(parent))?;
+    if let Some(p) = app.workspace.write().pane_mut(pane) {
+        p.reveal(name.to_owned());
+    }
+    app.wake();
+    Ok(())
 }
 
 impl Plugin for JumpPlugin {
@@ -156,21 +227,22 @@ impl Plugin for JumpPlugin {
         "Frecency jump from zoxide and recently used files; the recent: location"
     }
     fn register(&self, app: &App) {
-        let zx = Arc::clone(&self.zoxide);
+        let lifetime = app.lifetime().child();
+        *self.lifetime.lock() = lifetime.clone();
+        refresh(&self.index, &lifetime, app);
+        let index = Arc::clone(&self.index);
         app.commands.register::<CandidatesArgs, _>(
             ID,
             "jump.candidates",
             "Jump candidates",
-            "Rank jump targets for a query",
-            move |a, _| {
-                let dirs = zx.get();
-                let files = recent_files();
-                Ok(Outcome::Value(serde_json::to_value(rank(
-                    &a.query,
-                    &dirs,
-                    &files,
-                    a.limit.unwrap_or(20),
-                ))?))
+            "Rank jump targets for a query, from what zoxide and the recent files list said last",
+            move |a, app| {
+                let ranked = {
+                    let ix = index.lock();
+                    rank(&a.query, &ix.dirs, &ix.files, a.limit.unwrap_or(20))
+                };
+                refresh(&index, &lifetime, app);
+                Ok(Outcome::Value(serde_json::to_value(ranked)?))
             },
         );
         app.commands.register::<ToArgs, _>(
@@ -178,7 +250,7 @@ impl Plugin for JumpPlugin {
             "jump.to",
             "Jump to",
             "Go to a directory, or to a file's directory selecting it",
-            |a, app| jump_to(Path::new(&a.path), a.pane, app),
+            |a, app| jump_to(a.path.into_inner(), a.pane, app),
         );
         app.register_provider(ID, Arc::new(RecentProvider));
         app.registry.places.add(
@@ -201,6 +273,11 @@ impl Plugin for JumpPlugin {
                 when: None,
             },
         );
+    }
+
+    fn on_disable(&self, _app: &App) {
+        self.lifetime.lock().cancel();
+        *self.index.lock() = Index::default();
     }
 }
 
@@ -251,7 +328,10 @@ impl RecentLocation {
             "recent.list",
             cancel.clone(),
             move || {
-                let items = recent_files();
+                // Each is stat-ed below: what is gone is left out there.
+                let items = xbel::default_path()
+                    .map(|p| xbel::load(&p))
+                    .unwrap_or_default();
                 let mut batch = Vec::new();
                 let mut seen = std::collections::HashSet::new();
                 let mut map = HashMap::new();
@@ -312,33 +392,17 @@ impl OpenLocation for RecentLocation {
         }
         let tx = self.tx.clone();
         let metadata = Arc::clone(&self.ctx.metadata);
-        self.ctx.scheduler.spawn(
-            priority,
-            "recent.stat",
-            self.ctx.cancel.child(),
-            move || {
-                let mut updated: Vec<Entry> = Vec::new();
-                let mut gone = Vec::new();
-                for (id, path) in wanted {
-                    match bibli_core::fs::stat::stat_path(&path) {
-                        Some(mut e) => {
-                            e.id = id;
-                            if let Some(dir) = path.parent() {
-                                metadata.fill(dir, std::slice::from_mut(&mut e));
-                            }
-                            updated.push(e);
-                        }
-                        None => gone.push(id),
-                    }
+        let paths = Arc::clone(&self.paths);
+        let cancel = self.ctx.cancel.child();
+        self.ctx
+            .scheduler
+            .spawn(priority, "recent.stat", cancel.clone(), move || {
+                let gone = hydrate_paths(&wanted, &metadata, &tx, &cancel);
+                let mut paths = paths.lock();
+                for id in gone {
+                    paths.remove(&id);
                 }
-                if !updated.is_empty() {
-                    tx.send(ListingEvent::Updated(updated));
-                }
-                if !gone.is_empty() {
-                    tx.send(ListingEvent::Removed(gone));
-                }
-            },
-        );
+            });
     }
     fn path_of(&self, id: EntryId) -> Option<PathBuf> {
         self.paths.lock().get(&id).cloned()
@@ -413,21 +477,33 @@ mod tests {
         }
         let app = app(tmp.path());
         app.plugins.add(Arc::new(JumpPlugin::default()), &app);
-        let out = app
-            .dispatch(&Invocation::with_args(
-                "jump.candidates",
-                &serde_json::json!({ "query": "alpha" }),
-            ))
-            .unwrap();
-        let Outcome::Value(v) = out else {
-            panic!("expected value")
+        // The index is gathered on a worker; the command only ranks it.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let arr = loop {
+            let Outcome::Value(v) = app
+                .dispatch(&Invocation::with_args(
+                    "jump.candidates",
+                    &serde_json::json!({ "query": "alpha" }),
+                ))
+                .unwrap()
+            else {
+                panic!("expected value")
+            };
+            let arr = v.as_array().unwrap().clone();
+            if !arr.is_empty() {
+                break arr;
+            }
+            assert!(std::time::Instant::now() < deadline, "no candidates");
+            std::thread::sleep(Duration::from_millis(10));
         };
-        let arr = v.as_array().unwrap();
         assert!(
             arr.iter()
                 .any(|c| c["path"] == "/tmp/fake-alpha" && c["source"] == "zoxide")
         );
         assert!(!arr.iter().any(|c| c["path"] == "/tmp/fake-beta"));
+        app.plugins.set_enabled(ID, false, &app);
+        app.plugins.set_enabled(ID, true, &app);
+        assert!(app.commands.get("jump.candidates").is_some());
     }
 
     #[test]
@@ -462,16 +538,28 @@ mod tests {
                 Some(f1.clone())
             );
         }
-        // jump.to a file: parent opened, file selected.
+        // jump.to a file: parent opened, file selected once listed.
         app.dispatch(&Invocation::with_args(
             "jump.to",
-            &serde_json::json!({ "path": f1.to_string_lossy() }),
+            &serde_json::json!({ "path": PathArg::from(f1.as_path()) }),
         ))
         .unwrap();
-        let ws = app.workspace.read();
-        let p = ws.pane(pane).unwrap();
-        assert_eq!(p.location().unwrap().path().unwrap(), tmp.path());
-        assert_eq!(p.selection.len(), 1);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            app.pump();
+            let ws = app.workspace.read();
+            let p = ws.pane(pane).unwrap();
+            if p.location().and_then(Location::path).as_deref() == Some(tmp.path())
+                && p.selection.len() == 1
+            {
+                let id = p.selection.iter().next().unwrap();
+                assert_eq!(p.listing.get(id).unwrap().name, "one.txt");
+                break;
+            }
+            drop(ws);
+            assert!(std::time::Instant::now() < deadline, "never selected");
+            std::thread::sleep(Duration::from_millis(5));
+        }
         assert!(
             app.registry
                 .places

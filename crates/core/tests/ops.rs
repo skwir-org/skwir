@@ -664,3 +664,52 @@ fn a_cross_device_move_redoes_and_is_idempotent() {
     );
     assert!(remote.path().join("a").exists() && !root.join("a").exists());
 }
+
+#[test]
+fn observers_hear_what_holds_after_each_run_until_withdrawn() {
+    let tmp = Scratch::new();
+    let root = tmp.path();
+    std::fs::create_dir(root.join("d")).unwrap();
+    std::fs::write(root.join("a"), b"a").unwrap();
+    let app = bibli_core::app::App::new(bibli_core::app::AppConfig::ephemeral(root)).unwrap();
+    let heard = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let sink = std::sync::Arc::clone(&heard);
+    app.executor.observe(
+        "test",
+        std::sync::Arc::new(move |changes: &[bibli_core::op::Change]| {
+            sink.lock().push(changes.to_vec());
+        }),
+    );
+    let plan = Plan::with_steps(
+        "move",
+        vec![Box::new(Move {
+            entry: EntryRef::from_path(root.join("a")).unwrap(),
+            dest_dir: root.join("d"),
+        })],
+    );
+    assert!(
+        app.executor
+            .execute_blocking(&plan, app.lifetime())
+            .error
+            .is_none()
+    );
+    assert!(app.executor.undo_blocking(app.lifetime()).is_some());
+    let expected = [
+        bibli_core::op::Change::Move {
+            from: root.join("a"),
+            to: root.join("d/a"),
+        },
+        bibli_core::op::Change::Move {
+            from: root.join("d/a"),
+            to: root.join("a"),
+        },
+    ];
+    assert_eq!(
+        heard.lock().iter().flatten().cloned().collect::<Vec<_>>(),
+        expected,
+        "the move and its undo"
+    );
+    app.unregister_owner("test");
+    assert!(app.executor.redo_blocking(app.lifetime()).is_some());
+    assert_eq!(heard.lock().len(), 2, "withdrawn with its owner");
+}

@@ -8,20 +8,31 @@
 //! to rename it, put a relative path with `/` in the name to move it into
 //! that folder (created if needed), add a line without a handle ending in
 //! `/` to create a folder. Line order is ignored. New files are not
-//! supported.
+//! supported. A folder named in a path is the folder as the edited buffer
+//! leaves it: `b/x` after renaming `a/` to `b/` moves `x` into it.
+//!
+//! Names are escaped so every name is one line that reads back exactly:
+//! `\\` for a backslash, and `\xHH` for a byte that is not text, a control
+//! character (a newline in a name), or a space at either end of a name.
 
 use std::collections::{HashMap, HashSet};
+use std::ffi::{OsStr, OsString};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use bibli_core::app::{App, NotifyLevel};
+use bibli_core::CancelToken;
+use bibli_core::app::{App, NotifyLevel, PaneArg};
 use bibli_core::command::{Invocation, Outcome};
 use bibli_core::entry::EntryId;
-use bibli_core::op::{EntryRef, Mkdir, Move, Operation, Plan, Rename, Trash};
+use bibli_core::op::{
+    EntryRef, Mkdir, Move, Operation, Plan, Rename, RenameOrderError, RenameRequest, Trash,
+    order_renames, valid_file_name,
+};
 use bibli_core::plugin::Plugin;
 use bibli_core::registry::{KeyBinding, MenuItem};
 use bibli_core::scheduler::Priority;
 use bibli_core::workspace::PaneId;
+use parking_lot::Mutex;
 
 const ID: &str = "edit-as-buffer";
 
@@ -32,14 +43,93 @@ const HEADER: &str = "\
 #   name with a slash        -> move into that folder (created if needed)
 #   new line ending with /   -> new folder
 # Keep the number at the start of each line. Order does not matter.
+# In names, \\\\ is a backslash and \\xHH a raw byte (\\x0a a newline,
+# \\x20 a space at either end).
 ";
 
+#[cfg(unix)]
+fn os_bytes(s: &OsStr) -> &[u8] {
+    std::os::unix::ffi::OsStrExt::as_bytes(s)
+}
+
+#[cfg(not(unix))]
+fn os_bytes(s: &OsStr) -> &[u8] {
+    s.as_encoded_bytes()
+}
+
+#[cfg(unix)]
+fn os_string(bytes: Vec<u8>) -> OsString {
+    std::os::unix::ffi::OsStringExt::from_vec(bytes)
+}
+
+#[cfg(not(unix))]
+fn os_string(bytes: Vec<u8>) -> OsString {
+    String::from_utf8_lossy(&bytes).into_owned().into()
+}
+
+/// `name` as one line of text that [`unescape`] turns back into it.
+pub fn escape(name: &OsStr) -> String {
+    let bytes = os_bytes(name);
+    let mut out = String::with_capacity(bytes.len());
+    let hex = |out: &mut String, bytes: &[u8]| {
+        for b in bytes {
+            let _ = write!(out, "\\x{b:02x}");
+        }
+    };
+    for chunk in bytes.utf8_chunks() {
+        let text = chunk.valid();
+        let chars = text.char_indices().count();
+        for (n, (at, c)) in text.char_indices().enumerate() {
+            let edge = (n == 0 && out.is_empty()) || (n + 1 == chars && chunk.invalid().is_empty());
+            if c == '\\' {
+                out.push_str("\\\\");
+            } else if c.is_control() || (edge && c.is_whitespace()) {
+                hex(&mut out, &text.as_bytes()[at..at + c.len_utf8()]);
+            } else {
+                out.push(c);
+            }
+        }
+        hex(&mut out, chunk.invalid());
+    }
+    out
+}
+
+/// The bytes `text` stands for: `\\` and `\xHH` decoded, any other
+/// backslash kept as it is.
+pub fn unescape(text: &str) -> Vec<u8> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' {
+            if bytes.get(i + 1) == Some(&b'\\') {
+                out.push(b'\\');
+                i += 2;
+                continue;
+            }
+            if bytes.get(i + 1) == Some(&b'x')
+                && let Some(b) = bytes
+                    .get(i + 2..i + 4)
+                    .and_then(|h| std::str::from_utf8(h).ok())
+                    .and_then(|h| u8::from_str_radix(h, 16).ok())
+            {
+                out.push(b);
+                i += 4;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    out
+}
+
 /// The buffer text for `entries` (id, name, `is_dir`), one line each.
-pub fn to_buffer(entries: &[(EntryId, String, bool)]) -> String {
+pub fn to_buffer(entries: &[(EntryId, OsString, bool)]) -> String {
     let mut out = String::from(HEADER);
     for (i, (_, name, is_dir)) in entries.iter().enumerate() {
         let slash = if *is_dir { "/" } else { "" };
-        let _ = writeln!(out, "{:>4}  {name}{slash}", i + 1);
+        let _ = writeln!(out, "{:>4}  {}{slash}", i + 1, escape(name));
     }
     out
 }
@@ -50,147 +140,136 @@ pub enum BufferError {
     UnknownHandle { line: usize, handle: usize },
     #[error("line {line}: handle {handle} appears twice")]
     DuplicateHandle { line: usize, handle: usize },
-    #[error("line {line}: invalid name `{name}`")]
-    InvalidName { line: usize, name: String },
+    #[error("line {line}: invalid name `{name}`: {reason}")]
+    InvalidName {
+        line: usize,
+        name: String,
+        reason: String,
+    },
     #[error("`{name}` is the target of several lines")]
     DuplicateTarget { name: String },
+    #[error("line {line}: `{name}` already exists")]
+    Taken { line: usize, name: String },
     #[error(
         "line {line}: new files are not supported (`{name}`); end the line with / for a folder"
     )]
     NewFile { line: usize, name: String },
-    #[error("line {line}: cannot parse `{text}`")]
-    Unparsable { line: usize, text: String },
 }
 
 enum Line {
     Handled {
         line: usize,
         handle: usize,
-        target: String,
+        target: Target,
     },
     New {
         line: usize,
-        name: String,
+        target: Target,
     },
+}
+
+/// A parsed name: folders below the listed one, then the final name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Target {
+    sub: Vec<OsString>,
+    name: OsString,
+    /// Written with a trailing `/`.
+    folder: bool,
+}
+
+impl Target {
+    fn rel(&self) -> PathBuf {
+        let mut p: PathBuf = self.sub.iter().collect();
+        p.push(&self.name);
+        p
+    }
+}
+
+fn parse_target(text: &str, line: usize) -> Result<Target, BufferError> {
+    let invalid = |reason: String| BufferError::InvalidName {
+        line,
+        name: text.to_owned(),
+        reason,
+    };
+    // Escapes decode to bytes, so a `\x2f` is a slash in a name, which
+    // `valid_file_name` refuses, not a separator.
+    if text.starts_with('/') {
+        return Err(invalid("a path must stay inside this folder".into()));
+    }
+    let folder = text.ends_with('/');
+    let mut parts: Vec<OsString> = text
+        .split('/')
+        .filter(|p| !p.is_empty())
+        .map(|p| os_string(unescape(p)))
+        .collect();
+    let Some(name) = parts.pop() else {
+        return Err(invalid("a name cannot be empty".into()));
+    };
+    for part in parts.iter().chain([&name]) {
+        valid_file_name(part).map_err(|e| invalid(e.to_string()))?;
+    }
+    Ok(Target {
+        sub: parts,
+        name,
+        folder,
+    })
 }
 
 fn parse(edited: &str) -> Result<Vec<Line>, BufferError> {
     let mut out = Vec::new();
     for (i, raw) in edited.lines().enumerate() {
         let line = i + 1;
-        let text = raw.trim_end();
-        if text.trim().is_empty() || text.trim_start().starts_with('#') {
+        let t = raw.trim();
+        if t.is_empty() || t.starts_with('#') {
             continue;
         }
-        let t = text.trim_start();
-        let digits: String = t.chars().take_while(char::is_ascii_digit).collect();
-        if !digits.is_empty() {
-            let rest = &t[digits.len()..];
-            if rest.starts_with("  ") || rest.starts_with('\t') {
-                let handle: usize = digits.parse().map_err(|_| BufferError::Unparsable {
-                    line,
-                    text: text.to_owned(),
-                })?;
-                out.push(Line::Handled {
-                    line,
-                    handle,
-                    target: rest.trim().to_owned(),
-                });
-                continue;
-            }
+        let digits = t.bytes().take_while(u8::is_ascii_digit).count();
+        let rest = &t[digits..];
+        if digits > 0
+            && (rest.starts_with("  ") || rest.starts_with('\t'))
+            && let Ok(handle) = t[..digits].parse::<usize>()
+        {
+            out.push(Line::Handled {
+                line,
+                handle,
+                target: parse_target(rest.trim(), line)?,
+            });
+        } else {
+            out.push(Line::New {
+                line,
+                target: parse_target(t, line)?,
+            });
         }
-        out.push(Line::New {
-            line,
-            name: t.trim().to_owned(),
-        });
     }
     Ok(out)
 }
 
-fn valid_component(c: &str) -> bool {
-    !c.is_empty() && c != "." && c != ".." && !c.contains('\0')
-}
-
-/// Split `target` into (relative subdirectory, final name), validating.
-fn split_target(target: &str, line: usize) -> Result<(PathBuf, String), BufferError> {
-    let t = target.trim_end_matches('/');
-    let mut parts: Vec<&str> = t.split('/').filter(|p| !p.is_empty()).collect();
-    let Some(name) = parts.pop() else {
-        return Err(BufferError::InvalidName {
-            line,
-            name: target.to_owned(),
-        });
-    };
-    if target.starts_with('/')
-        || !valid_component(name)
-        || !parts.iter().all(|p| valid_component(p))
-    {
-        return Err(BufferError::InvalidName {
-            line,
-            name: target.to_owned(),
-        });
-    }
-    Ok((parts.iter().collect(), name.to_owned()))
-}
-
-/// Order renames within one directory so targets are free, parking cycles
-/// under temp names. Returns (index, new name) steps.
-fn order_renames(old: &[String], renames: &HashMap<usize, String>) -> Vec<(usize, String)> {
-    let index_of_old: HashMap<&str, usize> = old
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.as_str(), i))
-        .collect();
-    let dep: HashMap<usize, usize> = renames
-        .iter()
-        .filter_map(|(&i, t)| {
-            index_of_old
-                .get(t.as_str())
-                .filter(|&&j| j != i && renames.contains_key(&j))
-                .map(|&j| (i, j))
-        })
-        .collect();
-    let mut done = HashSet::new();
-    let mut steps = Vec::new();
-    let mut pending: Vec<usize> = renames.keys().copied().collect();
-    pending.sort_unstable();
-    let mut parked = Vec::new();
-    let mut k = 0;
-    while !pending.is_empty() {
-        let before = pending.len();
-        pending.retain(|&i| {
-            if dep.get(&i).is_none_or(|j| done.contains(j)) {
-                steps.push((i, renames[&i].clone()));
-                done.insert(i);
-                false
-            } else {
-                true
-            }
-        });
-        if pending.len() == before {
-            let i = pending.remove(0);
-            k += 1;
-            steps.push((i, format!(".bibli-edit-tmp-{k}")));
-            done.insert(i);
-            parked.push((i, renames[&i].clone()));
-        }
-    }
-    steps.extend(parked);
-    steps
+/// A listed entry and what the buffer says becomes of it.
+enum Fate {
+    Trash,
+    Keep,
+    Rename(OsString),
+    Move(Target),
 }
 
 /// Diff the edited buffer against `original` (ref, name, `is_dir`) for the
-/// directory `dir` and build the plan.
+/// directory `dir` and build the plan. Stats the folder's contents where
+/// the buffer alone cannot say whether a name is free: worker-only.
+///
+/// The steps run in an order where each one finds its entry and its target
+/// free: trash; moves into folders that stay as they are; renames in `dir`,
+/// ordered by [`order_renames`] (an entry whose name is wanted but that
+/// moves into a folder that does not exist yet is parked under a free name
+/// first); new folders; the remaining moves; and renames of moved entries.
 pub fn diff_buffer(
-    original: &[(EntryRef, String, bool)],
+    original: &[(EntryRef, OsString, bool)],
     edited: &str,
     dir: &Path,
 ) -> Result<Plan, BufferError> {
     let lines = parse(edited)?;
-    let mut seen_handles: HashSet<usize> = HashSet::new();
-    let mut renames: HashMap<usize, String> = HashMap::new(); // same-dir renames
-    let mut moves: Vec<(usize, PathBuf, String)> = Vec::new(); // (index, subdir, final name)
-    let mut new_dirs: Vec<PathBuf> = Vec::new();
+    let mut fates: Vec<Fate> = original.iter().map(|_| Fate::Trash).collect();
+    let mut line_of: Vec<usize> = vec![0; original.len()];
+    let mut new_dirs: Vec<(usize, PathBuf)> = Vec::new();
     let mut targets: HashSet<PathBuf> = HashSet::new();
     let mut claim = |p: PathBuf| -> Result<(), BufferError> {
         if !targets.insert(p.clone()) {
@@ -210,143 +289,310 @@ pub fn diff_buffer(
                 if handle == 0 || handle > original.len() {
                     return Err(BufferError::UnknownHandle { line, handle });
                 }
-                if !seen_handles.insert(handle) {
+                let i = handle - 1;
+                if line_of[i] != 0 {
                     return Err(BufferError::DuplicateHandle { line, handle });
                 }
-                let i = handle - 1;
-                let (sub, name) = split_target(&target, line)?;
-                claim(sub.join(&name))?;
-                if sub.as_os_str().is_empty() {
-                    if name != original[i].1 {
-                        renames.insert(i, name);
-                    }
+                line_of[i] = line;
+                claim(target.rel())?;
+                fates[i] = if !target.sub.is_empty() {
+                    Fate::Move(target)
+                } else if target.name == original[i].1 {
+                    Fate::Keep
                 } else {
-                    moves.push((i, sub, name));
-                }
+                    Fate::Rename(target.name)
+                };
             }
-            Line::New { line, name } => {
-                if !name.ends_with('/') {
-                    return Err(BufferError::NewFile { line, name });
+            Line::New { line, target } => {
+                if !target.folder {
+                    return Err(BufferError::NewFile {
+                        line,
+                        name: target.rel().to_string_lossy().into_owned(),
+                    });
                 }
-                let (sub, last) = split_target(&name, line)?;
-                let rel = sub.join(last);
-                claim(rel.clone())?;
-                new_dirs.push(rel);
+                claim(target.rel())?;
+                new_dirs.push((line, target.rel()));
             }
         }
     }
-    let old: Vec<String> = original.iter().map(|(_, n, _)| n.clone()).collect();
-    let mut steps: Vec<Box<dyn Operation>> = Vec::new();
-    // 1. Trash entries whose line disappeared.
-    for (i, (entry, _, _)) in original.iter().enumerate() {
-        if !seen_handles.contains(&(i + 1)) {
-            steps.push(Box::new(Trash {
-                entry: entry.clone(),
-            }));
+
+    // The folders of `dir` once the renames are done: final name -> where
+    // that folder is now. A path through one of them can be checked on disk.
+    let mut folders: HashMap<OsString, PathBuf> = HashMap::new();
+    for (i, (entry, name, is_dir)) in original.iter().enumerate() {
+        match &fates[i] {
+            Fate::Keep if *is_dir => {
+                folders.insert(name.clone(), entry.path.clone());
+            }
+            Fate::Rename(to) if *is_dir => {
+                folders.insert(to.clone(), entry.path.clone());
+            }
+            _ => {}
         }
     }
-    // 2. Folders to create, deepest last, deduplicated, only when missing.
-    let mut mkdirs: Vec<PathBuf> = Vec::new();
-    let want_dir = |rel: &Path, mkdirs: &mut Vec<PathBuf>| {
-        let mut acc = PathBuf::new();
-        for c in rel.components() {
-            acc.push(c);
-            let abs = dir.join(&acc);
-            if !abs.is_dir() && !mkdirs.contains(&abs) {
-                mkdirs.push(abs);
+    // Stable folders keep their name: a move into one can run before the
+    // renames, which frees the mover's name early.
+    let stable: HashSet<&OsStr> = original
+        .iter()
+        .zip(&fates)
+        .filter(|((_, _, is_dir), fate)| *is_dir && matches!(fate, Fate::Keep))
+        .map(|((_, name, _), _)| name.as_os_str())
+        .collect();
+    // Folders to create for `rel` (relative to `dir`), parents first.
+    let missing = |rel: &Path, out: &mut Vec<PathBuf>| {
+        let mut parts = rel.components();
+        let Some(top) = parts.next() else { return };
+        let top = top.as_os_str();
+        let mut now = folders.get(top).cloned();
+        let mut at = dir.join(top);
+        if now.is_none() && !out.contains(&at) {
+            out.push(at.clone());
+        }
+        for part in parts {
+            at.push(part);
+            now = now.map(|p| p.join(part)).filter(|p| p.is_dir());
+            if now.is_none() && !out.contains(&at) {
+                out.push(at.clone());
             }
         }
     };
-    for d in &new_dirs {
-        want_dir(d, &mut mkdirs);
+    let mut early_dirs = Vec::new();
+    let mut late_dirs = Vec::new();
+    for (_, rel) in &new_dirs {
+        missing(rel, &mut late_dirs);
     }
-    for (_, sub, _) in &moves {
-        want_dir(sub, &mut mkdirs);
+    let mut early = Vec::new();
+    let mut late = Vec::new();
+    for (i, fate) in fates.iter().enumerate() {
+        let Fate::Move(target) = fate else { continue };
+        let sub: PathBuf = target.sub.iter().collect();
+        if stable.contains(target.sub[0].as_os_str()) {
+            missing(&sub, &mut early_dirs);
+            early.push(i);
+        } else {
+            missing(&sub, &mut late_dirs);
+            late.push(i);
+        }
     }
-    for path in mkdirs {
+    // Names in `dir` that something wants once the renames run.
+    let wanted: HashSet<&OsStr> = fates
+        .iter()
+        .filter_map(|f| match f {
+            Fate::Rename(to) => Some(to.as_os_str()),
+            _ => None,
+        })
+        .chain(
+            late_dirs
+                .iter()
+                .filter(|p| p.parent() == Some(dir))
+                .filter_map(|p| p.file_name()),
+        )
+        .collect();
+
+    let mut steps: Vec<Box<dyn Operation>> = Vec::new();
+    let mut current: Vec<PathBuf> = original.iter().map(|(e, _, _)| e.path.clone()).collect();
+    let mut freed: HashSet<OsString> = HashSet::new();
+    for (i, (entry, name, _)) in original.iter().enumerate() {
+        if matches!(fates[i], Fate::Trash) {
+            steps.push(Box::new(Trash {
+                entry: entry.clone(),
+            }));
+            freed.insert(name.clone());
+        }
+    }
+    for path in early_dirs {
         steps.push(Box::new(Mkdir { path }));
     }
-    // 3. Same-directory renames, cycle-safe.
-    let mut current: Vec<PathBuf> = original.iter().map(|(e, _, _)| e.path.clone()).collect();
-    for (i, name) in order_renames(&old, &renames) {
-        steps.push(Box::new(Rename {
-            entry: EntryRef::new(original[i].0.id, current[i].clone()),
-            new_name: name.clone().into(),
-        }));
-        current[i] = dir.join(name);
+    for &i in &early {
+        let Fate::Move(target) = &fates[i] else {
+            unreachable!()
+        };
+        move_into(&mut steps, &mut current, i, original[i].0.id, dir, target);
+        freed.insert(original[i].1.clone());
     }
-    // 4. Moves into subfolders (targets there were validated unique).
-    for (i, sub, name) in moves {
-        let dest = dir.join(&sub);
-        steps.push(Box::new(Move {
-            entry: EntryRef::new(original[i].0.id, current[i].clone()),
-            dest_dir: dest.clone(),
-        }));
-        let after_move = dest.join(&original[i].1);
-        if name == original[i].1 {
-            current[i] = after_move;
-        } else {
-            steps.push(Box::new(Rename {
-                entry: EntryRef::new(original[i].0.id, after_move.clone()),
-                new_name: name.clone().into(),
-            }));
-            current[i] = dest.join(name);
+
+    // Renames, and the parking of late movers whose name is wanted. Once
+    // the trash and the early moves ran, a name in `dir` is taken by what
+    // stays (kept, or moving later), is free if it was freed, and is
+    // otherwise asked of the disk (a hidden file, one created since).
+    let occupied: HashSet<&OsStr> = original
+        .iter()
+        .zip(&fates)
+        .filter(|(_, f)| matches!(f, Fate::Keep | Fate::Move(_)))
+        .map(|((_, name, _), _)| name.as_os_str())
+        .collect();
+    let exists = |p: &Path| {
+        let taken_now = || p.symlink_metadata().is_ok();
+        match p.file_name() {
+            Some(name) if p.parent() == Some(dir) => {
+                !freed.contains(name) && (occupied.contains(name) || taken_now())
+            }
+            _ => taken_now(),
         }
+    };
+    let mut requests = Vec::new();
+    let mut request_line = Vec::new();
+    for (i, (entry, _, _)) in original.iter().enumerate() {
+        if let Fate::Rename(to) = &fates[i] {
+            requests.push(RenameRequest {
+                entry: entry.clone(),
+                new_name: to.clone(),
+            });
+            request_line.push(line_of[i]);
+        }
+    }
+    let mut parked_serial = 0u32;
+    for &i in &late {
+        if !wanted.contains(original[i].1.as_os_str()) {
+            continue;
+        }
+        let parked = loop {
+            parked_serial += 1;
+            let name = OsString::from(format!(".bibli-edit-{parked_serial}"));
+            if !wanted.contains(name.as_os_str()) && !exists(&dir.join(&name)) {
+                break name;
+            }
+        };
+        requests.push(RenameRequest {
+            entry: original[i].0.clone(),
+            new_name: parked.clone(),
+        });
+        request_line.push(line_of[i]);
+        current[i] = dir.join(parked);
+    }
+    let renames = order_renames(&requests, exists).map_err(|e| match e {
+        RenameOrderError::InvalidName { item, reason } => BufferError::InvalidName {
+            line: request_line[item],
+            name: requests[item].new_name.to_string_lossy().into_owned(),
+            reason,
+        },
+        RenameOrderError::Duplicate { target, .. } => BufferError::DuplicateTarget {
+            name: target.to_string_lossy().into_owned(),
+        },
+        RenameOrderError::Conflict { item, target } => BufferError::Taken {
+            line: request_line[item],
+            name: target.to_string_lossy().into_owned(),
+        },
+    })?;
+    steps.extend(
+        renames
+            .into_iter()
+            .map(|r| Box::new(r) as Box<dyn Operation>),
+    );
+
+    for path in late_dirs {
+        steps.push(Box::new(Mkdir { path }));
+    }
+    for &i in &late {
+        let Fate::Move(target) = &fates[i] else {
+            unreachable!()
+        };
+        move_into(&mut steps, &mut current, i, original[i].0.id, dir, target);
     }
     Ok(Plan::with_steps(format!("edit {}", dir.display()), steps))
 }
 
-// ------------------------------------------------------------------ plugin
-
-#[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
-struct PaneArgs {
-    #[serde(default)]
-    pane: Option<PaneId>,
+/// Move entry `i` into its target folder, then give it its final name
+/// there if that differs from the name it arrives with.
+fn move_into(
+    steps: &mut Vec<Box<dyn Operation>>,
+    current: &mut [PathBuf],
+    i: usize,
+    id: EntryId,
+    dir: &Path,
+    target: &Target,
+) {
+    let dest: PathBuf = dir.join(target.sub.iter().collect::<PathBuf>());
+    let arrives = current[i].file_name().unwrap_or_default().to_owned();
+    steps.push(Box::new(Move {
+        entry: EntryRef::new(id, current[i].clone()),
+        dest_dir: dest.clone(),
+    }));
+    current[i] = dest.join(&arrives);
+    if arrives != target.name {
+        steps.push(Box::new(Rename {
+            entry: EntryRef::new(id, current[i].clone()),
+            new_name: target.name.clone(),
+        }));
+        current[i] = dest.join(&target.name);
+    }
 }
+
+// ------------------------------------------------------------------ plugin
 
 /// The edit-as-buffer plugin. Finished editor sessions propose their plan
 /// through a weak app handle, or report errors as notifications.
 #[derive(Default)]
-pub struct EditAsBufferPlugin;
+pub struct EditAsBufferPlugin {
+    /// Cancelled on disable: a session whose editor closes afterwards
+    /// proposes nothing.
+    lifetime: Mutex<CancelToken>,
+}
 
 fn editor() -> String {
     ["VISUAL", "EDITOR"]
         .iter()
         .filter_map(|k| std::env::var(k).ok())
-        .find(|v| !v.is_empty())
+        .find(|v| !v.trim().is_empty())
         .unwrap_or_else(|| "vi".into())
 }
 
-static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// The argv that edits `file` with `editor`, read by the shell as git
+/// reads `$EDITOR`: `code --wait` or a quoted path with spaces both work.
+fn editor_argv(editor: &str, file: &Path) -> Vec<OsString> {
+    vec![
+        "/bin/sh".into(),
+        "-c".into(),
+        format!("{editor} \"$@\"").into(),
+        editor.into(),
+        file.as_os_str().to_owned(),
+    ]
+}
 
-fn start_session(pane: Option<PaneId>, app: &App) -> anyhow::Result<Outcome> {
-    let pane = pane.unwrap_or_else(|| app.workspace.read().active_id());
-    let (dir, original) = {
+/// A private file for the buffer: created exclusively, readable by the
+/// user alone, in the runtime directory when there is one.
+fn buffer_file(text: &str) -> anyhow::Result<tempfile::TempPath> {
+    use std::io::Write as _;
+    let dir = dirs::runtime_dir().unwrap_or_else(std::env::temp_dir);
+    let mut file = tempfile::Builder::new()
+        .prefix("bibli-edit-")
+        .suffix(".txt")
+        .tempfile_in(dir)?;
+    file.write_all(text.as_bytes())?;
+    file.flush()?;
+    Ok(file.into_temp_path())
+}
+
+type Original = Vec<(EntryRef, OsString, bool)>;
+
+fn start_session(
+    pane: Option<PaneId>,
+    app: &App,
+    lifetime: CancelToken,
+) -> anyhow::Result<Outcome> {
+    let pane = app.pane_or_active(pane);
+    let dir = app.pane_dir(pane)?;
+    let original: Original = {
         let ws = app.workspace.read();
         let p = ws
             .pane(pane)
             .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-        let dir = p
-            .location()
-            .and_then(bibli_core::Location::path)
-            .ok_or_else(|| anyhow::anyhow!("pane is not showing a directory"))?;
         let open = p
             .open
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("pane has no open location"))?;
-        let order = p.listing.sorted(p.sort);
-        let original: Vec<(EntryRef, String, bool)> = order
+        p.listing
+            .sorted(p.sort)
             .iter()
             .filter_map(|&id| {
                 let e = p.listing.get(id)?;
                 Some((
                     EntryRef::new(id, open.path_of(id)?),
-                    e.name_str().into_owned(),
+                    e.name.clone(),
                     e.is_dir(),
                 ))
             })
-            .collect();
-        (dir, original)
+            .collect()
     };
     let buffer = to_buffer(
         &original
@@ -354,41 +600,42 @@ fn start_session(pane: Option<PaneId>, app: &App) -> anyhow::Result<Outcome> {
             .map(|(r, n, d)| (r.id, n.clone(), *d))
             .collect::<Vec<_>>(),
     );
-    let file = std::env::temp_dir().join(format!(
-        "bibli-edit-{}-{}.txt",
-        std::process::id(),
-        COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
-    std::fs::write(&file, &buffer)?;
-    let mut child = bibli_platform::open::open_terminal_with(
-        &dir,
-        &[editor(), file.to_string_lossy().into_owned()],
-    )?;
+    let file = buffer_file(&buffer)?;
+    let argv = editor_argv(&editor(), &file);
     let weak = app.weak();
-    app.scheduler.spawn(
-        Priority::Background,
-        "edit-as-buffer.wait",
-        app.lifetime().child(),
-        move || {
-            let result = match child.wait() {
-                Ok(status) if status.success() => match std::fs::read_to_string(&file) {
-                    Ok(text) => diff_buffer(&original, &text, &dir).map_err(|e| e.to_string()),
-                    Err(e) => Err(format!("cannot read the edited buffer: {e}")),
-                },
-                Ok(status) => Err(format!("editor exited with {status}")),
-                Err(e) => Err(format!("editor failed: {e}")),
-            };
-            let _ = std::fs::remove_file(&file);
-            let Some(app) = weak.upgrade() else { return };
-            match result {
-                Ok(plan) if plan.is_empty() => {
-                    app.notify(NotifyLevel::Info, "edit as text: no changes");
+    let cwd = dir.clone();
+    bibli_platform::open::open_terminal_watched(&cwd, &argv, move |status| {
+        // The reaper thread only hands the result to a worker.
+        let Some(app) = weak.upgrade() else { return };
+        let weak = app.weak();
+        app.scheduler.spawn(
+            Priority::Normal,
+            "edit-as-buffer.diff",
+            lifetime.clone(),
+            move || {
+                let result = match status {
+                    Ok(status) if status.success() => match std::fs::read_to_string(&file) {
+                        Ok(text) => diff_buffer(&original, &text, &dir).map_err(|e| e.to_string()),
+                        Err(e) => Err(format!("cannot read the edited buffer: {e}")),
+                    },
+                    Ok(status) => Err(format!("editor exited with {status}")),
+                    Err(e) => Err(format!("editor failed: {e}")),
+                };
+                drop(file);
+                let Some(app) = weak.upgrade() else { return };
+                if lifetime.is_cancelled() {
+                    return;
                 }
-                Ok(plan) => app.propose(plan),
-                Err(e) => app.notify(NotifyLevel::Error, format!("edit as text: {e}")),
-            }
-        },
-    );
+                match result {
+                    Ok(plan) if plan.is_empty() => {
+                        app.notify(NotifyLevel::Info, "edit as text: no changes");
+                    }
+                    Ok(plan) => app.propose(plan),
+                    Err(e) => app.notify(NotifyLevel::Error, format!("edit as text: {e}")),
+                }
+            },
+        );
+    })?;
     Ok(Outcome::Done)
 }
 
@@ -406,12 +653,14 @@ impl Plugin for EditAsBufferPlugin {
     }
 
     fn register(&self, app: &App) {
-        app.commands.register::<PaneArgs, _>(
+        let lifetime = app.lifetime().child();
+        *self.lifetime.lock() = lifetime.clone();
+        app.commands.register::<PaneArg, _>(
             ID,
             "edit_as_buffer",
             "Edit as text…",
             "Open the listing in $EDITOR; saving proposes a plan for review",
-            |a, app| start_session(a.pane, app),
+            move |a, app| start_session(a.pane, app, lifetime.clone()),
         );
         app.registry.keymap.add(
             ID,
@@ -434,6 +683,10 @@ impl Plugin for EditAsBufferPlugin {
             },
         );
     }
+
+    fn on_disable(&self, _app: &App) {
+        self.lifetime.lock().cancel();
+    }
 }
 
 #[cfg(test)]
@@ -445,11 +698,18 @@ mod tests {
     /// Environment writes are unsafe in edition 2024; nextest runs each test
     /// in its own process and this runs before any thread is spawned.
     #[allow(unsafe_code)]
-    fn set_env(key: &str, value: &Path) {
+    fn set_env(key: &str, value: impl AsRef<OsStr>) {
         unsafe { std::env::set_var(key, value) };
     }
 
-    fn refs(dir: &Path, names: &[(&str, bool)]) -> Vec<(EntryRef, String, bool)> {
+    fn scratch() -> tempfile::TempDir {
+        // Trashed in some tests: on the home filesystem, like the user's files.
+        let base = std::env::home_dir().unwrap().join(".cache/bibli-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        tempfile::tempdir_in(base).unwrap()
+    }
+
+    fn refs(dir: &Path, names: &[(&str, bool)]) -> Original {
         names
             .iter()
             .map(|(n, d)| {
@@ -459,13 +719,24 @@ mod tests {
                 } else {
                     std::fs::write(&p, n.as_bytes()).unwrap();
                 }
-                (EntryRef::from_path(&p).unwrap(), (*n).to_string(), *d)
+                (EntryRef::from_path(&p).unwrap(), OsString::from(n), *d)
             })
             .collect()
     }
 
     fn kinds(plan: &Plan) -> Vec<&'static str> {
         plan.steps.iter().map(|s| s.kind()).collect()
+    }
+
+    fn apply(plan: &Plan, dir: &Path) -> Arc<App> {
+        let app = App::new(bibli_core::app::AppConfig::ephemeral(dir.join(".app"))).unwrap();
+        let r = app.executor.execute_blocking(plan, app.lifetime());
+        assert!(r.error.is_none(), "{:?}", r.error);
+        app
+    }
+
+    fn read(p: PathBuf) -> String {
+        std::fs::read_to_string(p).unwrap()
     }
 
     #[test]
@@ -479,22 +750,56 @@ mod tests {
     }
 
     #[test]
+    fn names_read_back_exactly() {
+        let mut names: Vec<OsString> = [
+            " notes",
+            "notes ",
+            "a\nb",
+            "back\\slash",
+            "tab\there",
+            "été",
+            "x\\x41",
+            "#1",
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+        #[cfg(unix)]
+        names.push(os_string(b"caf\xe9".to_vec()));
+        for name in &names {
+            let line = escape(name);
+            assert!(!line.contains('\n') && line.trim() == line, "{line:?}");
+            assert_eq!(&os_string(unescape(&line)), name, "{line:?}");
+        }
+        assert_eq!(escape(OsStr::new("a b")), "a b", "inner spaces stay");
+    }
+
+    #[test]
+    fn an_unedited_buffer_changes_nothing_whatever_the_names() {
+        let tmp = scratch();
+        let dir = tmp.path();
+        let orig = refs(dir, &[(" lead", false), ("trail ", false), ("a\\b", true)]);
+        let buffer = to_buffer(
+            &orig
+                .iter()
+                .map(|(r, n, d)| (r.id, n.clone(), *d))
+                .collect::<Vec<_>>(),
+        );
+        assert!(diff_buffer(&orig, &buffer, dir).unwrap().is_empty());
+    }
+
+    #[test]
     fn diff_rename_move_delete_and_new_dir() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = scratch();
         let dir = tmp.path();
         let orig = refs(dir, &[("a.txt", false), ("b.txt", false), ("old", true)]);
         let edited = "# header\n   1  renamed.txt\n   2  archive/2024/b.txt\nphotos/\n";
         let plan = diff_buffer(&orig, edited, dir).unwrap();
-        // old/ (line 3) deleted -> trash; mkdir archive, archive/2024, photos; rename a; move b
         assert_eq!(
             kinds(&plan),
-            ["trash", "mkdir", "mkdir", "mkdir", "rename", "move"]
+            ["trash", "rename", "mkdir", "mkdir", "mkdir", "move"]
         );
-        let r = App::new(bibli_core::app::AppConfig::ephemeral(dir.join("app")))
-            .unwrap()
-            .executor
-            .execute_blocking(&plan, &bibli_core::CancelToken::new());
-        assert!(r.error.is_none(), "{:?}", r.error);
+        apply(&plan, dir);
         assert!(
             dir.join("renamed.txt").exists()
                 && dir.join("archive/2024/b.txt").exists()
@@ -505,32 +810,87 @@ mod tests {
 
     #[test]
     fn diff_swap_and_move_with_rename() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = scratch();
         let dir = tmp.path();
         let orig = refs(dir, &[("a", false), ("b", false), ("c", false)]);
         let plan = diff_buffer(&orig, "1  b\n2  a\n3  sub/renamed\n", dir).unwrap();
         assert_eq!(
             kinds(&plan),
-            ["mkdir", "rename", "rename", "rename", "move", "rename"]
+            ["rename", "rename", "rename", "mkdir", "move", "rename"]
         );
-        let app = App::new(bibli_core::app::AppConfig::ephemeral(dir.join("app"))).unwrap();
-        let r = app.executor.execute_blocking(&plan, app.lifetime());
-        assert!(r.error.is_none(), "{:?}", r.error);
-        assert_eq!(std::fs::read_to_string(dir.join("a")).unwrap(), "b");
-        assert_eq!(std::fs::read_to_string(dir.join("b")).unwrap(), "a");
-        assert_eq!(
-            std::fs::read_to_string(dir.join("sub/renamed")).unwrap(),
-            "c"
-        );
+        let app = apply(&plan, dir);
+        assert_eq!(read(dir.join("a")), "b");
+        assert_eq!(read(dir.join("b")), "a");
+        assert_eq!(read(dir.join("sub/renamed")), "c");
         let u = app.executor.undo_blocking(app.lifetime()).unwrap();
         assert!(u.error.is_none(), "{:?}", u.error);
-        assert_eq!(std::fs::read_to_string(dir.join("a")).unwrap(), "a");
+        assert_eq!(read(dir.join("a")), "a");
         assert!(dir.join("c").exists() && !dir.join("sub").exists());
     }
 
     #[test]
+    fn a_name_freed_by_a_move_can_be_taken() {
+        let tmp = scratch();
+        let dir = tmp.path();
+        let orig = refs(dir, &[("a", false), ("b", false)]);
+        // a moves into a folder that does not exist yet, b takes its name.
+        let plan = diff_buffer(&orig, "1  sub/a\n2  a\n", dir).unwrap();
+        apply(&plan, dir);
+        assert_eq!(read(dir.join("sub/a")), "a");
+        assert_eq!(read(dir.join("a")), "b");
+    }
+
+    #[test]
+    fn a_move_into_a_stable_folder_frees_its_name_first() {
+        let tmp = scratch();
+        let dir = tmp.path();
+        let orig = refs(dir, &[("a", false), ("b", false), ("keep", true)]);
+        let plan = diff_buffer(&orig, "1  keep/deep/a\n2  a\n3  keep/\n", dir).unwrap();
+        assert_eq!(kinds(&plan), ["mkdir", "move", "rename"]);
+        apply(&plan, dir);
+        assert_eq!(read(dir.join("keep/deep/a")), "a");
+        assert_eq!(read(dir.join("a")), "b");
+    }
+
+    #[test]
+    fn a_move_into_a_renamed_folder_follows_the_new_name() {
+        let tmp = scratch();
+        let dir = tmp.path();
+        let orig = refs(dir, &[("a", true), ("c", false)]);
+        let plan = diff_buffer(&orig, "1  b/\n2  b/c\n", dir).unwrap();
+        assert_eq!(kinds(&plan), ["rename", "move"], "no folder b is created");
+        apply(&plan, dir);
+        assert_eq!(read(dir.join("b/c")), "c");
+    }
+
+    #[test]
+    fn a_folder_can_move_into_a_new_folder_of_its_own_name() {
+        let tmp = scratch();
+        let dir = tmp.path();
+        let orig = refs(dir, &[("a", false)]);
+        let plan = diff_buffer(&orig, "1  a/a\n", dir).unwrap();
+        apply(&plan, dir);
+        assert_eq!(read(dir.join("a/a")), "a");
+    }
+
+    #[test]
+    fn a_hidden_file_in_the_way_is_reported() {
+        let tmp = scratch();
+        let dir = tmp.path();
+        let orig = refs(dir, &[("a", false)]);
+        std::fs::write(dir.join(".hidden"), b"").unwrap();
+        assert_eq!(
+            diff_buffer(&orig, "1  .hidden\n", dir).unwrap_err(),
+            BufferError::Taken {
+                line: 1,
+                name: dir.join(".hidden").to_string_lossy().into_owned()
+            }
+        );
+    }
+
+    #[test]
     fn diff_errors() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = scratch();
         let dir = tmp.path();
         let orig = refs(dir, &[("a", false), ("b", false)]);
         assert_eq!(
@@ -558,52 +918,105 @@ mod tests {
             diff_buffer(&orig, "1  ..\n2  b\n", dir).unwrap_err(),
             BufferError::InvalidName { .. }
         ));
+        assert!(matches!(
+            diff_buffer(&orig, "1  x\\x2fy\n2  b\n", dir).unwrap_err(),
+            BufferError::InvalidName { .. }
+        ));
         assert!(
             diff_buffer(&orig, "1  a\n2  b\n", dir).unwrap().is_empty(),
             "no change, empty plan"
         );
     }
 
+    #[cfg(unix)]
     #[test]
-    fn end_to_end_with_a_fake_editor_and_terminal() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("work");
-        std::fs::create_dir(&dir).unwrap();
-        std::fs::write(dir.join("one.txt"), b"1").unwrap();
-        let bin = tmp.path().join("bin");
+    fn the_buffer_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let file = buffer_file("x").unwrap();
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    /// A fake terminal that runs its `-e` arguments, and an editor that
+    /// renames `one.txt` in the buffer once `gate` exists.
+    fn fake_tools(tmp: &Path, gate: &Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let bin = tmp.join("bin");
         std::fs::create_dir(&bin).unwrap();
-        // The fake terminal runs its `-e` arguments; the fake editor rewrites the buffer.
         std::fs::write(
-            bin.join("fakeed"),
-            "#!/bin/sh\nf=\"$1\"\nsed -i 's/one.txt/two.txt/' \"$f\"\n",
+            bin.join("fake ed"),
+            format!(
+                "#!/bin/sh\n[ \"$1\" = --flag ] || exit 3\nwhile [ ! -e '{}' ]; do sleep 0.01; done\nsed -i 's/one.txt/two.txt/' \"$2\"\n",
+                gate.display()
+            ),
         )
         .unwrap();
         std::fs::write(bin.join("faketerm"), "#!/bin/sh\nshift\nexec \"$@\"\n").unwrap();
-        for f in ["fakeed", "faketerm"] {
-            use std::os::unix::fs::PermissionsExt;
+        for f in ["fake ed", "faketerm"] {
             std::fs::set_permissions(bin.join(f), std::fs::Permissions::from_mode(0o755)).unwrap();
         }
-        set_env("TERMINAL", &bin.join("faketerm"));
-        set_env("VISUAL", &bin.join("fakeed"));
-        let app = App::new(bibli_core::app::AppConfig::ephemeral(
-            tmp.path().join("app"),
-        ))
-        .unwrap();
-        app.plugins.add(Arc::new(EditAsBufferPlugin), &app);
+        set_env("TERMINAL", bin.join("faketerm"));
+        // Quoted, with an argument: read by the shell like git does.
+        set_env(
+            "VISUAL",
+            format!("'{}' --flag", bin.join("fake ed").display()),
+        );
+        bin
+    }
+
+    fn session(tmp: &Path) -> (Arc<App>, PathBuf) {
+        let dir = tmp.join("work");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("one.txt"), b"1").unwrap();
+        let app = App::new(bibli_core::app::AppConfig::ephemeral(tmp.join("app"))).unwrap();
+        app.plugins
+            .add(Arc::new(EditAsBufferPlugin::default()), &app);
         let pane = app.workspace.read().active_id();
         app.navigate(pane, &bibli_core::Location::from_path(&dir))
             .unwrap();
         assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        (app, dir)
+    }
+
+    #[test]
+    fn end_to_end_with_a_fake_editor_and_terminal() {
+        let tmp = scratch();
+        let gate = tmp.path().join("gate");
+        std::fs::write(&gate, b"").unwrap();
+        fake_tools(tmp.path(), &gate);
+        let (app, dir) = session(tmp.path());
         app.dispatch(&Invocation::new("edit_as_buffer")).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         let plan = loop {
             if let Some(p) = app.take_proposals().pop() {
                 break p;
             }
+            let notes = app.take_notifications();
+            assert!(
+                notes.is_empty(),
+                "{:?}",
+                notes.iter().map(|n| &n.text).collect::<Vec<_>>()
+            );
             assert!(std::time::Instant::now() < deadline, "no plan proposed");
             std::thread::sleep(Duration::from_millis(20));
         };
         assert_eq!(kinds(&plan), ["rename"]);
         assert!(dir.join("one.txt").exists(), "proposing never applies");
+    }
+
+    #[test]
+    fn a_session_ending_after_disable_proposes_nothing() {
+        let tmp = scratch();
+        let gate = tmp.path().join("gate");
+        fake_tools(tmp.path(), &gate);
+        let (app, _dir) = session(tmp.path());
+        app.dispatch(&Invocation::new("edit_as_buffer")).unwrap();
+        app.plugins.set_enabled(ID, false, &app);
+        std::fs::write(&gate, b"").unwrap();
+        // Wait for the editor to be done with the buffer, then some.
+        std::thread::sleep(Duration::from_millis(500));
+        assert!(app.take_proposals().is_empty());
+        app.plugins.set_enabled(ID, true, &app);
+        assert!(app.commands.get("edit_as_buffer").is_some());
     }
 }

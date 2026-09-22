@@ -1,12 +1,13 @@
 //! bibli plugin: open-with. Opens entries with the default application,
 //! enters directories, and opens a terminal in the current directory.
 
-use bibli_core::app::App;
+use bibli_core::app::{App, NotifyLevel, PaneArg};
 use bibli_core::command::{Invocation, Outcome};
 use bibli_core::entry::{EntryId, EntryKind};
 use bibli_core::location::Location;
 use bibli_core::plugin::Plugin;
 use bibli_core::registry::MenuItem;
+use bibli_core::scheduler::Priority;
 use bibli_core::workspace::PaneId;
 
 const ID: &str = "open-with";
@@ -24,20 +25,10 @@ struct OpenArgs {
     ids: Vec<EntryId>,
 }
 
-#[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
-struct PaneArgs {
-    #[serde(default)]
-    pane: Option<PaneId>,
-}
-
-fn pane_of(app: &App, pane: Option<PaneId>) -> PaneId {
-    pane.unwrap_or_else(|| app.workspace.read().active_id())
-}
-
 fn open(args: OpenArgs, app: &App) -> anyhow::Result<Outcome> {
-    let pane = pane_of(app, args.pane);
+    let pane = app.pane_or_active(args.pane);
     // Resolve (kind, path) for every target while holding the read lock, then release it.
-    let targets: Vec<(EntryKind, std::path::PathBuf)> = {
+    let (targets, lifetime): (Vec<(EntryKind, std::path::PathBuf)>, _) = {
         let ws = app.workspace.read();
         let p = ws
             .pane(pane)
@@ -51,20 +42,50 @@ fn open(args: OpenArgs, app: &App) -> anyhow::Result<Outcome> {
         } else {
             args.ids
         };
-        ids.into_iter()
+        let targets = ids
+            .into_iter()
             .filter_map(|id| {
                 let kind = p.listing.get(id)?.kind;
                 let path = open.path_of(id)?;
                 Some((kind, path))
             })
-            .collect()
+            .collect();
+        (targets, p.location_lifetime())
     };
     if targets.is_empty() {
         anyhow::bail!("nothing to open");
     }
-    if let [(EntryKind::Directory, dir)] = targets.as_slice() {
-        app.navigate(pane, &Location::from_path(dir))?;
-        return Ok(Outcome::Done);
+    match targets.as_slice() {
+        [(EntryKind::Directory, dir)] => {
+            app.navigate(pane, &Location::from_path(dir))?;
+            return Ok(Outcome::Done);
+        }
+        // A link may lead to a folder, which opens here like one; asking
+        // follows the link, which can wait on a sleeping disk, so a worker
+        // asks. Navigating away first cancels it.
+        [(EntryKind::Symlink | EntryKind::Unknown, path)] => {
+            let path = path.clone();
+            let weak = app.weak();
+            let cancel = lifetime.clone();
+            app.scheduler
+                .spawn(Priority::Normal, "open-with.resolve", lifetime, move || {
+                    let Some(app) = weak.upgrade() else { return };
+                    let result = if path.is_dir() {
+                        if cancel.is_cancelled() {
+                            return;
+                        }
+                        app.navigate(pane, &Location::from_path(&path))
+                    } else {
+                        bibli_platform::open::open_path(&path)
+                    };
+                    match result {
+                        Ok(()) => app.wake(),
+                        Err(e) => app.notify(NotifyLevel::Error, format!("{e:#}")),
+                    }
+                });
+            return Ok(Outcome::Done);
+        }
+        _ => {}
     }
     for (_, path) in &targets {
         bibli_platform::open::open_path(path)?;
@@ -88,13 +109,12 @@ fn target_dir(pane: PaneId, app: &App) -> anyhow::Result<std::path::PathBuf> {
     {
         return Ok(path);
     }
-    p.location()
-        .and_then(Location::path)
-        .ok_or_else(|| anyhow::anyhow!("pane is not showing a directory"))
+    drop(ws);
+    app.pane_dir(pane)
 }
 
 fn open_terminal(pane: Option<PaneId>, app: &App) -> anyhow::Result<Outcome> {
-    let dir = target_dir(pane_of(app, pane), app)?;
+    let dir = target_dir(app.pane_or_active(pane), app)?;
     bibli_platform::open::open_terminal(&dir)?;
     Ok(Outcome::Done)
 }
@@ -114,7 +134,7 @@ impl Plugin for OpenWithPlugin {
 
     fn register(&self, app: &App) {
         app.commands.register::<OpenArgs, _>(ID, "open", "Open", "Enter the selected directory, or open the selected files with their default application", open);
-        app.commands.register::<PaneArgs, _>(
+        app.commands.register::<PaneArg, _>(
             ID,
             "open_terminal",
             "Open terminal here",
@@ -214,6 +234,43 @@ mod tests {
             app.dispatch(&Invocation::new("open")).is_err(),
             "empty selection is an error"
         );
+    }
+
+    #[test]
+    fn open_enters_a_link_to_a_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::os::unix::fs::symlink(root.join("sub"), root.join("link")).unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(OpenWithPlugin), &app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&root)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        app.dispatch(&Invocation::with_args(
+            "select",
+            &serde_json::json!({ "names": ["link"] }),
+        ))
+        .unwrap();
+        app.dispatch(&Invocation::new("open")).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let location = || {
+            app.workspace
+                .read()
+                .pane(pane)
+                .unwrap()
+                .location()
+                .unwrap()
+                .path()
+                .unwrap()
+        };
+        while location() != root.join("link") {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "never entered the link"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     #[test]

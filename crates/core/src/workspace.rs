@@ -1,5 +1,6 @@
 //! Panes, selection, and focus: the state every view and command reads.
 
+use std::ffi::OsString;
 use std::sync::Arc;
 
 use indexmap::IndexSet;
@@ -28,29 +29,49 @@ pub struct Selection {
     items: IndexSet<EntryId>,
     pub anchor: Option<EntryId>,
     pub cursor: Option<EntryId>,
+    /// Stamped from one process-wide counter whenever the items change, so
+    /// two selections never share a nonzero stamp; 0 is an untouched one.
+    revision: u64,
 }
 
+static SELECTION_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 impl Selection {
+    /// Changes whenever the selected items may have changed: a summary of
+    /// the selection (counts, sizes) keyed on it with the listing's version
+    /// is recomputed only when needed.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    fn touch(&mut self) {
+        self.revision = SELECTION_REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// Deselect everything. The cursor stays where it was, so the keyboard
     /// carries on from there; a new location resets the whole selection.
     pub fn clear(&mut self) {
+        self.touch();
         self.items.clear();
         self.anchor = None;
     }
 
     pub fn set(&mut self, ids: impl IntoIterator<Item = EntryId>) {
+        self.touch();
         self.items = ids.into_iter().collect();
         self.anchor = self.items.first().copied();
         self.cursor = self.items.last().copied();
     }
 
     pub fn add(&mut self, id: EntryId) {
+        self.touch();
         self.items.insert(id);
         self.cursor = Some(id);
         self.anchor.get_or_insert(id);
     }
 
     pub fn toggle(&mut self, id: EntryId) {
+        self.touch();
         if !self.items.shift_remove(&id) {
             self.items.insert(id);
             self.anchor.get_or_insert(id);
@@ -59,6 +80,7 @@ impl Selection {
     }
 
     pub fn remove(&mut self, id: EntryId) {
+        self.touch();
         self.items.shift_remove(&id);
         if self.anchor == Some(id) {
             self.anchor = self.items.first().copied();
@@ -86,7 +108,11 @@ impl Selection {
 
     /// Drop ids that no longer exist in the listing.
     pub fn retain_in(&mut self, listing: &Listing) {
+        let before = self.items.len();
         self.items.retain(|id| listing.get(*id).is_some());
+        if self.items.len() != before {
+            self.touch();
+        }
         if self.anchor.is_some_and(|a| listing.get(a).is_none()) {
             self.anchor = self.items.first().copied();
         }
@@ -108,6 +134,8 @@ pub struct Pane {
     pub history: Vec<Location>,
     /// Index into `history` of the current location.
     pub history_pos: usize,
+    /// A name to select once the listing has it; see [`Pane::reveal`].
+    reveal: Option<OsString>,
 }
 
 impl Pane {
@@ -121,6 +149,7 @@ impl Pane {
             sort: SortSpec::default(),
             history: Vec::new(),
             history_pos: 0,
+            reveal: None,
         }
     }
 
@@ -138,6 +167,27 @@ impl Pane {
         self.listing = Listing::default();
         // Nothing of the old location survives, the cursor included.
         self.selection = Selection::default();
+        self.reveal = None;
+    }
+
+    /// Select the entry called `name` as soon as the listing has it: how a
+    /// jump to a file, or a script, opens its folder with the file selected
+    /// without waiting for the listing. Call it right after navigating;
+    /// the next navigation forgets it, and so does a listing that
+    /// completes without that name.
+    pub fn reveal(&mut self, name: OsString) {
+        self.reveal = Some(name);
+        self.take_reveal();
+    }
+
+    fn take_reveal(&mut self) {
+        let Some(name) = &self.reveal else { return };
+        if let Some(id) = self.listing.find_by_name(name).map(|e| e.id) {
+            self.selection.set([id]);
+            self.reveal = None;
+        } else if self.listing.is_complete() {
+            self.reveal = None;
+        }
     }
 
     pub fn location(&self) -> Option<&Location> {
@@ -151,6 +201,7 @@ impl Pane {
         let n = self.listing.drain(&rx);
         if n > 0 {
             self.selection.retain_in(&self.listing);
+            self.take_reveal();
         }
         n
     }

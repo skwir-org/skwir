@@ -1,11 +1,12 @@
 //! bibli plugin: shell. Hands the selection to a shell: copy the paths as a
-//! quoted string, or run a command in a terminal with the selection as `$@`.
+//! quoted string, or run a command in a terminal with the selection as its
+//! arguments (`"$@"` in a POSIX shell, `$argv` in fish).
 
-use std::path::PathBuf;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 
-use bibli_core::app::App;
+use bibli_core::app::{App, PaneArg};
 use bibli_core::command::{Invocation, Outcome};
-use bibli_core::location::Location;
 use bibli_core::plugin::Plugin;
 use bibli_core::registry::{KeyBinding, MenuItem};
 use bibli_core::settings::SettingSpec;
@@ -36,51 +37,63 @@ pub fn quote_paths(paths: &[PathBuf]) -> String {
         .join(" ")
 }
 
-/// The argv that runs `command` with `paths` as `$@` under `program`.
-pub fn run_argv(program: &str, command: &str, paths: &[PathBuf]) -> Vec<String> {
-    let mut argv = vec![
-        program.to_owned(),
-        "-c".to_owned(),
-        format!("{command} \"$@\""),
-        "bibli".to_owned(),
+/// How a shell takes a command and its arguments.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Family {
+    /// `sh -c 'cmd "$@"' $0 args…`
+    Posix,
+    /// `fish -c 'cmd $argv' args…`: fish rejects `$@` and has no `$0` slot.
+    Fish,
+}
+
+fn family(program: &str) -> Option<Family> {
+    let name = Path::new(program).file_name()?.to_str()?;
+    match name {
+        "sh" | "bash" | "zsh" | "dash" | "ksh" | "mksh" | "yash" | "ash" => Some(Family::Posix),
+        "fish" => Some(Family::Fish),
+        _ => None,
+    }
+}
+
+/// The argv that runs `command` with `paths` as its arguments under
+/// `program`, then leaves the terminal open on an interactive `$SHELL` so
+/// the output can be read. The wrapper is always `/bin/sh`, whatever
+/// `program` speaks; a program of unknown family is given POSIX syntax.
+pub fn run_argv(program: &str, command: &str, paths: &[PathBuf]) -> Vec<OsString> {
+    let mut argv: Vec<OsString> = vec![
+        "/bin/sh".into(),
+        "-c".into(),
+        "\"$@\"; exec \"${SHELL:-/bin/sh}\"".into(),
+        "bibli".into(),
+        program.into(),
+        "-c".into(),
     ];
-    argv.extend(paths.iter().map(|p| p.to_string_lossy().into_owned()));
+    match family(program).unwrap_or(Family::Posix) {
+        Family::Posix => {
+            argv.push(format!("{command} \"$@\"").into());
+            argv.push("bibli".into());
+        }
+        Family::Fish => argv.push(format!("{command} $argv").into()),
+    }
+    argv.extend(paths.iter().map(|p| p.as_os_str().to_owned()));
     argv
 }
 
+/// `$SHELL` when it is a shell whose syntax we know, `/bin/sh` otherwise.
 fn default_program() -> String {
     std::env::var("SHELL")
         .ok()
-        .filter(|s| !s.is_empty())
+        .filter(|s| family(s).is_some())
         .unwrap_or_else(|| "/bin/sh".into())
-}
-
-#[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
-struct PaneArgs {
-    #[serde(default)]
-    pane: Option<PaneId>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct RunArgs {
-    /// Shell command; the selected paths are appended as `"$@"`.
+    /// Shell command; the selected paths are its arguments (`"$@"`, or
+    /// `$argv` in fish).
     command: String,
     #[serde(default)]
     pane: Option<PaneId>,
-}
-
-fn pane_of(app: &App, pane: Option<PaneId>) -> PaneId {
-    pane.unwrap_or_else(|| app.workspace.read().active_id())
-}
-
-fn pane_dir(app: &App, pane: PaneId) -> anyhow::Result<PathBuf> {
-    let ws = app.workspace.read();
-    let p = ws
-        .pane(pane)
-        .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-    p.location()
-        .and_then(Location::path)
-        .ok_or_else(|| anyhow::anyhow!("pane is not showing a directory"))
 }
 
 fn selected_paths(app: &App, pane: PaneId) -> Vec<PathBuf> {
@@ -96,8 +109,8 @@ fn run(
     pane: Option<PaneId>,
     with_selection: bool,
 ) -> anyhow::Result<Outcome> {
-    let pane = pane_of(app, pane);
-    let dir = pane_dir(app, pane)?;
+    let pane = app.pane_or_active(pane);
+    let dir = app.pane_dir(pane)?;
     let paths = if with_selection {
         selected_paths(app, pane)
     } else {
@@ -108,17 +121,8 @@ fn run(
         .get(PROGRAM_KEY)
         .unwrap_or_else(default_program);
     let argv = run_argv(&program, command, &paths);
-    let child = bibli_platform::open::open_terminal_with(&dir, &argv)?;
-    // Detach: the terminal outlives us; reap it on a worker so it never zombies.
-    app.scheduler.spawn(
-        bibli_core::scheduler::Priority::Background,
-        "shell.reap",
-        app.lifetime().child(),
-        move || {
-            let mut child = child;
-            let _ = child.wait();
-        },
-    );
+    // The terminal outlives the command; the platform's reaper collects it.
+    bibli_platform::open::open_terminal_watched(&dir, &argv, |_| {})?;
     Ok(Outcome::Done)
 }
 
@@ -140,16 +144,16 @@ impl Plugin for ShellPlugin {
         app.settings.declare(SettingSpec::command(
             PROGRAM_KEY,
             "Shell",
-            "Program that runs commands on the selection. Defaults to $SHELL.",
+            "Program that runs commands on the selection: a POSIX shell or fish. Defaults to $SHELL.",
             &default_program(),
         ));
-        app.commands.register::<PaneArgs, _>(
+        app.commands.register::<PaneArg, _>(
             ID,
             "shell.copy_paths",
             "Copy paths",
             "The selected paths, shell-quoted (the UI puts the value on the clipboard)",
             |a, app| {
-                let pane = pane_of(app, a.pane);
+                let pane = app.pane_or_active(a.pane);
                 let paths = selected_paths(app, pane);
                 if paths.is_empty() {
                     anyhow::bail!("nothing selected");
@@ -163,7 +167,7 @@ impl Plugin for ShellPlugin {
             ID,
             "shell.run",
             "Run command on selection…",
-            "Run a shell command in a terminal with the selected paths as \"$@\"",
+            "Run a shell command in a terminal with the selected paths as its arguments",
             |a, app| run(app, &a.command, a.pane, true),
         );
         app.commands.register::<RunArgs, _>(
@@ -212,6 +216,7 @@ impl Plugin for ShellPlugin {
 mod tests {
     use super::*;
     use bibli_core::app::AppConfig;
+    use bibli_core::location::Location;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -228,8 +233,56 @@ mod tests {
         );
         assert_eq!(
             run_argv("/bin/sh", "ls -l", &["/x".into()]),
-            ["/bin/sh", "-c", "ls -l \"$@\"", "bibli", "/x"]
+            [
+                "/bin/sh",
+                "-c",
+                "\"$@\"; exec \"${SHELL:-/bin/sh}\"",
+                "bibli",
+                "/bin/sh",
+                "-c",
+                "ls -l \"$@\"",
+                "bibli",
+                "/x"
+            ]
         );
+        assert_eq!(
+            run_argv("/usr/bin/fish", "ls -l", &["/x".into()])[4..],
+            ["/usr/bin/fish", "-c", "ls -l $argv", "/x"]
+        );
+    }
+
+    /// Runs the argv without a terminal, with a `$SHELL` that exits at once,
+    /// and returns what the command printed.
+    fn output_of(program: &str, paths: &[PathBuf]) -> String {
+        let argv = run_argv(program, "printf '<%s>'", paths);
+        let out = std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            .env("SHELL", bibli_core::os_path::find_program("true").unwrap())
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        String::from_utf8(out.stdout).unwrap()
+    }
+
+    #[test]
+    fn the_command_sees_each_path_as_one_argument() {
+        let paths = [PathBuf::from("/x/a b"), PathBuf::from("/x/it's $HOME")];
+        assert_eq!(output_of("/bin/sh", &paths), "</x/a b></x/it's $HOME>");
+        if let Some(fish) = bibli_core::os_path::find_program("fish") {
+            assert_eq!(
+                output_of(&fish.to_string_lossy(), &paths),
+                "</x/a b></x/it's $HOME>"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn paths_that_are_not_utf8_reach_the_command_intact() {
+        use std::os::unix::ffi::OsStrExt;
+        let raw = PathBuf::from(std::ffi::OsStr::from_bytes(b"/x/caf\xe9"));
+        let argv = run_argv("/bin/sh", "true", std::slice::from_ref(&raw));
+        assert_eq!(argv.last().unwrap(), raw.as_os_str());
     }
 
     #[test]
@@ -294,13 +347,19 @@ mod tests {
             .map(str::to_owned)
             .collect();
         assert_eq!(lines[0], "-e");
-        assert_eq!(lines[1], "/bin/sh");
-        assert_eq!(lines[2], "-c");
-        assert_eq!(lines[3], "ls -l \"$@\"");
-        assert_eq!(lines[4], "bibli");
-        assert_eq!(lines[5], dir.join("a b.txt").to_string_lossy());
         assert_eq!(
-            lines[6],
+            lines[1..5],
+            [
+                "/bin/sh",
+                "-c",
+                "\"$@\"; exec \"${SHELL:-/bin/sh}\"",
+                "bibli"
+            ]
+        );
+        assert_eq!(lines[5..9], ["/bin/sh", "-c", "ls -l \"$@\"", "bibli"]);
+        assert_eq!(lines[9], dir.join("a b.txt").to_string_lossy());
+        assert_eq!(
+            lines[10],
             dir.to_string_lossy(),
             "runs in the pane's directory"
         );
