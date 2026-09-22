@@ -16,7 +16,8 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
   The picture answers a click like any player (`media::surface`, on the
   film, the audio figure and the fullscreen canvas): one click toggles
   playback and flashes which way it went in the middle, a bounded entrance
-  (`FLASH_MS`, under 200 ms) cleared by one timer, never a loop; a double
+  (`FLASH_MS`, about half a second, the one exception to the 200 ms rule,
+  because a glyph must be read) cleared by one timer, never a loop; a double
   click on a film toggles fullscreen after its second click undid the first,
   so playback is as it was.
 - Position updates carry command generations too. Discard queued and late old

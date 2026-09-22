@@ -85,7 +85,8 @@ current source before assuming a planned crate, command, or API exists.
   status bar holds state (counts, selection size, the Undo button), never
   messages. A key whose command needs a selection carries `selection` in its
   `when`, so it does nothing instead of reporting "nothing selected". The only
-  animation allowed is a bounded entrance (under 200 ms) that ends by itself.
+  animation allowed is a bounded entrance (under 200 ms) that ends by itself;
+  the player's play/pause flash (`media::FLASH_MS`) is the one longer one.
 - **Application row and pane row.** The application toolbar holds what is
   about the window: views, the Sort and display menu, New folder, Search, the
   Split and Preview toggles (in the order of what they open: the middle of

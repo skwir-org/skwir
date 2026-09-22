@@ -586,8 +586,11 @@ impl Shell {
 
 /// A full-window canvas, independent of the preview card's chrome and zoom.
 /// The image fills its bounds with Contain, including upscaling small videos.
-/// How long the flash takes to grow and fade: a bounded entrance.
-const FLASH_MS: u64 = 190;
+/// How long the flash takes to grow and fade. Longer than the entrance the
+/// rules allow elsewhere, on purpose: it is the one animation that answers
+/// a click, and players make it about half a second so the eye can read
+/// the glyph before it is gone.
+const FLASH_MS: u64 = 450;
 
 /// The picture with the click behaviour of a player on it: `inner` is the
 /// film or the audio figure, laid out as it was, and the flash sits over its
