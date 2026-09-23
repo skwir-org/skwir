@@ -280,8 +280,10 @@ fn manage(
         bibli_core::media::MAX_SIDE,
         bibli_core::media::MAX_SIDE,
     )?)?)?;
-    let audio_only =
-        crate::mime::by_name(path.as_os_str()).is_some_and(|mime| mime.0.starts_with("audio/"));
+    // By the bytes where the name is not enough: an `.ogg` may hold a film.
+    let audio_only = path.file_name().is_some_and(|name| {
+        crate::mime::identify(name, &path).is_some_and(|mime| mime.0.starts_with("audio/"))
+    });
     let mut command = Command::new(executable);
     command.arg(path).arg(scratch.path());
     if audio_only {

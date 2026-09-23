@@ -44,8 +44,30 @@ impl fmt::Display for Mime {
 ///
 /// `None` means the name says nothing (`settings.cfg`, `README`, `.env`):
 /// not that the file is binary. Only `by_content` can say that.
+///
+/// Several types can claim a name equally (`*.ogg`: Ogg audio, Vorbis,
+/// FLAC, Speex, Ogg video, Theora). The answer is then the most general of
+/// them, the one the others descend from, the same in every process: the
+/// database hands the ties back in no particular order. What such a file
+/// really holds is for [`identify`] to say, where the bytes can be read.
 pub fn by_name(name: &OsStr) -> Option<Mime> {
     imp::by_name(name)
+}
+
+/// Whether the name leaves the type to the bytes: several types claim it
+/// equally ([`by_name`]). No I/O.
+pub fn ambiguous(name: &OsStr) -> bool {
+    imp::ambiguous(name)
+}
+
+/// What the file `name` at `path` is, from its name and, only where the
+/// name is not enough, its bytes: the shared-mime-info order. A name one
+/// type claims is that type. A name several claim is settled by the magic
+/// among them (a Vorbis `.ogg` is Vorbis, a Theora one a film), and stays
+/// the name's answer when the bytes do not choose. A name no type claims is
+/// [`by_content`]'s. Reads the head of the file: call from a worker.
+pub fn identify(name: &OsStr, path: &Path) -> Option<Mime> {
+    imp::identify(name, path)
 }
 
 /// What the bytes say, for a file whose name says nothing. Reads the head
@@ -124,17 +146,72 @@ mod imp {
         mime::Mime::from_str(&m.0).ok()
     }
 
+    /// The types the name's best globs give, all of equal weight. The
+    /// database answers application/octet-stream for a name that matches
+    /// no glob: its "no idea", never a type the name said.
+    fn candidates(name: &OsStr) -> Vec<mime::Mime> {
+        let Some(name) = name.to_str() else {
+            return Vec::new();
+        };
+        let mut all = db().get_mime_types_from_file_name(name);
+        all.retain(|m| *m != mime::APPLICATION_OCTET_STREAM);
+        all
+    }
+
+    /// The most general of equally likely types: the one most of the others
+    /// descend from (`audio/ogg` over Vorbis, FLAC and Speex), the name as
+    /// the last word, so the choice never depends on the order they came in.
+    pub(super) fn representative(mut candidates: Vec<mime::Mime>) -> Option<mime::Mime> {
+        if candidates.len() < 2 {
+            return candidates.pop();
+        }
+        let descendants = |base: &mime::Mime| {
+            candidates
+                .iter()
+                .filter(|m| *m != base && db().mime_type_subclass(m, base))
+                .count()
+        };
+        candidates
+            .iter()
+            .max_by(|a, b| {
+                descendants(a)
+                    .cmp(&descendants(b))
+                    .then_with(|| b.essence_str().cmp(a.essence_str()))
+            })
+            .cloned()
+    }
+
     pub fn by_name(name: &OsStr) -> Option<Mime> {
-        let name = name.to_str()?;
-        // The database answers application/octet-stream for a name that
-        // matches no glob: its "no idea", never a type the name said.
-        db().get_mime_types_from_file_name(name)
-            .first()
-            .filter(|m| **m != mime::APPLICATION_OCTET_STREAM)
+        representative(candidates(name)).as_ref().map(to_mime)
+    }
+
+    pub fn ambiguous(name: &OsStr) -> bool {
+        candidates(name).len() > 1
+    }
+
+    pub fn identify(name: &OsStr, path: &Path) -> Option<Mime> {
+        let candidates = candidates(name);
+        if candidates.len() < 2 {
+            return match candidates.first() {
+                Some(only) => Some(to_mime(only)),
+                None => by_content(path),
+            };
+        }
+        // The bytes choose only among what the name allows, or something
+        // more precise than one of those: magic that names another kind of
+        // file altogether does not outvote an extension several types share.
+        let sniffed = head(path)
+            .and_then(|head| db().get_mime_type_for_data(&head))
+            .map(|(m, _)| m)
+            .filter(|m| candidates.iter().any(|c| db().mime_type_subclass(m, c)));
+        sniffed
+            .or_else(|| representative(candidates))
+            .as_ref()
             .map(to_mime)
     }
 
-    pub fn by_content(path: &Path) -> Option<Mime> {
+    /// The first bytes of a regular file, as much as sniffing reads.
+    fn head(path: &Path) -> Option<Vec<u8>> {
         use std::io::Read;
         let mut head = Vec::with_capacity(super::SNIFF);
         crate::file::open_regular(path)
@@ -142,6 +219,11 @@ mod imp {
             .take(super::SNIFF as u64)
             .read_to_end(&mut head)
             .ok()?;
+        Some(head)
+    }
+
+    pub fn by_content(path: &Path) -> Option<Mime> {
+        let head = head(path)?;
         // Magic, which also names an empty file (application/x-zerosize).
         // There is no magic for text/plain: what it does not know is text
         // or binary by the bytes.
@@ -189,6 +271,12 @@ mod imp {
     pub fn by_content(_path: &Path) -> Option<Mime> {
         None
     }
+    pub fn ambiguous(_name: &OsStr) -> bool {
+        false
+    }
+    pub fn identify(_name: &OsStr, _path: &Path) -> Option<Mime> {
+        None
+    }
     pub fn generic_icon_name(m: &Mime) -> String {
         format!("{}-x-generic", m.top_level())
     }
@@ -209,6 +297,79 @@ mod tests {
         assert_eq!(m.top_level(), "image");
         assert_eq!(m.icon_name(), "image-png");
         assert_eq!(m.generic_icon_name(), "image-x-generic");
+    }
+
+    /// An Ogg page whose first packet starts with `codec`, as far as the
+    /// database's magic looks.
+    #[cfg(target_os = "linux")]
+    fn ogg(codec: &[u8]) -> Vec<u8> {
+        let mut bytes = b"OggS".to_vec();
+        bytes.resize(28, 0);
+        bytes.extend_from_slice(codec);
+        bytes.resize(256, 0);
+        bytes
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn a_name_several_types_claim_has_one_answer_until_the_bytes_speak() {
+        let name = OsStr::new("a tone.ogg");
+        assert!(ambiguous(name));
+        assert!(!ambiguous(OsStr::new("a.png")));
+        assert_eq!(by_name(name).map(|m| m.0), Some("audio/ogg".into()));
+        // The database hands the ties back in no particular order: every
+        // order gives the same answer.
+        let ties: Vec<mime::Mime> = [
+            "video/x-theora+ogg",
+            "audio/x-flac+ogg",
+            "audio/ogg",
+            "video/ogg",
+            "audio/x-vorbis+ogg",
+            "audio/x-speex+ogg",
+        ]
+        .iter()
+        .map(|m| m.parse().unwrap())
+        .collect();
+        for rotation in 0..ties.len() {
+            let mut order = ties.clone();
+            order.rotate_left(rotation);
+            let reversed: Vec<_> = order.iter().rev().cloned().collect();
+            for order in [order, reversed] {
+                assert_eq!(
+                    imp::representative(order).map(|m| m.essence_str().to_owned()),
+                    Some("audio/ogg".into())
+                );
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let file = |bytes: &[u8]| {
+            let path = dir.path().join("a tone.ogg");
+            std::fs::write(&path, bytes).unwrap();
+            identify(name, &path).map(|m| m.0)
+        };
+        assert_eq!(file(&ogg(b"\x01vorbis")), Some("audio/x-vorbis+ogg".into()));
+        assert_eq!(file(&ogg(b"\x80theora")), Some("video/x-theora+ogg".into()));
+        // Bytes that do not choose among them, or name another kind of
+        // file, leave the name's answer.
+        assert_eq!(file(&ogg(b"\x00nothing")), Some("audio/ogg".into()));
+        assert_eq!(
+            file(b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR"),
+            Some("audio/ogg".into())
+        );
+        // A name one type claims is that type without a read; a name none
+        // claims is the bytes'.
+        let png = dir.path().join("p.png");
+        assert_eq!(
+            identify(OsStr::new("p.png"), &png).map(|m| m.0),
+            Some("image/png".into())
+        );
+        let cfg = dir.path().join("s.cfg");
+        std::fs::write(&cfg, "key = value\n").unwrap();
+        assert_eq!(
+            identify(OsStr::new("s.cfg"), &cfg).map(|m| m.0),
+            Some("text/plain".into())
+        );
     }
 
     #[test]

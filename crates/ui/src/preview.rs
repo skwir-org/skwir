@@ -63,8 +63,8 @@ struct PreviewResult {
     complete: bool,
     session: Option<Arc<dyn bibli_core::document::DocumentSession>>,
     media: Option<Media>,
-    /// The type the worker read from the bytes when the name said nothing
-    /// (`mime::by_content`): the header shows it and the next request of
+    /// The type the worker read from the bytes when the name did not settle
+    /// it (`mime::identify`): the header shows it and the next request of
     /// the same file carries it, so the bytes are asked once.
     sniffed: Option<String>,
 }
@@ -74,6 +74,10 @@ struct PreviewResult {
 pub struct Info {
     pub name: String,
     pub mime: Option<String>,
+    /// Whether `mime` is settled: the name alone decides it, or the bytes
+    /// were read. A name several types claim (`*.ogg`) gives the most
+    /// general of them until the worker reads the file (`mime::identify`).
+    pub identified: bool,
     pub size: Option<String>,
     pub modified: Option<String>,
     pub is_dir: bool,
@@ -452,9 +456,9 @@ fn extract_member(
         .ok_or_else(|| anyhow::anyhow!("The extracted member is missing"))?;
     Ok(Some(Arc::new(Nested {
         target: target.to_owned(),
-        // Resolved once, here on the worker: by name, else by the bytes.
-        mime: bibli_platform::mime::by_name(std::ffi::OsStr::new(&member.name))
-            .or_else(|| bibli_platform::mime::by_content(&member.path))
+        // Resolved once, here on the worker: by name, and by the bytes
+        // where the name is not enough.
+        mime: bibli_platform::mime::identify(std::ffi::OsStr::new(&member.name), &member.path)
             .map(|mime| mime.to_string()),
         name: member.name,
         entry,
@@ -649,9 +653,12 @@ impl Shell {
             self.preview.details_at = None;
             let app = Arc::clone(&self.app);
             self.type_names.request(&app);
+            let identified =
+                entry.is_dir() || (mime.is_some() && !bibli_platform::mime::ambiguous(&entry.name));
             self.preview.info = Info {
                 name: entry.name_str().into_owned(),
                 mime,
+                identified,
                 size: None,
                 modified: None,
                 is_dir: entry.is_dir(),
@@ -753,13 +760,14 @@ impl Shell {
         // again. A member the panel went down into resolved its own type
         // when it was extracted.
         if let Some(sniffed) = result.sniffed
-            && self.preview.info.mime.is_none()
+            && !self.preview.info.identified
             && self.preview.nested.is_empty()
         {
             let mime = bibli_platform::mime::Mime(sniffed);
             self.type_names.get(&mime);
             self.type_names.request(&Arc::clone(&self.app));
             self.preview.info.mime = Some(mime.0);
+            self.preview.info.identified = true;
         }
         if result.complete {
             self.preview.reader.tried = true;
@@ -936,6 +944,9 @@ impl Shell {
         let previews = Arc::clone(&self.app.previews);
         let wake = self.app.waker_handle();
         let is_dir = entry.is_dir();
+        // The file's own name, while its type is not settled: the worker
+        // reads the bytes to settle it, once.
+        let unsettled = (!is_dir && !self.preview.info.identified).then(|| entry.name.clone());
         let session = self.preview.reader.session.clone();
         let open_document = !is_dir && !self.preview.reader.tried;
         let lifetime = self.preview.reader.lifetime.clone();
@@ -985,6 +996,8 @@ impl Shell {
                 // What is previewed: the entry, or the member of it the panel
                 // went down into. Everything below treats it as any file.
                 let mut request = request;
+                // Whether the entry itself is shown, not a member of it.
+                let own = nested.is_none() && descend.is_none();
                 let source = |member: &Nested, request: &mut PreviewRequest, path: &mut PathBuf| {
                     request.entry = member.entry.clone();
                     request.mime.clone_from(&member.mime);
@@ -1005,11 +1018,17 @@ impl Shell {
                     }
                 }
                 // A name that says nothing (`settings.cfg`, `README`) is not
-                // a binary file: the bytes are asked, here on the worker,
+                // a binary file, and one several types claim (`*.ogg`) is not
+                // yet any of them: the bytes are asked, here on the worker,
                 // before any provider is. From here on an
-                // `application/octet-stream` request means binary bytes.
-                if !is_dir && request.mime.is_none() {
-                    request.mime = bibli_platform::mime::by_content(&path).map(|m| m.to_string());
+                // `application/octet-stream` request means binary bytes. A
+                // member went down into was identified when extracted.
+                if !is_dir && (request.mime.is_none() || (own && unsettled.is_some())) {
+                    request.mime = match unsettled.as_deref().filter(|_| own) {
+                        Some(name) => bibli_platform::mime::identify(name, &path),
+                        None => bibli_platform::mime::by_content(&path),
+                    }
+                    .map(|m| m.to_string());
                     sniffed.replace(request.mime.clone());
                 }
                 if !is_dir {
