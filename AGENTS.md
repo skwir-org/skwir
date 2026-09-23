@@ -182,8 +182,10 @@ current source before assuming a planned crate, command, or API exists.
   window's width, never a fixed cap); a window too small draws it narrower
   without rewriting the remembered width, and a double click on its edge
   returns it to the default. At the bottom the same holds for its height
-  (`preview::max_height`), and the pinned player's dock stands at the
-  panel's right end instead of its foot.
+  (`preview::max_height`); the pinned player's dock stays at the panel's
+  foot, bounded by the panel's height (`Shell::dock_height_limit`), and
+  until the edge is dragged the default height adds the dock's, so a pin
+  does not take its room from the preview.
 - **A menu that depends on a toolbar variant** is built once per variant and
   chosen in the popover's deferred prepaint from `AdaptiveRow::chosen`, in the
   same frame (`PopoverAnchor::popup_for`). More holds what has no button.

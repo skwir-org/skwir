@@ -319,7 +319,7 @@ impl Shell {
             self.preview.width = session.preview_width;
         }
         if session.preview_height > 0. {
-            self.preview.height = session.preview_height;
+            self.preview.height = Some(session.preview_height);
         }
         self.layout.panes = session.panes;
         self.layout.preview = session.preview_at;

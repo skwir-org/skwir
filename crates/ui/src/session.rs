@@ -32,7 +32,8 @@ pub struct Session {
     /// The preview at the right, at the bottom, or as the window's shape says.
     pub preview_at: crate::layout::Preview,
     pub preview_width: f32,
-    /// How tall the preview is when it is at the bottom.
+    /// How tall the preview is when it is at the bottom, once dragged; 0
+    /// until then (the default makes room for a pinned player).
     pub preview_height: f32,
     /// Whether Details is open under the preview.
     pub details: bool,
@@ -53,7 +54,7 @@ impl Shell {
             preview: self.preview.open,
             preview_at: self.layout.preview,
             preview_width: self.preview.width,
-            preview_height: self.preview.height,
+            preview_height: self.preview.height.unwrap_or(0.),
             details: self.preview.details_open,
             timeline: self.timeline.open,
             player_height: self.player.height,

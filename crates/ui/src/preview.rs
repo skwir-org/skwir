@@ -189,9 +189,11 @@ pub struct PreviewState {
     pub open: bool,
     pub peek: bool,
     /// The panel's width at the right edge, and its height at the bottom:
-    /// each remembered, so moving it back finds it as it was.
+    /// each remembered, so moving it back finds it as it was. The height is
+    /// `None` until its edge is dragged: the default makes room for the
+    /// pinned player's dock (`Shell::preview_panel_height`).
     pub width: f32,
-    pub height: f32,
+    pub height: Option<f32>,
     pub info: Info,
     pub content: Option<PreviewContent>,
     pub(crate) phase: PreviewPhase,
@@ -261,7 +263,7 @@ impl Default for PreviewState {
             open: false,
             peek: false,
             width: DEFAULT_WIDTH,
-            height: DEFAULT_HEIGHT,
+            height: None,
             info: Info::default(),
             content: None,
             phase: PreviewPhase::Idle,
@@ -1603,6 +1605,20 @@ impl Shell {
 
     /// The tallest the panel may be at the bottom: everything the stacked
     /// panes, the toolbar and the status bar do not need.
+    /// How tall the panel at the bottom wants to be: as dragged, else the
+    /// default with the pinned player's dock added under it, so a pin does
+    /// not take its room from the preview. `preview_height_limit` bounds it.
+    pub fn preview_panel_height(&self) -> f32 {
+        self.preview.height.unwrap_or_else(|| {
+            DEFAULT_HEIGHT
+                + if self.dock_shown() {
+                    self.player.height
+                } else {
+                    0.
+                }
+        })
+    }
+
     pub fn preview_height_limit(&self, window: &Window) -> f32 {
         let window = f32::from(window.viewport_size().height);
         max_height(window, self.panes_down())
@@ -1652,7 +1668,8 @@ impl Shell {
     ) {
         let bottom = f32::from(window.viewport_size().height) - crate::status::HEIGHT;
         let y = f32::from(ev.event.position.y);
-        self.preview.height = (bottom - y).clamp(MIN_HEIGHT, self.preview_height_limit(window));
+        self.preview.height =
+            Some((bottom - y).clamp(MIN_HEIGHT, self.preview_height_limit(window)));
         cx.notify();
     }
 
@@ -2159,8 +2176,6 @@ const SIDEBAR_WIDTH: f32 = 200.;
 const PANE_KEEP_HEIGHT: f32 = 160.;
 /// The application toolbar above everything (`address::render_toolbar`).
 const TOOLBAR_HEIGHT: f32 = 42.;
-/// The dock beside the panel's content when the panel is at the bottom.
-const DOCK_BESIDE: f32 = 320.;
 
 /// The widest the panel may be: the window less what the panes and the
 /// sidebar keep. Never a fixed number: a wide window has room for a wide page.
@@ -2178,13 +2193,12 @@ pub fn max_height(window: f32, panes: usize) -> f32 {
 
 /// The preview panel, or `None` when closed.
 ///
-/// At the right edge (`bottom` false) it is a column as wide as `limit`
-/// allows (`Shell::preview_width_limit`), with the pinned player's dock at
-/// its foot. At the bottom it is as tall as `limit` allows
-/// (`Shell::preview_height_limit`), and the dock stands at its right end
-/// instead, as tall as the panel: a strip at the foot of a short, wide
-/// panel would leave its content no room. Either way the remembered size is
-/// kept as the user left it and only drawn smaller while the window is.
+/// At the right edge (`bottom` false) it is as wide as `limit` allows
+/// (`Shell::preview_width_limit`); at the bottom, as tall as `limit` allows
+/// (`Shell::preview_height_limit`). Either way the pinned player's dock
+/// stands at its foot, up to `dock_limit` (`Shell::dock_height_limit`), and
+/// the remembered size is kept as the user left it and only drawn smaller
+/// while the window is.
 pub fn render_panel(
     shell: &Shell,
     bottom: bool,
@@ -2199,7 +2213,7 @@ pub fn render_panel(
     let reset = cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
         if event.click_count() == 2 {
             if bottom {
-                this.preview.height = DEFAULT_HEIGHT;
+                this.preview.height = None;
             } else {
                 this.preview.width = DEFAULT_WIDTH;
             }
@@ -2240,39 +2254,24 @@ pub fn render_panel(
         .border_color(theme.border)
         .bg(theme.surface);
     let panel = if bottom {
-        let height = shell.preview.height.min(limit);
-        let dock = crate::dock::render(shell, crate::dock::Place::Beside(height), cx).map(|dock| {
-            div()
-                .flex_none()
-                .w(px(DOCK_BESIDE))
-                .h_full()
-                .flex()
-                .flex_col()
-                .border_l_1()
-                .border_color(theme.border)
-                .child(dock)
-        });
         panel
             .w_full()
-            .h(px(height))
-            .flex_row()
+            .h(px(shell.preview_panel_height().min(limit)))
             .border_t_1()
-            .child(content.flex_1().min_w_0().h_full())
-            .children(dock)
     } else {
         panel
             .w(px(shell.preview.width.min(limit)))
             .h_full()
-            .flex_col()
             .border_l_1()
-            .child(content.flex_1().min_h_0().w_full())
-            .children(crate::dock::render(
-                shell,
-                crate::dock::Place::Foot(dock_limit),
-                cx,
-            ))
     };
-    Some(panel.child(handle).into_any_element())
+    Some(
+        panel
+            .flex_col()
+            .child(content.flex_1().min_h_0().w_full())
+            .children(crate::dock::render(shell, dock_limit, cx))
+            .child(handle)
+            .into_any_element(),
+    )
 }
 
 /// The centered peek overlay, or `None`.
