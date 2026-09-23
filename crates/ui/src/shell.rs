@@ -1297,25 +1297,28 @@ impl Shell {
         for id in ids {
             self.pane = id;
             let app = Arc::clone(&self.app);
-            let (location, resorted) = {
+            // A new listing, not a new address, is what starts the pane's
+            // state over: reopening the folder already shown (revealing the
+            // playing track in it) replaces the listing under the same text.
+            let (location, resorted, replaced) = {
                 let ws = app.workspace.read();
                 let Some(pane) = ws.pane(id) else { continue };
                 let location = pane.location().map(ToString::to_string).unwrap_or_default();
-                let ui = self.ui_mut();
-                if location != ui.address_shown {
-                    ui.list.reset();
-                }
-                let resorted = ui.list.sync(&pane.listing, pane.sort);
-                (location, resorted)
+                let list = &mut self.ui_mut().list;
+                let before = list.listing();
+                let resorted = list.sync(&pane.listing, pane.sort);
+                (location, resorted, list.listing() != before)
             };
             resorted_any |= resorted;
+            if replaced {
+                for v in self.ui_mut().views.values_mut() {
+                    v.reset();
+                }
+            }
             if location != self.ui().address_shown {
                 self.ui_mut().address_shown.clone_from(&location);
                 let address = self.ui().address.clone();
                 address.update(cx, |i, cx| i.set_text(location, cx));
-                for v in self.ui_mut().views.values_mut() {
-                    v.reset();
-                }
             }
         }
         self.pane = saved;

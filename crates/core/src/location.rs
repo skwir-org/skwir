@@ -301,11 +301,23 @@ impl Delta {
     }
 }
 
+/// Every version of every listing is read from this one clock, so a value
+/// names one state of one listing. A pane that reopens its folder gets a
+/// new listing whose versions cannot repeat the old one's: work keyed on a
+/// version (a sorted order, requests already sent, measured names) sees the
+/// replacement even though the location reads the same.
+fn stamp() -> u64 {
+    static CLOCK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    CLOCK.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 /// An in-memory view of a listing, kept up to date by applying events.
 /// Insertion order is preserved so streaming order is stable; `sorted`
 /// gives a cached order for a [`SortSpec`].
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Listing {
+    /// Which listing this is; see [`stamp`].
+    id: u64,
     entries: IndexMap<EntryId, Slot>,
     complete: bool,
     error: Option<String>,
@@ -325,6 +337,24 @@ pub struct Listing {
     size_version: u64,
     modified_version: u64,
     sort_cache: parking_lot::Mutex<Option<SortCache>>,
+}
+
+impl Default for Listing {
+    fn default() -> Self {
+        let id = stamp();
+        Listing {
+            id,
+            entries: IndexMap::new(),
+            complete: false,
+            error: None,
+            version: id,
+            names_version: id,
+            order_version: id,
+            size_version: id,
+            modified_version: id,
+            sort_cache: parking_lot::Mutex::new(None),
+        }
+    }
 }
 
 impl Listing {
@@ -367,11 +397,17 @@ impl Listing {
                 self.error = Some(e);
             }
         }
-        self.names_version += u64::from(delta.name);
-        self.order_version += u64::from(delta.order);
-        self.size_version += u64::from(delta.size);
-        self.modified_version += u64::from(delta.modified);
-        self.version += u64::from(delta.any);
+        for (moved, version) in [
+            (delta.name, &mut self.names_version),
+            (delta.order, &mut self.order_version),
+            (delta.size, &mut self.size_version),
+            (delta.modified, &mut self.modified_version),
+            (delta.any, &mut self.version),
+        ] {
+            if moved {
+                *version = stamp();
+            }
+        }
         delta.any
     }
 
@@ -411,6 +447,13 @@ impl Listing {
     }
 
     /// Changes so far; equal versions mean identical contents.
+    /// Which listing this is: a pane that reopens its location, even the
+    /// same one, holds a listing with another id.
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// Changes, unique across listings: see [`stamp`].
     pub fn version(&self) -> u64 {
         self.version
     }
@@ -551,11 +594,32 @@ mod tests {
 
         // A rename keeps the inode, so the id: only the name tells.
         listing.apply(ListingEvent::Updated(vec![file(1, "renamed.txt")]));
-        assert_eq!(listing.names_version(), names + 1);
+        let renamed = listing.names_version();
+        assert!(renamed > names);
         listing.apply(ListingEvent::Removed(vec![EntryId { dev: 1, ino: 9 }]));
-        assert_eq!(listing.names_version(), names + 1, "nothing was removed");
+        assert_eq!(listing.names_version(), renamed, "nothing was removed");
         listing.apply(ListingEvent::Removed(vec![EntryId { dev: 1, ino: 2 }]));
-        assert_eq!(listing.names_version(), names + 2);
+        assert!(listing.names_version() > renamed);
+    }
+
+    #[test]
+    fn a_reopened_location_never_repeats_a_version() {
+        // A pane that reopens the folder it shows gets a fresh listing of the
+        // same entries. Work keyed on the old one's versions (the hydration
+        // it asked for, its sorted order) must see the change.
+        let file = |ino, name: &str| Entry::new(EntryId { dev: 1, ino }, name, EntryKind::File);
+        let mut old = Listing::default();
+        old.apply(ListingEvent::Added(vec![file(1, "a"), file(2, "b")]));
+        let mut new = Listing::default();
+        assert_ne!(new.id(), old.id());
+        new.apply(ListingEvent::Added(vec![file(1, "a"), file(2, "b")]));
+        for (a, b) in [
+            (old.version(), new.version()),
+            (old.names_version(), new.names_version()),
+        ] {
+            assert_ne!(a, b);
+        }
+        assert_ne!(Listing::default().version(), Listing::default().version());
     }
 
     fn stat(mut e: Entry, size: u64) -> Entry {

@@ -25,12 +25,15 @@ pub struct ListState {
     /// Entry ids in display order, from the core's cached sort.
     pub sorted: std::sync::Arc<[EntryId]>,
     sorted_at: Option<(u64, SortSpec)>,
-    /// Hydration requested and not yet answered. Kept until the pane shows
-    /// another location: an answer arrives as an update that hydrates the
-    /// entry (or removes it), so nothing asked for needs asking again, and a
-    /// listing that changes while 100 000 entries are in flight must not
-    /// send them all a second time.
+    /// Hydration requested and not yet answered. Kept for as long as the
+    /// pane holds the same listing: an answer arrives as an update that
+    /// hydrates the entry (or removes it), so nothing asked for needs asking
+    /// again, and a listing that changes while 100 000 entries are in
+    /// flight must not send them all a second time. A new listing, even of
+    /// the folder already shown, starts bare and needs asking again.
     pub pending_hydrate: HashSet<EntryId>,
+    /// The listing (`Listing::id`) everything here describes.
+    listing: Option<u64>,
     pub visible_rows: usize,
     typeahead: String,
     typeahead_at: Option<Instant>,
@@ -46,6 +49,7 @@ impl Default for ListState {
             sorted: std::sync::Arc::from([]),
             sorted_at: None,
             pending_hydrate: HashSet::new(),
+            listing: None,
             visible_rows: 20,
             typeahead: String::new(),
             typeahead_at: None,
@@ -57,6 +61,10 @@ impl Default for ListState {
 impl ListState {
     /// Adopt the core's sorted order when the listing version or the spec changed.
     pub fn sync(&mut self, listing: &bibli_core::Listing, spec: SortSpec) -> bool {
+        if self.listing != Some(listing.id()) {
+            self.reset();
+            self.listing = Some(listing.id());
+        }
         let version = listing.version();
         if self.sorted_at == Some((version, spec)) {
             return false;
@@ -70,11 +78,16 @@ impl ListState {
         self.sorted_at.map(|(v, _)| v)
     }
 
-    pub fn reset(&mut self) {
+    fn reset(&mut self) {
         self.sorted = std::sync::Arc::from([]);
         self.sorted_at = None;
         self.pending_hydrate.clear();
         self.selection.set(None);
+    }
+
+    /// Whether the last `sync` adopted another listing than the one before.
+    pub fn listing(&self) -> Option<u64> {
+        self.listing
     }
 
     pub fn index_of(&self, id: EntryId) -> Option<usize> {
