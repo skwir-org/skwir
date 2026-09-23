@@ -9,6 +9,8 @@ use bibli_core::{App, Location};
 
 fn main() -> anyhow::Result<()> {
     let started = Instant::now();
+    // Before anything allocates much: freed memory goes back (ADR-011).
+    bibli_alloc::tune();
     // Before any GPU work: keep the Vulkan loader from mapping drivers for
     // hardware that is not here (ADR-002).
     let restricted = gpu::restrict_vulkan_drivers();

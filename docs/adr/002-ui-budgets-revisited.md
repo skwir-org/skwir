@@ -74,7 +74,9 @@ The gate is 100 MB PSS and stays at 100 MB: nothing here loosens it. The
 anonymous memory grew from about 25 MB at the time of this ADR to 43 MB, and
 the mapped-file share includes the nouveau and Intel ICDs, which the vendor
 filter keeps on a hybrid machine. Owning the gate means a heap profile
-(`heaptrack` is in the dev shell) of the 18 MB of anonymous growth and a
+(`heaptrack` is in the dev shell; since ADR-011 profile a build with
+`--no-default-features`, which keeps glibc's malloc for heaptrack to see) of
+the 18 MB of anonymous growth and a
 decision per contributor: shrink it, or budget it in a new ADR with the reason.
 Until then the status line in `docs/PLAN.md` reports the gate as open, and
 per-change status notes must not restate the number without a comparison

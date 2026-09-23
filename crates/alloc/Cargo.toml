@@ -1,0 +1,19 @@
+[package]
+name = "bibli-alloc"
+description = "bibli: the process-wide allocator of the bibli binaries (ADR-011)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+# mimalloc, tuned (ADR-011). Without it the binaries use the system
+# allocator, which heap profilers such as heaptrack can see.
+mimalloc = ["dep:mimalloc", "dep:libmimalloc-sys"]
+
+[dependencies]
+mimalloc = { workspace = true, optional = true }
+libmimalloc-sys = { workspace = true, optional = true }
+
+[lints]
+workspace = true

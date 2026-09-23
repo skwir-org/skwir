@@ -10,7 +10,13 @@ rust-version.workspace = true
 name = "bibli"
 path = "src/main.rs"
 
+[features]
+default = ["mimalloc"]
+# The tuned mimalloc of ADR-011; build without it to profile with heaptrack.
+mimalloc = ["bibli-alloc/mimalloc"]
+
 [dependencies]
+bibli-alloc.workspace = true
 bibli-core.workspace = true
 bibli-plugin-places.workspace = true
 bibli-plugin-open-with.workspace = true

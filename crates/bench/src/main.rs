@@ -50,6 +50,8 @@ enum Cmd {
 }
 
 fn main() -> Result<()> {
+    // The allocator the application ships with (ADR-011).
+    bibli_alloc::tune();
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Gen { profiles } => {

@@ -506,6 +506,10 @@ user's Trash. Run tests through nextest (`just test`), not `cargo test`.
   fixture otherwise puts it in the user's real Trash.
 - Measure: first frame from the shell's log line, memory from
   `/proc/<pid>/smaps_rollup` (PSS), corrections/traces from `RUST_LOG=bibli_ui=trace`.
+  The binaries use a tuned mimalloc (`crates/alloc`, ADR-011); heaptrack sees
+  only glibc's malloc, so profile a build made with `--no-default-features`.
+  Compare memory between builds back to back under the same conditions:
+  PSS shares pages with whatever else runs.
 
 ## Shell hygiene (learned the hard way)
 

@@ -367,17 +367,33 @@ impl Drop for PreviewState {
     }
 }
 
+/// Whose turn it is to decode a picture for the preview. A photo decodes
+/// at full size before it is scaled down, tens of megabytes at a time, and
+/// a decode that has started cannot be stopped: holding an arrow key through
+/// a folder of photos otherwise ran one on every worker at once. One at a
+/// time, and a request that waited for its turn gives it up if the panel
+/// moved on meanwhile, so the peak is one picture and passed-over files are
+/// never decoded.
+static DECODE_TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn decode_image(path: &Path, cancel: &CancelToken) -> anyhow::Result<PreviewContent> {
-    let (w, h) = image::ImageReader::open(path)?
-        .with_guessed_format()?
-        .into_dimensions()?;
+    let reader = || -> anyhow::Result<_> {
+        let file = std::io::BufReader::new(bibli_platform::file::open_regular(path)?);
+        Ok(image::ImageReader::new(file).with_guessed_format()?)
+    };
+    let (w, h) = reader()?.into_dimensions()?;
     anyhow::ensure!(
         u64::from(w) * u64::from(h) <= 64 * 1024 * 1024,
         "image is too large to preview"
     );
-    let img = image::ImageReader::open(path)?
-        .with_guessed_format()?
-        .decode()?;
+    // A decode that panicked held nothing worth protecting: take the turn.
+    let _turn = DECODE_TURN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if cancel.is_cancelled() {
+        anyhow::bail!("cancelled");
+    }
+    let img = reader()?.decode()?;
     if cancel.is_cancelled() {
         anyhow::bail!("cancelled");
     }
