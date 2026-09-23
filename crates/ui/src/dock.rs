@@ -1,5 +1,8 @@
 //! The pinned player's dock: a strip at the foot of the preview panel that
-//! holds what keeps playing while the selection moves (`player.rs`).
+//! holds what keeps playing while the selection moves (`player.rs`). With
+//! the panel at the bottom of the window it stands at the panel's right end
+//! instead, as tall as the panel (`Place::Beside`), and has no edge of its
+//! own to drag: the panel's height is its height.
 //!
 //! It has two sizes, chosen by the height the user dragged it to, which is
 //! remembered with the window's shape: compact, a row with the cover, the
@@ -53,6 +56,16 @@ const PANEL_KEEP: f32 = 220.;
 #[derive(Clone)]
 pub struct DockHandle;
 
+/// Where the dock stands in the preview panel.
+#[derive(Clone, Copy)]
+pub enum Place {
+    /// At the foot of a panel at the right edge, as tall as dragged, up to
+    /// this limit (`Shell::dock_height_limit`).
+    Foot(f32),
+    /// Beside the content of a panel at the bottom, this tall.
+    Beside(f32),
+}
+
 impl Shell {
     /// The tallest the dock may be in this window: the panel keeps the rest.
     pub fn dock_height_limit(&self, window: &Window) -> f32 {
@@ -101,13 +114,16 @@ fn meter(spectrum: &[f32], playing: bool, tint: gpui::Hsla) -> AnyElement {
 }
 
 /// The dock, or `None` when there is nothing to show in it.
-pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyElement> {
+pub fn render(shell: &Shell, place: Place, cx: &mut Context<Shell>) -> Option<AnyElement> {
     if !shell.dock_shown() {
         return None;
     }
     let pinned = shell.player.pinned.as_ref()?;
     let theme = cx.global::<Theme>().clone();
-    let height = shell.player.height.min(limit);
+    let height = match place {
+        Place::Foot(limit) => shell.player.height.min(limit),
+        Place::Beside(height) => height,
+    };
     let tall = height >= TALL_FROM;
     let state = &pinned.state;
     let title = crate::media::track_title(state, &pinned.path);
@@ -287,13 +303,15 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
         .id("player-dock")
         .relative()
         .flex_none()
-        .h(px(height))
         .flex()
         .flex_col()
-        .border_t_1()
         .border_color(theme.border)
         .bg(theme.surface)
         .key_context(crate::keymap::PLAYER);
+    dock = match place {
+        Place::Foot(_) => dock.h(px(height)).border_t_1(),
+        Place::Beside(_) => dock.size_full(),
+    };
     if let Some(focus) = &shell.player.focus {
         let clicked = focus.clone();
         dock =
@@ -307,7 +325,7 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
             .child(picture)
             .children(caption)
             .child(transport)
-            .child(handle)
+            .when(matches!(place, Place::Foot(_)), |d| d.child(handle))
             .into_any_element(),
     )
 }

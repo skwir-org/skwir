@@ -90,8 +90,13 @@ current source before assuming a planned crate, command, or API exists.
 - **Application row and pane row.** The application toolbar holds what is
   about the window: views, the Sort and display menu, New folder, Search, the
   Split and Preview toggles (in the order of what they open: the middle of
-  the window, then its right edge), and More (everything else, so the
-  narrowest variant loses nothing). Navigation is per pane: Back, Forward, Up and the
+  the window, then its edge), and More (everything else, so the
+  narrowest variant loses nothing). Split panes sit side by side or stacked,
+  and the preview is at the right or the bottom (`layout.rs`): each a choice
+  in Sort and display (`ui.layout`) whose default, Automatic, follows the
+  window's shape, decided in `Shell::render` from the window's size like the
+  sidebar. The toggles' icons show the arrangement they open; Shift+F3
+  splits the other way for that split only. Navigation is per pane: Back, Forward, Up and the
   breadcrumb trail live in each pane's own row (`address.rs`). The trail and
   the list's detail columns use the same layout-only technique, a wrapping
   flex line one row tall, so the segments nearest the current folder stay
@@ -167,15 +172,18 @@ current source before assuming a planned crate, command, or API exists.
   bar in it, so a press beside the rows never selects one. Wrapping a
   scrolling element to overlay a bar must preserve its flex context — a body
   that grew in a column needs a column — or it silently stops scrolling.
-- **What the window remembers.** The shape of the last window (view, split,
-  preview and its width, timeline, zoom) is application data, not preference:
+- **What the window remembers.** The shape of the last window (view, split
+  and its arrangement, preview with its place, width and height, timeline,
+  zoom) is application data, not preference:
   `session.rs` keeps it under one key, restores it at startup and writes it
   only when it changes, never per frame. A new pane opens in the view the
   current one shows. The preview panel is as wide as the user drags it, up to
   what the panes and the sidebar do not need (`preview::max_width`, from the
   window's width, never a fixed cap); a window too small draws it narrower
   without rewriting the remembered width, and a double click on its edge
-  returns it to the default.
+  returns it to the default. At the bottom the same holds for its height
+  (`preview::max_height`), and the pinned player's dock stands at the
+  panel's right end instead of its foot.
 - **A menu that depends on a toolbar variant** is built once per variant and
   chosen in the popover's deferred prepaint from `AdaptiveRow::chosen`, in the
   same frame (`PopoverAnchor::popup_for`). More holds what has no button.

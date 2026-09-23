@@ -77,6 +77,7 @@ fn app_row(
 ) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let open = shell.toolbar_menu.as_ref().map(|menu| menu.kind);
+    let (split_icon, split_tip) = shell.layout.split_button();
     // One id for every variant, so a focused button keeps its focus handle
     // (gpui element state keyed by the id path) across a responsive reflow.
     let mut bar = toolbar::row(&theme).id("app-tools");
@@ -130,7 +131,7 @@ fn app_row(
             // the window, the preview panel at its right edge.
             .child(
                 labelled(
-                    Button::new("split-toggle", "split", "Split panes", "ui.split")
+                    Button::new("split-toggle", split_icon, split_tip, "ui.split")
                         .active(shell.is_split()),
                     "Split",
                     mode,
@@ -141,7 +142,7 @@ fn app_row(
                 labelled(
                     Button::new(
                         "preview-toggle",
-                        "preview",
+                        shell.layout.preview_icon(),
                         "Preview panel",
                         "ui.toggle_preview",
                     )
@@ -229,7 +230,74 @@ fn sort_groups(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
             label,
         ));
     }
-    vec![("Sort by", order), ("Show", show), ("Icon size", size)]
+    vec![
+        ("Sort by", order),
+        ("Show", show),
+        ("Icon size", size),
+        ("Split panes", layout_items(shell, "panes")),
+        ("Preview", layout_items(shell, "preview")),
+    ]
+}
+
+/// The choices of one side of the window's arrangement (`ui.layout`), the
+/// current one checked. Automatic says what it means in this window.
+fn layout_items(shell: &Shell, what: &'static str) -> Vec<Button> {
+    use crate::layout::{Panes, Preview};
+    let layout = &shell.layout;
+    let choices: [(&str, &str, bool); 3] = if what == "panes" {
+        [
+            (
+                "auto",
+                if layout.tall() {
+                    "Automatic (one above the other)"
+                } else {
+                    "Automatic (side by side)"
+                },
+                layout.panes == Panes::Auto,
+            ),
+            ("row", "Side by side", layout.panes == Panes::Row),
+            (
+                "column",
+                "One above the other",
+                layout.panes == Panes::Column,
+            ),
+        ]
+    } else {
+        [
+            (
+                "auto",
+                if layout.tall() {
+                    "Automatic (at the bottom)"
+                } else {
+                    "Automatic (on the right)"
+                },
+                layout.preview == Preview::Auto,
+            ),
+            ("right", "On the right", layout.preview == Preview::Right),
+            ("bottom", "At the bottom", layout.preview == Preview::Bottom),
+        ]
+    };
+    choices
+        .into_iter()
+        .map(|(value, label, current)| {
+            let tip = if value == "auto" {
+                "Follow the window's shape: stacked when it is taller than wide"
+            } else {
+                label
+            };
+            menu_item(
+                Button::new(
+                    format!("layout-{what}-{value}"),
+                    if current { "check" } else { "" },
+                    tip,
+                    "ui.layout",
+                )
+                .args(serde_json::json!({ what: value }))
+                .active(current),
+                label,
+            )
+        })
+        .collect()
 }
 
 /// A group's title in a popup menu.
@@ -257,6 +325,7 @@ fn more_panel(
     let group = |panel: gpui::Stateful<gpui::Div>, title: &'static str| {
         panel.child(group_title(title, theme))
     };
+    let (split_icon, split_tip) = shell.layout.split_button();
     if everything {
         panel = group(panel, "View");
         for spec in shell.available_views() {
@@ -269,14 +338,14 @@ fn more_panel(
         }
         for (button, label) in [
             (
-                Button::new("menu-split", "split", "Split panes", "ui.split")
+                Button::new("menu-split", split_icon, split_tip, "ui.split")
                     .active(shell.is_split()),
                 "Split panes",
             ),
             (
                 Button::new(
                     "menu-preview",
-                    "preview",
+                    shell.layout.preview_icon(),
                     "Preview panel",
                     "ui.toggle_preview",
                 )

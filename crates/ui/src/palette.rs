@@ -163,6 +163,37 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.tags_prompt", "{}", "Tags…"),
     ("ui.timeline", "{}", "Timeline"),
     ("ui.split", "{}", "Split pane"),
+    (
+        "ui.split",
+        r#"{"axis":"other"}"#,
+        "Split pane the other way",
+    ),
+    (
+        "ui.layout",
+        r#"{"panes":"auto"}"#,
+        "Panes: arrange automatically",
+    ),
+    ("ui.layout", r#"{"panes":"row"}"#, "Panes: side by side"),
+    (
+        "ui.layout",
+        r#"{"panes":"column"}"#,
+        "Panes: one above the other",
+    ),
+    (
+        "ui.layout",
+        r#"{"preview":"auto"}"#,
+        "Preview: place automatically",
+    ),
+    (
+        "ui.layout",
+        r#"{"preview":"right"}"#,
+        "Preview: on the right",
+    ),
+    (
+        "ui.layout",
+        r#"{"preview":"bottom"}"#,
+        "Preview: at the bottom",
+    ),
     ("ui.focus_other_pane", "{}", "Focus other pane"),
     ("ui.shelf_open", "{}", "Open shelf"),
     ("ui.quit", "{}", "Quit"),

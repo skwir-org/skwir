@@ -117,9 +117,13 @@ pub struct Autoplay {
     pub member: Option<String>,
 }
 
-/// Marker type for dragging the panel's edge.
+/// Marker type for dragging the panel's left edge (panel at the right).
 #[derive(Clone)]
 pub struct ResizeHandle;
+
+/// Marker type for dragging the panel's top edge (panel at the bottom).
+#[derive(Clone)]
+pub struct ResizeHeightHandle;
 
 /// What an edge being dragged shows under the pointer: nothing, the edge
 /// itself follows. Shared by every drag handle of the panel and the dock.
@@ -180,7 +184,10 @@ pub struct PreviewState {
     pub menu: Option<crate::toolbar::Popup>,
     pub open: bool,
     pub peek: bool,
+    /// The panel's width at the right edge, and its height at the bottom:
+    /// each remembered, so moving it back finds it as it was.
     pub width: f32,
+    pub height: f32,
     pub info: Info,
     pub content: Option<PreviewContent>,
     pub(crate) phase: PreviewPhase,
@@ -250,6 +257,7 @@ impl Default for PreviewState {
             open: false,
             peek: false,
             width: DEFAULT_WIDTH,
+            height: DEFAULT_HEIGHT,
             info: Info::default(),
             content: None,
             phase: PreviewPhase::Idle,
@@ -1571,12 +1579,36 @@ impl Shell {
     /// the sidebar do not need. The window's width is known before layout.
     pub fn preview_width_limit(&self, window: &Window) -> f32 {
         let window = f32::from(window.viewport_size().width);
-        max_width(window, self.panes.len(), self.sidebar_fits(window))
+        max_width(window, self.panes_across(), self.sidebar_fits(window))
+    }
+
+    /// The tallest the panel may be at the bottom: everything the stacked
+    /// panes, the toolbar and the status bar do not need.
+    pub fn preview_height_limit(&self, window: &Window) -> f32 {
+        let window = f32::from(window.viewport_size().height);
+        max_height(window, self.panes_down())
+    }
+
+    /// How many panes share the window's width, and its height.
+    pub fn panes_across(&self) -> usize {
+        if self.layout.stacked() {
+            1
+        } else {
+            self.panes.len()
+        }
+    }
+
+    pub fn panes_down(&self) -> usize {
+        if self.layout.stacked() {
+            self.panes.len()
+        } else {
+            1
+        }
     }
 
     /// Whether this window has room for the sidebar beside the panes.
     pub fn sidebar_fits(&self, window: f32) -> bool {
-        window >= 520. + 300. * self.panes.len().saturating_sub(1) as f32
+        window >= 520. + 300. * self.panes_across().saturating_sub(1) as f32
     }
 
     fn on_resize_drag(
@@ -1591,9 +1623,24 @@ impl Shell {
         cx.notify();
     }
 
+    /// The top edge of the panel at the bottom follows the pointer; its
+    /// bottom is the status bar's top.
+    fn on_resize_height_drag(
+        &mut self,
+        ev: &DragMoveEvent<ResizeHeightHandle>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let bottom = f32::from(window.viewport_size().height) - crate::status::HEIGHT;
+        let y = f32::from(ev.event.position.y);
+        self.preview.height = (bottom - y).clamp(MIN_HEIGHT, self.preview_height_limit(window));
+        cx.notify();
+    }
+
     /// Root-level hook so edge drags are tracked anywhere in the window.
     pub fn resize_hook<E: InteractiveElement>(&self, el: E, cx: &mut Context<Self>) -> E {
         el.on_drag_move(cx.listener(Self::on_resize_drag))
+            .on_drag_move(cx.listener(Self::on_resize_height_drag))
             .on_drag_move(cx.listener(Self::on_dock_drag))
             .on_drag_move(cx.listener(Self::on_column_drag))
             .on_mouse_up(
@@ -2082,9 +2129,19 @@ fn type_label(shell: &Shell, info: &Info) -> Option<String> {
 /// The narrowest the panel gets, and the width a double click returns it to.
 const MIN_WIDTH: f32 = 200.;
 const DEFAULT_WIDTH: f32 = 320.;
+/// The same at the bottom: the lowest it gets, and its height by default.
+const MIN_HEIGHT: f32 = 140.;
+const DEFAULT_HEIGHT: f32 = 280.;
 /// What each pane keeps when the panel is dragged wide, and the sidebar.
 const PANE_KEEP: f32 = 240.;
 const SIDEBAR_WIDTH: f32 = 200.;
+/// What each stacked pane keeps when the panel is dragged tall: its own
+/// row and a few of its entries.
+const PANE_KEEP_HEIGHT: f32 = 160.;
+/// The application toolbar above everything (`address::render_toolbar`).
+const TOOLBAR_HEIGHT: f32 = 42.;
+/// The dock beside the panel's content when the panel is at the bottom.
+const DOCK_BESIDE: f32 = 320.;
 
 /// The widest the panel may be: the window less what the panes and the
 /// sidebar keep. Never a fixed number: a wide window has room for a wide page.
@@ -2093,11 +2150,25 @@ pub fn max_width(window: f32, panes: usize, sidebar: bool) -> f32 {
     (window - kept).max(MIN_WIDTH)
 }
 
-/// The side panel, or `None` when closed.
-/// `limit` is `Shell::preview_width_limit`: the remembered width is kept as
-/// the user left it and only drawn narrower while the window is too small.
+/// The tallest the panel may be at the bottom, from the window's height the
+/// same way.
+pub fn max_height(window: f32, panes: usize) -> f32 {
+    let kept = PANE_KEEP_HEIGHT * panes.max(1) as f32 + TOOLBAR_HEIGHT + crate::status::HEIGHT;
+    (window - kept).max(MIN_HEIGHT)
+}
+
+/// The preview panel, or `None` when closed.
+///
+/// At the right edge (`bottom` false) it is a column as wide as `limit`
+/// allows (`Shell::preview_width_limit`), with the pinned player's dock at
+/// its foot. At the bottom it is as tall as `limit` allows
+/// (`Shell::preview_height_limit`), and the dock stands at its right end
+/// instead, as tall as the panel: a strip at the foot of a short, wide
+/// panel would leave its content no room. Either way the remembered size is
+/// kept as the user left it and only drawn smaller while the window is.
 pub fn render_panel(
     shell: &Shell,
+    bottom: bool,
     limit: f32,
     dock_limit: f32,
     cx: &mut Context<Shell>,
@@ -2106,41 +2177,83 @@ pub fn render_panel(
         return None;
     }
     let theme = cx.global::<Theme>().clone();
+    let reset = cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+        if event.click_count() == 2 {
+            if bottom {
+                this.preview.height = DEFAULT_HEIGHT;
+            } else {
+                this.preview.width = DEFAULT_WIDTH;
+            }
+            this.remember_session();
+            cx.notify();
+        }
+    });
     let handle = div()
         .id("preview-resize")
         .absolute()
         .left_0()
         .top_0()
-        .h_full()
-        .w(px(6.))
-        .cursor(CursorStyle::ResizeLeftRight)
         .hover(|style| style.bg(theme.handle))
-        .on_drag(ResizeHandle, |_, _, _, cx| cx.new(|_| NoDragView))
-        .on_click(cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
-            if event.click_count() == 2 {
-                this.preview.width = DEFAULT_WIDTH;
-                this.remember_session();
-                cx.notify();
-            }
-        }));
-    Some(
-        div()
-            .id("preview-panel")
-            .relative()
+        .on_click(reset);
+    let handle = if bottom {
+        handle
+            .w_full()
+            .h(px(6.))
+            .cursor(CursorStyle::ResizeUpDown)
+            .on_drag(ResizeHeightHandle, |_, _, _, cx| cx.new(|_| NoDragView))
+    } else {
+        handle
+            .h_full()
+            .w(px(6.))
+            .cursor(CursorStyle::ResizeLeftRight)
+            .on_drag(ResizeHandle, |_, _, _, cx| cx.new(|_| NoDragView))
+    };
+    let content = div()
+        .flex()
+        .flex_col()
+        .child(header(shell, &theme, cx))
+        .child(body(shell, &theme, !shell.preview.peek, cx));
+    let panel = div()
+        .id("preview-panel")
+        .relative()
+        .flex_none()
+        .flex()
+        .border_color(theme.border)
+        .bg(theme.surface);
+    let panel = if bottom {
+        let height = shell.preview.height.min(limit);
+        let dock = crate::dock::render(shell, crate::dock::Place::Beside(height), cx).map(|dock| {
+            div()
+                .flex_none()
+                .w(px(DOCK_BESIDE))
+                .h_full()
+                .flex()
+                .flex_col()
+                .border_l_1()
+                .border_color(theme.border)
+                .child(dock)
+        });
+        panel
+            .w_full()
+            .h(px(height))
+            .flex_row()
+            .border_t_1()
+            .child(content.flex_1().min_w_0().h_full())
+            .children(dock)
+    } else {
+        panel
             .w(px(shell.preview.width.min(limit)))
             .h_full()
-            .flex_none()
-            .flex()
             .flex_col()
             .border_l_1()
-            .border_color(theme.border)
-            .bg(theme.surface)
-            .child(header(shell, &theme, cx))
-            .child(body(shell, &theme, !shell.preview.peek, cx))
-            .children(crate::dock::render(shell, dock_limit, cx))
-            .child(handle)
-            .into_any_element(),
-    )
+            .child(content.flex_1().min_h_0().w_full())
+            .children(crate::dock::render(
+                shell,
+                crate::dock::Place::Foot(dock_limit),
+                cx,
+            ))
+    };
+    Some(panel.child(handle).into_any_element())
 }
 
 /// The centered peek overlay, or `None`.

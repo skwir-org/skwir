@@ -119,6 +119,8 @@ pub struct Shell {
     pub reviews: VecDeque<crate::review::Review>,
     pub review_focus: Option<crate::review::ReviewFocus>,
     pub timeline: TimelineState,
+    /// Panes side by side or stacked, the preview at the right or the bottom.
+    pub layout: crate::layout::Layout,
     pub toasts: crate::toast::ToastState,
     /// This frame's snapshot of what waits for a paste; rows and cells test
     /// membership here instead of taking the lock each.
@@ -271,6 +273,7 @@ impl Shell {
             reviews: VecDeque::new(),
             review_focus: None,
             timeline: TimelineState::default(),
+            layout: crate::layout::Layout::default(),
             toasts: crate::toast::ToastState::default(),
             pending: Arc::default(),
             shortcuts: None,
@@ -315,12 +318,20 @@ impl Shell {
         if session.preview_width > 0. {
             self.preview.width = session.preview_width;
         }
+        if session.preview_height > 0. {
+            self.preview.height = session.preview_height;
+        }
+        self.layout.panes = session.panes;
+        self.layout.preview = session.preview_at;
+        self.layout.split = session.split_panes;
         if session.player_height > 0. {
             self.player.height = session.player_height;
         }
         self.timeline.open = session.timeline;
         if session.split {
-            self.split(window, cx);
+            let split = self.layout.split;
+            self.toggle_split(window, cx);
+            self.layout.split = split;
         }
         // The views this build and its plugins have were instantiated with
         // the panes; a remembered one that is gone leaves the List.
@@ -566,8 +577,11 @@ impl Shell {
         cx.notify();
     }
 
-    fn split(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Split the window, or close the split, arranged as `layout` says.
+    pub(crate) fn toggle_split(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.is_split() {
+            // An arrangement made for this split ends with it.
+            self.layout.split = None;
             // Close the other pane; keep the active one.
             let other = self.other_pane();
             if let Some(o) = other {
@@ -978,7 +992,8 @@ impl Shell {
                 self.timeline_set_bucket(&b, cx);
             }
             "timeline_subtree" => self.timeline_toggle_subtree(cx),
-            "split" => self.split(window, cx),
+            "split" => self.split_command(args, window, cx),
+            "layout" => self.layout_command(args, cx),
             "focus_other_pane" => self.focus_other_pane(window, cx),
             "copy_other" => self.send_to_other_pane("copy", window, cx),
             "move_other" => self.send_to_other_pane("move", window, cx),
@@ -1405,14 +1420,18 @@ impl Shell {
             None
         };
         self.pane = saved;
+        // Split panes are told apart by the edge they share: the left one
+        // side by side, the top one stacked. The active pane's is the accent.
+        let stacked = self.layout.stacked();
         div()
             .flex_1()
             .min_w_0()
-            .h_full()
+            .min_h_0()
             .flex()
             .flex_col()
             .when(self.is_split(), |d| {
-                d.border_l_1()
+                d.when(stacked, gpui::Styled::border_t_1)
+                    .when(!stacked, gpui::Styled::border_l_1)
                     .border_color(if active { theme.accent } else { theme.border })
             })
             .child(address_bar)
@@ -1444,6 +1463,12 @@ impl Render for Shell {
             );
         }
         self.sync(window, cx);
+        // Like the sidebar below, the arrangement follows the window's own
+        // size, known before layout; decide it before anything is built.
+        let viewport = window.viewport_size();
+        self.layout
+            .observe(f32::from(viewport.width), f32::from(viewport.height));
+        let (stacked, bottom) = (self.layout.stacked(), self.layout.bottom());
         let theme = cx.global::<Theme>().clone();
         let toolbar = address::render_toolbar(self, cx);
         // The window's own width is known before layout, unlike an element's.
@@ -1457,12 +1482,12 @@ impl Render for Shell {
         for id in pane_ids {
             columns.push(self.render_pane(id, window, cx));
         }
-        let panel = preview::render_panel(
-            self,
-            self.preview_width_limit(window),
-            self.dock_height_limit(window),
-            cx,
-        );
+        let limit = if bottom {
+            self.preview_height_limit(window)
+        } else {
+            self.preview_width_limit(window)
+        };
+        let panel = preview::render_panel(self, bottom, limit, self.dock_height_limit(window), cx);
         let status_bar = status::render(self, cx);
         // Not deferred: GPUI cannot nest deferred draws and the dialog's own
         // dropdowns are. It is the last overlay, so it paints above the rest.
@@ -1503,8 +1528,27 @@ impl Render for Shell {
                     .min_h_0()
                     .w_full()
                     .children(side)
-                    .children(columns)
-                    .children(panel),
+                    // The panes and the preview: a row with the panel at the
+                    // right edge, a column with it at the bottom; the panes
+                    // among themselves, side by side or stacked.
+                    .child(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .min_w_0()
+                            .min_h_0()
+                            .when(bottom, gpui::Styled::flex_col)
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .min_h_0()
+                                    .when(stacked, gpui::Styled::flex_col)
+                                    .children(columns),
+                            )
+                            .children(panel),
+                    ),
             )
             .child(status_bar)
             .children(toast)

@@ -126,6 +126,8 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
 
 /// Builtin bindings that carry arguments (`keys, command, args json, when`).
 const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
+    // Shift+F3 splits the other way from F3, for this split only.
+    ("shift-f3", "ui.split", r#"{"axis":"other"}"#, None),
     (
         "ctrl-c",
         "ui.inspect",

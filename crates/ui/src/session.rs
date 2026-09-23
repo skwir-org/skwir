@@ -2,9 +2,9 @@
 //!
 //! A preference is something the user chose in Settings; this is not that. It
 //! is the shape of the last window — which view each pane showed, whether it
-//! was split, whether the preview and the timeline were open and how wide the
-//! preview was — kept as application data under one key and restored at
-//! startup. Nothing here is worth a dialog, and all of it is annoying to set
+//! was split and how, whether the preview and the timeline were open, where
+//! the preview was and how big — kept as application data under one key and
+//! restored at startup. Nothing here is worth a dialog, and all of it is annoying to set
 //! up again every morning.
 //!
 //! The shell keeps a copy and writes it only when it differs, so ordinary
@@ -24,8 +24,16 @@ pub struct Session {
     /// Icon size of the grid view.
     pub zoom: u32,
     pub split: bool,
+    /// Split panes side by side, stacked, or as the window's shape says.
+    pub panes: crate::layout::Panes,
+    /// The open split's own arrangement, when it was made the other way.
+    pub split_panes: Option<crate::layout::Panes>,
     pub preview: bool,
+    /// The preview at the right, at the bottom, or as the window's shape says.
+    pub preview_at: crate::layout::Preview,
     pub preview_width: f32,
+    /// How tall the preview is when it is at the bottom.
+    pub preview_height: f32,
     /// Whether Details is open under the preview.
     pub details: bool,
     pub timeline: bool,
@@ -40,8 +48,12 @@ impl Shell {
             view: self.ui().view_id.to_owned(),
             zoom: self.zoom,
             split: self.is_split(),
+            panes: self.layout.panes,
+            split_panes: self.layout.split,
             preview: self.preview.open,
+            preview_at: self.layout.preview,
             preview_width: self.preview.width,
+            preview_height: self.preview.height,
             details: self.preview.details_open,
             timeline: self.timeline.open,
             player_height: self.player.height,
@@ -79,4 +91,29 @@ pub fn declare(app: &bibli_core::App) {
             "The last window's view, split, preview and timeline",
             toml::Value::Table(toml::map::Map::new()),
         ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layout::{Panes, Preview};
+
+    #[test]
+    fn the_arrangement_survives_the_settings_file() {
+        for split_panes in [None, Some(Panes::Column)] {
+            let session = Session {
+                split: true,
+                panes: Panes::Row,
+                split_panes,
+                preview_at: Preview::Bottom,
+                preview_height: 300.,
+                ..Session::default()
+            };
+            let value = toml::Value::try_from(&session).unwrap();
+            assert_eq!(value.try_into::<Session>().unwrap(), session);
+        }
+        // A file written before the arrangement existed reads as automatic.
+        let old: Session = toml::from_str("split = true\npreview = true").unwrap();
+        assert_eq!((old.panes, old.preview_at), (Panes::Auto, Preview::Auto));
+    }
 }

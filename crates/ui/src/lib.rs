@@ -31,6 +31,7 @@ mod inspector_rows;
 mod inspector_text;
 pub mod jump;
 pub mod keymap;
+pub mod layout;
 pub mod list;
 mod loading;
 mod markdown;
