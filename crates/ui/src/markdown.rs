@@ -13,7 +13,7 @@
 //! and skip the frame, or code inside a quote loses its border.
 use crate::{inspector_text, theme::Theme};
 use bibli_core::{
-    inspection::{Block, BlockKind},
+    inspection::{Align, Block, BlockKind},
     workspace::PaneId,
 };
 use gpui::{
@@ -154,13 +154,24 @@ pub fn block(
         _ if block.code => code_box(block, index, selection, style, mono, pane, entity),
         BlockKind::Text => text_body(block, index, selection, style, pane, entity),
     };
-    let mut line = div().flex().flex_row().items_start().w_full().min_w_0();
+    // The document's own margins (a letter, a verse, a definition) indent
+    // the whole block, marker included.
+    let indent = block.indent.max(0.) * style.body_size;
+    let mut line = div()
+        .flex()
+        .flex_row()
+        .items_start()
+        .w_full()
+        .min_w_0()
+        .pl(px(indent));
     if block.list_depth > 0 {
         // The marker column is reserved for every block of the item, not only
         // the one that shows the bullet, so an item's later paragraphs and its
         // code line up under its first line.
         line = line
-            .pl(px(style.list_indent * (block.list_depth - 1) as f32))
+            .pl(px(
+                indent + style.list_indent * (block.list_depth - 1) as f32
+            ))
             .child(
                 div()
                     .flex_none()
@@ -177,7 +188,11 @@ pub fn block(
                 div()
                     .w_full()
                     .flex()
-                    .when(block.centered, gpui::Styled::justify_center)
+                    .map(|d| match block.align {
+                        Align::Start => d,
+                        Align::Center => d.justify_center(),
+                        Align::End => d.justify_end(),
+                    })
                     .child(gpui::img(image.clone()).max_w_full()),
             )
         })
@@ -204,13 +219,18 @@ fn text_body(
             body = body.border_b_1().border_color(style.border).pb_1();
         }
     } else {
+        // A paragraph the document sets apart by its size (a title page
+        // line, small print) keeps that proportion to the body.
+        let size = style.body_size * block.size.unwrap_or(1.);
         body = body
-            .text_size(px(style.body_size))
-            .line_height(px(style.body_size * style.line_height));
+            .text_size(px(size))
+            .line_height(px(size * style.line_height));
     }
-    if block.centered {
-        body = body.text_center();
-    }
+    body = match block.align {
+        Align::Start => body,
+        Align::Center => body.text_center(),
+        Align::End => body.text_right(),
+    };
     if block.quote {
         body = body.text_color(style.quote_text);
     }

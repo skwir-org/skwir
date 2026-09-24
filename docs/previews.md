@@ -22,9 +22,9 @@ Each format is enabled by an independent plugin in **Settings → Plugins**:
 | --- | --- |
 | `preview-audio` | Audio playback, seeking, volume, speed (pitch kept), tags, embedded cover and a spectrum ring in the cover's colour. Playback starts paused. Previous and Next step through the folder's audio files or a playlist; a track that ends hands over to the next. **Keep playing** pins the player so the music goes on while you browse, steered from the status bar and from the desktop's media keys (MPRIS), without a gap between tracks. ReplayGain is a setting. |
 | `preview-hex` | Read-only hexadecimal/ASCII ranges for binary files; available explicitly for any file. Jump to a decimal or `0x` offset; search text or `hex: 00 ff 7a` byte sequences. |
-| `preview-markdown` | Markdown and HTML reading mode with source toggle, headings, emphasis, lists, tables, code highlighting, links and local images. HTML is inert: no scripts, styles or remote content. |
+| `preview-markdown` | Markdown and HTML reading mode with source toggle, headings, emphasis, lists, tables, code highlighting, links and local images. HTML keeps what its stylesheets say about emphasis, alignment, indents and hidden text, and is inert: no scripts, fonts or remote content. |
 | `preview-archives` | File-list-style archive tree with themed icons, folders first, aligned sizes, expand/collapse controls and selected-member image/text previews; other members show paged hexadecimal bytes. |
-| `preview-epub` | Reflowing EPUB chapters, contents, embedded images, links, text size, selection/copy, source and book search. Chapters follow each other: scroll on past the end of one to read the next. |
+| `preview-epub` | Reflowing EPUB chapters, contents, embedded images, links and footnotes, text size, selection/copy, source and book search. The book's stylesheets give it its italics, centred titles, indents and hidden text; its fonts and colours give way to the theme. Chapters follow each other: scroll on past the end of one to read the next. A fixed-layout book of pictures (a comic) shows a page at a time. |
 | `preview-playlists` | M3U/M3U8, PLS, XSPF and CUE files as a list of tracks with titles, artists and lengths; missing and remote entries are marked. A track on this machine opens in the player, whose Previous and Next then walk the playlist. Nothing is fetched. |
 | `preview-tables` | CSV/TSV tables, quoted multiline cells, horizontal scrolling and section navigation. |
 | `preview-structured` | Syntax-highlighted JSON/YAML/TOML code with line numbers, folding and source toggle. |
@@ -68,9 +68,13 @@ the [GStreamer ASF demuxer](https://gstreamer.freedesktop.org/documentation/asf/
 from `gst-plugins-ugly`; the dev shell includes it alongside `gst-libav` for
 Windows Media codecs. Reload the dev shell after changing its plugin packages.
 
-EPUB is a native **reading mode**, not a browser: publisher CSS, fixed-page
-layouts, scripts and DRM are unsupported. Markdown and email do not fetch remote
-images. Encrypted archives need an external application. Selected container
+EPUB is a native **reading mode**, not a browser: a book's stylesheets are
+applied only where they say how text reads (emphasis, alignment, indents, relative
+sizes, hidden text); its fonts, colours, page layout, scripts and DRM are not.
+Footnotes are gathered at the end of their chapter, where their links lead.
+Superscripts read at the line's size, and at most eight pictures show per
+chapter. Markdown and email do not fetch remote images. Encrypted archives need
+an external application. Selected container
 members and mail attachments currently preview as images, text or bytes; they do
 not launch nested PDF/video sessions. Large inputs have explicit bounds and
 errors rather than unbounded parsing; see [ADR-009](adr/009-structured-previews.md).

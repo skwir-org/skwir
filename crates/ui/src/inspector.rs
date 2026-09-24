@@ -249,7 +249,7 @@ impl State {
             && let Some(item) = data
                 .blocks
                 .iter()
-                .position(|block| block.anchor.as_deref() == Some(fragment))
+                .position(|block| block.anchors.iter().any(|name| name == fragment))
                 .and_then(|index| self.item_of(data, index))
         {
             scroll_into_view(&self.list, item);
@@ -651,7 +651,7 @@ impl Shell {
                         .data
                         .blocks
                         .iter()
-                        .position(|b| b.anchor.as_deref() == Some(anchor))
+                        .position(|b| b.anchors.iter().any(|name| name == anchor))
                         .and_then(|i| self.preview.inspection.item_of(&display.data, i))
                 {
                     scroll_into_view(&self.preview.inspection.list, item);

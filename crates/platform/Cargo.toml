@@ -21,6 +21,15 @@ parking_lot.workspace = true
 tempfile.workspace = true
 serde_json.workspace = true
 scraper = "0.24"
+# The versions scraper itself builds on: publisher stylesheets are parsed and
+# matched against its tree, and XHTML read as XML is built into that tree.
+cssparser = "0.35"
+selectors = "0.31"
+markup5ever = "0.35"
+ego-tree = "0.10"
+roxmltree.workspace = true
+# SVG pictures in documents; the version gpui already links.
+resvg = { version = "0.45", default-features = false }
 percent-encoding = "2"
 encoding_rs = "0.8"
 crossbeam-channel.workspace = true

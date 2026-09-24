@@ -79,17 +79,24 @@ impl PreviewProvider for Provider {
         let (source, encoding) = inspection::read_text(&path, cancel)?;
         let base = path.parent().unwrap_or(std::path::Path::new("."));
         let image = |href: &str| rich_preview::local_image(base, href, cancel);
-        let markdown = matches!(
-            inspection::extension(&path).as_str(),
-            "md" | "markdown" | "mdown"
-        );
-        let (title, page, notice) = if markdown {
+        let extension = inspection::extension(&path);
+        let (title, page, notice) = if matches!(extension.as_str(), "md" | "markdown" | "mdown") {
             ("Markdown", markdown::parse(&source, cancel, image)?, "")
         } else {
+            let markup = if extension == "xhtml" {
+                rich_preview::Markup::Xhtml
+            } else {
+                rich_preview::Markup::Html
+            };
             (
                 "HTML",
-                rich_preview::html(&source, cancel, image)?,
-                "Reading mode · scripts, styles and remote content are not loaded",
+                rich_preview::html(
+                    &source,
+                    markup,
+                    cancel,
+                    rich_preview::Local { base, cancel },
+                )?,
+                "Reading mode · scripts, fonts and remote content are not loaded",
             )
         };
         Ok(Some(measured(

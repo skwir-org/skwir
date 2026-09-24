@@ -92,14 +92,15 @@ impl PreviewProvider for Provider {
         let mut remote = false;
         let mut truncated = false;
         if let Some(html) = message.body_html(0) {
-            let page = rich_preview::html(&html, cancel, |src| {
+            let images = rich_preview::pictures(|src: &str| {
                 let Some(id) = src.strip_prefix("cid:") else {
                     remote |= ["http:", "https:", "//"].iter().any(|p| src.starts_with(p));
                     return None;
                 };
                 let part = message.parts.iter().find(|p| p.content_id() == Some(id))?;
                 inspection::image(part.contents()).ok()
-            })?;
+            });
+            let page = rich_preview::html(&html, rich_preview::Markup::Html, cancel, images)?;
             truncated = page.truncated;
             blocks.extend(page.blocks);
         } else if let Some(text) = message.body_text(0) {

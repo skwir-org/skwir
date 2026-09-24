@@ -169,7 +169,13 @@ fn emit_html(
     if source.trim().is_empty() {
         return Ok(());
     }
-    for mut block in rich_preview::html(&source, cancel, image)?.blocks {
+    let page = rich_preview::html(
+        &source,
+        rich_preview::Markup::Html,
+        cancel,
+        rich_preview::pictures(image),
+    )?;
+    for mut block in page.blocks {
         block.quote |= quote_depth > 0;
         blocks.push(block);
     }
@@ -299,8 +305,8 @@ pub fn parse(
                 flush(&mut blocks, &mut current, &mut marker);
             }
             Event::End(TagEnd::Heading(_)) => {
-                if current.anchor.is_none() {
-                    current.anchor = Some(anchors.slug(&current.text));
+                if current.anchors.is_empty() {
+                    current.anchors.push(anchors.slug(&current.text));
                 }
                 flush(&mut blocks, &mut current, &mut marker);
             }
@@ -308,7 +314,10 @@ pub fn parse(
                 flush(&mut blocks, &mut current, &mut marker);
                 begin(&mut current, quote_depth, &lists, marker.as_deref());
                 current.heading = level(tag);
-                current.anchor = id.map(|id| anchors.unique(id.to_string()));
+                current.anchors = id
+                    .map(|id| anchors.unique(id.to_string()))
+                    .into_iter()
+                    .collect();
             }
             Event::Start(Tag::BlockQuote(_)) => {
                 flush(&mut blocks, &mut current, &mut marker);
@@ -602,7 +611,10 @@ mod tests {
         let blocks = parse(
             "# The Plan!\n\n## The Plan\n\n### Explicit {#Named_Part}\n\n## my_func\n\n## a -- b\n\n## The Plan-1\n",
         );
-        let anchors: Vec<_> = blocks.iter().map(|b| b.anchor.as_deref()).collect();
+        let anchors: Vec<_> = blocks
+            .iter()
+            .map(|b| b.anchors.first().map(String::as_str))
+            .collect();
         assert_eq!(
             anchors,
             [
@@ -623,12 +635,9 @@ mod tests {
         let started = std::time::Instant::now();
         let blocks = parse(&source);
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
-        assert_eq!(blocks[1].anchor.as_deref(), Some("a-1"));
+        assert_eq!(blocks[1].anchors, ["a-1"]);
         let last = format!("a-{}", limits::BLOCKS - 2);
-        assert_eq!(
-            blocks.last().unwrap().anchor.as_deref(),
-            Some(last.as_str())
-        );
+        assert_eq!(blocks.last().unwrap().anchors, [last]);
     }
 
     #[test]

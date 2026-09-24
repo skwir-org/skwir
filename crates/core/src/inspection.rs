@@ -84,9 +84,21 @@ pub enum BlockKind {
         header: bool,
     },
 }
+/// Where a block's lines sit in the column.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Align {
+    #[default]
+    Start,
+    /// A book's title page, a README's logo line.
+    Center,
+    End,
+}
 #[derive(Clone, Debug, Default)]
 pub struct Block {
-    pub anchor: Option<String>,
+    /// The names a link can reach this block by (`#name`): a heading's slug,
+    /// or every `id` in a page that lands here, the block's own and those of
+    /// the sections it opens and the words inside it.
+    pub anchors: Vec<String>,
     pub language: Option<String>,
     pub kind: BlockKind,
     pub text: String,
@@ -98,10 +110,16 @@ pub struct Block {
     pub list_depth: u32,
     /// The bullet or number that introduces a list item, drawn beside it.
     pub marker: Option<String>,
-    /// Set in the middle of the column: a book's title page, a README's logo
-    /// line. The one piece of a document's own styling that is structure
-    /// enough to keep.
-    pub centered: bool,
+    /// Where the lines sit, as the document's own styling says.
+    pub align: Align,
+    /// Extra left indent, in ems, from the document's own margins (a letter,
+    /// a verse, a definition): bounded, and apart from quotes and lists,
+    /// which are structure.
+    pub indent: f32,
+    /// Text size relative to the body, when the document sets a paragraph
+    /// apart by it (a title page line, small print). Headings and code keep
+    /// the reading typography's sizes.
+    pub size: Option<f32>,
     pub runs: Vec<Run>,
     pub image: Option<Image>,
 }
@@ -113,6 +131,7 @@ pub struct Run {
     pub bold: bool,
     pub italic: bool,
     pub strikethrough: bool,
+    pub underline: bool,
     pub code: bool,
     pub link: Option<String>,
 }
@@ -191,17 +210,19 @@ pub fn split_blocks(blocks: Vec<Block>) -> Vec<Block> {
                 text: block.text[start..end].into(),
                 runs,
                 image: if start == 0 { block.image.take() } else { None },
-                anchor: if start == 0 {
-                    block.anchor.take()
+                anchors: if start == 0 {
+                    std::mem::take(&mut block.anchors)
                 } else {
-                    None
+                    Vec::new()
                 },
                 marker: if start == 0 {
                     block.marker.take()
                 } else {
                     None
                 },
-                centered: block.centered,
+                align: block.align,
+                indent: block.indent,
+                size: block.size,
                 // Only text can exceed the limit, so the kind carries over.
                 kind: block.kind.clone(),
                 language: block.language.clone(),

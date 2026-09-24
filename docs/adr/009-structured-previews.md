@@ -28,6 +28,8 @@ Markdown uses pulldown-cmark (MIT). Markdown, EPUB and email share an inert nati
 reading-mode HTML adapter using scraper/html5ever (ISC/MIT/Apache-2.0). It exposes
 headings, paragraphs, lists, inline emphasis, links, code and images; it does not
 execute scripts, apply publisher CSS, run browser layout or fetch remote assets.
+(ADR-012 amends this: the part of a document's CSS that says how text reads is
+applied; layout, fonts and colours are still not.)
 EPUB parsing uses rbook (Apache-2.0). Its parser and ZIP dependency require Rust
 1.88, now declared by the EPUB plugin and application; the Nix shell already uses
 newer Rust. Other crates retain their existing minimum. Prefer this limited reading mode over embedding

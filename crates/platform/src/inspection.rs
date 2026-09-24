@@ -51,6 +51,9 @@ pub mod limits {
     pub const NESTING: usize = 64;
     /// Element depth of HTML read in reading mode.
     pub const HTML_DEPTH: usize = 128;
+    /// Style rules kept for one page, the built-in ones included; its
+    /// stylesheets together are bounded by `TEXT_INPUT`.
+    pub const STYLE_RULES: usize = 4000;
     pub const EMBEDDED_IMAGES: usize = 8;
     /// Decoded embedded images: pixel side, decoder allocation and display side.
     pub const IMAGE_SIDE: u32 = 8192;
@@ -371,6 +374,9 @@ pub fn image(bytes: &[u8]) -> anyhow::Result<Image> {
         "Embedded image exceeds {}",
         limits::describe(limits::BINARY_INPUT)
     );
+    if is_svg(bytes) {
+        return svg(bytes);
+    }
     let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?;
     let mut image_limits = image::Limits::default();
     image_limits.max_image_width = Some(limits::IMAGE_SIDE);
@@ -389,6 +395,48 @@ pub fn image(bytes: &[u8]) -> anyhow::Result<Image> {
         width: img.width(),
         height: img.height(),
         rgba: img.into_raw().into(),
+    })
+}
+/// Whether `bytes` are an SVG document rather than a raster image.
+fn is_svg(bytes: &[u8]) -> bool {
+    let head = &bytes[..bytes.len().min(1024)];
+    let head = String::from_utf8_lossy(head);
+    let head = head.trim_start_matches('\u{feff}').trim_start();
+    (head.starts_with("<?xml") || head.starts_with("<svg") || head.starts_with("<!--"))
+        && head.contains("<svg")
+}
+/// Rasterize an SVG picture at its own size, no larger than the display
+/// side. It is inert: nothing it names outside itself (a file, a URL) is
+/// read, only pictures embedded in it as data.
+fn svg(bytes: &[u8]) -> anyhow::Result<Image> {
+    use resvg::{tiny_skia, usvg};
+    let mut options = usvg::Options::default();
+    options.image_href_resolver.resolve_string = Box::new(|_, _| None);
+    let tree = usvg::Tree::from_data(bytes, &options)?;
+    let size = tree.size();
+    let limit = limits::IMAGE_DISPLAY_SIDE as f32;
+    let scale = (limit / size.width()).min(limit / size.height()).min(1.);
+    let width = (size.width() * scale).round().max(1.) as u32;
+    let height = (size.height() * scale).round().max(1.) as u32;
+    let mut pixmap = tiny_skia::Pixmap::new(width, height)
+        .ok_or_else(|| anyhow::anyhow!("SVG picture has no size"))?;
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+    let rgba: Vec<u8> = pixmap
+        .pixels()
+        .iter()
+        .flat_map(|pixel| {
+            let color = pixel.demultiply();
+            [color.red(), color.green(), color.blue(), color.alpha()]
+        })
+        .collect();
+    Ok(Image {
+        width,
+        height,
+        rgba: rgba.into(),
     })
 }
 /// One fact for the panel's Details, or nothing when the format left it

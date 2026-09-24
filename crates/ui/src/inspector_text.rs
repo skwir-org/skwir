@@ -118,6 +118,12 @@ pub fn part(
                         color: Some(style.link),
                         wavy: false,
                     });
+                } else if r.underline {
+                    highlight.underline = Some(UnderlineStyle {
+                        thickness: px(1.),
+                        color: None,
+                        wavy: false,
+                    });
                 }
             }
             if selection.contains(&start) {

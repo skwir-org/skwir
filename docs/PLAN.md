@@ -96,6 +96,19 @@ playing video, movement resetting the deadline, hover protection, menu focus
 and dismissal, and fullscreen exit. Lint, 148 default tests, two explicit native
 video tests and the benchmark gate pass.
 
+Reading fidelity (2026-09-24, ADR-012): reading mode keeps the part of a
+document's CSS that says how text reads, through a cascade over the parsed tree
+with the selector engine scraper already uses: a book's class-borne italics,
+centred titles, verse indents and hidden text now show, in the reader's theme.
+XHTML chapters are read as XML (a self-closed `<title/>` emptied the chapter);
+every `id` is a link target, footnotes gather at the end of their chapter and
+page numbers leave the text; SVG cover pages and drawings show; a fixed-layout
+book of pictures shows page by page. Deviations: superscripts and small capitals
+are not drawn (a GPUI run has no size of its own), and pictures are still capped
+at eight per page rather than loaded as they scroll into view. Lint and the
+default tests pass; a synthetic book was checked in a window on an isolated
+display, including following a footnote and its way back.
+
 Music (2026-09-22): the audio preview became a small player. Sound: a
 perceptual volume, `scaletempo` so speed keeps the pitch, a spectrum folded
 into logarithmic bands. Tracks: Previous and Next through the folder's audio

@@ -46,20 +46,27 @@ impl PreviewProvider for Provider {
     ) -> anyhow::Result<Option<Inspection>> {
         let path = req.entry.resolve()?;
         let mut container = Container::open(&path, cancel)?;
-        let book = package(&mut container, cancel)?;
-        let chapters: Vec<String> = book
+        let (book, fixed) = package(&mut container, cancel)?;
+        let (chapters, markups): (Vec<String>, Vec<rich_preview::Markup>) = book
             .spine()
             .iter()
             .filter_map(|s| s.manifest_entry())
-            .map(|c| c.href().as_str().to_owned())
-            .collect();
+            .map(|c| {
+                let markup = if c.media_type() == "text/html" {
+                    rich_preview::Markup::Html
+                } else {
+                    rich_preview::Markup::Xhtml
+                };
+                (c.href().as_str().to_owned(), markup)
+            })
+            .unzip();
         anyhow::ensure!(!chapters.is_empty(), "EPUB has no readable chapters");
         // A chapter is found by the member it names, however a link spells
         // it (`Text/../Text/ch2.xhtml`, escaped, with a fragment).
         let keys: Vec<_> = chapters.iter().map(|href| member_key(href)).collect();
         let mut index = view.offset.min(chapters.len().saturating_sub(1) as u64) as usize;
         let mut notice = vec![String::from(
-            "Reading mode · publisher CSS and fixed-page layout are not applied",
+            "Reading mode · the book's fonts, colours and page layout are not applied",
         )];
         if let Some(query) = view.query.as_deref().filter(|q| !q.is_empty()) {
             // A search starts at the requested chapter and wraps, so a caller
@@ -67,12 +74,25 @@ impl PreviewProvider for Provider {
             // A chapter that cannot be read is passed over, not the search.
             let start = (view.offset % chapters.len() as u64) as usize;
             let query = query.to_lowercase();
+            // A chapter is searched as it reads, with its stylesheets: what
+            // the book hides is not a match.
             let found = (start..chapters.len()).chain(0..start).find(|&candidate| {
                 !cancel.is_cancelled()
                     && container
                         .read(&chapters[candidate], "Chapter", cancel)
                         .and_then(|bytes| {
-                            rich_preview::html(&inspection::decode(&bytes).0, cancel, |_| None)
+                            let resources = Chapter {
+                                container: &mut container,
+                                base: base(&chapters[candidate]),
+                                cancel,
+                                images: false,
+                            };
+                            rich_preview::html(
+                                &inspection::decode(&bytes).0,
+                                markups[candidate],
+                                cancel,
+                                resources,
+                            )
                         })
                         .is_ok_and(|page| {
                             page.blocks
@@ -103,7 +123,7 @@ impl PreviewProvider for Provider {
         let bytes = container.read(&href, "Chapter", cancel)?;
         let (source, encoding) = inspection::decode(&bytes);
         notice.extend(encoding.notice());
-        let base = href.rsplit_once('/').map_or("", |(base, _)| base);
+        let base = base(&href);
         let mut rows = Vec::new();
         for entry in book.toc() {
             contents(entry, 0, &mut rows);
@@ -162,15 +182,31 @@ impl PreviewProvider for Provider {
                 ..frame
             }));
         }
-        let page = rich_preview::html(&source, cancel, |src| {
-            if src.contains(':') {
-                return None;
-            }
-            let bytes = container
-                .read(&resolve(base, src), "Embedded image", cancel)
-                .ok()?;
-            inspection::image(&bytes).ok()
-        })?;
+        let resources = Chapter {
+            container: &mut container,
+            base,
+            cancel,
+            images: true,
+        };
+        let page = rich_preview::html(&source, markups[index], cancel, resources)?;
+        // A fixed-layout book whose page is one picture (a comic, a
+        // picture book) shows it as a page, the inspection's own picture the
+        // width of the panel, not a picture in a column of text. It is still
+        // a book: its contents, search and links work as on any chapter.
+        if fixed
+            && let [picture] = page.blocks.as_slice()
+            && picture.image.is_some()
+        {
+            let mut blocks = page.blocks;
+            return Ok(Some(Inspection {
+                kind: bibli_core::inspection::InspectionKind::Book,
+                title: format!("EPUB · page {} / {}", index + 1, chapters.len()),
+                image: blocks.pop().and_then(|picture| picture.image),
+                rows,
+                notice: encoding.notice().unwrap_or_default(),
+                ..frame
+            }));
+        }
         if page.truncated {
             notice.push(inspection::blocks_notice());
         }
@@ -192,6 +228,41 @@ impl PreviewProvider for Provider {
             notice: notice.join(" · "),
             ..frame
         }))
+    }
+}
+/// A chapter's folder in the container, which its links start from.
+fn base(href: &str) -> &str {
+    href.rsplit_once('/').map_or("", |(base, _)| base)
+}
+/// What a chapter names inside the container, read through its bounded
+/// reader: pictures (unless only the text is wanted) and stylesheets.
+/// Nothing outside the container is ever named.
+struct Chapter<'a> {
+    container: &'a mut Container,
+    base: &'a str,
+    cancel: &'a CancelToken,
+    images: bool,
+}
+impl rich_preview::Resources for Chapter<'_> {
+    fn image(&mut self, src: &str) -> Option<bibli_core::thumbs::Image> {
+        if !self.images || src.contains(':') {
+            return None;
+        }
+        let bytes = self
+            .container
+            .read(&resolve(self.base, src), "Embedded image", self.cancel)
+            .ok()?;
+        inspection::image(&bytes).ok()
+    }
+    fn stylesheet(&mut self, href: &str) -> Option<String> {
+        if href.contains(':') {
+            return None;
+        }
+        let bytes = self
+            .container
+            .read(&resolve(self.base, href), "Stylesheet", self.cancel)
+            .ok()?;
+        (bytes.len() <= limits::TEXT_INPUT).then(|| inspection::decode(&bytes).0.into_owned())
     }
 }
 fn resolve(base: &str, href: &str) -> String {
@@ -266,7 +337,9 @@ fn normalize(path: &str) -> Option<String> {
 /// Build the in-memory package rbook parses: container.xml, the OPF and the
 /// contents documents (EPUB 3 nav, EPUB 2 NCX) it may read, all stored after
 /// passing through the bounded reader.
-fn package(container: &mut Container, cancel: &CancelToken) -> anyhow::Result<rbook::Epub> {
+/// Also says whether the book is laid out in fixed pages
+/// (`rendition:layout` is `pre-paginated`).
+fn package(container: &mut Container, cancel: &CancelToken) -> anyhow::Result<(rbook::Epub, bool)> {
     const CONTAINER: &str = "META-INF/container.xml";
     let container_xml = container.read(CONTAINER, "EPUB container", cancel)?;
     let opf_path = {
@@ -281,9 +354,15 @@ fn package(container: &mut Container, cancel: &CancelToken) -> anyhow::Result<rb
     let opf = container.read(&opf_path, "EPUB package", cancel)?;
     let opf_dir = opf_path.rsplit_once('/').map_or("", |(dir, _)| dir);
     let mut contents = Vec::new();
+    let fixed;
     {
         let text = inspection::decode(&opf).0;
         let doc = roxmltree::Document::parse(&text)?;
+        fixed = doc.descendants().any(|n| {
+            n.has_tag_name("meta")
+                && n.attribute("property") == Some("rendition:layout")
+                && n.text().map(str::trim) == Some("pre-paginated")
+        });
         let items: Vec<_> = doc
             .descendants()
             .filter(|n| n.has_tag_name("item"))
@@ -328,7 +407,7 @@ fn package(container: &mut Container, cancel: &CancelToken) -> anyhow::Result<rb
         }
     }
     let bytes = zip.finish()?.into_inner();
-    Ok(rbook::Epub::read(std::io::Cursor::new(bytes))?)
+    Ok((rbook::Epub::read(std::io::Cursor::new(bytes))?, fixed))
 }
 
 /// Flatten a contents tree. Wrapper entries without a target (such as the
@@ -555,6 +634,8 @@ mod tests {
                 b"<html><body><h1>Th\xe9</h1><p>caf\xe9</p></body></html>",
             ),
         ];
+        // An extra entry replaces the chapter of the same name.
+        entries.retain(|(name, _)| !extra.iter().any(|(extra, _)| extra == name));
         entries.extend_from_slice(extra);
         write(path, &entries);
     }
@@ -659,6 +740,94 @@ mod tests {
         )
         .unwrap();
         assert_eq!(found.position, 2);
+    }
+
+    /// A chapter reads with the book's own stylesheet, found inside the
+    /// container through the chapter's relative link, and as XML: a
+    /// `<title/>` closes itself instead of swallowing the chapter.
+    #[test]
+    fn a_chapter_reads_with_its_stylesheet_and_as_xhtml() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("Synthetic styled book.epub");
+        let chapter = br#"<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title/><link rel="stylesheet" type="text/css" href="../Styles/style.css"/></head>
+<body><p class="c">CHAPTER ONE</p><p>She said <span class="i">never</span>.</p><p class="kf8">Kindle only needle</p></body></html>"#;
+        sigil(
+            &path,
+            &[
+                (
+                    "OEBPS/Styles/style.css",
+                    b".i { font-style: italic } .c { text-align: center } .kf8 { display: none }",
+                ),
+                ("OEBPS/Text/one.xhtml", chapter),
+            ],
+        );
+        let first = inspect(&path, &InspectRequest::default()).unwrap();
+        let texts: Vec<_> = first.blocks.iter().map(|b| b.text.as_str()).collect();
+        assert_eq!(texts, ["CHAPTER ONE", "She said never."]);
+        assert_eq!(first.blocks[0].align, bibli_core::inspection::Align::Center);
+        let never = &first.blocks[1].runs[1];
+        assert!(never.italic && first.blocks[1].text[never.range.clone()] == *"never");
+        // What the book hides is not a match either.
+        let search = inspect(
+            &path,
+            &InspectRequest {
+                query: Some("needle".into()),
+                ..InspectRequest::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(search.notice, "No matching chapter");
+    }
+
+    /// A fixed-layout book whose pages are pictures (a comic) shows a page
+    /// as a page: the picture, the width of the panel.
+    #[test]
+    fn a_fixed_layout_picture_page_is_a_page() {
+        const PNG: &[u8] = b"\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x44\x52\x00\x00\x00\x02\x00\x00\x00\x03\x08\x06\x00\x00\x00\xb9\xea\xde\x81\x00\x00\x00\x11\x49\x44\x41\x54\x78\x9c\x63\xf8\xcf\xc0\xf0\x1f\x84\x19\x30\x18\x00\xa1\x79\x0b\xf5\x4d\xc4\x9a\x07\x00\x00\x00\x00\x49\x45\x4e\x44\xae\x42\x60\x82";
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("Synthetic comic book.epub");
+        let opf = OPF.replace(
+            "<dc:language>en</dc:language>",
+            r#"<dc:language>en</dc:language><meta property="rendition:layout">pre-paginated</meta>"#,
+        );
+        let page = br#"<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Page</title><meta name="viewport" content="width=2, height=3"/></head>
+<body><div><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 2 3"><image width="2" height="3" xlink:href="images/p1.png"/></svg></div></body></html>"#;
+        write(
+            &path,
+            &[
+                ("mimetype", b"application/epub+zip"),
+                ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+                ("EPUB/book.opf", opf.as_bytes()),
+                ("EPUB/nav.xhtml", NAV.as_bytes()),
+                ("EPUB/one.xhtml", page),
+                ("EPUB/images/p1.png", PNG),
+                (
+                    "EPUB/two.xhtml",
+                    br"<html><body><p>Words on a page.</p></body></html>",
+                ),
+            ],
+        );
+        let first = inspect(&path, &InspectRequest::default()).unwrap();
+        assert_eq!(first.kind, bibli_core::inspection::InspectionKind::Book);
+        assert_eq!(first.title, "EPUB · page 1 / 3");
+        assert!(!first.rows.is_empty(), "the book's contents stay reachable");
+        let image = first.image.expect("the page");
+        assert_eq!((image.width, image.height), (2, 3));
+        assert!(first.blocks.is_empty());
+        assert_eq!(first.next, Some(1));
+        // A page with text reads as text.
+        let second = inspect(
+            &path,
+            &InspectRequest {
+                offset: 1,
+                ..InspectRequest::default()
+            },
+        )
+        .unwrap();
+        assert!(second.image.is_none());
+        assert_eq!(second.blocks[0].text, "Words on a page.");
     }
 
     #[test]

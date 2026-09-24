@@ -15,8 +15,12 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   `Shell::reveal_path` selects the file once the listing has it, which is what
   opens it in the preview. A link is a place to show, never a file to run.
 - HTML reading mode is inert: no scripts, remote assets or automatic link opens.
-  Markdown images must stay within the document directory after canonicalizing;
-  EPUB resources stay inside their container and email images use content IDs.
+  Markdown images, and an HTML file's pictures and stylesheets, must stay within
+  the document directory after canonicalizing; EPUB resources (pictures and
+  stylesheets) stay inside their container and email images use content IDs.
+  A caller hands `rich_preview::html` its `Resources`; the adapter never opens a
+  file or a URL itself. An SVG picture is rasterized with every reference outside
+  itself refused.
 - Markdown parses parser events directly into semantic blocks
   (`crates/plugins/preview-markdown/src/markdown.rs`): heading level, list depth
   and marker, quote and table cells stay in `inspection::Block` instead of being
@@ -192,11 +196,27 @@ still to come are in `docs/preview-frame.md`.
   files, EPUB and mail): headings, paragraphs, quotes and code; lists as a
   depth and a marker beside the text, numbered from `start`, the marker on an
   item's first block only; table rows as cells that are ranges of the row's
-  text, like Markdown's; rules; and the one piece of a page's own styling that
-  is structure enough to keep, what is centred (`Block::centered`: a title
-  page, a logo), plus bold and italic from an element's inline `style`. A
-  publisher's stylesheet is not applied and nothing is executed or fetched. A
-  book reads in the same typography as a document (the reading profile).
+  text, like Markdown's, an empty cell still a column; rules. XHTML (a book's
+  chapters, `.xhtml` files) is read as XML first (`rich_preview/xml.rs`), into
+  the same tree the HTML parser builds, so `<title/>` cannot swallow a page.
+- **A page's own styling is kept where it says how text reads**
+  (`rich_preview/style.rs`, ADR-012): which elements make blocks or are
+  hidden, emphasis, underline and strike, alignment (`Block::align`),
+  preserved line breaks, size relative to the page's body text
+  (`Block::size`, running text only) and left margins as a bounded indent
+  (`Block::indent`, never on quotes, lists or tables, which have a shape of
+  their own). It is a cascade (built-in sheet, the page's sheets, `style`
+  attributes, `!important`), never a second set of hard-coded tag checks:
+  what a tag means is stated once in the built-in sheet. Fonts, colours,
+  boxes and absolute sizes stay the reader's. A book searches with its
+  stylesheets, so hidden text is not a match.
+- **Every `id` is a link target** (`Block::anchors`): a section's is its first
+  block, a word's the block around it. A footnote (`footnote`, `note`,
+  `rearnote`, `doc-footnote`) moves to the end of the page under a rule; a
+  printed page number (`pagebreak`) is a target, never read. A fixed-layout
+  book's page that is one picture shows as a page: the inspection's own
+  picture, the panel's width, in a book that keeps its contents and search.
+  A book reads in the same typography as a document (the reading profile).
 - **Sections follow each other under the wheel.** Any preview with a previous
   and a next section (a book's chapters, pages of text, of bytes, of rows)
   turns when the wheel pushes on past its edge: it must first come to rest
