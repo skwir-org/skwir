@@ -719,6 +719,7 @@ impl PlatformTextSystem for NoopTextSystem {
         let mut runs = Vec::default();
         if !glyphs.is_empty() {
             runs.push(ShapedRun {
+                position: crate::RunPosition::Baseline,
                 font_id: FontId(0),
                 glyphs,
             });

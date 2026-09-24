@@ -165,6 +165,8 @@ pub struct State {
     land_at_end: bool,
     /// Pictures the page named for later, decoded as they come into view.
     pub(crate) pictures: crate::inspector_pictures::Pictures,
+    /// A note opened under its reference.
+    pub(crate) notes: crate::note_popover::Notes,
 }
 impl Default for State {
     fn default() -> Self {
@@ -185,6 +187,7 @@ impl Default for State {
             at_edge: 0,
             land_at_end: false,
             pictures: crate::inspector_pictures::Pictures::default(),
+            notes: crate::note_popover::Notes::default(),
         }
     }
 }
@@ -212,6 +215,7 @@ impl State {
                 .find
                 .as_ref()
                 .is_some_and(|find| find.is_focused(window, cx))
+            || self.notes.holds_focus(window, cx)
     }
     pub fn reset(&mut self, data: &Inspection) {
         self.collapsed = Arc::default();
@@ -664,6 +668,18 @@ impl Shell {
             {
                 return;
             }
+            // A reference to a note opens the note under it, where the
+            // reading goes on; only a link to no note goes there.
+            if args["note"].as_bool() == Some(true)
+                && let (Some(target), Some(x), Some(y)) = (
+                    args["target"].as_str(),
+                    args["x"].as_f64(),
+                    args["y"].as_f64(),
+                )
+                && self.open_note(target, gpui::point(px(x as f32), px(y as f32)), window, cx)
+            {
+                return;
+            }
             if let Some(anchor) = args["target"].as_str().and_then(|s| s.strip_prefix('#')) {
                 if let Some(PreviewContent::Inspection(display)) = &self.preview.content
                     && let Some(item) = display
@@ -866,6 +882,11 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A note stays under its reference: the text moving away closes it.
+        if self.preview.inspection.notes.open.is_some() {
+            self.preview.inspection.notes.close(window);
+            cx.notify();
+        }
         let Some(PreviewContent::Inspection(display)) = &self.preview.content else {
             return;
         };
@@ -1258,6 +1279,7 @@ pub fn content(
             InspectionKind::Markdown | InspectionKind::Book
         ),
     );
+    let note = crate::note_popover::popover(shell, &list_style, theme, cx);
     let measure = list_style.measure;
     let entity = cx.entity().downgrade();
     let list = gpui::list(shell.preview.inspection.list.clone(), move |index, _, _| {
@@ -1625,7 +1647,8 @@ pub fn content(
             .children(decoded)
             .into_any_element()
     } else {
-        body.into_any_element()
+        // A deferred draw: the note is over the text, wherever it is laid.
+        body.children(note).into_any_element()
     }
 }
 

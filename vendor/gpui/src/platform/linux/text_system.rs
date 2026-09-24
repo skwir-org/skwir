@@ -440,6 +440,7 @@ impl CosmicTextSystemState {
                 last_run.glyphs.push(shaped_glyph);
             } else {
                 runs.push(ShapedRun {
+                    position: crate::RunPosition::Baseline,
                     font_id,
                     glyphs: vec![shaped_glyph],
                 });

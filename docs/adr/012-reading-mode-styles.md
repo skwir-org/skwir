@@ -74,9 +74,8 @@ single picture shows as a page, like a comic's.
 - A book reads with its italics, titles, verse indents and hidden text as its
   publisher meant, in the reader's theme. Search in a book reads chapters with
   their stylesheets, so hidden text is not a match.
-- Superscripts and small capitals are not drawn as such: a GPUI text run has
-  no size or baseline of its own (`TextRun`), so a note reference reads as a
-  link beside the word. A vendored patch could add them.
+- Superscripts, subscripts and small capitals are drawn (see the second
+  addendum).
 - Pictures are decoded as they come into view (see below), so a page names
   as many as it has.
 - Embedded fonts are not used: GPUI cannot unregister a font, and fonts are
@@ -101,3 +100,23 @@ build on an isolated display, every plate showed; placeholders held their
 place while scrolling fast; PSS rose from 241 MB with the first plates shown
 to 327 MB with every plate seen, and stayed at 361 MB over two further passes
 from end to end; the idle process used the same CPU before and after.
+
+## Addendum, 2026-09-24: positions within a line, and notes beside the text
+
+A GPUI text run had no size or baseline of its own, so `<sup>`, `<sub>` and
+`font-variant: small-caps` read as plain text ("note1", "mc2"). Vendored
+patch 0006 gives a run a position (`gpui::RunPosition`): a line whose runs
+all sit on the baseline is shaped and painted as before; otherwise each
+stretch of one position is shaped at its own size and the stretches are
+joined, and each run's glyphs are painted at its size and height. The
+cascade computes `vertical-align` and `font-variant`, and the reader draws
+small capitals as the reduced capitals of lowercase letters, keeping the
+text's offsets. The patch touches the three platform shapers only to name
+the field; the mac and Windows edits were not compiled here.
+
+A reference to a note (marked `noteref`, or a link set raised) opens the
+note in a popover under the reference instead of scrolling away from the
+text; "Go to note" still goes there. Notes in another chapter are read from
+it on a worker. Checked in a window on an isolated display: a footnote on
+the page and an endnote in another chapter opened under their references,
+Escape closed the popover, and "Go to note" went to the endnote's chapter.

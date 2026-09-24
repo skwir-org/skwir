@@ -1281,6 +1281,8 @@ impl Shell {
             }
             _ => {}
         }
+        // A note belongs to the text it was opened from.
+        self.preview.inspection.notes.close(window);
         // Pictures decoded as they came into view belong to the page they
         // were of, whatever replaces it.
         for image in self.preview.inspection.pictures.clear() {

@@ -18,7 +18,7 @@ mod xml;
 use crate::inspection::{check, limits, read_bounded};
 use bibli_core::{
     CancelToken,
-    inspection::{Block, BlockKind, Picture, Run},
+    inspection::{Block, BlockKind, Picture, Run, Script},
     thumbs::Image,
 };
 use ego_tree::{NodeId, NodeRef, iter::Edge};
@@ -226,7 +226,14 @@ struct Context {
     link: Option<String>,
     language: Option<String>,
     row: Option<NodeId>,
-    note: bool,
+    /// The note the content is part of, and whether it is one that moves to
+    /// the end of the page (a footnote) rather than one already there.
+    note: Option<NodeId>,
+    moved: bool,
+    /// The link is a reference to a note.
+    reference: bool,
+    /// Inside a list of notes, whose items are notes.
+    list_of_notes: bool,
     /// A printed page number: kept as a place to link to, never read.
     silent: bool,
 }
@@ -247,7 +254,10 @@ impl Default for Context {
             link: None,
             language: None,
             row: None,
-            note: false,
+            note: None,
+            moved: false,
+            reference: false,
+            list_of_notes: false,
             silent: false,
         }
     }
@@ -299,6 +309,7 @@ impl Context {
             "a" => {
                 if let Some(href) = e.attr("href") {
                     context.link = Some(href.to_owned());
+                    context.reference = false;
                 }
             }
             "tr" => context.row = Some(node.id()),
@@ -310,18 +321,30 @@ impl Context {
         }) {
             context.language = Some(language.to_owned());
         }
-        let mut kinds = e
+        let kinds: Vec<&str> = e
             .attr("epub:type")
             .into_iter()
             .chain(e.attr("role"))
-            .flat_map(str::split_ascii_whitespace);
-        if kinds
-            .clone()
-            .any(|kind| matches!(kind, "footnote" | "note" | "rearnote" | "doc-footnote"))
-        {
-            context.note = true;
+            .flat_map(str::split_ascii_whitespace)
+            .collect();
+        let is = |wanted: &[&str]| kinds.iter().any(|kind| wanted.contains(kind));
+        // A footnote leaves the text for the end of the page; an endnote is
+        // already where it belongs. Both are notes a reference can open, and
+        // so is an item of a list of endnotes that does not say so itself.
+        let footnote = is(&["footnote", "note", "doc-footnote"]);
+        let endnote =
+            is(&["endnote", "rearnote", "doc-endnote"]) || (name == "li" && self.list_of_notes);
+        if (footnote || endnote) && self.note.is_none() {
+            context.note = Some(node.id());
+            context.moved = footnote;
         }
-        if kinds.any(|kind| matches!(kind, "pagebreak" | "doc-pagebreak")) {
+        if is(&["endnotes", "rearnotes", "footnotes", "doc-endnotes"]) {
+            context.list_of_notes = true;
+        }
+        if is(&["noteref", "doc-noteref"]) {
+            context.reference = true;
+        }
+        if is(&["pagebreak", "doc-pagebreak"]) {
             context.silent = true;
         }
         context
@@ -336,6 +359,8 @@ struct Walk {
     blocks: Vec<Block>,
     /// Footnotes, moved to the end of the page.
     notes: Vec<Block>,
+    /// The notes of the page in the order they began, which numbers them.
+    note_ids: Vec<NodeId>,
     current: Block,
     /// Whether `current` is part of a note, and keeps its spaces.
     current_note: bool,
@@ -377,11 +402,20 @@ impl Walk {
         }
         if !self.filled() {
             self.current.anchors.append(&mut self.pending);
-            self.current_note = context.note;
+            self.current_note = context.moved;
             self.current_pre = context.pre || context.block_style.pre;
             self.current_size = context.block_style.size;
         }
+        let note = context.note.map(|id| {
+            let ordinal = self.note_ids.iter().position(|seen| *seen == id);
+            u32::try_from(ordinal.unwrap_or_else(|| {
+                self.note_ids.push(id);
+                self.note_ids.len() - 1
+            }))
+            .unwrap_or(u32::MAX)
+        });
         let block = &mut self.current;
+        block.note = note;
         block.heading = context.heading;
         block.code = context.pre;
         block.quote = context.quote;
@@ -488,6 +522,12 @@ impl Walk {
             italic: context.style.italic,
             strikethrough: context.style.strike,
             underline: context.style.underline,
+            script: context.style.script,
+            small_caps: context.style.small_caps,
+            // A link a book marks as a note reference, or one set raised
+            // like a note's number, as most books without the marks do.
+            note: context.link.is_some()
+                && (context.reference || context.style.script == Script::Superscript),
             code: context.code,
             link: context.link.clone(),
         });
@@ -1133,6 +1173,86 @@ mod tests {
             (decoded.width, decoded.height),
             (1600, 400),
             "shown as named"
+        );
+    }
+
+    /// Note references and exponents are raised, formulas' counts lowered,
+    /// and small capitals marked, whether by tag or by class.
+    #[test]
+    fn scripts_and_small_capitals_are_runs() {
+        use bibli_core::inspection::Script;
+        let source = r#"<style>.nr { vertical-align: super; font-size: 0.75em }
+            .sc { font-variant: small-caps } sup.flat { vertical-align: baseline }</style>
+            <p>E = mc<sup>2</sup>, H<sub>2</sub>O, a note<a href="n.xhtml"><span class="nr">3</span></a>,
+            <span class="sc">Chapter</span>, <sup>raised <span style="vertical-align: baseline">still</span></sup>,
+            <sup class="flat">flat</sup></p>"#;
+        let blocks = read(source, Markup::Html);
+        let runs: Vec<_> = blocks[0]
+            .runs
+            .iter()
+            .map(|r| (&blocks[0].text[r.range.clone()], r.script, r.small_caps))
+            .filter(|(text, _, _)| !text.trim().is_empty() && !text.starts_with(','))
+            .collect();
+        let find = |wanted: &str| {
+            runs.iter()
+                .find(|(text, _, _)| text.trim() == wanted)
+                .map_or_else(
+                    || panic!("no run {wanted}: {runs:?}"),
+                    |(_, script, small_caps)| (*script, *small_caps),
+                )
+        };
+        let twos: Vec<_> = runs
+            .iter()
+            .filter(|(text, _, _)| *text == "2")
+            .map(|(_, script, _)| *script)
+            .collect();
+        assert_eq!(twos, [Script::Superscript, Script::Subscript]);
+        assert_eq!(find("3"), (Script::Superscript, false));
+        assert_eq!(find("Chapter"), (Script::Baseline, true));
+        assert_eq!(
+            find("still"),
+            (Script::Superscript, false),
+            "raised with its parent"
+        );
+        assert_eq!(
+            find("flat"),
+            (Script::Baseline, false),
+            "a sheet can undo the tag's"
+        );
+    }
+
+    /// A reference knows it opens a note, and a note's blocks know which
+    /// note they are: a footnote, an endnote, an item of a list of notes.
+    #[test]
+    fn notes_and_their_references() {
+        let source = r##"<p>Marked<a epub:type="noteref" href="#n1">1</a>,
+            raised<a href="notes.xhtml#n2"><sup>2</sup></a>,
+            and a <a href="other.xhtml">plain link</a>.</p>
+            <aside epub:type="footnote" id="n1"><p>First para.</p><p>Second para.</p></aside>
+            <section epub:type="endnotes"><ol>
+              <li id="e1"><p>Endnote one.</p><ul><li>Inside it.</li></ul></li>
+              <li id="e2">Endnote two.</li>
+            </ol></section>"##;
+        let blocks = read(source, Markup::Html);
+        let links: Vec<_> = blocks[0]
+            .runs
+            .iter()
+            .filter(|run| run.link.is_some())
+            .map(|run| (&blocks[0].text[run.range.clone()], run.note))
+            .collect();
+        assert_eq!(links, [("1", true), ("2", true), ("plain link", false)]);
+        let notes: Vec<_> = blocks.iter().map(|b| (b.text.as_str(), b.note)).collect();
+        assert_eq!(
+            notes,
+            [
+                (blocks[0].text.as_str(), None),
+                ("Endnote one.", Some(1)),
+                ("Inside it.", Some(1)),
+                ("Endnote two.", Some(2)),
+                ("", None),
+                ("First para.", Some(0)),
+                ("Second para.", Some(0)),
+            ]
         );
     }
 

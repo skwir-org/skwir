@@ -399,6 +399,10 @@ pub struct TextStyle {
 
     /// The number of lines to display before truncating the text
     pub line_clamp: Option<usize>,
+
+    /// Where the text sits in its line: on the baseline at its size, or
+    /// smaller, raised or lowered (`RunPosition`). Set through a highlight.
+    pub position: RunPosition,
 }
 
 impl Default for TextStyle {
@@ -420,6 +424,7 @@ impl Default for TextStyle {
             text_overflow: None,
             text_align: TextAlign::default(),
             line_clamp: None,
+            position: RunPosition::Baseline,
         }
     }
 }
@@ -453,6 +458,10 @@ impl TextStyle {
 
         if let Some(strikethrough) = style.strikethrough {
             self.strikethrough = Some(strikethrough);
+        }
+
+        if let Some(position) = style.position {
+            self.position = position;
         }
 
         self
@@ -489,6 +498,48 @@ impl TextStyle {
             background_color: self.background_color,
             underline: self.underline,
             strikethrough: self.strikethrough,
+            position: self.position,
+        }
+    }
+}
+
+/// Where a run of text sits in its line: at the text's size on the baseline,
+/// or smaller and moved off it. A line with runs off the baseline is shaped
+/// in stretches of one position, each at its own size, and painted with each
+/// run's glyphs at that size and height; the line keeps the height and
+/// baseline its text gives it.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema,
+)]
+pub enum RunPosition {
+    /// At the text's size, on the baseline.
+    #[default]
+    Baseline,
+    /// Smaller and raised: a note reference, an exponent.
+    Superscript,
+    /// Smaller and lowered: the counts of a chemical formula.
+    Subscript,
+    /// Smaller, on the baseline: capitals set as synthesized small capitals.
+    Reduced,
+}
+
+impl RunPosition {
+    /// The run's size relative to the text's.
+    pub fn scale(self) -> f32 {
+        match self {
+            Self::Baseline => 1.,
+            Self::Superscript | Self::Subscript => 0.7,
+            Self::Reduced => 0.8,
+        }
+    }
+
+    /// How far the run's baseline sits above the line's, in ems of the
+    /// text's size; below it when negative.
+    pub fn rise(self) -> f32 {
+        match self {
+            Self::Superscript => 0.35,
+            Self::Subscript => -0.15,
+            Self::Baseline | Self::Reduced => 0.,
         }
     }
 }
@@ -517,6 +568,9 @@ pub struct HighlightStyle {
 
     /// Similar to the CSS `opacity` property, this will cause the text to be less vibrant.
     pub fade_out: Option<f32>,
+
+    /// Where the text sits in its line: superscript, subscript, reduced.
+    pub position: Option<RunPosition>,
 }
 
 impl Eq for HighlightStyle {}
@@ -529,6 +583,7 @@ impl Hash for HighlightStyle {
         self.background_color.hash(state);
         self.underline.hash(state);
         self.strikethrough.hash(state);
+        self.position.hash(state);
         state.write_u32(u32::from_be_bytes(
             self.fade_out.map(|f| f.to_be_bytes()).unwrap_or_default(),
         ));
@@ -869,6 +924,7 @@ impl From<&TextStyle> for HighlightStyle {
             underline: other.underline,
             strikethrough: other.strikethrough,
             fade_out: None,
+            position: Some(other.position),
         }
     }
 }
@@ -901,6 +957,7 @@ impl HighlightStyle {
             background_color: other.background_color.or(self.background_color),
             underline: other.underline.or(self.underline),
             strikethrough: other.strikethrough.or(self.strikethrough),
+            position: other.position.or(self.position),
             fade_out: other
                 .fade_out
                 .map(|source_fade| {
@@ -1319,6 +1376,7 @@ mod tests {
             fade_out: Some(0.),
             font_style: Some(FontStyle::Italic),
             font_weight: Some(FontWeight(300.)),
+            position: Some(RunPosition::Superscript),
             background_color: Some(yellow()),
             underline: Some(UnderlineStyle {
                 thickness: px(2.),
@@ -1351,6 +1409,7 @@ mod tests {
             fade_out: Some(0.),
             font_style: Some(FontStyle::Oblique),
             font_weight: Some(FontWeight(800.)),
+            position: Some(RunPosition::Subscript),
             background_color: Some(green()),
             underline: Some(UnderlineStyle {
                 thickness: px(4.),
@@ -1369,6 +1428,7 @@ mod tests {
             fade_out: Some(0.),
             font_style: Some(FontStyle::Oblique),
             font_weight: Some(FontWeight(800.)),
+            position: Some(RunPosition::Subscript),
             background_color: Some(green()),
             underline: Some(UnderlineStyle {
                 thickness: px(4.),

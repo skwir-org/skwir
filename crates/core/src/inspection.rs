@@ -122,6 +122,10 @@ pub struct Block {
     pub size: Option<f32>,
     pub runs: Vec<Run>,
     pub picture: Option<Picture>,
+    /// The note this block is part of (a footnote, an endnote), numbered in
+    /// its page: the blocks of one note share it, and a reference to any of
+    /// its names opens them together.
+    pub note: Option<u32>,
 }
 /// A picture a block shows.
 #[derive(Clone, Debug)]
@@ -148,6 +152,14 @@ impl Picture {
         }
     }
 }
+/// Where a run sits in its line.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Script {
+    #[default]
+    Baseline,
+    Superscript,
+    Subscript,
+}
 #[derive(Clone, Debug, Default)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct Run {
@@ -157,6 +169,13 @@ pub struct Run {
     pub italic: bool,
     pub strikethrough: bool,
     pub underline: bool,
+    /// Raised or lowered, and smaller: a note reference, an exponent.
+    pub script: Script,
+    /// Lowercase letters set as small capitals.
+    pub small_caps: bool,
+    /// The link is a reference to a note, which the view opens beside the
+    /// text rather than going to it.
+    pub note: bool,
     pub code: bool,
     pub link: Option<String>,
 }
@@ -252,6 +271,7 @@ pub fn split_blocks(blocks: Vec<Block>) -> Vec<Block> {
                 align: block.align,
                 indent: block.indent,
                 size: block.size,
+                note: block.note,
                 // Only text can exceed the limit, so the kind carries over.
                 kind: block.kind.clone(),
                 language: block.language.clone(),

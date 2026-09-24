@@ -228,7 +228,11 @@ fn paint_line(
         let mut max_glyph_size = size(px(0.), px(0.));
         let mut first_glyph_x = origin.x;
         for (run_ix, run) in layout.runs.iter().enumerate() {
-            max_glyph_size = text_system.bounding_box(run.font_id, layout.font_size).size;
+            // A run off the baseline is painted at its own size, raised or
+            // lowered; the line's baseline stays where its text puts it.
+            let run_font_size = run.font_size(layout.font_size);
+            let rise = point(px(0.), run.rise(layout.font_size));
+            max_glyph_size = text_system.bounding_box(run.font_id, run_font_size).size;
 
             for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
                 glyph_origin.x += glyph.position.x - prev_glyph_position.x;
@@ -371,17 +375,17 @@ fn paint_line(
                 if max_glyph_bounds.intersects(&content_mask.bounds) {
                     if glyph.is_emoji {
                         window.paint_emoji(
-                            glyph_origin + baseline_offset,
+                            glyph_origin + baseline_offset - rise,
                             run.font_id,
                             glyph.id,
-                            layout.font_size,
+                            run_font_size,
                         )?;
                     } else {
                         window.paint_glyph(
-                            glyph_origin + baseline_offset,
+                            glyph_origin + baseline_offset - rise,
                             run.font_id,
                             glyph.id,
-                            layout.font_size,
+                            run_font_size,
                             color,
                         )?;
                     }
@@ -460,7 +464,9 @@ fn paint_line_background(
         let mut prev_glyph_position = Point::default();
         let mut max_glyph_size = size(px(0.), px(0.));
         for (run_ix, run) in layout.runs.iter().enumerate() {
-            max_glyph_size = text_system.bounding_box(run.font_id, layout.font_size).size;
+            max_glyph_size = text_system
+                .bounding_box(run.font_id, run.font_size(layout.font_size))
+                .size;
 
             for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
                 glyph_origin.x += glyph.position.x - prev_glyph_position.x;

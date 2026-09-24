@@ -1,4 +1,6 @@
-use crate::{FontId, GlyphId, Pixels, PlatformTextSystem, Point, SharedString, Size, point, px};
+use crate::{
+    FontId, GlyphId, Pixels, PlatformTextSystem, Point, RunPosition, SharedString, Size, point, px,
+};
 use collections::FxHashMap;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
@@ -35,6 +37,21 @@ pub struct ShapedRun {
     pub font_id: FontId,
     /// The glyphs that make up this run
     pub glyphs: Vec<ShapedGlyph>,
+    /// Where the run sits in its line: its glyphs are shaped and painted at
+    /// the line's size scaled by it, raised or lowered by its rise.
+    pub position: RunPosition,
+}
+
+impl ShapedRun {
+    /// The size this run's glyphs are shaped and painted at.
+    pub fn font_size(&self, line_font_size: Pixels) -> Pixels {
+        line_font_size * self.position.scale()
+    }
+
+    /// How far this run's baseline sits above the line's.
+    pub fn rise(&self, line_font_size: Pixels) -> Pixels {
+        line_font_size * self.position.rise()
+    }
 }
 
 /// A single glyph, ready to paint.
@@ -561,9 +578,7 @@ impl LineLayoutCache {
             layout
         } else {
             let text = SharedString::from(text);
-            let mut layout = self
-                .platform_text_system
-                .layout_line(&text, font_size, runs);
+            let mut layout = shape(&*self.platform_text_system, &text, font_size, runs);
 
             if let Some(force_width) = force_width {
                 let mut glyph_pos = 0;
@@ -592,11 +607,64 @@ impl LineLayoutCache {
     }
 }
 
+/// Shape a line whose runs may sit off the baseline. A line on the baseline
+/// is one call to the platform, as it always was. Otherwise each stretch of
+/// runs in one position is shaped on its own at its own size (no ligature or
+/// kerning joins a superscript to its word), and the stretches follow each
+/// other: glyph positions and indices are offset to the whole line's, each
+/// run keeps its position for painting, and the line's ascent and descent are
+/// those of its text at full size.
+fn shape(
+    platform: &dyn PlatformTextSystem,
+    text: &str,
+    font_size: Pixels,
+    runs: &[FontRun],
+) -> LineLayout {
+    if runs.iter().all(|run| run.position == RunPosition::Baseline) {
+        return platform.layout_line(text, font_size, runs);
+    }
+    let mut layout = LineLayout {
+        font_size,
+        len: text.len(),
+        ..LineLayout::default()
+    };
+    let mut start = 0;
+    for stretch in runs.chunk_by(|a, b| a.position == b.position) {
+        let position = stretch[0].position;
+        let len: usize = stretch.iter().map(|run| run.len).sum();
+        let end = (start + len).min(text.len());
+        let scale = position.scale();
+        let part = platform.layout_line(&text[start..end], font_size * scale, stretch);
+        let x = layout.width;
+        for mut run in part.runs {
+            run.position = position;
+            for glyph in &mut run.glyphs {
+                glyph.position.x += x;
+                glyph.index += start;
+            }
+            layout.runs.push(run);
+        }
+        layout.width += part.width;
+        // The text's metrics at full size, whichever stretch is largest; a
+        // platform may give the descent as a negative distance.
+        let (ascent, descent) = (part.ascent / scale, part.descent / scale);
+        if start == 0 || ascent > layout.ascent {
+            layout.ascent = ascent;
+        }
+        if start == 0 || descent.abs() > layout.descent.abs() {
+            layout.descent = descent;
+        }
+        start = end;
+    }
+    layout
+}
+
 /// A run of text with a single font.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct FontRun {
     pub(crate) len: usize,
     pub(crate) font_id: FontId,
+    pub(crate) position: RunPosition,
 }
 
 trait AsCacheKeyRef {
@@ -668,5 +736,65 @@ impl<'a> Borrow<dyn AsCacheKeyRef + 'a> for Arc<CacheKey> {
 impl AsCacheKeyRef for CacheKeyRef<'_> {
     fn as_cache_key_ref(&self) -> CacheKeyRef<'_> {
         *self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::platform::NoopTextSystem;
+
+    fn run(len: usize, position: RunPosition) -> FontRun {
+        FontRun {
+            len,
+            font_id: FontId(0),
+            position,
+        }
+    }
+
+    #[test]
+    fn runs_off_the_baseline_are_shaped_at_their_size_and_follow_on() {
+        let platform = NoopTextSystem::new();
+        let text = "note12 more";
+        let plain = shape(
+            &platform,
+            text,
+            px(20.),
+            &[run(text.len(), RunPosition::Baseline)],
+        );
+        assert_eq!(plain.runs.len(), 1, "a line on the baseline is one call");
+        let em = plain.width / text.len() as f32;
+
+        let raised = shape(
+            &platform,
+            text,
+            px(20.),
+            &[
+                run(4, RunPosition::Baseline),
+                run(2, RunPosition::Superscript),
+                run(5, RunPosition::Baseline),
+            ],
+        );
+        let glyphs: Vec<_> = raised
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(move |g| (g.index, run.position)))
+            .collect();
+        assert_eq!(
+            glyphs.iter().map(|(index, _)| *index).collect::<Vec<_>>(),
+            (0..text.len()).collect::<Vec<_>>(),
+            "indices are the whole line's"
+        );
+        assert_eq!(glyphs[4].1, RunPosition::Superscript);
+        assert_eq!(glyphs[6].1, RunPosition::Baseline);
+        let x = |index: usize| raised.x_for_index(index);
+        assert!((x(6) - (em * 4. + em * 0.7 * 2.)).abs() < px(0.01));
+        assert!((raised.width - (em * 9. + em * 0.7 * 2.)).abs() < px(0.01));
+        assert_eq!(raised.len, text.len());
+        assert!((raised.ascent - plain.ascent).abs() < px(0.01));
+        assert!((raised.descent - plain.descent).abs() < px(0.01));
+        let run = &raised.runs[1];
+        assert_eq!(run.font_size(px(20.)), px(14.));
+        assert_eq!(run.rise(px(20.)), px(7.));
     }
 }

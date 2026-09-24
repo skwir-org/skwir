@@ -501,6 +501,7 @@ impl MacTextSystemState {
                 Some(run) if run.font_id == font_id => &mut run.glyphs,
                 _ => {
                     runs.push(ShapedRun {
+                        position: crate::RunPosition::Baseline,
                         font_id,
                         glyphs: Vec::with_capacity(run.glyph_count().try_into().unwrap_or(0)),
                     });
@@ -719,6 +720,7 @@ mod tests {
         let mut style = FontRun {
             font_id,
             len: line.len(),
+            position: crate::RunPosition::Baseline,
         };
 
         let layout = fonts.layout_line(line, px(16.), &[style]);
@@ -740,10 +742,12 @@ mod tests {
             FontRun {
                 len: "\u{feff}".len(),
                 font_id,
+                position: crate::RunPosition::Baseline,
             },
             FontRun {
                 len: "ab".len(),
                 font_id,
+                position: crate::RunPosition::Baseline,
             },
         ];
         let layout = fonts.layout_line(line, px(16.), font_runs);
@@ -762,8 +766,16 @@ mod tests {
 
         let text = "hello world";
         let font_runs = &[
-            FontRun { font_id, len: 5 }, // "hello"
-            FontRun { font_id, len: 6 }, // " world"
+            FontRun {
+                font_id,
+                len: 5,
+                position: crate::RunPosition::Baseline,
+            }, // "hello"
+            FontRun {
+                font_id,
+                len: 6,
+                position: crate::RunPosition::Baseline,
+            }, // " world"
         ];
 
         let layout = fonts.layout_line(text, px(16.), font_runs);
@@ -783,11 +795,16 @@ mod tests {
         // Test with different font runs - should not insert ZWNJ
         let font_id2 = fonts.font_id(&font("Times")).unwrap_or(font_id);
         let font_runs_different = &[
-            FontRun { font_id, len: 5 }, // "hello"
+            FontRun {
+                font_id,
+                len: 5,
+                position: crate::RunPosition::Baseline,
+            }, // "hello"
             // " world"
             FontRun {
                 font_id: font_id2,
                 len: 6,
+                position: crate::RunPosition::Baseline,
             },
         ];
 
@@ -812,15 +829,31 @@ mod tests {
         let font_id = fonts.font_id(&font("Helvetica")).unwrap();
 
         let text = "hello";
-        let font_runs = &[FontRun { font_id, len: 5 }];
+        let font_runs = &[FontRun {
+                font_id,
+                len: 5,
+                position: crate::RunPosition::Baseline,
+            }];
         let layout = fonts.layout_line(text, px(16.), font_runs);
         assert_eq!(layout.len, text.len());
 
         let text = "abc";
         let font_runs = &[
-            FontRun { font_id, len: 1 }, // "a"
-            FontRun { font_id, len: 1 }, // "b"
-            FontRun { font_id, len: 1 }, // "c"
+            FontRun {
+                font_id,
+                len: 1,
+                position: crate::RunPosition::Baseline,
+            }, // "a"
+            FontRun {
+                font_id,
+                len: 1,
+                position: crate::RunPosition::Baseline,
+            }, // "b"
+            FontRun {
+                font_id,
+                len: 1,
+                position: crate::RunPosition::Baseline,
+            }, // "c"
         ];
         let layout = fonts.layout_line(text, px(16.), font_runs);
         assert_eq!(layout.len, text.len());

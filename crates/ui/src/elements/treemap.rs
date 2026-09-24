@@ -108,6 +108,7 @@ fn layout_level(
                 background_color: None,
                 underline: None,
                 strikethrough: None,
+                position: gpui::RunPosition::Baseline,
             };
             Some(
                 window

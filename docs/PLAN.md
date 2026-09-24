@@ -105,8 +105,9 @@ every `id` is a link target, footnotes gather at the end of their chapter and
 page numbers leave the text; SVG cover pages and drawings show; a fixed-layout
 book of pictures shows page by page. A book's or a document's pictures are
 decoded as they come into view (ADR-012 addendum), so a chapter shows every
-illustration it has. Deviation: superscripts and small capitals are not drawn
-(a GPUI run has no size of its own). Lint and the
+illustration it has. Superscripts, subscripts and small capitals are drawn
+(vendored gpui patch 0006: a run's own size and height in its line), and a
+note reference opens its note in a popover, from another chapter too. Lint and the
 default tests pass; a synthetic book was checked in a window on an isolated
 display, including following a footnote and its way back.
 

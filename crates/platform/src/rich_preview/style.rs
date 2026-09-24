@@ -17,7 +17,7 @@
 //! screens without conditions; `@import`, `@font-face` and `@page` are not
 //! followed. Every stylesheet and the number of rules are bounded.
 use crate::inspection::limits;
-use bibli_core::inspection::Align;
+use bibli_core::inspection::{Align, Script};
 use cssparser::{
     AtRuleParser, CowRcStr, DeclarationParser, ParseError, Parser, ParserInput, ParserState,
     QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, StyleSheetParser, Token,
@@ -45,6 +45,8 @@ b, strong, th { font-weight: bold }
 i, em, cite, var, dfn, figcaption { font-style: italic }
 del, s, strike { text-decoration: line-through }
 u, ins { text-decoration: underline }
+sup { vertical-align: super }
+sub { vertical-align: sub }
 center { text-align: center }
 pre, listing, xmp, plaintext { white-space: pre }
 dd { margin-left: 2em }
@@ -70,6 +72,9 @@ pub struct Style {
     pub italic: bool,
     pub underline: bool,
     pub strike: bool,
+    /// Raised or lowered with its content, like a decoration.
+    pub script: Script,
+    pub small_caps: bool,
     pub align: Align,
     /// Line breaks and spaces are kept as written (`white-space: pre*`).
     pub pre: bool,
@@ -86,6 +91,8 @@ impl Default for Style {
             italic: false,
             underline: false,
             strike: false,
+            script: Script::Baseline,
+            small_caps: false,
             align: Align::Start,
             pre: false,
             size: 1.,
@@ -119,6 +126,8 @@ enum Property {
     Bold(bool),
     Italic(bool),
     Decoration { underline: bool, strike: bool },
+    Script(Script),
+    SmallCaps(bool),
     Align(Align),
     Pre(bool),
     Size(Size),
@@ -276,6 +285,7 @@ impl Sheets {
         matched.sort_by_key(|(key, _)| *key);
         let mut style = parent.inherited();
         let (mut margin, mut padding) = (0., 0.);
+        let mut script = None;
         for (_, declaration) in matched {
             match declaration.property {
                 Property::Display(display) => style.display = display,
@@ -286,6 +296,8 @@ impl Sheets {
                     style.underline = parent.underline || underline;
                     style.strike = parent.strike || strike;
                 }
+                Property::Script(own) => script = Some(own),
+                Property::SmallCaps(small_caps) => style.small_caps = small_caps,
                 Property::Align(align) => style.align = align,
                 Property::Pre(pre) => style.pre = pre,
                 Property::Size(Size::Parent(scale)) => style.size = parent.size * scale,
@@ -293,6 +305,11 @@ impl Sheets {
                 Property::MarginLeft(ems) => margin = ems,
                 Property::PaddingLeft(ems) => padding = ems,
             }
+        }
+        // A raised element raises its content; its own `baseline` only
+        // undoes what a sheet said about it, not its parent's position.
+        if let Some(script) = script.filter(|script| *script != Script::Baseline) {
+            style.script = script;
         }
         style.size = style.size.clamp(0.25, 8.);
         style.indent = margin + padding;
@@ -541,6 +558,17 @@ fn property(name: &str, values: &[Value]) -> Option<Property> {
             Property::Decoration { underline, strike }
         }
         "text-align" => Property::Align(align(ident()?)?),
+        "vertical-align" => Property::Script(match ident()? {
+            "super" | "top" | "text-top" => Script::Superscript,
+            "sub" | "bottom" | "text-bottom" => Script::Subscript,
+            "baseline" => Script::Baseline,
+            _ => return None,
+        }),
+        "font-variant" | "font-variant-caps" => Property::SmallCaps(match ident()? {
+            "small-caps" | "all-small-caps" | "petite-caps" | "all-petite-caps" => true,
+            "normal" => false,
+            _ => return None,
+        }),
         "white-space" => Property::Pre(match ident()? {
             "pre" | "pre-wrap" | "pre-line" | "break-spaces" => true,
             "normal" | "nowrap" => false,

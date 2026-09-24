@@ -88,6 +88,22 @@ layout (`crates/gpui/...`) so they apply there with `git apply -p1`.
   this patch keeps their public names so callers survive an upgrade, and
   should be dropped, not upstreamed, when gpui is updated.
 
+- `0006-text-run-positions.patch`: a run of text can sit off the baseline
+  (`RunPosition`: `Superscript`, `Subscript`, or `Reduced` for synthesized
+  small capitals), set on `TextRun`, `HighlightStyle` or `TextStyle`. Each
+  platform shapes a line at one size, so `LineLayoutCache::layout_line` shapes
+  a line whose runs are all on the baseline as before, in one call, and
+  otherwise shapes each stretch of one position on its own at its size
+  (`scale`) and joins them: glyph positions and indices are offset to the
+  line's, `ShapedRun::position` keeps each run's, and the line's ascent and
+  descent are its text's at full size, so its height and baseline do not
+  move. `paint_line` draws each run's glyphs at its size, raised or lowered
+  by its `rise`. `FontRun` and `ShapedRun` gain the field; the platform
+  shapers only set `Baseline` in the runs they build. The mac and Windows
+  edits are mechanical and not compiled here. A line wrapper measuring
+  single characters for truncation still measures them at the line's size.
+  `just list-check` runs the layout test with the list and wrapper tests.
+
 ## Regenerating a patch
 
     G=$(ls -d ~/.cargo/registry/src/*/gpui-0.2.2)
@@ -95,4 +111,6 @@ layout (`crates/gpui/...`) so they apply there with `git apply -p1`.
         --exclude=.cargo-ok "${G#/}" $PWD/vendor/gpui) > vendor/patches/NNNN-name.patch
 
 then rewrite the path prefixes as above. `0001` excludes `taffy.rs`, which is
-`0002` on its own.
+`0002` on its own. A patch over files an earlier one changed (`0006` touches
+the text system `0005` did) is the diff against the committed vendored tree:
+`git diff HEAD -- vendor/gpui`, with the same prefixes rewritten.

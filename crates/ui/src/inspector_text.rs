@@ -1,9 +1,12 @@
 //! Native rich-text selection. Geometry is read only for pointer hit testing.
 use crate::{markdown::MarkdownStyle, shell::Shell};
-use bibli_core::{inspection::Block, workspace::PaneId};
+use bibli_core::{
+    inspection::{Block, Script},
+    workspace::PaneId,
+};
 use gpui::{
-    AnyElement, HighlightStyle, MouseButton, StrikethroughStyle, StyledText, UnderlineStyle,
-    WeakEntity, div, prelude::*, px,
+    AnyElement, HighlightStyle, MouseButton, RunPosition, StrikethroughStyle, StyledText,
+    UnderlineStyle, WeakEntity, div, prelude::*, px,
 };
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Selection {
@@ -44,6 +47,47 @@ impl Selection {
         (!parts.is_empty()).then(|| parts.join("\n"))
     }
 }
+/// The text of `range` as drawn, and where it is set in small capitals (in
+/// the block's coordinates): a lowercase letter of a small-caps run is drawn
+/// as its capital, reduced. Only a letter whose capital is one character of
+/// the same length changes, so every offset the view reports (selection,
+/// links, the pointer) is still the block's, and copy reads the text itself.
+fn small_capitals(
+    block: &Block,
+    range: std::ops::Range<usize>,
+) -> (String, Vec<std::ops::Range<usize>>) {
+    let mut shown = block.text[range.clone()].to_owned();
+    let mut reduced: Vec<std::ops::Range<usize>> = Vec::new();
+    for run in block.runs.iter().filter(|run| run.small_caps) {
+        let from = run.range.start.max(range.start);
+        let to = run.range.end.min(range.end);
+        if from >= to {
+            continue;
+        }
+        for (offset, letter) in block.text[from..to].char_indices() {
+            let mut capitals = letter.to_uppercase();
+            let (Some(capital), None) = (capitals.next(), capitals.next()) else {
+                continue;
+            };
+            if capital == letter || capital.len_utf8() != letter.len_utf8() {
+                continue;
+            }
+            let at = from + offset;
+            let end = at + letter.len_utf8();
+            let mut buffer = [0; 4];
+            shown.replace_range(
+                at - range.start..end - range.start,
+                capital.encode_utf8(&mut buffer),
+            );
+            match reduced.last_mut() {
+                Some(last) if last.end == at => last.end = end,
+                _ => reduced.push(at..end),
+            }
+        }
+    }
+    (shown, reduced)
+}
+
 pub fn render(
     block: &Block,
     index: usize,
@@ -57,23 +101,19 @@ pub fn render(
     part(block, index, id, whole, selection, style, pane, entity)
 }
 
-/// One stretch of a block's text as its own element: the whole block, or a
-/// single table cell. Runs, links and the selection are clipped to `range`,
-/// and pointer offsets are reported back in the block's own coordinates, so
-/// selecting and copying work the same inside a cell as outside one.
-pub fn part(
+/// The text of `range` as drawn and its highlights (relative to `range`):
+/// emphasis, links, code, scripts, small capitals and the `selection`, which
+/// is in the block's coordinates. Shared by the reader's rows and the note
+/// popover, so a note reads as it does in the text.
+pub fn styled(
     block: &Block,
-    index: usize,
-    id: gpui::ElementId,
     range: std::ops::Range<usize>,
-    selection: Option<Selection>,
+    selection: std::ops::Range<usize>,
     style: &MarkdownStyle,
-    pane: PaneId,
-    entity: WeakEntity<Shell>,
-) -> AnyElement {
-    let selected = selection.map_or(0..0, |s| s.range(index, block.text.len()));
-    let selection = selected.start.max(range.start)..selected.end.min(range.end);
+) -> (String, Vec<(std::ops::Range<usize>, HighlightStyle)>) {
+    let (shown, reduced) = small_capitals(block, range.clone());
     let mut edges = vec![range.start, range.end];
+    edges.extend(reduced.iter().flat_map(|r| [r.start, r.end]));
     if selection.start < selection.end {
         edges.extend([selection.start, selection.end]);
     }
@@ -112,6 +152,14 @@ pub fn part(
                         color: Some(style.text_muted),
                     });
                 }
+                highlight.position = match r.script {
+                    Script::Baseline => None,
+                    Script::Superscript => Some(RunPosition::Superscript),
+                    Script::Subscript => Some(RunPosition::Subscript),
+                };
+                if highlight.position.is_none() && reduced.iter().any(|r| r.contains(&start)) {
+                    highlight.position = Some(RunPosition::Reduced);
+                }
                 if r.link.is_some() && style.link_underline {
                     highlight.underline = Some(UnderlineStyle {
                         thickness: px(1.),
@@ -132,7 +180,27 @@ pub fn part(
             (start - range.start..end - range.start, highlight)
         })
         .collect::<Vec<_>>();
-    let text = StyledText::new(block.text[range.clone()].to_owned()).with_highlights(highlights);
+    (shown, highlights)
+}
+
+/// One stretch of a block's text as its own element: the whole block, or a
+/// single table cell. Runs, links and the selection are clipped to `range`,
+/// and pointer offsets are reported back in the block's own coordinates, so
+/// selecting and copying work the same inside a cell as outside one.
+pub fn part(
+    block: &Block,
+    index: usize,
+    id: gpui::ElementId,
+    range: std::ops::Range<usize>,
+    selection: Option<Selection>,
+    style: &MarkdownStyle,
+    pane: PaneId,
+    entity: WeakEntity<Shell>,
+) -> AnyElement {
+    let selected = selection.map_or(0..0, |s| s.range(index, block.text.len()));
+    let selection = selected.start.max(range.start)..selected.end.min(range.end);
+    let (shown, highlights) = styled(block, range.clone(), selection, style);
+    let text = StyledText::new(shown).with_highlights(highlights);
     let down = text.layout().clone();
     let moved = down.clone();
     let links: Vec<_> = block
@@ -143,21 +211,40 @@ pub fn part(
             (clipped.start < clipped.end)
                 .then(|| r.link.clone())
                 .flatten()
-                .map(|href| (clipped.start - range.start..clipped.end - range.start, href))
+                .map(|href| {
+                    (
+                        clipped.start - range.start..clipped.end - range.start,
+                        href,
+                        r.note,
+                    )
+                })
         })
         .collect();
-    let ranges = links.iter().map(|(r, _)| r.clone()).collect();
+    let ranges = links.iter().map(|(r, _, _)| r.clone()).collect();
+    let clicked = down.clone();
     let weak = entity.clone();
     let offset_of = move |position, layout: &gpui::TextLayout| {
         range.start + layout.index_for_position(position).unwrap_or_else(|i| i)
     };
     let text = gpui::InteractiveText::new(gpui::ElementId::from((id.clone(), "text")), text)
         .on_click(ranges, move |i, window, cx| {
+            let (range, target, note) = &links[i];
+            // A note opens under its reference: where the reference is
+            // drawn now, below its line.
+            let under = clicked
+                .position_for_index(range.start)
+                .map(|at| at + gpui::point(px(0.), clicked.line_height()));
             let _ = weak.update(cx, |s, cx| {
                 s.with_pane(pane, |s| {
                     s.run(
                         "ui.inspect",
-                        serde_json::json!({"action":"link","target":links[i].1}),
+                        serde_json::json!({
+                            "action": "link",
+                            "target": target,
+                            "note": note,
+                            "x": under.map(|at| f32::from(at.x)),
+                            "y": under.map(|at| f32::from(at.y)),
+                        }),
                         window,
                         cx,
                     );
@@ -228,6 +315,36 @@ pub fn part(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn small_capitals_keep_every_offset() {
+        use bibli_core::inspection::Run;
+        let text = "The Straße, éclair";
+        let block = Block {
+            text: text.into(),
+            runs: vec![
+                Run {
+                    range: 0..4,
+                    ..Run::default()
+                },
+                Run {
+                    range: 4..text.len(),
+                    small_caps: true,
+                    ..Run::default()
+                },
+            ],
+            ..Block::default()
+        };
+        let (shown, reduced) = small_capitals(&block, 0..text.len());
+        assert_eq!(shown.len(), text.len());
+        // "ß" has no one-letter capital of its length: it stays as written.
+        assert_eq!(shown, "The STRAßE, ÉCLAIR");
+        let parts: Vec<_> = reduced.iter().map(|r| &text[r.clone()]).collect();
+        assert_eq!(parts, ["tra", "e", "éclair"]);
+        // A part of the block (a table cell) keeps the block's coordinates.
+        let (shown, reduced) = small_capitals(&block, 5..10);
+        assert_eq!(shown, "TRAß");
+        assert_eq!(reduced, vec![std::ops::Range { start: 5, end: 8 }]);
+    }
     #[test]
     fn selection_preserves_blank_lines_and_line_boundaries() {
         let blocks = ["first", "", "last"].map(|text| Block {

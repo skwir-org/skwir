@@ -224,6 +224,23 @@ still to come are in `docs/preview-frame.md`.
   what a tag means is stated once in the built-in sheet. Fonts, colours,
   boxes and absolute sizes stay the reader's. A book searches with its
   stylesheets, so hidden text is not a match.
+- **Superscripts, subscripts and small capitals are runs**
+  (`Run::script`, `Run::small_caps`, from `vertical-align` and
+  `font-variant` in the cascade), drawn by gpui at their own size and height
+  (`gpui::RunPosition`, vendored patch 0006). Small capitals are the
+  capitals of lowercase letters, reduced, and only where the capital has the
+  letter's length (`inspector_text::small_capitals`): the drawn text keeps
+  every offset of the block's, which selection, links and copy use.
+- **A note opens under its reference** (`note_popover.rs`). A link is a
+  reference when the book marks it so or sets it raised (`Run::note`); a
+  note is every block of the element the book marks as one (`Block::note`:
+  a footnote, an endnote, an item of a list of notes), or the one block its
+  name lands in. A note in another chapter is read from there on a worker,
+  through the provider that read the page; a reference that leads to no note
+  goes where it says. The popover is a toolbar popup (`popup_panel`): it
+  takes the keyboard and gives it back, and Escape, a click outside,
+  scrolling the text or replacing it close it. It opens where the reference
+  is drawn, read from its text layout when clicked.
 - **Every `id` is a link target** (`Block::anchors`): a section's is its first
   block, a word's the block around it. A footnote (`footnote`, `note`,
   `rearnote`, `doc-footnote`) moves to the end of the page under a rule; a

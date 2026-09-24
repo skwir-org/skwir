@@ -1520,7 +1520,11 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             }
             glyph_idx += cluster_glyph_count;
         }
-        context.runs.push(ShapedRun { font_id, glyphs });
+        context.runs.push(ShapedRun {
+            font_id,
+            glyphs,
+            position: crate::RunPosition::Baseline,
+        });
         Ok(())
     }
 

@@ -39,6 +39,7 @@ mod markdown;
 mod media;
 pub mod menu;
 pub mod modal;
+mod note_popover;
 mod outline;
 pub mod palette;
 pub mod placeholder;

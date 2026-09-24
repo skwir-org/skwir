@@ -23,5 +23,5 @@ with tempfile.TemporaryDirectory(prefix="bibli-list-tests-") as temporary:
         "cargo", "test", "--manifest-path", str(manifest),
         "--target-dir", str(root / "target"), "--no-default-features",
         "--features", "wayland", "--lib", "--",
-        "elements::list", "text_system::line_wrapper",
+        "elements::list", "text_system::line_wrapper", "text_system::line_layout",
     ], check=True)

@@ -649,6 +649,7 @@ impl Element for TextElement {
             background_color: None,
             underline: None,
             strikethrough: None,
+            position: gpui::RunPosition::Baseline,
         };
         let runs = if let Some(marked) = marked_range.as_ref() {
             vec![

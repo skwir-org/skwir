@@ -13,8 +13,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
-    StrikethroughStyle, UnderlineStyle, px,
+    Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, RunPosition,
+    SharedString, Size, StrikethroughStyle, UnderlineStyle, px,
 };
 use anyhow::{Context as _, anyhow};
 use collections::FxHashMap;
@@ -457,6 +457,7 @@ impl WindowTextSystem {
                 let font_id = self.resolve_font(&run.font);
                 if let Some(font_run) = font_runs.last_mut()
                     && font_id == font_run.font_id
+                    && font_run.position == run.position
                     && !decoration_changed
                 {
                     font_run.len += run_len_within_line;
@@ -464,6 +465,7 @@ impl WindowTextSystem {
                     font_runs.push(FontRun {
                         len: run_len_within_line,
                         font_id,
+                        position: run.position,
                     });
                 }
 
@@ -560,6 +562,7 @@ impl WindowTextSystem {
 
             if let Some(font_run) = font_runs.last_mut()
                 && Some(font_run.font_id) == last_font
+                && font_run.position == run.position
                 && !decoration_changed
             {
                 font_run.len += run.len;
@@ -569,6 +572,7 @@ impl WindowTextSystem {
                 font_runs.push(FontRun {
                     len: run.len,
                     font_id,
+                    position: run.position,
                 });
             }
         }
@@ -743,6 +747,8 @@ pub struct TextRun {
     pub underline: Option<UnderlineStyle>,
     /// The strikethrough style (if any)
     pub strikethrough: Option<StrikethroughStyle>,
+    /// Where the run sits in its line, and at what size.
+    pub position: RunPosition,
 }
 
 #[cfg(all(target_os = "macos", test))]
