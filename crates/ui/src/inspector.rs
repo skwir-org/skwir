@@ -5,11 +5,11 @@ use crate::{
     theme::Theme,
     toolbar::Button,
 };
-use bibli_core::inspection::{InspectRequest, Inspection, InspectionKind};
+use bibli_core::inspection::{InspectRequest, Inspection, InspectionKind, Picture};
 use gpui::{
     AnyElement, Context, ListAlignment, ListState, RenderImage, Window, div, prelude::*, px,
 };
-use std::{collections::BTreeSet, sync::Arc};
+use std::{cell::RefCell, collections::BTreeSet, rc::Rc, sync::Arc};
 pub struct Display {
     pub data: Arc<Inspection>,
     /// The inspection's own picture, then one per block. Shared with every
@@ -21,6 +21,13 @@ pub struct Display {
     folded: Arc<Vec<String>>,
     /// Column widths and kinds of a table, worked out on the worker.
     table: Option<Arc<crate::inspector_rows::Shape>>,
+    /// The request this inspection answered, which its pictures for later
+    /// are asked with (`inspector_pictures`); `None` for text the panel read
+    /// itself.
+    pub origin: Option<(
+        bibli_core::preview::PreviewRequest,
+        bibli_core::inspection::InspectRequest,
+    )>,
 }
 impl Display {
     pub fn new(mut data: Inspection, dark: bool) -> Self {
@@ -76,8 +83,16 @@ impl Display {
                 format!("{} · {unpacked}", data.notice)
             };
         }
+        // A picture decoded with the page is uploaded here, on the worker; one
+        // for later stays in its block, for its size and its key.
         let images = std::iter::once(data.image.take())
-            .chain(data.blocks.iter_mut().map(|b| b.image.take()))
+            .chain(data.blocks.iter_mut().map(|b| match b.picture.take() {
+                Some(Picture::Ready(image)) => Some(image),
+                later => {
+                    b.picture = later;
+                    None
+                }
+            }))
             .map(|i| i.and_then(|i| crate::thumbs::to_render_image(&i)))
             .collect();
         let folded = data
@@ -94,6 +109,7 @@ impl Display {
             images,
             row_icons: Arc::new(row_icons),
             folded: Arc::new(folded),
+            origin: None,
         }
     }
     /// The next block or row (blocks first, then rows offset by the block
@@ -147,6 +163,8 @@ pub struct State {
     at_edge: i8,
     /// The section before was asked for by scrolling up: show its end.
     land_at_end: bool,
+    /// Pictures the page named for later, decoded as they come into view.
+    pub(crate) pictures: crate::inspector_pictures::Pictures,
 }
 impl Default for State {
     fn default() -> Self {
@@ -166,6 +184,7 @@ impl Default for State {
             turn: crate::reader_scroll::WheelTurn::default(),
             at_edge: 0,
             land_at_end: false,
+            pictures: crate::inspector_pictures::Pictures::default(),
         }
     }
 }
@@ -1204,6 +1223,15 @@ pub fn content(
     let data = display.data.clone();
     let shape = display.table.clone();
     let images = display.images.clone();
+    // The blocks the rows draw, reported after layout so the pictures they
+    // show can be asked for (`inspector_pictures`).
+    let loaded = Rc::clone(&shell.preview.inspection.pictures.loaded);
+    let drawn = Rc::new(RefCell::new(Vec::new()));
+    let seen = Rc::clone(&drawn);
+    let later = data
+        .blocks
+        .iter()
+        .any(|block| matches!(block.picture, Some(Picture::Later { .. })));
     let row_icons = display.row_icons.clone();
     let visible = shell.preview.inspection.visible.clone();
     let collapsed = shell.preview.inspection.collapsed.clone();
@@ -1264,10 +1292,21 @@ pub fn content(
             .render();
         }
         if let Some(block) = data.blocks.get(i) {
+            seen.borrow_mut().push(i);
+            let picture = match (images[i + 1].as_ref(), &block.picture) {
+                (Some(image), _) => Some(crate::markdown::Shown::ready(image)),
+                (None, Some(Picture::Later { key, width, height })) => {
+                    Some(crate::markdown::Shown {
+                        image: loaded.get(key).map(|decoded| &decoded.image),
+                        size: (*width, *height),
+                    })
+                }
+                _ => None,
+            };
             return crate::markdown::block(
                 block,
                 i,
-                images[i + 1].as_ref(),
+                picture,
                 selection,
                 &list_style,
                 &mono,
@@ -1494,6 +1533,28 @@ pub fn content(
                     .when_some(measure, |d, measure| d.max_w(px(measure)))
                     .child(list),
             )
+            // After the list's layout, which drew the rows: what they show
+            // is what to decode. Deferred, never done while painting.
+            .when(later, |d| {
+                let entity = cx.entity().downgrade();
+                d.child(
+                    gpui::canvas(
+                        move |_, window, cx| {
+                            let seen = std::mem::take(&mut *drawn.borrow_mut());
+                            window.defer(cx, move |window, cx| {
+                                if let Some(shell) = entity.upgrade() {
+                                    shell.update(cx, |shell, cx| {
+                                        shell.inspector_pictures(seen, window, cx);
+                                    });
+                                }
+                            });
+                        },
+                        |_, (), _, _| {},
+                    )
+                    .absolute()
+                    .size_0(),
+                )
+            })
             .child(crate::elements::scrollbar::vertical(
                 "inspect-scrollbar",
                 crate::elements::scrollbar::Scrolls::Items(shell.preview.inspection.list.clone()),

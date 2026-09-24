@@ -59,6 +59,9 @@ pub mod limits {
     pub const IMAGE_SIDE: u32 = 8192;
     pub const IMAGE_ALLOC: u64 = 128 * 1024 * 1024;
     pub const IMAGE_DISPLAY_SIDE: u32 = 1600;
+    /// Bytes of a picture read to learn its size before it is shown: a
+    /// raster header, with room for the metadata a JPEG may put first.
+    pub const PICTURE_HEADER: usize = 256 * 1024;
     pub const TABLE_ROWS: usize = 500;
     pub const TABLE_COLUMNS: usize = 64;
     /// Characters kept per table cell; longer cells are marked truncated.
@@ -386,9 +389,9 @@ pub fn image(bytes: &[u8]) -> anyhow::Result<Image> {
     let mut img = reader.decode()?;
     // Only shrink: `thumbnail` would otherwise scale a tiny icon up to the
     // display side and hand the UI megabytes of pixels per embedded image.
-    let side = limits::IMAGE_DISPLAY_SIDE;
-    if img.width() > side || img.height() > side {
-        img = img.thumbnail(side, side);
+    let (width, height) = shown(img.width(), img.height());
+    if (width, height) != (img.width(), img.height()) {
+        img = img.thumbnail_exact(width, height);
     }
     let img = img.into_rgba8();
     Ok(Image {
@@ -396,6 +399,36 @@ pub fn image(bytes: &[u8]) -> anyhow::Result<Image> {
         height: img.height(),
         rgba: img.into_raw().into(),
     })
+}
+/// The size `image` shows a picture of `width` × `height` at: its own, or
+/// shrunk to fit the display side.
+fn shown(width: u32, height: u32) -> (u32, u32) {
+    let side = f64::from(limits::IMAGE_DISPLAY_SIDE);
+    let scale = (side / f64::from(width.max(1)))
+        .min(side / f64::from(height.max(1)))
+        .min(1.);
+    let fit = |length: u32| ((f64::from(length) * scale).round() as u32).max(1);
+    (fit(width), fit(height))
+}
+/// The size `image` would show a picture at, read from as much of the file
+/// as `bytes` holds: a raster format's header is enough, an SVG needs the
+/// whole document. `None` when `bytes` do not tell.
+pub fn picture_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    let (width, height) = if is_svg(bytes) {
+        let size = svg_tree(bytes).ok()?.size();
+        (
+            size.width().round().max(1.) as u32,
+            size.height().round().max(1.) as u32,
+        )
+    } else {
+        image::ImageReader::new(std::io::Cursor::new(bytes))
+            .with_guessed_format()
+            .ok()?
+            .into_dimensions()
+            .ok()?
+    };
+    (width > 0 && height > 0 && width <= limits::IMAGE_SIDE && height <= limits::IMAGE_SIDE)
+        .then(|| shown(width, height))
 }
 /// Whether `bytes` are an SVG document rather than a raster image.
 fn is_svg(bytes: &[u8]) -> bool {
@@ -409,15 +442,14 @@ fn is_svg(bytes: &[u8]) -> bool {
 /// side. It is inert: nothing it names outside itself (a file, a URL) is
 /// read, only pictures embedded in it as data.
 fn svg(bytes: &[u8]) -> anyhow::Result<Image> {
-    use resvg::{tiny_skia, usvg};
-    let mut options = usvg::Options::default();
-    options.image_href_resolver.resolve_string = Box::new(|_, _| None);
-    let tree = usvg::Tree::from_data(bytes, &options)?;
+    use resvg::tiny_skia;
+    let tree = svg_tree(bytes)?;
     let size = tree.size();
-    let limit = limits::IMAGE_DISPLAY_SIDE as f32;
-    let scale = (limit / size.width()).min(limit / size.height()).min(1.);
-    let width = (size.width() * scale).round().max(1.) as u32;
-    let height = (size.height() * scale).round().max(1.) as u32;
+    let (width, height) = shown(
+        size.width().round().max(1.) as u32,
+        size.height().round().max(1.) as u32,
+    );
+    let scale = (width as f32 / size.width()).min(height as f32 / size.height());
     let mut pixmap = tiny_skia::Pixmap::new(width, height)
         .ok_or_else(|| anyhow::anyhow!("SVG picture has no size"))?;
     resvg::render(
@@ -438,6 +470,12 @@ fn svg(bytes: &[u8]) -> anyhow::Result<Image> {
         height,
         rgba: rgba.into(),
     })
+}
+/// An SVG document parsed with every reference outside itself refused.
+fn svg_tree(bytes: &[u8]) -> anyhow::Result<resvg::usvg::Tree> {
+    let mut options = resvg::usvg::Options::default();
+    options.image_href_resolver.resolve_string = Box::new(|_, _| None);
+    Ok(resvg::usvg::Tree::from_data(bytes, &options)?)
 }
 /// One fact for the panel's Details, or nothing when the format left it
 /// blank. Bounded: a title can be a whole abstract.

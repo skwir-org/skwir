@@ -27,7 +27,21 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   flattened to HTML and scraped back. Raw HTML blocks are the exception, and are
   read by `rich_preview::html` where they stand: dropping them loses a README's
   logo and centered headers. Every image in a document, Markdown's and HTML's,
-  shares the one `EMBEDDED_IMAGES` budget and the one document-local loader.
+  goes through the one document-local loader.
+- **A picture is decoded when it is seen** (`inspection::Picture`). A
+  provider that can read a picture again names it (`Picture::Later`: its own
+  key and the size it will be shown at, read from the file's header by
+  `inspection::picture_size`) and decodes it in `PreviewProvider::picture`,
+  with the same containment as when it was named. The row holds that box,
+  placeholder or picture, so nothing moves when it arrives
+  (`markdown::Shown`). `inspector_pictures.rs` asks for what the rows drew,
+  nearest first, and the one before and after, one at a time, from the
+  provider that answered the inspection (`Display::origin`); it takes a result
+  only for its generation, keeps `CACHE_BYTES` of decoded pixels, and drops
+  the atlas entry of every picture it lets go, and of all of them when the
+  content is replaced. What cannot be read again (a message's parts) or is
+  part of the page (an SVG drawing) is `Picture::Ready`, decoded with the
+  page and bounded by `EMBEDDED_IMAGES`.
 - A block is text, a rule or a table row: `BlockKind`, not a set of flags that
   can disagree. A table row is text too: its cells are ranges of `Block::text`,
   which holds them joined by tabs, so a cell keeps its emphasis, code and links

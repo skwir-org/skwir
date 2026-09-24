@@ -65,6 +65,19 @@ pub trait PreviewProvider: Send + Sync {
     ) -> anyhow::Result<Option<crate::inspection::Inspection>> {
         Ok(None)
     }
+    /// Decode a picture an inspection named for later
+    /// (`inspection::Picture::Later`), when the view shows it. `request` and
+    /// `view` are those the inspection answered; `key` is the provider's own
+    /// and never a filesystem path it has not checked.
+    fn picture(
+        &self,
+        _request: &PreviewRequest,
+        _view: &crate::inspection::InspectRequest,
+        _key: &str,
+        _cancel: &CancelToken,
+    ) -> anyhow::Result<Option<crate::thumbs::Image>> {
+        Ok(None)
+    }
     /// A container writes the member its rows call `target` into `into`, a
     /// private directory the caller owns and removes, under a name of the
     /// provider's choosing: a member's own name is a label, never a path.
@@ -94,6 +107,19 @@ pub trait PreviewProvider: Send + Sync {
         _lifetime: &CancelToken,
     ) -> anyhow::Result<Option<Arc<dyn crate::document::DocumentSession>>> {
         Ok(None)
+    }
+}
+
+/// The provider an inspection goes to, and the pictures it names come back
+/// to: the one `view.provider` names, or the first that accepts.
+fn inspector<'a>(
+    request: &'a PreviewRequest,
+    view: &'a crate::inspection::InspectRequest,
+) -> impl Fn(&dyn PreviewProvider) -> bool + 'a {
+    |p| {
+        view.provider
+            .as_deref()
+            .map_or_else(|| p.accepts(request), |id| p.id() == id)
     }
 }
 
@@ -156,13 +182,26 @@ impl Previews {
         view: &crate::inspection::InspectRequest,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<crate::inspection::Inspection>> {
-        let chosen = |p: &dyn PreviewProvider| {
-            view.provider
-                .as_deref()
-                .map_or_else(|| p.accepts(request), |id| p.id() == id)
-        };
         Ok(self
-            .dispatch(cancel, chosen, |p, cancel| p.inspect(request, view, cancel))?
+            .dispatch(cancel, inspector(request, view), |p, cancel| {
+                p.inspect(request, view, cancel)
+            })?
+            .flatten())
+    }
+
+    /// The provider that answered the inspection decodes the picture it
+    /// named: the same choice as `inspect`.
+    pub fn picture(
+        &self,
+        request: &PreviewRequest,
+        view: &crate::inspection::InspectRequest,
+        key: &str,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Option<Image>> {
+        Ok(self
+            .dispatch(cancel, inspector(request, view), |p, cancel| {
+                p.picture(request, view, key, cancel)
+            })?
             .flatten())
     }
 

@@ -15,10 +15,10 @@
 mod style;
 mod xml;
 
-use crate::inspection::{check, limits};
+use crate::inspection::{check, limits, read_bounded};
 use bibli_core::{
     CancelToken,
-    inspection::{Block, BlockKind, Run},
+    inspection::{Block, BlockKind, Picture, Run},
     thumbs::Image,
 };
 use ego_tree::{NodeId, NodeRef, iter::Edge};
@@ -48,41 +48,58 @@ pub enum Markup {
 /// page's own bounds: a Markdown file's folder, a book's container, a
 /// message's parts.
 pub trait Resources {
-    fn image(&mut self, src: &str) -> Option<Image>;
+    /// A picture the page names: decoded now, or named for the view to ask
+    /// for when it shows it (`Picture::Later`).
+    fn picture(&mut self, src: &str) -> Option<Picture>;
     /// A linked stylesheet's text.
     fn stylesheet(&mut self, _href: &str) -> Option<String> {
         None
     }
 }
-/// Resources that are pictures alone, resolved by `image`.
-pub fn pictures<F: FnMut(&str) -> Option<Image>>(image: F) -> Pictures<F> {
-    Pictures(image)
+/// Pictures decoded with the page by `decode`, at most
+/// `limits::EMBEDDED_IMAGES` of them: what cannot be read again later (a
+/// message's parts).
+pub fn pictures<F: FnMut(&str) -> Option<Image>>(decode: F) -> Pictures<F> {
+    Pictures { decode, asked: 0 }
 }
-pub struct Pictures<F>(F);
+pub struct Pictures<F> {
+    decode: F,
+    asked: usize,
+}
 impl<F: FnMut(&str) -> Option<Image>> Resources for Pictures<F> {
-    fn image(&mut self, src: &str) -> Option<Image> {
+    fn picture(&mut self, src: &str) -> Option<Picture> {
+        if self.asked >= limits::EMBEDDED_IMAGES {
+            return None;
+        }
+        self.asked += 1;
+        (self.decode)(src).map(Picture::Ready)
+    }
+}
+/// Pictures as `name` gives them, decoded or for later: the raw HTML of a
+/// Markdown document shares the document's own loader.
+pub fn named<F: FnMut(&str) -> Option<Picture>>(name: F) -> Named<F> {
+    Named(name)
+}
+pub struct Named<F>(F);
+impl<F: FnMut(&str) -> Option<Picture>> Resources for Named<F> {
+    fn picture(&mut self, src: &str) -> Option<Picture> {
         (self.0)(src)
     }
 }
 
 /// A page on disk: its pictures and stylesheets are read only from its own
-/// folder, like `local_image`.
+/// folder (`local_path`), and its pictures only when they are shown.
 pub struct Local<'a> {
     pub base: &'a std::path::Path,
     pub cancel: &'a CancelToken,
 }
 impl Resources for Local<'_> {
-    fn image(&mut self, src: &str) -> Option<Image> {
-        local_image(self.base, src, self.cancel)
+    fn picture(&mut self, src: &str) -> Option<Picture> {
+        local_picture(self.base, src, self.cancel)
     }
     fn stylesheet(&mut self, href: &str) -> Option<String> {
-        let bytes = local_file(
-            self.base,
-            href,
-            limits::TEXT_INPUT,
-            "Stylesheet",
-            self.cancel,
-        )?;
+        let path = local_path(self.base, href)?;
+        let bytes = read_bounded(&path, limits::TEXT_INPUT, "Stylesheet", self.cancel).ok()?;
         Some(crate::inspection::decode(&bytes).0.into_owned())
     }
 }
@@ -334,7 +351,8 @@ struct Walk {
     marked: HashSet<NodeId>,
     /// Link targets waiting for the next block that has content.
     pending: Vec<String>,
-    images: usize,
+    /// SVG drawings rasterized with the page.
+    drawn: usize,
     /// The size of each block's text relative to the root, for `page`.
     sizes: Vec<(f32, bool)>,
     note_sizes: Vec<(f32, bool)>,
@@ -343,7 +361,7 @@ struct Walk {
 impl Walk {
     /// Whether `current` has anything in it.
     fn filled(&self) -> bool {
-        !self.current.text.is_empty() || self.current.image.is_some()
+        !self.current.text.is_empty() || self.current.picture.is_some()
     }
 
     /// Content from `context` is about to be added: close the block before
@@ -384,7 +402,7 @@ impl Walk {
     /// tabs, and running text loses the spaces it ended on.
     fn finish(&mut self) {
         let mut block = std::mem::take(&mut self.current);
-        if !self.current_pre && block.kind == BlockKind::Text && block.image.is_none() {
+        if !self.current_pre && block.kind == BlockKind::Text && block.picture.is_none() {
             let end = block.text.trim_end_matches([' ', '\n']).len();
             block.text.truncate(end);
             block.runs.retain_mut(|run| {
@@ -548,12 +566,8 @@ impl Walk {
             }
             "img" if !context.silent => {
                 let alt = e.attr("alt").unwrap_or_default();
-                let bitmap = if self.images < limits::EMBEDDED_IMAGES {
-                    e.attr("src").and_then(|src| resources.image(src))
-                } else {
-                    None
-                };
-                self.picture(context, alt, bitmap);
+                let picture = e.attr("src").and_then(|src| resources.picture(src));
+                self.picture(context, alt, picture);
             }
             "rt" if !has_child(node.parent(), "rp") => self.push(context, "("),
             _ => {}
@@ -576,28 +590,32 @@ impl Walk {
             .and_then(ElementRef::wrap)
             .map(|title| title.text().collect::<String>())
             .unwrap_or_default();
-        let bitmap = if self.images >= limits::EMBEDDED_IMAGES {
-            None
-        } else if let Some(href) = framed {
-            resources.image(href)
+        let picture = if let Some(href) = framed {
+            resources.picture(href)
+        } else if self.drawn < limits::EMBEDDED_IMAGES {
+            // A drawing is decoded with the page: it is part of it, with
+            // nothing to read again later.
+            self.drawn += 1;
+            crate::inspection::image(svg_source(node).as_bytes())
+                .ok()
+                .map(Picture::Ready)
         } else {
-            crate::inspection::image(svg_source(node).as_bytes()).ok()
+            None
         };
-        self.picture(context, title.trim(), bitmap);
+        self.picture(context, title.trim(), picture);
     }
 
     /// A picture ends the block it sits in and keeps its quote and list.
     /// In a table row it stands between the cells before and after it.
-    fn picture(&mut self, context: &Context, alt: &str, bitmap: Option<Image>) {
+    fn picture(&mut self, context: &Context, alt: &str, picture: Option<Picture>) {
         self.begin(context);
         let row = self.row;
         if !self.current.text.is_empty() {
             self.finish();
             self.begin(context);
         }
-        self.images += 1;
         alt.clone_into(&mut self.current.text);
-        self.current.image = bitmap;
+        self.current.picture = picture;
         self.row = None;
         self.finish();
         self.row = row;
@@ -703,15 +721,9 @@ fn escape(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
-/// Read a file named by a document, only if it resolves (symlinks included)
+/// The file a document names, only if it resolves (symlinks included)
 /// inside the document's directory.
-fn local_file(
-    base: &std::path::Path,
-    href: &str,
-    limit: usize,
-    what: &str,
-    cancel: &CancelToken,
-) -> Option<Vec<u8>> {
+fn local_path(base: &std::path::Path, href: &str) -> Option<std::path::PathBuf> {
     if href.contains(':') || href.starts_with('/') {
         return None;
     }
@@ -721,15 +733,29 @@ fn local_file(
         .ok()?;
     let base = base.canonicalize().ok()?;
     let path = base.join(href.as_ref()).canonicalize().ok()?;
-    if !path.starts_with(&base) {
-        return None;
-    }
-    crate::inspection::read_bounded(&path, limit, what, cancel).ok()
+    path.starts_with(&base).then_some(path)
 }
 /// Resolve only local descendants of the document directory, including symlinks.
 pub fn local_image(base: &std::path::Path, href: &str, cancel: &CancelToken) -> Option<Image> {
-    let bytes = local_file(base, href, limits::BINARY_INPUT, "Embedded image", cancel)?;
+    let path = local_path(base, href)?;
+    let bytes = read_bounded(&path, limits::BINARY_INPUT, "Embedded image", cancel).ok()?;
     crate::inspection::image(&bytes).ok()
+}
+/// A picture beside a document, named for later (`local_image` decodes it
+/// by the same `href`) with the size it will be shown at, read from its
+/// header.
+pub fn local_picture(base: &std::path::Path, href: &str, cancel: &CancelToken) -> Option<Picture> {
+    let path = local_path(base, href)?;
+    let head = crate::inspection::read(&path, 0, limits::PICTURE_HEADER, cancel).ok()?;
+    let (width, height) = crate::inspection::picture_size(&head).or_else(|| {
+        let whole = read_bounded(&path, limits::BINARY_INPUT, "Embedded image", cancel).ok()?;
+        crate::inspection::picture_size(&whole)
+    })?;
+    Some(Picture::Later {
+        key: href.to_owned(),
+        width,
+        height,
+    })
 }
 #[cfg(test)]
 mod tests {
@@ -870,7 +896,7 @@ mod tests {
     fn a_publisher_stylesheet_carries_emphasis_alignment_and_hiding() {
         struct Book;
         impl Resources for Book {
-            fn image(&mut self, _: &str) -> Option<Image> {
+            fn picture(&mut self, _: &str) -> Option<Picture> {
                 None
             }
             fn stylesheet(&mut self, href: &str) -> Option<String> {
@@ -1049,10 +1075,65 @@ mod tests {
             .blocks;
             assert_eq!(asked, ["../Images/cover.jpg"]);
             assert_eq!(texts(&blocks), ["Cover", "Text", "", "after."]);
-            let drawing = blocks[2].image.as_ref().expect("the drawing");
+            let Some(Picture::Ready(drawing)) = &blocks[2].picture else {
+                panic!("the drawing is decoded with the page");
+            };
             assert_eq!((drawing.width, drawing.height), (20, 10));
             assert_eq!(&drawing.rgba[..4], &[255, 0, 0, 255]);
         }
+    }
+
+    /// A picture beside a document is named with the size it will be
+    /// shown at, and decoded only when asked for by that name.
+    #[test]
+    fn local_pictures_are_named_for_later_at_their_shown_size() {
+        let tmp = tempfile::tempdir().unwrap();
+        let docs = tmp.path().join("doc's dir");
+        std::fs::create_dir_all(&docs).unwrap();
+        image::RgbaImage::from_pixel(3200, 800, image::Rgba([9, 9, 9, 255]))
+            .save_with_format(docs.join("wide one.png"), image::ImageFormat::Png)
+            .unwrap();
+        std::fs::write(
+            docs.join("drawing.svg"),
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="30"><rect width="40" height="30"/></svg>"#,
+        )
+        .unwrap();
+        let cancel = CancelToken::new();
+        let source = r#"<p><img src="wide%20one.png" alt="Wide"/><img src="drawing.svg"/><img src="../outside.png"/></p>"#;
+        let blocks = html(
+            source,
+            Markup::Html,
+            &cancel,
+            Local {
+                base: &docs,
+                cancel: &cancel,
+            },
+        )
+        .unwrap()
+        .blocks;
+        let pictures: Vec<_> = blocks
+            .iter()
+            .map(|b| match &b.picture {
+                Some(Picture::Later { key, width, height }) => {
+                    Some((key.as_str(), *width, *height))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            pictures,
+            [
+                Some(("wide%20one.png", 1600, 400)),
+                Some(("drawing.svg", 40, 30)),
+                None
+            ]
+        );
+        let decoded = local_image(&docs, "wide%20one.png", &cancel).unwrap();
+        assert_eq!(
+            (decoded.width, decoded.height),
+            (1600, 400),
+            "shown as named"
+        );
     }
 
     fn png(dir: &std::path::Path, name: &str) -> std::path::PathBuf {

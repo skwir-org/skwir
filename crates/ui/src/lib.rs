@@ -27,6 +27,7 @@ pub mod format;
 pub mod icons;
 pub mod input;
 mod inspector;
+mod inspector_pictures;
 mod inspector_rows;
 mod inspector_text;
 pub mod jump;

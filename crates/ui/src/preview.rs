@@ -1067,7 +1067,9 @@ impl Shell {
                             });
                     match result {
                         Ok(Some(data)) => {
-                            let display = crate::inspector::Display::new(data, dark);
+                            let mut display = crate::inspector::Display::new(data, dark);
+                            // Its pictures for later are asked for as it was.
+                            display.origin = Some((request.clone(), inspection.clone()));
                             return send(PreviewContent::Inspection(display), true, None, None);
                         }
                         Err(error) => return fail(error),
@@ -1278,6 +1280,11 @@ impl Shell {
                 }
             }
             _ => {}
+        }
+        // Pictures decoded as they came into view belong to the page they
+        // were of, whatever replaces it.
+        for image in self.preview.inspection.pictures.clear() {
+            cx.drop_image(image, Some(window));
         }
         let refresh = std::mem::take(&mut self.preview.refresh);
         if let Some(PreviewContent::Inspection(display)) = &content {

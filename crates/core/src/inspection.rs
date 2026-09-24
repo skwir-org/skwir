@@ -121,7 +121,32 @@ pub struct Block {
     /// the reading typography's sizes.
     pub size: Option<f32>,
     pub runs: Vec<Run>,
-    pub image: Option<Image>,
+    pub picture: Option<Picture>,
+}
+/// A picture a block shows.
+#[derive(Clone, Debug)]
+pub enum Picture {
+    /// Decoded with the page: a message's embedded image, a drawing.
+    Ready(Image),
+    /// Named by the page and decoded only when the view shows it: the
+    /// provider reads it again by `key` (`PreviewProvider::picture`). Its size
+    /// as it will be shown, read from the file's header, holds its place
+    /// until then, so the page does not move when it arrives. A book with a
+    /// hundred illustrations costs what is on screen.
+    Later {
+        key: String,
+        width: u32,
+        height: u32,
+    },
+}
+impl Picture {
+    /// The size the picture is shown at.
+    pub fn size(&self) -> (u32, u32) {
+        match self {
+            Self::Ready(image) => (image.width, image.height),
+            Self::Later { width, height, .. } => (*width, *height),
+        }
+    }
 }
 #[derive(Clone, Debug, Default)]
 #[allow(clippy::struct_excessive_bools)]
@@ -209,7 +234,11 @@ pub fn split_blocks(blocks: Vec<Block>) -> Vec<Block> {
             out.push(Block {
                 text: block.text[start..end].into(),
                 runs,
-                image: if start == 0 { block.image.take() } else { None },
+                picture: if start == 0 {
+                    block.picture.take()
+                } else {
+                    None
+                },
                 anchors: if start == 0 {
                     std::mem::take(&mut block.anchors)
                 } else {

@@ -19,7 +19,7 @@ impl Plugin for PreviewPlugin {
         "Preview: Markdown and HTML"
     }
     fn description(&self) -> &'static str {
-        "Read Markdown and HTML files as documents, with headings, tables, code and local images; switch to the source at any time. HTML is inert: no scripts, styles or remote content"
+        "Read Markdown and HTML files as documents, with headings, tables, code and local images; switch to the source at any time. HTML is inert: no scripts, fonts or remote content"
     }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
@@ -65,6 +65,19 @@ impl PreviewProvider for Provider {
             "md" | "markdown" | "mdown" | "html" | "htm" | "xhtml"
         )
     }
+    /// A picture the document named, beside it: the same containment as
+    /// when it was named.
+    fn picture(
+        &self,
+        req: &PreviewRequest,
+        _view: &InspectRequest,
+        key: &str,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Option<bibli_core::thumbs::Image>> {
+        let path = req.entry.resolve()?;
+        let base = path.parent().unwrap_or(std::path::Path::new("."));
+        Ok(rich_preview::local_image(base, key, cancel))
+    }
     fn inspect(
         &self,
         req: &PreviewRequest,
@@ -78,7 +91,7 @@ impl PreviewProvider for Provider {
         let path = req.entry.resolve()?;
         let (source, encoding) = inspection::read_text(&path, cancel)?;
         let base = path.parent().unwrap_or(std::path::Path::new("."));
-        let image = |href: &str| rich_preview::local_image(base, href, cancel);
+        let image = |href: &str| rich_preview::local_picture(base, href, cancel);
         let extension = inspection::extension(&path);
         let (title, page, notice) = if matches!(extension.as_str(), "md" | "markdown" | "mdown") {
             ("Markdown", markdown::parse(&source, cancel, image)?, "")

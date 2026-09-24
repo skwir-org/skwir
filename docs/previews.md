@@ -72,8 +72,8 @@ EPUB is a native **reading mode**, not a browser: a book's stylesheets are
 applied only where they say how text reads (emphasis, alignment, indents, relative
 sizes, hidden text); its fonts, colours, page layout, scripts and DRM are not.
 Footnotes are gathered at the end of their chapter, where their links lead.
-Superscripts read at the line's size, and at most eight pictures show per
-chapter. Markdown and email do not fetch remote images. Encrypted archives need
+Superscripts read at the line's size. Pictures are decoded as they scroll into
+view. Markdown and email do not fetch remote images. Encrypted archives need
 an external application. Selected container
 members and mail attachments currently preview as images, text or bytes; they do
 not launch nested PDF/video sessions. Large inputs have explicit bounds and

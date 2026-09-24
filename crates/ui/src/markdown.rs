@@ -54,6 +54,8 @@ pub struct MarkdownStyle {
     /// Space between the text column and the edge of the pane.
     pub page_padding: f32,
     pub marker_color: Hsla,
+    /// Where a picture will be, until it is decoded.
+    pub placeholder: Hsla,
     /// The widest the text column may be, when reading asks for a measure.
     pub measure: Option<f32>,
     pub reading: bool,
@@ -102,6 +104,7 @@ impl MarkdownStyle {
             } else {
                 theme.text
             },
+            placeholder: theme.surface,
             measure: reading.then_some(body_size * MEASURE),
             reading,
         }
@@ -112,10 +115,29 @@ impl MarkdownStyle {
     }
 }
 
+/// A block's picture as a row draws it: decoded, or still on its way, and
+/// the size it is shown at either way.
+pub struct Shown<'a> {
+    pub image: Option<&'a Arc<RenderImage>>,
+    pub size: (u32, u32),
+}
+impl<'a> Shown<'a> {
+    pub fn ready(image: &'a Arc<RenderImage>) -> Self {
+        let size = image.size(0);
+        Self {
+            image: Some(image),
+            size: (
+                u32::try_from(size.width.0).unwrap_or(1),
+                u32::try_from(size.height.0).unwrap_or(1),
+            ),
+        }
+    }
+}
+
 pub fn block(
     block: &Block,
     index: usize,
-    image: Option<&Arc<RenderImage>>,
+    picture: Option<Shown<'_>>,
     selection: Option<inspector_text::Selection>,
     style: &MarkdownStyle,
     mono: &SharedString,
@@ -181,9 +203,25 @@ pub fn block(
             );
     }
     row.child(line.child(content))
-        .when_some(image, |d, image| {
+        .when_some(picture, |d, picture| {
             // A picture the page centred (a cover, a logo) stays in the middle;
-            // its caption, the block's text, follows it there.
+            // its caption, the block's text, follows it there. Its box is the
+            // size it is shown at before it is decoded too, so nothing moves
+            // when it arrives: the width, no wider than the column, and the
+            // height its proportions give.
+            let (width, height) = picture.size;
+            let frame = div()
+                .flex_none()
+                .w(px(width.max(1) as f32))
+                .max_w_full()
+                .map(|mut d| {
+                    d.style().aspect_ratio = Some(width.max(1) as f32 / height.max(1) as f32);
+                    d
+                });
+            let frame = match picture.image {
+                Some(image) => frame.child(gpui::img(image.clone()).size_full()),
+                None => frame.bg(style.placeholder),
+            };
             d.child(
                 div()
                     .w_full()
@@ -193,7 +231,7 @@ pub fn block(
                         Align::Center => d.justify_center(),
                         Align::End => d.justify_end(),
                     })
-                    .child(gpui::img(image.clone()).max_w_full()),
+                    .child(frame),
             )
         })
         .into_any_element()

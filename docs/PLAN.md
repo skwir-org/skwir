@@ -103,9 +103,10 @@ centred titles, verse indents and hidden text now show, in the reader's theme.
 XHTML chapters are read as XML (a self-closed `<title/>` emptied the chapter);
 every `id` is a link target, footnotes gather at the end of their chapter and
 page numbers leave the text; SVG cover pages and drawings show; a fixed-layout
-book of pictures shows page by page. Deviations: superscripts and small capitals
-are not drawn (a GPUI run has no size of its own), and pictures are still capped
-at eight per page rather than loaded as they scroll into view. Lint and the
+book of pictures shows page by page. A book's or a document's pictures are
+decoded as they come into view (ADR-012 addendum), so a chapter shows every
+illustration it has. Deviation: superscripts and small capitals are not drawn
+(a GPUI run has no size of its own). Lint and the
 default tests pass; a synthetic book was checked in a window on an isolated
 display, including following a footnote and its way back.
 

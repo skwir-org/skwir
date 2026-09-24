@@ -6,7 +6,7 @@
 //! documents), each extracted here with the same bound as every chapter.
 use bibli_core::{
     App, CancelToken,
-    inspection::{InspectRequest, Inspection, Row},
+    inspection::{InspectRequest, Inspection, Picture, Row},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
 };
@@ -37,6 +37,19 @@ impl PreviewProvider for Provider {
     }
     fn accepts(&self, req: &PreviewRequest) -> bool {
         inspection::extension(&req.entry.path) == "epub"
+    }
+    /// A picture a chapter named, by its member: read through the same
+    /// bounded reader, and never outside the container.
+    fn picture(
+        &self,
+        req: &PreviewRequest,
+        _view: &InspectRequest,
+        key: &str,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Option<bibli_core::thumbs::Image>> {
+        let mut container = Container::open(&req.entry.resolve()?, cancel)?;
+        let bytes = container.read(key, "Embedded image", cancel)?;
+        Ok(Some(inspection::image(&bytes)?))
     }
     fn inspect(
         &self,
@@ -194,14 +207,19 @@ impl PreviewProvider for Provider {
         // width of the panel, not a picture in a column of text. It is still
         // a book: its contents, search and links work as on any chapter.
         if fixed
-            && let [picture] = page.blocks.as_slice()
-            && picture.image.is_some()
+            && let [only] = page.blocks.as_slice()
+            && let Some(picture) = &only.picture
         {
-            let mut blocks = page.blocks;
+            let image = match picture {
+                Picture::Ready(image) => image.clone(),
+                Picture::Later { key, .. } => {
+                    inspection::image(&container.read(key, "Embedded image", cancel)?)?
+                }
+            };
             return Ok(Some(Inspection {
                 kind: bibli_core::inspection::InspectionKind::Book,
                 title: format!("EPUB · page {} / {}", index + 1, chapters.len()),
-                image: blocks.pop().and_then(|picture| picture.image),
+                image: Some(image),
                 rows,
                 notice: encoding.notice().unwrap_or_default(),
                 ..frame
@@ -244,15 +262,25 @@ struct Chapter<'a> {
     images: bool,
 }
 impl rich_preview::Resources for Chapter<'_> {
-    fn image(&mut self, src: &str) -> Option<bibli_core::thumbs::Image> {
+    /// Named by its member for the view to decode when it shows it, with
+    /// the size it will be shown at, read from its header.
+    fn picture(&mut self, src: &str) -> Option<Picture> {
         if !self.images || src.contains(':') {
             return None;
         }
-        let bytes = self
+        let key = member_key(&resolve(self.base, src))?;
+        let head = self
             .container
-            .read(&resolve(self.base, src), "Embedded image", self.cancel)
+            .read_head(&key, limits::PICTURE_HEADER, self.cancel)
             .ok()?;
-        inspection::image(&bytes).ok()
+        let (width, height) = inspection::picture_size(&head).or_else(|| {
+            let whole = self
+                .container
+                .read(&key, "Embedded image", self.cancel)
+                .ok()?;
+            inspection::picture_size(&whole)
+        })?;
+        Some(Picture::Later { key, width, height })
     }
     fn stylesheet(&mut self, href: &str) -> Option<String> {
         if href.contains(':') {
@@ -301,6 +329,26 @@ impl Container {
             }
         }
         Ok(Self { archive, members })
+    }
+    /// The first `limit` bytes of a resource, or all of it if it is shorter:
+    /// enough to learn a picture's size without inflating the rest.
+    fn read_head(
+        &mut self,
+        href: &str,
+        limit: usize,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Vec<u8>> {
+        use std::io::Read;
+        let index = member_key(href)
+            .and_then(|name| self.members.get(&name).copied())
+            .ok_or_else(|| anyhow::anyhow!("Missing EPUB resource {href}"))?;
+        inspection::check(cancel)?;
+        let mut head = Vec::new();
+        self.archive
+            .by_index(index)?
+            .take(limit as u64)
+            .read_to_end(&mut head)?;
+        Ok(head)
     }
     /// Read one resource by container href (absolute or root-relative, percent-encoded or not).
     fn read(&mut self, href: &str, what: &str, cancel: &CancelToken) -> anyhow::Result<Vec<u8>> {
@@ -439,6 +487,9 @@ mod tests {
     const CONTAINER_XML: &str = r#"<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="EPUB/book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#;
     const OPF: &str = r#"<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">urn:example:synthetic</dc:identifier><dc:title>Synthetic book</dc:title><dc:language>en</dc:language></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="one" href="one.xhtml" media-type="application/xhtml+xml"/><item id="two" href="two.xhtml" media-type="application/xhtml+xml"/><item id="three" href="sub/caf%C3%A9%20three.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="one"/><itemref idref="two"/><itemref idref="three"/></spine></package>"#;
     const NAV: &str = r#"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="toc"><ol><li><a href="one.xhtml">Start</a><ol><li><a href="two.xhtml">Middle</a></li></ol></li><li><a href="sub/caf%C3%A9%20three.xhtml">End</a></li></ol></nav></body></html>"#;
+
+    /// A 2 × 3 picture.
+    const PNG: &[u8] = b"\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x44\x52\x00\x00\x00\x02\x00\x00\x00\x03\x08\x06\x00\x00\x00\xb9\xea\xde\x81\x00\x00\x00\x11\x49\x44\x41\x54\x78\x9c\x63\xf8\xcf\xc0\xf0\x1f\x84\x19\x30\x18\x00\xa1\x79\x0b\xf5\x4d\xc4\x9a\x07\x00\x00\x00\x00\x49\x45\x4e\x44\xae\x42\x60\x82";
 
     fn write(path: &std::path::Path, entries: &[(&str, &[u8])]) {
         let mut zip = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
@@ -784,7 +835,6 @@ mod tests {
     /// as a page: the picture, the width of the panel.
     #[test]
     fn a_fixed_layout_picture_page_is_a_page() {
-        const PNG: &[u8] = b"\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x44\x52\x00\x00\x00\x02\x00\x00\x00\x03\x08\x06\x00\x00\x00\xb9\xea\xde\x81\x00\x00\x00\x11\x49\x44\x41\x54\x78\x9c\x63\xf8\xcf\xc0\xf0\x1f\x84\x19\x30\x18\x00\xa1\x79\x0b\xf5\x4d\xc4\x9a\x07\x00\x00\x00\x00\x49\x45\x4e\x44\xae\x42\x60\x82";
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("Synthetic comic book.epub");
         let opf = OPF.replace(
@@ -828,6 +878,60 @@ mod tests {
         .unwrap();
         assert!(second.image.is_none());
         assert_eq!(second.blocks[0].text, "Words on a page.");
+    }
+
+    /// A chapter names its pictures, as many as it has, with the size they
+    /// are shown at; each is decoded only when asked for by its member.
+    #[test]
+    fn pictures_are_named_for_later_and_decoded_by_their_member() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("Synthetic illustrated book.epub");
+        let count = limits::EMBEDDED_IMAGES + 4;
+        let chapter = (0..count).fold(String::from("<html><body>"), |mut html, i| {
+            use std::fmt::Write;
+            let _ = write!(
+                html,
+                r#"<p>Plate {i}</p><img src="../Images/plate%20{i}.png" alt="Plate"/>"#
+            );
+            html
+        }) + "</body></html>";
+        let names: Vec<String> = (0..count)
+            .map(|i| format!("OEBPS/Images/plate {i}.png"))
+            .collect();
+        let mut extra: Vec<(&str, &[u8])> = vec![("OEBPS/Text/one.xhtml", chapter.as_bytes())];
+        extra.extend(names.iter().map(|name| (name.as_str(), PNG)));
+        sigil(&path, &extra);
+        let first = inspect(&path, &InspectRequest::default()).unwrap();
+        let later: Vec<_> = first
+            .blocks
+            .iter()
+            .filter_map(|b| match &b.picture {
+                Some(Picture::Later { key, width, height }) => Some((key.clone(), *width, *height)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(later.len(), count, "no picture is left out");
+        assert_eq!(later[3], ("OEBPS/Images/plate 3.png".to_owned(), 2, 3));
+        let request = PreviewRequest {
+            entry: EntryRef::from_path(&path).unwrap(),
+            mime: None,
+            page: 1,
+            seconds: None,
+            max_side: 64,
+        };
+        let cancel = CancelToken::new();
+        let view = InspectRequest::default();
+        let decoded = Provider
+            .picture(&request, &view, &later[3].0, &cancel)
+            .unwrap()
+            .unwrap();
+        assert_eq!((decoded.width, decoded.height), (2, 3));
+        assert!(
+            Provider
+                .picture(&request, &view, "../outside.png", &cancel)
+                .is_err(),
+            "a key is a member, never a path out of the container"
+        );
     }
 
     #[test]

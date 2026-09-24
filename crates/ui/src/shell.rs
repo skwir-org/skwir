@@ -1352,6 +1352,7 @@ impl Shell {
         self.sync_busy(cx);
         self.sync_reader(cx);
         self.sync_document_scroll(window, cx);
+        self.sync_pictures(window, cx);
         self.sync_media(window, cx);
         self.sync_player(window, cx);
         for id in self.panes.iter().map(|p| p.id).collect::<Vec<_>>() {

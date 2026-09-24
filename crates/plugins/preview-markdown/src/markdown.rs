@@ -6,11 +6,11 @@
 //! Raw HTML blocks are the exception: Markdown allows arbitrary HTML, and
 //! READMEs put logos and centered headers in it, so a run of HTML events is
 //! handed to the shared reading-mode HTML reader rather than dropped. Its
-//! images go through the same bounded, document-local loader.
+//! images go through the same document-local loader, which names each
+//! picture for the view to decode when it shows it.
 use bibli_core::{
     CancelToken,
-    inspection::{Block, BlockKind, Run},
-    thumbs::Image,
+    inspection::{Block, BlockKind, Picture, Run},
 };
 use bibli_platform::{
     inspection::{check, limits},
@@ -58,7 +58,7 @@ fn push(current: &mut Block, text: &str, inline: &Inline) {
 /// item, so the block that takes it is also the one that spends it: a loose
 /// item's later paragraphs must not repeat the bullet.
 fn flush(blocks: &mut Vec<Block>, current: &mut Block, marker: &mut Option<String>) {
-    if current.text.is_empty() && current.image.is_none() && current.kind == BlockKind::Text {
+    if current.text.is_empty() && current.picture.is_none() && current.kind == BlockKind::Text {
         *current = Block::default();
         return;
     }
@@ -162,7 +162,7 @@ fn emit_html(
     blocks: &mut Vec<Block>,
     html: &mut String,
     cancel: &CancelToken,
-    image: &mut impl FnMut(&str) -> Option<Image>,
+    image: &mut impl FnMut(&str) -> Option<Picture>,
     quote_depth: u32,
 ) -> anyhow::Result<()> {
     let source = std::mem::take(html);
@@ -173,7 +173,7 @@ fn emit_html(
         &source,
         rich_preview::Markup::Html,
         cancel,
-        rich_preview::pictures(image),
+        rich_preview::named(image),
     )?;
     for mut block in page.blocks {
         block.quote |= quote_depth > 0;
@@ -188,7 +188,7 @@ fn emit_html(
 pub fn parse(
     source: &str,
     cancel: &CancelToken,
-    mut image: impl FnMut(&str) -> Option<Image>,
+    mut load: impl FnMut(&str) -> Option<Picture>,
 ) -> anyhow::Result<rich_preview::Page> {
     // Metadata blocks are enabled so that a note's front matter is recognized
     // and skipped, rather than read as a rule and a large heading.
@@ -205,7 +205,7 @@ pub fn parse(
     let mut lists: Vec<Option<u64>> = Vec::new();
     let mut marker: Option<String> = None;
     let mut alt = String::new();
-    let mut pending: Option<Image> = None;
+    let mut pending: Option<Picture> = None;
     let mut in_image = false;
     let mut in_table = false;
     let mut in_metadata = false;
@@ -214,13 +214,6 @@ pub fn parse(
     let mut cell_start = 0usize;
     let mut html = String::new();
     let mut anchors = Anchors::default();
-    // One budget for every image in the document, Markdown's and raw HTML's.
-    let mut images_seen = 0usize;
-    let mut load = |href: &str| -> Option<Image> {
-        let within = images_seen < limits::EMBEDDED_IMAGES;
-        images_seen += 1;
-        within.then(|| image(href)).flatten()
-    };
 
     for event in Parser::new_ext(source, options) {
         check(cancel)?;
@@ -389,12 +382,12 @@ pub fn parse(
             // were written in.
             Event::End(TagEnd::Image) => {
                 in_image = false;
-                let bitmap = pending.take();
+                let picture = pending.take();
                 let text = std::mem::take(&mut alt);
                 begin(&mut current, quote_depth, &lists, marker.as_deref());
-                if bitmap.is_some() || !text.is_empty() {
+                if picture.is_some() || !text.is_empty() {
                     current.text = text;
-                    current.image = bitmap;
+                    current.picture = picture;
                     flush(&mut blocks, &mut current, &mut marker);
                     begin(&mut current, quote_depth, &lists, marker.as_deref());
                 }
@@ -547,13 +540,13 @@ mod tests {
         )
         .unwrap()
         .blocks;
-        assert_eq!(asked, ["logo.png"], "its images use the bounded loader");
+        assert_eq!(asked, ["logo.png"], "its images use the document's loader");
         assert!(blocks.iter().any(|b| b.text == "Logo"));
         assert!(blocks.iter().any(|b| b.text == "Text."));
     }
 
     #[test]
-    fn every_image_in_the_document_shares_one_budget() {
+    fn every_image_in_the_document_goes_through_one_loader() {
         use std::fmt::Write;
         let mut source = String::new();
         for i in 0..limits::EMBEDDED_IMAGES + 4 {
@@ -569,7 +562,8 @@ mod tests {
             None
         })
         .unwrap();
-        assert_eq!(asked, limits::EMBEDDED_IMAGES);
+        // Naming a picture costs its header: none is left out.
+        assert_eq!(asked, limits::EMBEDDED_IMAGES + 4);
     }
 
     /// The cells of a row, read back through the ranges the view draws.

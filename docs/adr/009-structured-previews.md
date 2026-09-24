@@ -71,7 +71,9 @@ attachment byte views share the hexadecimal plugin's row formatting.
   come from parser spans/events, and are nested or disjoint. JSON is formatted;
   TOML/YAML retain comments, ordering and indentation. Highlighting maintains
   parser state across lines on a worker; the UI virtualizes visible lines.
-- Rich content is limited to 2000 semantic blocks and eight embedded images.
+- Rich content is limited to 2000 semantic blocks and eight images decoded with
+  the page; pictures a provider can read again are decoded as they come into
+  view instead, within a 64 MiB cache (ADR-012).
   Local Markdown images must resolve within its directory, including symlinks.
   Email images resolve only embedded content IDs. EPUB resources remain inside
   the container. Declared sizes are advisory: a deflate stream can inflate past

@@ -77,7 +77,27 @@ single picture shows as a page, like a comic's.
 - Superscripts and small capitals are not drawn as such: a GPUI text run has
   no size or baseline of its own (`TextRun`), so a note reference reads as a
   link beside the word. A vendored patch could add them.
-- Pictures stay bounded by `EMBEDDED_IMAGES` per page; loading them as they
-  scroll into view is separate work.
+- Pictures are decoded as they come into view (see below), so a page names
+  as many as it has.
 - Embedded fonts are not used: GPUI cannot unregister a font, and fonts are
   never registered with the UI permanently (ADR-009).
+
+## Addendum, 2026-09-24: pictures as they come into view
+
+A page decoded its pictures with its text, at most `EMBEDDED_IMAGES` (eight)
+of them, so an illustrated chapter lost the rest, and the eight cost their
+pixels whether or not they were ever scrolled to. A provider that can read a
+picture again now names it (`Picture::Later`) with the size it will be shown
+at, read from the file's header (up to `PICTURE_HEADER` bytes, the whole file
+for SVG), and decodes it on request (`PreviewProvider::picture`, dispatched to
+the provider that answered the inspection). The view reserves the picture's
+box, asks for what its rows drew and their neighbours one at a time, and keeps
+64 MiB of decoded pixels, dropping atlas entries with them, like the reader's
+pages. Pictures that cannot be read again (a message's content-ID parts) and
+SVG drawings inside a page are still decoded with it, within the old bound.
+
+On a synthetic book of 40 plates of 1200 × 800 in one chapter, in a debug
+build on an isolated display, every plate showed; placeholders held their
+place while scrolling fast; PSS rose from 241 MB with the first plates shown
+to 327 MB with every plate seen, and stayed at 361 MB over two further passes
+from end to end; the idle process used the same CPU before and after.
