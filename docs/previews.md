@@ -24,7 +24,7 @@ Each format is enabled by an independent plugin in **Settings → Plugins**:
 | `preview-hex` | Read-only hexadecimal/ASCII ranges for binary files; available explicitly for any file. Jump to a decimal or `0x` offset; search text or `hex: 00 ff 7a` byte sequences. |
 | `preview-markdown` | Markdown and HTML reading mode with source toggle, headings, emphasis, lists, tables, code highlighting, links and local images. HTML keeps what its stylesheets say about emphasis, alignment, indents and hidden text, and is inert: no scripts, fonts or remote content. |
 | `preview-archives` | File-list-style archive tree with themed icons, folders first, aligned sizes, expand/collapse controls and selected-member image/text previews; other members show paged hexadecimal bytes. |
-| `preview-epub` | Reflowing EPUB chapters, contents, embedded images, links and footnotes (which open under their reference), text size, selection/copy, source and book search. The book's stylesheets give it its italics, centred titles, indents and hidden text; its fonts and colours give way to the theme. Chapters follow each other: scroll on past the end of one to read the next. A fixed-layout book of pictures (a comic) shows a page at a time. |
+| `preview-epub` | Reflowing EPUB chapters, contents, embedded images, links and footnotes (which open under their reference), text size, selection/copy, source and book search. The book's stylesheets give it its italics, centred titles, indents and hidden text; its fonts and colours give way to the theme. Chapters follow each other: scroll on past the end of one to read the next. A fixed-layout book (a comic, a picture book) is drawn a page at a time as its book lays it out, lettering in the book's own fonts. |
 | `preview-playlists` | M3U/M3U8, PLS, XSPF and CUE files as a list of tracks with titles, artists and lengths; missing and remote entries are marked. A track on this machine opens in the player, whose Previous and Next then walk the playlist. Nothing is fetched. |
 | `preview-tables` | CSV/TSV tables, quoted multiline cells, horizontal scrolling and section navigation. |
 | `preview-structured` | Syntax-highlighted JSON/YAML/TOML code with line numbers, folding and source toggle. |
@@ -74,7 +74,10 @@ sizes, hidden text); its fonts, colours, page layout, scripts and DRM are not.
 Footnotes are gathered at the end of their chapter; clicking a note reference
 opens the note under it, from this chapter or another, and **Go to note**
 leads there. Superscripts, subscripts and small capitals are drawn as such.
-Pictures are decoded as they scroll into view. Markdown and email do not fetch remote images. Encrypted archives need
+Pictures are decoded as they scroll into view. A fixed-layout page that
+states its size is drawn as its book lays it out (text over pictures, in the
+book's fonts); floats, tables and columns on such pages come out
+approximately, and a drawn page has no selectable text. Markdown and email do not fetch remote images. Encrypted archives need
 an external application. Selected container
 members and mail attachments currently preview as images, text or bytes; they do
 not launch nested PDF/video sessions. Large inputs have explicit bounds and

@@ -12,8 +12,11 @@
 //! of the page, under a rule, where its link still reaches it; a printed
 //! page number (`pagebreak`) is not read into the sentence, but stays a place
 //! to link to. Every `id` is a link target of the block it lands in.
+mod page;
 mod style;
 mod xml;
+
+pub use page::page;
 
 use crate::inspection::{check, limits, read_bounded};
 use bibli_core::{
@@ -53,6 +56,11 @@ pub trait Resources {
     fn picture(&mut self, src: &str) -> Option<Picture>;
     /// A linked stylesheet's text.
     fn stylesheet(&mut self, _href: &str) -> Option<String> {
+        None
+    }
+    /// A file the page names, as it is (a font, a picture a fixed page
+    /// draws), within the same bounds.
+    fn file(&mut self, _href: &str) -> Option<Vec<u8>> {
         None
     }
 }
@@ -110,36 +118,8 @@ pub fn html(
     cancel: &CancelToken,
     mut resources: impl Resources,
 ) -> anyhow::Result<Page> {
-    let doc = match markup {
-        Markup::Xhtml => xml::parse(source),
-        Markup::Html => None,
-    }
-    .unwrap_or_else(|| Html::parse_document(source));
-    let mut sheets = Sheets::new();
-    for node in doc.tree.root().descendants() {
-        let Some(element) = ElementRef::wrap(node) else {
-            continue;
-        };
-        let e = element.value();
-        if e.name.ns == markup5ever::ns!(svg) {
-            continue;
-        }
-        match e.name() {
-            "style" => sheets.add(&element.text().collect::<String>()),
-            "link"
-                if e.attr("rel").is_some_and(|rel| {
-                    let mut kinds = rel.split_ascii_whitespace();
-                    kinds.clone().any(|k| k.eq_ignore_ascii_case("stylesheet"))
-                        && !kinds.any(|k| k.eq_ignore_ascii_case("alternate"))
-                }) =>
-            {
-                if let Some(css) = e.attr("href").and_then(|href| resources.stylesheet(href)) {
-                    sheets.add(&css);
-                }
-            }
-            _ => {}
-        }
-    }
+    let doc = document(source, markup);
+    let mut sheets = stylesheets(&doc, &mut resources);
     check(cancel)?;
     let mut walk = Walk::default();
     let mut stack: Vec<Context> = vec![Context::default()];
@@ -199,6 +179,50 @@ pub fn html(
         }
     }
     Ok(walk.page())
+}
+
+/// The page's tree: XHTML read as XML when it is well-formed.
+fn document(source: &str, markup: Markup) -> Html {
+    match markup {
+        Markup::Xhtml => xml::parse(source),
+        Markup::Html => None,
+    }
+    .unwrap_or_else(|| Html::parse_document(source))
+}
+
+/// The page's stylesheets in document order: linked ones through
+/// `resources`, each with its own folder for the URLs inside it, and
+/// `<style>` elements.
+fn stylesheets(doc: &Html, resources: &mut impl Resources) -> Sheets {
+    let mut sheets = Sheets::new();
+    for node in doc.tree.root().descendants() {
+        let Some(element) = ElementRef::wrap(node) else {
+            continue;
+        };
+        let e = element.value();
+        if e.name.ns == markup5ever::ns!(svg) {
+            continue;
+        }
+        match e.name() {
+            "style" => sheets.add(&element.text().collect::<String>(), ""),
+            "link"
+                if e.attr("rel").is_some_and(|rel| {
+                    let mut kinds = rel.split_ascii_whitespace();
+                    kinds.clone().any(|k| k.eq_ignore_ascii_case("stylesheet"))
+                        && !kinds.any(|k| k.eq_ignore_ascii_case("alternate"))
+                }) =>
+            {
+                if let Some(href) = e.attr("href")
+                    && let Some(css) = resources.stylesheet(href)
+                {
+                    let base = href.split(['#', '?']).next().unwrap_or(href);
+                    sheets.add(&css, base.rsplit_once('/').map_or("", |(base, _)| base));
+                }
+            }
+            _ => {}
+        }
+    }
+    sheets
 }
 
 /// What an open element passes to its content.

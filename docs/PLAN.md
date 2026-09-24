@@ -107,7 +107,9 @@ book of pictures shows page by page. A book's or a document's pictures are
 decoded as they come into view (ADR-012 addendum), so a chapter shows every
 illustration it has. Superscripts, subscripts and small capitals are drawn
 (vendored gpui patch 0006: a run's own size and height in its line), and a
-note reference opens its note in a popover, from another chapter too. Lint and the
+note reference opens its note in a popover, from another chapter too.
+Fixed-layout pages are drawn (ADR-013): a converted comic's lettering, set
+over its picture in the book's fonts, comes out in its balloons. Lint and the
 default tests pass; a synthetic book was checked in a window on an isolated
 display, including following a footnote and its way back.
 

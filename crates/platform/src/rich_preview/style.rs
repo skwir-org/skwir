@@ -50,6 +50,13 @@ sub { vertical-align: sub }
 center { text-align: center }
 pre, listing, xmp, plaintext { white-space: pre }
 dd { margin-left: 2em }
+p, blockquote, ul, ol, dl, figure { margin-top: 1em; margin-bottom: 1em }
+h1 { font-size: 2em; margin-top: 0.67em; margin-bottom: 0.67em }
+h2 { font-size: 1.5em; margin-top: 0.83em; margin-bottom: 0.83em }
+h3 { font-size: 1.17em; margin-top: 1em; margin-bottom: 1em }
+h4 { margin-top: 1.33em; margin-bottom: 1.33em }
+h5 { font-size: 0.83em; margin-top: 1.67em; margin-bottom: 1.67em }
+h6 { font-size: 0.67em; margin-top: 2.33em; margin-bottom: 2.33em }
 ";
 
 /// How an element takes part in the page.
@@ -120,22 +127,28 @@ enum Size {
     Root(f32),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum Property {
+    /// What only a fixed-layout page uses (`page.rs`); reading mode leaves
+    /// boxes and fonts to the reader.
+    Page(Page),
     Display(Display),
     Bold(bool),
     Italic(bool),
-    Decoration { underline: bool, strike: bool },
+    Decoration {
+        underline: bool,
+        strike: bool,
+    },
     Script(Script),
     SmallCaps(bool),
     Align(Align),
     Pre(bool),
     Size(Size),
-    MarginLeft(f32),
-    PaddingLeft(f32),
+    Margin(Side, Length),
+    Padding(Side, Length),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct Declaration {
     property: Property,
     important: bool,
@@ -166,23 +179,37 @@ pub struct Sheets {
     /// Bytes of author CSS read so far, against `limits::TEXT_INPUT`.
     bytes: usize,
     caches: SelectorCaches,
+    /// The fonts the page's stylesheets bring (`@font-face`).
+    pub faces: Vec<FontFace>,
+}
+
+/// A font a stylesheet brings: its CSS family and where the files are,
+/// relative to the page (a stylesheet's own URLs are relative to it).
+#[derive(Clone, Debug, Default)]
+pub struct FontFace {
+    pub family: String,
+    pub src: Vec<String>,
+    pub bold: bool,
+    pub italic: bool,
 }
 impl Sheets {
     pub fn new() -> Self {
         let mut sheets = Self::default();
-        sheets.parse(USER_AGENT, Origin::UserAgent);
+        sheets.parse(USER_AGENT, Origin::UserAgent, "");
         sheets
     }
-    /// Add one of the document's stylesheets. Past the bound, the rest of the
-    /// document's CSS is left out: the page still reads, with less styling.
-    pub fn add(&mut self, css: &str) {
+    /// Add one of the document's stylesheets, found at `base` (the folder
+    /// of a linked sheet relative to the page, empty for a `<style>`). Past
+    /// the bound, the rest of the document's CSS is left out: the page
+    /// still reads, with less styling.
+    pub fn add(&mut self, css: &str, base: &str) {
         if self.bytes + css.len() > limits::TEXT_INPUT {
             return;
         }
         self.bytes += css.len();
-        self.parse(css, Origin::Author);
+        self.parse(css, Origin::Author, base);
     }
-    fn parse(&mut self, css: &str, origin: Origin) {
+    fn parse(&mut self, css: &str, origin: Origin, base: &str) {
         let mut input = ParserInput::new(css);
         let mut parser = Parser::new(&mut input);
         let mut rules = Rules {
@@ -190,11 +217,14 @@ impl Sheets {
             out: Vec::new(),
             budget: limits::STYLE_RULES.saturating_sub(self.rules.len()),
             depth: 0,
+            base: base.to_owned(),
+            faces: Vec::new(),
         };
         rules.sheet(&mut parser);
         for rule in rules.out {
             self.insert(rule);
         }
+        self.faces.append(&mut rules.faces);
     }
     fn insert(&mut self, rule: Rule) {
         let index = self.rules.len();
@@ -222,8 +252,9 @@ impl Sheets {
         self.rules.push(rule);
     }
 
-    /// The style of `element`, whose parent's style is `parent`.
-    pub fn compute(&mut self, element: ElementRef<'_>, parent: &Style) -> Style {
+    /// The declarations that apply to `element`, weakest first: applying
+    /// them in turn leaves each property's winner.
+    fn matched(&mut self, element: ElementRef<'_>) -> Vec<Declaration> {
         let e = element.value();
         let mut candidates: Vec<usize> = self.universal.clone();
         if let Some(id) = e.id()
@@ -259,7 +290,7 @@ impl Sheets {
                 for declaration in rule.declarations.iter() {
                     matched.push((
                         (declaration.important, rule.origin, specificity, index),
-                        *declaration,
+                        declaration.clone(),
                     ));
                 }
             }
@@ -283,10 +314,19 @@ impl Sheets {
             ));
         }
         matched.sort_by_key(|(key, _)| *key);
+        matched
+            .into_iter()
+            .map(|(_, declaration)| declaration)
+            .collect()
+    }
+
+    /// The style of `element`, whose parent's style is `parent`.
+    pub fn compute(&mut self, element: ElementRef<'_>, parent: &Style) -> Style {
+        let matched = self.matched(element);
         let mut style = parent.inherited();
         let (mut margin, mut padding) = (0., 0.);
         let mut script = None;
-        for (_, declaration) in matched {
+        for declaration in matched {
             match declaration.property {
                 Property::Display(display) => style.display = display,
                 Property::Bold(bold) => style.bold = bold,
@@ -302,8 +342,9 @@ impl Sheets {
                 Property::Pre(pre) => style.pre = pre,
                 Property::Size(Size::Parent(scale)) => style.size = parent.size * scale,
                 Property::Size(Size::Root(scale)) => style.size = scale,
-                Property::MarginLeft(ems) => margin = ems,
-                Property::PaddingLeft(ems) => padding = ems,
+                Property::Margin(Side::Left, length) => margin = ems(length),
+                Property::Padding(Side::Left, length) => padding = ems(length),
+                Property::Page(_) | Property::Margin(..) | Property::Padding(..) => {}
             }
         }
         // A raised element raises its content; its own `baseline` only
@@ -317,6 +358,148 @@ impl Sheets {
     }
 }
 
+/// The computed style of an element on a fixed-layout page (`page.rs`): its
+/// box, its font and how its text is set. Lengths that depend on a box stay
+/// lengths; what CSS inherits as a value (sizes, spacing) is in pixels.
+// Each flag is a separate CSS property, computed independently.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Clone, Debug)]
+pub struct PageStyle {
+    pub display: PageDisplay,
+    pub position: Position,
+    /// `top right bottom left`, as CSS orders them.
+    pub offsets: [Length; 4],
+    pub width: Length,
+    pub height: Length,
+    pub margin: [Length; 4],
+    pub padding: [Length; 4],
+    pub transform: Option<[f32; 6]>,
+    pub origin: (Length, Length),
+    pub families: Arc<[String]>,
+    pub font_size: f32,
+    pub bold: bool,
+    pub italic: bool,
+    pub line_height: LineHeight,
+    pub letter_spacing: f32,
+    pub word_spacing: f32,
+    pub color: [u8; 4],
+    pub background: Option<[u8; 4]>,
+    pub visible: bool,
+    pub opacity: f32,
+    /// Lines break to fit the box (`white-space` other than `pre`, `nowrap`).
+    pub wrap: bool,
+    /// Spaces and line breaks are kept as written.
+    pub pre: bool,
+    pub align: Align,
+}
+impl Default for PageStyle {
+    fn default() -> Self {
+        Self {
+            display: PageDisplay::Inline,
+            position: Position::Static,
+            offsets: [Length::Auto; 4],
+            width: Length::Auto,
+            height: Length::Auto,
+            margin: [Length::Px(0.); 4],
+            padding: [Length::Px(0.); 4],
+            transform: None,
+            origin: (Length::Percent(50.), Length::Percent(50.)),
+            families: Arc::from([]),
+            font_size: 16.,
+            bold: false,
+            italic: false,
+            line_height: LineHeight::Normal,
+            letter_spacing: 0.,
+            word_spacing: 0.,
+            color: [0, 0, 0, 255],
+            background: None,
+            visible: true,
+            opacity: 1.,
+            wrap: true,
+            pre: false,
+            align: Align::Start,
+        }
+    }
+}
+impl PageStyle {
+    /// What a child starts from: CSS's inherited properties.
+    fn inherited(&self) -> Self {
+        Self {
+            families: self.families.clone(),
+            font_size: self.font_size,
+            bold: self.bold,
+            italic: self.italic,
+            line_height: self.line_height,
+            letter_spacing: self.letter_spacing,
+            word_spacing: self.word_spacing,
+            color: self.color,
+            visible: self.visible,
+            wrap: self.wrap,
+            pre: self.pre,
+            align: self.align,
+            ..Self::default()
+        }
+    }
+}
+fn side(side: Side) -> usize {
+    match side {
+        Side::Top => 0,
+        Side::Right => 1,
+        Side::Bottom => 2,
+        Side::Left => 3,
+    }
+}
+
+impl Sheets {
+    /// The page style of `element`, whose parent's is `parent`.
+    pub fn compute_page(&mut self, element: ElementRef<'_>, parent: &PageStyle) -> PageStyle {
+        let mut style = parent.inherited();
+        let (mut letter, mut word) = (None, None);
+        for declaration in self.matched(element) {
+            match declaration.property {
+                Property::Size(Size::Parent(scale)) => style.font_size = parent.font_size * scale,
+                Property::Size(Size::Root(scale)) => style.font_size = scale * 16.,
+                Property::Bold(bold) => style.bold = bold,
+                Property::Italic(italic) => style.italic = italic,
+                Property::Align(align) => style.align = align,
+                Property::Pre(pre) => style.pre = pre,
+                Property::Margin(at, length) => style.margin[side(at)] = length,
+                Property::Padding(at, length) => style.padding[side(at)] = length,
+                Property::Page(page) => match page {
+                    Page::Display(display) => style.display = display,
+                    Page::Position(position) => style.position = position,
+                    Page::Offset(at, length) => style.offsets[side(at)] = length,
+                    Page::Width(length) => style.width = length,
+                    Page::Height(length) => style.height = length,
+                    Page::Transform(matrix) => {
+                        style.transform = (matrix != IDENTITY).then_some(matrix);
+                    }
+                    Page::Origin(x, y) => style.origin = (x, y),
+                    Page::Families(families) => style.families = families,
+                    Page::LineHeight(height) => style.line_height = height,
+                    Page::LetterSpacing(length) => letter = Some(length),
+                    Page::WordSpacing(length) => word = Some(length),
+                    Page::Color(color) => style.color = color,
+                    Page::Background(color) => style.background = color,
+                    Page::Visible(visible) => style.visible = visible,
+                    Page::Opacity(opacity) => style.opacity = opacity,
+                    Page::Wrap(wrap) => style.wrap = wrap,
+                },
+                _ => {}
+            }
+        }
+        // Spacing in ems is of this element's size, and inherited as pixels.
+        let font = style.font_size;
+        if let Some(px) = letter.and_then(|length| length.px(font, 0.)) {
+            style.letter_spacing = px;
+        }
+        if let Some(px) = word.and_then(|length| length.px(font, 0.)) {
+            style.word_spacing = px;
+        }
+        style
+    }
+}
+
 /// The rules of one stylesheet (or of an `@media` block inside one).
 struct Rules {
     origin: Origin,
@@ -324,6 +507,9 @@ struct Rules {
     budget: usize,
     /// `@media` blocks inside `@media` blocks, bounded like HTML nesting.
     depth: usize,
+    /// Where the sheet is, relative to the page, for its URLs.
+    base: String,
+    faces: Vec<FontFace>,
 }
 impl Rules {
     fn sheet(&mut self, input: &mut Parser<'_, '_>) {
@@ -335,10 +521,55 @@ impl Rules {
 }
 
 const MEDIA_DEPTH: usize = 4;
+/// Fonts one page's stylesheets may bring.
+const FACES: usize = 64;
+
+/// A URL of a stylesheet at `base`, relative to the page.
+fn join(base: &str, url: &str) -> String {
+    if base.is_empty() || url.starts_with('/') {
+        url.to_owned()
+    } else {
+        format!("{base}/{url}")
+    }
+}
+
+/// The descriptors of an `@font-face` rule, as names and values.
+struct Descriptors;
+impl<'i> DeclarationParser<'i> for Descriptors {
+    type Declaration = (String, Vec<Value>);
+    type Error = ();
+    fn parse_value<'t>(
+        &mut self,
+        name: CowRcStr<'i>,
+        input: &mut Parser<'i, 't>,
+        _: &ParserState,
+    ) -> Result<(String, Vec<Value>), ParseError<'i, ()>> {
+        Ok((name.to_ascii_lowercase(), values(input).0))
+    }
+}
+impl AtRuleParser<'_> for Descriptors {
+    type Prelude = ();
+    type AtRule = (String, Vec<Value>);
+    type Error = ();
+}
+impl QualifiedRuleParser<'_> for Descriptors {
+    type Prelude = ();
+    type QualifiedRule = (String, Vec<Value>);
+    type Error = ();
+}
+impl RuleBodyItemParser<'_, (String, Vec<Value>), ()> for Descriptors {
+    fn parse_declarations(&self) -> bool {
+        true
+    }
+    fn parse_qualified(&self) -> bool {
+        false
+    }
+}
 
 /// An at-rule's prelude: which ones have rules worth reading.
 enum At {
     Media(bool),
+    FontFace,
     Other,
 }
 
@@ -366,6 +597,9 @@ impl<'i> AtRuleParser<'i> for Rules {
             return Ok(At::Media(applies));
         }
         while input.next().is_ok() {}
+        if name.eq_ignore_ascii_case("font-face") {
+            return Ok(At::FontFace);
+        }
         Ok(At::Other)
     }
     fn rule_without_block(&mut self, _: At, _: &ParserState) -> Result<(), ()> {
@@ -383,6 +617,42 @@ impl<'i> AtRuleParser<'i> for Rules {
             self.depth += 1;
             self.sheet(input);
             self.depth -= 1;
+        } else if let At::FontFace = prelude {
+            let mut face = FontFace::default();
+            let mut parser = Descriptors;
+            for (name, values) in RuleBodyParser::new(input, &mut parser).filter_map(Result::ok) {
+                match name.as_str() {
+                    "font-family" => {
+                        if let Some(Property::Page(Page::Families(families))) =
+                            page("font-family", &values).map(Property::Page)
+                        {
+                            face.family = families.first().cloned().unwrap_or_default();
+                        }
+                    }
+                    "src" => {
+                        face.src = values
+                            .iter()
+                            .filter_map(|value| match value {
+                                Value::Url(url) if !url.contains(':') => {
+                                    Some(join(&self.base, url))
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                    }
+                    "font-weight" => {
+                        face.bold = matches!(property(&name, &values), Some(Property::Bold(true)));
+                    }
+                    "font-style" => {
+                        face.italic =
+                            matches!(property(&name, &values), Some(Property::Italic(true)));
+                    }
+                    _ => {}
+                }
+            }
+            if !face.family.is_empty() && !face.src.is_empty() && self.faces.len() < FACES {
+                self.faces.push(face);
+            }
         } else {
             while input.next().is_ok() {}
         }
@@ -454,8 +724,9 @@ fn declarations(style: &str) -> Vec<Declaration> {
 
 struct Declarations;
 impl<'i> DeclarationParser<'i> for Declarations {
-    /// `None` for a property reading mode does not keep.
-    type Declaration = Option<Declaration>;
+    /// The properties a declaration sets that anything here keeps: none,
+    /// one, or several for a shorthand (`margin`).
+    type Declaration = Vec<Declaration>;
     type Error = ();
 
     fn parse_value<'t>(
@@ -463,44 +734,28 @@ impl<'i> DeclarationParser<'i> for Declarations {
         name: CowRcStr<'i>,
         input: &mut Parser<'i, 't>,
         _: &ParserState,
-    ) -> Result<Option<Declaration>, ParseError<'i, ()>> {
-        let mut values: Vec<Value> = Vec::new();
-        let mut important = false;
-        while let Ok(token) = input.next().cloned() {
-            match token {
-                Token::Delim('!') => {
-                    important = matches!(input.next(), Ok(Token::Ident(i)) if i.eq_ignore_ascii_case("important"));
-                }
-                Token::Ident(ident) => values.push(Value::Ident(ident.to_ascii_lowercase())),
-                Token::Number { value, .. } => values.push(Value::Number(value)),
-                Token::Dimension { value, unit, .. } => {
-                    values.push(Value::Length(value, unit.to_ascii_lowercase()));
-                }
-                Token::Percentage { unit_value, .. } => {
-                    values.push(Value::Length(unit_value * 100., "%".into()));
-                }
-                _ => values.push(Value::Other),
-            }
-        }
-        Ok(
-            property(&name.to_ascii_lowercase(), &values).map(|property| Declaration {
+    ) -> Result<Vec<Declaration>, ParseError<'i, ()>> {
+        let (values, important) = values(input);
+        Ok(properties(&name.to_ascii_lowercase(), &values)
+            .into_iter()
+            .map(|property| Declaration {
                 property,
                 important,
-            }),
-        )
+            })
+            .collect())
     }
 }
 impl AtRuleParser<'_> for Declarations {
     type Prelude = ();
-    type AtRule = Option<Declaration>;
+    type AtRule = Vec<Declaration>;
     type Error = ();
 }
 impl QualifiedRuleParser<'_> for Declarations {
     type Prelude = ();
-    type QualifiedRule = Option<Declaration>;
+    type QualifiedRule = Vec<Declaration>;
     type Error = ();
 }
-impl RuleBodyItemParser<'_, Option<Declaration>, ()> for Declarations {
+impl RuleBodyItemParser<'_, Vec<Declaration>, ()> for Declarations {
     fn parse_declarations(&self) -> bool {
         true
     }
@@ -509,14 +764,407 @@ impl RuleBodyItemParser<'_, Option<Declaration>, ()> for Declarations {
     }
 }
 
-#[derive(Debug)]
+/// A declaration's value, token by token, and whether it is `!important`.
+/// Functions keep their arguments (`rgb()`, `matrix()`, `url()`).
+fn values(input: &mut Parser<'_, '_>) -> (Vec<Value>, bool) {
+    let mut out = Vec::new();
+    let mut important = false;
+    while let Ok(token) = input.next().cloned() {
+        out.push(match token {
+            Token::Delim('!') => {
+                important = matches!(input.next(), Ok(Token::Ident(i)) if i.eq_ignore_ascii_case("important"));
+                continue;
+            }
+            Token::Ident(ident) => Value::Ident(ident.to_ascii_lowercase()),
+            Token::Number { value, .. } => Value::Number(value),
+            Token::Dimension { value, unit, .. } => {
+                Value::Length(value, unit.to_ascii_lowercase())
+            }
+            Token::Percentage { unit_value, .. } => Value::Length(unit_value * 100., "%".into()),
+            Token::QuotedString(text) => Value::String(text.to_string()),
+            Token::UnquotedUrl(url) => Value::Url(url.to_string()),
+            Token::Comma => Value::Comma,
+            Token::Hash(hex) | Token::IDHash(hex) => Value::Hash(hex.to_ascii_lowercase()),
+            Token::Function(name) => {
+                let name = name.to_ascii_lowercase();
+                let inner = input
+                    .parse_nested_block(|input| Ok::<_, ParseError<'_, ()>>(values(input).0))
+                    .unwrap_or_default();
+                match (name.as_str(), inner.as_slice()) {
+                    ("url", [Value::String(url)]) => Value::Url(url.clone()),
+                    _ => Value::Function(name, inner),
+                }
+            }
+            _ => Value::Other,
+        });
+    }
+    (out, important)
+}
+
+#[derive(Clone, Debug)]
 enum Value {
     Ident(String),
     Number(f32),
     Length(f32, String),
+    String(String),
+    Url(String),
+    Hash(String),
+    Function(String, Vec<Value>),
+    Comma,
     Other,
 }
 
+/// A CSS length, resolved where it is used: ems need the element's font
+/// size, percentages the box they are of.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Length {
+    Px(f32),
+    Em(f32),
+    Rem(f32),
+    Percent(f32),
+    Auto,
+}
+impl Length {
+    fn parse(value: &Value) -> Option<Self> {
+        Some(match value {
+            Value::Number(zero) if *zero == 0. => Self::Px(0.),
+            Value::Ident(auto) if auto == "auto" => Self::Auto,
+            Value::Length(value, unit) => match unit.as_str() {
+                "px" => Self::Px(*value),
+                "pt" => Self::Px(value * 4. / 3.),
+                "pc" => Self::Px(value * 16.),
+                "in" => Self::Px(value * 96.),
+                "cm" => Self::Px(value * 96. / 2.54),
+                "mm" => Self::Px(value * 96. / 25.4),
+                "em" => Self::Em(*value),
+                "rem" => Self::Rem(*value),
+                "ex" | "ch" => Self::Em(value / 2.),
+                "%" | "vw" | "vh" => Self::Percent(*value),
+                _ => return None,
+            },
+            _ => return None,
+        })
+    }
+    /// In pixels, for an element whose font is `font` pixels, of a box of
+    /// `base` pixels; `None` for `auto`.
+    pub fn px(self, font: f32, base: f32) -> Option<f32> {
+        match self {
+            Self::Px(px) => Some(px),
+            Self::Em(em) => Some(em * font),
+            Self::Rem(rem) => Some(rem * 16.),
+            Self::Percent(percent) => Some(percent / 100. * base),
+            Self::Auto => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Side {
+    Top,
+    Right,
+    Bottom,
+    Left,
+}
+const SIDES: [Side; 4] = [Side::Top, Side::Right, Side::Bottom, Side::Left];
+
+/// The four values of a box shorthand (`margin: 0 auto`), in CSS order.
+fn sides(values: &[Value]) -> Option<[Length; 4]> {
+    let lengths: Vec<Length> = values.iter().map(Length::parse).collect::<Option<_>>()?;
+    Some(match lengths.as_slice() {
+        [all] => [*all; 4],
+        [vertical, horizontal] => [*vertical, *horizontal, *vertical, *horizontal],
+        [top, horizontal, bottom] => [*top, *horizontal, *bottom, *horizontal],
+        [top, right, bottom, left] => [*top, *right, *bottom, *left],
+        _ => return None,
+    })
+}
+
+/// What a fixed-layout page's boxes and text are laid out with.
+#[derive(Clone, Debug)]
+enum Page {
+    Display(PageDisplay),
+    Position(Position),
+    Offset(Side, Length),
+    Width(Length),
+    Height(Length),
+    /// `transform`: a 2D matrix `a b c d e f` (`none` is the identity).
+    Transform([f32; 6]),
+    Origin(Length, Length),
+    Families(Arc<[String]>),
+    LineHeight(LineHeight),
+    LetterSpacing(Length),
+    WordSpacing(Length),
+    Color([u8; 4]),
+    Background(Option<[u8; 4]>),
+    Visible(bool),
+    Opacity(f32),
+    Wrap(bool),
+}
+
+/// How a box is laid out on a fixed page.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PageDisplay {
+    Block,
+    #[default]
+    Inline,
+    InlineBlock,
+    None,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Position {
+    #[default]
+    Static,
+    Relative,
+    Absolute,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum LineHeight {
+    #[default]
+    Normal,
+    Number(f32),
+    Length(Length),
+}
+
+fn properties(name: &str, values: &[Value]) -> Vec<Property> {
+    let one = |property: Option<Property>| property.into_iter().collect();
+    match name {
+        "margin" | "padding" => {
+            let Some(sides) = sides(values) else {
+                return Vec::new();
+            };
+            SIDES
+                .iter()
+                .zip(sides)
+                .map(|(side, length)| {
+                    if name == "margin" {
+                        Property::Margin(*side, length)
+                    } else {
+                        Property::Padding(*side, length)
+                    }
+                })
+                .collect()
+        }
+        "display" => [
+            property(name, values),
+            page(name, values).map(Property::Page),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
+        _ => one(property(name, values).or_else(|| page(name, values).map(Property::Page))),
+    }
+}
+
+/// A page property, or `None` for one no layout here keeps.
+fn page(name: &str, values: &[Value]) -> Option<Page> {
+    let ident = || match values {
+        [Value::Ident(ident)] => Some(ident.as_str()),
+        _ => None,
+    };
+    let length = || match values {
+        [value] => Length::parse(value),
+        _ => None,
+    };
+    Some(match name {
+        "display" => Page::Display(match ident()? {
+            "none" => PageDisplay::None,
+            "inline" | "contents" | "ruby" => PageDisplay::Inline,
+            "inline-block" | "inline-flex" | "inline-grid" | "inline-table" => {
+                PageDisplay::InlineBlock
+            }
+            _ => PageDisplay::Block,
+        }),
+        "position" => Page::Position(match ident()? {
+            "absolute" | "fixed" => Position::Absolute,
+            "relative" | "sticky" => Position::Relative,
+            _ => Position::Static,
+        }),
+        "left" => Page::Offset(Side::Left, length()?),
+        "top" => Page::Offset(Side::Top, length()?),
+        "right" => Page::Offset(Side::Right, length()?),
+        "bottom" => Page::Offset(Side::Bottom, length()?),
+        "width" => Page::Width(length()?),
+        "height" => Page::Height(length()?),
+        "transform" | "-webkit-transform" => Page::Transform(transform(values)?),
+        "transform-origin" | "-webkit-transform-origin" => {
+            let mut lengths = values.iter().filter_map(|value| match value {
+                Value::Ident(keyword) => match keyword.as_str() {
+                    "left" | "top" => Some(Length::Percent(0.)),
+                    "center" => Some(Length::Percent(50.)),
+                    "right" | "bottom" => Some(Length::Percent(100.)),
+                    _ => None,
+                },
+                value => Length::parse(value),
+            });
+            let x = lengths.next()?;
+            Page::Origin(x, lengths.next().unwrap_or(Length::Percent(50.)))
+        }
+        "font-family" => {
+            let mut families = Vec::new();
+            let mut current = String::new();
+            for value in values.iter().chain([&Value::Comma]) {
+                match value {
+                    Value::String(name) => current.push_str(name),
+                    Value::Ident(word) => {
+                        if !current.is_empty() {
+                            current.push(' ');
+                        }
+                        current.push_str(word);
+                    }
+                    Value::Comma if !current.is_empty() => {
+                        families.push(std::mem::take(&mut current));
+                    }
+                    _ => {}
+                }
+            }
+            Page::Families(families.into())
+        }
+        "line-height" => Page::LineHeight(match values {
+            [Value::Ident(normal)] if normal == "normal" => LineHeight::Normal,
+            [Value::Number(number)] => LineHeight::Number(*number),
+            [value] => LineHeight::Length(Length::parse(value)?),
+            _ => return None,
+        }),
+        "letter-spacing" => Page::LetterSpacing(match ident() {
+            Some("normal") => Length::Px(0.),
+            _ => length()?,
+        }),
+        "word-spacing" => Page::WordSpacing(match ident() {
+            Some("normal") => Length::Px(0.),
+            _ => length()?,
+        }),
+        "color" => Page::Color(color(values)?),
+        "background-color" | "background" => Page::Background(
+            values
+                .iter()
+                .find_map(|value| color(std::slice::from_ref(value))),
+        ),
+        "visibility" => Page::Visible(ident()? != "hidden"),
+        "opacity" => Page::Opacity(match values {
+            [Value::Number(opacity)] => opacity.clamp(0., 1.),
+            [Value::Length(percent, unit)] if unit == "%" => (percent / 100.).clamp(0., 1.),
+            _ => return None,
+        }),
+        "white-space" => Page::Wrap(!matches!(ident()?, "pre" | "nowrap")),
+        _ => return None,
+    })
+}
+
+/// A 2D transform as the matrix `a b c d e f`: `matrix()`, `scale()`,
+/// `translate()` and `rotate()`, composed left to right; `none` is the
+/// identity, and `None` a transform this layout does not know.
+fn transform(values: &[Value]) -> Option<[f32; 6]> {
+    if let [Value::Ident(none)] = values
+        && none == "none"
+    {
+        return Some(IDENTITY);
+    }
+    let mut matrix = IDENTITY;
+    for value in values {
+        let Value::Function(name, arguments) = value else {
+            continue;
+        };
+        let numbers: Vec<f32> = arguments
+            .iter()
+            .filter_map(|value| match value {
+                Value::Number(number) => Some(*number),
+                Value::Length(number, unit) if unit == "px" => Some(*number),
+                Value::Length(degrees, unit) if unit == "deg" => Some(degrees.to_radians()),
+                Value::Length(radians, unit) if unit == "rad" => Some(*radians),
+                Value::Length(turns, unit) if unit == "turn" => Some(turns * std::f32::consts::TAU),
+                _ => None,
+            })
+            .collect();
+        let step = match (name.as_str(), numbers.as_slice()) {
+            ("matrix", [a, b, c, d, e, f]) => [*a, *b, *c, *d, *e, *f],
+            ("scale", [s]) => [*s, 0., 0., *s, 0., 0.],
+            ("scale", [x, y]) => [*x, 0., 0., *y, 0., 0.],
+            ("scalex", [x]) => [*x, 0., 0., 1., 0., 0.],
+            ("scaley", [y]) => [1., 0., 0., *y, 0., 0.],
+            ("translate" | "translatex", [x]) => [1., 0., 0., 1., *x, 0.],
+            ("translate", [x, y]) => [1., 0., 0., 1., *x, *y],
+            ("translatey", [y]) => [1., 0., 0., 1., 0., *y],
+            ("rotate", [angle]) => {
+                let (sin, cos) = angle.sin_cos();
+                [cos, sin, -sin, cos, 0., 0.]
+            }
+            _ => return None,
+        };
+        matrix = multiply(matrix, step);
+    }
+    Some(matrix)
+}
+pub const IDENTITY: [f32; 6] = [1., 0., 0., 1., 0., 0.];
+/// `first` then `second`, as CSS composes a transform list.
+pub fn multiply(first: [f32; 6], second: [f32; 6]) -> [f32; 6] {
+    let [a, b, c, d, e, f] = first;
+    let [g, h, i, j, k, l] = second;
+    [
+        a * g + c * h,
+        b * g + d * h,
+        a * i + c * j,
+        b * i + d * j,
+        a * k + c * l + e,
+        b * k + d * l + f,
+    ]
+}
+
+/// A colour as RGBA: `#rgb`, `#rrggbb`, `rgb()`, `rgba()`, and the few names
+/// books use.
+fn color(values: &[Value]) -> Option<[u8; 4]> {
+    let channel = |value: &Value| match value {
+        Value::Number(number) => Some(number.clamp(0., 255.) as u8),
+        Value::Length(percent, unit) if unit == "%" => {
+            Some((percent / 100. * 255.).clamp(0., 255.) as u8)
+        }
+        _ => None,
+    };
+    match values {
+        [Value::Hash(hex)] => {
+            let digit = |i: usize| u8::from_str_radix(hex.get(i..=i)?, 16).ok();
+            match hex.len() {
+                3 => Some([digit(0)? * 17, digit(1)? * 17, digit(2)? * 17, 255]),
+                6 | 8 => {
+                    let byte = |i: usize| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok();
+                    Some([byte(0)?, byte(2)?, byte(4)?, byte(6).unwrap_or(255)])
+                }
+                _ => None,
+            }
+        }
+        [Value::Function(name, arguments)] if name == "rgb" || name == "rgba" => {
+            let numbers: Vec<&Value> = arguments
+                .iter()
+                .filter(|value| !matches!(value, Value::Comma | Value::Other))
+                .collect();
+            let alpha = match numbers.get(3) {
+                Some(Value::Number(alpha)) => (alpha.clamp(0., 1.) * 255.) as u8,
+                Some(value) => channel(value)?,
+                None => 255,
+            };
+            Some([
+                channel(numbers.first()?)?,
+                channel(numbers.get(1)?)?,
+                channel(numbers.get(2)?)?,
+                alpha,
+            ])
+        }
+        [Value::Ident(name)] => Some(match name.as_str() {
+            "black" => [0, 0, 0, 255],
+            "white" => [255, 255, 255, 255],
+            "red" => [255, 0, 0, 255],
+            "green" => [0, 128, 0, 255],
+            "blue" => [0, 0, 255, 255],
+            "gray" | "grey" => [128, 128, 128, 255],
+            "transparent" => [0, 0, 0, 0],
+            _ => return None,
+        }),
+        _ => None,
+    }
+}
+
+/// A reading-mode property, or `None` for one reading mode does not keep.
 fn property(name: &str, values: &[Value]) -> Option<Property> {
     let ident = || match values {
         [Value::Ident(ident)] => Some(ident.as_str()),
@@ -597,11 +1245,16 @@ fn property(name: &str, values: &[Value]) -> Option<Property> {
             },
             _ => return None,
         }),
-        "margin-left" | "margin-inline-start" => Property::MarginLeft(ems(values.first()?)?),
-        "padding-left" | "padding-inline-start" => Property::PaddingLeft(ems(values.first()?)?),
-        // The shorthands name the left side last, or repeat an earlier one.
-        "margin" => Property::MarginLeft(ems(left(values)?)?),
-        "padding" => Property::PaddingLeft(ems(left(values)?)?),
+        "margin-left" | "margin-inline-start" => {
+            Property::Margin(Side::Left, Length::parse(values.first()?)?)
+        }
+        "margin-top" => Property::Margin(Side::Top, Length::parse(values.first()?)?),
+        "margin-right" => Property::Margin(Side::Right, Length::parse(values.first()?)?),
+        "margin-bottom" => Property::Margin(Side::Bottom, Length::parse(values.first()?)?),
+        "padding-left" | "padding-inline-start" => {
+            Property::Padding(Side::Left, Length::parse(values.first()?)?)
+        }
+        "padding-top" => Property::Padding(Side::Top, Length::parse(values.first()?)?),
         _ => return None,
     })
 }
@@ -613,28 +1266,14 @@ fn align(value: &str) -> Option<Align> {
         _ => return None,
     })
 }
-fn left(values: &[Value]) -> Option<&Value> {
-    match values {
-        [all] | [_, all] | [_, all, _] => Some(all),
-        [_, _, _, left] => Some(left),
-        _ => None,
-    }
-}
-/// A length as ems of the body. Percentages are of the column, taken as a
-/// reading measure of about 40 ems.
-fn ems(value: &Value) -> Option<f32> {
-    match value {
-        Value::Number(zero) if *zero == 0. => Some(0.),
-        Value::Ident(auto) if auto == "auto" => Some(0.),
-        Value::Length(value, unit) => Some(match unit.as_str() {
-            "em" | "rem" => *value,
-            "px" => value / 16.,
-            "pt" => value / 12.,
-            "%" => value * 0.4,
-            "ex" | "ch" => value / 2.,
-            _ => return None,
-        }),
-        _ => None,
+/// A reading margin as ems of the body. Percentages are of the column, taken
+/// as a reading measure of about 40 ems.
+fn ems(length: Length) -> f32 {
+    match length {
+        Length::Px(px) => px / 16.,
+        Length::Em(em) | Length::Rem(em) => em,
+        Length::Percent(percent) => percent * 0.4,
+        Length::Auto => 0.,
     }
 }
 
@@ -646,7 +1285,7 @@ mod tests {
     fn style_of(html: &str, css: &str, id: &str) -> Style {
         let doc = Html::parse_document(html);
         let mut sheets = Sheets::new();
-        sheets.add(css);
+        sheets.add(css, "");
         // Walk from the root so inheritance is what the page gives.
         let mut styles: HashMap<ego_tree::NodeId, Style> = HashMap::new();
         for node in doc.tree.root().descendants() {
@@ -735,7 +1374,7 @@ mod tests {
             css
         });
         let mut sheets = Sheets::new();
-        sheets.add(&css);
+        sheets.add(&css, "");
         assert_eq!(sheets.rules.len(), limits::STYLE_RULES);
     }
 }

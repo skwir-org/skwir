@@ -28,8 +28,11 @@ selectors = "0.31"
 markup5ever = "0.35"
 ego-tree = "0.10"
 roxmltree.workspace = true
-# SVG pictures in documents; the version gpui already links.
-resvg = { version = "0.45", default-features = false }
+# SVG pictures in documents, and fixed-layout pages drawn as SVG with the
+# book's fonts; the version and features gpui already links.
+resvg = { version = "0.45", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
+# Font metrics for laying out a fixed page's text; the version fontdb uses.
+ttf-parser = "0.25"
 percent-encoding = "2"
 encoding_rs = "0.8"
 crossbeam-channel.workspace = true

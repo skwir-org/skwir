@@ -244,9 +244,20 @@ still to come are in `docs/preview-frame.md`.
 - **Every `id` is a link target** (`Block::anchors`): a section's is its first
   block, a word's the block around it. A footnote (`footnote`, `note`,
   `rearnote`, `doc-footnote`) moves to the end of the page under a rule; a
-  printed page number (`pagebreak`) is a target, never read. A fixed-layout
-  book's page that is one picture shows as a page: the inspection's own
-  picture, the panel's width, in a book that keeps its contents and search.
+  printed page number (`pagebreak`) is a target, never read.
+- **A fixed-layout page is drawn, not read** (`rich_preview/page.rs`,
+  ADR-013): one that states its size is laid out from the cascade
+  (`PageStyle`) and drawn as the inspection's own picture, the panel's
+  width, in a book that keeps its contents and search. Text goes to resvg as
+  SVG `<text>` with the book's fonts, renamed to their CSS families;
+  pictures are decoded by the `image` crate and composited between the SVG
+  fragments in paint order (`Canvas`), never through resvg's decoders. Fonts
+  and pictures come only through the caller's `Resources`; an obfuscated
+  font is restored by the provider, an encrypted one is not read. A page
+  with no size is read as text.
+- **A book's rows are its contents** (`inspector::listed`): the Contents
+  drawer shows them; they are not list items after its text, nor part of
+  what find and copy read.
   A book reads in the same typography as a document (the reading profile).
 - **Sections follow each other under the wheel.** Any preview with a previous
   and a next section (a book's chapters, pages of text, of bytes, of rows)

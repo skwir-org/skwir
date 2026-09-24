@@ -716,6 +716,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tracing",
+ "ttf-parser 0.25.1",
  "xdg-mime",
 ]
 
@@ -875,6 +876,7 @@ dependencies = [
  "rbook",
  "roxmltree 0.21.1",
  "serde_json",
+ "sha1_smol",
  "tempfile",
  "zip",
 ]

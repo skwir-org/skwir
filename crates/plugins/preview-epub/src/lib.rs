@@ -195,6 +195,34 @@ impl PreviewProvider for Provider {
                 ..frame
             }));
         }
+        // A fixed-layout page is drawn as its book lays it out: a comic's
+        // lettering is text set over its picture, and reads as nothing
+        // alone. One that states no size is read as text.
+        if fixed {
+            let resources = Chapter {
+                container: &mut container,
+                base,
+                cancel,
+                images: true,
+            };
+            match rich_preview::page(&source, markups[index], cancel, resources) {
+                Ok(Some(image)) => {
+                    return Ok(Some(Inspection {
+                        kind: bibli_core::inspection::InspectionKind::Book,
+                        title: format!("EPUB · page {} / {}", index + 1, chapters.len()),
+                        image: Some(image),
+                        rows,
+                        notice: encoding.notice().unwrap_or_default(),
+                        ..frame
+                    }));
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    inspection::check(cancel)?;
+                    notice.push(format!("The page could not be drawn ({error:#})"));
+                }
+            }
+        }
         let resources = Chapter {
             container: &mut container,
             base,
@@ -282,6 +310,12 @@ impl rich_preview::Resources for Chapter<'_> {
         })?;
         Some(Picture::Later { key, width, height })
     }
+    fn file(&mut self, href: &str) -> Option<Vec<u8>> {
+        if href.contains(':') {
+            return None;
+        }
+        self.container.file(&resolve(self.base, href), self.cancel)
+    }
     fn stylesheet(&mut self, href: &str) -> Option<String> {
         if href.contains(':') {
             return None;
@@ -308,6 +342,54 @@ struct Container {
     /// Normalized member path → index, so hrefs never become archive lookups
     /// through a path the ZIP library interprets.
     members: HashMap<String, usize>,
+    /// Members `META-INF/encryption.xml` lists, by the algorithm named.
+    encrypted: HashMap<String, String>,
+    /// The package's unique identifier, which obfuscated fonts are keyed by.
+    identifier: String,
+}
+
+/// How EPUB obfuscates embedded fonts: not encryption, a key every reading
+/// system knows. Anything else `encryption.xml` names is DRM, and unread.
+const IDPF_OBFUSCATION: &str = "http://www.idpf.org/2008/embedding";
+const ADOBE_OBFUSCATION: &str = "http://ns.adobe.com/pdf/enc#RC";
+
+/// Undo a font's obfuscation: its first bytes combined (exclusive or) with a key derived from
+/// the package's unique identifier (IDPF: the SHA-1 of the identifier
+/// without whitespace, over 1040 bytes; Adobe: the 16 bytes of its UUID,
+/// over 1024).
+fn deobfuscate(bytes: &mut [u8], algorithm: &str, identifier: &str) -> Option<()> {
+    let (key, length): (Vec<u8>, usize) = match algorithm {
+        IDPF_OBFUSCATION => {
+            let identifier: String = identifier
+                .chars()
+                .filter(|c| !matches!(c, ' ' | '\t' | '\r' | '\n'))
+                .collect();
+            (
+                sha1_smol::Sha1::from(identifier).digest().bytes().to_vec(),
+                1040,
+            )
+        }
+        ADOBE_OBFUSCATION => {
+            let hex: String = identifier
+                .trim()
+                .trim_start_matches("urn:uuid:")
+                .chars()
+                .filter(char::is_ascii_hexdigit)
+                .collect();
+            let key: Vec<u8> = (0..hex.len() / 2)
+                .filter_map(|i| u8::from_str_radix(hex.get(2 * i..2 * i + 2)?, 16).ok())
+                .collect();
+            if key.len() != 16 {
+                return None;
+            }
+            (key, 1024)
+        }
+        _ => return None,
+    };
+    for (i, byte) in bytes.iter_mut().take(length).enumerate() {
+        *byte ^= key[i % key.len()];
+    }
+    Some(())
 }
 impl Container {
     fn open(path: &std::path::Path, cancel: &CancelToken) -> anyhow::Result<Self> {
@@ -328,7 +410,44 @@ impl Container {
                 members.entry(name).or_insert(i);
             }
         }
-        Ok(Self { archive, members })
+        let mut container = Self {
+            archive,
+            members,
+            encrypted: HashMap::new(),
+            identifier: String::new(),
+        };
+        if let Ok(xml) = container.read("META-INF/encryption.xml", "EPUB encryption", cancel) {
+            let text = inspection::decode(&xml).0;
+            if let Ok(doc) = roxmltree::Document::parse(&text) {
+                for data in doc
+                    .descendants()
+                    .filter(|n| n.has_tag_name("EncryptedData"))
+                {
+                    let algorithm = data
+                        .descendants()
+                        .find(|n| n.has_tag_name("EncryptionMethod"))
+                        .and_then(|n| n.attribute("Algorithm"));
+                    let uri = data
+                        .descendants()
+                        .find(|n| n.has_tag_name("CipherReference"))
+                        .and_then(|n| n.attribute("URI"))
+                        .and_then(member_key);
+                    if let (Some(algorithm), Some(uri)) = (algorithm, uri) {
+                        container.encrypted.insert(uri, algorithm.to_owned());
+                    }
+                }
+            }
+        }
+        Ok(container)
+    }
+    /// A resource as a reading system reads it: an obfuscated font restored,
+    /// and nothing for what is encrypted.
+    fn file(&mut self, href: &str, cancel: &CancelToken) -> Option<Vec<u8>> {
+        let mut bytes = self.read(href, "EPUB resource", cancel).ok()?;
+        if let Some(algorithm) = member_key(href).and_then(|key| self.encrypted.get(&key)) {
+            deobfuscate(&mut bytes, algorithm, &self.identifier)?;
+        }
+        Some(bytes)
     }
     /// The first `limit` bytes of a resource, or all of it if it is shorter:
     /// enough to learn a picture's size without inflating the rest.
@@ -411,6 +530,15 @@ fn package(container: &mut Container, cancel: &CancelToken) -> anyhow::Result<(r
                 && n.attribute("property") == Some("rendition:layout")
                 && n.text().map(str::trim) == Some("pre-paginated")
         });
+        // The identifier obfuscated fonts are keyed by.
+        let unique = doc.root_element().attribute("unique-identifier");
+        if let Some(identifier) = doc
+            .descendants()
+            .find(|n| n.has_tag_name("identifier") && n.attribute("id") == unique)
+            .and_then(|n| n.text())
+        {
+            identifier.trim().clone_into(&mut container.identifier);
+        }
         let items: Vec<_> = doc
             .descendants()
             .filter(|n| n.has_tag_name("item"))
@@ -864,7 +992,8 @@ mod tests {
         assert_eq!(first.title, "EPUB · page 1 / 3");
         assert!(!first.rows.is_empty(), "the book's contents stay reachable");
         let image = first.image.expect("the page");
-        assert_eq!((image.width, image.height), (2, 3));
+        // Its viewport is 2 × 3: drawn at four times, the most a small page is.
+        assert_eq!((image.width, image.height), (8, 12));
         assert!(first.blocks.is_empty());
         assert_eq!(first.next, Some(1));
         // A page with text reads as text.
@@ -932,6 +1061,79 @@ mod tests {
                 .is_err(),
             "a key is a member, never a path out of the container"
         );
+    }
+
+    /// Obfuscation is its own inverse, keyed by the package's identifier:
+    /// IDPF's by its SHA-1 over 1040 bytes, Adobe's by its UUID over 1024.
+    #[test]
+    fn obfuscated_fonts_are_restored() {
+        let font: Vec<u8> = (0..2000u32).map(|i| (i % 251) as u8).collect();
+        for (algorithm, identifier, length) in [
+            (IDPF_OBFUSCATION, " urn:isbn:9780000000000 \n", 1040),
+            (
+                ADOBE_OBFUSCATION,
+                "urn:uuid:0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+                1024,
+            ),
+        ] {
+            let mut bytes = font.clone();
+            deobfuscate(&mut bytes, algorithm, identifier).unwrap();
+            assert_ne!(bytes[..length], font[..length]);
+            assert_eq!(bytes[length..], font[length..], "only the head is keyed");
+            deobfuscate(&mut bytes, algorithm, identifier).unwrap();
+            assert_eq!(bytes, font);
+        }
+        let mut drm = font.clone();
+        assert!(
+            deobfuscate(&mut drm, "http://www.w3.org/2001/04/xmlenc#aes128-cbc", "x").is_none()
+        );
+    }
+
+    /// A fixed-layout page that states its size is drawn, its picture and
+    /// its text in place, rather than read as text after its picture.
+    #[test]
+    fn a_fixed_layout_page_with_a_size_is_drawn() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("Synthetic drawn book.epub");
+        let opf = OPF.replace(
+            "<dc:language>en</dc:language>",
+            r#"<dc:language>en</dc:language><meta property="rendition:layout">pre-paginated</meta>"#,
+        );
+        let page = br#"<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title/><meta name="viewport" content="width=300,height=400"/>
+<style>body { margin: 0 } img { position: absolute; left: 0; top: 0; width: 300px; height: 400px }
+.t { position: absolute; left: 20px; top: 20px; color: #123456 }</style></head>
+<body><img src="images/p1.png" alt=""/><div class="t">Lettering</div></body></html>"#;
+        write(
+            &path,
+            &[
+                ("mimetype", b"application/epub+zip"),
+                ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+                ("EPUB/book.opf", opf.as_bytes()),
+                ("EPUB/nav.xhtml", NAV.as_bytes()),
+                ("EPUB/one.xhtml", page),
+                ("EPUB/images/p1.png", PNG),
+                (
+                    "EPUB/two.xhtml",
+                    br"<html><body><p>No size stated.</p></body></html>",
+                ),
+            ],
+        );
+        let first = inspect(&path, &InspectRequest::default()).unwrap();
+        assert_eq!(first.title, "EPUB · page 1 / 3");
+        let image = first.image.expect("the page, drawn");
+        // 300 × 400 at the display side.
+        assert_eq!((image.width, image.height), (1200, 1600));
+        assert!(first.blocks.is_empty(), "nothing is read after the page");
+        let second = inspect(
+            &path,
+            &InspectRequest {
+                offset: 1,
+                ..InspectRequest::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(second.blocks[0].text, "No size stated.");
     }
 
     #[test]
