@@ -295,7 +295,7 @@ fn menu_row(button: Button, shell: &Shell, cx: &mut Context<Shell>) -> AnyElemen
         .into_any_element()
 }
 
-fn separator(theme: &Theme) -> Div {
+pub(crate) fn separator(theme: &Theme) -> Div {
     div().h(px(1.)).my_1().bg(theme.border)
 }
 

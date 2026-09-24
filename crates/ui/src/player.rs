@@ -28,6 +28,121 @@ use crate::shell::Shell;
 use crate::theme::Theme;
 use crate::toolbar::Button;
 
+/// What follows a track that plays to its end (`ui.media_continue`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Continue {
+    /// Nothing: the player stops.
+    #[default]
+    Stop,
+    /// The next file of the same kind in the pane's order, or of the playlist.
+    Next,
+    /// One of them at random. The pin draws an order once and walks it, so
+    /// Previous goes back the way Next came.
+    Shuffle,
+}
+
+impl Continue {
+    pub const ALL: [Self; 3] = [Self::Stop, Self::Next, Self::Shuffle];
+
+    /// The setting's value.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Stop => "off",
+            Self::Next => "next",
+            Self::Shuffle => "shuffle",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Stop => "Stop",
+            Self::Next => "Play next",
+            Self::Shuffle => "Shuffle",
+        }
+    }
+
+    pub fn icon(self) -> &'static str {
+        match self {
+            Self::Shuffle => "shuffle",
+            Self::Stop | Self::Next => "play-next",
+        }
+    }
+
+    pub fn parse(key: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|mode| mode.key() == key)
+            .unwrap_or_default()
+    }
+
+    /// The one after, for a command given no mode: Stop, Next, Shuffle.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Stop => Self::Next,
+            Self::Next => Self::Shuffle,
+            Self::Shuffle => Self::Stop,
+        }
+    }
+}
+
+/// The player's preferences (`Shell::prefs`), read with the others when
+/// the settings change.
+#[derive(Clone, Copy, Debug)]
+pub struct PlayerPrefs {
+    /// `ui.media_keep_playing`: a track that starts to play is pinned.
+    pub keep_playing: bool,
+    /// `ui.media_autoplay`: music and films play once selected.
+    pub autoplay: bool,
+    /// `ui.media_continue`: what follows a track that ends.
+    pub continue_with: Continue,
+}
+
+impl Default for PlayerPrefs {
+    fn default() -> Self {
+        Self {
+            keep_playing: true,
+            autoplay: false,
+            continue_with: Continue::Stop,
+        }
+    }
+}
+
+/// A number below `bound`, which must not be 0. `RandomState` draws fresh
+/// keys for every instance, so a hash of nothing under them is random
+/// enough to shuffle a folder without a dependency for it.
+pub(crate) fn random_below(bound: usize) -> usize {
+    use std::hash::BuildHasher;
+    let draw = std::hash::RandomState::new().hash_one(());
+    usize::try_from(draw % bound as u64).unwrap_or(0)
+}
+
+/// The indices `0..len` in a random order that starts with `first`.
+fn shuffled(len: usize, first: usize) -> Vec<usize> {
+    let mut rest: Vec<usize> = (0..len).filter(|index| *index != first).collect();
+    for end in (1..rest.len()).rev() {
+        rest.swap(end, random_below(end + 1));
+    }
+    (first < len)
+        .then_some(first)
+        .into_iter()
+        .chain(rest)
+        .collect()
+}
+
+/// The track `delta` steps from `index` in a queue of `len`: along `order`
+/// while shuffling (when it is drawn over the whole queue), otherwise along
+/// the queue.
+fn step(len: usize, order: &[usize], index: usize, delta: i64, mode: Continue) -> Option<usize> {
+    let delta = delta.signum() as isize;
+    if mode == Continue::Shuffle && order.len() == len {
+        let at = order.iter().position(|track| *track == index)?;
+        return at
+            .checked_add_signed(delta)
+            .and_then(|at| order.get(at).copied());
+    }
+    index.checked_add_signed(delta).filter(|index| *index < len)
+}
+
 /// Where, under the cache and this process's id, the covers of what plays
 /// are written for others to show (the desktop's media widget).
 pub const COVERS: &str = "player-covers";
@@ -45,6 +160,9 @@ pub struct Pinned {
     /// The tracks Next and Previous walk: the folder's, or the playlist's.
     pub queue: Vec<PathBuf>,
     pub index: usize,
+    /// The order a shuffle walks `queue` in, as indices; empty unless
+    /// shuffling (`Continue::Shuffle`).
+    order: Vec<usize>,
     /// A film rather than music: the dock shows its frames, not a cover.
     pub video: bool,
     /// The cover of the track, for the dock: the panel's picture when
@@ -66,6 +184,39 @@ impl Drop for Pinned {
 }
 
 impl Pinned {
+    /// The track `delta` steps away in the order played: the shuffle's
+    /// while shuffling, otherwise the queue's own.
+    pub fn step_target(&self, delta: i64, mode: Continue) -> Option<usize> {
+        step(self.queue.len(), &self.order, self.index, delta, mode)
+    }
+
+    pub fn can_step(&self, delta: i64, mode: Continue) -> bool {
+        self.step_target(delta, mode).is_some()
+    }
+
+    /// The track to go on with when this one ends.
+    fn upcoming(&self, mode: Continue) -> Option<usize> {
+        self.step_target(1, mode).filter(|_| mode != Continue::Stop)
+    }
+
+    /// Draw a shuffle that starts with the track playing, or forget it.
+    fn reorder(&mut self, mode: Continue) {
+        self.order = if mode == Continue::Shuffle {
+            shuffled(self.queue.len(), self.index)
+        } else {
+            Vec::new()
+        };
+    }
+
+    /// A shuffle drawn while shuffling and only then, over the queue as it is.
+    fn keep_order(&mut self, mode: Continue) {
+        let shuffling = mode == Continue::Shuffle;
+        if shuffling == self.order.is_empty() || (shuffling && self.order.len() != self.queue.len())
+        {
+            self.reorder(mode);
+        }
+    }
+
     /// The session went on to `path` by itself.
     fn advance(&mut self, path: &std::path::Path) {
         if let Some(index) = self.queue.iter().position(|track| track == path) {
@@ -173,14 +324,38 @@ impl Shell {
     /// moves, or let go of it again.
     pub fn media_pin(&mut self, cx: &mut Context<Self>) {
         if self.preview_is_pinned() {
-            // The panel keeps its session; it is a preview again.
-            if let Some(mut pinned) = self.set_pin(None) {
-                self.preview
-                    .media
-                    .adopt_lifetime(std::mem::take(&mut pinned.lifetime));
-            }
+            self.unpin_preview();
             return cx.notify();
         }
+        self.pin_preview(cx);
+    }
+
+    /// The panel keeps the pinned session; it is a preview again, and ends
+    /// with the selection.
+    fn unpin_preview(&mut self) {
+        if let Some(mut pinned) = self.set_pin(None) {
+            self.preview
+                .media
+                .adopt_lifetime(std::mem::take(&mut pinned.lifetime));
+        }
+    }
+
+    /// Playback starts in the panel, and one player plays at a time: with
+    /// Keep playing on, the track is pinned, which moves the pin from any
+    /// other; off, another pinned track stops.
+    pub(crate) fn media_started(&mut self, cx: &mut Context<Self>) {
+        if self.preview_is_pinned() {
+            return;
+        }
+        if self.prefs.player.keep_playing {
+            self.pin_preview(cx);
+        } else if self.set_pin(None).is_some() {
+            cx.notify();
+        }
+    }
+
+    /// Pin the track in the panel: its session belongs to the window now.
+    fn pin_preview(&mut self, cx: &mut Context<Self>) {
         let Some(session) = self.preview.media.session.clone() else {
             return;
         };
@@ -198,7 +373,7 @@ impl Shell {
             }) => Some((Arc::clone(image), *width, *height)),
             _ => None,
         };
-        let pin = Pinned {
+        let mut pin = Pinned {
             session,
             queued: None,
             lifetime: self.preview.media.release_lifetime(),
@@ -206,6 +381,7 @@ impl Shell {
             path,
             queue,
             index,
+            order: Vec::new(),
             video,
             cover: picture
                 .as_ref()
@@ -215,6 +391,13 @@ impl Shell {
             scrub: None,
             icon: None,
         };
+        // A step in the same folder keeps the shuffle it is walking.
+        match self.player.pinned.as_ref() {
+            Some(old) if old.queue == pin.queue && !old.order.is_empty() => {
+                pin.order.clone_from(&old.order);
+            }
+            _ => pin.reorder(self.prefs.player.continue_with),
+        }
         self.set_pin(Some(pin));
         // A film needs room to be seen; music is fine in a row.
         if video && self.player.height < crate::dock::TALL_FROM {
@@ -223,6 +406,81 @@ impl Shell {
         self.player.focus.get_or_insert_with(|| cx.focus_handle());
         self.remember_session();
         cx.notify();
+    }
+
+    /// `ui.media_keep_playing`: the preference, and the track shown follows
+    /// it at once: pinned if it plays, a preview again otherwise.
+    pub fn set_keep_playing(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.prefs.player.keep_playing = on;
+        crate::settings::remember(self, crate::settings::KEEP_PLAYING_KEY, on.to_string(), cx);
+        if on && self.preview.media.state.playing() {
+            self.media_started(cx);
+        } else if !on && self.preview_is_pinned() {
+            self.unpin_preview();
+        }
+        cx.notify();
+    }
+
+    /// `ui.media_autoplay`: music and films play once selected.
+    pub fn set_autoplay(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.prefs.player.autoplay = on;
+        crate::settings::remember(self, crate::settings::AUTOPLAY_KEY, on.to_string(), cx);
+        cx.notify();
+    }
+
+    /// `ui.media_continue`: what follows a track that ends. Choosing Shuffle
+    /// draws a new order; the popup closes on its choice.
+    pub fn set_continue(&mut self, mode: Continue, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(popup) = self
+            .preview
+            .menu
+            .take_if(|popup| popup.kind == crate::media::CONTINUE_POPUP)
+        {
+            popup.restore(window);
+        }
+        self.prefs.player.continue_with = mode;
+        crate::settings::remember(
+            self,
+            crate::settings::CONTINUE_KEY,
+            mode.key().to_owned(),
+            cx,
+        );
+        if let Some(pinned) = &mut self.player.pinned {
+            pinned.reorder(mode);
+        }
+        cx.notify();
+    }
+
+    /// The player's preferences, from the settings or a change not saved yet.
+    pub(crate) fn read_player_prefs(&mut self) {
+        use crate::settings::{AUTOPLAY_KEY, CONTINUE_KEY, KEEP_PLAYING_KEY, preference};
+        self.prefs.player.keep_playing =
+            preference(self, KEEP_PLAYING_KEY).is_none_or(|on| on != "false");
+        self.prefs.player.autoplay = preference(self, AUTOPLAY_KEY).is_some_and(|on| on == "true");
+        self.prefs.player.continue_with = preference(self, CONTINUE_KEY)
+            .map_or_else(Continue::default, |mode| Continue::parse(&mode));
+    }
+
+    /// Select `path` in the pane the panel previews, when it is listed there:
+    /// the panel then shows it, as it shows any selection.
+    pub(crate) fn select_track(
+        &mut self,
+        path: &std::path::Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.preview.nested.is_empty() {
+            // Inside a playlist the panel shows its member, not the pane's.
+            return;
+        }
+        let (Some(pane), Some(id)) = (self.preview.pane(), self.listed(path)) else {
+            return;
+        };
+        self.with_pane(pane, |this| {
+            if let Some(index) = this.ui().list.index_of(id) {
+                this.cursor_to(index as isize, false, window, cx);
+            }
+        });
     }
 
     /// The tracks a pin walks: the files of the same kind (music, or films)
@@ -282,10 +540,7 @@ impl Shell {
             .filter_map(|id| {
                 let entry = pane.listing.get(*id)?;
                 let kind = if video { "video/" } else { "audio/" };
-                let same_kind = !entry.is_dir()
-                    && bibli_platform::mime::by_name(&entry.name)
-                        .is_some_and(|mime| mime.as_str().starts_with(kind));
-                same_kind
+                crate::media::is_track(entry, kind)
                     .then(|| pane.open.as_ref()?.path_of(*id))
                     .flatten()
             })
@@ -298,7 +553,7 @@ impl Shell {
     }
 
     /// A queue is a folder's worth of music, not a disk's.
-    const QUEUE_TRACKS: usize = 5000;
+    pub(crate) const QUEUE_TRACKS: usize = 5000;
 
     /// Open track `index` of the pin's queue on a worker.
     fn pinned_open(&mut self, index: usize) {
@@ -347,16 +602,19 @@ impl Shell {
         );
     }
 
-    /// Step the pin's queue. Without a pin the preview steps the selection.
+    /// Step the pin's queue. Without a pin, or while the panel shows it, the
+    /// panel steps the selection: the list shows what plays, and the panel
+    /// never holds a session the pin has let go of.
     pub fn player_step(&mut self, delta: i64, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(pinned) = &self.player.pinned else {
+        let Some(pinned) = self
+            .player
+            .pinned
+            .as_ref()
+            .filter(|_| !self.preview_is_pinned())
+        else {
             return self.media_step(delta, window, cx);
         };
-        let target = pinned
-            .index
-            .checked_add_signed(delta.signum() as isize)
-            .filter(|index| *index < pinned.queue.len());
-        if let Some(index) = target {
+        if let Some(index) = pinned.step_target(delta, self.prefs.player.continue_with) {
             // A newer step supersedes one still opening.
             self.player.generation += 1;
             self.pinned_open(index);
@@ -435,6 +693,7 @@ impl Shell {
                 && let Some(index) = paths.iter().position(|path| *path == current)
             {
                 (pinned.queue, pinned.index) = (paths, index);
+                pinned.reorder(self.prefs.player.continue_with);
                 cx.notify();
             }
         }
@@ -482,12 +741,15 @@ impl Shell {
         // The panel pulls the updates of a session it shows; otherwise the
         // pin does. One reader, so no update is split between two.
         let shown = self.preview_is_pinned();
+        let mode = self.prefs.player.continue_with;
         let mut finished = false;
         let mut failed = None;
+        let mut follow = None;
         if let Some(pinned) = &mut self.player.pinned {
+            pinned.keep_order(mode);
             // Gapless: the session is told the next track ahead of time and
             // switches to it at the sample boundary; the pin only follows.
-            let next = (pinned.index + 1 < pinned.queue.len()).then_some(pinned.index + 1);
+            let next = pinned.upcoming(mode);
             if pinned.queued != next {
                 pinned.queued = next;
                 if let Err(error) = pinned
@@ -502,6 +764,7 @@ impl Shell {
                 pinned.state = self.preview.media.state.clone();
                 if let Some(path) = self.preview.media.advanced.take() {
                     pinned.advance(&path);
+                    follow = Some(pinned.path.clone());
                 }
             } else {
                 let update = pinned.session.take_update();
@@ -544,10 +807,15 @@ impl Shell {
         if shown && std::mem::take(&mut self.player.fullscreen_wanted) {
             self.media_fullscreen(window, cx);
         }
+        // The panel showed the track that ended: it shows the next, as a
+        // step would, and the list selects it.
+        if let Some(path) = follow {
+            self.select_track(&path, window, cx);
+        }
         if let Some(error) = failed {
             self.set_pin(None);
             self.set_status(error, true, cx);
-        } else if finished {
+        } else if finished && mode != Continue::Stop {
             self.player_step(1, window, cx);
         }
 
@@ -621,7 +889,8 @@ impl Shell {
                 if self.preview_is_pinned() {
                     // The panel shows this very session: it goes back to
                     // being a preview rather than ending under the user.
-                    return self.media_pin(cx);
+                    self.unpin_preview();
+                    return cx.notify();
                 }
                 self.set_pin(None);
                 return cx.notify();
@@ -632,6 +901,10 @@ impl Shell {
             }
         };
         if let Some(control) = control.filter(Control::valid) {
+            if self.player.pinned.is_none() {
+                // The panel's player, the panel's way: starting pins it.
+                return self.media_send(control, cx);
+            }
             if let Err(error) = session.control(control) {
                 self.set_status(error.to_string(), true, cx);
             }
@@ -679,11 +952,12 @@ impl Shell {
             .as_ref()
             .and_then(|(_, file)| file.clone());
         let now = self.playing().filter(|_| announced).map(|(_, state)| {
+            let mode = self.prefs.player.continue_with;
             let (path, can_previous, can_next) = if let Some(pin) = &self.player.pinned {
                 (
                     pin.path.clone(),
-                    pin.index > 0,
-                    pin.index + 1 < pin.queue.len(),
+                    pin.can_step(-1, mode),
+                    pin.can_step(1, mode),
                 )
             } else {
                 let (previous, next) = self.track_neighbours();
@@ -749,7 +1023,7 @@ pub fn render_status(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> O
                     "Previous track",
                     "previous",
                 )
-                .enabled(pinned.index > 0)
+                .enabled(pinned.can_step(-1, shell.prefs.player.continue_with))
                 .render(shell, cx),
             )
             .child(
@@ -763,7 +1037,7 @@ pub fn render_status(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> O
             )
             .child(
                 request("pin-next", "skip-next", "Next track", "next")
-                    .enabled(pinned.index + 1 < pinned.queue.len())
+                    .enabled(pinned.can_step(1, shell.prefs.player.continue_with))
                     .render(shell, cx),
             )
             .child(
@@ -803,4 +1077,52 @@ pub(crate) fn request(
     what: &str,
 ) -> Button {
     Button::new(id, icon, tip, "ui.player").args(serde_json::json!({ "request": what }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Continue, shuffled, step};
+
+    #[test]
+    fn a_shuffle_plays_every_track_once_starting_with_the_one_playing() {
+        for first in [0, 3, 7] {
+            let order = shuffled(8, first);
+            assert_eq!(order[0], first);
+            let mut sorted = order.clone();
+            sorted.sort_unstable();
+            assert_eq!(sorted, (0..8).collect::<Vec<_>>());
+        }
+        assert_eq!(shuffled(1, 0), vec![0]);
+        assert!(shuffled(0, 0).is_empty());
+    }
+
+    #[test]
+    fn previous_goes_back_the_way_next_came() {
+        let order = [2, 0, 3, 1];
+        let shuffle = Continue::Shuffle;
+        assert_eq!(step(4, &order, 2, 1, shuffle), Some(0));
+        assert_eq!(step(4, &order, 0, 1, shuffle), Some(3));
+        assert_eq!(step(4, &order, 3, -1, shuffle), Some(0));
+        assert_eq!(step(4, &order, 2, -1, shuffle), None);
+        assert_eq!(step(4, &order, 1, 1, shuffle), None);
+    }
+
+    #[test]
+    fn without_a_shuffle_steps_follow_the_queue() {
+        for mode in [Continue::Stop, Continue::Next] {
+            assert_eq!(step(4, &[], 1, 1, mode), Some(2));
+            assert_eq!(step(4, &[], 3, 1, mode), None);
+            assert_eq!(step(4, &[], 0, -1, mode), None);
+        }
+        // An order drawn over another queue is not walked.
+        assert_eq!(step(4, &[1, 0], 1, 1, Continue::Shuffle), Some(2));
+    }
+
+    #[test]
+    fn modes_round_trip_through_the_setting() {
+        for mode in Continue::ALL {
+            assert_eq!(Continue::parse(mode.key()), mode);
+        }
+        assert_eq!(Continue::parse("unknown"), Continue::Stop);
+    }
 }

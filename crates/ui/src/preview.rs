@@ -223,9 +223,6 @@ pub struct PreviewState {
     /// The request in flight reads the shown file again after it changed:
     /// what it brings keeps the folds, the selection and the place.
     pub(crate) refresh: bool,
-    /// The reader's mode, chosen with its button and not saved yet
-    /// (`settings::remember_reader_mode`).
-    pub(crate) reader_mode: Option<bool>,
     pub(crate) page: u32,
     pub(crate) seconds: Option<f64>,
     pub(crate) zoom: Option<f32>,
@@ -249,10 +246,10 @@ pub struct PreviewState {
     tx: flume::Sender<PreviewResult>,
     rx: flume::Receiver<PreviewResult>,
     pub peek_focus: Option<FocusHandle>,
-    /// The audio files before and after this one in the pane's order; found
-    /// when the listing, its order or the entry changes (`details_at`),
-    /// never while painting.
-    pub audio_neighbours: (Option<EntryId>, Option<EntryId>),
+    /// The files of the same kind (music, or films) before and after this
+    /// one in the pane's order; found when the listing, its order or the
+    /// entry changes (`details_at`), never while painting.
+    pub neighbours: (Option<EntryId>, Option<EntryId>),
     /// The track to start once shown: the one before it ended, or the user
     /// stepped to it while listening.
     pub autoplay: Option<Autoplay>,
@@ -303,7 +300,6 @@ impl Default for PreviewState {
             key: None,
             version: None,
             refresh: false,
-            reader_mode: None,
             page: 1,
             seconds: None,
             zoom: None,
@@ -316,7 +312,7 @@ impl Default for PreviewState {
             tx,
             rx,
             peek_focus: None,
-            audio_neighbours: (None, None),
+            neighbours: (None, None),
             queue: None,
             autoplay: None,
             nested: Vec::new(),
@@ -631,6 +627,7 @@ impl Shell {
             Some("zoom") => "zoom",
             Some("text") => "text",
             Some("unit") => "unit",
+            Some(crate::media::CONTINUE_POPUP) => crate::media::CONTINUE_POPUP,
             _ => "preview",
         };
         let previous = self.preview.menu.take();
@@ -646,7 +643,6 @@ impl Shell {
 
     /// Called on UI wake. Only a changed request schedules worker work.
     pub fn sync_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        crate::settings::flush_reader_mode(self, cx);
         if !(self.preview.open || self.preview.peek) {
             if self.preview.key.is_some() {
                 self.cancel_preview(window, cx);
@@ -750,6 +746,19 @@ impl Shell {
                 is_dir: entry.is_dir(),
                 icon: self.icons.for_entry(&entry, 48),
             };
+            // Play on selection is the wish a step makes, made by the
+            // selection: the track plays once shown, and the dock of what
+            // it replaces stays aside meanwhile (`dock_shown`).
+            if self.prefs.player.autoplay
+                && self.preview.autoplay.is_none()
+                && self.media_kind().is_some()
+            {
+                self.preview.autoplay = Some(Autoplay {
+                    pane: key.pane,
+                    id: key.id,
+                    member: None,
+                });
+            }
             self.preview.version = Some(version.clone());
             self.describe_version(&version, entry.is_dir());
             if !entry.metadata.is_hydrated() {
@@ -763,11 +772,9 @@ impl Shell {
         if self.preview.details_at != Some(seen) {
             self.preview.details_at = Some(seen);
             self.preview.details = crate::details::entry_groups(&entry, &key.path);
-            self.preview.audio_neighbours = if self.media_is_audio() {
-                self.audio_neighbours(id)
-            } else {
-                (None, None)
-            };
+            self.preview.neighbours = self
+                .media_kind()
+                .map_or((None, None), |kind| self.media_neighbours(id, kind));
             let selection = self.selection_ctx();
             self.preview.selection_summary = (selection.count > 1).then(|| crate::details::Group {
                 title: "Selection".into(),
@@ -887,7 +894,8 @@ impl Shell {
             }
             match result.media {
                 Some(Media::Opened(session)) => {
-                    self.show_media(session, autoplay, window, cx);
+                    let play = autoplay || self.prefs.player.autoplay;
+                    self.show_media(session, play, window, cx);
                 }
                 Some(Media::Pinned) if !self.show_pinned(autoplay, window, cx) => {
                     // The pin moved on while this was on its way.
@@ -966,9 +974,6 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if play {
-            let _ = session.control(bibli_core::media::Control::Play(true));
-        }
         self.preview.media.session = Some(session);
         let focus = cx.focus_handle();
         if self.preview.peek
@@ -981,6 +986,9 @@ impl Shell {
             window.focus(&focus);
         }
         self.preview.media.focus = Some(focus);
+        if play {
+            self.media_send(bibli_core::media::Control::Play(true), cx);
+        }
     }
 
     /// The pinned track selected again: the panel shows the session that is

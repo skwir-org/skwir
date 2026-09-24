@@ -109,16 +109,26 @@ impl Shell {
                 .is_some_and(|m| m.starts_with("audio/"))
     }
 
-    /// How far a search for the neighbouring audio file looks: a folder of a
+    /// The kind of media the panel shows, as the start of its type:
+    /// `audio/` or `video/`. Stepping and a shuffle keep to that kind.
+    pub(crate) fn media_kind(&self) -> Option<&'static str> {
+        let mime = self.preview.info.mime.as_deref()?;
+        ["audio/", "video/"]
+            .into_iter()
+            .find(|kind| mime.starts_with(kind))
+    }
+
+    /// How far a search for the neighbouring track looks: a folder of a
     /// hundred thousand documents with two songs in it is not scanned whole.
     const NEIGHBOUR_REACH: usize = 4000;
 
-    /// The audio files around entry `id` in the pane's order. They are kept
-    /// as entries, not positions, so a sort in between cannot turn a step
-    /// into a jump to whatever took their place.
-    pub(crate) fn audio_neighbours(
+    /// The files of the same kind (`media_kind`) around entry `id` in the
+    /// pane's order. They are kept as entries, not positions, so a sort in
+    /// between cannot turn a step into a jump to whatever took their place.
+    pub(crate) fn media_neighbours(
         &self,
         id: bibli_core::EntryId,
+        kind: &str,
     ) -> (Option<bibli_core::EntryId>, Option<bibli_core::EntryId>) {
         let sorted = self.ui().list.sorted.clone();
         let Some(here) = sorted.iter().position(|entry| *entry == id) else {
@@ -128,45 +138,131 @@ impl Shell {
         let Some(pane) = ws.pane(self.pane) else {
             return (None, None);
         };
-        let audio = |index: &usize| {
-            pane.listing.get(sorted[*index]).is_some_and(|entry| {
-                !entry.is_dir()
-                    && bibli_platform::mime::by_name(&entry.name)
-                        .is_some_and(|mime| mime.as_str().starts_with("audio/"))
-            })
+        let track = |index: &usize| {
+            pane.listing
+                .get(sorted[*index])
+                .is_some_and(|entry| is_track(entry, kind))
         };
         (
             (here.saturating_sub(Self::NEIGHBOUR_REACH)..here)
                 .rev()
-                .find(audio)
+                .find(track)
                 .map(|index| sorted[index]),
             (here + 1..sorted.len().min(here + 1 + Self::NEIGHBOUR_REACH))
-                .find(audio)
+                .find(track)
                 .map(|index| sorted[index]),
         )
     }
 
-    /// Whether there is a track before this one, and one after: in the
-    /// playlist the panel went into, otherwise in the folder.
-    pub(crate) fn track_neighbours(&self) -> (bool, bool) {
-        if let Some(queue) = &self.preview.queue {
-            return (queue.index > 0, queue.index + 1 < queue.targets.len());
-        }
-        let (previous, next) = self.preview.audio_neighbours;
-        (previous.is_some(), next.is_some())
+    /// Another file of the kind shown, drawn at random from the pane: what
+    /// a shuffle goes on with when nothing is pinned. Worked out on a step,
+    /// never while painting.
+    fn random_track(&self) -> Option<bibli_core::EntryId> {
+        let (kind, here) = (self.media_kind()?, self.preview.entry_id()?);
+        let ws = self.app.workspace.read();
+        let pane = ws.pane(self.pane)?;
+        let tracks: Vec<_> = self
+            .ui()
+            .list
+            .sorted
+            .iter()
+            .filter(|id| {
+                **id != here
+                    && pane
+                        .listing
+                        .get(**id)
+                        .is_some_and(|entry| is_track(entry, kind))
+            })
+            .take(Self::QUEUE_TRACKS)
+            .copied()
+            .collect();
+        (!tracks.is_empty()).then(|| tracks[crate::player::random_below(tracks.len())])
     }
 
-    /// `ui.media_step { delta }`: the audio file after or before this one. It
-    /// is the pane's selection that moves; the preview follows it as always,
+    /// The entry of the pane the panel previews whose file is `path`.
+    pub(crate) fn listed(&self, path: &std::path::Path) -> Option<bibli_core::EntryId> {
+        let pane = self.preview.pane()?;
+        let ui = self.panes.iter().find(|ui| ui.id == pane)?;
+        let ws = self.app.workspace.read();
+        let open = ws.pane(pane)?.open.as_ref()?;
+        ui.list
+            .sorted
+            .iter()
+            .copied()
+            .find(|id| open.path_of(*id).is_some_and(|there| there == path))
+    }
+
+    /// Whether there is a track before this one, and one after: in the
+    /// playlist the panel went into, in the pin's order while the panel
+    /// shows the pinned track, otherwise in the folder. A shuffle can go on
+    /// as long as there is another track.
+    pub(crate) fn track_neighbours(&self) -> (bool, bool) {
+        let mode = self.prefs.player.continue_with;
+        let shuffle = mode == crate::player::Continue::Shuffle;
+        if let Some(queue) = &self.preview.queue {
+            let others = queue.targets.len() > 1;
+            return (
+                queue.index > 0,
+                (shuffle && others) || queue.index + 1 < queue.targets.len(),
+            );
+        }
+        if let Some(pinned) = self
+            .player
+            .pinned
+            .as_ref()
+            .filter(|_| self.preview_is_pinned())
+        {
+            return (pinned.can_step(-1, mode), pinned.can_step(1, mode));
+        }
+        let (previous, next) = self.preview.neighbours;
+        let next = next.is_some() || (shuffle && previous.is_some());
+        (previous.is_some(), next)
+    }
+
+    /// The entry a step of `delta` goes to: the pin's next or previous
+    /// while the panel shows the pinned track, so the panel and the dock
+    /// walk one order; else one at random for Next in a shuffle, else the
+    /// neighbour.
+    fn step_target(&self, delta: i64) -> Option<bibli_core::EntryId> {
+        let mode = self.prefs.player.continue_with;
+        if let Some(pinned) = self
+            .player
+            .pinned
+            .as_ref()
+            .filter(|_| self.preview_is_pinned())
+            && let Some(index) = pinned.step_target(delta, mode)
+            && let Some(id) = self.listed(&pinned.queue[index])
+        {
+            return Some(id);
+        }
+        if mode == crate::player::Continue::Shuffle
+            && delta > 0
+            && let Some(id) = self.random_track()
+        {
+            return Some(id);
+        }
+        let (previous, next) = self.preview.neighbours;
+        if delta < 0 { previous } else { next }
+    }
+
+    /// `ui.media_step { delta }`: the track after or before this one. It is
+    /// the pane's selection that moves; the preview follows it as always,
     /// and keeps playing if it was.
     pub fn media_step(&mut self, delta: i64, window: &mut Window, cx: &mut Context<Self>) {
         let playing = self.preview.media.state.playing() || self.preview.media.state.ended();
+        let shuffle = self.prefs.player.continue_with == crate::player::Continue::Shuffle;
         if let Some(queue) = &mut self.preview.queue {
-            let Some(index) = queue
-                .index
-                .checked_add_signed(delta.signum() as isize)
-                .filter(|index| *index < queue.targets.len())
-            else {
+            let count = queue.targets.len();
+            let index = if shuffle && delta > 0 && count > 1 {
+                // Any track but this one.
+                Some((queue.index + 1 + crate::player::random_below(count - 1)) % count)
+            } else {
+                queue
+                    .index
+                    .checked_add_signed(delta.signum() as isize)
+                    .filter(|index| *index < count)
+            };
+            let Some(index) = index else {
                 return;
             };
             queue.index = index;
@@ -188,8 +284,7 @@ impl Shell {
             }
             return;
         }
-        let (previous, next) = self.preview.audio_neighbours;
-        let Some(target) = (if delta < 0 { previous } else { next }) else {
+        let Some(target) = self.step_target(delta) else {
             return;
         };
         let Some(pane) = self.preview.pane() else {
@@ -221,7 +316,9 @@ impl Shell {
         if let Some(state) = update.state {
             let finished = state.ended() && !self.preview.media.state.ended();
             self.preview.media.state = state;
-            hand_over = finished && self.media_is_audio() && self.track_neighbours().1;
+            hand_over = finished
+                && self.prefs.player.continue_with != crate::player::Continue::Stop
+                && self.track_neighbours().1;
         }
         let mut frame = update.frame.filter(|_| !hand_over);
         if !matches!(self.preview.media.poster, Poster::Dismissed) {
@@ -325,6 +422,9 @@ impl Shell {
                     if let Control::Seek(position) = command {
                         self.preview.media.state.position =
                             position.min(self.preview.media.state.duration.unwrap_or(position));
+                    }
+                    if matches!(command, Control::Play(true)) {
+                        self.media_started(cx);
                     }
                     if matches!(command, Control::Play(true) | Control::Seek(_))
                         && !self.media_is_audio()
@@ -432,15 +532,7 @@ impl Shell {
             _ => None,
         };
         if let Some(command) = command {
-            // One player at a time: starting another track while one is
-            // pinned moves the pin to it.
-            let takes_over = matches!(command, Control::Play(true))
-                && self.player.pinned.is_some()
-                && !self.preview_is_pinned();
             self.media_send(command, cx);
-            if takes_over {
-                self.media_pin(cx);
-            }
         }
     }
     pub fn media_scrub(&mut self, args: &serde_json::Value, cx: &mut Context<Self>) {
@@ -744,6 +836,13 @@ pub fn surface(
     .into_any_element()
 }
 
+/// A file of the kind a player steps through (`audio/`, `video/`).
+pub(crate) fn is_track(entry: &bibli_core::Entry, kind: &str) -> bool {
+    !entry.is_dir()
+        && bibli_platform::mime::by_name(&entry.name)
+            .is_some_and(|mime| mime.as_str().starts_with(kind))
+}
+
 /// A full-window canvas, independent of the preview card's chrome and zoom.
 /// The image fills its bounds with Contain, including upscaling small videos.
 pub fn fullscreen(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
@@ -799,6 +898,10 @@ pub fn fullscreen(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
                     .top_0()
                     .left_0()
                     .right_0()
+                    // The film under the bar answers clicks too (`clickable`):
+                    // the bar takes the pointer, or a click on one of its
+                    // buttons would also play or pause.
+                    .occlude()
                     .flex()
                     .flex_col()
                     .when_some(shell.preview.media.fullscreen.as_ref(), |d, fullscreen| {
@@ -1079,23 +1182,65 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         )
         .active(shell.preview.media.fullscreen.is_some()),
     ));
-    // Music and films alike keep playing in the dock.
-    bar.push(Item::button(
-        Slot::View,
-        1,
-        Button::new(
-            "media-pin",
-            "pin",
-            "Keep playing while you browse",
-            "ui.media_pin",
+    // What follows the track: in the row while it has room, in More after.
+    let mode = shell.prefs.player.continue_with;
+    bar.push(
+        Item::button(
+            Slot::View,
+            1,
+            Button::new(
+                "media-continue",
+                mode.icon(),
+                format!("When a track ends: {}", mode.label()),
+                "ui.preview_menu",
+            )
+            .args(serde_json::json!({ "kind": CONTINUE_POPUP }))
+            .active(mode != crate::player::Continue::Stop),
         )
-        .active(shell.preview_is_pinned()),
-    ));
+        .opens(CONTINUE_POPUP),
+    );
+    bar.popups.push((CONTINUE_POPUP, Rc::new(continue_popup)));
     bar.settings = Some(std::rc::Rc::new(settings));
     crate::preview_bar::render(&bar, crate::preview::active_popup(shell), shell, theme, cx)
 }
 
-/// What playback has no button for: volume, speed and the tracks.
+/// The popup of what follows a track that ends (`ui.media_continue`).
+pub const CONTINUE_POPUP: &str = "continue";
+
+fn continue_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
+    use crate::player::Continue;
+    let popup = shell.preview.menu.as_ref()?;
+    let mut choices = div().flex().flex_col().gap_1().child(
+        div()
+            .px_2()
+            .text_xs()
+            .text_color(theme.text_muted)
+            .child("When a track ends"),
+    );
+    for mode in Continue::ALL {
+        choices = choices.child(
+            Button::new(
+                format!("continue-{}", mode.key()),
+                "",
+                mode.label(),
+                "ui.media_continue",
+            )
+            .args(serde_json::json!({ "mode": mode.key() }))
+            .label(mode.label())
+            .active(shell.prefs.player.continue_with == mode)
+            .menu()
+            .render(shell, cx),
+        );
+    }
+    Some(
+        crate::toolbar::popup_panel(popup, "ui.preview_menu", theme, cx)
+            .child(choices)
+            .into_any_element(),
+    )
+}
+
+/// What playback has no button for: whether it goes on while you browse,
+/// whether it starts on selection, volume, speed and the tracks.
 fn settings(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyElement> {
     let state = &shell.preview.media.state;
     let heading = |title: &'static str| {
@@ -1105,7 +1250,30 @@ fn settings(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
             .child(title)
             .into_any_element()
     };
+    let mut toggle = |id: &'static str, icon: &'static str, title: &'static str, command, on| {
+        Button::new(id, icon, title, command)
+            .label(title)
+            .active(on)
+            .menu()
+            .render(shell, cx)
+            .into_any_element()
+    };
     let mut rows = vec![
+        toggle(
+            "media-keep-playing",
+            "pin",
+            "Keep playing while you browse",
+            "ui.media_keep_playing",
+            shell.prefs.player.keep_playing,
+        ),
+        toggle(
+            "media-autoplay",
+            "play",
+            "Play on selection",
+            "ui.media_autoplay",
+            shell.prefs.player.autoplay,
+        ),
+        crate::preview_bar::separator(theme).into_any_element(),
         div()
             .text_xs()
             .child(format!("{} / {}", time(state.position), duration(state)))

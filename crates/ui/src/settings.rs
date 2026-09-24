@@ -46,6 +46,12 @@ pub const READER_CONTINUOUS_KEY: &str = "ui.reader_continuous";
 pub const READING_WIDTH_KEY: &str = "ui.reading_width";
 /// Whether a book's position counts its printed pages (`ui.printed_pages`).
 pub const PRINTED_PAGES_KEY: &str = "ui.printed_pages";
+/// Whether a track that starts to play keeps playing while you browse.
+pub const KEEP_PLAYING_KEY: &str = "ui.media_keep_playing";
+/// Whether music and films start to play as soon as they are selected.
+pub const AUTOPLAY_KEY: &str = "ui.media_autoplay";
+/// What follows a track that ends (`player::Continue`).
+pub const CONTINUE_KEY: &str = "ui.media_continue";
 
 /// Declare the shell's own preferences. They live in the `ui` namespace and
 /// exist only while a shell does, so headless tools never see them.
@@ -106,6 +112,34 @@ pub fn declare(app: &App) {
         )
         .section("Documents"),
     );
+    app.settings.declare(
+        SettingSpec::toggle(
+            KEEP_PLAYING_KEY,
+            "Keep playing while you browse",
+            "Music or a film you play goes on when you select another file, in a player at the foot of the preview. Off, it stops when the selection moves.",
+            true,
+        )
+        .section("Music and films"),
+    );
+    app.settings.declare(
+        SettingSpec::toggle(
+            AUTOPLAY_KEY,
+            "Play on selection",
+            "Start music and films as soon as they are selected, instead of waiting for Play.",
+            false,
+        )
+        .section("Music and films"),
+    );
+    app.settings.declare(
+        SettingSpec::choice(
+            CONTINUE_KEY,
+            "When a track ends",
+            "Stop, go on with the next file of the same kind in the folder (or the playlist), or with one of them at random.",
+            crate::player::Continue::Stop.key(),
+            &crate::player::Continue::ALL.map(|mode| (mode.key(), mode.label())),
+        )
+        .section("Music and films"),
+    );
     app.settings.declare(SettingSpec::data(
         crate::shortcuts::HINTS_KEY,
         "Commands whose shortcut hint was already shown",
@@ -139,58 +173,70 @@ pub fn declare(app: &App) {
     }
 }
 
-/// Record how the user chose to read documents. The reader's button is the
-/// same choice as the one in the dialog, so it goes the same way: through
-/// `settings.apply`, which saves on a worker and tells everyone else. The
-/// core takes one save at a time: while another runs, the choice waits
-/// (`flush_reader_mode`, on every wake) instead of failing.
-pub fn remember_reader_mode(
+/// Save a preference changed where it is used (the reader's button, the
+/// player's menu) rather than in the dialog. It goes the dialog's way,
+/// through `settings.apply`, which saves on a worker and tells everyone
+/// else. The core takes one save at a time: while another runs, the change
+/// waits (`flush_remembered`, on every wake) instead of failing, and
+/// `preference` reads it meanwhile.
+pub fn remember(
     shell: &mut crate::shell::Shell,
-    continuous: bool,
+    key: &'static str,
+    value: String,
     cx: &mut gpui::Context<crate::shell::Shell>,
 ) {
-    shell.preview.reader_mode = Some(continuous);
-    flush_reader_mode(shell, cx);
+    shell.unsaved.insert(key, value);
+    flush_remembered(shell, cx);
 }
 
-/// Send the reader's waiting choice, unless a save is running.
-pub fn flush_reader_mode(
+/// Send the waiting changes as one batch, unless a save is running.
+pub fn flush_remembered(
     shell: &mut crate::shell::Shell,
     cx: &mut gpui::Context<crate::shell::Shell>,
 ) {
-    let Some(continuous) = shell.preview.reader_mode else {
-        return;
-    };
-    if shell.app.settings.save_status().1 == SaveState::Saving {
+    if shell.unsaved.is_empty() || shell.app.settings.save_status().1 == SaveState::Saving {
         return;
     }
-    shell.preview.reader_mode = None;
-    if shell
-        .app
-        .settings
-        .get::<bool>(READER_CONTINUOUS_KEY)
-        .is_some_and(|stored| stored == continuous)
-    {
+    let changes: serde_json::Map<String, serde_json::Value> = std::mem::take(&mut shell.unsaved)
+        .into_iter()
+        .filter(|(key, value)| shell.app.settings.text(key).as_ref() != Some(value))
+        .map(|(key, value)| (key.to_owned(), value.into()))
+        .collect();
+    if changes.is_empty() {
         return;
     }
     if let Err(error) = shell.app.dispatch(&Invocation::with_args(
         "settings.apply",
-        &serde_json::json!({ "changes": { READER_CONTINUOUS_KEY: continuous.to_string() } }),
+        &serde_json::json!({ "changes": changes }),
     )) {
         shell.set_status(format!("{error:#}"), true, cx);
     }
 }
 
+/// A preference as it stands: the change waiting to be saved, else the
+/// stored value, as text.
+pub fn preference(shell: &crate::shell::Shell, key: &str) -> Option<String> {
+    shell
+        .unsaved
+        .get(key)
+        .cloned()
+        .or_else(|| shell.app.settings.text(key))
+}
+
+/// Record how the user chose to read documents: the reader's button is the
+/// same choice as the one in the dialog.
+pub fn remember_reader_mode(
+    shell: &mut crate::shell::Shell,
+    continuous: bool,
+    cx: &mut gpui::Context<crate::shell::Shell>,
+) {
+    remember(shell, READER_CONTINUOUS_KEY, continuous.to_string(), cx);
+}
+
 /// How the next document opens: the choice waiting to be saved, else the
 /// stored one.
 pub fn reader_mode(shell: &crate::shell::Shell) -> bool {
-    shell.preview.reader_mode.unwrap_or_else(|| {
-        shell
-            .app
-            .settings
-            .get::<bool>(READER_CONTINUOUS_KEY)
-            .unwrap_or(true)
-    })
+    preference(shell, READER_CONTINUOUS_KEY).is_none_or(|mode| mode != "false")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

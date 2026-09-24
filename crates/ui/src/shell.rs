@@ -82,6 +82,8 @@ pub struct Preferences {
     pub grid_fill: bool,
     /// `ui.printed_pages`: a book's position counts its printed pages.
     pub printed_pages: bool,
+    /// How music and films play.
+    pub player: crate::player::PlayerPrefs,
 }
 
 impl Default for Preferences {
@@ -90,6 +92,7 @@ impl Default for Preferences {
             friendly_dates: true,
             grid_fill: false,
             printed_pages: false,
+            player: crate::player::PlayerPrefs::default(),
         }
     }
 }
@@ -112,6 +115,9 @@ pub struct Shell {
     pub type_names: crate::typenames::TypeNames,
     /// Switches of the settings, resolved when their revision changes.
     pub prefs: Preferences,
+    /// Preferences changed from the toolbars and not saved yet
+    /// (`settings::remember`).
+    pub(crate) unsaved: std::collections::BTreeMap<&'static str, String>,
     /// Sidebar groups the user folded, for this session.
     pub sidebar_folded: std::collections::HashSet<String>,
     /// Size, Modified, Type: which detail columns the list shows.
@@ -278,6 +284,7 @@ impl Shell {
             icons: IconCache::default(),
             type_names: crate::typenames::TypeNames::default(),
             prefs: Preferences::default(),
+            unsaved: std::collections::BTreeMap::new(),
             sidebar_folded: std::collections::HashSet::new(),
             columns: [true; 3],
             reading_measure: crate::markdown::measure("comfortable"),
@@ -1151,6 +1158,24 @@ impl Shell {
             "inspect" => self.inspect_command(args, window, cx),
             "media_control" => self.media_control(args, cx),
             "media_pin" => self.media_pin(cx),
+            "media_keep_playing" => {
+                let on = args.get("on").and_then(serde_json::Value::as_bool);
+                self.set_keep_playing(on.unwrap_or(!self.prefs.player.keep_playing), cx);
+            }
+            "media_autoplay" => {
+                let on = args.get("on").and_then(serde_json::Value::as_bool);
+                self.set_autoplay(on.unwrap_or(!self.prefs.player.autoplay), cx);
+            }
+            "media_continue" => {
+                let mode = args
+                    .get("mode")
+                    .and_then(serde_json::Value::as_str)
+                    .map_or_else(
+                        || self.prefs.player.continue_with.next(),
+                        crate::player::Continue::parse,
+                    );
+                self.set_continue(mode, window, cx);
+            }
             "player_mute" => self.player_mute(cx),
             "player" => {
                 let request = args.get("request").cloned().unwrap_or_default();
@@ -1377,6 +1402,7 @@ impl Shell {
                 .settings
                 .get::<bool>(crate::settings::PRINTED_PAGES_KEY)
                 .unwrap_or(false);
+            self.read_player_prefs();
             self.columns = crate::settings::COLUMN_KEYS
                 .map(|key| self.app.settings.get::<bool>(key).unwrap_or(true));
             if self.column_drag.is_none()
@@ -1447,6 +1473,7 @@ impl Shell {
                 "sync"
             );
         }
+        crate::settings::flush_remembered(self, cx);
         self.sync_preview(window, cx);
         self.sync_busy(cx);
         self.sync_reader(cx);

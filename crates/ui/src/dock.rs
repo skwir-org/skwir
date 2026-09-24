@@ -84,9 +84,18 @@ impl Shell {
     }
 
     /// Whether the dock is drawn: a pin, the panel open, and the panel
-    /// showing something other than the pinned session itself.
+    /// showing something other than the pinned session itself, nor on its
+    /// way to it (the pin went on to the next track and the selection
+    /// follows) or to a track about to take its place (a step, Play on
+    /// selection): the dock would only flash in between.
     pub fn dock_shown(&self) -> bool {
-        self.player.pinned.is_some() && self.preview.open && !self.preview_is_pinned()
+        let Some(pinned) = &self.player.pinned else {
+            return false;
+        };
+        self.preview.open
+            && !self.preview_is_pinned()
+            && self.preview.autoplay.is_none()
+            && self.preview.playing_path().as_ref() != Some(&pinned.path)
     }
 }
 
@@ -230,7 +239,7 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
                 "Previous track",
                 "previous",
             )
-            .enabled(pinned.index > 0)
+            .enabled(pinned.can_step(-1, shell.prefs.player.continue_with))
             .render(shell, cx),
         )
         .child(
@@ -244,7 +253,7 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
         )
         .child(
             request("dock-next", "skip-next", "Next track", "next")
-                .enabled(pinned.index + 1 < pinned.queue.len())
+                .enabled(pinned.can_step(1, shell.prefs.player.continue_with))
                 .render(shell, cx),
         )
         .child(time(crate::media::time(position), false))

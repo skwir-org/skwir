@@ -75,10 +75,27 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ),
     ("ui.preview_open_external", "{}", "Preview: open externally"),
     ("ui.preview_copy_path", "{}", "Preview: copy path"),
+    ("ui.media_pin", "{}", "Player: pin or let go of this track"),
     (
-        "ui.media_pin",
+        "ui.media_keep_playing",
         "{}",
         "Player: keep playing while you browse",
+    ),
+    ("ui.media_autoplay", "{}", "Player: play on selection"),
+    (
+        "ui.media_continue",
+        r#"{"mode":"off"}"#,
+        "Player: stop when a track ends",
+    ),
+    (
+        "ui.media_continue",
+        r#"{"mode":"next"}"#,
+        "Player: play the next track when one ends",
+    ),
+    (
+        "ui.media_continue",
+        r#"{"mode":"shuffle"}"#,
+        "Player: shuffle",
     ),
     (
         "ui.player",

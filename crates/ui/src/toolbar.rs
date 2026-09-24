@@ -73,7 +73,9 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "code",
         "skip-next",
         "skip-previous",
-        "pin"
+        "pin",
+        "play-next",
+        "shuffle"
     )
 }
 
