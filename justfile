@@ -7,9 +7,9 @@ default:
 build:
     cargo build
 
-# Build the optional native workers (Poppler, GStreamer, libarchive).
+# Build the optional native workers (Poppler, MuPDF, GStreamer, libarchive).
 workers:
-    cargo build -p bibli-poppler-worker -p bibli-media-worker -p bibli-archive-worker
+    cargo build -p bibli-poppler-worker -p bibli-mupdf-worker -p bibli-media-worker -p bibli-archive-worker
 
 # Build everything, native workers included.
 build-all:
@@ -27,6 +27,11 @@ test-all:
 poppler-check:
     cargo build -p bibli-poppler-worker
     python3 tools/pdf/check.py --engine poppler --worker target/debug/bibli-poppler-worker
+
+# Exercise MuPDF with the same synthetic fixtures (its first build compiles MuPDF).
+mupdf-check:
+    cargo build -p bibli-mupdf-worker
+    python3 tools/pdf/check.py --engine mupdf --worker target/debug/bibli-mupdf-worker
 
 # Exercise GStreamer playback using a synthetic two-track video and subtitles.
 media-check:
@@ -82,12 +87,12 @@ spike toolkit gpu="intel" rows="100000":
 
 # Run the app (release) on a directory, default: the current one.
 run dir=".":
-    cargo build --release -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-media-worker -p bibli-archive-worker
+    cargo build --release -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-mupdf-worker -p bibli-media-worker -p bibli-archive-worker
     ./target/release/bibli {{dir}}
 
 # Profile the app with samply (opens the Firefox Profiler UI when done).
 flame dir=".":
-    cargo build --release -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-media-worker -p bibli-archive-worker
+    cargo build --release -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-mupdf-worker -p bibli-media-worker -p bibli-archive-worker
     samply record ./target/release/bibli {{dir}}
 
 # Profile a bench profile's listing with a flamegraph SVG.

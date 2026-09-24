@@ -36,7 +36,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--worker", type=Path, default=Path("target/release/bibli-pdf-worker"))
     parser.add_argument("--library", type=Path)
-    parser.add_argument("--engine", choices=["pdfium", "poppler"], default="pdfium")
+    parser.add_argument("--engine", choices=["pdfium", "poppler", "mupdf"], default="pdfium")
     args = parser.parse_args()
     environment = dict(os.environ)
     if args.library:

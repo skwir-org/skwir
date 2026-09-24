@@ -53,6 +53,52 @@ ranged from 134.52 to 213.39 ms, while PDFium's was 166.78–168.78 ms. Engine
 order now alternates and the tool reports the observed range. Keep PDFium
 preferred by `auto`; both engines are useful selectable readers.
 
+## With MuPDF
+
+Measured 2026-09-24 on the same workstation with the same method and
+fixtures, release builds, PDFium 7749, Poppler 26.06.0 and MuPDF 1.27.2
+(`mupdf` crate 0.8, ADR-014), five runs per fixture with the engine order
+rotated between runs. The desktop session was busy (load average 4–10 on
+20 cores), so absolute times are higher than in the table above; compare
+engines within this table, not across tables.
+
+Median times in milliseconds:
+
+| Fixture | Engine | Open | First page | New page | Revisit | Search |
+|---|---|---:|---:|---:|---:|---:|
+| Text | PDFium | 4.15 | 26.41 | 21.69 | 14.52 | 0.29 |
+| Text | Poppler | 12.67 | 32.26 | 19.60 | 16.92 | 0.42 |
+| Text | MuPDF | 2.35 | 27.26 | 18.97 | 17.11 | 0.27 |
+| Vector | PDFium | 5.92 | 248.46 | 237.14 | 236.99 | 2.87 |
+| Vector | Poppler | 15.58 | 167.23 | 153.24 | 155.27 | 4.21 |
+| Vector | MuPDF | 3.28 | 1740.48 | 1704.61 | 1685.66 | 2.27 |
+| Scan | PDFium | 8.02 | 96.82 | 84.60 | 71.08 | 0.39 |
+| Scan | Poppler | 23.87 | 80.43 | 72.16 | 67.63 | 0.51 |
+| Scan | MuPDF | 4.63 | 90.33 | 78.55 | 73.22 | 0.45 |
+
+| Fixture | Engine | New-page run range (ms) | CPU (ms) | Peak worker PSS (MiB) | Idle worker PSS (MiB) |
+|---|---|---:|---:|---:|---:|
+| Text | PDFium | 18.97–21.90 | 50 | 29.44 | 29.44 |
+| Text | Poppler | 19.11–19.79 | 60 | 23.74 | 23.74 |
+| Text | MuPDF | 18.32–19.26 | 50 | 14.01 | 14.01 |
+| Vector | PDFium | 162.27–249.96 | 930 | 29.94 | 6.21 |
+| Vector | Poppler | 108.87–172.11 | 610 | 23.54 | 23.54 |
+| Vector | MuPDF | 1255.87–1768.53 | 6900 | 13.86 | 13.86 |
+| Scan | PDFium | 60.52–90.36 | 240 | 42.46 | 42.46 |
+| Scan | Poppler | 61.11–83.88 | 220 | 34.54 | 34.54 |
+| Scan | MuPDF | 75.38–80.57 | 220 | 23.14 | 23.14 |
+
+MuPDF opened fastest and had the lowest worker memory on every fixture, and
+was level with the others on text and scanned pages. The vector fixture is
+1,500 separate stroked lines, each across most of the page, and MuPDF's
+anti-aliased rasterizer spends about 1.2 ms on each at this size. The cost
+is MuPDF's, not the worker's: `mutool draw -r 184` of MuPDF 1.27.2 from
+nixpkgs takes 1.39 s on that page with its default anti-aliasing and 0.04 s
+with it off. Anti-aliasing was left at MuPDF's default. Real documents with
+many large strokes (plans, maps, charts) are where to look for this.
+Every engine found the three text matches, none on the scans, and every
+worker exited on close.
+
 ## Whole application navigation
 
 Fresh isolated configurations, an 1189×1334 Wayland window, synthetic text
@@ -91,14 +137,16 @@ from a single sample.
 Enter `nix develop .#pdf`, then:
 
 ```sh
-cargo build --release -p bibli -p bibli-pdf-worker -p bibli-poppler-worker
-python3 tools/pdf/check.py --library "$BIBLI_PDFium_LIBRARY"
+cargo build --release -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-mupdf-worker
+python3 tools/pdf/check.py --library "$BIBLI_PDFIUM_LIBRARY"
 python3 tools/pdf/check.py --engine poppler --worker target/release/bibli-poppler-worker
-python3 tools/pdf/compare.py --library "$BIBLI_PDFium_LIBRARY" --runs 5
+python3 tools/pdf/check.py --engine mupdf --worker target/release/bibli-mupdf-worker
+python3 tools/pdf/compare.py --library "$BIBLI_PDFIUM_LIBRARY" --runs 5
 BIBLI_PDF_WORKER="$PWD/target/release/bibli-pdf-worker" BIBLI_POPPLER_WORKER="$PWD/target/release/bibli-poppler-worker" cargo test --release -p bibli-platform real_pdfium_and_poppler_backend_comparison -- --ignored --nocapture
 ```
 
-The default shell can run `just poppler-check` without PDFium. The broader
+The default shell can run `just poppler-check` and `just mupdf-check` without
+PDFium; `compare.py --engines poppler,mupdf` compares those two alone. The broader
 installed-tool tests additionally require Poppler CLI utilities, LibreOffice,
 bubblewrap and FFmpeg on PATH. Run measurements with other builds/tests and
 test UI windows stopped. Keep reports aggregate and synthetic.

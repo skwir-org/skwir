@@ -10,10 +10,11 @@ members = [
     "crates/alloc",
     "crates/pdf-worker",
     "crates/poppler-worker",
+    "crates/mupdf-worker",
     "crates/media-worker",
     "crates/archive-worker",
 ]
-# The native workers link Poppler, GStreamer and libarchive. They are optional
+# The native workers link Poppler, MuPDF, GStreamer and libarchive. They are optional
 # at runtime and stay out of the default build so the application, plugins and
 # tests compile without those libraries; `just workers` / `just test-all`
 # include them, and CI runs the full set inside the Nix shell.

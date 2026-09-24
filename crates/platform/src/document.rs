@@ -52,6 +52,8 @@ pub struct WorkerSession {
 pub enum Engine {
     Pdfium,
     Poppler,
+    /// Chosen explicitly only: `auto` does not try it (ADR-014).
+    Mupdf,
 }
 
 /// The engine's worker executable: its environment override, beside our
@@ -60,6 +62,7 @@ pub fn worker_path(engine: Engine) -> Option<PathBuf> {
     let (variable, executable) = match engine {
         Engine::Pdfium => ("BIBLI_PDF_WORKER", "bibli-pdf-worker"),
         Engine::Poppler => ("BIBLI_POPPLER_WORKER", "bibli-poppler-worker"),
+        Engine::Mupdf => ("BIBLI_MUPDF_WORKER", "bibli-mupdf-worker"),
     };
     crate::process::find_worker(variable, executable)
 }

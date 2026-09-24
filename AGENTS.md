@@ -292,6 +292,7 @@ crates/ui          the gpui shell: views, panels, prompts, keymap, elements
 crates/bibli       the binary: wires plugins and starts the UI
 crates/pdf-worker  optional native PDF reader process (runtime-loaded PDFium)
 crates/poppler-worker optional native PDF reader process (linked poppler-glib)
+crates/mupdf-worker optional native PDF reader process (linked MuPDF, AGPL; ADR-014)
 crates/media-worker optional audio/video player process (linked GStreamer)
 crates/archive-worker optional archive reader process (linked libarchive)
 crates/plugins/*   one crate per plugin (see docs/PLAN.md Phase 2 and 4)
@@ -450,7 +451,7 @@ The dev environment is the Nix flake (`flake.nix`, loaded by direnv). Inside it:
 
 ```
 just build          cargo build (default members: no native workers)
-just workers        build the Poppler, GStreamer and libarchive workers
+just workers        build the Poppler, MuPDF, GStreamer and libarchive workers
 just test           cargo nextest run (default members)
 just test-all       every crate, native workers included (what CI runs)
 just lint           cargo fmt --check + clippy --all-targets -D warnings
@@ -463,9 +464,9 @@ just flame [dir]    profile with samply
 Without an active dev shell, use `nix develop --command just <recipe>`, as CI
 does. `spikes/` is a separate workspace and is not covered by the root checks.
 
-CI runs lint-all, test-all, poppler-check and bench-check; all must pass before
+CI runs lint-all, test-all, poppler-check, mupdf-check and bench-check; all must pass before
 a commit is considered done. The native workers are outside `default-members`
-so the default build and tests need no Poppler, GStreamer or libarchive;
+so the default build and tests need no Poppler, MuPDF, GStreamer or libarchive;
 run the `-all` recipes (inside `nix develop`) before committing worker changes. Clippy runs pedantic with the allowances listed in the root
 `Cargo.toml`; do not add allowances in code without a reason in a comment.
 

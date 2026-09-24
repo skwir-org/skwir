@@ -1,9 +1,11 @@
 # Document reader invariants
 
-Read this before touching `crates/pdf-worker`, `crates/poppler-worker`, `crates/platform/src/document.rs`, `crates/ui/src/reader*.rs` or `crates/ui/src/elements/document.rs`. It is binding, like `AGENTS.md`.
+Read this before touching `crates/pdf-worker`, `crates/poppler-worker`, `crates/mupdf-worker`, `crates/platform/src/document.rs`, `crates/ui/src/reader*.rs` or `crates/ui/src/elements/document.rs`. It is binding, like `AGENTS.md`.
 
-- Native PDF libraries load only in `bibli-pdf-worker` / `bibli-poppler-worker`,
-  never in the UI process. Both engines use the same protocol/session manager.
+- Native PDF libraries load only in `bibli-pdf-worker` / `bibli-poppler-worker`
+  / `bibli-mupdf-worker`, never in the UI process. Every engine uses the same
+  protocol/session manager, and `tools/pdf/check.py` runs the same fixtures on
+  each. MuPDF is chosen explicitly, never by `auto` (ADR-014).
   Session creation/render/search are blocking worker entry points. The manager
   thread owns child cleanup and temporary files; dropping a UI session must
   only cancel/send, never wait for a process or delete files.
@@ -47,7 +49,7 @@ Read this before touching `crates/pdf-worker`, `crates/poppler-worker`, `crates/
   explicit so a later layout does not cancel the work it just requested.
 - PDF pixel, text, link and search rectangles share normalized coordinates.
   Fit/zoom transforms belong in `elements/document.rs` prepaint. Verify rotated
-  pages with `tools/pdf/check.py` for both engines; use only its synthetic
+  pages with `tools/pdf/check.py` for every engine; use only its synthetic
   fixture generator. Poppler text layout has a top-left origin, whereas its
   search/link rectangles have a bottom-left origin; normalize at the worker.
 - `auto` may fall back when the worker/library is absent. Report document

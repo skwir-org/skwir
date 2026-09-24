@@ -374,12 +374,16 @@ impl PreviewProvider for DocumentPreviews {
     ) -> anyhow::Result<Option<std::sync::Arc<dyn bibli_core::document::DocumentSession>>> {
         use crate::document::{Engine, WorkerSession};
         anyhow::ensure!(
-            matches!(self.backend.as_str(), "auto" | "pdfium" | "poppler"),
-            "unknown PDF backend; choose auto, pdfium, or poppler"
+            matches!(
+                self.backend.as_str(),
+                "auto" | "pdfium" | "poppler" | "mupdf"
+            ),
+            "unknown PDF backend; choose auto, pdfium, poppler or mupdf"
         );
         let engines: &[Engine] = match self.backend.as_str() {
             "pdfium" => &[Engine::Pdfium],
             "poppler" => &[Engine::Poppler],
+            "mupdf" => &[Engine::Mupdf],
             _ => &[Engine::Pdfium, Engine::Poppler],
         };
         let source = req.entry.resolve()?;
@@ -875,7 +879,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires PDFium worker/library and Poppler; run in release mode for timings"]
+    #[ignore = "requires the PDFium worker/library, Poppler and MuPDF; run in release mode for timings"]
     fn real_pdfium_and_poppler_backend_comparison() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("Synthetic scanned reader.pdf");
@@ -883,7 +887,7 @@ mod tests {
         let mut req = request(&path);
         req.max_side = MAX_SIDE;
         let cancel = CancelToken::new();
-        for engine in ["pdfium", "poppler"] {
+        for engine in ["pdfium", "poppler", "mupdf"] {
             let backend = DocumentPreviews::new(Cache::new(tmp.path()).namespace("preview"))
                 .with_reader(engine.into(), None);
             let start = Instant::now();
@@ -1097,7 +1101,7 @@ mod tests {
                 );
                 assert!(preview.image.width > 0 && preview.image.height > 0);
                 // The optional reader consumes the same isolated conversion.
-                for engine in ["pdfium", "poppler"] {
+                for engine in ["pdfium", "poppler", "mupdf"] {
                     if engine == "pdfium" && std::env::var_os("BIBLI_PDFIUM_LIBRARY").is_none() {
                         continue;
                     }

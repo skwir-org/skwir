@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare persistent PDFium and Poppler workers with identical reader requests.
+"""Compare persistent PDFium, Poppler and MuPDF workers with identical reader requests.
 
 Renderer timings include metadata extraction and pixel output/transfer, but
 exclude bibli's platform manager, GPUI upload and painting. Memory samples are
@@ -48,12 +48,21 @@ class Peak:
         return self.value
 
 
+def reply(process, expected):
+    """The next reply, which must answer request `expected` (0 is the greeting)."""
+    line = json.loads(process.stdout.readline())
+    assert line["id"] == expected, line
+    body = line["body"]
+    assert not ("Error" in body or "Unavailable" in body), body
+    return body
+
+
 def request(process, value):
-    process.stdin.write(json.dumps(value) + "\n")
+    """Requests are numbered from 1 and answered once each, in order."""
+    process.sent = getattr(process, "sent", 0) + 1
+    process.stdin.write(json.dumps({"id": process.sent, "body": value}) + "\n")
     process.stdin.flush()
-    reply = json.loads(process.stdout.readline())
-    assert not ("Error" in reply or "Unavailable" in reply), reply
-    return reply
+    return reply(process, process.sent)
 
 
 def sample(worker, library, pdf, work, side):
@@ -65,15 +74,15 @@ def sample(worker, library, pdf, work, side):
     monitor = Peak(process.pid)
     idle_pss = 0
     try:
-        ready = json.loads(process.stdout.readline())
+        ready = reply(process, 0)
         assert ready.get("Ready", {}).get("pages") == 3, ready
         opened = (time.perf_counter() - start) * 1000
         timings = []
         for page in [1, 2, 3, 1]:
             start = time.perf_counter()
-            reply = request(process, {"Render": {"page": page, "side": side}})["Page"]
+            rendered = request(process, {"Render": {"page": page, "side": side}})["Page"]
             pixels = (work / "page.rgba").read_bytes()
-            assert len(pixels) == reply["width"] * reply["height"] * 4
+            assert len(pixels) == rendered["width"] * rendered["height"] * 4
             timings.append((time.perf_counter() - start) * 1000)
         before = time.perf_counter()
         matches = request(process, {"Search": {"query": "needle"}})["Matches"]
@@ -96,6 +105,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--worker", type=Path, default=Path("target/release/bibli-pdf-worker"))
     parser.add_argument("--poppler-worker", type=Path, default=Path("target/release/bibli-poppler-worker"))
+    parser.add_argument("--mupdf-worker", type=Path, default=Path("target/release/bibli-mupdf-worker"))
+    parser.add_argument("--engines", default="pdfium,poppler,mupdf",
+                        help="comma-separated engines to compare")
     parser.add_argument("--library", type=Path, required=True)
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--side", type=int, default=2048)
@@ -109,12 +121,15 @@ def main():
             pdf = root / f"Synthetic {kind}.pdf"
             reader(pdf, kind)
             result["fixtures"][kind] = {}
-            samples = {"pdfium": [], "poppler": []}
-            engines = [("pdfium", args.worker), ("poppler", args.poppler_worker)]
-            # Alternate execution order to reduce bias from changing host load
+            workers = {"pdfium": args.worker, "poppler": args.poppler_worker,
+                       "mupdf": args.mupdf_worker}
+            engines = [(name, workers[name]) for name in args.engines.split(",")]
+            samples = {name: [] for name, _ in engines}
+            # Rotate the execution order to reduce bias from changing host load
             # and CPU frequency; expose the observed spread, not just a median.
             for index in range(args.runs):
-                for engine, worker in engines[::1 if index % 2 == 0 else -1]:
+                shift = index % len(engines)
+                for engine, worker in engines[shift:] + engines[:shift]:
                     samples[engine].append(sample(worker.resolve(), args.library.resolve(), pdf, root, args.side))
             for engine, runs in samples.items():
                 result["fixtures"][kind][engine] = {key: (all(run[key] for run in runs) if isinstance(runs[0][key], bool) else round(statistics.median(run[key] for run in runs), 2)) for key in runs[0]}

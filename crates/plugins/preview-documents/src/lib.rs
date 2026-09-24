@@ -31,6 +31,9 @@ impl Plugin for PreviewPlugin {
             Requirement::new("bibli-poppler-worker", "PDF reading with Poppler", || {
                 worker_path(Engine::Poppler).is_some()
             }),
+            Requirement::new("bibli-mupdf-worker", "PDF reading with MuPDF", || {
+                worker_path(Engine::Mupdf).is_some()
+            }),
         ]
     }
 
@@ -39,12 +42,13 @@ impl Plugin for PreviewPlugin {
         app.settings.declare(SettingSpec::choice(
             "preview-documents.backend",
             "Document engine",
-            "Automatic prefers PDFium and falls back to Poppler.",
+            "Automatic prefers PDFium and falls back to Poppler; MuPDF is used only when chosen.",
             "auto",
             &[
                 ("auto", "Automatic"),
                 ("pdfium", "PDFium"),
                 ("poppler", "Poppler"),
+                ("mupdf", "MuPDF"),
             ],
         ));
         app.settings.declare(SettingSpec::path(

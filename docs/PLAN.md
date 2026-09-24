@@ -109,7 +109,9 @@ illustration it has. Superscripts, subscripts and small capitals are drawn
 (vendored gpui patch 0006: a run's own size and height in its line), and a
 note reference opens its note in a popover, from another chapter too.
 Fixed-layout pages are drawn (ADR-013): a converted comic's lettering, set
-over its picture in the book's fonts, comes out in its balloons. Lint and the
+over its picture in the book's fonts, comes out in its balloons. MuPDF is a
+third, optional reader engine (ADR-014, AGPL worker), chosen explicitly and
+compared with PDFium and Poppler in `docs/pdf-comparison.md`. Lint and the
 default tests pass; a synthetic book was checked in a window on an isolated
 display, including following a footnote and its way back.
 
