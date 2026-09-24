@@ -45,6 +45,11 @@ struct Player {
     selected: bool,
     restore: Option<f64>,
     seeking: bool,
+    /// The loop's inbox, for the fences a track change sends.
+    events: Arc<Events>,
+    /// Fences sent and not yet reached: while there is one, what the loop
+    /// takes from the bus was posted before the latest READY (see `fence`).
+    fences: usize,
 }
 impl Drop for Player {
     fn drop(&mut self) {
@@ -184,6 +189,8 @@ impl Player {
             selected: false,
             restore: None,
             seeking: false,
+            events: Arc::clone(events),
+            fences: 0,
         };
         player.pipeline.set_state(gst::State::Paused)?;
         Ok(player)
@@ -320,10 +327,9 @@ impl Player {
         // Dynamic output replacement can deadlock a paused subtitle pipeline.
         // Re-preroll from READY with the desired streams, then restore position.
         // The UI retains its last image throughout; no stale preroll is published.
-        // Messages posted before this point may still be queued for the loop;
-        // the AsyncDone handler ignores them until the new preroll settles.
         let position = self.restore.unwrap_or(self.state.position);
         self.pipeline.set_state(gst::State::Ready)?;
+        self.fence();
         self.state.audio = audio;
         self.state.subtitle = subtitle;
         self.state.seekable = false;
@@ -332,6 +338,18 @@ impl Player {
         self.restore = Some(position);
         self.pipeline.set_state(gst::State::Paused)?;
         Ok(())
+    }
+    /// Mark where the preroll abandoned by a return to READY ends. Messages
+    /// its threads posted may still wait in the loop's inbox, the stream
+    /// collection among them: selecting from that one asks decodebin3 for
+    /// streams of a collection it no longer knows, and the video branch never
+    /// comes back (two quick track changes while playing did this). The bus
+    /// reaches the inbox through the sync handler, in order, and once
+    /// `set_state(Ready)` has returned the old preroll's threads have
+    /// stopped: everything before the fence is stale, and the loop drops it.
+    fn fence(&mut self) {
+        self.fences += 1;
+        let _ = self.events.tx.send(Event::Fence);
     }
     fn select_tracks(&mut self, audio: i32, subtitle: i32) -> anyhow::Result<()> {
         let mut selected = Vec::new();
@@ -366,6 +384,9 @@ impl Player {
 }
 
 enum Event {
+    /// Everything before it was posted by a preroll since abandoned
+    /// (`Player::fence`).
+    Fence,
     Request(Request),
     /// A bus message, delivered with the wake that announces it.
     Bus(gst::Message),
@@ -550,6 +571,10 @@ fn run() -> anyhow::Result<()> {
                 // exit closes audio/device handles without waiting on it.
                 std::process::exit(0);
             }
+            Ok(Event::Fence) => player.fences -= 1,
+            // Posted before the latest return to READY: about a preroll that
+            // no longer exists.
+            Ok(Event::Bus(_)) if player.fences > 0 => {}
             Ok(Event::Bus(message)) => {
                 handle_message(&mut player, &message, &mut ready, &mut dirty)?;
             }
@@ -825,11 +850,7 @@ fn handle_message(
         }
         gst::MessageView::AsyncDone(_) => {
             if player.restore.is_some() {
-                // A message posted before the READY transition can still be
-                // queued; the re-preroll's own AsyncDone follows once settled.
-                if !player.settled() {
-                    return Ok(());
-                }
+                // The re-preroll's own: anything older was fenced off.
                 let position = player.restore.take().unwrap_or_default();
                 player.refresh();
                 // A non-seekable stream restarts from its beginning after a

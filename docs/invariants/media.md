@@ -38,6 +38,11 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
 - GStreamer owns audio/video timing. Decoder events wake the worker and new
   output wakes the UI; never introduce a UI frame timer for playback.
 - Track changes re-preroll from READY, then restore position/rate/play state.
+  Returning to READY fences the loop's inbox (`Player::fence`): bus messages
+  queued before it belong to the abandoned preroll and are dropped, so a
+  second change sent before the first has prerolled never selects streams
+  from a stream collection decodebin3 no longer knows (which stopped the
+  video for good). `tools/media/check.py` switches twice while playing.
   Do not race dynamic subtitle output replacement with paused flushing seeks.
   Keep playbin flags intact and test actual subtitle pixels, not only metadata.
   The manager bounds glibc arenas in the child to limit frame-buffer retention;

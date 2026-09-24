@@ -218,6 +218,16 @@ def check(executable, clip, audio=False):
         worker.control({"Audio": 0})
         worker.until(lambda: worker.state.get("audio") == 0 and worker.state["position"] > position + .25)
         assert worker.state["status"] == "Playing"
+        # Two track changes in a row while playing, the second sent before the
+        # first has prerolled: it must not select from the first one's stream
+        # collection, or the video never comes back (Player::fence).
+        for track in (1, 0):
+            worker.control({"Audio": track})
+            worker.until(lambda: worker.state.get("audio") == track)
+        worker.seek(8.)
+        before = worker.frames
+        worker.until(lambda: worker.frames > before + 10 and worker.last_generation == worker.generation)
+        assert worker.state["status"] == "Playing"
         worker.control({"Play": False})
         worker.until(lambda: worker.state["status"] != "Playing")
         worker.control({"Seek": 11.5})
