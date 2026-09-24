@@ -71,7 +71,13 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   only the middle differs, so nothing can return early and lose the border.
   Reading mode also caps the text column at `MarkdownStyle::measure`, centres
   it and keeps `page_padding` between the text and the edge of the pane: all
-  maxima and paddings applied in layout, never a measured width.
+  maxima and paddings applied in layout, never a measured width. The cap is
+  the Reading width preference (`ui.reading_width`, in ems of the text, so
+  it grows with the text size; `markdown::measure`), Full width being none;
+  the Full width button is that same preference (`ui.full_width`, through
+  `settings.apply`), after the text size as Fit width is after a
+  document's zoom, and the first to go to More. The column is for text
+  only.
 - Only `bibli-archive-worker` links libarchive. Member names are labels/keys,
   never extraction paths. Read only selected regular members, bound the actual
   decompressed bytes and keep temporary cleanup off the UI thread.
@@ -108,13 +114,20 @@ still to come are in `docs/preview-frame.md`.
 - **One toolbar.** A preview never builds a row: it lists its tools in
   `preview_bar::Bar`, each in a slot, and the bar lays them out. Left to right:
   contents (first, because its drawer opens on that side) · navigate (parent,
-  previous and next, page) · view (how the content is shown: the format's own
-  name is the switch between rendered and source, then zoom or text size, fit)
-  · spacer · find · More. Copy has no button: it is Ctrl+C and the content's
+  previous, the page or chapter as a field with the count, next:
+  `preview_bar::number_tool`, the reader's pages and a book's numbered
+  sections alike, `Inspection::sections`) · view (zoom or text size, each
+  as smaller, the value as a picker, larger; then fit or width: Fit width
+  for a page, Full width for text; then the presentation: the reader's
+  Continuous, or the format's own name as the switch between rendered and
+  source) · spacer · find · More. Text and a page give way alike: the
+  same keeps for the same places. Copy has no button: it is Ctrl+C and the content's
   right-click menu (`Shell::open_preview_menu`), where people look for it. An
   action too rare for a button in any variant, like View as hex, is
   `Item::menu_only`.
-  `zoom_tools` is the one zoom group, for a picture and a page alike. Shared
+  `zoom_tools` is the one zoom group, for a picture and a page alike; text
+  has its twin in the inspector (the text size picker, `text_size_panel`,
+  a popup of kind `text`). Shared
   actions take their words from `preview_bar::label`. An item says the
   narrowest of the three variants that still shows it (`keep`).
 - **The menu rule** is the application toolbar's: More holds the buttons the
@@ -132,7 +145,24 @@ still to come are in `docs/preview-frame.md`.
   sentence inside the content. The keys are the same everywhere they mean
   something: Ctrl+F, Ctrl+C, Ctrl++ / Ctrl+- (zoom what is looked at, size what
   is read), Ctrl+0, `[` and `]` for the previous and next section or page; a
-  picture takes them, and Ctrl+wheel, once clicked.
+  picture takes them, and Ctrl+wheel, once clicked. Which one a key does
+  follows from what is shown, never from a per-format switch: text in
+  reading mode changes size (the inspector's text size); an image is a
+  picture (`preview::picture`, with `zoom_tools` in its bar): whole by
+  default (Fit), as wide as the panel (Fit width), or at a share of its own
+  size. It is laid out at its own size (what 100% is: an image's size
+  before it was shrunk for display), never at its pixels', which only fill
+  its box; after layout it compares the device pixels it covers with the
+  ones it has and, short, is decoded again at the next step
+  (`preview::sharper`, `Shell::sharpen_picture`), never past its own
+  pixels, in place: the zoom and the scroll stay. A page zooms in the
+  reader, a PDF's, a fixed-layout book's or a comic's alike
+  (`docs/invariants/reader.md`); a book an engine laid out into pages is
+  laid out again at another text size. A user asks for bigger or smaller
+  and never chooses the mechanism. A zoom step from Fit or Fit width starts
+  at the scale they show (`Shell::picture_scale`: read from the bounds the
+  picture's container had in its last prepaint, or the scale the reader's
+  pages reported, when the key is pressed), so Zoom out never enlarges.
 - **One text path.** Any text file without a presentation of its own is the
   code view (`inspection::plain`): a block per line, the language from the
   name, a gutter, selection, find and copy. A rendered format's source is the
@@ -245,16 +275,26 @@ still to come are in `docs/preview-frame.md`.
   block, a word's the block around it. A footnote (`footnote`, `note`,
   `rearnote`, `doc-footnote`) moves to the end of the page under a rule; a
   printed page number (`pagebreak`) is a target, never read.
+- **A book of pages is a document** (ADR-013 addendum): a fixed-layout
+  book (`rendition:layout pre-paginated`) with the built-in engine, and a
+  comic, open in the document reader through an in-process
+  `DocumentSession` (`preview-epub/src/pages.rs`, `preview-comics`),
+  continuously or a page at a time like a PDF, never as an inspection:
+  `inspect` answers `None` for them. A page is drawn or decoded at the side
+  the reader asks, its own size (CSS pixels for a page, pixels for a
+  picture) what 100% is; the book's contents are the reader's outline;
+  search finds pages, not places, since a drawn page has no text layer.
 - **A fixed-layout page is drawn, not read** (`rich_preview/page.rs`,
   ADR-013): one that states its size is laid out from the cascade
-  (`PageStyle`) and drawn as the inspection's own picture, the panel's
-  width, in a book that keeps its contents and search. Text goes to resvg as
+  (`PageStyle`) and drawn with the side the reader asks on its longer
+  side. Text goes to resvg as
   SVG `<text>` with the book's fonts, renamed to their CSS families;
   pictures are decoded by the `image` crate and composited between the SVG
   fragments in paint order (`Canvas`), never through resvg's decoders. Fonts
   and pictures come only through the caller's `Resources`; an obfuscated
-  font is restored by the provider, an encrypted one is not read. A page
-  with no size is read as text.
+  font is restored by the provider, an encrypted one is not read. In a
+  book of pages, a page that states no size and is one picture is that
+  picture; any other is drawn at the size the book's first pages state.
 - **A book's rows are its contents** (`inspector::listed`): the Contents
   drawer shows them; they are not list items after its text, nor part of
   what find and copy read.

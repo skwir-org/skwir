@@ -59,6 +59,10 @@ pub mod limits {
     pub const IMAGE_SIDE: u32 = 8192;
     pub const IMAGE_ALLOC: u64 = 128 * 1024 * 1024;
     pub const IMAGE_DISPLAY_SIDE: u32 = 1600;
+    /// The largest side a picture shown zoomed in (a page, a comic's) is
+    /// drawn or decoded at: about 45 MB of pixels for a page of a comic.
+    /// Past it, a zoom enlarges these pixels.
+    pub const PICTURE_SIDE: u32 = bibli_core::document::MAX_SIDE;
     /// Bytes of a picture read to learn its size before it is shown: a
     /// raster header, with room for the metadata a JPEG may put first.
     pub const PICTURE_HEADER: usize = 256 * 1024;
@@ -372,13 +376,31 @@ fn page_text(bytes: &[u8], first: bool) -> (Cow<'_, str>, Encoding) {
     }
 }
 pub fn image(bytes: &[u8]) -> anyhow::Result<Image> {
+    picture(bytes, limits::IMAGE_DISPLAY_SIDE).map(|decoded| Image {
+        width: decoded.width,
+        height: decoded.height,
+        rgba: decoded.rgba.into(),
+    })
+}
+/// A picture decoded (`picture`): its pixels, and its own size.
+pub struct Decoded {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+    pub own: (u32, u32),
+}
+/// A picture decoded with at most `side` pixels on its longer side (bounded
+/// by `limits::PICTURE_SIDE`), never enlarged, with its own size, what 100%
+/// is: a page of a comic as the reader asks for it.
+pub fn picture(bytes: &[u8], side: u32) -> anyhow::Result<Decoded> {
+    let side = side.clamp(64, limits::PICTURE_SIDE);
     anyhow::ensure!(
         bytes.len() <= limits::BINARY_INPUT,
         "Embedded image exceeds {}",
         limits::describe(limits::BINARY_INPUT)
     );
     if is_svg(bytes) {
-        return svg(bytes);
+        return svg(bytes, side);
     }
     let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?;
     let mut image_limits = image::Limits::default();
@@ -387,23 +409,25 @@ pub fn image(bytes: &[u8]) -> anyhow::Result<Image> {
     image_limits.max_alloc = Some(limits::IMAGE_ALLOC);
     reader.limits(image_limits);
     let mut img = reader.decode()?;
+    let own = (img.width(), img.height());
     // Only shrink: `thumbnail` would otherwise scale a tiny icon up to the
     // display side and hand the UI megabytes of pixels per embedded image.
-    let (width, height) = shown(img.width(), img.height());
+    let (width, height) = shown(img.width(), img.height(), side);
     if (width, height) != (img.width(), img.height()) {
         img = img.thumbnail_exact(width, height);
     }
     let img = img.into_rgba8();
-    Ok(Image {
+    Ok(Decoded {
         width: img.width(),
         height: img.height(),
-        rgba: img.into_raw().into(),
+        rgba: img.into_raw(),
+        own,
     })
 }
-/// The size `image` shows a picture of `width` × `height` at: its own, or
-/// shrunk to fit the display side.
-fn shown(width: u32, height: u32) -> (u32, u32) {
-    let side = f64::from(limits::IMAGE_DISPLAY_SIDE);
+/// The size a picture of `width` × `height` is shown at: its own, or
+/// shrunk to fit `side`.
+fn shown(width: u32, height: u32, side: u32) -> (u32, u32) {
+    let side = f64::from(side);
     let scale = (side / f64::from(width.max(1)))
         .min(side / f64::from(height.max(1)))
         .min(1.);
@@ -428,7 +452,7 @@ pub fn picture_size(bytes: &[u8]) -> Option<(u32, u32)> {
             .ok()?
     };
     (width > 0 && height > 0 && width <= limits::IMAGE_SIDE && height <= limits::IMAGE_SIDE)
-        .then(|| shown(width, height))
+        .then(|| shown(width, height, limits::IMAGE_DISPLAY_SIDE))
 }
 /// Whether `bytes` are an SVG document rather than a raster image.
 fn is_svg(bytes: &[u8]) -> bool {
@@ -441,15 +465,16 @@ fn is_svg(bytes: &[u8]) -> bool {
 /// Rasterize an SVG picture at its own size, no larger than the display
 /// side. It is inert: nothing it names outside itself (a file, a URL) is
 /// read, only pictures embedded in it as data.
-fn svg(bytes: &[u8]) -> anyhow::Result<Image> {
+fn svg(bytes: &[u8], side: u32) -> anyhow::Result<Decoded> {
     use resvg::tiny_skia;
     let tree = svg_tree(bytes)?;
-    let size = tree.size();
-    let (width, height) = shown(
-        size.width().round().max(1.) as u32,
-        size.height().round().max(1.) as u32,
+    let drawn = tree.size();
+    let own = (
+        drawn.width().round().max(1.) as u32,
+        drawn.height().round().max(1.) as u32,
     );
-    let scale = (width as f32 / size.width()).min(height as f32 / size.height());
+    let (width, height) = shown(own.0, own.1, side);
+    let scale = (width as f32 / drawn.width()).min(height as f32 / drawn.height());
     let mut pixmap = tiny_skia::Pixmap::new(width, height)
         .ok_or_else(|| anyhow::anyhow!("SVG picture has no size"))?;
     resvg::render(
@@ -465,10 +490,11 @@ fn svg(bytes: &[u8]) -> anyhow::Result<Image> {
             [color.red(), color.green(), color.blue(), color.alpha()]
         })
         .collect();
-    Ok(Image {
+    Ok(Decoded {
         width,
         height,
-        rgba: rgba.into(),
+        rgba,
+        own,
     })
 }
 /// An SVG document parsed with every reference outside itself refused.
@@ -621,6 +647,30 @@ pub fn hex_page(title: String, page: &[u8], len: u64, offset: u64, position: u64
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_picture_is_decoded_at_the_side_asked_within_bounds() {
+        let mut bytes = Vec::new();
+        image::RgbImage::new(5000, 1000)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        let at = |side| {
+            let decoded = picture(&bytes, side).unwrap();
+            assert_eq!(decoded.own, (5000, 1000), "100% is the picture's own size");
+            assert_eq!(
+                decoded.rgba.len() as u32,
+                decoded.width * decoded.height * 4
+            );
+            (decoded.width, decoded.height)
+        };
+        assert_eq!(at(1000), (1000, 200));
+        assert_eq!(at(2400), (2400, 480));
+        assert_eq!(at(u32::MAX), (limits::PICTURE_SIDE, 819), "bounded");
+        assert_eq!(image(&bytes).map(|i| i.width).unwrap(), 1600);
+    }
 
     #[test]
     fn hex_rows_group_bytes_and_align_headers() {

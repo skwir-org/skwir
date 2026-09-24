@@ -131,6 +131,14 @@ impl Display {
             .or_else(|| wrap.then(|| hit(0..start.min(self.folded.len()))).flatten())
     }
 }
+/// The text size reading starts at, and Default size returns to.
+pub(crate) const TEXT_SIZE: f32 = 16.;
+
+/// The text size as a share of the default, for the size picker.
+pub(crate) fn text_size_label(size: f32) -> String {
+    format!("{:.0}%", size / TEXT_SIZE * 100.)
+}
+
 /// The rows that are content, drawn after the blocks: a table's, an
 /// archive's, a message's attachments. A book's rows are its contents, a way
 /// through it that the Contents drawer shows, and none of its text.
@@ -170,6 +178,8 @@ pub struct State {
     outline: bool,
     /// The find field, open under its button like the document reader's.
     find: Option<crate::preview_bar::Field>,
+    /// The chapter field while it is edited (`preview_bar::number_tool`).
+    pub(crate) section_input: Option<crate::preview_bar::Field>,
     /// The column a table is ordered by, and whether ascending.
     sort: Option<(usize, bool)>,
     /// Scrolling past the end of a section goes to the next one: the wheel
@@ -194,9 +204,10 @@ impl Default for State {
             selected: None,
             selection: None,
             dragging: false,
-            font_size: 16.,
+            font_size: TEXT_SIZE,
             outline: false,
             find: None,
+            section_input: None,
             sort: None,
             turn: crate::reader_scroll::WheelTurn::default(),
             at_edge: 0,
@@ -226,10 +237,10 @@ impl State {
         self.focus
             .as_ref()
             .is_some_and(|focus| focus.contains_focused(window, cx))
-            || self
-                .find
-                .as_ref()
-                .is_some_and(|find| find.is_focused(window, cx))
+            || [&self.find, &self.section_input]
+                .into_iter()
+                .flatten()
+                .any(|field| field.is_focused(window, cx))
             || self.notes.holds_focus(window, cx)
     }
     pub fn reset(&mut self, data: &Inspection) {
@@ -268,6 +279,7 @@ impl State {
             self.reset(data);
         }
         self.request.offset = data.position;
+        self.section_input = None;
         (self.at_edge, self.turn) = (0, crate::reader_scroll::WheelTurn::default());
         if std::mem::take(&mut self.land_at_end) {
             // Scrolled up out of the next section: read on from this one's end.
@@ -491,6 +503,38 @@ impl Shell {
                 }
                 return cx.notify();
             }
+            "section_edit" => return self.inspect_section_edit(window, cx),
+            "section_cancel" => {
+                self.preview.inspection.section_input = None;
+                if let Some(focus) = &self.preview.inspection.focus {
+                    window.focus(focus);
+                }
+                return cx.notify();
+            }
+            "section_submit" => {
+                let Some(PreviewContent::Inspection(display)) = &self.preview.content else {
+                    return;
+                };
+                let sections = display.data.sections;
+                let number = self
+                    .preview
+                    .inspection
+                    .section_input
+                    .as_ref()
+                    .and_then(|field| field.text(cx).trim().parse::<u64>().ok())
+                    .filter(|n| (1..=sections).contains(n));
+                let Some(number) = number else {
+                    return self.set_status(
+                        format!("Enter a chapter number from 1 to {sections}"),
+                        true,
+                        cx,
+                    );
+                };
+                let args = serde_json::json!({"action":"section_cancel"});
+                self.inspect_command(&args, window, cx);
+                let args = serde_json::json!({"action":"page","offset":number - 1});
+                return self.run("ui.inspect", args, window, cx);
+            }
             "offset" => {
                 let (pane, generation) = (self.pane, self.preview.generation);
                 self.open_prompt(
@@ -624,6 +668,19 @@ impl Shell {
                     self.preview
                         .inspection
                         .collapse_all(&display.data, action == "collapse_all");
+                    cx.notify();
+                    return;
+                }
+                "reset" | "text_size" => {
+                    let size = args["value"].as_f64().map_or(TEXT_SIZE, |v| v as f32);
+                    let state = &mut self.preview.inspection;
+                    state.font_size = size.clamp(10., 40.);
+                    let count = state.list.item_count();
+                    state.list.remeasure_items(0..count);
+                    // The size picker closes on its choice.
+                    if let Some(popup) = self.preview.menu.take_if(|popup| popup.kind == "text") {
+                        popup.restore(window);
+                    }
                     cx.notify();
                     return;
                 }
@@ -949,6 +1006,31 @@ impl Shell {
         }
     }
 
+    /// The chapter field, open on the chapter shown.
+    fn inspect_section_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(PreviewContent::Inspection(display)) = &self.preview.content else {
+            return;
+        };
+        if display.data.sections == 0 {
+            return;
+        }
+        let current = display.data.position + 1;
+        let field = crate::preview_bar::Field::new(
+            "Chapter",
+            "ui.inspect section_submit",
+            "ui.inspect section_cancel",
+            window,
+            cx,
+        );
+        field.input.update(cx, |input, cx| {
+            input.set_text(current.to_string(), cx);
+            input.select_all_now(cx);
+            input.focus(window);
+        });
+        self.preview.inspection.section_input = Some(field);
+        cx.notify();
+    }
+
     fn inspect_find_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.preview.inspection.find.is_none() {
             let hex = matches!(
@@ -1051,23 +1133,43 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     let mut bar = Bar::new("inspect-tools");
 
     crate::preview_bar::parent_tool(&mut bar, shell);
-    for (id, icon, title, offset) in [
-        (
-            "inspect-prev",
-            "left",
-            "Previous section · [",
-            data.previous,
-        ),
-        ("inspect-next", "right", "Next section · ]", data.next),
-    ] {
-        if let Some(offset) = offset {
-            bar.push(Item::button(
-                Slot::Navigate,
-                2,
-                Button::new(id, icon, title, "ui.inspect")
-                    .args(serde_json::json!({"action":"page","offset":offset})),
-            ));
-        }
+    // Numbered sections (a book's chapters) are gone through as a
+    // document's pages are: previous, the number as a field, next, the
+    // buttons there even when there is nowhere to go.
+    let numbered = data.sections > 0;
+    let step = |id, icon, title, offset: Option<u64>| {
+        Button::new(id, icon, title, "ui.inspect")
+            .args(serde_json::json!({"action":"page","offset":offset.unwrap_or(0)}))
+            .enabled(offset.is_some())
+    };
+    if numbered || data.previous.is_some() {
+        bar.push(Item::button(
+            Slot::Navigate,
+            2,
+            step(
+                "inspect-prev",
+                "left",
+                "Previous section · [",
+                data.previous,
+            ),
+        ));
+    }
+    if numbered {
+        crate::preview_bar::number_tool(
+            &mut bar,
+            ("inspect-section", "Go to chapter"),
+            ("ui.inspect", serde_json::json!({"action":"section_edit"})),
+            (data.position + 1, data.sections),
+            |shell| shell.preview.inspection.section_input.as_ref(),
+            theme,
+        );
+    }
+    if numbered || data.next.is_some() {
+        bar.push(Item::button(
+            Slot::Navigate,
+            2,
+            step("inspect-next", "right", "Next section · ]", data.next),
+        ));
     }
 
     if data.blocks.iter().any(|block| block.heading > 0) || data.kind == InspectionKind::Book {
@@ -1079,50 +1181,6 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         ));
     }
 
-    // How the file is shown. The name of the presentation is the switch to the
-    // other one: "Markdown" shows the source, "Source" the document again.
-    let (name, rest) = data
-        .title
-        .split_once(" · ")
-        .map_or((data.title.as_str(), ""), |(name, rest)| (name, rest));
-    if request.provider.is_some() {
-        bar.push(Item::button(
-            Slot::View,
-            1,
-            button("inspect-auto", "back", "Default presentation", "auto"),
-        ));
-    }
-    if data.source_available {
-        bar.push(Item::button(
-            Slot::View,
-            2,
-            button(
-                "inspect-source",
-                "code",
-                // One wording for both states: a tooltip outlives the click.
-                "Switch between rendered and source",
-                "source",
-            )
-            .label(if request.source { "Source" } else { name }.to_owned())
-            .active(request.source),
-        ));
-    }
-    let caption = if data.source_available {
-        rest
-    } else {
-        data.title.as_str()
-    };
-    if !caption.is_empty() {
-        let (caption, muted) = (caption.to_owned(), theme.text_muted);
-        bar.push(Item::widget(Slot::View, 0, move |_, _| {
-            div()
-                .text_xs()
-                .whitespace_nowrap()
-                .text_color(muted)
-                .child(caption.clone())
-                .into_any_element()
-        }));
-    }
     if data.kind == InspectionKind::Hex {
         bar.push(Item::button(
             Slot::View,
@@ -1156,17 +1214,94 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
             ),
         ));
     }
+    // Text size, as a document's zoom: smaller, the size as a picker,
+    // larger; the same keeps, so both rows give way alike.
     if !data.blocks.is_empty() {
         bar.push(Item::button(
             Slot::View,
-            0,
+            1,
             button("inspect-smaller", "minus", "Smaller text", "smaller"),
         ));
+        bar.push(
+            Item::button(
+                Slot::View,
+                2,
+                Button::new(
+                    "inspect-text-size",
+                    "chevron",
+                    "Text size",
+                    "ui.preview_menu",
+                )
+                .args(serde_json::json!({"kind":"text"}))
+                .label(text_size_label(shell.preview.inspection.font_size)),
+            )
+            .opens("text"),
+        );
+        bar.push(Item::button(
+            Slot::View,
+            1,
+            button("inspect-larger", "plus", "Larger text", "larger"),
+        ));
+        bar.popups.push(("text", std::rc::Rc::new(text_size_panel)));
+    }
+    // What is read in a column may take the whole panel instead: the
+    // Reading width preference, from where it shows. It stands where a
+    // document's Fit width does, after the size, and goes to More first.
+    if !data.blocks.is_empty()
+        && matches!(data.kind, InspectionKind::Markdown | InspectionKind::Book)
+    {
         bar.push(Item::button(
             Slot::View,
             0,
-            button("inspect-larger", "plus", "Larger text", "larger"),
+            Button::new("inspect-full-width", "width", "Full width", "ui.full_width")
+                .active(shell.reading_measure.is_none()),
         ));
+    }
+    // How the file is shown, after its size, as a document's Continuous is.
+    // The name of the presentation is the switch to the other one:
+    // "Markdown" shows the source, "Source" the document again.
+    let (name, rest) = data
+        .title
+        .split_once(" · ")
+        .map_or((data.title.as_str(), ""), |(name, rest)| (name, rest));
+    if request.provider.is_some() {
+        bar.push(Item::button(
+            Slot::View,
+            1,
+            button("inspect-auto", "back", "Default presentation", "auto"),
+        ));
+    }
+    if data.source_available {
+        bar.push(Item::button(
+            Slot::View,
+            2,
+            button(
+                "inspect-source",
+                "code",
+                // One wording for both states: a tooltip outlives the click.
+                "Switch between rendered and source",
+                "source",
+            )
+            .label(if request.source { "Source" } else { name }.to_owned())
+            .active(request.source),
+        ));
+    }
+    let caption = if data.source_available {
+        rest
+    } else {
+        data.title.as_str()
+    };
+    // Numbered sections say where they are in their field.
+    if !caption.is_empty() && !numbered {
+        let (caption, muted) = (caption.to_owned(), theme.text_muted);
+        bar.push(Item::widget(Slot::View, 0, move |_, _| {
+            div()
+                .text_xs()
+                .whitespace_nowrap()
+                .text_color(muted)
+                .child(caption.clone())
+                .into_any_element()
+        }));
     }
 
     bar.push(
@@ -1184,6 +1319,48 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
 /// The find field: the same popup, keys and place as the document reader's.
 /// A structured preview searches as it goes, so there is no count: Enter and
 /// F3 move to the next match and wrap.
+/// The text size picker, as a document's zoom picker is: the default size,
+/// then the sizes to choose from, as shares of it.
+fn text_size_panel(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
+    let popup = shell.preview.menu.as_ref()?;
+    let size = shell.preview.inspection.font_size;
+    let mut presets = div().flex().flex_wrap().gap_1();
+    for (id, percent) in [
+        ("text75", 75.),
+        ("text100", 100.),
+        ("text125", 125.),
+        ("text150", 150.),
+        ("text200", 200.),
+    ] {
+        let value = TEXT_SIZE * percent / 100.;
+        presets = presets.child(
+            Button::new(id, "", "Text size", "ui.inspect")
+                .label(text_size_label(value))
+                .args(serde_json::json!({"action":"text_size","value":value}))
+                .active((size - value).abs() < 0.5)
+                .render(shell, cx),
+        );
+    }
+    let default = Button::new("text-default", "revert", "Default size", "ui.inspect")
+        .label("Default size")
+        .args(serde_json::json!({"action":"reset"}))
+        .active((size - TEXT_SIZE).abs() < 0.5)
+        .menu()
+        .render(shell, cx);
+    Some(
+        crate::toolbar::popup_panel(popup, "ui.preview_menu", theme, cx)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(default)
+                    .child(presets),
+            )
+            .into_any_element(),
+    )
+}
+
 pub fn find_panel(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let find = shell.preview.inspection.find.as_ref()?;
     let buttons = vec![
@@ -1298,6 +1475,7 @@ pub fn content(
             display.data.kind,
             InspectionKind::Markdown | InspectionKind::Book
         ),
+        shell.reading_measure,
     );
     let note = crate::note_popover::popover(shell, &list_style, theme, cx);
     let measure = list_style.measure;

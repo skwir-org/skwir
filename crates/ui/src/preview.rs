@@ -26,7 +26,17 @@ use crate::shell::Shell;
 use crate::theme::Theme;
 
 const TEXT_LIMIT: usize = 64 * 1024;
+/// The text size a book is read at before the reader changes it, in pixels.
+pub(crate) const TEXT_SIZE: f32 = 16.;
+/// The zoom range of a picture or a page, as a share of its pixels. The
+/// floor is low enough that Zoom out from Fit always shrinks: a large page in
+/// a narrow panel is shown well under a quarter of its size.
+const MIN_ZOOM: f32 = 0.1;
+const MAX_ZOOM: f32 = 4.0;
 const IMAGE_MAX_SIDE: u32 = 2048;
+/// The side a document's first page is rendered at, before any page was
+/// shown to say what the panel needs.
+const FIRST_PAGE_SIDE: u32 = 2048;
 
 pub enum PreviewContent {
     Inspection(crate::inspector::Display),
@@ -209,7 +219,7 @@ pub struct PreviewState {
     version: Option<Version>,
     /// The request in flight reads the shown file again after it changed:
     /// what it brings keeps the folds, the selection and the place.
-    refresh: bool,
+    pub(crate) refresh: bool,
     /// The reader's mode, chosen with its button and not saved yet
     /// (`settings::remember_reader_mode`).
     pub(crate) reader_mode: Option<bool>,
@@ -217,6 +227,19 @@ pub struct PreviewState {
     pub(crate) seconds: Option<f64>,
     pub(crate) zoom: Option<f32>,
     pub(crate) fit_width: bool,
+    /// Where a picture zoomed past the panel is scrolled to (`picture`).
+    pub(crate) picture_scroll: gpui::ScrollHandle,
+    /// The side an image was asked to be decoded at for a zoom
+    /// (`sharpen_picture`); 0 for the display side.
+    pub(crate) picture_side: u32,
+    /// The side document pages are rendered at: the one they were last
+    /// shown at (`Shell::document_shown`), kept from one document to the
+    /// next, so a page opens at the size the panel shows it.
+    pub(crate) page_side: u32,
+    /// The size a book laid out by its engine is read at (`MuPDF`'s books),
+    /// in pixels; `None` until the reader changes it. A book in reading mode
+    /// keeps its own (`inspector::State`), pictures and pages zoom instead.
+    pub(crate) text_size: Option<f32>,
     tx: flume::Sender<PreviewResult>,
     rx: flume::Receiver<PreviewResult>,
     pub peek_focus: Option<FocusHandle>,
@@ -279,6 +302,10 @@ impl Default for PreviewState {
             seconds: None,
             zoom: None,
             fit_width: false,
+            picture_scroll: gpui::ScrollHandle::new(),
+            picture_side: 0,
+            page_side: FIRST_PAGE_SIDE,
+            text_size: None,
             tx,
             rx,
             peek_focus: None,
@@ -345,6 +372,7 @@ impl PreviewState {
             page: 1,
             seconds: None,
             max_side: 0,
+            text_size: None,
         })
     }
 
@@ -376,7 +404,14 @@ impl Drop for PreviewState {
 /// never decoded.
 static DECODE_TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-fn decode_image(path: &Path, cancel: &CancelToken) -> anyhow::Result<PreviewContent> {
+/// An image decoded at most `side` pixels on its longer side (at least the
+/// display side, `IMAGE_MAX_SIDE`; a zoom asks for more), with its own size,
+/// what 100% is, as its width and height.
+fn decode_image(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<PreviewContent> {
+    let side = side.clamp(
+        IMAGE_MAX_SIDE,
+        bibli_platform::inspection::limits::PICTURE_SIDE,
+    );
     let reader = || -> anyhow::Result<_> {
         let file = std::io::BufReader::new(bibli_platform::file::open_regular(path)?);
         Ok(image::ImageReader::new(file).with_guessed_format()?)
@@ -397,19 +432,18 @@ fn decode_image(path: &Path, cancel: &CancelToken) -> anyhow::Result<PreviewCont
     if cancel.is_cancelled() {
         anyhow::bail!("cancelled");
     }
-    let img = if img.width().max(img.height()) > IMAGE_MAX_SIDE {
-        img.thumbnail(IMAGE_MAX_SIDE, IMAGE_MAX_SIDE)
+    let img = if img.width().max(img.height()) > side {
+        img.thumbnail(side, side)
     } else {
         img
     };
     let rgba = img.to_rgba8();
-    let (width, height) = (rgba.width(), rgba.height());
-    let image = crate::thumbs::owned_render_image(width, height, rgba.into_raw())
+    let image = crate::thumbs::owned_render_image(rgba.width(), rgba.height(), rgba.into_raw())
         .ok_or_else(|| anyhow::anyhow!("invalid image"))?;
     Ok(PreviewContent::Image {
         image,
-        width,
-        height,
+        width: w,
+        height: h,
         detail: None,
         document: None,
         facts: bibli_platform::exif::details(path),
@@ -493,6 +527,7 @@ fn compute(
     mime: Option<&str>,
     dark: bool,
     offset: u64,
+    picture_side: u32,
     cancel: &CancelToken,
 ) -> PreviewContent {
     if is_dir {
@@ -513,7 +548,7 @@ fn compute(
     }
     let top = mime.and_then(|m| m.split('/').next()).unwrap_or("");
     if top == "image" {
-        return decode_image(path, cancel)
+        return decode_image(path, picture_side, cancel)
             .unwrap_or_else(|e| PreviewContent::Error(format!("{e:#}")));
     }
     if top == "video" || mime == Some("application/pdf") {
@@ -560,10 +595,10 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let kind = if args.get("kind").and_then(serde_json::Value::as_str) == Some("zoom") {
-            "zoom"
-        } else {
-            "preview"
+        let kind = match args.get("kind").and_then(serde_json::Value::as_str) {
+            Some("zoom") => "zoom",
+            Some("text") => "text",
+            _ => "preview",
         };
         let previous = self.preview.menu.take();
         let was_open = previous.as_ref().is_some_and(|p| p.kind == kind);
@@ -952,6 +987,7 @@ impl Shell {
             page: self.preview.page,
             seconds: self.preview.seconds,
             max_side: IMAGE_MAX_SIDE,
+            text_size: self.preview.text_size,
         };
         let mut inspection = self.preview.inspection.request.clone();
         let tx = self.preview.tx.clone();
@@ -966,6 +1002,10 @@ impl Shell {
         // reads the bytes to settle it, once.
         let unsettled = (!is_dir && !self.preview.info.identified).then(|| entry.name.clone());
         let session = self.preview.reader.session.clone();
+        let picture_side = self.preview.picture_side;
+        // A document's page is rendered at the side pages are shown at.
+        let page_side = self.preview.page_side;
+        self.preview.reader.shown_side = page_side;
         let open_document = !is_dir && !self.preview.reader.tried;
         let lifetime = self.preview.reader.lifetime.clone();
         let media_lifetime = self.preview.media.lifetime();
@@ -1145,7 +1185,7 @@ impl Shell {
                 match reader {
                     Ok(Some(session)) => {
                         let content = session
-                            .render(request.page, request.max_side, &cancel)
+                            .render(request.page, page_side, &cancel)
                             .and_then(|page| {
                                 let image = crate::thumbs::owned_render_image(
                                     page.width,
@@ -1194,6 +1234,7 @@ impl Shell {
                         request.mime.as_deref(),
                         dark,
                         inspection.offset,
+                        picture_side,
                         &cancel,
                     ),
                     Err(e) => PreviewContent::Error(format!("{e:#}")),
@@ -1346,6 +1387,9 @@ impl Shell {
         self.preview.seconds = None;
         self.preview.zoom = None;
         self.preview.fit_width = false;
+        self.preview.picture_scroll = gpui::ScrollHandle::new();
+        self.preview.picture_side = 0;
+        self.preview.text_size = None;
     }
 
     pub fn preview_page(&mut self, delta: i32, cx: &mut Context<Self>) {
@@ -1536,17 +1580,118 @@ impl Shell {
         self.set_status("Copied the path", false, cx);
     }
 
-    pub fn preview_zoom(&mut self, direction: &str, cx: &mut Context<Self>) {
+    /// Zoom what is looked at; size what is read. A book its engine laid out
+    /// into pages (`MuPDF`'s) is read, not looked at: its steps change the text
+    /// size and lay it out again, while a chosen zoom or fit still zooms its
+    /// pages.
+    pub fn preview_zoom(&mut self, direction: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(direction, "in" | "out" | "reset") && self.reader_reflows() {
+            let size = self.preview.text_size.unwrap_or(TEXT_SIZE);
+            let next = match direction {
+                "in" => (size + 2.).min(40.),
+                "out" => (size - 2.).max(10.),
+                _ => TEXT_SIZE,
+            };
+            if (next - size).abs() > f32::EPSILON {
+                self.relayout(next, window, cx);
+            }
+            return;
+        }
+        // A step from Fit or Fit width starts at the scale they show, so
+        // Zoom out never makes a large picture larger.
+        let shown = self.preview.zoom.or_else(|| self.picture_scale());
         self.preview.fit_width = direction == "width";
         self.preview.zoom = match direction {
-            "in" => Some(self.preview.zoom.map_or(1.0, |z| (z * 1.25).min(4.0))),
-            "out" => Some(self.preview.zoom.map_or(0.75, |z| (z / 1.25).max(0.25))),
+            "in" => Some(shown.map_or(1.0, |z| (z * 1.25).clamp(MIN_ZOOM, MAX_ZOOM))),
+            "out" => Some(shown.map_or(0.75, |z| (z / 1.25).clamp(MIN_ZOOM, MAX_ZOOM))),
             value => value
                 .parse::<f32>()
                 .ok()
                 .filter(|v| v.is_finite())
-                .map(|v| v.clamp(0.25, 4.0)),
+                .map(|v| v.clamp(MIN_ZOOM, MAX_ZOOM)),
         };
+        cx.notify();
+    }
+
+    /// The scale Fit or Fit width shows the picture at: an image's, from the
+    /// bounds its container had in the last prepaint; a document's pages',
+    /// as they reported it (`Shell::document_shown`). Read when a key asks,
+    /// never to lay anything out. `None` before it was drawn.
+    fn picture_scale(&self) -> Option<f32> {
+        let (scroll, (width, height)) = match &self.preview.content {
+            Some(PreviewContent::Image {
+                width,
+                height,
+                document: None,
+                ..
+            }) => (&self.preview.picture_scroll, (*width, *height)),
+            // A document's pages report the scale they are shown at.
+            Some(PreviewContent::Image {
+                document: Some(_), ..
+            }) => return self.preview.reader.shown_scale,
+            _ => return None,
+        };
+        let bounds = scroll.bounds().size;
+        let (across, down) = (
+            f32::from(bounds.width) / width.max(1) as f32,
+            f32::from(bounds.height) / height.max(1) as f32,
+        );
+        let scale = if self.preview.fit_width {
+            across
+        } else {
+            // Contain never enlarges a small picture.
+            across.min(down).min(1.)
+        };
+        (scale.is_finite() && scale > 0.).then_some(scale)
+    }
+
+    /// A picture covers more device pixels than it has (a zoom, a high-density
+    /// panel): read it again with `side` pixels on its longer side, where
+    /// it is. The zoom, the scroll and the page stay; the pixels are
+    /// replaced when they arrive, the old ones evicted like any content's.
+    pub(crate) fn sharpen_picture(
+        &mut self,
+        side: u32,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match &self.preview.content {
+            Some(PreviewContent::Image { document: None, .. })
+                if self.preview.media.session.is_none() =>
+            {
+                if side <= self.preview.picture_side {
+                    return;
+                }
+                self.preview.picture_side = side;
+            }
+            _ => return,
+        }
+        tracing::debug!(side, "draw the picture sharper");
+        self.cancel_pending_preview();
+        self.preview.refresh = true;
+        self.preview.phase = PreviewPhase::Queued;
+        cx.notify();
+    }
+
+    /// Whether the reader shows a book its engine laid out into pages.
+    pub(crate) fn reader_reflows(&self) -> bool {
+        self.preview
+            .reader
+            .session
+            .as_ref()
+            .is_some_and(|session| session.info().reflowable)
+    }
+
+    /// Lay the book out again at text `size`, where the reader is: its
+    /// pages are others now, so the reader finds what it was reading in them
+    /// (`reader_anchor`, `reader_land`).
+    fn relayout(&mut self, size: f32, window: &mut Window, cx: &mut Context<Self>) {
+        let anchor = self.reader_anchor();
+        self.reader_reopen(window, cx);
+        self.preview.reader.relayout = Some(anchor);
+        self.preview.text_size = Some(size);
+        self.cancel_pending_preview();
+        self.preview.phase = PreviewPhase::Queued;
         cx.notify();
     }
 
@@ -1884,56 +2029,21 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                     p.zoom,
                     cx,
                 )
-            } else if let Some(zoom) = p.zoom {
-                div()
-                    .id("preview-image-scroll")
-                    .flex_1()
-                    .min_h_0()
-                    .w_full()
-                    .overflow_scroll()
-                    .child(
-                        img(Arc::clone(image))
-                            .w(px(*width as f32 * zoom))
-                            .h(px(*height as f32 * zoom)),
-                    )
-                    .into_any_element()
-            } else if p.fit_width {
-                div()
-                    .id("preview-image-scroll")
-                    .flex_1()
-                    .min_h_0()
-                    .w_full()
-                    .overflow_scroll()
-                    .child(
-                        // GPUI's img resolves an auto height to the source's
-                        // pixel height when width is relative. Let the parent
-                        // aspect ratio size the image instead.
-                        div()
-                            .relative()
-                            .w_full()
-                            .map(|mut d| {
-                                d.style().aspect_ratio =
-                                    Some(*width as f32 / (*height).max(1) as f32);
-                                d
-                            })
-                            .child(img(Arc::clone(image)).absolute().size_full()),
-                    )
-                    .into_any_element()
             } else {
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        img(Arc::clone(image))
-                            .max_w_full()
-                            .max_h_full()
-                            .object_fit(ObjectFit::Contain),
-                    )
-                    .into_any_element()
+                picture(
+                    image,
+                    (*width, *height),
+                    (p.zoom, p.fit_width),
+                    &p.picture_scroll,
+                    "preview-image-scroll",
+                    // A picture shown smaller than its own size was decoded
+                    // smaller; one given at its pixels has no more.
+                    Some(Sharpen {
+                        shell: cx.entity().downgrade(),
+                        asked: p.picture_side,
+                        most: (*width).max(*height),
+                    }),
+                )
             };
             // A film answers a click like a player does.
             let picture = if p.media.session.is_some() && interactive {
@@ -1971,7 +2081,11 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                                     if event.modifiers.control {
                                         let up = event.delta.pixel_delta(window.line_height()).y
                                             > px(0.);
-                                        this.preview_zoom(if up { "in" } else { "out" }, cx);
+                                        this.preview_zoom(
+                                            if up { "in" } else { "out" },
+                                            window,
+                                            cx,
+                                        );
                                         cx.stop_propagation();
                                     }
                                 },
@@ -2202,6 +2316,178 @@ const PANE_KEEP_HEIGHT: f32 = 160.;
 /// The application toolbar above everything (`address::render_toolbar`).
 const TOOLBAR_HEIGHT: f32 = 42.;
 
+/// A picture as every preview shows one: whole in the panel (Fit), as wide
+/// as the panel (Fit width), or at a share of its own size, scrolling in
+/// both directions past the panel, with a scrollbar when it scrolls. Pages
+/// of a document are the reader's (`elements::document`).
+///
+/// Its layout is its own size (`own`, what 100% is), never its pixels': the
+/// pixels may be fewer (shrunk for display) or more (drawn again for a
+/// zoom), and only fill the box. After layout, `sharpen` compares the device
+/// pixels the picture covers with the ones it has and asks for more when
+/// they fall short (`Shell::sharpen_picture`).
+pub(crate) fn picture(
+    image: &Arc<gpui::RenderImage>,
+    own: (u32, u32),
+    (zoom, fit_width): (Option<f32>, bool),
+    scroll: &gpui::ScrollHandle,
+    id: &'static str,
+    sharpen: Option<Sharpen>,
+) -> AnyElement {
+    let (width, height) = (own.0.max(1) as f32, own.1.max(1) as f32);
+    let scrolling = |content: AnyElement| {
+        div()
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .id(id)
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .overflow_scroll()
+                    .track_scroll(scroll)
+                    .flex()
+                    .flex_col()
+                    .child(content),
+            )
+            .child(crate::elements::scrollbar::vertical(
+                (id, 1usize),
+                crate::elements::scrollbar::Scrolls::Offset(scroll.clone()),
+            ))
+            .into_any_element()
+    };
+    // The pixels fill the box the layout gave the picture, as large as they
+    // are or not; Fit's box can be taller or wider than the picture, which
+    // stays whole in it.
+    let pixels = img(Arc::clone(image))
+        .absolute()
+        .size_full()
+        .object_fit(ObjectFit::Contain);
+    let raster = {
+        let size = image.size(0);
+        u32::try_from(size.width.0.max(size.height.0)).unwrap_or(0)
+    };
+    let watch = sharpen.map(|sharpen| sharpen.watch(raster, (width, height)));
+    if let Some(zoom) = zoom {
+        // Smaller than the panel, it sits in the middle, as whole; larger,
+        // the wrapper grows with it and it scrolls from its corner.
+        scrolling(
+            div()
+                .flex_grow()
+                .flex_shrink_0()
+                .min_w_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .relative()
+                        .flex_none()
+                        .w(px(width * zoom))
+                        .h(px(height * zoom))
+                        .child(pixels)
+                        .children(watch),
+                )
+                .into_any_element(),
+        )
+    } else if fit_width {
+        // As wide as the panel, as tall as its proportions say.
+        scrolling(
+            div()
+                .relative()
+                .flex_shrink_0()
+                .w_full()
+                .map(|mut d| {
+                    d.style().aspect_ratio = Some(width / height);
+                    d
+                })
+                .child(pixels)
+                .children(watch)
+                .into_any_element(),
+        )
+    } else {
+        // Whole, and never larger than its own size. It never scrolls; it
+        // sits in the same tracked container so the zoom steps know the
+        // scale it is shown at (`picture_scale`).
+        scrolling(
+            div()
+                .flex_1()
+                .min_h_0()
+                .w_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .relative()
+                        .size_full()
+                        .max_w(px(width))
+                        .max_h(px(height))
+                        .child(pixels)
+                        .children(watch),
+                )
+                .into_any_element(),
+        )
+    }
+}
+
+/// Who a picture asks for more pixels (`picture`), the side it already
+/// asked for, so it asks once per step, and the most it can have: its own
+/// pixels, within `limits::PICTURE_SIDE`.
+pub(crate) struct Sharpen {
+    pub(crate) shell: gpui::WeakEntity<Shell>,
+    pub(crate) asked: u32,
+    pub(crate) most: u32,
+}
+
+/// Steps a picture is drawn again at: a zoom step of 1.25 crosses at most
+/// one, and a picture a little short of its pixels is left as it is.
+const SHARPEN_STEP: u32 = 512;
+
+impl Sharpen {
+    /// A canvas over the picture's box that, once laid out, measures the
+    /// device pixels the picture covers (whole in the box, like `Contain`).
+    fn watch(self, raster: u32, (width, height): (f32, f32)) -> gpui::Canvas<()> {
+        gpui::canvas(
+            move |bounds, window, cx| {
+                let scale = (f32::from(bounds.size.width) / width)
+                    .min(f32::from(bounds.size.height) / height);
+                let covered = width.max(height) * scale * window.scale_factor();
+                if let Some(side) = sharper(covered, raster, self.asked, self.most) {
+                    let shell = self.shell.clone();
+                    window.defer(cx, move |window, cx| {
+                        if let Some(shell) = shell.upgrade() {
+                            shell.update(cx, |shell, cx| shell.sharpen_picture(side, window, cx));
+                        }
+                    });
+                }
+            },
+            |_, (), _, _| {},
+        )
+        .absolute()
+        .size_full()
+    }
+}
+
+/// The side to draw a picture again at, when `covered` device pixels show
+/// one of `raster` pixels: the next step up, within `most` (what the
+/// picture can have) and `limits::PICTURE_SIDE`, and above what was already
+/// `asked`. `None` while its pixels suffice or can be no more.
+pub(crate) fn sharper(covered: f32, raster: u32, asked: u32, most: u32) -> Option<u32> {
+    use bibli_platform::inspection::limits::PICTURE_SIDE;
+    let most = most.min(PICTURE_SIDE);
+    if !covered.is_finite() || covered <= raster as f32 * 1.05 || raster >= most {
+        return None;
+    }
+    let side = ((covered / SHARPEN_STEP as f32).ceil() as u32 * SHARPEN_STEP).min(most);
+    (side > raster && side > asked).then_some(side)
+}
+
 /// The widest the panel may be: the window less what the panes and the
 /// sidebar keep. Never a fixed number: a wide window has room for a wide page.
 pub fn max_width(window: f32, panes: usize, sidebar: bool) -> f32 {
@@ -2360,7 +2646,24 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
 
 #[cfg(test)]
 mod tests {
-    use super::{Version, max_width};
+    use super::{SHARPEN_STEP, Version, max_width, sharper};
+
+    #[test]
+    fn a_picture_is_drawn_sharper_in_steps_up_to_what_it_can_have() {
+        use bibli_platform::inspection::limits::PICTURE_SIDE;
+        // Its pixels suffice, or nearly.
+        assert_eq!(sharper(1500., 1600, 0, u32::MAX), None);
+        assert_eq!(sharper(1650., 1600, 0, u32::MAX), None);
+        // Short: the next step up, once.
+        assert_eq!(sharper(2100., 1600, 0, u32::MAX), Some(5 * SHARPEN_STEP));
+        assert_eq!(sharper(2100., 1600, 5 * SHARPEN_STEP, u32::MAX), None);
+        // Never past what the picture has, nor the bound.
+        assert_eq!(sharper(2100., 1600, 0, 1800), Some(1800));
+        assert_eq!(sharper(2100., 1800, 0, 1800), None);
+        assert_eq!(sharper(20_000., 1600, 0, u32::MAX), Some(PICTURE_SIDE));
+        assert_eq!(sharper(20_000., PICTURE_SIDE, 0, u32::MAX), None);
+        assert_eq!(sharper(f32::NAN, 1600, 0, u32::MAX), None);
+    }
 
     #[test]
     fn metadata_learnt_late_is_not_a_changed_file() {

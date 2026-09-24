@@ -113,7 +113,39 @@ over its picture in the book's fonts, comes out in its balloons. MuPDF is a
 third, optional reader engine (ADR-014, AGPL worker), chosen explicitly and
 compared with PDFium and Poppler in `docs/pdf-comparison.md`. Lint and the
 default tests pass; a synthetic book was checked in a window on an isolated
-display, including following a footnote and its way back.
+display, including following a footnote and its way back. MuPDF is also a
+book engine (ADR-014 addendum, `preview-epub.backend`, built-in by default):
+it lays books out into pages for the reader, with the desktop's fonts
+(fontconfig) for named, generic and uncovered-script text. Ctrl++ / Ctrl+-
+work on every book: reading mode sizes its text, a drawn page or a comic
+is shown as a picture (Fit by default, Fit width, zoom, as images are,
+never in the reading column), and a MuPDF book is laid out again at the new size and reopened on
+the page holding what was being read (`Locate`). Deviation: the crate's
+`system-fonts` feature was dropped for a loader of our own, because its
+`font-kit` broke the whole-workspace build. Verified in a window on
+synthetic books and a comic; `just mupdf-check` covers layout and locate.
+The reading column's width is the Reading width preference (Narrow,
+Comfortable, Wide, Full width), shared by books and Markdown, with a Full
+width button beside the text size, where a document has Fit width; zoom steps on any picture start
+from the scale Fit shows, so Zoom out never enlarges. A picture zoomed
+past its pixels (a drawn page, a comic's page, an image) is drawn or
+decoded again at the side it covers, in 512 px steps up to 4096 px, where
+it is; 100% is its own size, not its pixels (an image's Details now give
+its real dimensions). Verified in a window on synthetic pages: a drawn
+page at 400% redrawn at 3584 px, a 3000 × 4500 comic page at 100% at
+4096 px, a 5000 × 3000 image at 48% at 2560 px. Then (ADR-015) books of
+pages and comics became documents: a fixed-layout EPUB and a CBZ open in
+the reader, continuously or a page at a time, through in-process sessions,
+and the inspector's page view went. The reader renders every page at the
+side it covers (512 px steps up to 4096 px, for every engine) instead of a
+fixed 2048 px, and a page's size is its own (CSS pixels), so 100% is real
+size. Verified in a window on synthetic files: a fixed EPUB and a comic in
+both modes, a zoom from Fit redrawing pages at 1024 to 2560 px, a PDF at
+100% at its size in points; all three PDF engines pass `tools/pdf/check.py`. The
+reading toolbar now mirrors the reader's: a chapter field between previous
+and next (the reader's page field, shared), a text size picker between
+smaller and larger, Full width where Fit width is, and the rendered/source
+switch last in the view group, where Continuous is.
 
 Music (2026-09-22): the audio preview became a small player. Sound: a
 perceptual volume, `scaletempo` so speed keeps the pitch, a spectrum folded

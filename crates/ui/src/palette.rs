@@ -56,6 +56,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.sort", r#"{"key":"size"}"#, "Sort by size"),
     ("ui.sort", r#"{"key":"modified"}"#, "Sort by date modified"),
     ("ui.grid_fill", "{}", "Toggle filled thumbnails"),
+    ("ui.full_width", "{}", "Toggle full-width reading"),
     ("ui.zoom", r#"{"dir":"in"}"#, "Zoom in"),
     ("ui.zoom", r#"{"dir":"out"}"#, "Zoom out"),
     ("ui.zoom", r#"{"dir":"reset"}"#, "Zoom reset"),
@@ -67,6 +68,11 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ),
     ("ui.preview_page", r#"{"delta":1}"#, "Preview: next page"),
     ("ui.reader_page_edit", "{}", "Document: go to page…"),
+    (
+        "ui.inspect",
+        r#"{"action":"section_edit"}"#,
+        "Book: go to chapter…",
+    ),
     ("ui.preview_open_external", "{}", "Preview: open externally"),
     ("ui.preview_copy_path", "{}", "Preview: copy path"),
     (

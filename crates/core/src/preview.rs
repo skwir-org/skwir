@@ -19,6 +19,11 @@ pub struct PreviewRequest {
     pub seconds: Option<f64>,
     /// Bound both image dimensions; backends impose their own upper limit too.
     pub max_side: u32,
+    /// The size body text is read at, in pixels, for a provider that lays
+    /// text out into pages (a book laid out by `MuPDF`); `None` is its own
+    /// default. Pictures and fixed pages ignore it: they are zoomed instead.
+    #[serde(default)]
+    pub text_size: Option<f32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -360,6 +365,7 @@ mod tests {
             page: 1,
             seconds: None,
             max_side: 128,
+            text_size: None,
         };
         for attempt in 0..8 {
             previews.register("test", provider.clone());

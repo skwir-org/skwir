@@ -4,8 +4,8 @@ use std::path::Path;
 
 use anyhow::Context;
 use bibli_core::document::{
-    DocumentInfo, MAX_HITS, MAX_SIDE, PIXELS_FILE, PageContent, Rect, SearchHit, WorkerReply,
-    WorkerRequest, worker,
+    CSS_PER_POINT, DocumentInfo, MAX_HITS, MAX_SIDE, PIXELS_FILE, PageContent, Rect, SearchHit,
+    WorkerReply, WorkerRequest, worker,
 };
 use cairo::{Context as CairoContext, Format, ImageSurface};
 use poppler::{Document, Page};
@@ -29,6 +29,7 @@ fn run() -> anyhow::Result<()> {
     worker::greet(&WorkerReply::Ready(DocumentInfo {
         pages,
         outlines: navigation::outlines(&document),
+        reflowable: false,
     }))?;
     let scratch = Path::new(&args[1]);
     worker::serve(|request, superseded| match request {
@@ -36,6 +37,8 @@ fn run() -> anyhow::Result<()> {
         WorkerRequest::Search { query } => {
             search(&document, &query, superseded).map(WorkerReply::Matches)
         }
+        // A PDF's pages never move.
+        WorkerRequest::Locate { .. } => Ok(WorkerReply::Located(None)),
         // `serve` answers it: nothing runs by the time it is read.
         WorkerRequest::Cancel => anyhow::bail!("nothing to cancel"),
     })
@@ -116,8 +119,8 @@ fn render(
     Ok(WorkerReply::Page {
         content: PageContent {
             page: number,
-            width: width as f32,
-            height: height as f32,
+            width: size.0 as f32 * CSS_PER_POINT,
+            height: size.1 as f32 * CSS_PER_POINT,
             chars,
             links,
         },

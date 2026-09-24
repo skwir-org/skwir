@@ -423,12 +423,16 @@ impl PreviewProvider for DocumentPreviews {
                 fingerprint(req, &source)? == base,
                 "file changed during document open"
             );
+            let setup = crate::document::Setup {
+                library: self.library.clone(),
+                layout: None,
+            };
             if let Some(session) = WorkerSession::open(
                 engine,
                 pdf,
                 source.clone(),
                 scratch,
-                self.library.clone(),
+                setup,
                 lifetime.clone(),
             )? {
                 return Ok(Some(session));
@@ -694,6 +698,7 @@ mod tests {
             page: 1,
             seconds: None,
             max_side: 256,
+            text_size: None,
         }
     }
 

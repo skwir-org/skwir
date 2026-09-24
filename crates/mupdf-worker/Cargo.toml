@@ -14,9 +14,14 @@ bibli-core.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 # MuPDF 1.27.2, built from the source the crate bundles with its own
-# third-party libraries (MuPDF relies on its own lcms2 fork). Only the 14
-# standard PDF fonts are compiled in; scripting and OCR are left out.
-mupdf = { version = "=0.8.0", default-features = false, features = ["base14-fonts"] }
+# third-party libraries (MuPDF relies on its own lcms2 fork). The 14
+# standard PDF fonts are compiled in; text they do not cover (a book in
+# Cyrillic or Chinese without fonts of its own) falls back to the system's.
+# EPUB and HTML are read for books laid out into pages; scripting and OCR
+# are left out.
+mupdf = { version = "=0.8.0", default-features = false, features = ["base14-fonts", "epub", "html"] }
+# The script and language codes MuPDF asks for fallback fonts with.
+mupdf-sys = { version = "=0.8.0", default-features = false }
 
 [lints]
 workspace = true

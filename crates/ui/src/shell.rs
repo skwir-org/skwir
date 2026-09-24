@@ -96,6 +96,12 @@ pub struct Shell {
     pub columns: [bool; 3],
     /// `ui.grid_fill`: thumbnails cropped to their box.
     pub grid_fill: bool,
+    /// `ui.reading_width`: the reading column's widest, in ems, or `None`
+    /// for the whole panel (`markdown::measure`).
+    pub reading_measure: Option<f32>,
+    /// The reading width before Full width was switched on from a preview,
+    /// to return to when it is switched off.
+    reading_width_before: Option<String>,
     /// Ctrl and the wheel over the grid: a trackpad must mean it.
     pub zoom_wheel: crate::reader_scroll::WheelTurn,
     pub column_widths: [f32; 3],
@@ -255,6 +261,8 @@ impl Shell {
             sidebar_folded: std::collections::HashSet::new(),
             columns: [true; 3],
             grid_fill: false,
+            reading_measure: crate::markdown::measure("comfortable"),
+            reading_width_before: None,
             zoom_wheel: crate::reader_scroll::WheelTurn::default(),
             column_widths: crate::views::list::DEFAULT_WIDTHS,
             column_drag: None,
@@ -753,6 +761,35 @@ impl Shell {
         }
     }
 
+    /// `ui.full_width`: the reading column takes the whole panel, or goes
+    /// back to the width it had. The Reading width preference, so it goes
+    /// through `settings.apply` like the choice in the dialog.
+    fn toggle_full_width(&mut self, cx: &mut Context<Self>) {
+        let current = self
+            .app
+            .settings
+            .get::<String>(crate::settings::READING_WIDTH_KEY)
+            .unwrap_or_else(|| "comfortable".into());
+        let next = if current == "full" {
+            self.reading_width_before
+                .take()
+                .unwrap_or_else(|| "comfortable".into())
+        } else {
+            self.reading_width_before = Some(current);
+            "full".into()
+        };
+        self.reading_measure = crate::markdown::measure(&next);
+        cx.notify();
+        if let Err(error) = self.app.dispatch(&Invocation::with_args(
+            "settings.apply",
+            &serde_json::json!({
+                "changes": { crate::settings::READING_WIDTH_KEY: next }
+            }),
+        )) {
+            self.set_status(format!("{error:#}"), true, cx);
+        }
+    }
+
     /// Ctrl and the wheel over the grid. The view stays where it is (the grid
     /// keeps its first visible item); only the keys follow the cursor.
     pub fn zoom_wheel(&mut self, delta: f32, lines: bool, cx: &mut Context<Self>) {
@@ -1061,6 +1098,7 @@ impl Shell {
             }
             "columns_reset" => self.reset_column_widths(cx),
             "grid_fill" => self.toggle_grid_fill(cx),
+            "full_width" => self.toggle_full_width(cx),
             "zoom" => {
                 let dir = arg("dir").unwrap_or_else(|| "reset".into());
                 self.zoom_step(&dir, cx);
@@ -1107,7 +1145,9 @@ impl Shell {
                     .unwrap_or(5.0),
                 cx,
             ),
-            "preview_zoom" => self.preview_zoom(arg("dir").as_deref().unwrap_or("reset"), cx),
+            "preview_zoom" => {
+                self.preview_zoom(arg("dir").as_deref().unwrap_or("reset"), window, cx);
+            }
             "toggle_preview" => self.toggle_preview(window, cx),
             "preview_close" => self.preview_close(window, cx),
             "reader_continuous" => self.reader_continuous(window, cx),
@@ -1279,6 +1319,13 @@ impl Shell {
                 .settings
                 .get::<bool>(crate::settings::GRID_FILL_KEY)
                 .unwrap_or(false);
+            self.reading_measure = crate::markdown::measure(
+                &self
+                    .app
+                    .settings
+                    .get::<String>(crate::settings::READING_WIDTH_KEY)
+                    .unwrap_or_default(),
+            );
             self.columns = crate::settings::COLUMN_KEYS
                 .map(|key| self.app.settings.get::<bool>(key).unwrap_or(true));
             if self.column_drag.is_none()

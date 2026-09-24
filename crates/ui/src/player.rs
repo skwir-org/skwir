@@ -332,6 +332,7 @@ impl Shell {
                             page: 1,
                             seconds: None,
                             max_side: 0,
+                            text_size: None,
                         };
                         previews.open_media(&request, &lifetime, wake.clone())
                     });
@@ -389,6 +390,7 @@ impl Shell {
                         page: 1,
                         seconds: None,
                         max_side: 512,
+                        text_size: None,
                     };
                     let image = previews.render(&request, &CancelToken::new()).ok()??.image;
                     let picture =

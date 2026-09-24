@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
-from fixtures import reader, write_pdf
+from fixtures import book, reader, write_pdf
 
 
 def reply(process, expected):
@@ -30,6 +30,48 @@ def has_ink(pixels, width, height, bounds):
     y1 = min(height, int((bounds["y"] + bounds["height"]) * height) + 1)
     return any(min(pixels[(y * width + x) * 4:(y * width + x) * 4 + 3]) < 128
                for y in range(y0, y1) for x in range(x0, x1))
+
+
+def page_text(process, number):
+    page = send(process, {"Render": {"page": number, "side": 600}})["Page"]["content"]
+    return " ".join("".join(char["text"] for char in page["chars"]).split())
+
+
+def check_book(worker, root, environment):
+    """A reflowable book is laid out at the size asked for, and a page's
+    words are found again after it is laid out at another text size."""
+    epub = root / "Synthetic book.epub"
+    book(epub)
+
+    def start(em):
+        command = [str(worker), str(epub), str(root), f"--layout=420,595,{em}"]
+        return subprocess.Popen(command, env=environment, stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE, text=True)
+
+    with start(9) as small:
+        info = reply(small, 0)["Ready"]
+        assert info["reflowable"] and info["pages"] > 3, info
+        pages = info["pages"]
+        read = pages // 2 + 1
+        anchor = " ".join(page_text(small, read).split()[:6])
+        small.stdin.close()
+        assert small.wait(timeout=5) == 0
+    with start(18) as large:
+        info = reply(large, 0)["Ready"]
+        assert info["reflowable"] and info["pages"] > pages, (info, pages)
+        near = int((read - 1) / pages * info["pages"]) + 1
+        found = send(large, {"Locate": {"text": anchor, "near": near}})["Located"]
+        assert found is not None and anchor in page_text(large, found), (anchor, found)
+        # From a worse estimate the same page is found, nearest first.
+        for off in (max(1, found - 3), min(info["pages"], found + 3)):
+            assert send(large, {"Locate": {"text": anchor, "near": off}}) == {"Located": found}
+        assert send(large, {"Locate": {"text": "absent words", "near": near}}) == {"Located": None}
+        assert send(large, {"Locate": {"text": "", "near": 1}}) == {"Located": None}
+        large.stdin.close()
+        assert large.wait(timeout=5) == 0
+    for bad in ["--layout=1,595,12", "--layout=420,595", "--layout=420,595,200", "--other"]:
+        command = [str(worker), str(epub), str(root), bad]
+        assert "Error" in json.loads(subprocess.check_output(command, env=environment, text=True))["body"]
 
 
 def main():
@@ -58,8 +100,12 @@ def main():
                 assert send(process, {"Search": {"query": ""}}) == {"Matches": []}
                 assert send(process, {"Search": {"query": "absent"}}) == {"Matches": []}
                 for number in [1, 2, 3, 1]:
+                    # A page's own size does not depend on the side rendered.
+                    small = send(process, {"Render": {"page": number, "side": 300}})["Page"]["content"]
                     rendered = send(process, {"Render": {"page": number, "side": 600}})["Page"]
                     page = rendered["content"]
+                    assert abs(small["width"] - page["width"]) < 0.5 and abs(small["height"] - page["height"]) < 0.5
+                    assert (page["width"] > page["height"]) == (rendered["width"] > rendered["height"])
                     width, height = rendered["width"], rendered["height"]
                     assert max(width, height) == 600
                     assert (width > height) == (number == 2 and angle in (90, 270)), "intrinsic rotation"
@@ -79,6 +125,8 @@ def main():
                 assert "Error" in send(process, {"Search": {"query": "x" * 5000}})
                 assert send(process, "Cancel") == {"Error": "cancelled"}
                 assert send(process, {"Search": {"query": "absent"}}) == {"Matches": []}
+                # A PDF's pages never move: nothing to locate.
+                assert send(process, {"Locate": {"text": "needle", "near": 1}}) == {"Located": None}
                 process.stdin.close()
                 assert process.wait(timeout=5) == 0
         # Empty pages and absent outlines exercise nullable native allocations.
@@ -89,21 +137,26 @@ def main():
         ])
         with subprocess.Popen(command, env=environment, stdin=subprocess.PIPE,
                               stdout=subprocess.PIPE, text=True) as process:
-            assert reply(process, 0) == {"Ready": {"pages": 1, "outlines": []}}
-            for side, expected in [(0, 64), (10000, 2048)]:
+            assert reply(process, 0) == {"Ready": {"pages": 1, "outlines": [], "reflowable": False}}
+            for side, expected in [(0, 64), (10000, 4096)]:
                 page = send(process, {"Render": {"page": 100, "side": side}})["Page"]
                 assert max(page["width"], page["height"]) == expected
                 assert page["content"]["page"] == 1
                 assert page["content"]["chars"] == page["content"]["links"] == []
+                # 600 x 800 points is 800 x 1066.7 CSS pixels, whatever the side.
+                assert abs(page["content"]["width"] - 800) < 1 and abs(page["content"]["height"] - 1066.67) < 1
             assert send(process, {"Search": {"query": "needle"}}) == {"Matches": []}
             process.stdin.close()
             assert process.wait(timeout=5) == 0
         if args.engine == "pdfium":
             missing = dict(environment, BIBLI_PDFIUM_LIBRARY=str(root / "missing-library"))
             assert "Unavailable" in json.loads(subprocess.check_output(command, env=missing, text=True))["body"]
+        if args.engine == "mupdf":
+            check_book(args.worker.resolve(), root, environment)
         pdf.write_bytes(b"not a PDF")
         assert "Error" in json.loads(subprocess.check_output(command, env=environment, text=True))["body"]
-    print(f"PASS ({args.engine}): pages, rotation/crop, text geometry, links, outlines, search, limits, corrupt PDF")
+    extra = ", book layout and locate" if args.engine == "mupdf" else ""
+    print(f"PASS ({args.engine}): pages, rotation/crop, text geometry, links, outlines, search, limits, corrupt PDF{extra}")
 
 
 if __name__ == "__main__":

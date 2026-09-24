@@ -42,6 +42,10 @@ pub struct Inspection {
     pub previous: Option<u64>,
     pub next: Option<u64>,
     pub position: u64,
+    /// How many sections the provider numbers, whose offsets are their
+    /// indices (a book's chapters): the toolbar's field goes to one by its
+    /// number, as a document's goes to a page. 0: not numbered.
+    pub sections: u64,
     pub source_available: bool,
     pub notice: String,
     /// What the format knows about the file, for the panel's Details: a

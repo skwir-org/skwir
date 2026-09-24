@@ -6,8 +6,8 @@ use std::path::Path;
 
 use anyhow::Context;
 use bibli_core::document::{
-    Destination, DocumentInfo, Link, MAX_HITS, MAX_PAGE_CHARS, MAX_SIDE, Outline, PIXELS_FILE,
-    PageContent, Rect, SearchHit, TextChar, WorkerReply, WorkerRequest, worker,
+    CSS_PER_POINT, Destination, DocumentInfo, Link, MAX_HITS, MAX_PAGE_CHARS, MAX_SIDE, Outline,
+    PIXELS_FILE, PageContent, Rect, SearchHit, TextChar, WorkerReply, WorkerRequest, worker,
 };
 use pdfium_render::prelude::*;
 
@@ -45,6 +45,8 @@ fn run() -> anyhow::Result<()> {
         WorkerRequest::Search { query } => {
             search(&document, &query, superseded).map(WorkerReply::Matches)
         }
+        // A PDF's pages never move.
+        WorkerRequest::Locate { .. } => Ok(WorkerReply::Located(None)),
         // `serve` answers it: nothing runs by the time it is read.
         WorkerRequest::Cancel => anyhow::bail!("nothing to cancel"),
     })
@@ -87,6 +89,7 @@ fn document_info(document: &PdfDocument<'_>) -> DocumentInfo {
     DocumentInfo {
         pages: u32::from(document.pages().len()),
         outlines,
+        reflowable: false,
     }
 }
 
@@ -170,11 +173,15 @@ fn render(
             })
         })
         .collect();
+    // The page's own size: the rendered pixels scaled to its longer side
+    // in points, which a rotation does not change.
+    let long = page.width().value.max(page.height().value) * CSS_PER_POINT;
+    let own = long / width.max(height).max(1) as f32;
     Ok(WorkerReply::Page {
         content: PageContent {
             page: number,
-            width: width as f32,
-            height: height as f32,
+            width: width as f32 * own,
+            height: height as f32 * own,
             chars,
             links,
         },

@@ -202,6 +202,7 @@ mod tests {
             page: 1,
             seconds: None,
             max_side: 64,
+            text_size: None,
         };
         Provider
             .inspect(&request, &InspectRequest::default(), &CancelToken::new())

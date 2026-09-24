@@ -16,7 +16,7 @@ mod page;
 mod style;
 mod xml;
 
-pub use page::page;
+pub use page::{Drawing, page, stated_size};
 
 use crate::inspection::{check, limits, read_bounded};
 use bibli_core::{

@@ -52,11 +52,24 @@ pub struct Outline {
 pub struct DocumentInfo {
     pub pages: u32,
     pub outlines: Vec<Outline>,
+    /// The engine laid the document out into these pages itself (a book):
+    /// a text size of its own gives other pages. PDF pages are fixed.
+    #[serde(default)]
+    pub reflowable: bool,
 }
+
+/// CSS pixels (1/96 in) in a point (1/72 in): a page's own size is given
+/// in CSS pixels, so a PDF, a book's page and a picture share one 100%.
+pub const CSS_PER_POINT: f32 = 96. / 72.;
+/// The largest a page's own side may be, in CSS pixels (a PDF's largest
+/// page is 200 inches).
+pub const MAX_PAGE_SIZE: f32 = 20_000.;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PageContent {
     pub page: u32,
+    /// The page's own size in CSS pixels, what 100% zoom shows, whatever
+    /// side its pixels were rendered at (`DocumentPage::width`).
     pub width: f32,
     pub height: f32,
     pub chars: Vec<TextChar>,
@@ -85,6 +98,13 @@ pub trait DocumentSession: Send + Sync {
     fn info(&self) -> &DocumentInfo;
     fn render(&self, page: u32, side: u32, cancel: &CancelToken) -> anyhow::Result<DocumentPage>;
     fn search(&self, query: &str, cancel: &CancelToken) -> anyhow::Result<Vec<SearchHit>>;
+    /// The page nearest `near` holding `text`, for a book laid out again:
+    /// the page where what was read now lies. `None` when no page near
+    /// enough holds it, or the document's pages never move (a PDF).
+    fn locate(&self, text: &str, near: u32, cancel: &CancelToken) -> anyhow::Result<Option<u32>> {
+        let _ = (text, near, cancel);
+        Ok(None)
+    }
 }
 
 /// Internal protocol: JSON lines for small requests/metadata, a private RGBA
@@ -109,6 +129,12 @@ pub enum WorkerRequest {
     Search {
         query: String,
     },
+    /// The page nearest `near` holding `text` (`DocumentSession::locate`).
+    /// An engine whose pages are fixed answers `Located(None)`.
+    Locate {
+        text: String,
+        near: u32,
+    },
     /// Stop what runs now: a search notices at its next page. Answered,
     /// like any request, by an `Error`.
     Cancel,
@@ -123,11 +149,14 @@ pub enum WorkerReply {
         height: u32,
     },
     Matches(Vec<SearchHit>),
+    Located(Option<u32>),
     Unavailable(String),
     Error(String),
 }
 
-pub const MAX_SIDE: u32 = 2048;
+/// The longest side a page is rendered at. The reader asks for the side a
+/// page covers on screen (`reader::page_side`), up to this.
+pub const MAX_SIDE: u32 = 4096;
 /// Bytes of one reply line, its newline included.
 pub const MAX_REPLY: usize = 32 * 1024 * 1024;
 /// Bytes of one request line, its newline included.
@@ -253,6 +282,7 @@ pub mod worker {
                         Ok(WorkerReply::Error("x".repeat(MAX_REPLY)))
                     }
                     WorkerRequest::Search { .. } => Ok(WorkerReply::Matches(Vec::new())),
+                    WorkerRequest::Locate { .. } => Ok(WorkerReply::Located(None)),
                     WorkerRequest::Render { page, .. } => anyhow::bail!("page {page} is broken"),
                     WorkerRequest::Cancel => anyhow::bail!("answered by serve"),
                 },

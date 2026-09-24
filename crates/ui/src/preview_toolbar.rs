@@ -62,16 +62,23 @@ fn zoom_menu(shell: &Shell, cx: &mut Context<Shell>) -> Div {
 }
 
 /// Zoom, for whatever is looked at rather than read: a picture or a page.
-/// The same five tools in the same order in both.
+/// The same five tools in the same order in both. A book laid out into pages
+/// by its engine is read: its steps size its text (`Shell::preview_zoom`),
+/// and say so.
 pub fn zoom_tools(bar: &mut Bar, shell: &Shell) {
     let fit = shell.preview.zoom.is_none() && !shell.preview.fit_width;
     let step = |id, icon, title, dir| {
         Button::new(id, icon, title, "ui.preview_zoom").args(serde_json::json!({"dir":dir}))
     };
+    let (smaller, larger) = if shell.reader_reflows() {
+        ("Smaller text", "Larger text")
+    } else {
+        ("Zoom out", "Zoom in")
+    };
     bar.push(Item::button(
         Slot::View,
         1,
-        step("preview-zoom-out", "minus", "Zoom out", "out"),
+        step("preview-zoom-out", "minus", smaller, "out"),
     ));
     bar.push(
         Item::button(
@@ -91,7 +98,7 @@ pub fn zoom_tools(bar: &mut Bar, shell: &Shell) {
     bar.push(Item::button(
         Slot::View,
         1,
-        step("preview-zoom-in", "plus", "Zoom in", "in"),
+        step("preview-zoom-in", "plus", larger, "in"),
     ));
     bar.push(Item::button(
         Slot::View,

@@ -15,6 +15,9 @@ use bibli_platform::{
     rich_preview,
 };
 use std::{collections::HashMap, io::Write, sync::Arc};
+
+mod pages;
+
 pub struct PreviewPlugin;
 impl Plugin for PreviewPlugin {
     fn id(&self) -> &'static str {
@@ -26,11 +29,56 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> &'static str {
         "Read EPUB books with their table of contents"
     }
+    fn on_settings_changed(&self, app: &App, _keys: &[String]) {
+        app.previews.unregister_owner(self.id());
+        self.register(app);
+    }
+    fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
+        use bibli_platform::document::{Engine as Worker, worker_path};
+        vec![bibli_core::plugin::Requirement::new(
+            "bibli-mupdf-worker",
+            "Books laid out into pages by MuPDF",
+            || worker_path(Worker::Mupdf).is_some(),
+        )]
+    }
     fn register(&self, app: &App) {
-        app.previews.register(self.id(), Arc::new(Provider));
+        app.settings.declare(bibli_core::settings::SettingSpec::choice(
+            "preview-epub.backend",
+            "Book engine",
+            "Automatic reads books with the built-in engine: text that reflows in the theme, fixed-layout pages drawn as their book lays them out. MuPDF lays every book out into pages, with its own styles.",
+            "auto",
+            &[
+                ("auto", "Automatic"),
+                ("builtin", "Built-in"),
+                ("mupdf", "MuPDF"),
+            ],
+        ));
+        let engine = match app
+            .settings
+            .get::<String>("preview-epub.backend")
+            .as_deref()
+        {
+            Some("mupdf") => Engine::Mupdf,
+            _ => Engine::BuiltIn,
+        };
+        app.previews
+            .register(self.id(), Arc::new(Provider { engine }));
     }
 }
-struct Provider;
+/// Which engine reads a book (`preview-epub.backend`). Either one sizes
+/// what is read with the reader's text size, and zooms what is looked at.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Engine {
+    /// Reading mode for reflowing books, drawn pages for fixed ones.
+    #[default]
+    BuiltIn,
+    /// Every book laid out into pages by `MuPDF`, in the document reader.
+    Mupdf,
+}
+#[derive(Default)]
+struct Provider {
+    engine: Engine,
+}
 impl PreviewProvider for Provider {
     fn id(&self) -> &'static str {
         "preview-epub"
@@ -51,15 +99,49 @@ impl PreviewProvider for Provider {
         let bytes = container.read(key, "Embedded image", cancel)?;
         Ok(Some(inspection::image(&bytes)?))
     }
+    /// A book of pages opens in the document reader: with `MuPDF`, every
+    /// book, laid out into pages at the reader's text size and again when it
+    /// changes; with the built-in engine, a fixed-layout book, its pages
+    /// drawn as it lays them out (`pages::FixedBook`).
+    fn open_document(
+        &self,
+        req: &PreviewRequest,
+        lifetime: &CancelToken,
+    ) -> anyhow::Result<Option<Arc<dyn bibli_core::document::DocumentSession>>> {
+        if self.engine != Engine::Mupdf {
+            let book = pages::FixedBook::open(req.entry.resolve()?, lifetime)?;
+            return Ok(
+                book.map(|book| Arc::new(book) as Arc<dyn bibli_core::document::DocumentSession>)
+            );
+        }
+        let session = bibli_platform::document::open_book(
+            req.entry.resolve()?,
+            req.text_size,
+            lifetime.clone(),
+        )?;
+        anyhow::ensure!(
+            session.is_some(),
+            "Reading books with MuPDF needs bibli-mupdf-worker; install it, or choose the built-in book engine"
+        );
+        Ok(session)
+    }
     fn inspect(
         &self,
         req: &PreviewRequest,
         view: &InspectRequest,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Inspection>> {
+        // MuPDF's books are documents, opened by `open_document`.
+        if self.engine == Engine::Mupdf {
+            return Ok(None);
+        }
         let path = req.entry.resolve()?;
         let mut container = Container::open(&path, cancel)?;
         let (book, fixed) = package(&mut container, cancel)?;
+        // A book of pages is a document (`open_document`).
+        if fixed {
+            return Ok(None);
+        }
         let (chapters, markups): (Vec<String>, Vec<rich_preview::Markup>) = book
             .spine()
             .iter()
@@ -182,6 +264,7 @@ impl PreviewProvider for Provider {
             previous: (index > 0).then(|| index as u64 - 1),
             next: (index + 1 < chapters.len()).then_some(index as u64 + 1),
             position: index as u64,
+            sections: chapters.len() as u64,
             source_available: true,
             ..Inspection::default()
         };
@@ -195,34 +278,6 @@ impl PreviewProvider for Provider {
                 ..frame
             }));
         }
-        // A fixed-layout page is drawn as its book lays it out: a comic's
-        // lettering is text set over its picture, and reads as nothing
-        // alone. One that states no size is read as text.
-        if fixed {
-            let resources = Chapter {
-                container: &mut container,
-                base,
-                cancel,
-                images: true,
-            };
-            match rich_preview::page(&source, markups[index], cancel, resources) {
-                Ok(Some(image)) => {
-                    return Ok(Some(Inspection {
-                        kind: bibli_core::inspection::InspectionKind::Book,
-                        title: format!("EPUB · page {} / {}", index + 1, chapters.len()),
-                        image: Some(image),
-                        rows,
-                        notice: encoding.notice().unwrap_or_default(),
-                        ..frame
-                    }));
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    inspection::check(cancel)?;
-                    notice.push(format!("The page could not be drawn ({error:#})"));
-                }
-            }
-        }
         let resources = Chapter {
             container: &mut container,
             base,
@@ -230,29 +285,6 @@ impl PreviewProvider for Provider {
             images: true,
         };
         let page = rich_preview::html(&source, markups[index], cancel, resources)?;
-        // A fixed-layout book whose page is one picture (a comic, a
-        // picture book) shows it as a page, the inspection's own picture the
-        // width of the panel, not a picture in a column of text. It is still
-        // a book: its contents, search and links work as on any chapter.
-        if fixed
-            && let [only] = page.blocks.as_slice()
-            && let Some(picture) = &only.picture
-        {
-            let image = match picture {
-                Picture::Ready(image) => image.clone(),
-                Picture::Later { key, .. } => {
-                    inspection::image(&container.read(key, "Embedded image", cancel)?)?
-                }
-            };
-            return Ok(Some(Inspection {
-                kind: bibli_core::inspection::InspectionKind::Book,
-                title: format!("EPUB · page {} / {}", index + 1, chapters.len()),
-                image: Some(image),
-                rows,
-                notice: encoding.notice().unwrap_or_default(),
-                ..frame
-            }));
-        }
         if page.truncated {
             notice.push(inspection::blocks_notice());
         }
@@ -664,10 +696,46 @@ mod tests {
             page: 1,
             seconds: None,
             max_side: 64,
+            text_size: None,
         };
-        Provider
+        Provider::default()
             .inspect(&request, view, &CancelToken::new())
             .map(Option::unwrap)
+    }
+
+    #[test]
+    fn each_engine_answers_through_its_own_surface() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("Synthetic book.epub");
+        book(&path);
+        let request = PreviewRequest {
+            entry: EntryRef::from_path(&path).unwrap(),
+            mime: None,
+            page: 1,
+            seconds: None,
+            max_side: 64,
+            text_size: Some(20.),
+        };
+        let cancel = CancelToken::new();
+        // The built-in engine inspects; it opens no document.
+        let builtin = Provider::default();
+        assert!(builtin.open_document(&request, &cancel).unwrap().is_none());
+        assert!(
+            builtin
+                .inspect(&request, &InspectRequest::default(), &cancel)
+                .unwrap()
+                .is_some()
+        );
+        // MuPDF's books are documents: the reader opens them, never inspect.
+        let mupdf = Provider {
+            engine: Engine::Mupdf,
+        };
+        assert!(
+            mupdf
+                .inspect(&request, &InspectRequest::default(), &cancel)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -961,52 +1029,44 @@ mod tests {
 
     /// A fixed-layout book whose pages are pictures (a comic) shows a page
     /// as a page: the picture, the width of the panel.
-    #[test]
-    fn a_fixed_layout_picture_page_is_a_page() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("Synthetic comic book.epub");
+    fn fixed(path: &std::path::Path, pages: &[(&str, &[u8])]) {
         let opf = OPF.replace(
             "<dc:language>en</dc:language>",
             r#"<dc:language>en</dc:language><meta property="rendition:layout">pre-paginated</meta>"#,
         );
-        let page = br#"<?xml version="1.0" encoding="utf-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Page</title><meta name="viewport" content="width=2, height=3"/></head>
-<body><div><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 2 3"><image width="2" height="3" xlink:href="images/p1.png"/></svg></div></body></html>"#;
-        write(
-            &path,
-            &[
-                ("mimetype", b"application/epub+zip"),
-                ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
-                ("EPUB/book.opf", opf.as_bytes()),
-                ("EPUB/nav.xhtml", NAV.as_bytes()),
-                ("EPUB/one.xhtml", page),
-                ("EPUB/images/p1.png", PNG),
-                (
-                    "EPUB/two.xhtml",
-                    br"<html><body><p>Words on a page.</p></body></html>",
-                ),
-            ],
+        let mut entries: Vec<(&str, &[u8])> = vec![
+            ("mimetype", b"application/epub+zip"),
+            ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+            ("EPUB/book.opf", opf.as_bytes()),
+            ("EPUB/nav.xhtml", NAV.as_bytes()),
+            ("EPUB/images/p1.png", PNG),
+        ];
+        entries.extend_from_slice(pages);
+        write(path, &entries);
+    }
+
+    fn session(path: &std::path::Path) -> Arc<dyn bibli_core::document::DocumentSession> {
+        let request = PreviewRequest {
+            entry: EntryRef::from_path(path).unwrap(),
+            mime: None,
+            page: 1,
+            seconds: None,
+            max_side: 64,
+            text_size: None,
+        };
+        let provider = Provider::default();
+        let cancel = CancelToken::new();
+        assert!(
+            provider
+                .inspect(&request, &InspectRequest::default(), &cancel)
+                .unwrap()
+                .is_none(),
+            "a book of pages is not read as chapters"
         );
-        let first = inspect(&path, &InspectRequest::default()).unwrap();
-        assert_eq!(first.kind, bibli_core::inspection::InspectionKind::Book);
-        assert_eq!(first.title, "EPUB · page 1 / 3");
-        assert!(!first.rows.is_empty(), "the book's contents stay reachable");
-        let image = first.image.expect("the page");
-        // Its viewport is 2 × 3: drawn at four times, the most a small page is.
-        assert_eq!((image.width, image.height), (8, 12));
-        assert!(first.blocks.is_empty());
-        assert_eq!(first.next, Some(1));
-        // A page with text reads as text.
-        let second = inspect(
-            &path,
-            &InspectRequest {
-                offset: 1,
-                ..InspectRequest::default()
-            },
-        )
-        .unwrap();
-        assert!(second.image.is_none());
-        assert_eq!(second.blocks[0].text, "Words on a page.");
+        provider
+            .open_document(&request, &cancel)
+            .unwrap()
+            .expect("a book of pages")
     }
 
     /// A chapter names its pictures, as many as it has, with the size they
@@ -1047,16 +1107,17 @@ mod tests {
             page: 1,
             seconds: None,
             max_side: 64,
+            text_size: None,
         };
         let cancel = CancelToken::new();
         let view = InspectRequest::default();
-        let decoded = Provider
+        let decoded = Provider::default()
             .picture(&request, &view, &later[3].0, &cancel)
             .unwrap()
             .unwrap();
         assert_eq!((decoded.width, decoded.height), (2, 3));
         assert!(
-            Provider
+            Provider::default()
                 .picture(&request, &view, "../outside.png", &cancel)
                 .is_err(),
             "a key is a member, never a path out of the container"
@@ -1089,51 +1150,91 @@ mod tests {
         );
     }
 
-    /// A fixed-layout page that states its size is drawn, its picture and
-    /// its text in place, rather than read as text after its picture.
+    /// A fixed-layout book is a document of pages: each drawn at the side
+    /// the reader asks, its own size what 100% is, its contents leading to
+    /// its pages, its text found by page.
     #[test]
-    fn a_fixed_layout_page_with_a_size_is_drawn() {
+    fn a_fixed_layout_book_is_a_document_of_pages() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("Synthetic drawn book.epub");
-        let opf = OPF.replace(
-            "<dc:language>en</dc:language>",
-            r#"<dc:language>en</dc:language><meta property="rendition:layout">pre-paginated</meta>"#,
-        );
         let page = br#"<?xml version="1.0" encoding="utf-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml"><head><title/><meta name="viewport" content="width=300,height=400"/>
 <style>body { margin: 0 } img { position: absolute; left: 0; top: 0; width: 300px; height: 400px }
 .t { position: absolute; left: 20px; top: 20px; color: #123456 }</style></head>
 <body><img src="images/p1.png" alt=""/><div class="t">Lettering</div></body></html>"#;
-        write(
+        fixed(
             &path,
             &[
-                ("mimetype", b"application/epub+zip"),
-                ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
-                ("EPUB/book.opf", opf.as_bytes()),
-                ("EPUB/nav.xhtml", NAV.as_bytes()),
                 ("EPUB/one.xhtml", page),
-                ("EPUB/images/p1.png", PNG),
                 (
                     "EPUB/two.xhtml",
                     br"<html><body><p>No size stated.</p></body></html>",
                 ),
             ],
         );
-        let first = inspect(&path, &InspectRequest::default()).unwrap();
-        assert_eq!(first.title, "EPUB · page 1 / 3");
-        let image = first.image.expect("the page, drawn");
-        // 300 × 400 at the display side.
-        assert_eq!((image.width, image.height), (1200, 1600));
-        assert!(first.blocks.is_empty(), "nothing is read after the page");
-        let second = inspect(
+        let book = session(&path);
+        let cancel = CancelToken::new();
+        assert_eq!(book.info().pages, 3);
+        assert_eq!(
+            book.info()
+                .outlines
+                .iter()
+                .map(|o| (o.title.as_str(), o.depth, o.page))
+                .collect::<Vec<_>>(),
+            [
+                ("Start", 0, Some(1)),
+                ("Middle", 1, Some(2)),
+                ("End", 0, Some(3))
+            ]
+        );
+        for side in [800, 1600] {
+            let drawn = book.render(1, side, &cancel).unwrap();
+            assert_eq!(drawn.height, side, "drawn at the side asked");
+            assert_eq!(drawn.width * 4, side * 3);
+            assert_eq!(drawn.rgba.len() as u32, drawn.width * drawn.height * 4);
+            assert_eq!((drawn.content.width, drawn.content.height), (300., 400.));
+            assert!(
+                drawn.content.chars.is_empty(),
+                "a drawn page has no text layer"
+            );
+        }
+        // A page that states no size is drawn at the book's.
+        let second = book.render(2, 800, &cancel).unwrap();
+        assert_eq!((second.content.width, second.content.height), (300., 400.));
+        // The third page is missing from the archive: an error of its own.
+        assert!(book.render(3, 800, &cancel).is_err());
+        let pages = |query| {
+            book.search(query, &cancel)
+                .unwrap()
+                .into_iter()
+                .map(|hit| hit.page)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(pages("LETTERING"), [1]);
+        assert_eq!(pages("no size"), [2]);
+        assert!(pages("absent").is_empty());
+    }
+
+    /// A page that states no size and holds one picture (a comic's page) is
+    /// that picture, at its own size.
+    #[test]
+    fn a_fixed_layout_picture_page_is_its_picture() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("Synthetic comic book.epub");
+        fixed(
             &path,
-            &InspectRequest {
-                offset: 1,
-                ..InspectRequest::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(second.blocks[0].text, "No size stated.");
+            &[(
+                "EPUB/one.xhtml",
+                br#"<html><body><img src="images/p1.png" alt=""/></body></html>"#,
+            )],
+        );
+        let page = session(&path).render(1, 800, &CancelToken::new()).unwrap();
+        assert_eq!((page.content.width, page.content.height), (2., 3.));
+        assert_eq!(
+            (page.width, page.height),
+            (2, 3),
+            "a picture is never enlarged"
+        );
     }
 
     #[test]

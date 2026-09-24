@@ -13,6 +13,17 @@ use gpui::{
 };
 
 type Pointer = Rc<dyn Fn(&str, f32, f32, &mut Window, &mut App)>;
+
+/// What pages cover on screen, reported by their elements in prepaint: the
+/// most device pixels any covers on its longer side, and the scale it is
+/// shown at (its size on screen over its own). The reader renders pages at
+/// that side (`Shell::document_shown`) and zooms from that scale.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shown {
+    pub covered: f32,
+    pub scale: f32,
+}
+pub type Report = Rc<std::cell::Cell<Option<Shown>>>;
 pub struct DocumentElement {
     pub image: Arc<RenderImage>,
     pub page: Arc<PageContent>,
@@ -23,6 +34,7 @@ pub struct DocumentElement {
     pub zoom: Option<f32>,
     pub fit_width: bool,
     pub on_pointer: Pointer,
+    pub report: Option<Report>,
 }
 impl IntoElement for DocumentElement {
     type Element = Self;
@@ -96,6 +108,15 @@ impl Element for DocumentElement {
             self.page.height,
         );
         let image = Bounds::new(bounds.origin + point(px(x), px(y)), size(px(w), px(h)));
+        if let Some(report) = &self.report {
+            let shown = Shown {
+                covered: w.max(h) * window.scale_factor(),
+                scale: w / self.page.width.max(1.),
+            };
+            if report.get().is_none_or(|seen| seen.covered < shown.covered) {
+                report.set(Some(shown));
+            }
+        }
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         Prepaint { image, hitbox }
     }

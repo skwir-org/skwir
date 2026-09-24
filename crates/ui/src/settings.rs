@@ -42,6 +42,8 @@ pub const COLUMN_KEYS: [&str; 3] = ["ui.column_size", "ui.column_modified", "ui.
 pub const GRID_FILL_KEY: &str = "ui.grid_fill";
 /// How documents are read: one scrolling column, or a page at a time.
 pub const READER_CONTINUOUS_KEY: &str = "ui.reader_continuous";
+/// How wide a reading column may grow (`markdown::measure`).
+pub const READING_WIDTH_KEY: &str = "ui.reading_width";
 
 /// Declare the shell's own preferences. They live in the `ui` namespace and
 /// exist only while a shell does, so headless tools never see them.
@@ -75,6 +77,21 @@ pub fn declare(app: &App) {
             "Continuous scrolling",
             "Read a document as one scrolling column. Off shows one page at a time, and the reader's own button still changes it for the document in front of you.",
             true,
+        )
+        .section("Documents"),
+    );
+    app.settings.declare(
+        SettingSpec::choice(
+            READING_WIDTH_KEY,
+            "Reading width",
+            "How long the lines of a book or a Markdown file may grow before the text stops widening and sits in the middle of the preview: about 65 characters for Narrow, 85 for Comfortable, 110 for Wide. Full width uses the whole panel, with small margins.",
+            "comfortable",
+            &[
+                ("narrow", "Narrow"),
+                ("comfortable", "Comfortable"),
+                ("wide", "Wide"),
+                ("full", "Full width"),
+            ],
         )
         .section("Documents"),
     );

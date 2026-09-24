@@ -7,15 +7,29 @@ use bibli_core::{
     document::{Destination, DocumentSession, PageContent, Rect, SearchHit},
     scheduler::Priority,
 };
-use gpui::{
-    AnyElement, ClipboardItem, Context, FocusHandle, RenderImage, Window, div, prelude::*, px,
-};
+use gpui::{AnyElement, ClipboardItem, Context, FocusHandle, RenderImage, Window, div, prelude::*};
 use std::{rc::Rc, sync::Arc};
 
 struct SearchResult {
     generation: u64,
     result: Result<Vec<SearchHit>, String>,
 }
+
+/// Where a book laid out again should open: what was read, as the first
+/// words of its page, and how far through the book that page was (0 to 1),
+/// for when the words are not found. `page` is where the reader landed with
+/// it: steps of text size that follow one another without a move keep the
+/// first anchor, instead of drifting a page each time.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Anchor {
+    pub(crate) at: f32,
+    pub(crate) text: String,
+    pub(crate) page: u32,
+}
+
+/// Words of a page's text that find it again in another layout: few enough
+/// to fall on one page of it.
+const ANCHOR_WORDS: usize = 6;
 // Independent switches of one reader, not a state machine in disguise.
 #[allow(clippy::struct_excessive_bools)]
 pub struct ReaderState {
@@ -27,6 +41,18 @@ pub struct ReaderState {
     /// The session was let go because its file changed; the next one is
     /// the same document read again (`Shell::reader_opened`).
     pub(crate) reopened: bool,
+    /// The book is being laid out again at another text size: where the
+    /// reader lands in its new pages.
+    pub(crate) relayout: Option<Anchor>,
+    /// Where the last layout landed, and the lookup of its words running.
+    pub(crate) anchor: Option<Anchor>,
+    /// The scale pages were last shown at (their size on screen over their
+    /// own): where a zoom step from Fit starts.
+    pub(crate) shown_scale: Option<f32>,
+    /// The side the page shown in single-page mode was asked at.
+    pub(crate) shown_side: u32,
+    located: (flume::Sender<(u64, u32)>, flume::Receiver<(u64, u32)>),
+    locating: u64,
     pub focus: Option<FocusHandle>,
     pub selection: Option<(usize, usize)>,
     pub outlines: bool,
@@ -51,6 +77,12 @@ impl Default for ReaderState {
             lifetime: CancelToken::new(),
             tried: false,
             reopened: false,
+            relayout: None,
+            anchor: None,
+            shown_scale: None,
+            shown_side: 0,
+            located: flume::unbounded(),
+            locating: 0,
             focus: None,
             selection: None,
             outlines: false,
@@ -386,7 +418,87 @@ impl Shell {
         );
         cx.notify();
     }
+    /// Where the reader is, to open a book laid out again at: the anchor it
+    /// landed with if it has not moved since, else the current page.
+    pub(crate) fn reader_anchor(&mut self) -> Anchor {
+        let current = self.preview.page;
+        if let Some(anchor) = self.preview.reader.anchor.take()
+            && anchor.page == current
+        {
+            return anchor;
+        }
+        let pages = self
+            .preview
+            .reader
+            .session
+            .as_ref()
+            .map_or(1, |session| session.info().pages.max(1));
+        let text = page(self).map_or_else(String::new, |page| {
+            let text: String = page.chars.iter().map(|c| c.text.as_str()).collect();
+            text.split_whitespace()
+                .take(ANCHOR_WORDS)
+                .collect::<Vec<_>>()
+                .join(" ")
+        });
+        Anchor {
+            at: current.saturating_sub(1) as f32 / pages as f32,
+            text,
+            page: current,
+        }
+    }
+
+    /// Open the book laid out again where `anchor` says: at once on the
+    /// page its share of the book gives, then on the page its words are
+    /// found on, if the reader has not moved meanwhile.
+    pub(crate) fn reader_land(&mut self, anchor: Anchor, cx: &mut Context<Self>) {
+        let reader = &mut self.preview.reader;
+        let Some(session) = reader.session.clone() else {
+            return;
+        };
+        let count = session.info().pages.max(1);
+        let near = ((anchor.at * count as f32).floor() as u32 + 1).min(count);
+        reader.locating = reader.locating.wrapping_add(1);
+        if !anchor.text.is_empty() {
+            let (generation, tx) = (reader.locating, reader.located.0.clone());
+            let cancel = reader.lifetime.child();
+            let text = anchor.text.clone();
+            let wake = self.app.waker_handle();
+            self.app.scheduler.spawn(
+                Priority::Visible,
+                "document-locate",
+                cancel.clone(),
+                move || {
+                    if let Ok(Some(page)) = session.locate(&text, near, &cancel)
+                        && !cancel.is_cancelled()
+                    {
+                        let _ = tx.send((generation, page));
+                        wake();
+                    }
+                },
+            );
+        }
+        self.preview.reader.anchor = Some(Anchor {
+            page: near,
+            ..anchor
+        });
+        self.preview_go_page(near, cx);
+    }
+
     pub fn sync_reader(&mut self, cx: &mut Context<Self>) {
+        while let Ok((generation, page)) = self.preview.reader.located.1.try_recv() {
+            let current = self.preview.page;
+            let reader = &mut self.preview.reader;
+            if generation != reader.locating {
+                continue;
+            }
+            if let Some(anchor) = &mut reader.anchor
+                && anchor.page == current
+                && page != current
+            {
+                anchor.page = page;
+                self.preview_go_page(page, cx);
+            }
+        }
         while let Ok(reply) = self.preview.reader.rx.try_recv() {
             if reply.generation != self.preview.reader.generation {
                 continue;
@@ -430,7 +542,28 @@ pub fn page_element(
     if shell.preview.reader.scroll.continuous {
         return crate::reader_scroll::continuous_element(shell, image, page, cx);
     }
-    let element = page_surface(shell, image, page, zoom, shell.preview.fit_width, cx);
+    let report = crate::elements::document::Report::default();
+    let element = page_surface(
+        shell,
+        image,
+        page,
+        zoom,
+        shell.preview.fit_width,
+        Some(report.clone()),
+        cx,
+    );
+    // Once the page is laid out: what it covers, for the side pages are
+    // rendered at (`Shell::document_shown`).
+    let (side, scale) = (shell.preview.page_side, shell.preview.reader.shown_scale);
+    let entity = cx.entity().downgrade();
+    let watch = gpui::canvas(
+        move |_, window, cx| {
+            crate::reader_scroll::report_shown(&report, side, scale, entity, window, cx);
+        },
+        |_, (), _, _| {},
+    )
+    .absolute()
+    .size_0();
     div()
         .id("reader-canvas")
         .flex_1()
@@ -445,6 +578,7 @@ pub fn page_element(
             d.track_focus(focus).key_context(crate::keymap::READER)
         })
         .child(element)
+        .child(watch)
         .into_any_element()
 }
 
@@ -454,6 +588,7 @@ pub(crate) fn page_surface(
     page: Arc<PageContent>,
     zoom: Option<f32>,
     fit_width: bool,
+    report: Option<crate::elements::document::Report>,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     surface(
@@ -471,6 +606,7 @@ pub(crate) fn page_surface(
             .cloned(),
         cx.global::<Theme>(),
         cx.entity().downgrade(),
+        report,
     )
 }
 
@@ -486,6 +622,7 @@ pub(crate) fn surface(
     hit: Option<SearchHit>,
     theme: &Theme,
     entity: gpui::WeakEntity<Shell>,
+    report: Option<crate::elements::document::Report>,
 ) -> AnyElement {
     let number = page.page;
     let selection = selection
@@ -508,6 +645,7 @@ pub(crate) fn surface(
         highlights,
         zoom,
         fit_width,
+        report,
         colors: (theme.page_match, theme.page_selection),
         on_pointer: Rc::new(move |phase, x, y, window, cx| {
             if let Some(entity) = entity.upgrade() {
@@ -577,7 +715,13 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
             "ui.reader_outline",
         )
         .active(reader.outlines)
-        .enabled(native),
+        // A document without contents (a comic) has none to show.
+        .enabled(
+            reader
+                .session
+                .as_ref()
+                .is_some_and(|session| !session.info().outlines.is_empty()),
+        ),
     ));
     crate::preview_bar::parent_tool(&mut bar, shell);
 
@@ -588,44 +732,14 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
             .args(serde_json::json!({"delta":-1}))
             .enabled(current > 1),
     ));
-    let (accent, border, paper, muted) = (theme.accent, theme.border, theme.bg, theme.text_muted);
-    bar.push(Item::widget(
-        Slot::Navigate,
-        2,
-        move |shell, cx| match &shell.preview.reader.page_input {
-            Some(editor) => div()
-                .w(px(44.))
-                .flex_none()
-                .h(px(28.))
-                .px_1()
-                .border_1()
-                .border_color(accent)
-                .rounded_md()
-                .bg(paper)
-                .child(editor.input.clone())
-                .into_any_element(),
-            None => Button::new(
-                "reader-page-number",
-                "",
-                "Go to page",
-                "ui.reader_page_edit",
-            )
-            .label(shell.preview.page.to_string())
-            .render(shell, cx)
-            .bg(paper)
-            .border_color(border)
-            .into_any_element(),
-        },
-    ));
-    bar.push(Item::widget(Slot::Navigate, 1, move |_, _| {
-        div()
-            .flex_none()
-            .text_xs()
-            .text_color(muted)
-            .whitespace_nowrap()
-            .child(format!("/ {pages}"))
-            .into_any_element()
-    }));
+    crate::preview_bar::number_tool(
+        &mut bar,
+        ("reader-page-number", "Go to page"),
+        ("ui.reader_page_edit", serde_json::json!({})),
+        (u64::from(current), u64::from(pages)),
+        |shell| shell.preview.reader.page_input.as_ref(),
+        theme,
+    );
     bar.push(Item::button(
         Slot::Navigate,
         2,

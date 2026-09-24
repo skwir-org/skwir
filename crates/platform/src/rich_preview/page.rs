@@ -17,8 +17,8 @@
 //! word spacing, with alignment and wrapping, and inline spacers (an empty
 //! `inline-block`'s width, an inline margin) that converters use to kern.
 //! Floats, tables, columns and CSS background images are not laid out. A
-//! page that states no viewport (`<meta name="viewport">`) is not drawn:
-//! the caller reads it as text instead.
+//! page that states no viewport (`<meta name="viewport">`) is drawn at the
+//! size the caller gives for it, or not at all.
 //!
 //! Like reading mode it is inert: fonts and pictures come only through the
 //! caller's `Resources`, and resvg is refused every other reference.
@@ -28,7 +28,7 @@ use super::{
     stylesheets,
 };
 use crate::inspection::{check, limits};
-use bibli_core::{CancelToken, inspection::Align, thumbs::Image};
+use bibli_core::{CancelToken, inspection::Align};
 use ego_tree::NodeRef;
 use resvg::{
     tiny_skia,
@@ -49,18 +49,38 @@ const PICTURES: usize = 64;
 /// The largest a page's own size may be, in CSS pixels.
 const VIEWPORT: f32 = 8192.;
 
-/// The page drawn, or `None` when it states no size of its own and is read
-/// as text instead.
+/// A page drawn: its pixels, and its own size in CSS pixels, what 100% is.
+pub struct Drawing {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+    pub own: (f32, f32),
+}
+
+/// The page drawn with `side` pixels on its longer side (bounded by
+/// `document::MAX_SIDE`), at the size its viewport states, else at
+/// `fallback`; `None` when it states none and there is no fallback.
 pub fn page(
     source: &str,
     markup: Markup,
     cancel: &CancelToken,
     mut resources: impl Resources,
-) -> anyhow::Result<Option<Image>> {
-    let Some((canvas, drawn)) = layout(source, markup, cancel, &mut resources)? else {
+    side: u32,
+    fallback: Option<(f32, f32)>,
+) -> anyhow::Result<Option<Drawing>> {
+    let Some((canvas, drawn)) = layout(source, markup, cancel, &mut resources, fallback)? else {
         return Ok(None);
     };
-    render(canvas, drawn).map(Some)
+    let own = (drawn.width, drawn.height);
+    let side = side.clamp(64, bibli_core::document::MAX_SIDE);
+    render(canvas, drawn, side).map(|(width, height, rgba)| {
+        Some(Drawing {
+            width,
+            height,
+            rgba,
+            own,
+        })
+    })
 }
 
 /// What a page draws, in paint order: SVG fragments, which resvg draws with
@@ -145,9 +165,10 @@ fn layout(
     markup: Markup,
     cancel: &CancelToken,
     resources: &mut impl Resources,
+    fallback: Option<(f32, f32)>,
 ) -> anyhow::Result<Option<(Canvas, Drawn)>> {
     let doc = document(source, markup);
-    let Some((width, height)) = viewport(&doc) else {
+    let Some((width, height)) = viewport(&doc).or(fallback) else {
         return Ok(None);
     };
     let sheets = stylesheets(&doc, resources);
@@ -191,6 +212,11 @@ fn layout(
             pictures: page.pictures,
         },
     )))
+}
+
+/// The size a page states for itself, in CSS pixels, if it does.
+pub fn stated_size(source: &str, markup: Markup) -> Option<(f32, f32)> {
+    viewport(&document(source, markup))
 }
 
 /// The page's size, from `<meta name="viewport" content="width=…,height=…">`.
@@ -1272,10 +1298,10 @@ fn attribute(value: &str) -> String {
     escape(value).replace('"', "&quot;")
 }
 
-/// Draw the page at the display side, on white paper, layer by layer.
-fn render(canvas: Canvas, drawn: Drawn) -> anyhow::Result<Image> {
-    let side = limits::IMAGE_DISPLAY_SIDE as f32;
-    let scale = (side / drawn.width.max(drawn.height)).min(4.);
+/// Draw the page with `side` pixels on its longer side, on white paper,
+/// layer by layer: its width, height and pixels.
+fn render(canvas: Canvas, drawn: Drawn, side: u32) -> anyhow::Result<(u32, u32, Vec<u8>)> {
+    let scale = side as f32 / drawn.width.max(drawn.height);
     let width = (drawn.width * scale).round().max(1.) as u32;
     let height = (drawn.height * scale).round().max(1.) as u32;
     let mut options = usvg::Options {
@@ -1323,11 +1349,7 @@ fn render(canvas: Canvas, drawn: Drawn) -> anyhow::Result<Image> {
             [color.red(), color.green(), color.blue(), color.alpha()]
         })
         .collect();
-    Ok(Image {
-        width,
-        height,
-        rgba: rgba.into(),
-    })
+    Ok((width, height, rgba))
 }
 
 /// Draw a picture into `rect` under `transform`: decoded within the bounds
@@ -1563,7 +1585,7 @@ mod tests {
         <div class="t m fs x y h">A<span class="_ _7"></span>B<span class="gone">hidden</span></div></div></body></html>"#;
 
     fn laid_out(source: &str, resources: &mut Files) -> (Canvas, Drawn) {
-        layout(source, Markup::Xhtml, &CancelToken::new(), resources)
+        layout(source, Markup::Xhtml, &CancelToken::new(), resources, None)
             .unwrap()
             .expect("a page with a viewport")
     }
@@ -1618,12 +1640,12 @@ mod tests {
     #[test]
     fn the_page_is_drawn_with_the_books_font_over_its_picture() {
         let (canvas, drawn) = laid_out(CONVERTED, &mut files());
-        let image = render(canvas, drawn).unwrap();
-        // A small page is drawn at most four times its size.
-        assert_eq!((image.width, image.height), (800, 400));
+        // The 200 × 100 page drawn with 800 pixels on its longer side.
+        let (width, height, rgba) = render(canvas, drawn, 800).unwrap();
+        assert_eq!((width, height), (800, 400));
         let at = |x: u32, y: u32| {
-            let i = ((y * image.width + x) * 4) as usize;
-            [image.rgba[i], image.rgba[i + 1], image.rgba[i + 2]]
+            let i = ((y * width + x) * 4) as usize;
+            [rgba[i], rgba[i + 1], rgba[i + 2]]
         };
         // The picture, away from the text.
         assert_eq!(at(600, 100), [200, 30, 30]);
@@ -1635,6 +1657,25 @@ mod tests {
             "the letter is drawn: {:?}",
             [r, g, b]
         );
+    }
+
+    #[test]
+    fn a_page_is_drawn_at_the_side_asked_and_keeps_its_own_size() {
+        // Twice the side: twice the pixels, the same letter, the same page.
+        let drawing = page(
+            CONVERTED,
+            Markup::Xhtml,
+            &CancelToken::new(),
+            files(),
+            1600,
+            None,
+        )
+        .unwrap()
+        .expect("a page with a viewport");
+        assert_eq!((drawing.width, drawing.height), (1600, 800));
+        assert_eq!(drawing.own, (200., 100.));
+        let i = ((636 * drawing.width + 100) * 4) as usize;
+        assert!(drawing.rgba[i] < 60, "the letter is drawn at the new scale");
     }
 
     #[test]
@@ -1657,12 +1698,23 @@ mod tests {
     }
 
     #[test]
-    fn a_page_without_a_size_is_read_instead() {
+    fn a_page_without_a_size_takes_the_one_given_for_it() {
         let page = "<html><head></head><body><p>Text</p></body></html>";
+        let cancel = CancelToken::new();
         assert!(
-            layout(page, Markup::Html, &CancelToken::new(), &mut files())
+            layout(page, Markup::Html, &cancel, &mut files(), None)
                 .unwrap()
                 .is_none()
         );
+        let (_, drawn) = layout(
+            page,
+            Markup::Html,
+            &cancel,
+            &mut files(),
+            Some((300., 400.)),
+        )
+        .unwrap()
+        .expect("drawn at the size given");
+        assert_eq!((drawn.width, drawn.height), (300., 400.));
     }
 }

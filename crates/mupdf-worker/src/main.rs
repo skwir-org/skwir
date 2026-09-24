@@ -2,6 +2,11 @@
 //! A document stays open for the worker's lifetime; each request loads its
 //! page and drops it. The parent enforces cancellation, time and output limits.
 //!
+//! A reflowable document (a book) is laid out into pages of the size and
+//! text size the parent gives (`--layout=width,height,em`, in points), and
+//! says so (`DocumentInfo::reflowable`): the parent opens it again at
+//! another text size. A PDF's pages are fixed and ignore it.
+//!
 //! `MuPDF` gives page geometry in points with the origin at the top left of
 //! the page's bounds, crop and rotation already applied: pixels, characters,
 //! links and search hits all share that space, and are normalized against the
@@ -12,10 +17,12 @@ use std::path::Path;
 
 use anyhow::Context;
 use bibli_core::document::{
-    Destination, DocumentInfo, Link, MAX_HITS, MAX_PAGE_CHARS, MAX_SIDE, Outline, PIXELS_FILE,
-    PageContent, Rect, SearchHit, TextChar, WorkerReply, WorkerRequest, worker,
+    CSS_PER_POINT, Destination, DocumentInfo, Link, MAX_HITS, MAX_PAGE_CHARS, MAX_SIDE, Outline,
+    PIXELS_FILE, PageContent, Rect, SearchHit, TextChar, WorkerReply, WorkerRequest, worker,
 };
 use mupdf::{Colorspace, Device, Document, Matrix, Page, Pixmap, Quad, TextPageFlags};
+
+mod fonts;
 
 /// Entries of a document's outline, and links on one page.
 const ENTRIES: usize = 4096;
@@ -30,21 +37,36 @@ fn main() {
 
 fn run() -> anyhow::Result<()> {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
-    anyhow::ensure!(args.len() == 2, "expected PDF path and scratch directory");
+    anyhow::ensure!(
+        matches!(args.len(), 2 | 3),
+        "expected document path, scratch directory and an optional layout"
+    );
     let path = args[0]
         .to_str()
         .context("document path is not valid UTF-8")?;
-    let document =
-        Document::open(path).context("open PDF (encrypted files require an external reader)")?;
+    let layout = match args.get(2) {
+        Some(arg) => Some(layout(arg.to_str().context("invalid layout")?)?),
+        None => None,
+    };
+    // Text in a script no font of the document covers asks the desktop.
+    mupdf::set_font_loader(fonts::Fallback::default());
+    let mut document = Document::open(path)
+        .context("open document (encrypted files require an external reader)")?;
     anyhow::ensure!(
         !document.needs_password()?,
-        "PDF is encrypted; open it in an external reader"
+        "document is encrypted; open it in an external reader"
     );
+    let reflowable = document.is_reflowable()?;
+    if reflowable {
+        let [width, height, em] = layout.unwrap_or([420., 595., 12.]);
+        document.layout(width, height, em)?;
+    }
     let pages = u32::try_from(document.page_count()?)?;
     anyhow::ensure!(pages > 0, "document has no pages");
     worker::greet(&WorkerReply::Ready(DocumentInfo {
         pages,
         outlines: outlines(&document),
+        reflowable,
     }))?;
     let scratch = Path::new(&args[1]);
     worker::serve(|request, superseded| match request {
@@ -52,9 +74,36 @@ fn run() -> anyhow::Result<()> {
         WorkerRequest::Search { query } => {
             search(&document, pages, &query, superseded).map(WorkerReply::Matches)
         }
+        // A PDF's pages never move.
+        WorkerRequest::Locate { .. } if !reflowable => Ok(WorkerReply::Located(None)),
+        WorkerRequest::Locate { text, near } => {
+            locate(&document, pages, &text, near, superseded).map(WorkerReply::Located)
+        }
         // `serve` answers it: nothing runs by the time it is read.
         WorkerRequest::Cancel => anyhow::bail!("nothing to cancel"),
     })
+}
+
+/// `--layout=width,height,em`: page size and body text size, in points,
+/// each bounded.
+fn layout(arg: &str) -> anyhow::Result<[f32; 3]> {
+    let values: Vec<f32> = arg
+        .strip_prefix("--layout=")
+        .context("unknown argument")?
+        .split(',')
+        .map(str::parse)
+        .collect::<Result<_, _>>()?;
+    let [width, height, em] = values[..] else {
+        anyhow::bail!("layout needs a width, a height and a text size");
+    };
+    anyhow::ensure!(
+        [width, height]
+            .iter()
+            .all(|side| (72. ..=2000.).contains(side))
+            && (4. ..=72.).contains(&em),
+        "layout out of bounds"
+    );
+    Ok([width, height, em])
 }
 
 /// The outline flattened in reading order, with its depth. An outline that
@@ -153,8 +202,8 @@ fn render(
     Ok(WorkerReply::Page {
         content: PageContent {
             page: number,
-            width: width as f32,
-            height: height as f32,
+            width: page_width * CSS_PER_POINT,
+            height: page_height * CSS_PER_POINT,
             chars: chars(&page, space),
             links: links(&page, space),
         },
@@ -232,6 +281,44 @@ fn links(page: &Page, space: [f32; 4]) -> Vec<Link> {
             })
         })
         .collect()
+}
+
+/// The page nearest `near` holding `text`, looking at most `LOCATE` pages
+/// either side, nearest first: after a book is laid out again, what was read
+/// is a page or two from where its share of the book says. A text the book
+/// repeats (a refrain, a running phrase) is found where it is nearest.
+fn locate(
+    document: &Document,
+    pages: u32,
+    text: &str,
+    near: u32,
+    superseded: &dyn Fn() -> bool,
+) -> anyhow::Result<Option<u32>> {
+    const LOCATE: u32 = 24;
+    anyhow::ensure!(
+        text.len() <= 4096 && !text.contains('\0'),
+        "invalid text to locate"
+    );
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    let near = near.clamp(1, pages);
+    for distance in 0..=LOCATE {
+        for page in [near.checked_sub(distance), near.checked_add(distance)] {
+            let Some(page) = page.filter(|page| (1..=pages).contains(page)) else {
+                continue;
+            };
+            if distance == 0 && page != near {
+                continue;
+            }
+            anyhow::ensure!(!superseded(), "locate superseded");
+            let loaded = document.load_page(i32::try_from(page - 1)?)?;
+            if !loaded.search(text, 1)?.is_empty() {
+                return Ok(Some(page));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// Stops, with an error nobody reads, as soon as a newer request waits.

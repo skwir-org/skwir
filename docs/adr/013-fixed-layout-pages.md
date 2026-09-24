@@ -47,7 +47,10 @@ image, shown as the page, the width of the panel:
   older copies of two decoders to the tree. An SVG frame's pictures (a
   cover page) are placed through its `viewBox`.
 - The page is drawn at the display side, at most four times its size, on
-  white. A page that states no size is read as text, as before.
+  white. A page that states no size is read as text, as before. Zoomed in, it is drawn again at the side it
+  covers (`InspectRequest::picture_side`, at most `limits::PICTURE_SIDE`,
+  4096 px); its own size in CSS pixels (`Inspection::image_size`) is what
+  100% is, whatever its pixels.
 
 ## Consequences
 
@@ -59,3 +62,14 @@ image, shown as the page, the width of the panel:
   converter wrote is unreadable anyway; search still reads the page's text.
 - Fixed-layout pages built on what this layout does not know (floats,
   tables, multi-column text) come out approximately.
+
+## Addendum (2026-09-24): a book of pages is a document
+
+A fixed-layout book opens in the document reader, like a PDF, through an
+in-process `DocumentSession` (`preview-epub/src/pages.rs`), continuously or
+a page at a time; comics do the same (ADR-015). Each page is drawn at the
+side the reader asks. A page that states no size and holds a single picture
+is that picture; any other page without a size is drawn at the size the
+book's first pages state. The book's contents become the reader's outline,
+and search finds the pages whose text holds the words.
+

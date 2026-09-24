@@ -15,6 +15,46 @@ pub(crate) struct CachedPage {
     pub image: Arc<RenderImage>,
     pub content: Arc<PageContent>,
     bytes: usize,
+    /// The side it was asked at: drawn again only when pages are shown
+    /// larger than that, whatever pixels the engine could give.
+    side: u32,
+}
+
+/// Steps pages are rendered at: a zoom step of 1.25 crosses at most one.
+const SIDE_STEP: f32 = 512.;
+
+/// The side to render a page at that covers `covered` device pixels on its
+/// longer side: the next step, a little short allowed, up to `MAX_SIDE`.
+pub(crate) fn page_side(covered: f32) -> u32 {
+    let steps = if covered.is_finite() {
+        (covered / 1.05 / SIDE_STEP).ceil().max(1.)
+    } else {
+        1.
+    };
+    ((steps * SIDE_STEP) as u32).min(bibli_core::document::MAX_SIDE)
+}
+
+/// Hand what the pages covered this frame to the shell, when it changes the
+/// side they are rendered at or the scale a zoom step starts from.
+pub(crate) fn report_shown(
+    report: &crate::elements::document::Report,
+    side: u32,
+    scale: Option<f32>,
+    entity: gpui::WeakEntity<Shell>,
+    window: &mut Window,
+    cx: &mut gpui::App,
+) {
+    let Some(shown) = report.take() else {
+        return;
+    };
+    if page_side(shown.covered) == side && scale.is_some_and(|s| (s - shown.scale).abs() < 1e-4) {
+        return;
+    }
+    window.defer(cx, move |window, cx| {
+        if let Some(shell) = entity.upgrade() {
+            shell.update(cx, |shell, cx| shell.document_shown(shown, window, cx));
+        }
+    });
 }
 struct PageResult {
     generation: u64,
@@ -236,6 +276,8 @@ impl Shell {
         if !first {
             return;
         }
+        // A book laid out again lands where it was read (`reader_land`).
+        let relaid = self.preview.reader.relayout.take().filter(|_| reopened);
         let scroll = &mut self.preview.reader.scroll;
         if reopened && scroll.continuous {
             let mut top = scroll.list.logical_scroll_top();
@@ -243,9 +285,15 @@ impl Shell {
             scroll.list.reset(count);
             scroll.layout.borrow_mut().take();
             scroll.list.scroll_to(top);
+            if let Some(anchor) = relaid {
+                self.reader_land(anchor, cx);
+            }
             return;
         }
         if reopened {
+            if let Some(anchor) = relaid {
+                self.reader_land(anchor, cx);
+            }
             return;
         }
         let continuous = crate::settings::reader_mode(self);
@@ -386,10 +434,42 @@ impl Shell {
         }
     }
 
+    /// Pages were shown at `shown` (`report_shown`): render the next ones
+    /// at the side they cover, and draw again the ones shown larger than
+    /// they were rendered. A smaller side leaves drawn pages as they are.
+    pub(crate) fn document_shown(
+        &mut self,
+        shown: crate::elements::document::Shown,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.preview.reader.shown_scale = Some(shown.scale);
+        let side = page_side(shown.covered);
+        if side == self.preview.page_side {
+            return;
+        }
+        let grew = side > self.preview.page_side;
+        self.preview.page_side = side;
+        tracing::debug!(side, "document pages rendered at");
+        if !grew || self.preview.reader.session.is_none() {
+            return;
+        }
+        if self.preview.reader.scroll.continuous {
+            self.request_document_page();
+        } else if self.preview.reader.shown_side < side {
+            // The page shown is drawn again, where it is.
+            self.cancel_pending_preview();
+            self.preview.refresh = true;
+            self.preview.phase = crate::preview::PreviewPhase::Queued;
+            cx.notify();
+        }
+    }
+
     fn request_document_page(&mut self) {
         let Some(session) = self.preview.reader.session.clone() else {
             return;
         };
+        let side = self.preview.page_side;
         let initial = match &self.preview.content {
             Some(PreviewContent::Image {
                 document: Some(page),
@@ -397,12 +477,17 @@ impl Shell {
             }) => Some(page.page),
             _ => None,
         };
+        // The page the preview opened on is drawn from its content until
+        // it is shown larger than it was rendered.
+        let initial = initial.filter(|_| self.preview.reader.shown_side >= side);
         let scroll = &mut self.preview.reader.scroll;
         if !scroll.continuous || scroll.pending.is_some() {
             return;
         }
         let Some(number) = scroll.wanted.iter().copied().find(|p| {
-            Some(*p) != initial && !scroll.pages.contains_key(p) && !scroll.errors.contains_key(p)
+            Some(*p) != initial
+                && scroll.pages.get(p).is_none_or(|cached| cached.side < side)
+                && !scroll.errors.contains_key(p)
         }) else {
             return;
         };
@@ -425,7 +510,7 @@ impl Shell {
             cancel.clone(),
             move || {
                 let result = session
-                    .render(number, bibli_core::document::MAX_SIDE, &cancel)
+                    .render(number, side, &cancel)
                     .and_then(|page| {
                         let bytes = page.rgba.len();
                         let image =
@@ -435,6 +520,7 @@ impl Shell {
                             image,
                             content: page.content,
                             bytes,
+                            side,
                         })
                     })
                     .map_err(|e| format!("{e:#}"));
@@ -510,6 +596,10 @@ pub fn continuous_element(
     let layout = scroll.layout.clone();
     let requested = Rc::new(RefCell::new(Vec::new()));
     let seen = requested.clone();
+    // What the rows cover, read once they are laid out.
+    let report = crate::elements::document::Report::default();
+    let row_report = report.clone();
+    let (side, scale) = (shell.preview.page_side, reader.shown_scale);
     let entity = cx.entity().downgrade();
     let after_entity = entity.clone();
     let lifetime = reader.lifetime.clone();
@@ -566,13 +656,11 @@ pub fn continuous_element(
                     .pb(px(12.))
                     .flex()
                     .justify_center();
-                let shown = if number == page.page {
-                    Some((image.clone(), page.clone()))
-                } else {
-                    pages
-                        .get(&number)
-                        .map(|cached| (cached.image.clone(), cached.content.clone()))
-                };
+                // A page drawn again sharper replaces the one it opened on.
+                let shown = pages
+                    .get(&number)
+                    .map(|cached| (cached.image.clone(), cached.content.clone()))
+                    .or_else(|| (number == page.page).then(|| (image.clone(), page.clone())));
                 if let Some((image, content)) = shown {
                     row = row.child(div().w(px(pw * scale)).h(px(row_height)).child(
                         crate::reader::surface(
@@ -585,6 +673,7 @@ pub fn continuous_element(
                             hit.clone(),
                             &theme,
                             entity.clone(),
+                            Some(row_report.clone()),
                         ),
                     ));
                 } else {
@@ -645,6 +734,7 @@ pub fn continuous_element(
             )
             .unwrap_or((after_list.logical_scroll_top().item_ix as u32 + 1).min(count));
             wanted = wanted_pages(wanted, current, count);
+            report_shown(&report, side, scale, after_entity.clone(), window, cx);
             window.defer(cx, move |window, cx| {
                 if !lifetime.is_cancelled()
                     && let Some(entity) = after_entity.upgrade()
@@ -704,6 +794,18 @@ mod tests {
     }
 
     #[test]
+    fn pages_are_rendered_at_the_step_they_cover() {
+        use bibli_core::document::MAX_SIDE;
+        // A little short of a step is that step; past it, the next.
+        assert_eq!(page_side(426.), 512);
+        assert_eq!(page_side(1067.), 1024);
+        assert_eq!(page_side(1100.), 1536);
+        assert_eq!(page_side(0.), 512);
+        assert_eq!(page_side(f32::NAN), 512);
+        assert_eq!(page_side(100_000.), MAX_SIDE);
+    }
+
+    #[test]
     fn cache_releases_distant_pages_but_keeps_visible_pixels_and_geometry() {
         let mut state = DocumentScroll::default();
         for number in 1..=8 {
@@ -720,6 +822,7 @@ mod tests {
                     }),
                     // Exercise accounting with tiny synthetic buffers.
                     bytes: CACHE_BYTES / 4,
+                    side: 1024,
                 },
             );
             Rc::make_mut(&mut state.sizes).insert(number, (600., 800.));

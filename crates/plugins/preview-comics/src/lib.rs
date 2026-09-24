@@ -1,7 +1,8 @@
-//! CBZ/CBR comic pages, read through libarchive without whole-archive extraction.
+//! CBZ/CBR comic books in the document reader, their pages read through
+//! libarchive one at a time, without extracting the archive.
 use bibli_core::{
     App, CancelToken,
-    inspection::{InspectRequest, Inspection},
+    document::{DocumentInfo, DocumentPage, DocumentSession, PageContent, SearchHit},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
 };
@@ -16,7 +17,7 @@ impl Plugin for PreviewPlugin {
         "Preview: comics"
     }
     fn description(&self) -> &'static str {
-        "Read CBZ and CBR comic books page by page"
+        "Read CBZ and CBR comic books, continuously or a page at a time"
     }
     fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
         vec![
@@ -43,35 +44,72 @@ impl PreviewProvider for Provider {
             "cbz" | "cbr" | "cb7" | "cbt"
         )
     }
-    fn inspect(
+    /// A comic is a document of pages: read continuously or a page at a
+    /// time in the reader, each page decoded at the side it is shown at.
+    fn open_document(
         &self,
         req: &PreviewRequest,
-        view: &InspectRequest,
-        cancel: &CancelToken,
-    ) -> anyhow::Result<Option<Inspection>> {
+        lifetime: &CancelToken,
+    ) -> anyhow::Result<Option<Arc<dyn DocumentSession>>> {
         let path = req.entry.resolve()?;
-        let mut pages: Vec<_> = archive::list(&path, cancel)?
+        let mut pages: Vec<_> = archive::list(&path, lifetime)?
             .members
             .into_iter()
             .filter(is_page)
             .collect();
         pages.sort_by_cached_key(|m| bibli_core::collate::sort_key(m.name.as_ref()));
         anyhow::ensure!(!pages.is_empty(), "Comic contains no supported images");
-        let index = view.offset.min(pages.len() as u64 - 1) as usize;
-        let page = &pages[index];
-        let image = inspection::image(&archive::read(&path, page, cancel)?)?;
-        Ok(Some(Inspection {
-            kind: bibli_core::inspection::InspectionKind::Comic,
-            title: format!("Comic · {} / {}", index + 1, pages.len()),
-            notice: page.name.clone(),
-            image: Some(image),
-            previous: (index > 0).then(|| index as u64 - 1),
-            next: (index + 1 < pages.len()).then_some(index as u64 + 1),
-            position: index as u64,
-            ..Inspection::default()
-        }))
+        let count = u32::try_from(pages.len())?;
+        Ok(Some(Arc::new(Comic {
+            path,
+            pages,
+            info: DocumentInfo {
+                pages: count,
+                outlines: Vec::new(),
+                reflowable: false,
+            },
+        })))
     }
 }
+
+/// A comic's pages, read from the archive when the reader asks for one.
+struct Comic {
+    path: std::path::PathBuf,
+    pages: Vec<archive::Member>,
+    info: DocumentInfo,
+}
+
+impl DocumentSession for Comic {
+    fn info(&self) -> &DocumentInfo {
+        &self.info
+    }
+
+    /// A page decoded with at most `side` pixels on its longer side; its own
+    /// size is what 100% is.
+    fn render(&self, page: u32, side: u32, cancel: &CancelToken) -> anyhow::Result<DocumentPage> {
+        let number = page.clamp(1, self.info.pages);
+        let member = &self.pages[number as usize - 1];
+        let decoded = inspection::picture(&archive::read(&self.path, member, cancel)?, side)?;
+        Ok(DocumentPage {
+            width: decoded.width,
+            height: decoded.height,
+            rgba: decoded.rgba,
+            content: Arc::new(PageContent {
+                page: number,
+                width: decoded.own.0 as f32,
+                height: decoded.own.1 as f32,
+                chars: Vec::new(),
+                links: Vec::new(),
+            }),
+        })
+    }
+
+    /// Pictures have no text to find.
+    fn search(&self, _query: &str, _cancel: &CancelToken) -> anyhow::Result<Vec<SearchHit>> {
+        Ok(Vec::new())
+    }
+}
+
 /// A picture the book shows: a regular, readable image, and not something a
 /// tool left beside the pages. Archives made on a Mac carry an `AppleDouble`
 /// twin of every page (`__MACOSX/._page01.jpg`) that sorts first and is no

@@ -61,11 +61,22 @@ pub struct MarkdownStyle {
     pub reading: bool,
 }
 
-/// Characters per line a reading column aims for.
-const MEASURE: f32 = 42.;
+/// The widest a reading column may be, in ems of its text, for a
+/// `ui.reading_width` choice: `None` is the whole panel. An em holds about
+/// two characters of running text, so Comfortable is about 85 a line.
+pub fn measure(choice: &str) -> Option<f32> {
+    match choice {
+        "narrow" => Some(32.),
+        "wide" => Some(56.),
+        "full" => None,
+        _ => Some(42.),
+    }
+}
 
 impl MarkdownStyle {
-    pub fn new(theme: &Theme, body_size: f32, reading: bool) -> Self {
+    /// `measure` is the reading column's width in ems (`measure`), for a
+    /// style that reads.
+    pub fn new(theme: &Theme, body_size: f32, reading: bool, measure: Option<f32>) -> Self {
         let heading_sizes = std::array::from_fn(|level| match level {
             0 => body_size,
             _ if reading => body_size * HEADING_SCALE[level],
@@ -105,7 +116,7 @@ impl MarkdownStyle {
                 theme.text
             },
             placeholder: theme.surface,
-            measure: reading.then_some(body_size * MEASURE),
+            measure: measure.filter(|_| reading).map(|ems| body_size * ems),
             reading,
         }
     }
@@ -354,4 +365,27 @@ fn code_box(
         );
     }
     container.child(text).into_any_element()
+}
+
+#[cfg(test)]
+mod reading_width_tests {
+    use super::*;
+
+    #[test]
+    fn the_reading_column_follows_the_preference_and_the_text_size() {
+        let theme = Theme::light();
+        let column = |size, choice| MarkdownStyle::new(&theme, size, true, measure(choice)).measure;
+        assert_eq!(column(16., "comfortable"), Some(16. * 42.));
+        assert_eq!(column(20., "comfortable"), Some(20. * 42.));
+        assert!(column(16., "narrow") < column(16., "comfortable"));
+        assert!(column(16., "wide") > column(16., "comfortable"));
+        assert_eq!(column(16., "full"), None);
+        // An unknown value reads as the default.
+        assert_eq!(column(16., "other"), column(16., "comfortable"));
+        // Only a reading style has a column.
+        assert_eq!(
+            MarkdownStyle::new(&theme, 16., false, measure("comfortable")).measure,
+            None
+        );
+    }
 }

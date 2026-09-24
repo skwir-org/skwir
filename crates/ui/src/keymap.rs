@@ -300,6 +300,12 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         Some("Inspector"),
     ),
     (
+        "ctrl-0",
+        "ui.inspect",
+        r#"{"action":"reset"}"#,
+        Some("Inspector"),
+    ),
+    (
         "f3",
         "ui.inspect",
         r#"{"action":"find_next"}"#,

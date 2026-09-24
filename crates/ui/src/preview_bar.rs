@@ -160,6 +160,54 @@ impl Bar {
     }
 }
 
+/// Where a document or a book is, between its previous and next buttons:
+/// its page or chapter as a button that becomes a field when clicked
+/// (`edit`), then how many there are. `editor` finds the field while it is
+/// open; the reader's page and a book's chapter are the same tool.
+pub fn number_tool(
+    bar: &mut Bar,
+    (id, title): (&'static str, &'static str),
+    edit: (&'static str, serde_json::Value),
+    (value, total): (u64, u64),
+    editor: fn(&Shell) -> Option<&Field>,
+    theme: &Theme,
+) {
+    let (accent, border, paper, muted) = (theme.accent, theme.border, theme.bg, theme.text_muted);
+    bar.push(Item::widget(
+        Slot::Navigate,
+        2,
+        move |shell, cx| match editor(shell) {
+            Some(field) => div()
+                .w(px(44.))
+                .flex_none()
+                .h(px(28.))
+                .px_1()
+                .border_1()
+                .border_color(accent)
+                .rounded_md()
+                .bg(paper)
+                .child(field.input.clone())
+                .into_any_element(),
+            None => Button::new(id, "", title, edit.0)
+                .args(edit.1.clone())
+                .label(value.to_string())
+                .render(shell, cx)
+                .bg(paper)
+                .border_color(border)
+                .into_any_element(),
+        },
+    ));
+    bar.push(Item::widget(Slot::Navigate, 1, move |_, _| {
+        div()
+            .flex_none()
+            .text_xs()
+            .text_color(muted)
+            .whitespace_nowrap()
+            .child(format!("/ {total}"))
+            .into_any_element()
+    }));
+}
+
 /// Back to the container, first in every bar while the panel shows one of
 /// its members: whatever the member turned out to be, the way out is the same.
 pub fn parent_tool(bar: &mut Bar, shell: &Shell) {

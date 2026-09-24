@@ -17,7 +17,8 @@ Add `bibli-mupdf-worker`, a third implementation of the shared document
 protocol (ADR-004/005), in its own process like the others. It links
 MuPDF 1.27.2 through the `mupdf` crate 0.8 (AGPL-3.0), pinned exactly, with
 default features off: the 14 standard PDF fonts only, no JavaScript, no OCR,
-no system-font lookup. `mupdf-sys` builds MuPDF from the source it bundles,
+and not the crate's own system-font lookup (see the addendum for the fonts
+it gets instead). `mupdf-sys` builds MuPDF from the source it bundles,
 with MuPDF's own third-party libraries (MuPDF relies on its own lcms2 fork,
 so linking the system's would not match); the default Nix shell already has
 the C toolchain and libclang its bindings need.
@@ -56,4 +57,42 @@ over a network; bibli is a desktop application.
   geometry and selection, search, page and web links, outlines, fit and zoom.
   Encrypted documents are refused, as by the other engines.
 - EPUB through MuPDF is not wired yet: it needs the `epub` and `html`
-  features and a presentation of its own.
+  features and a presentation of its own (done, see the addendum).
+
+## Addendum (2026-09-24): books, text size and fonts
+
+- **A book engine, not a button.** `preview-epub.backend` chooses who reads
+  a book, like `preview-documents.backend` for a PDF: `builtin` (reading
+  mode, and drawn pages for fixed-layout books, ADR-012/013), or `mupdf`,
+  which opens every book in the document reader, laid out into pages by
+  MuPDF. `auto` is the built-in engine. With `mupdf` the plugin answers
+  `open_document` and never `inspect`; a missing worker is an error that
+  names the setting.
+- **Layout is an argument.** The worker takes `--layout=width,height,em`
+  (points, bounded) and lays a reflowable document out before greeting;
+  `DocumentInfo::reflowable` says it did. A book is laid out on a 420 × 595
+  point page with its body text at the preview's text size
+  (`PreviewRequest::text_size`, 16 px unless changed).
+- **Size what is read.** In the reader, Ctrl++ / Ctrl+- / Ctrl+0 on a
+  reflowable document change the text size and open the book again at it,
+  in a new worker (`reader_reopen`); a PDF's keys still zoom. The toolbar
+  says "Larger text" and "Smaller text" then. The reader lands where it was
+  read, not at the same page number: the first words of the page and its
+  share of the book are its anchor (`reader::Anchor`), and the new worker is
+  asked for the page nearest that share holding the words
+  (`WorkerRequest::Locate`, searched outward, at most 24 pages each way).
+  Engines whose pages never move answer `Located(None)`. Size steps with no
+  move between them keep the first anchor, so repeated steps do not drift.
+  MuPDF's own bookmarks cannot do this: they point into the laid-out tree of
+  one process.
+- **Fonts from the desktop.** A worker-side `FontLoader` asks fontconfig
+  (`fc-match`, no linked library) for what a document uses but does not
+  carry: a family by name (taken only if fontconfig has that family; else
+  MuPDF's standard fonts stand in), a style's generic family (`serif`,
+  `sans-serif`, `monospace`, as any reader on the desktop would), and text in
+  a script no font covers (Chinese, Japanese, Arabic, Devanagari…), asked for
+  with the script's language and taken from the first face whose coverage
+  includes it. The crate's `system-fonts` feature is not used: it answers
+  by name only, and its `font-kit` shares a `fontconfig` binding with gpui's
+  copy of `font-kit`, whose dlopen feature breaks it when the workspace is
+  built as one (`cargo build --workspace` fails).

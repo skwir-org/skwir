@@ -45,6 +45,7 @@ fn request(path: &Path) -> PreviewRequest {
         page: 1,
         seconds: None,
         max_side: 512,
+        text_size: None,
     }
 }
 /// What the preview worker shows: the provider's inspection, else, for the
@@ -500,6 +501,7 @@ fn format_providers_never_compete_for_the_same_file() {
                 page: 1,
                 seconds: None,
                 max_side: 64,
+                text_size: None,
             };
             if !matches!(app.previews.render(&request, &CancelToken::new()), Ok(None)) {
                 accepted.push(id);
@@ -787,4 +789,53 @@ fn compressed_files_and_long_archives_are_listed() {
         "{}",
         listing.notice
     );
+}
+
+/// A comic is a document of pages in the reader: in the order its names
+/// read, each decoded at the side asked and never enlarged, its own size
+/// what 100% is.
+#[test]
+fn a_comic_is_a_document_of_pages() {
+    if !with_archive_worker() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(bibli_plugin_preview_comics::PreviewPlugin), &app);
+    let path = tmp.path().join("Synthetic comic's pages.cbz");
+    // Within one stored deflate block, as `synthetic_png` writes them.
+    let (big, small) = (synthetic_png(120, 180), synthetic_png(30, 40));
+    write_zip(
+        &path,
+        &[
+            ("pages/10.png", big.as_slice()),
+            ("pages/2.png", small.as_slice()),
+            ("pages/1.png", big.as_slice()),
+            ("pages/notes.txt", b"not a page"),
+        ],
+    );
+    let cancel = CancelToken::new();
+    let request = request(&path);
+    assert!(
+        app.previews
+            .inspect(&request, &InspectRequest::default(), &cancel)
+            .unwrap()
+            .is_none(),
+        "a comic is not an inspection"
+    );
+    let comic = app
+        .previews
+        .open_document(&request, &cancel)
+        .unwrap()
+        .expect("a comic of pages");
+    assert_eq!(comic.info().pages, 3);
+    let page = comic.render(1, 90, &cancel).unwrap();
+    assert_eq!((page.width, page.height), (60, 90));
+    assert_eq!((page.content.width, page.content.height), (120., 180.));
+    assert_eq!(page.rgba.len(), 60 * 90 * 4);
+    let second = comic.render(2, 300, &cancel).unwrap();
+    assert_eq!((second.width, second.height), (30, 40), "never enlarged");
+    assert_eq!(comic.render(3, 4096, &cancel).unwrap().height, 180);
+    assert!(comic.search("page", &cancel).unwrap().is_empty());
 }

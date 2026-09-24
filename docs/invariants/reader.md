@@ -5,7 +5,10 @@ Read this before touching `crates/pdf-worker`, `crates/poppler-worker`, `crates/
 - Native PDF libraries load only in `bibli-pdf-worker` / `bibli-poppler-worker`
   / `bibli-mupdf-worker`, never in the UI process. Every engine uses the same
   protocol/session manager, and `tools/pdf/check.py` runs the same fixtures on
-  each. MuPDF is chosen explicitly, never by `auto` (ADR-014).
+  each. MuPDF is chosen explicitly, never by `auto` (ADR-014). A session
+  whose pages are drawn by our own Rust code (a fixed-layout book's, a
+  comic's pictures) runs in process on the scheduler, like an inspection,
+  with the same contract: bounded, cancellable, one owned pixel buffer.
   Session creation/render/search are blocking worker entry points. The manager
   thread owns child cleanup and temporary files; dropping a UI session must
   only cancel/send, never wait for a process or delete files.
@@ -52,6 +55,26 @@ Read this before touching `crates/pdf-worker`, `crates/poppler-worker`, `crates/
   pages with `tools/pdf/check.py` for every engine; use only its synthetic
   fixture generator. Poppler text layout has a top-left origin, whereas its
   search/link rectangles have a bottom-left origin; normalize at the worker.
+- A reflowable document (a book through MuPDF, `DocumentInfo::reflowable`)
+  is laid out by its worker at the preview's text size; its size keys lay it
+  out again instead of zooming (`Shell::preview_zoom`, `relayout`). A new
+  layout has other pages: the reader lands through `reader::Anchor` and
+  `DocumentSession::locate`, never by the old page number, and accepts the
+  located page only if the reader has not moved since. Anything that asks a
+  worker where text lies after a layout goes through `Locate`; a fixed-page
+  engine answers `Located(None)`. A document's missing fonts come from
+  fontconfig inside the worker (ADR-014 addendum), never from the UI process.
+- A page's size (`PageContent::width`/`height`) is its own, in CSS pixels
+  (1/96 in; a PDF's points times `CSS_PER_POINT`): what 100% zoom shows and
+  what layout uses, whatever its pixels. Pages are rendered at the side
+  they cover on screen, never at a fixed one: each page element reports
+  what it covers in prepaint (`elements::document::Shown`), the shell keeps
+  one side in 512 px steps up to `MAX_SIDE` (`reader_scroll::page_side`,
+  `Shell::document_shown`, kept from one document to the next), new pages
+  are rendered at it and shown ones asked at less are rendered again,
+  replacing their pixels in place. A smaller side redraws nothing: the next
+  pages come smaller. A cached page remembers the side it was asked at, so
+  an engine that has no more pixels (a small picture) is not asked again.
 - `auto` may fall back when the worker/library is absent. Report document
   errors directly; do not conceal malformed files by silently trying engines.
   Poppler provides the same reader features. CLI image fallback is for `auto`

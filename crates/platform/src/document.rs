@@ -17,8 +17,8 @@ use std::time::{Duration, Instant, SystemTime};
 use anyhow::Context;
 use bibli_core::CancelToken;
 use bibli_core::document::{
-    DocumentInfo, DocumentPage, DocumentSession, MAX_REPLY, MAX_SIDE, PIXELS_FILE, SearchHit,
-    Tagged, WorkerReply, WorkerRequest,
+    DocumentInfo, DocumentPage, DocumentSession, MAX_PAGE_SIZE, MAX_REPLY, MAX_SIDE, PIXELS_FILE,
+    SearchHit, Tagged, WorkerReply, WorkerRequest,
 };
 use crossbeam_channel::{Receiver, Sender};
 
@@ -41,6 +41,7 @@ struct Job {
 enum Response {
     Page(DocumentPage),
     Matches(Vec<SearchHit>),
+    Located(Option<u32>),
 }
 
 pub struct WorkerSession {
@@ -72,7 +73,57 @@ struct Launch {
     executable: PathBuf,
     pdf: PathBuf,
     scratch: PathBuf,
-    library: Option<PathBuf>,
+    setup: Setup,
+}
+
+/// What an engine is told beside the document: `PDFium`'s library, and the
+/// pages a reflowable document is laid out into.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Setup {
+    pub library: Option<PathBuf>,
+    pub layout: Option<Layout>,
+}
+
+/// The pages a reflowable document (a book) is laid out into: their size
+/// and the size of body text, in points. Only `MuPDF` lays documents out.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Layout {
+    pub width: f32,
+    pub height: f32,
+    pub em: f32,
+}
+impl Layout {
+    /// Book pages (A5), body text at `text_size` pixels, the reader's own
+    /// measure of text: 16 px is 12 pt.
+    pub fn book(text_size: Option<f32>) -> Self {
+        Self {
+            width: 420.,
+            height: 595.,
+            em: text_size.unwrap_or(16.).clamp(8., 48.) * 0.75,
+        }
+    }
+}
+
+/// A book laid out into pages by `MuPDF`, its text at `text_size` pixels, for
+/// the reader: the same session as a PDF's, over pages the engine made.
+/// `None` when the `MuPDF` worker is absent. Called on a scheduler worker.
+pub fn open_book(
+    source: PathBuf,
+    text_size: Option<f32>,
+    lifetime: CancelToken,
+) -> anyhow::Result<Option<Arc<dyn DocumentSession>>> {
+    let setup = Setup {
+        library: None,
+        layout: Some(Layout::book(text_size)),
+    };
+    WorkerSession::open(
+        Engine::Mupdf,
+        source.clone(),
+        source,
+        tempfile::tempdir()?,
+        setup,
+        lifetime,
+    )
 }
 
 impl WorkerSession {
@@ -83,13 +134,13 @@ impl WorkerSession {
         pdf: PathBuf,
         source: PathBuf,
         scratch: tempfile::TempDir,
-        library: Option<PathBuf>,
+        setup: Setup,
         lifetime: CancelToken,
     ) -> anyhow::Result<Option<Arc<dyn DocumentSession>>> {
         let Some(executable) = worker_path(engine) else {
             return Ok(None);
         };
-        Self::open_with_worker(executable, pdf, source, scratch, library, lifetime)
+        Self::open_with_worker(executable, pdf, source, scratch, setup, lifetime)
     }
 
     fn open_with_worker(
@@ -97,7 +148,7 @@ impl WorkerSession {
         pdf: PathBuf,
         source: PathBuf,
         scratch: tempfile::TempDir,
-        library: Option<PathBuf>,
+        setup: Setup,
         lifetime: CancelToken,
     ) -> anyhow::Result<Option<Arc<dyn DocumentSession>>> {
         let (jobs, rx) = crossbeam_channel::unbounded::<Job>();
@@ -110,7 +161,7 @@ impl WorkerSession {
                     executable,
                     pdf,
                     scratch: scratch.path().to_owned(),
-                    library,
+                    setup,
                 };
                 let setup = || -> anyhow::Result<(Worker, DocumentInfo, FileVersion)> {
                     let version = file_version(&source)?;
@@ -189,7 +240,9 @@ impl DocumentSession for WorkerSession {
     fn render(&self, page: u32, side: u32, cancel: &CancelToken) -> anyhow::Result<DocumentPage> {
         match self.request(WorkerRequest::Render { page, side }, cancel)? {
             Response::Page(page) => Ok(page),
-            Response::Matches(_) => anyhow::bail!("unexpected document search result"),
+            Response::Matches(_) | Response::Located(_) => {
+                anyhow::bail!("unexpected document search result")
+            }
         }
     }
     fn search(&self, query: &str, cancel: &CancelToken) -> anyhow::Result<Vec<SearchHit>> {
@@ -201,7 +254,24 @@ impl DocumentSession for WorkerSession {
             cancel,
         )? {
             Response::Matches(hits) => Ok(hits),
-            Response::Page(_) => anyhow::bail!("unexpected document page"),
+            Response::Page(_) | Response::Located(_) => {
+                anyhow::bail!("unexpected document reply")
+            }
+        }
+    }
+    fn locate(&self, text: &str, near: u32, cancel: &CancelToken) -> anyhow::Result<Option<u32>> {
+        anyhow::ensure!(text.len() <= 4096, "text to locate exceeds limit");
+        match self.request(
+            WorkerRequest::Locate {
+                text: text.into(),
+                near,
+            },
+            cancel,
+        )? {
+            Response::Located(page) => Ok(page.filter(|page| (1..=self.info.pages).contains(page))),
+            Response::Page(_) | Response::Matches(_) => {
+                anyhow::bail!("unexpected document reply")
+            }
         }
     }
 }
@@ -281,6 +351,12 @@ impl Manager {
                     width > 0 && height > 0 && width <= MAX_SIDE && height <= MAX_SIDE,
                     "invalid document bitmap size"
                 );
+                anyhow::ensure!(
+                    [content.width, content.height]
+                        .iter()
+                        .all(|side| side.is_finite() && *side > 0. && *side <= MAX_PAGE_SIZE),
+                    "invalid document page size"
+                );
                 let bytes = u64::from(width) * u64::from(height) * 4;
                 let path = self.launch.scratch.join(PIXELS_FILE);
                 anyhow::ensure!(
@@ -296,6 +372,7 @@ impl Manager {
                 }))
             }
             WorkerReply::Matches(hits) => Ok(Response::Matches(hits)),
+            WorkerReply::Located(page) => Ok(Response::Located(page)),
             // A page the worker could not render is that page's error; the
             // worker itself is fine and keeps the document open.
             WorkerReply::Error(message) | WorkerReply::Unavailable(message) => {
@@ -380,7 +457,10 @@ impl Worker {
         anyhow::ensure!(!cancel.is_cancelled(), "document open cancelled");
         let mut command = Command::new(&launch.executable);
         command.arg(&launch.pdf).arg(&launch.scratch);
-        if let Some(library) = &launch.library {
+        if let Some(Layout { width, height, em }) = launch.setup.layout {
+            command.arg(format!("--layout={width},{height},{em}"));
+        }
+        if let Some(library) = &launch.setup.library {
             command.env("BIBLI_PDFIUM_LIBRARY", library);
         }
         let mut worker = Self {
@@ -514,7 +594,7 @@ mod tests {
                 source.clone(),
                 source.clone(),
                 scratch,
-                None,
+                Setup::default(),
                 lifetime.clone(),
             )
             .unwrap()
