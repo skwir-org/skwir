@@ -307,7 +307,22 @@ still to come are in `docs/preview-frame.md`.
   picture; any other is drawn at the size the book's first pages state.
 - **A book's rows are its contents** (`inspector::listed`): the Contents
   drawer shows them; they are not list items after its text, nor part of
-  what find and copy read.
+  what find and copy read. They are its table of contents alone
+  (`preview-epub::table_of_contents`: the EPUB 3 `toc` nav, else the NCX
+  `navMap`), never the landmarks, the printed page list or the NCX's copy
+  of the same chapters, which `rbook::Epub::toc` also iterates.
+- **A book is counted by chapters or by its printed pages**
+  (`Inspection::printed_pages`, from its `page-list` or NCX `pageList`;
+  `ui.printed_pages`, a preference, chosen in the count's own picker,
+  `unit_panel`). Counted by pages, the field, previous and next, `[` and
+  `]` all go by printed page: a page is found by its label as printed, and
+  shown at the top of the view from the block holding its mark
+  (`inspector::page_starts`, built when a chapter arrives); the page shown
+  is the last to start at or before the top of the view, read from the
+  list's scroll, never measured. A page in another chapter opens that
+  chapter at its mark, and a chapter reached by a link is then only its
+  number (`request.target` is cleared on arrival). A book without printed
+  pages counts chapters, whatever the preference.
   A book reads in the same typography as a document (the reading profile).
 - **Sections follow each other under the wheel.** Any preview with a previous
   and a next section (a book's chapters, pages of text, of bytes, of rows)

@@ -10,6 +10,7 @@ use bibli_core::{
     CancelToken,
     document::{
         DocumentInfo, DocumentPage, DocumentSession, MAX_HITS, Outline, PageContent, SearchHit,
+        page_labels,
     },
     inspection::Picture,
 };
@@ -18,7 +19,7 @@ use bibli_platform::{
     rich_preview::{self, Drawing, Markup},
 };
 
-use crate::{Chapter, Container, base, contents, member_key, package};
+use crate::{Chapter, Container, base, member_key, package, printed_pages, table_of_contents};
 
 /// Pages read to find the size a page stating none is drawn at.
 const SIZE_PAGES: usize = 8;
@@ -76,11 +77,7 @@ impl FixedBook {
         // The contents lead to the page each entry names, however its link
         // spells it.
         let keys: Vec<_> = pages.iter().map(|page| member_key(&page.href)).collect();
-        let mut rows = Vec::new();
-        for entry in book.toc() {
-            contents(entry, 0, &mut rows);
-        }
-        let outlines = rows
+        let outlines = table_of_contents(&book)
             .into_iter()
             .map(|row| {
                 let target = row.target.as_deref().map(member_key);
@@ -102,12 +99,22 @@ impl FixedBook {
                 rich_preview::stated_size(&inspection::decode(&bytes).0, markup)
             })
             .unwrap_or(PAGE_SIZE);
+        // A page's label is the first printed page the page list puts on it.
+        let printed = printed_pages(&book, &keys);
+        let labels = page_labels((0..pages.len()).map(|index| {
+            printed
+                .iter()
+                .find(|page| page.section == index as u64)
+                .map(|page| page.label.clone())
+                .unwrap_or_default()
+        }));
         inspection::check(cancel)?;
         Ok(Some(Self {
             info: DocumentInfo {
                 pages: pages.len() as u32,
                 outlines,
                 reflowable: false,
+                labels,
             },
             path,
             pages,

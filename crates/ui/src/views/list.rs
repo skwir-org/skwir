@@ -180,7 +180,7 @@ impl Shell {
     /// (the Columns view) show a name only: their details are not computed.
     pub fn rows(&mut self, range: Range<usize>, icon_px: u16, compact: bool) -> Vec<RowData> {
         let mut out = Vec::with_capacity(range.len());
-        let friendly = self.friendly_dates;
+        let friendly = self.prefs.friendly_dates;
         let now = (!compact && friendly && self.columns[1]).then(jiff::Zoned::now);
         let app = std::sync::Arc::clone(&self.app);
         let ws = app.workspace.read();

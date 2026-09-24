@@ -149,7 +149,12 @@ switch last in the view group, where Continuous is. The desktop's
 thumbnail no longer flashes before a preview: it waits aside and stands
 in only once a load has lasted 200 ms, where the preview will be (an
 image's at its own size, a document's as its first page), and stays as
-the picture of a file with no preview of its own.
+the picture of a file with no preview of its own. A book's Contents are its
+table of contents alone (no landmarks, no printed page list, no second
+NCX copy), and a book that lists its printed pages can be counted by them
+in the toolbar (`ui.printed_pages`); the reader does the same with a PDF's
+page labels and a fixed-layout book's page list, read by all three
+engines.
 
 Music (2026-09-22): the audio preview became a small player. Sound: a
 perceptual volume, `scaletempo` so speed keeps the pitch, a spectrum folded

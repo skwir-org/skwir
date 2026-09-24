@@ -192,8 +192,15 @@ impl Shell {
             window,
             cx,
         );
+        // Counted by printed pages, the field opens on the page's label.
+        let current = page_labels(self)
+            .filter(|_| self.prefs.printed_pages)
+            .and_then(|labels| labels.get(self.preview.page as usize - 1))
+            .filter(|label| !label.is_empty())
+            .cloned()
+            .unwrap_or_else(|| self.preview.page.to_string());
         field.input.update(cx, |input, cx| {
-            input.set_text(self.preview.page.to_string(), cx);
+            input.set_text(current, cx);
             input.select_all_now(cx);
             input.focus(window);
         });
@@ -202,12 +209,32 @@ impl Shell {
     }
 
     pub fn reader_page_submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let number = self
+        let typed = self
             .preview
             .reader
             .page_input
             .as_ref()
-            .and_then(|p| p.text(cx).trim().parse::<u32>().ok());
+            .map(|p| p.text(cx))
+            .unwrap_or_default();
+        // Counted by printed pages, a page is found by its name as printed.
+        if let Some(labels) = page_labels(self).filter(|_| self.prefs.printed_pages) {
+            let Some(number) = page_named(labels, &typed) else {
+                let named = || labels.iter().filter(|label| !label.is_empty());
+                let (first, last) = (
+                    named().next().cloned().unwrap_or_default(),
+                    named().next_back().cloned().unwrap_or_default(),
+                );
+                return self.set_status(
+                    format!("Enter a page number printed in the document, from {first} to {last}"),
+                    true,
+                    cx,
+                );
+            };
+            self.reader_page_cancel(window, cx);
+            let args = serde_json::json!({"page":number});
+            return self.run("ui.reader_page", args, window, cx);
+        }
+        let number = typed.trim().parse::<u32>().ok();
         if let Some(number) = number.filter(|n| *n > 0 && *n <= document_pages(self)) {
             self.reader_page_cancel(window, cx);
             self.run(
@@ -714,6 +741,27 @@ pub(crate) fn surface(
     .into_any_element()
 }
 
+/// The labels the document shown gives its pages, when it names them
+/// otherwise than by their number (`DocumentInfo::labels`).
+fn page_labels(shell: &Shell) -> Option<&[String]> {
+    shell
+        .preview
+        .reader
+        .session
+        .as_ref()
+        .map(|session| session.info().labels.as_slice())
+        .filter(|labels| !labels.is_empty())
+}
+
+/// The page named `typed`, as printed: matched without regard to case.
+fn page_named(labels: &[String], typed: &str) -> Option<u32> {
+    let typed = typed.trim().to_lowercase();
+    labels
+        .iter()
+        .position(|label| !label.is_empty() && label.to_lowercase() == typed)
+        .map(|index| index as u32 + 1)
+}
+
 /// Pages of the document shown, when it is one.
 pub(crate) fn pages(shell: &Shell) -> Option<u32> {
     let document = shell.preview.reader.session.is_some()
@@ -783,12 +831,40 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
             .args(serde_json::json!({"delta":-1}))
             .enabled(current > 1),
     ));
+    // A document that names its pages can show and take those names.
+    let labels = page_labels(shell);
+    let (value, total) = match labels.filter(|_| shell.prefs.printed_pages) {
+        Some(labels) => (
+            labels
+                .get(current as usize - 1)
+                .filter(|label| !label.is_empty())
+                .cloned()
+                .unwrap_or_else(|| "–".to_owned()),
+            labels
+                .iter()
+                .rev()
+                .find(|label| !label.is_empty())
+                .cloned()
+                .unwrap_or_default(),
+        ),
+        None => (current.to_string(), pages.to_string()),
+    };
+    let unit = labels.map(|_| {
+        bar.popups
+            .push(("unit", crate::preview_bar::unit_popup("Pages")));
+        (
+            Button::new("reader-unit", "", "Count by", "ui.preview_menu")
+                .args(serde_json::json!({"kind":"unit"})),
+            "unit",
+        )
+    });
     crate::preview_bar::number_tool(
         &mut bar,
         ("reader-page-number", "Go to page"),
         ("ui.reader_page_edit", serde_json::json!({})),
-        (u64::from(current), u64::from(pages)),
+        (value, total),
         |shell| shell.preview.reader.page_input.as_ref(),
+        unit,
         theme,
     );
     bar.push(Item::button(

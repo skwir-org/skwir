@@ -131,6 +131,37 @@ impl Display {
             .or_else(|| wrap.then(|| hit(0..start.min(self.folded.len()))).flatten())
     }
 }
+/// Whether the book's position counts its printed pages: the preference,
+/// when the book lists them.
+pub(crate) fn counts_printed(shell: &Shell, data: &Inspection) -> bool {
+    shell.prefs.printed_pages && !data.printed_pages.is_empty()
+}
+
+/// Where the printed pages of the section shown start, (block, page) in
+/// reading order: at the block holding the mark its link names, or at the
+/// top for a link to the section itself. A mark reading mode did not keep
+/// leaves its page out.
+fn page_starts(data: &Inspection) -> Vec<(usize, usize)> {
+    let mut starts: Vec<(usize, usize)> = data
+        .printed_pages
+        .iter()
+        .enumerate()
+        .filter(|(_, page)| page.section == data.position)
+        .filter_map(|(index, page)| {
+            let block = match page.target.split_once('#') {
+                Some((_, mark)) => data
+                    .blocks
+                    .iter()
+                    .position(|block| block.anchors.iter().any(|name| name == mark))?,
+                None => 0,
+            };
+            Some((block, index))
+        })
+        .collect();
+    starts.sort_unstable();
+    starts
+}
+
 /// The text size reading starts at, and Default size returns to.
 pub(crate) const TEXT_SIZE: f32 = 16.;
 
@@ -180,6 +211,9 @@ pub struct State {
     find: Option<crate::preview_bar::Field>,
     /// The chapter field while it is edited (`preview_bar::number_tool`).
     pub(crate) section_input: Option<crate::preview_bar::Field>,
+    /// Where the printed pages of the section shown start: (block, page),
+    /// in reading order, from the anchors their marks left (`arrived`).
+    page_starts: Vec<(usize, usize)>,
     /// The column a table is ordered by, and whether ascending.
     sort: Option<(usize, bool)>,
     /// Scrolling past the end of a section goes to the next one: the wheel
@@ -208,6 +242,7 @@ impl Default for State {
             outline: false,
             find: None,
             section_input: None,
+            page_starts: Vec::new(),
             sort: None,
             turn: crate::reader_scroll::WheelTurn::default(),
             at_edge: 0,
@@ -280,6 +315,7 @@ impl State {
         }
         self.request.offset = data.position;
         self.section_input = None;
+        self.page_starts = page_starts(data);
         (self.at_edge, self.turn) = (0, crate::reader_scroll::WheelTurn::default());
         if std::mem::take(&mut self.land_at_end) {
             // Scrolled up out of the next section: read on from this one's end.
@@ -304,6 +340,11 @@ impl State {
         {
             scroll_into_view(&self.list, item);
         }
+        // Landed: the chapter is its number now, like any other (`offset`,
+        // set above), not a place inside a container to go back out of.
+        if data.kind == InspectionKind::Book {
+            self.request.target = None;
+        }
         if data.kind == InspectionKind::Book
             && !refresh
             && let Some(query) = self.request.query.as_deref()
@@ -311,6 +352,36 @@ impl State {
         {
             self.reveal(data, i);
         }
+    }
+    /// The printed page at the top of the view: the last to start at or
+    /// before it in this section, else the last of the sections before;
+    /// `None` before the first (a book's front matter).
+    pub(crate) fn printed_page(&self, data: &Inspection) -> Option<usize> {
+        let top = self.list.logical_scroll_top().item_ix.saturating_sub(1);
+        self.page_starts
+            .iter()
+            .take_while(|(block, _)| *block <= top)
+            .last()
+            .map(|(_, page)| *page)
+            .or_else(|| {
+                data.printed_pages
+                    .iter()
+                    .rposition(|page| page.section < data.position)
+            })
+    }
+    /// Show printed page `index`, of this section, at the top of the view.
+    /// `false` when it starts in another section.
+    fn show_printed(&self, data: &Inspection, index: usize) -> bool {
+        let Some(&(block, _)) = self.page_starts.iter().find(|(_, page)| *page == index) else {
+            return false;
+        };
+        if let Some(item) = self.item_of(data, block) {
+            self.list.scroll_to(gpui::ListOffset {
+                item_ix: item,
+                offset_in_item: px(0.),
+            });
+        }
+        true
     }
     /// The list item that shows block or row `index` (as `find` numbers
     /// them), if it is shown: the code view and a table's rows go through
@@ -515,6 +586,34 @@ impl Shell {
                 let Some(PreviewContent::Inspection(display)) = &self.preview.content else {
                     return;
                 };
+                // A printed page is found by its number as printed.
+                if counts_printed(self, &display.data) {
+                    let pages = &display.data.printed_pages;
+                    let typed = self
+                        .preview
+                        .inspection
+                        .section_input
+                        .as_ref()
+                        .map(|field| field.text(cx).trim().to_lowercase())
+                        .unwrap_or_default();
+                    let Some(index) = pages
+                        .iter()
+                        .position(|page| page.label.to_lowercase() == typed)
+                    else {
+                        let (first, last) = (&pages[0].label, &pages[pages.len() - 1].label);
+                        return self.set_status(
+                            format!(
+                                "Enter a page number printed in the book, from {first} to {last}"
+                            ),
+                            true,
+                            cx,
+                        );
+                    };
+                    let args = serde_json::json!({"action":"section_cancel"});
+                    self.inspect_command(&args, window, cx);
+                    let args = serde_json::json!({"action":"printed","index":index});
+                    return self.run("ui.inspect", args, window, cx);
+                }
                 let sections = display.data.sections;
                 let number = self
                     .preview
@@ -670,6 +769,20 @@ impl Shell {
                         .collapse_all(&display.data, action == "collapse_all");
                     cx.notify();
                     return;
+                }
+                // A printed page: in this section, brought to the top; in
+                // another, that section opened at its mark.
+                "printed" => {
+                    let index = args["index"].as_u64().unwrap_or(0) as usize;
+                    let Some(page) = display.data.printed_pages.get(index) else {
+                        return;
+                    };
+                    if self.preview.inspection.show_printed(&display.data, index) {
+                        cx.notify();
+                        return;
+                    }
+                    let args = serde_json::json!({"action":"target","target":page.target});
+                    return self.inspect_command(&args, window, cx);
                 }
                 "reset" | "text_size" => {
                     let size = args["value"].as_f64().map_or(TEXT_SIZE, |v| v as f32);
@@ -1014,16 +1127,24 @@ impl Shell {
         if display.data.sections == 0 {
             return;
         }
-        let current = display.data.position + 1;
+        let current = if counts_printed(self, &display.data) {
+            self.preview
+                .inspection
+                .printed_page(&display.data)
+                .map(|index| display.data.printed_pages[index].label.clone())
+                .unwrap_or_default()
+        } else {
+            (display.data.position + 1).to_string()
+        };
         let field = crate::preview_bar::Field::new(
-            "Chapter",
+            "Page",
             "ui.inspect section_submit",
             "ui.inspect section_cancel",
             window,
             cx,
         );
         field.input.update(cx, |input, cx| {
-            input.set_text(current.to_string(), cx);
+            input.set_text(current, cx);
             input.select_all_now(cx);
             input.focus(window);
         });
@@ -1137,38 +1258,85 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     // document's pages are: previous, the number as a field, next, the
     // buttons there even when there is nowhere to go.
     let numbered = data.sections > 0;
-    let step = |id, icon, title, offset: Option<u64>| {
-        Button::new(id, icon, title, "ui.inspect")
-            .args(serde_json::json!({"action":"page","offset":offset.unwrap_or(0)}))
-            .enabled(offset.is_some())
+    // Counted by printed pages, the same tools turn and show those.
+    let printed = counts_printed(shell, data);
+    let page = printed
+        .then(|| shell.preview.inspection.printed_page(data))
+        .flatten();
+    let (previous, next, titles) = if printed {
+        let last = data.printed_pages.len() - 1;
+        (
+            page.and_then(|page| page.checked_sub(1))
+                .map(|index| serde_json::json!({"action":"printed","index":index})),
+            Some(page.map_or(0, |page| page + 1))
+                .filter(|index| *index <= last)
+                .map(|index| serde_json::json!({"action":"printed","index":index})),
+            ("Previous page · [", "Next page · ]", "Go to page"),
+        )
+    } else {
+        let offset = |offset: Option<u64>| {
+            offset.map(|offset| serde_json::json!({"action":"page","offset":offset}))
+        };
+        (
+            offset(data.previous),
+            offset(data.next),
+            ("Previous section · [", "Next section · ]", "Go to chapter"),
+        )
     };
-    if numbered || data.previous.is_some() {
+    let step = |id, icon, title, args: Option<serde_json::Value>| {
+        let enabled = args.is_some();
+        Button::new(id, icon, title, "ui.inspect")
+            .args(args.unwrap_or_else(|| serde_json::json!({})))
+            .enabled(enabled)
+    };
+    if numbered || previous.is_some() {
         bar.push(Item::button(
             Slot::Navigate,
             2,
-            step(
-                "inspect-prev",
-                "left",
-                "Previous section · [",
-                data.previous,
-            ),
+            step("inspect-prev", "left", titles.0, previous),
         ));
     }
     if numbered {
+        let (value, total) = if printed {
+            (
+                page.map_or_else(
+                    || "–".to_owned(),
+                    |page| data.printed_pages[page].label.clone(),
+                ),
+                data.printed_pages[data.printed_pages.len() - 1]
+                    .label
+                    .clone(),
+            )
+        } else {
+            ((data.position + 1).to_string(), data.sections.to_string())
+        };
+        // A book that lists its printed pages can be counted either way.
+        let unit = (!data.printed_pages.is_empty()).then(|| {
+            (
+                Button::new("inspect-unit", "", "Count by", "ui.preview_menu")
+                    .args(serde_json::json!({"kind":"unit"})),
+                "unit",
+            )
+        });
+        if unit.is_some() {
+            bar.popups
+                .push(("unit", crate::preview_bar::unit_popup("Chapters")));
+        }
         crate::preview_bar::number_tool(
             &mut bar,
-            ("inspect-section", "Go to chapter"),
+            ("inspect-section", titles.2),
             ("ui.inspect", serde_json::json!({"action":"section_edit"})),
-            (data.position + 1, data.sections),
+            (value, total),
             |shell| shell.preview.inspection.section_input.as_ref(),
+            unit,
             theme,
         );
     }
-    if numbered || data.next.is_some() {
+    if numbered || next.is_some() {
         bar.push(Item::button(
             Slot::Navigate,
             2,
-            step("inspect-next", "right", "Next section · ]", data.next),
+            step("inspect-next", "right", titles.1, next),
         ));
     }
 
@@ -1316,9 +1484,6 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     bar.popups.push(("find", std::rc::Rc::new(find_panel)));
     crate::preview_bar::render(&bar, crate::preview::active_popup(shell), shell, theme, cx)
 }
-/// The find field: the same popup, keys and place as the document reader's.
-/// A structured preview searches as it goes, so there is no count: Enter and
-/// F3 move to the next match and wrap.
 /// The text size picker, as a document's zoom picker is: the default size,
 /// then the sizes to choose from, as shares of it.
 fn text_size_panel(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
@@ -1361,6 +1526,9 @@ fn text_size_panel(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Opt
     )
 }
 
+/// The find field: the same popup, keys and place as the document reader's.
+/// A structured preview searches as it goes, so there is no count: Enter and
+/// F3 move to the next match and wrap.
 pub fn find_panel(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let find = shell.preview.inspection.find.as_ref()?;
     let buttons = vec![
@@ -1977,6 +2145,43 @@ mod tests {
             },
             false,
         )
+    }
+
+    #[test]
+    fn printed_pages_start_where_their_marks_are() {
+        use bibli_core::inspection::PrintedPage;
+        let page = |label: &str, section, target: &str| PrintedPage {
+            label: label.into(),
+            section,
+            target: target.into(),
+        };
+        let block = |text: &str, anchors: &[&str]| Block {
+            text: text.into(),
+            anchors: anchors.iter().map(|a| (*a).to_owned()).collect(),
+            ..Block::default()
+        };
+        let data = Inspection {
+            kind: InspectionKind::Book,
+            position: 1,
+            sections: 3,
+            blocks: vec![
+                block("Chapter", &["chapter"]),
+                block("First", &[]),
+                block("Second", &["p8"]),
+                block("Third", &[]),
+            ],
+            printed_pages: vec![
+                page("6", 0, "one.xhtml#p6"),
+                page("7", 1, "two.xhtml"),
+                page("8", 1, "two.xhtml#p8"),
+                page("9", 1, "two.xhtml#lost"),
+                page("10", 2, "three.xhtml#p10"),
+            ],
+            ..Inspection::default()
+        };
+        // Page 7 is the chapter's own start; 8 its mark; 9's mark was not
+        // kept, and pages of other chapters are not here.
+        assert_eq!(page_starts(&data), [(0, 1), (2, 2)]);
     }
 
     fn code(lines: &[&str], folds: Vec<std::ops::Range<usize>>) -> Display {

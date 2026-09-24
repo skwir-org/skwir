@@ -7,7 +7,8 @@ use std::path::Path;
 use anyhow::Context;
 use bibli_core::document::{
     CSS_PER_POINT, Destination, DocumentInfo, Link, MAX_HITS, MAX_PAGE_CHARS, MAX_SIDE, Outline,
-    PIXELS_FILE, PageContent, Rect, SearchHit, TextChar, WorkerReply, WorkerRequest, worker,
+    PIXELS_FILE, PageContent, Rect, SearchHit, TextChar, WorkerReply, WorkerRequest, page_labels,
+    worker,
 };
 use pdfium_render::prelude::*;
 
@@ -90,7 +91,32 @@ fn document_info(document: &PdfDocument<'_>) -> DocumentInfo {
         pages: u32::from(document.pages().len()),
         outlines,
         reflowable: false,
+        labels: labels(document),
     }
+}
+
+/// Each page's label, read from the document without loading its pages.
+fn labels(document: &PdfDocument<'_>) -> Vec<String> {
+    let bindings = document.bindings();
+    let handle = bindings.get_handle_from_document(document);
+    let count = i32::from(document.pages().len());
+    page_labels((0..count).map(|index| {
+        // UTF-16LE with its terminating NUL, the length asked first.
+        let length = bindings.FPDF_GetPageLabel(handle, index, std::ptr::null_mut(), 0);
+        if length == 0 {
+            return String::new();
+        }
+        let mut buffer = vec![0u8; length as usize];
+        bindings.FPDF_GetPageLabel(handle, index, buffer.as_mut_ptr().cast(), length);
+        let units: Vec<u16> = buffer
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_le_bytes(*pair))
+            .take_while(|unit| *unit != 0)
+            .collect();
+        String::from_utf16_lossy(&units)
+    }))
 }
 
 /// `PDFium` maps crop offsets and intrinsic rotation. Normalized coordinates keep

@@ -630,6 +630,7 @@ impl Shell {
         let kind = match args.get("kind").and_then(serde_json::Value::as_str) {
             Some("zoom") => "zoom",
             Some("text") => "text",
+            Some("unit") => "unit",
             _ => "preview",
         };
         let previous = self.preview.menu.take();
@@ -1484,7 +1485,24 @@ impl Shell {
         self.preview.text_size = None;
     }
 
-    pub fn preview_page(&mut self, delta: i32, cx: &mut Context<Self>) {
+    pub fn preview_page(&mut self, delta: i32, window: &mut Window, cx: &mut Context<Self>) {
+        // A book counted by its printed pages turns them.
+        if let Some(PreviewContent::Inspection(display)) = &self.preview.content
+            && crate::inspector::counts_printed(self, &display.data)
+        {
+            let current = self.preview.inspection.printed_page(&display.data);
+            let index = if delta < 0 {
+                current.and_then(|index| index.checked_sub(1))
+            } else {
+                Some(current.map_or(0, |index| index + 1))
+            }
+            .filter(|index| *index < display.data.printed_pages.len());
+            if let Some(index) = index {
+                let args = serde_json::json!({"action":"printed","index":index});
+                self.run("ui.inspect", args, window, cx);
+            }
+            return;
+        }
         if let Some(PreviewContent::Inspection(display)) = &self.preview.content {
             if let Some(offset) = if delta < 0 {
                 display.data.previous

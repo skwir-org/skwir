@@ -44,6 +44,8 @@ pub const GRID_FILL_KEY: &str = "ui.grid_fill";
 pub const READER_CONTINUOUS_KEY: &str = "ui.reader_continuous";
 /// How wide a reading column may grow (`markdown::measure`).
 pub const READING_WIDTH_KEY: &str = "ui.reading_width";
+/// Whether a book's position counts its printed pages (`ui.printed_pages`).
+pub const PRINTED_PAGES_KEY: &str = "ui.printed_pages";
 
 /// Declare the shell's own preferences. They live in the `ui` namespace and
 /// exist only while a shell does, so headless tools never see them.
@@ -92,6 +94,15 @@ pub fn declare(app: &App) {
                 ("wide", "Wide"),
                 ("full", "Full width"),
             ],
+        )
+        .section("Documents"),
+    );
+    app.settings.declare(
+        SettingSpec::toggle(
+            PRINTED_PAGES_KEY,
+            "Printed page numbers",
+            "Count where you are in a book by the page numbers of its printed edition, when it lists them: page 47 of 312 rather than chapter 3 of 12. A book without them counts chapters.",
+            false,
         )
         .section("Documents"),
     );

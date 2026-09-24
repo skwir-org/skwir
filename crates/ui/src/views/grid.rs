@@ -204,7 +204,7 @@ fn cell(
         )
     };
     // A filled box shows the short side of the thumbnail at full size.
-    let fill = shell.grid_fill;
+    let fill = shell.prefs.grid_fill;
     let size = if zoom > 128 || (fill && zoom > 96) {
         ThumbSize::Large
     } else {

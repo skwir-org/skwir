@@ -67,6 +67,7 @@ impl PreviewProvider for Provider {
                 pages: count,
                 outlines: Vec::new(),
                 reflowable: false,
+                labels: Vec::new(),
             },
         })))
     }

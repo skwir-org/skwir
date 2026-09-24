@@ -6,7 +6,7 @@
 //! documents), each extracted here with the same bound as every chapter.
 use bibli_core::{
     App, CancelToken,
-    inspection::{InspectRequest, Inspection, Picture, Row},
+    inspection::{InspectRequest, Inspection, Picture, PrintedPage, Row},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
 };
@@ -219,10 +219,7 @@ impl PreviewProvider for Provider {
         let (source, encoding) = inspection::decode(&bytes);
         notice.extend(encoding.notice());
         let base = base(&href);
-        let mut rows = Vec::new();
-        for entry in book.toc() {
-            contents(entry, 0, &mut rows);
-        }
+        let mut rows = table_of_contents(&book);
         if rows.is_empty() {
             rows = chapters
                 .iter()
@@ -265,6 +262,7 @@ impl PreviewProvider for Provider {
             next: (index + 1 < chapters.len()).then_some(index as u64 + 1),
             position: index as u64,
             sections: chapters.len() as u64,
+            printed_pages: printed_pages(&book, &keys),
             source_available: true,
             ..Inspection::default()
         };
@@ -618,6 +616,58 @@ fn package(container: &mut Container, cancel: &CancelToken) -> anyhow::Result<(r
     Ok((rbook::Epub::read(std::io::Cursor::new(bytes))?, fixed))
 }
 
+/// The book's table of contents, and only it: the EPUB 3 `toc` nav, else
+/// the EPUB 2 NCX `navMap`. A book's navigation also lists its landmarks
+/// and its printed pages (`landmarks`, `page-list`, the NCX `pageList`, the
+/// OPF guide), and often the same chapters twice (nav and NCX): those are
+/// not its contents. `rbook::Epub::toc` iterates all of them.
+fn table_of_contents(book: &rbook::Epub) -> Vec<Row> {
+    let mut rows = Vec::new();
+    if let Some(root) = book.toc().contents() {
+        contents(root, 0, &mut rows);
+    }
+    rows
+}
+
+/// The printed book's pages, in order (`page-list`, else the NCX
+/// `pageList`): each with the chapter that holds it, among `keys` (the
+/// spine's members), and its link. A page in no chapter of the spine is
+/// left out.
+fn printed_pages(book: &rbook::Epub, keys: &[Option<String>]) -> Vec<PrintedPage> {
+    /// Pages kept: more than any printed book has.
+    const PAGES: usize = 20_000;
+    fn walk(
+        entry: rbook::epub::toc::EpubTocEntry<'_>,
+        depth: usize,
+        keys: &[Option<String>],
+        pages: &mut Vec<PrintedPage>,
+    ) {
+        if depth > limits::NESTING || pages.len() >= PAGES {
+            return;
+        }
+        if let Some(href) = entry.href() {
+            let target = href.as_str();
+            let key = member_key(target);
+            if let Some(section) = keys.iter().position(|k| k.is_some() && *k == key) {
+                pages.push(PrintedPage {
+                    label: entry.label().trim().to_owned(),
+                    section: section as u64,
+                    target: target.to_owned(),
+                });
+            }
+        }
+        for child in entry {
+            walk(child, depth + 1, keys, pages);
+        }
+    }
+    let mut pages = Vec::new();
+    if let Some(root) = book.toc().page_list() {
+        walk(root, 0, keys, &mut pages);
+    }
+    pages.retain(|page| !page.label.is_empty());
+    pages
+}
+
 /// Flatten a contents tree. Wrapper entries without a target (such as the
 /// root nav element) contribute no row and no indentation.
 fn contents(entry: rbook::epub::toc::EpubTocEntry<'_>, depth: usize, rows: &mut Vec<Row>) {
@@ -776,6 +826,82 @@ mod tests {
         .unwrap();
         assert_eq!(third.position, 2);
         assert!(third.plain_text().contains("Another needle"));
+    }
+
+    /// Contents are the table of contents: not the landmarks, not the list
+    /// of printed pages, not the NCX's second copy of the chapters.
+    #[test]
+    fn contents_are_the_table_of_contents_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("Synthetic paginated book.epub");
+        let opf = OPF
+            .replace(
+                r#"<item id="nav""#,
+                r#"<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/><item id="nav""#,
+            )
+            .replace("<spine>", r#"<spine toc="ncx">"#);
+        let nav = r#"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>
+<nav epub:type="toc"><ol><li><a href="one.xhtml">Start</a></li><li><a href="two.xhtml">Middle</a></li></ol></nav>
+<nav epub:type="landmarks"><ol><li><a epub:type="bodymatter" href="one.xhtml">Begin reading</a></li></ol></nav>
+<nav epub:type="page-list"><ol><li><a href="one.xhtml#p1">1</a></li><li><a href="two.xhtml#p2">2</a></li></ol></nav>
+</body></html>"#;
+        let ncx = r#"<?xml version="1.0"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><head/><docTitle><text>Synthetic</text></docTitle>
+<navMap><navPoint id="n1" playOrder="1"><navLabel><text>Start</text></navLabel><content src="one.xhtml"/></navPoint><navPoint id="n2" playOrder="2"><navLabel><text>Middle</text></navLabel><content src="two.xhtml"/></navPoint></navMap>
+<pageList><pageTarget id="p1" type="normal" value="1" playOrder="3"><navLabel><text>1</text></navLabel><content src="one.xhtml#p1"/></pageTarget></pageList></ncx>"#;
+        write(
+            &path,
+            &[
+                ("mimetype", b"application/epub+zip"),
+                ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+                ("EPUB/book.opf", opf.as_bytes()),
+                ("EPUB/nav.xhtml", nav.as_bytes()),
+                ("EPUB/toc.ncx", ncx.as_bytes()),
+                ("EPUB/one.xhtml", br"<html><body><p>One.</p></body></html>"),
+                ("EPUB/two.xhtml", br"<html><body><p>Two.</p></body></html>"),
+            ],
+        );
+        let first = inspect(&path, &InspectRequest::default()).unwrap();
+        let titles: Vec<_> = first.rows.iter().map(|r| r.cells[0].as_str()).collect();
+        assert_eq!(titles, ["Start", "Middle"]);
+        // The printed pages are the page list, each with its chapter.
+        let pages = |inspection: &Inspection| {
+            inspection
+                .printed_pages
+                .iter()
+                .map(|p| (p.label.clone(), p.section, p.target.clone()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            pages(&first),
+            [
+                ("1".to_owned(), 0, "/EPUB/one.xhtml#p1".to_owned()),
+                ("2".to_owned(), 1, "/EPUB/two.xhtml#p2".to_owned())
+            ]
+        );
+        // A book with only the EPUB 2 navigation reads its NCX `navMap`.
+        let nav_free = opf.replace(
+            r#"<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>"#,
+            "",
+        );
+        write(
+            &path,
+            &[
+                ("mimetype", b"application/epub+zip"),
+                ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+                ("EPUB/book.opf", nav_free.as_bytes()),
+                ("EPUB/toc.ncx", ncx.as_bytes()),
+                ("EPUB/one.xhtml", br"<html><body><p>One.</p></body></html>"),
+                ("EPUB/two.xhtml", br"<html><body><p>Two.</p></body></html>"),
+            ],
+        );
+        let first = inspect(&path, &InspectRequest::default()).unwrap();
+        let titles: Vec<_> = first.rows.iter().map(|r| r.cells[0].as_str()).collect();
+        assert_eq!(titles, ["Start", "Middle"]);
+        // ... and its `pageList`.
+        assert_eq!(
+            pages(&first),
+            [("1".to_owned(), 0, "/EPUB/one.xhtml#p1".to_owned())]
+        );
     }
 
     #[test]
@@ -1030,6 +1156,10 @@ mod tests {
     /// A fixed-layout book whose pages are pictures (a comic) shows a page
     /// as a page: the picture, the width of the panel.
     fn fixed(path: &std::path::Path, pages: &[(&str, &[u8])]) {
+        fixed_with(path, NAV, pages);
+    }
+
+    fn fixed_with(path: &std::path::Path, nav: &str, pages: &[(&str, &[u8])]) {
         let opf = OPF.replace(
             "<dc:language>en</dc:language>",
             r#"<dc:language>en</dc:language><meta property="rendition:layout">pre-paginated</meta>"#,
@@ -1038,7 +1168,7 @@ mod tests {
             ("mimetype", b"application/epub+zip"),
             ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
             ("EPUB/book.opf", opf.as_bytes()),
-            ("EPUB/nav.xhtml", NAV.as_bytes()),
+            ("EPUB/nav.xhtml", nav.as_bytes()),
             ("EPUB/images/p1.png", PNG),
         ];
         entries.extend_from_slice(pages);
@@ -1213,6 +1343,25 @@ mod tests {
         assert_eq!(pages("LETTERING"), [1]);
         assert_eq!(pages("no size"), [2]);
         assert!(pages("absent").is_empty());
+    }
+
+    /// A book of pages names them as its page list does: a page without a
+    /// printed number has none.
+    #[test]
+    fn a_fixed_layout_book_names_its_pages_as_printed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("Synthetic numbered book.epub");
+        let nav = NAV.replace(
+            "</body>",
+            r#"<nav epub:type="page-list"><ol><li><a href="one.xhtml">i</a></li><li><a href="two.xhtml">ii</a></li></ol></nav></body>"#,
+        );
+        let page = br#"<html><head><meta name="viewport" content="width=30,height=40"/></head><body><p>Page</p></body></html>"#;
+        fixed_with(
+            &path,
+            &nav,
+            &[("EPUB/one.xhtml", page), ("EPUB/two.xhtml", page)],
+        );
+        assert_eq!(session(&path).info().labels, ["i", "ii", ""]);
     }
 
     /// A page that states no size and holds one picture (a comic's page) is

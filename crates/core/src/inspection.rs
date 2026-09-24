@@ -46,6 +46,9 @@ pub struct Inspection {
     /// indices (a book's chapters): the toolbar's field goes to one by its
     /// number, as a document's goes to a page. 0: not numbered.
     pub sections: u64,
+    /// The pages of the printed book, in order, when it lists them (an
+    /// EPUB's `page-list`): where the toolbar counts by printed page.
+    pub printed_pages: Vec<PrintedPage>,
     pub source_available: bool,
     pub notice: String,
     /// What the format knows about the file, for the panel's Details: a
@@ -55,6 +58,16 @@ pub struct Inspection {
     /// they cost nothing more.
     pub details: Vec<Detail>,
 }
+/// A page of the printed book (`Inspection::printed_pages`): its number as
+/// printed ("xii", "47"), the section that holds it, and the link to where
+/// it starts in it (the section's target, with the fragment of its mark).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrintedPage {
+    pub label: String,
+    pub section: u64,
+    pub target: String,
+}
+
 /// One fact of [`Inspection::details`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Detail {

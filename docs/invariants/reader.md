@@ -75,6 +75,15 @@ Read this before touching `crates/pdf-worker`, `crates/poppler-worker`, `crates/
   replacing their pixels in place. A smaller side redraws nothing: the next
   pages come smaller. A cached page remembers the side it was asked at, so
   an engine that has no more pixels (a small picture) is not asked again.
+- A document that names its pages otherwise than by their number (a PDF's
+  `/PageLabels`, a fixed-layout book's page list) says so once, when it
+  opens (`DocumentInfo::labels`, filtered by `document::page_labels`, the
+  same for every engine: `tools/pdf/check.py` asserts it). Counted by
+  printed pages (`ui.printed_pages`, the count's picker shared with books,
+  `preview_bar::unit_popup`), the page field shows and takes those names;
+  previous and next still turn the file's pages. PDFium reads labels
+  without loading pages (`FPDF_GetPageLabel`); `MuPDF` reads them through
+  its PDF document.
 - `auto` may fall back when the worker/library is absent. Report document
   errors directly; do not conceal malformed files by silently trying engines.
   Poppler provides the same reader features. CLI image fallback is for `auto`

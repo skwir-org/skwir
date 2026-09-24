@@ -215,7 +215,7 @@ fn sort_groups(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
             "Crop thumbnails in the grid to fill their box",
             "ui.grid_fill",
         )
-        .active(shell.grid_fill),
+        .active(shell.prefs.grid_fill),
         "Fill thumbnails",
     ));
     let mut size = Vec::new();

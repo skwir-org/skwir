@@ -20,7 +20,9 @@ def stream(data):
     return f"<< /Length {len(data)} >>\nstream\n".encode() + data + b"\nendstream"
 
 
-def reader(path, kind="text", crop=False, angle=90, named=False):
+def reader(path, kind="text", crop=False, angle=90, named=False, labelled=False):
+    """Three pages; `labelled` names them as a book does (/PageLabels): a
+    roman front page, then 1 and 2."""
     objects = [b"", b"", b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
     page_ids = []
     image = None
@@ -61,6 +63,8 @@ def reader(path, kind="text", crop=False, angle=90, named=False):
     objects.append(f"<< /Title (Introduction) /Parent {outline} 0 R /Next {outline + 2} 0 R /Dest [{page_ids[0]} 0 R /Fit] >>".encode())
     objects.append(f"<< /Title (Second chapter) /Parent {outline} 0 R /Prev {outline + 1} 0 R /Dest {destination} >>".encode())
     names = f" /Dests << /chapter2 [{page_ids[1]} 0 R /Fit] >>" if named else ""
+    if labelled:
+        names += " /PageLabels << /Nums [0 << /S /r >> 1 << /S /D >>] >>"
     objects[0] = f"<< /Type /Catalog /Pages 2 0 R /Outlines {outline} 0 R{names} >>".encode()
     objects[1] = ("<< /Type /Pages /Count 3 /Kids [" + " ".join(f"{p} 0 R" for p in page_ids) + "] >>").encode()
     write_pdf(path, objects)

@@ -163,13 +163,16 @@ impl Bar {
 /// Where a document or a book is, between its previous and next buttons:
 /// its page or chapter as a button that becomes a field when clicked
 /// (`edit`), then how many there are. `editor` finds the field while it is
-/// open; the reader's page and a book's chapter are the same tool.
+/// open; the reader's page and a book's chapter are the same tool. `unit`,
+/// when a document can be counted two ways (chapters or printed pages),
+/// makes the count the picker of that unit, opening the popup it names.
 pub fn number_tool(
     bar: &mut Bar,
     (id, title): (&'static str, &'static str),
     edit: (&'static str, serde_json::Value),
-    (value, total): (u64, u64),
+    (value, total): (String, String),
     editor: fn(&Shell) -> Option<&Field>,
+    unit: Option<(Button, &'static str)>,
     theme: &Theme,
 ) {
     let (accent, border, paper, muted) = (theme.accent, theme.border, theme.bg, theme.text_muted);
@@ -190,13 +193,17 @@ pub fn number_tool(
                 .into_any_element(),
             None => Button::new(id, "", title, edit.0)
                 .args(edit.1.clone())
-                .label(value.to_string())
+                .label(value.clone())
                 .render(shell, cx)
                 .bg(paper)
                 .border_color(border)
                 .into_any_element(),
         },
     ));
+    if let Some((button, popup)) = unit {
+        bar.push(Item::button(Slot::Navigate, 1, button.label(format!("/ {total}"))).opens(popup));
+        return;
+    }
     bar.push(Item::widget(Slot::Navigate, 1, move |_, _| {
         div()
             .flex_none()
@@ -206,6 +213,34 @@ pub fn number_tool(
             .child(format!("/ {total}"))
             .into_any_element()
     }));
+}
+
+/// The count's own picker (`number_tool`): count by the document's own
+/// unit (`plain`: chapters of a book, pages of a document) or by the pages
+/// of its printed edition (`ui.printed_pages`).
+pub fn unit_popup(plain: &'static str) -> Popup {
+    Rc::new(move |shell, theme, cx| {
+        let popup = shell.preview.menu.as_ref()?;
+        let mut choices = div().flex().flex_col().gap_1();
+        for (id, label, on) in [
+            ("unit-plain", plain, false),
+            ("unit-printed", "Printed pages", true),
+        ] {
+            choices = choices.child(
+                Button::new(id, "", label, "ui.printed_pages")
+                    .label(label)
+                    .args(serde_json::json!({"on":on}))
+                    .active(shell.prefs.printed_pages == on)
+                    .menu()
+                    .render(shell, cx),
+            );
+        }
+        Some(
+            toolbar::popup_panel(popup, "ui.preview_menu", theme, cx)
+                .child(choices)
+                .into_any_element(),
+        )
+    })
 }
 
 /// Back to the container, first in every bar while the panel shows one of

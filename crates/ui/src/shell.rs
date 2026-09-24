@@ -72,6 +72,28 @@ struct Reveal {
     until: Instant,
 }
 
+/// The shell's switches read from the settings (`Shell::sync`, when their
+/// revision changes), never per frame.
+#[derive(Clone, Copy, Debug)]
+pub struct Preferences {
+    /// `ui.date_format`: Today 14:02 rather than an ISO date.
+    pub friendly_dates: bool,
+    /// `ui.grid_fill`: thumbnails cropped to their box.
+    pub grid_fill: bool,
+    /// `ui.printed_pages`: a book's position counts its printed pages.
+    pub printed_pages: bool,
+}
+
+impl Default for Preferences {
+    fn default() -> Self {
+        Self {
+            friendly_dates: true,
+            grid_fill: false,
+            printed_pages: false,
+        }
+    }
+}
+
 pub struct Shell {
     pub app: Arc<App>,
     /// The pane commands act on: the workspace's active pane, or the pane
@@ -88,14 +110,12 @@ pub struct Shell {
     pub thumbs: ThumbCache,
     pub icons: IconCache,
     pub type_names: crate::typenames::TypeNames,
-    /// `ui.date_format`, resolved when the settings revision changes.
-    pub friendly_dates: bool,
-    /// Size, Modified, Type: which detail columns the list shows.
+    /// Switches of the settings, resolved when their revision changes.
+    pub prefs: Preferences,
     /// Sidebar groups the user folded, for this session.
     pub sidebar_folded: std::collections::HashSet<String>,
+    /// Size, Modified, Type: which detail columns the list shows.
     pub columns: [bool; 3],
-    /// `ui.grid_fill`: thumbnails cropped to their box.
-    pub grid_fill: bool,
     /// `ui.reading_width`: the reading column's widest, in ems, or `None`
     /// for the whole panel (`markdown::measure`).
     pub reading_measure: Option<f32>,
@@ -257,10 +277,9 @@ impl Shell {
             thumbs: ThumbCache::default(),
             icons: IconCache::default(),
             type_names: crate::typenames::TypeNames::default(),
-            friendly_dates: true,
+            prefs: Preferences::default(),
             sidebar_folded: std::collections::HashSet::new(),
             columns: [true; 3],
-            grid_fill: false,
             reading_measure: crate::markdown::measure("comfortable"),
             reading_width_before: None,
             zoom_wheel: crate::reader_scroll::WheelTurn::default(),
@@ -749,12 +768,31 @@ impl Shell {
     /// `ui.grid_fill`: a preference, so it goes through `settings.apply` like
     /// the switch in the dialog.
     fn toggle_grid_fill(&mut self, cx: &mut Context<Self>) {
-        self.grid_fill = !self.grid_fill;
+        self.prefs.grid_fill = !self.prefs.grid_fill;
         cx.notify();
         if let Err(error) = self.app.dispatch(&Invocation::with_args(
             "settings.apply",
             &serde_json::json!({
-                "changes": { crate::settings::GRID_FILL_KEY: self.grid_fill.to_string() }
+                "changes": { crate::settings::GRID_FILL_KEY: self.prefs.grid_fill.to_string() }
+            }),
+        )) {
+            self.set_status(format!("{error:#}"), true, cx);
+        }
+    }
+
+    /// `ui.printed_pages`: count a book by chapters or by printed pages. A
+    /// preference, so it goes through `settings.apply` like the dialog's
+    /// switch; the unit picker closes on its choice.
+    fn set_printed_pages(&mut self, on: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(popup) = self.preview.menu.take_if(|popup| popup.kind == "unit") {
+            popup.restore(window);
+        }
+        self.prefs.printed_pages = on;
+        cx.notify();
+        if let Err(error) = self.app.dispatch(&Invocation::with_args(
+            "settings.apply",
+            &serde_json::json!({
+                "changes": { crate::settings::PRINTED_PAGES_KEY: on.to_string() }
             }),
         )) {
             self.set_status(format!("{error:#}"), true, cx);
@@ -1099,6 +1137,13 @@ impl Shell {
             "columns_reset" => self.reset_column_widths(cx),
             "grid_fill" => self.toggle_grid_fill(cx),
             "full_width" => self.toggle_full_width(cx),
+            "printed_pages" => {
+                let on = args
+                    .get("on")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(!self.prefs.printed_pages);
+                self.set_printed_pages(on, window, cx);
+            }
             "zoom" => {
                 let dir = arg("dir").unwrap_or_else(|| "reset".into());
                 self.zoom_step(&dir, cx);
@@ -1136,6 +1181,7 @@ impl Shell {
                     .and_then(serde_json::Value::as_i64)
                     .unwrap_or(1)
                     .clamp(-1, 1) as i32,
+                window,
                 cx,
             ),
             "preview_seek" => self.preview_seek(
@@ -1309,12 +1355,12 @@ impl Shell {
         if revision != self.theme_revision {
             self.theme_revision = revision;
             cx.set_global(Theme::resolve(&self.app, window.appearance()));
-            self.friendly_dates = self
+            self.prefs.friendly_dates = self
                 .app
                 .settings
                 .get::<String>(crate::settings::DATES_KEY)
                 .is_none_or(|format| format != "iso");
-            self.grid_fill = self
+            self.prefs.grid_fill = self
                 .app
                 .settings
                 .get::<bool>(crate::settings::GRID_FILL_KEY)
@@ -1326,6 +1372,11 @@ impl Shell {
                     .get::<String>(crate::settings::READING_WIDTH_KEY)
                     .unwrap_or_default(),
             );
+            self.prefs.printed_pages = self
+                .app
+                .settings
+                .get::<bool>(crate::settings::PRINTED_PAGES_KEY)
+                .unwrap_or(false);
             self.columns = crate::settings::COLUMN_KEYS
                 .map(|key| self.app.settings.get::<bool>(key).unwrap_or(true));
             if self.column_drag.is_none()

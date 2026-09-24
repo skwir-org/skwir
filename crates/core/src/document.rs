@@ -56,6 +56,29 @@ pub struct DocumentInfo {
     /// a text size of its own gives other pages. PDF pages are fixed.
     #[serde(default)]
     pub reflowable: bool,
+    /// Each page's label as printed ("iv", "47", "A-3"), when the document
+    /// names its pages otherwise than by their number (`page_labels`);
+    /// empty when it does not. A page without one has an empty label.
+    #[serde(default)]
+    pub labels: Vec<String>,
+}
+
+/// The longest page label kept, in characters.
+const LABEL_CHARS: usize = 64;
+
+/// A document's page labels as the protocol carries them: trimmed and
+/// bounded, and none at all when every labelled page is its own number, or
+/// none is labelled: a label is worth showing only where it differs.
+pub fn page_labels(labels: impl IntoIterator<Item = String>) -> Vec<String> {
+    let labels: Vec<String> = labels
+        .into_iter()
+        .map(|label| label.trim().chars().take(LABEL_CHARS).collect())
+        .collect();
+    let plain = labels
+        .iter()
+        .enumerate()
+        .all(|(index, label)| label.is_empty() || *label == (index + 1).to_string());
+    if plain { Vec::new() } else { labels }
 }
 
 /// CSS pixels (1/96 in) in a point (1/72 in): a page's own size is given
@@ -335,5 +358,30 @@ pub mod worker {
             .unwrap();
             assert_eq!(saw, [true]);
         }
+    }
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::page_labels;
+
+    fn labels(names: &[&str]) -> Vec<String> {
+        page_labels(names.iter().map(|name| (*name).to_owned()))
+    }
+
+    #[test]
+    fn labels_are_kept_only_where_a_page_is_named_otherwise() {
+        assert_eq!(labels(&["i", "ii", "1", "2"]), ["i", "ii", "1", "2"]);
+        assert_eq!(
+            labels(&["", " 1 ", "2"]),
+            ["", "1", "2"].map(String::from).to_vec()
+        );
+        // Each page its own number, or nothing named: nothing to show.
+        assert!(labels(&["1", "2", "3"]).is_empty());
+        assert!(labels(&["", "", ""]).is_empty());
+        assert!(labels(&["1", "", "3"]).is_empty());
+        // Bounded.
+        let long = "x".repeat(200);
+        assert_eq!(labels(&[&long])[0].chars().count(), 64);
     }
 }

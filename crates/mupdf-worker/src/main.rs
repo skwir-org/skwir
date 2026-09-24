@@ -18,7 +18,8 @@ use std::path::Path;
 use anyhow::Context;
 use bibli_core::document::{
     CSS_PER_POINT, Destination, DocumentInfo, Link, MAX_HITS, MAX_PAGE_CHARS, MAX_SIDE, Outline,
-    PIXELS_FILE, PageContent, Rect, SearchHit, TextChar, WorkerReply, WorkerRequest, worker,
+    PIXELS_FILE, PageContent, Rect, SearchHit, TextChar, WorkerReply, WorkerRequest, page_labels,
+    worker,
 };
 use mupdf::{Colorspace, Device, Document, Matrix, Page, Pixmap, Quad, TextPageFlags};
 
@@ -63,25 +64,46 @@ fn run() -> anyhow::Result<()> {
     }
     let pages = u32::try_from(document.page_count()?)?;
     anyhow::ensure!(pages > 0, "document has no pages");
+    // A PDF names its pages (`/PageLabels`); only MuPDF's PDF document
+    // reads them, and it is still the document every request reads.
+    let opened = if document.is_pdf() {
+        Opened::Pdf(mupdf::pdf::PdfDocument::try_from(document)?)
+    } else {
+        Opened::Other(document)
+    };
+    let (document, labels): (&Document, _) = match &opened {
+        Opened::Pdf(pdf) => (
+            pdf,
+            page_labels((0..pages as usize).map(|index| pdf.page_label(index).unwrap_or_default())),
+        ),
+        Opened::Other(document) => (document, Vec::new()),
+    };
     worker::greet(&WorkerReply::Ready(DocumentInfo {
         pages,
-        outlines: outlines(&document),
+        outlines: outlines(document),
         reflowable,
+        labels,
     }))?;
     let scratch = Path::new(&args[1]);
     worker::serve(|request, superseded| match request {
-        WorkerRequest::Render { page, side } => render(&document, pages, page, side, scratch),
+        WorkerRequest::Render { page, side } => render(document, pages, page, side, scratch),
         WorkerRequest::Search { query } => {
-            search(&document, pages, &query, superseded).map(WorkerReply::Matches)
+            search(document, pages, &query, superseded).map(WorkerReply::Matches)
         }
         // A PDF's pages never move.
         WorkerRequest::Locate { .. } if !reflowable => Ok(WorkerReply::Located(None)),
         WorkerRequest::Locate { text, near } => {
-            locate(&document, pages, &text, near, superseded).map(WorkerReply::Located)
+            locate(document, pages, &text, near, superseded).map(WorkerReply::Located)
         }
         // `serve` answers it: nothing runs by the time it is read.
         WorkerRequest::Cancel => anyhow::bail!("nothing to cancel"),
     })
+}
+
+/// The document opened, as a PDF when it is one.
+enum Opened {
+    Pdf(mupdf::pdf::PdfDocument),
+    Other(Document),
 }
 
 /// `--layout=width,height,em`: page size and body text size, in points,

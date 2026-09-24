@@ -87,13 +87,16 @@ def main():
         root = Path(directory)
         pdf = root / "Synthetic reader's document.pdf"
         for angle in (0, 90, 180, 270):
-            reader(pdf, crop=True, angle=angle, named=angle == 180)
+            labelled = angle == 270
+            reader(pdf, crop=True, angle=angle, named=angle == 180, labelled=labelled)
             command = [str(args.worker.resolve()), str(pdf), str(root)]
             with subprocess.Popen(command, env=environment, stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, text=True) as process:
                 info = reply(process, 0)["Ready"]
                 assert info["pages"] == 3
                 assert [entry["page"] for entry in info["outlines"]] == [1, 2]
+                # Pages named otherwise than by their number carry their names.
+                assert info["labels"] == (["i", "1", "2"] if labelled else []), info["labels"]
                 hits = send(process, {"Search": {"query": "needle"}})["Matches"]
                 assert [hit["page"] for hit in hits] == [1, 2, 3]
                 assert [hit["page"] for hit in send(process, {"Search": {"query": "NEEDLE"}})["Matches"]] == [1, 2, 3]
@@ -137,7 +140,7 @@ def main():
         ])
         with subprocess.Popen(command, env=environment, stdin=subprocess.PIPE,
                               stdout=subprocess.PIPE, text=True) as process:
-            assert reply(process, 0) == {"Ready": {"pages": 1, "outlines": [], "reflowable": False}}
+            assert reply(process, 0) == {"Ready": {"pages": 1, "outlines": [], "reflowable": False, "labels": []}}
             for side, expected in [(0, 64), (10000, 4096)]:
                 page = send(process, {"Render": {"page": 100, "side": side}})["Page"]
                 assert max(page["width"], page["height"]) == expected

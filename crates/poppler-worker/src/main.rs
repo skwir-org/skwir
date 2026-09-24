@@ -5,7 +5,7 @@ use std::path::Path;
 use anyhow::Context;
 use bibli_core::document::{
     CSS_PER_POINT, DocumentInfo, MAX_HITS, MAX_SIDE, PIXELS_FILE, PageContent, Rect, SearchHit,
-    WorkerReply, WorkerRequest, worker,
+    WorkerReply, WorkerRequest, page_labels, worker,
 };
 use cairo::{Context as CairoContext, Format, ImageSurface};
 use poppler::{Document, Page};
@@ -30,6 +30,13 @@ fn run() -> anyhow::Result<()> {
         pages,
         outlines: navigation::outlines(&document),
         reflowable: false,
+        labels: page_labels((0..document.n_pages()).map(|index| {
+            document
+                .page(index)
+                .and_then(|page| page.label())
+                .map(|label| label.to_string())
+                .unwrap_or_default()
+        })),
     }))?;
     let scratch = Path::new(&args[1]);
     worker::serve(|request, superseded| match request {
