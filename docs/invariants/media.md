@@ -47,6 +47,17 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
   Keep playbin flags intact and test actual subtitle pixels, not only metadata.
   The manager bounds glibc arenas in the child to limit frame-buffer retention;
   native benchmarks must use the same policy (as `tools/media/check.py` does).
+- The decoder is GStreamer's choice, by its feature ranks; bibli does not
+  pick one per machine. Where GStreamer ranks a hardware decoder first, the
+  worker carries that driver's stack: with NVIDIA's `nvcodec` decoders
+  (ranked above `avdec_*`) about 150 MB of CUDA mappings per video worker,
+  measured 2026-09-24, on top of the decoder's own frame buffers (about
+  60 MB at 1080p, about 400 MB at 4K H.265 with either decoder). An audio
+  worker never loads a video decoder and stays near 12 MB PSS. On that
+  machine software decoding was lighter and quicker to a first frame at
+  1080p and cost 1 to 1.5 more cores at 4K; one machine does not settle the
+  choice for others, so the ranks stay as installed. Compare worker memory
+  with the same decoder in both runs.
 - Generate media with `tools/media/check.py`; report worker-only versus full UI
   latency and combined PSS separately. Clocked fake audio checks timing but do
   not establish audible synchronization or real audio-device behavior.

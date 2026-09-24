@@ -54,6 +54,14 @@ current source before assuming a planned crate, command, or API exists.
   grid reflowed a frame late after every panel toggle; the fix was moving
   size-dependent layout into the element's prepaint (`crates/ui/src/view.rs`),
   not patching each toggle.
+- **No tuning for the machine it was measured on.** The reference machine
+  measures budgets and regressions; it is not the target. Do not choose
+  behaviour for its hardware (its GPU vendor or driver, a hardware decoder,
+  its core count, its memory) unless the gain holds on the machines bibli
+  runs on (other GPU vendors, no GPU, fewer cores, less memory) with
+  certainty, by a mechanism that does not depend on that hardware. When one
+  machine is all the evidence, record what was measured and keep the
+  platform's default: see the decoder note in `docs/invariants/media.md`.
 - **UI layout rule.** Never derive layout from a measured size in `render`.
   Size-dependent layout lives in an element's `prepaint`, where the bounds are
   real (`crates/ui/src/elements/`). The only permitted later reads of prepaint
