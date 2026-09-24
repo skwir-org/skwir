@@ -99,7 +99,11 @@ impl Display {
             .blocks
             .iter()
             .map(|b| b.text.to_lowercase())
-            .chain(data.rows.iter().map(|r| r.cells.join("\t").to_lowercase()))
+            .chain(
+                listed(&data)
+                    .iter()
+                    .map(|r| r.cells.join("\t").to_lowercase()),
+            )
             .collect();
         let table = (data.kind == InspectionKind::Table)
             .then(|| Arc::new(crate::inspector_rows::shape(&data.columns, &data.rows)));
@@ -127,6 +131,17 @@ impl Display {
             .or_else(|| wrap.then(|| hit(0..start.min(self.folded.len()))).flatten())
     }
 }
+/// The rows that are content, drawn after the blocks: a table's, an
+/// archive's, a message's attachments. A book's rows are its contents, a way
+/// through it that the Contents drawer shows, and none of its text.
+pub(crate) fn listed(data: &Inspection) -> &[bibli_core::inspection::Row] {
+    if data.kind == InspectionKind::Book {
+        &[]
+    } else {
+        &data.rows
+    }
+}
+
 /// Bring a list item into view. `ListState::scroll_to_reveal_item` walks the
 /// measured heights to get there, so it can only reach what the list has
 /// already laid out; a heading or a match further down would barely move the
@@ -243,7 +258,7 @@ impl State {
                     .collect()
             };
             self.collapsed = Arc::new(self.collapsed.intersection(&folds).copied().collect());
-            let items = data.blocks.len() + data.rows.len();
+            let items = data.blocks.len() + listed(data).len();
             self.selected = self.selected.filter(|&i| i < items);
             self.selection = None;
             self.dragging = false;
@@ -425,8 +440,7 @@ impl State {
             return;
         }
         let mut hidden = None;
-        let mut visible: Vec<usize> = data
-            .rows
+        let mut visible: Vec<usize> = listed(data)
             .iter()
             .enumerate()
             .filter_map(|(i, r)| {
@@ -552,14 +566,20 @@ impl Shell {
                                 .get(i)
                                 .map(|b| b.text.clone())
                                 .or_else(|| {
-                                    display
-                                        .data
-                                        .rows
+                                    listed(&display.data)
                                         .get(i.saturating_sub(display.data.blocks.len()))
                                         .map(|r| r.cells.join("\t"))
                                 })
                         })
-                        .unwrap_or_else(|| display.data.plain_text());
+                        .unwrap_or_else(|| {
+                            let blocks = display.data.blocks.iter().map(|b| b.text.as_str());
+                            let rows = listed(&display.data).iter().map(|r| r.cells.join("\t"));
+                            blocks
+                                .map(str::to_owned)
+                                .chain(rows)
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        });
                     cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
                     return;
                 }
