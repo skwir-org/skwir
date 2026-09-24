@@ -96,6 +96,16 @@ still to come are in `docs/preview-frame.md`.
   phase directly. Likewise a preview still on its way is not "nothing to
   preview": Details fills the body only when the phase is idle
   (`details::alone`), never for the instant before a picture replaces it.
+- **The desktop's thumbnail is that wait's picture, not a preview.** It is
+  sent ahead and kept aside (`PreviewState::placeholder`), shown only once
+  the wait has lasted, instead of "Loading…" (`preview::placeholder`), so
+  a preview that comes at once never flashes it. It stands where the
+  preview will: an image's at the image's own size (read from its
+  header), so only its sharpness changes; a document's where the reader
+  draws its first page; anything else at its proportions, as large as a
+  preview may be. A preview replaces it; a file with no picture of its own
+  (no preview for its type, a film until its player has a frame) keeps it
+  as its picture. Never show it as content before the wait has lasted.
 - **A changed file is read again in place.** A preview is identified by its
   pane, entry, path and the providers (`PreviewKey`); a new one of those is
   another preview and nothing of the last survives. The file's date, size

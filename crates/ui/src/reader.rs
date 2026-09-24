@@ -582,6 +582,57 @@ pub fn page_element(
         .into_any_element()
 }
 
+/// A document's first page stood in for by its thumbnail while the reader
+/// opens it: where the reader will draw it, at the page's proportions: at
+/// the top of the column and as wide as it fits when reading continuously,
+/// in the middle of the canvas a page at a time.
+pub(crate) fn page_placeholder(
+    image: Arc<RenderImage>,
+    (width, height): (f32, f32),
+    continuous: bool,
+) -> AnyElement {
+    if !continuous {
+        return div()
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .child(
+                gpui::img(image)
+                    .absolute()
+                    .size_full()
+                    .object_fit(gpui::ObjectFit::Contain),
+            )
+            .into_any_element();
+    }
+    // The reader's row: the page fitted to the width and the height less
+    // the gap under it (`reader_scroll::continuous_element`).
+    let viewport = crate::elements::document::DocumentViewport {
+        build: Box::new(move |bounds, _, _| {
+            let (w, h) = (f32::from(bounds.width), f32::from(bounds.height));
+            let scale = (w / width.max(1.)).min((h - 12.).max(1.) / height.max(1.));
+            div()
+                .size_full()
+                .flex()
+                .justify_center()
+                .child(
+                    gpui::img(image)
+                        .flex_none()
+                        .w(gpui::px(width * scale))
+                        .h(gpui::px(height * scale)),
+                )
+                .into_any_element()
+        }),
+        laid_out: Box::new(|_, _| {}),
+    };
+    div()
+        .flex_1()
+        .min_h_0()
+        .w_full()
+        .child(viewport)
+        .into_any_element()
+}
+
 pub(crate) fn page_surface(
     shell: &Shell,
     image: Arc<RenderImage>,

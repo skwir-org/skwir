@@ -77,6 +77,9 @@ struct PreviewResult {
     /// it (`mime::identify`): the header shows it and the next request of
     /// the same file carries it, so the bytes are asked once.
     sniffed: Option<String>,
+    /// The desktop's thumbnail of the file, sent ahead of its preview: kept
+    /// aside (`PreviewState::placeholder`), never shown as its content.
+    placeholder: bool,
 }
 
 /// Facts shown in the header, read from the entry's metadata.
@@ -229,6 +232,9 @@ pub struct PreviewState {
     pub(crate) fit_width: bool,
     /// Where a picture zoomed past the panel is scrolled to (`picture`).
     pub(crate) picture_scroll: gpui::ScrollHandle,
+    /// The file's thumbnail while its preview is on its way: shown only
+    /// once the wait has lasted, as "Loading…" is (`body`).
+    pub(crate) placeholder: Option<PreviewContent>,
     /// The side an image was asked to be decoded at for a zoom
     /// (`sharpen_picture`); 0 for the display side.
     pub(crate) picture_side: u32,
@@ -303,6 +309,7 @@ impl Default for PreviewState {
             zoom: None,
             fit_width: false,
             picture_scroll: gpui::ScrollHandle::new(),
+            placeholder: None,
             picture_side: 0,
             page_side: FIRST_PAGE_SIDE,
             text_size: None,
@@ -403,6 +410,31 @@ impl Drop for PreviewState {
 /// moved on meanwhile, so the peak is one picture and passed-over files are
 /// never decoded.
 static DECODE_TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Whether the file shown opens in the document reader, as pages: its
+/// thumbnail, while it loads, stands where the reader will put its first.
+fn opens_as_pages(shell: &Shell) -> bool {
+    let mime = shell.preview.info.mime.as_deref().unwrap_or_default();
+    let extension = shell
+        .preview
+        .key
+        .as_ref()
+        .map(|key| bibli_platform::inspection::extension(&key.path))
+        .unwrap_or_default();
+    mime == "application/pdf"
+        || mime.contains("comicbook")
+        || matches!(extension.as_str(), "pdf" | "cbz" | "cbr" | "cb7" | "cbt")
+}
+
+/// An image's own size, from its header.
+fn image_size(path: &Path) -> Option<(u32, u32)> {
+    let file = std::io::BufReader::new(bibli_platform::file::open_regular(path).ok()?);
+    image::ImageReader::new(file)
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()
+}
 
 /// An image decoded at most `side` pixels on its longer side (at least the
 /// display side, `IMAGE_MAX_SIDE`; a zoom asks for more), with its own size,
@@ -804,7 +836,7 @@ impl Shell {
     /// A result for the current request.
     fn preview_arrived(
         &mut self,
-        result: PreviewResult,
+        mut result: PreviewResult,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -821,6 +853,28 @@ impl Shell {
             self.type_names.request(&Arc::clone(&self.app));
             self.preview.info.mime = Some(mime.0);
             self.preview.info.identified = true;
+        }
+        // The thumbnail waits aside: it is shown only once the wait has
+        // lasted (`BUSY_AFTER`), in place of "Loading…", so a preview that
+        // comes at once never flashes it.
+        if result.placeholder {
+            if let Some(PreviewContent::Image { image, .. }) =
+                self.preview.placeholder.replace(result.content)
+            {
+                cx.drop_image(image, Some(window));
+            }
+            cx.notify();
+            return;
+        }
+        // A file with no picture of its own (a type without a preview, a
+        // film until its first frame) keeps its thumbnail as its picture;
+        // any other preview replaces it.
+        if let Some(placeholder) = self.preview.placeholder.take() {
+            if matches!(result.content, PreviewContent::Generic) && result.complete {
+                result.content = placeholder;
+            } else if let PreviewContent::Image { image, .. } = placeholder {
+                cx.drop_image(image, Some(window));
+            }
         }
         if result.complete {
             self.preview.reader.tried = true;
@@ -890,7 +944,10 @@ impl Shell {
                 ..
             }
         ) && self.preview.media.accept_poster();
-        if self.preview.media.session.is_none() || poster {
+        // A film's thumbnail stands for it until its player has a frame.
+        let thumbnail = self.preview.content.is_none()
+            && matches!(result.content, PreviewContent::Image { detail: None, .. });
+        if self.preview.media.session.is_none() || poster || thumbnail {
             self.replace_preview_content(Some(result.content), window, cx);
         }
         self.preview.phase = if result.complete {
@@ -1039,6 +1096,7 @@ impl Shell {
                             session,
                             media,
                             sniffed: sniffed.borrow().clone(),
+                            placeholder: false,
                         });
                         wake();
                     }
@@ -1129,15 +1187,45 @@ impl Shell {
                     if let Ok(Some(image)) = cached.thumbnail(&thumb, &cancel)
                         && let Some(render) = crate::thumbs::to_render_image(&image)
                     {
+                        // An image's thumbnail stands at the image's own
+                        // size, read from its header: when the preview comes,
+                        // only its sharpness changes. Any other keeps only
+                        // its proportions and stands as large as a preview
+                        // may be, filling the panel as a film or a page will.
+                        let own = request
+                            .mime
+                            .as_deref()
+                            .is_some_and(|mime| mime.starts_with("image/"))
+                            .then(|| image_size(&path))
+                            .flatten()
+                            .unwrap_or_else(|| {
+                                let scale = f64::from(IMAGE_MAX_SIDE)
+                                    / f64::from(image.width.max(image.height).max(1));
+                                let side = |length: u32| {
+                                    ((f64::from(length) * scale).round() as u32).max(1)
+                                };
+                                (side(image.width), side(image.height))
+                            });
                         let content = PreviewContent::Image {
                             image: render,
-                            width: image.width,
-                            height: image.height,
+                            width: own.0,
+                            height: own.1,
                             detail: None,
                             document: None,
                             facts: Vec::new(),
                         };
-                        send(content, false, None, None);
+                        if !cancel.is_cancelled() {
+                            let _ = tx.send(PreviewResult {
+                                generation,
+                                content,
+                                complete: false,
+                                session: None,
+                                media: None,
+                                sniffed: None,
+                                placeholder: true,
+                            });
+                            wake();
+                        }
                     }
                 }
                 if !is_dir && pinned.as_ref() == Some(&path) {
@@ -1311,6 +1399,10 @@ impl Shell {
     ) {
         // RenderImage's Arc does not own its uploaded atlas entry. Evict it
         // explicitly, just like the thumbnail LRU, on replacement and close.
+        // A thumbnail kept aside for the wait goes with it.
+        if let Some(PreviewContent::Image { image, .. }) = self.preview.placeholder.take() {
+            cx.drop_image(image, Some(window));
+        }
         match self.preview.content.take() {
             Some(PreviewContent::Image { image, .. }) => {
                 cx.drop_image(image, Some(window));
@@ -1977,7 +2069,17 @@ fn on_paper(shell: &Shell) -> bool {
     if preview.media.session.is_some() {
         return shell.media_is_audio();
     }
-    !matches!(preview.content, Some(PreviewContent::Image { .. }))
+    !matches!(preview.content, Some(PreviewContent::Image { .. })) && placeholder(shell).is_none()
+}
+
+/// The thumbnail standing in for the preview, once the wait has lasted
+/// (`BUSY_AFTER`) and while nothing else is shown.
+fn placeholder(shell: &Shell) -> Option<&PreviewContent> {
+    let preview = &shell.preview;
+    preview
+        .placeholder
+        .as_ref()
+        .filter(|_| preview.content.is_none() && shell.preview_busy())
 }
 
 fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>) -> AnyElement {
@@ -2000,8 +2102,39 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                     .and_then(|()| crate::inspector::outline_drawer(shell, display, theme, cx)),
             )
             .into_any_element(),
-        // A wait that has lasted says so; a shorter one shows nothing yet,
-        // so a preview that comes at once never flickers through "Loading…".
+        // A wait that has lasted shows the file's thumbnail, where its
+        // preview will stand; a shorter one shows nothing yet, so a preview
+        // that comes at once never flickers through a stand-in.
+        None if let Some(PreviewContent::Image {
+            image,
+            width,
+            height,
+            ..
+        }) = placeholder(shell) =>
+        {
+            div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(if opens_as_pages(shell) {
+                    crate::reader::page_placeholder(
+                        Arc::clone(image),
+                        (*width as f32, *height as f32),
+                        crate::settings::reader_mode(shell),
+                    )
+                } else {
+                    picture(
+                        image,
+                        (*width, *height),
+                        (None, false),
+                        &p.picture_scroll,
+                        "preview-placeholder",
+                        None,
+                    )
+                })
+                .into_any_element()
+        }
         None if shell.preview_busy() => div()
             .flex_1()
             .flex()

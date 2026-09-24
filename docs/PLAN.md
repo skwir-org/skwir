@@ -145,7 +145,11 @@ both modes, a zoom from Fit redrawing pages at 1024 to 2560 px, a PDF at
 reading toolbar now mirrors the reader's: a chapter field between previous
 and next (the reader's page field, shared), a text size picker between
 smaller and larger, Full width where Fit width is, and the rendered/source
-switch last in the view group, where Continuous is.
+switch last in the view group, where Continuous is. The desktop's
+thumbnail no longer flashes before a preview: it waits aside and stands
+in only once a load has lasted 200 ms, where the preview will be (an
+image's at its own size, a document's as its first page), and stays as
+the picture of a file with no preview of its own.
 
 Music (2026-09-22): the audio preview became a small player. Sound: a
 perceptual volume, `scaletempo` so speed keeps the pitch, a spectrum folded
