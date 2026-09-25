@@ -123,9 +123,19 @@ current source before assuming a planned crate, command, or API exists.
   lists the scales). State colors are tokens: `hover`, `selection_*`,
   `success`/`warning`/`error`, `scrim`. Do not derive one locally.
 - **Sidebar.** Places carry a theme icon name, optionally `space` (filled in
-  by a worker: asking a volume can block) and an `eject` command. A row is a
-  drop target like any folder; a folder dropped beside the rows is bookmarked
-  through `places.bookmark`, which writes the desktop's shared GTK bookmarks.
+  by a worker: asking a volume can block), an `eject` command, `unavailable`
+  (why it cannot be opened: the row dims and this is its tooltip) and `menu`,
+  the place's own right-click items with their arguments. A rescan publishes
+  at once and keeps what the worker measured last (`carry_over`) until the
+  worker measures again, so nothing blinks. A row is a drop target like any
+  folder; a folder dropped beside the rows is bookmarked through
+  `places.bookmark`, which writes the desktop's shared GTK bookmarks.
+  Bookmarks are edited only through `BookmarkEdit` (`bibli_platform::places`):
+  each edit returns its inverse, which the notification offers as Undo
+  (then Redo, `App::notify_with_action`), and lines other applications
+  wrote are kept. The plugin watches the file, so other file managers'
+  edits appear. A plugin that needs a line of text from the user dispatches
+  `ui.ask` with the command to complete, not a prompt kind of its own.
 - **Learning the keys.** F1 (`shortcuts.rs`) lists the bindings that apply
   to the focused element, read from its key contexts, so a new context needs
   only a name in `keymap::context_label`. A command run three times with the

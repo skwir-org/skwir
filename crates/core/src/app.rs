@@ -42,6 +42,17 @@ pub struct Notification {
     /// offers to open it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setting: Option<String>,
+    /// A button that goes with the message: Undo for what a command did
+    /// outside the journal (a bookmark), Redo after that undo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<NotifyAction>,
+}
+
+/// A button on a [`Notification`]: its label and the command it runs.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct NotifyAction {
+    pub label: String,
+    pub command: Invocation,
 }
 
 /// Construction options.
@@ -378,6 +389,27 @@ impl App {
             level,
             text: text.into(),
             setting: None,
+            action: None,
+        });
+        self.wake();
+    }
+
+    /// Like [`App::notify`], with a button that runs `command`.
+    pub fn notify_with_action(
+        &self,
+        level: NotifyLevel,
+        text: impl Into<String>,
+        label: impl Into<String>,
+        command: Invocation,
+    ) {
+        self.notifications.lock().push(Notification {
+            level,
+            text: text.into(),
+            setting: None,
+            action: Some(NotifyAction {
+                label: label.into(),
+                command,
+            }),
         });
         self.wake();
     }
@@ -388,6 +420,7 @@ impl App {
             level,
             text: text.into(),
             setting: Some(key.into()),
+            action: None,
         });
         self.wake();
     }

@@ -181,8 +181,16 @@ pub struct Place {
     /// A command that detaches the volume (the sidebar shows an eject button).
     pub eject: Option<Invocation>,
     /// Run this instead of opening `location`: a volume that must be mounted
-    /// (or unlocked) first. Such a place is drawn as not yet available.
+    /// (or unlocked) first.
     pub activate: Option<Invocation>,
+    /// Why the place cannot be opened as it is (a volume to mount, a
+    /// bookmarked folder that is not there): the row is drawn as not
+    /// available, with this as its tooltip.
+    pub unavailable: Option<String>,
+    /// The place's own items in its context menu (rename or remove a
+    /// bookmark), with their arguments; the UI adds Open and Eject. `when`
+    /// is not evaluated: the owner lists what applies to this place.
+    pub menu: Vec<MenuItem>,
 }
 
 /// A menu contribution. `when` is a space-separated list of tokens that must

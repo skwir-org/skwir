@@ -55,6 +55,14 @@ The columns view no longer lists its folders a second time: the pane keeps
 the folders above open beside the one shown, and going up or down adopts the
 listing already there (`App::keep_locations`), so `/nix/store` comes back at
 once, complete, and its column is whole as soon as a child is entered.
+Bookmarks (2026-09-25): beyond adding, the sidebar's bookmarks can be
+renamed, removed and put in order (a right-click menu that each place fills
+through `Place::menu`, and dragging one bookmark onto another), every edit
+answered by a toast with Undo and then Redo. Ctrl+D and the background menu
+bookmark the folder shown, and a button in each pane's row shows whether it
+is bookmarked and toggles it. The GTK file is watched, so edits made in other
+file managers appear, and a bookmark whose folder is gone is dimmed with the
+reason. Edits keep the lines they do not touch, remote bookmarks included.
 
 ---
 

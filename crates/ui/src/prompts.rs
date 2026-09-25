@@ -24,12 +24,22 @@ pub enum PromptKind {
         pane: bibli_core::workspace::PaneId,
         generation: u64,
     },
+    /// `ui.ask`: the text completes a command (`PromptState::ask`).
+    Ask,
+}
+
+/// What `ui.ask` runs with the answer: `command`, its `field` set to the
+/// text. A plugin asks for a name without the shell knowing its command.
+pub struct Ask {
+    pub command: Invocation,
+    pub field: String,
 }
 
 pub struct PromptState {
     pub title: String,
     pub kind: PromptKind,
     pub input: Entity<TextInput>,
+    ask: Option<Ask>,
     back: FocusReturn,
     _sub: Subscription,
 }
@@ -63,7 +73,61 @@ impl Shell {
             PromptKind::Mkdir => "Folder name",
             PromptKind::Search => "*.pdf modified<7d size>10M  (in: picks the root)",
             PromptKind::Tags => "tag1, tag2 (empty clears)",
+            PromptKind::Ask => "",
         };
+        self.open_prompt_with(kind, title, placeholder, initial, select, None, window, cx);
+    }
+
+    /// `ui.ask { title, text?, placeholder?, command, args?, field }`: ask
+    /// for a line of text and run `command` with it as `args[field]`.
+    pub fn open_ask(
+        &mut self,
+        args: &serde_json::Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let text = |key: &str| args.get(key).and_then(serde_json::Value::as_str);
+        let (Some(command), Some(field)) = (text("command"), text("field")) else {
+            self.set_status("ui.ask needs a command and a field", true, cx);
+            return;
+        };
+        let command = Invocation {
+            name: command.into(),
+            args: args
+                .get("args")
+                .cloned()
+                .filter(serde_json::Value::is_object)
+                .unwrap_or_else(|| serde_json::json!({})),
+        };
+        let ask = Ask {
+            command,
+            field: field.to_owned(),
+        };
+        self.open_prompt_with(
+            PromptKind::Ask,
+            text("title").unwrap_or_default(),
+            text("placeholder").unwrap_or_default(),
+            text("text").unwrap_or_default(),
+            None,
+            Some(ask),
+            window,
+            cx,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)] // Each is one part of the question.
+    fn open_prompt_with(
+        &mut self,
+        kind: PromptKind,
+        title: &str,
+        placeholder: &str,
+        initial: &str,
+        select: Option<std::ops::Range<usize>>,
+        ask: Option<Ask>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let placeholder = placeholder.to_owned();
         let back = FocusReturn::capture(window, cx);
         let input = cx.new(|cx| TextInput::new(placeholder, cx));
         input.update(cx, |i, cx| {
@@ -80,6 +144,7 @@ impl Shell {
             |this, input, ev: &InputEvent, window, cx| match ev {
                 InputEvent::Submit => {
                     let kind = this.prompt.as_ref().map(|p| p.kind);
+                    let ask = this.prompt.as_mut().and_then(|p| p.ask.take());
                     // Spaces can be part of a passphrase.
                     let text = if kind == Some(PromptKind::Passphrase) {
                         input.read(cx).text().to_owned()
@@ -87,7 +152,11 @@ impl Shell {
                         input.read(cx).text().trim().to_owned()
                     };
                     this.close_prompt(window, cx);
-                    if let Some(kind) = kind {
+                    if let Some(Ask { command, field }) = ask {
+                        let mut args = command.args;
+                        args[field.as_str()] = serde_json::json!(text);
+                        this.run(&command.name, args, window, cx);
+                    } else if let Some(kind) = kind {
                         this.prompt_submitted(kind, text, window, cx);
                     }
                     cx.notify();
@@ -104,6 +173,7 @@ impl Shell {
             title: title.to_owned(),
             kind,
             input,
+            ask,
             back,
             _sub: sub,
         });

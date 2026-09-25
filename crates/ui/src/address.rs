@@ -509,7 +509,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
                 })
                 .bg(theme.bg)
                 .key_context(keymap::ADDRESS);
-            match path.filter(|_| !focused) {
+            match path.clone().filter(|_| !focused) {
                 // A folder reads as a trail of places; the text field takes
                 // over while it is being edited (Ctrl+L, or a click beside
                 // the trail) and for locations that are not folders.
@@ -527,6 +527,32 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
                 None => field.px_2().child(ui.address.clone()),
             }
         });
+    // The folder's bookmark, while the places plugin keeps them: filled
+    // when the folder is one, and pressing it takes it back.
+    if let Some(path) = &path
+        && shell.app.commands.get("places.bookmark").is_some()
+    {
+        let bookmarked = shell
+            .app
+            .registry
+            .places
+            .find(|p| p.group == "bookmarks" && p.location.path().as_ref() == Some(path))
+            .is_some();
+        let (icon, title, command) = if bookmarked {
+            (
+                "bookmark-filled",
+                "Remove from bookmarks",
+                "places.unbookmark",
+            )
+        } else {
+            ("bookmark", "Bookmark this folder", "places.bookmark")
+        };
+        bar = bar.child(
+            Button::new("bookmark", icon, title, command)
+                .args(serde_json::json!({ "shown": true }))
+                .render(shell, cx),
+        );
+    }
     if is_shelf {
         for (id, icon, title, command) in [
             (

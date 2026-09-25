@@ -122,6 +122,8 @@ fn register_places(app: &App) {
             space: None,
             eject: None,
             activate: None,
+            unavailable: None,
+            menu: Vec::new(),
         }),
     );
 }

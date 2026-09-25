@@ -63,6 +63,18 @@ pub struct DragPreview {
     hidden: bool,
 }
 
+impl DragPreview {
+    /// One thing dragged inside the window, under its name.
+    pub fn named(label: String, position: Point<Pixels>) -> Self {
+        DragPreview {
+            count: 1,
+            label,
+            position,
+            hidden: false,
+        }
+    }
+}
+
 impl Render for DragPreview {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.hidden {

@@ -1002,6 +1002,7 @@ impl Shell {
             "toolbar_menu" => self.toggle_toolbar_menu(args, window, cx),
             name if name.starts_with("settings_") => self.settings_command(name, args, window, cx),
             "shortcuts" => self.toggle_shortcuts(window, cx),
+            "ask" => self.open_ask(args, window, cx),
             "unlock_prompt" => {
                 if let Some(device) = arg("device") {
                     let title = arg("title").unwrap_or_else(|| "this volume".into());
@@ -1387,8 +1388,25 @@ impl Shell {
         self.drain_executor(cx);
         for n in self.app.take_notifications() {
             let error = matches!(n.level, NotifyLevel::Error | NotifyLevel::Warning);
-            match n.setting {
-                Some(key) if error => self.set_status_about(n.text, &key, cx),
+            match (n.setting, n.action) {
+                (Some(key), _) if error => self.set_status_about(n.text, &key, cx),
+                // Something done outside the journal, with its own way back.
+                (_, Some(action)) => self.toast(
+                    crate::toast::Toast {
+                        text: n.text,
+                        tone: if error {
+                            crate::toast::Tone::Error
+                        } else {
+                            crate::toast::Tone::Success
+                        },
+                        action: Some(crate::toast::Action {
+                            label: action.label,
+                            command: action.command.name.to_string(),
+                            args: action.command.args,
+                        }),
+                    },
+                    cx,
+                ),
                 _ => self.set_status(n.text, error, cx),
             }
         }

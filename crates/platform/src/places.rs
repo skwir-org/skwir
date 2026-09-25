@@ -325,66 +325,248 @@ pub fn parse_user_dirs(text: &str, home: &Path) -> Vec<UserDir> {
 
 /// GTK bookmarks from `~/.config/gtk-3.0/bookmarks`.
 pub fn bookmarks() -> Vec<Bookmark> {
-    let Some(cfg) = dirs::config_dir() else {
+    let Some(file) = bookmarks_file() else {
         return Vec::new();
     };
-    let text = std::fs::read_to_string(cfg.join("gtk-3.0/bookmarks")).unwrap_or_default();
+    let text = std::fs::read_to_string(file).unwrap_or_default();
     parse_bookmarks(&text)
 }
 
 /// Parse `file:///path%20x Label` lines. Non-`file://` entries are skipped.
 pub fn parse_bookmarks(text: &str) -> Vec<Bookmark> {
-    text.lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .filter_map(|l| {
-            let (uri, label) = match l.split_once(' ') {
-                Some((u, l)) => (u, Some(l.trim())),
-                None => (l, None),
-            };
-            let path = crate::uri::path_of(uri)?;
+    lines_of(text)
+        .into_iter()
+        .filter_map(|line| line.mark)
+        .map(|(path, _, label)| {
             let title = label
-                .filter(|s| !s.is_empty())
-                .map(str::to_owned)
                 .or_else(|| path.file_name().map(|n| n.to_string_lossy().into_owned()))
                 .unwrap_or_else(|| path.display().to_string());
-            Some(Bookmark { title, path })
+            Bookmark { title, path }
         })
         .collect()
 }
 
-/// The bookmarks text with `path` added, or `None` if it is already there,
-/// however the application that wrote it escaped its URI.
-pub fn with_bookmark(text: &str, path: &Path) -> Option<String> {
-    if parse_bookmarks(text).iter().any(|b| b.path == path) {
-        return None;
-    }
-    let mut out = text.to_owned();
-    if !out.is_empty() && !out.ends_with('\n') {
-        out.push('\n');
-    }
-    out.push_str(&crate::uri::file_uri(path));
-    out.push('\n');
-    Some(out)
+/// A change to the bookmarks file, as data: what a command applies, and
+/// what [`edit_text`] hands back to take it back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BookmarkEdit {
+    /// Bookmark `path`, labelled `title` (the folder's own name when
+    /// `None`), before the bookmark of `before` (last when `None` or when
+    /// that one is gone).
+    Add {
+        path: PathBuf,
+        title: Option<String>,
+        before: Option<PathBuf>,
+    },
+    Remove {
+        path: PathBuf,
+    },
+    /// Label `path`'s bookmark `title`; `None` is the folder's own name.
+    Rename {
+        path: PathBuf,
+        title: Option<String>,
+    },
+    /// Put `path`'s bookmark before `before`'s, last when `None`.
+    Move {
+        path: PathBuf,
+        before: Option<PathBuf>,
+    },
 }
 
-/// Add a folder to the GTK bookmarks every file manager and file dialog on
-/// the desktop shares. Returns false if it was already bookmarked. Writes a
-/// file: call from a worker.
+impl BookmarkEdit {
+    /// The folder the edit is about.
+    pub fn path(&self) -> &Path {
+        match self {
+            Self::Add { path, .. }
+            | Self::Remove { path }
+            | Self::Rename { path, .. }
+            | Self::Move { path, .. } => path,
+        }
+    }
+}
+
+/// A line of the bookmarks file. Lines that are not folders (`sftp://`
+/// bookmarks, blank lines) are kept as they were written.
+struct Line {
+    raw: String,
+    /// The folder, its URI as written, and its label.
+    mark: Option<(PathBuf, String, Option<String>)>,
+}
+
+fn lines_of(text: &str) -> Vec<Line> {
+    text.lines()
+        .map(|raw| {
+            let trimmed = raw.trim();
+            let (uri, label) = match trimmed.split_once(' ') {
+                Some((uri, label)) => (uri, Some(label.trim()).filter(|l| !l.is_empty())),
+                None => (trimmed, None),
+            };
+            let mark = crate::uri::path_of(uri)
+                .map(|path| (path, uri.to_owned(), label.map(str::to_owned)));
+            Line {
+                raw: raw.to_owned(),
+                mark,
+            }
+        })
+        .collect()
+}
+
+fn text_of(lines: &[Line]) -> String {
+    lines.iter().fold(String::new(), |mut out, line| {
+        out.push_str(&line.raw);
+        out.push('\n');
+        out
+    })
+}
+
+fn mark_line(uri: &str, label: Option<&str>) -> String {
+    label.map_or_else(|| uri.to_owned(), |label| format!("{uri} {label}"))
+}
+
+/// A label as the file stores it: one line, and none at all when it is
+/// empty or the folder's own name, so the bookmark follows a rename.
+fn label_for(path: &Path, title: Option<&str>) -> Option<String> {
+    let title = title?
+        .split(['\n', '\r'])
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_owned();
+    let own = path.file_name().map(|n| n.to_string_lossy());
+    (!title.is_empty() && own.as_deref() != Some(title.as_str())).then_some(title)
+}
+
+fn position(lines: &[Line], path: &Path) -> Option<usize> {
+    lines
+        .iter()
+        .position(|l| l.mark.as_ref().is_some_and(|(p, ..)| p == path))
+}
+
+/// The folder bookmarked after line `index`, other than `path` itself.
+fn next_after(lines: &[Line], index: usize, path: &Path) -> Option<PathBuf> {
+    lines[index + 1..]
+        .iter()
+        .filter_map(|l| l.mark.as_ref().map(|(p, ..)| p))
+        .find(|p| *p != path)
+        .cloned()
+}
+
+/// Where a line goes to stand before `before`'s bookmark: at its line, or
+/// at the end.
+fn insertion(lines: &[Line], before: Option<&Path>) -> usize {
+    before
+        .and_then(|before| position(lines, before))
+        .unwrap_or(lines.len())
+}
+
+/// Apply `edit` to the text of a bookmarks file. `None` when it changes
+/// nothing (the folder is already there, or is not, or already has that
+/// label or place), else the new text and the edit that reverts it. Other
+/// lines, and the URIs other applications wrote, are kept as they were.
+pub fn edit_text(text: &str, edit: &BookmarkEdit) -> Option<(String, BookmarkEdit)> {
+    let mut lines = lines_of(text);
+    let inverse = match edit {
+        BookmarkEdit::Add {
+            path,
+            title,
+            before,
+        } => {
+            if position(&lines, path).is_some() {
+                return None;
+            }
+            let uri = crate::uri::file_uri(path);
+            let label = label_for(path, title.as_deref());
+            let at = insertion(&lines, before.as_deref());
+            lines.insert(
+                at,
+                Line {
+                    raw: mark_line(&uri, label.as_deref()),
+                    mark: Some((path.clone(), uri, label)),
+                },
+            );
+            BookmarkEdit::Remove { path: path.clone() }
+        }
+        BookmarkEdit::Remove { path } => {
+            let first = position(&lines, path)?;
+            let before = next_after(&lines, first, path);
+            let title = lines[first].mark.as_ref().and_then(|(.., l)| l.clone());
+            lines.retain(|l| l.mark.as_ref().is_none_or(|(p, ..)| p != path));
+            BookmarkEdit::Add {
+                path: path.clone(),
+                title,
+                before,
+            }
+        }
+        BookmarkEdit::Rename { path, title } => {
+            let at = position(&lines, path)?;
+            let label = label_for(path, title.as_deref());
+            let line = &mut lines[at];
+            let (_, uri, old) = line.mark.as_mut()?;
+            if *old == label {
+                return None;
+            }
+            line.raw = mark_line(uri, label.as_deref());
+            let old = std::mem::replace(old, label);
+            BookmarkEdit::Rename {
+                path: path.clone(),
+                title: old,
+            }
+        }
+        BookmarkEdit::Move { path, before } => {
+            let from = position(&lines, path)?;
+            let was = next_after(&lines, from, path);
+            if before.as_deref() == Some(path.as_path()) || was == *before {
+                return None;
+            }
+            let line = lines.remove(from);
+            let at = insertion(&lines, before.as_deref());
+            lines.insert(at, line);
+            BookmarkEdit::Move {
+                path: path.clone(),
+                before: was,
+            }
+        }
+    };
+    Some((text_of(&lines), inverse))
+}
+
+/// The GTK bookmarks file every file manager and file dialog on the desktop
+/// shares, as it is named (it may be a link).
+pub fn bookmarks_file() -> Option<PathBuf> {
+    Some(dirs::config_dir()?.join("gtk-3.0").join("bookmarks"))
+}
+
+/// The folders to watch to see the bookmarks change: the file's own, and
+/// the one it points into when it is a link (a dotfile manager's), since
+/// writers replace the file rather than write into it.
+pub fn bookmarks_folders() -> Vec<PathBuf> {
+    let Some(file) = bookmarks_file() else {
+        return Vec::new();
+    };
+    let mut folders: Vec<PathBuf> = file.parent().map(Path::to_path_buf).into_iter().collect();
+    if let Some(target) = std::fs::canonicalize(&file)
+        .ok()
+        .and_then(|target| target.parent().map(Path::to_path_buf))
+        && !folders.contains(&target)
+    {
+        folders.push(target);
+    }
+    folders
+}
+
+/// Apply `edit` to the GTK bookmarks. Returns the edit that reverts it, or
+/// `None` when nothing changed. Writes a file: call from a worker.
 ///
 /// A bookmarks file that is a link (a dotfile manager's) is updated where
 /// it points, keeping its mode; if that is read-only, as a declarative
 /// configuration is, it is refused rather than replaced by a copy that
 /// silently parts from the declaration.
-pub fn add_bookmark(path: &Path) -> anyhow::Result<bool> {
+pub fn edit_bookmarks(edit: &BookmarkEdit) -> anyhow::Result<Option<BookmarkEdit>> {
     use std::io::Write as _;
-    let dir = dirs::config_dir()
-        .ok_or_else(|| anyhow::anyhow!("no configuration directory"))?
-        .join("gtk-3.0");
-    let link = dir.join("bookmarks");
+    let link = bookmarks_file().ok_or_else(|| anyhow::anyhow!("no configuration directory"))?;
     let file = match std::fs::canonicalize(&link) {
         Ok(target) => target,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => link,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => link.clone(),
         Err(error) => return Err(error.into()),
     };
     let text = match std::fs::read_to_string(&file) {
@@ -392,10 +574,12 @@ pub fn add_bookmark(path: &Path) -> anyhow::Result<bool> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(error) => return Err(error.into()),
     };
-    let Some(updated) = with_bookmark(&text, path) else {
-        return Ok(false);
+    let Some((updated, inverse)) = edit_text(&text, edit) else {
+        return Ok(None);
     };
-    let parent = file.parent().unwrap_or(&dir);
+    let parent = file
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("the bookmarks file has no folder"))?;
     std::fs::create_dir_all(parent)?;
     let read_only = |error: &std::io::Error| {
         matches!(
@@ -406,7 +590,7 @@ pub fn add_bookmark(path: &Path) -> anyhow::Result<bool> {
     let mut staged = match tempfile::NamedTempFile::new_in(parent) {
         Ok(staged) => staged,
         Err(error) if read_only(&error) => {
-            anyhow::bail!("the bookmarks file is read-only; add the folder where it is managed")
+            anyhow::bail!("the bookmarks file is read-only; change it where it is managed")
         }
         Err(error) => return Err(error.into()),
     };
@@ -415,7 +599,7 @@ pub fn add_bookmark(path: &Path) -> anyhow::Result<bool> {
     }
     staged.write_all(updated.as_bytes())?;
     staged.persist(&file)?;
-    Ok(true)
+    Ok(Some(inverse))
 }
 
 /// Mounted volumes the user cares about.
@@ -602,25 +786,152 @@ mod tests {
 
     #[test]
     fn bookmarks_are_added_once_as_escaped_uris() {
+        use super::BookmarkEdit::{Add, Remove};
         let path = std::path::Path::new("/example/Work files/it's 100% done");
         let uri = crate::uri::file_uri(path);
         assert_eq!(uri, "file:///example/Work%20files/it's%20100%25%20done");
-        let first = super::with_bookmark("file:///example/other Other\n", path).unwrap();
+        let add = Add {
+            path: path.into(),
+            title: None,
+            before: None,
+        };
+        let (first, inverse) = super::edit_text("file:///example/other Other\n", &add).unwrap();
         assert_eq!(
             first,
             format!("file:///example/other Other\n{uri}\n"),
             "existing bookmarks and their labels are kept"
         );
-        assert_eq!(super::with_bookmark(&first, path), None);
+        assert_eq!(inverse, Remove { path: path.into() });
+        assert_eq!(super::edit_text(&first, &add), None);
         assert_eq!(
-            super::with_bookmark(
+            super::edit_text(
                 "file:///example/Work%20files/it%27s%20100%25%20done\n",
-                path
+                &add
             ),
             None,
             "another application's escaping names the same folder"
         );
-        assert_eq!(super::with_bookmark("", path).unwrap(), format!("{uri}\n"));
+        assert_eq!(super::edit_text("", &add).unwrap().0, format!("{uri}\n"));
+    }
+
+    /// Every edit is undone by the edit it returns: the bookmarks come back
+    /// in their order with their labels, and every line that is not a
+    /// folder (remote bookmarks) survives the round trip, though it may end
+    /// up on the other side of a neighbour. A removed bookmark comes back
+    /// with our escaping of its URI, which names the same folder.
+    #[test]
+    fn bookmark_edits_are_undone_by_their_inverse() {
+        use super::BookmarkEdit::{Add, Move, Remove, Rename};
+        let text = "file:///example/a%20b A label\nsftp://host/x Remote\nfile:///example/it%27s\n\nfile:///example/c\n";
+        let a = PathBuf::from("/example/a b");
+        let its = PathBuf::from("/example/it's");
+        let c = PathBuf::from("/example/c");
+        let d = PathBuf::from("/example/Ünïcode d");
+        let edits = [
+            Remove { path: a.clone() },
+            Remove { path: its.clone() },
+            Rename {
+                path: its.clone(),
+                title: Some("Reports".into()),
+            },
+            Rename {
+                path: a.clone(),
+                title: None,
+            },
+            Move {
+                path: c.clone(),
+                before: Some(a.clone()),
+            },
+            Move {
+                path: a.clone(),
+                before: None,
+            },
+            Move {
+                path: a.clone(),
+                before: Some(c.clone()),
+            },
+            Add {
+                path: d.clone(),
+                title: Some("Dee".into()),
+                before: Some(its.clone()),
+            },
+        ];
+        for edit in edits {
+            let (changed, inverse) = super::edit_text(text, &edit)
+                .unwrap_or_else(|| panic!("{edit:?} changes something"));
+            assert_ne!(changed, text, "{edit:?}");
+            let (back, redo) = super::edit_text(&changed, &inverse)
+                .unwrap_or_else(|| panic!("{inverse:?} reverts {edit:?}"));
+            let sorted = |text: &str| {
+                let mut lines: Vec<&str> = text
+                    .lines()
+                    .filter(|l| {
+                        crate::uri::path_of(l.split(' ').next().unwrap_or_default()).is_none()
+                    })
+                    .collect();
+                lines.sort_unstable();
+                lines.join("\n")
+            };
+            assert_eq!(parse_bookmarks(&back), parse_bookmarks(text), "{edit:?}");
+            assert_eq!(sorted(&back), sorted(text), "{edit:?} then {inverse:?}");
+            let (again, _) = super::edit_text(&back, &redo).expect("redo");
+            assert_eq!(parse_bookmarks(&again), parse_bookmarks(&changed), "redo");
+        }
+    }
+
+    #[test]
+    fn bookmark_edits_that_change_nothing_say_so() {
+        use super::BookmarkEdit::{Move, Remove, Rename};
+        let text = "file:///example/a\nfile:///example/b Bee\n";
+        let a = PathBuf::from("/example/a");
+        let b = PathBuf::from("/example/b");
+        for edit in [
+            Remove {
+                path: "/example/z".into(),
+            },
+            // Already where it is asked to go.
+            Move {
+                path: a.clone(),
+                before: Some(b.clone()),
+            },
+            Move {
+                path: b.clone(),
+                before: None,
+            },
+            Move {
+                path: a.clone(),
+                before: Some(a.clone()),
+            },
+            Rename {
+                path: b.clone(),
+                title: Some("Bee".into()),
+            },
+            // The folder's own name is no label at all.
+            Rename {
+                path: a.clone(),
+                title: Some(" a ".into()),
+            },
+        ] {
+            assert_eq!(super::edit_text(text, &edit), None, "{edit:?}");
+        }
+        let (renamed, _) = super::edit_text(
+            text,
+            &Rename {
+                path: b,
+                title: Some("two\nlines ".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(renamed, "file:///example/a\nfile:///example/b two lines\n");
+        let (moved, _) = super::edit_text(
+            text,
+            &Move {
+                path: a,
+                before: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(moved, "file:///example/b Bee\nfile:///example/a\n");
     }
 
     #[test]

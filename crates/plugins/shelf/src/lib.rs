@@ -576,6 +576,8 @@ impl Plugin for ShelfPlugin {
                 space: None,
                 eject: None,
                 activate: None,
+                unavailable: None,
+                menu: Vec::new(),
             },
         );
         for (keys, command, when) in BINDINGS {

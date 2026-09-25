@@ -182,6 +182,39 @@ impl Shell {
         cx.notify();
     }
 
+    /// A sidebar place's menu: Open, what its owner lists for it (rename
+    /// or remove a bookmark, bookmark a folder), and Eject for a volume.
+    pub fn open_place_menu(
+        &mut self,
+        place: &bibli_core::registry::Place,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let item = |title: &str, command, order, icon: &str| MenuItem {
+            menu: "place".into(),
+            title: title.into(),
+            command,
+            when: None,
+            order,
+            icon: Some(icon.into()),
+            submenu: None,
+        };
+        let mut items = vec![item(
+            "Open",
+            crate::sidebar::open_invocation(place),
+            0,
+            "open",
+        )];
+        items.extend(place.menu.iter().cloned());
+        if let Some(eject) = &place.eject {
+            items.push(item("Eject", eject.clone(), 350, "eject"));
+        }
+        items.sort_by_key(|m| m.order);
+        self.menu = Some(MenuState::open(position, items, window, cx));
+        cx.notify();
+    }
+
     /// The list header's own menu: which detail columns it shows. Choosing
     /// columns belongs where they are, not three clicks away in Settings, so
     /// the header answers a right-click with this instead of the dialog.
