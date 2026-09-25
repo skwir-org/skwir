@@ -104,6 +104,19 @@ layout (`crates/gpui/...`) so they apply there with `git apply -p1`.
   single characters for truncation still measures them at the line's size.
   `just list-check` runs the layout test with the list and wrapper tests.
 
+- `0007-keyboard-click-needs-its-key-down.patch`: a focused element's
+  Enter or Space key-up is a click only when the element was focused as the
+  key went down. `Window::keyboard_click_origin` records the focused element
+  on the key-down, before any binding or listener can move the focus, and
+  the element's key-up listener fires its click listeners only for itself.
+  Without it, a dialog that closes on Enter's key-down and gives the focus
+  back to the button that opened it (a picker opened from a toolbar button)
+  clicked that button with the same key's release, opening it again. The
+  record is the window's because bindings run before an element's key-down
+  listeners: a button that consumes Enter through its binding never sees
+  the key-down of its own keyboard click. A test in `elements::div`
+  (`keyboard_click_tests`), run by `just list-check`.
+
 ## Regenerating a patch
 
     G=$(ls -d ~/.cargo/registry/src/*/gpui-0.2.2)

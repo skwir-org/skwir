@@ -2176,8 +2176,13 @@ impl Interactivity {
                     }
                 });
 
-                if is_focused {
-                    // Press enter, space to trigger click, when the element is focused.
+                if is_focused
+                    && let Some(focus_id) = self.tracked_focus_handle.as_ref().map(|h| h.id)
+                {
+                    // Press enter, space to trigger click, when the element is
+                    // focused, and was when the key went down: a key pressed
+                    // elsewhere (a dialog that closed on it and gave the focus
+                    // here) is not a click on this element.
                     window.on_key_event({
                         let click_listeners = click_listeners.clone();
                         let hitbox = hitbox.clone();
@@ -2194,7 +2199,9 @@ impl Interactivity {
 
                                 if let Some(button) = keyboard_button
                                     && !stroke.modifiers.modified()
+                                    && window.keyboard_click_origin == Some((focus_id, button))
                                 {
+                                    window.keyboard_click_origin = None;
                                     let click_event = ClickEvent::Keyboard(KeyboardClickEvent {
                                         button,
                                         bounds: hitbox.bounds,
@@ -3246,5 +3253,79 @@ impl ScrollHandle {
     /// Get the count of children for scrollable item.
     pub fn children_count(&self) -> usize {
         self.0.borrow().child_bounds.len()
+    }
+}
+
+#[cfg(test)]
+mod keyboard_click_tests {
+    use crate::{
+        self as gpui, Context, FocusHandle, InteractiveElement as _, IntoElement,
+        KeyBinding, KeyDownEvent, KeyUpEvent, Keystroke, ParentElement as _, Render,
+        StatefulInteractiveElement as _, Styled as _, TestAppContext, VisualTestContext, Window,
+        div,
+    };
+    use std::{cell::Cell, rc::Rc};
+
+    gpui::actions!(keyboard_click_test, [CloseDialog]);
+
+    /// A dialog that closes on Enter's key-down and gives the focus to a
+    /// button, as a picker opened from a toolbar button does.
+    struct Dialog {
+        dialog: FocusHandle,
+        button: FocusHandle,
+        clicks: Rc<Cell<usize>>,
+    }
+
+    impl Render for Dialog {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let (clicks, button) = (self.clicks.clone(), self.button.clone());
+            div()
+                .size_full()
+                .child(
+                    div()
+                        .id("dialog")
+                        .key_context("Dialog")
+                        .track_focus(&self.dialog)
+                        .size_10()
+                        .on_action(move |_: &CloseDialog, window, _| window.focus(&button)),
+                )
+                .child(
+                    div()
+                        .id("button")
+                        .track_focus(&self.button)
+                        .size_10()
+                        .on_click(move |_, _, _| clicks.set(clicks.get() + 1)),
+                )
+        }
+    }
+
+    #[gpui::test]
+    fn a_key_released_where_it_was_not_pressed_is_no_click(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.bind_keys([KeyBinding::new("enter", CloseDialog, Some("Dialog"))]));
+        let clicks = Rc::new(Cell::new(0));
+        let (view, cx) = cx.add_window_view(|_, cx| Dialog {
+            dialog: cx.focus_handle(),
+            button: cx.focus_handle(),
+            clicks: clicks.clone(),
+        });
+        let enter = Keystroke::parse("enter").unwrap();
+        let press = |cx: &mut VisualTestContext| {
+            cx.simulate_event(KeyDownEvent {
+                keystroke: enter.clone(),
+                is_held: false,
+            });
+            cx.simulate_event(KeyUpEvent {
+                keystroke: enter.clone(),
+            });
+        };
+        cx.update(|window, cx| window.focus(&view.read(cx).dialog));
+        cx.run_until_parked();
+        // Pressed in the dialog, released on the button it gave focus to.
+        press(cx);
+        assert!(cx.update(|window, cx| view.read(cx).button.is_focused(window)));
+        assert_eq!(clicks.get(), 0, "the dialog's key is not the button's click");
+        // Pressed and released on the button: a click.
+        press(cx);
+        assert_eq!(clicks.get(), 1);
     }
 }

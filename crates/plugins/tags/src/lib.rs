@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use bibli_core::app::{App, PaneArg};
+use bibli_core::app::App;
 use bibli_core::command::{Invocation, Outcome};
 use bibli_core::entry::{Entry, Metadata, Provenance, Value, keys};
 use bibli_core::metadata::{MetadataProvider, same_tag};
@@ -23,6 +23,19 @@ pub const FIELD: &str = keys::TAGS;
 pub const COMMENT_FIELD: &str = "comment";
 use bibli_core::metadata::TAGS_XATTR as XATTR_TAGS;
 const XATTR_COMMENT: &str = "user.xdg.comment";
+
+/// At most this many files are read by `tags.list { read }`: enough for
+/// the tags a search found, bounded for one that found a disk.
+const READ_AT_MOST: usize = 20_000;
+
+#[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
+struct ListArgs {
+    #[serde(default)]
+    pane: Option<PaneId>,
+    /// Also read the tags of entries whose tags were not read yet.
+    #[serde(default)]
+    read: bool,
+}
 
 /// Tags of a path, from its xattr. Missing, unsupported, or unreadable → empty.
 pub fn read_tags(path: &Path) -> Vec<String> {
@@ -273,19 +286,41 @@ impl Plugin for TagsPlugin {
             "Remove tags from the selection (plan)",
             |a, app| tag_plan(app, &a, Mode::Remove),
         );
-        app.commands.register::<PaneArg, _>(
+        app.commands.register::<ListArgs, _>(
             ID,
             "tags.list",
             "List tags",
-            "Tags used in the pane's listing, with counts (tags that differ only in case count as one)",
+            "Tags used in the pane's listing, with counts (tags that differ only in case count as one); with `read`, read from the files whose tags the listing has not read yet (blocks: dispatch from a worker)",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 // Keyed by the lowercase form, shown as first spelled.
                 let mut counts: BTreeMap<String, (String, usize)> = BTreeMap::new();
-                if let Some(p) = app.workspace.read().pane(pane) {
+                let mut count = |tags: Vec<String>| {
+                    for t in tags {
+                        counts.entry(t.to_lowercase()).or_insert((t, 0)).1 += 1;
+                    }
+                };
+                // What the listing read, and the files it has not, taken
+                // under the lock and read after it.
+                let mut unread = Vec::new();
+                let open = {
+                    let ws = app.workspace.read();
+                    let Some(p) = ws.pane(pane) else {
+                        anyhow::bail!("no such pane");
+                    };
                     for e in p.listing.iter() {
-                        for t in tags_of(&e.metadata).unwrap_or_default() {
-                            counts.entry(t.to_lowercase()).or_insert((t, 0)).1 += 1;
+                        match tags_of(&e.metadata) {
+                            Some(tags) => count(tags),
+                            None if a.read && unread.len() < READ_AT_MOST => unread.push(e.id),
+                            None => {}
+                        }
+                    }
+                    p.open.clone()
+                };
+                if let Some(open) = open {
+                    for id in unread {
+                        if let Some(path) = open.path_of(id) {
+                            count(read_tags(&path));
                         }
                     }
                 }

@@ -300,6 +300,40 @@ fn ask(facet: &str, title: &str, placeholder: &str, text: &str) -> Invocation {
     )
 }
 
+/// Ask for a tag to type.
+pub fn ask_tag(current: &str) -> Invocation {
+    ask("tag", "Tagged", "A tag", current)
+}
+
+/// The picker's answer for the Tag chip (`ui.choose`'s source): the tags
+/// among the files, most used first, each refining the search, then one
+/// to type.
+pub fn tag_choices(counts: &std::collections::BTreeMap<String, usize>) -> serde_json::Value {
+    let mut tags: Vec<(&String, &usize)> = counts.iter().collect();
+    tags.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+    let mut choices: Vec<serde_json::Value> = tags
+        .into_iter()
+        .map(|(tag, n)| {
+            serde_json::json!({
+                "title": tag,
+                "detail": if *n == 1 { "1 file".to_owned() } else { format!("{n} files") },
+                "icon": "tag",
+                "command": refine_invocation("tag", Some(tag)),
+            })
+        })
+        .collect();
+    choices.push(serde_json::json!({
+        "title": "Another tag…",
+        "section": "Other",
+        "command": ask_tag(""),
+    }));
+    serde_json::json!({
+        "title": "Tagged",
+        "empty": "No tags among these files",
+        "choices": choices,
+    })
+}
+
 /// What a preset list says a term is: its label when it is one of them,
 /// else what follows the key.
 fn label_of(term: &str, key: &str, presets: &[(&str, &str)]) -> String {
@@ -348,8 +382,9 @@ fn preset_chip(
 }
 
 /// The chips of `expr`: every facet, set or not, then the parts no facet
-/// holds.
-pub fn describe(expr: &str) -> Result<Description, String> {
+/// holds. With `tags_known`, the Tag chip picks from the tags the search
+/// found (`query.tag_choices`), else it asks for one.
+pub fn describe(expr: &str, tags_known: bool) -> Result<Description, String> {
     let q = lang::parse(expr).map_err(|e| e.to_string())?;
     let p = Parts::of(&q);
     let mut chips = Vec::new();
@@ -428,7 +463,18 @@ pub fn describe(expr: &str) -> Result<Description, String> {
         icon: "tag".into(),
         choices: vec![Choice {
             label: "Tagged…".into(),
-            command: ask("tag", "Tagged", "A tag", &tag),
+            command: if tags_known {
+                Invocation::with_args(
+                    "ui.choose",
+                    &serde_json::json!({
+                        "title": "Tagged",
+                        "placeholder": "Filter tags",
+                        "source": Invocation::new("query.tag_choices"),
+                    }),
+                )
+            } else {
+                ask_tag(&tag)
+            },
             active: false,
         }],
         clear: p.tag.as_ref().map(|_| refine_invocation("tag", None)),
@@ -522,8 +568,8 @@ mod tests {
     fn a_query_is_cut_into_facets_and_the_rest() {
         let d = describe(
             r#"invoice "two words" kind:document modified:this-week size>1M tag:work content:total (a OR b) -draft in:/data depth:1"#,
-        )
-        .unwrap();
+            false,
+        ).unwrap();
         assert_eq!(
             chip(&d, "words").value.as_deref(),
             Some(r#"invoice "two words""#)
@@ -547,7 +593,7 @@ mod tests {
             .collect();
         assert_eq!(advanced, ["(name:a OR name:b)", "NOT name:draft"]);
         // Nothing is set on an empty search but where it looks.
-        let d = describe("in:/data").unwrap();
+        let d = describe("in:/data", false).unwrap();
         assert!(d.chips.iter().all(|c| c.value.is_none()));
         assert!(d.chips.iter().all(|c| c.id == "where" || c.clear.is_none()));
     }

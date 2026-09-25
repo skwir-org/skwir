@@ -6,7 +6,7 @@ use crate::{
     Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
     FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
-    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
+    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, KeyboardButton, Keystroke, KeystrokeEvent, LayoutId,
     LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
@@ -866,6 +866,11 @@ pub struct Window {
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
+    /// The element focused when Enter or Space last went down, and which:
+    /// only that element's key-up is a keyboard click. Without it, a dialog
+    /// that closes on the key-down and gives focus back to a button would
+    /// click that button with the same key's release.
+    pub(crate) keyboard_click_origin: Option<(FocusId, KeyboardButton)>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
     pending_modifier: ModifierState,
@@ -1249,6 +1254,7 @@ impl Window {
             refreshing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
+            keyboard_click_origin: None,
             focus_enabled: true,
             pending_input: None,
             pending_modifier: ModifierState::default(),
@@ -3750,6 +3756,20 @@ impl Window {
         let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
         let mut keystroke: Option<Keystroke> = None;
+
+        // Before any binding or listener runs, which may move the focus.
+        if let Some(event) = event.downcast_ref::<KeyDownEvent>()
+            && !event.is_held
+        {
+            let button = match event.keystroke.key.as_str() {
+                "enter" => Some(KeyboardButton::Enter),
+                "space" => Some(KeyboardButton::Space),
+                _ => None,
+            };
+            self.keyboard_click_origin = button
+                .filter(|_| !event.keystroke.modifiers.modified())
+                .and_then(|button| Some((self.focus?, button)));
+        }
 
         if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
             if event.modifiers.number_of_modifiers() == 0

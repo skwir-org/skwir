@@ -74,7 +74,9 @@ current source before assuming a planned crate, command, or API exists.
   during rendering and need pane-specific element IDs. Popovers restore focus
   when dismissed; retain a focused button's handle when it becomes disabled.
   GPUI already emits Enter/Space clicks on key-up: do not dispatch again on
-  key-down.
+  key-down. The click is only the element's the key went down on (vendored
+  patch 0007), so a dialog closed with Enter may give focus back to its
+  button.
   Preview types share their frame in `preview.rs` and one toolbar,
   `preview_bar.rs`: a kind lists its tools in slots and never builds a row
   (`docs/invariants/previews.md`, "The preview frame"). Preview menus

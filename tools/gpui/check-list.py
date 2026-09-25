@@ -2,7 +2,8 @@
 """Run the vendored GPUI list and line wrapper tests without adding GPUI dev
 dependencies to bibli.
 
-Covers our patches (item height hints, truncating the last clamped line)
+Covers our patches (item height hints, truncating the last clamped line,
+keyboard clicks needing their key-down)
 alongside the upstream tests of those modules. Needs no GPU.
 """
 from pathlib import Path
@@ -23,5 +24,6 @@ with tempfile.TemporaryDirectory(prefix="bibli-list-tests-") as temporary:
         "cargo", "test", "--manifest-path", str(manifest),
         "--target-dir", str(root / "target"), "--no-default-features",
         "--features", "wayland", "--lib", "--",
-        "elements::list", "text_system::line_wrapper", "text_system::line_layout",
+        "elements::list", "elements::div::keyboard_click_tests",
+        "text_system::line_wrapper", "text_system::line_layout",
     ], check=True)

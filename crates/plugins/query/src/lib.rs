@@ -13,6 +13,7 @@ pub mod lang;
 pub mod plocate;
 pub mod provider;
 pub mod saved;
+pub mod similar;
 
 use std::sync::Arc;
 
@@ -108,6 +109,20 @@ struct MoveArgs {
     before: Option<String>,
     #[serde(default)]
     undo: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct PaneOnly {
+    #[serde(default)]
+    pane: Option<PaneId>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct SimilarArgs {
+    /// What the files found share with the selected one.
+    by: similar::By,
+    #[serde(default)]
+    pane: Option<PaneId>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -601,10 +616,69 @@ impl Plugin for QueryPlugin {
                     Some(expr) => expr,
                     None => pane_search(app, app.pane_or_active(a.pane))?,
                 };
-                let description = facets::describe(&expr).map_err(|e| anyhow::anyhow!("query: {e}"))?;
+                let tags_known = app.commands.get("tags.list").is_some();
+                let description = facets::describe(&expr, tags_known)
+                    .map_err(|e| anyhow::anyhow!("query: {e}"))?;
                 Ok(Outcome::Value(serde_json::to_value(description)?))
             },
         );
+        app.commands.register::<PaneOnly, _>(
+            ID,
+            "query.tag_choices",
+            "Tags to refine by",
+            "The Tag chip's picker: the tags on the pane's files, read from them (blocks: `ui.choose` runs it on a worker), each refining the search",
+            |a, app| {
+                // The tags plugin reads tags; without it, only a tag to type.
+                let counts = app
+                    .commands
+                    .get("tags.list")
+                    .and_then(|_| {
+                        let list = Invocation::with_args(
+                            "tags.list",
+                            &serde_json::json!({ "pane": a.pane, "read": true }),
+                        );
+                        match app.dispatch(&list) {
+                            Ok(Outcome::Value(v)) => serde_json::from_value(v).ok(),
+                            _ => None,
+                        }
+                    })
+                    .unwrap_or_default();
+                Ok(Outcome::Value(facets::tag_choices(&counts)))
+            },
+        );
+        let similar_lifetime = lifetime.clone();
+        app.commands.register::<SimilarArgs, _>(
+            ID,
+            "query.similar",
+            "Find similar",
+            "Search for files like the selected one: of the same kind, modified the same day, of a similar size, or sharing a tag, in the folder searched or shown",
+            move |a, app| {
+                similar::start(app, a.pane, a.by, &similar_lifetime)?;
+                Ok(Outcome::Done)
+            },
+        );
+        for (title, by, when, order) in [
+            ("Same Kind", similar::By::Kind, "single", 470),
+            ("Same Day", similar::By::Day, "single", 471),
+            ("Similar Size", similar::By::Size, "single file", 472),
+            ("Same Tags", similar::By::Tags, "single", 473),
+        ] {
+            app.registry.menus.add(
+                ID,
+                MenuItem {
+                    menu: "context".into(),
+                    title: title.into(),
+                    command: Invocation::with_args(
+                        "query.similar",
+                        &serde_json::json!({ "by": by }),
+                    ),
+                    when: Some(when.into()),
+                    order,
+                    icon: Some("search".into()),
+                    submenu: Some("Find Similar".into()),
+                },
+            );
+        }
         app.commands.register::<RefineArgs, _>(
             ID,
             "query.refine",

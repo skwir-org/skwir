@@ -145,9 +145,16 @@ nothing typed) is every entry below the folder, which the chips then
 narrow. The query plugin owns the meaning (`query.describe`,
 `query.refine`, `facets.rs`), so the CLI and agents get the same chips as
 data; a part no facet holds (an OR across facets, a NOT, `ext:`) is a chip
-of its own showing its text, so nothing typed is lost. Not yet: choosing a
-tag from the tags known (it is typed), and starting from a file's own
-properties ("Find similar").
+of its own showing its text, so nothing typed is lost. The Tag chip picks
+from the tags on the files the search found (`query.tag_choices` through
+`ui.choose`, reading them with `tags.list { read }` on a worker; there is no
+index of tags to ask, by design), most used first, or one typed; with the
+tags plugin off it asks for one. Find Similar, on a file's menu, searches
+where the pane searches for files of the same kind, modified the same day,
+of about its size (half to twice) or sharing a tag, built on a worker from
+the file's own properties. A keyboard click fires only on the element its
+key went down on (vendored patch 0007): a picker closed with Enter gave the
+focus back to the chip that opened it and the key's release reopened it.
 
 ---
 
