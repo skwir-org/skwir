@@ -62,7 +62,7 @@ pub struct MarkdownStyle {
 }
 
 /// The widest a reading column may be, in ems of its text, for a
-/// `ui.reading_width` choice: `None` is the whole panel. An em holds about
+/// `reading.width` choice: `None` is the whole panel. An em holds about
 /// two characters of running text, so Comfortable is about 85 a line.
 pub fn measure(choice: &str) -> Option<f32> {
     match choice {

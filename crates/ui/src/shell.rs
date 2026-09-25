@@ -122,7 +122,7 @@ pub struct Shell {
     pub sidebar_folded: std::collections::HashSet<String>,
     /// Size, Modified, Type: which detail columns the list shows.
     pub columns: [bool; 3],
-    /// `ui.reading_width`: the reading column's widest, in ems, or `None`
+    /// `reading.width`: the reading column's widest, in ems, or `None`
     /// for the whole panel (`markdown::measure`).
     pub reading_measure: Option<f32>,
     /// The reading width before Full width was switched on from a preview,

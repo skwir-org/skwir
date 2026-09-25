@@ -72,7 +72,7 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   Reading mode also caps the text column at `MarkdownStyle::measure`, centres
   it and keeps `page_padding` between the text and the edge of the pane: all
   maxima and paddings applied in layout, never a measured width. The cap is
-  the Reading width preference (`ui.reading_width`, in ems of the text, so
+  the Reading width preference (`reading.width`, in ems of the text, so
   it grows with the text size; `markdown::measure`), Full width being none;
   the Full width button is that same preference (`ui.full_width`, through
   `settings.apply`), after the text size as Fit width is after a

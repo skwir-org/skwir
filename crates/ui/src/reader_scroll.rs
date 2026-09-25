@@ -256,7 +256,7 @@ impl Shell {
     }
 
     /// A document session arrived. One that just opened reads the way the
-    /// user last chose (`ui.reader_continuous`, or the choice not saved yet);
+    /// user last chose (`reading.continuous`, or the choice not saved yet);
     /// one read again after its file changed keeps the mode it had, over its
     /// new number of pages, at the same place.
     pub(crate) fn reader_opened(

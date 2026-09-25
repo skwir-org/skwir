@@ -15,7 +15,9 @@ use crate::controls::{self, ButtonStyle};
 use crate::elements::popover::PopoverAnchor;
 use crate::input::TextInput;
 use crate::keymap::KeyHint;
-use crate::settings::{CORE_OWNER, Page, Row, SettingsEvent, SettingsView, Stop, UI_OWNER};
+use crate::settings::{
+    CORE_OWNER, Page, READING_OWNER, Row, SettingsEvent, SettingsView, Stop, UI_OWNER,
+};
 use crate::theme::Theme;
 
 /// Segmented controls hold this many choices; longer lists use a dropdown.
@@ -115,6 +117,7 @@ impl SettingsView {
             let icon = match &page {
                 Page::General => "sliders",
                 Page::Appearance => "appearance",
+                Page::Reading => "reading",
                 Page::Plugins => "plugin",
                 Page::Keyboard => "keyboard",
                 Page::Plugin(_) => "",
@@ -956,6 +959,9 @@ impl Render for SettingsView {
             let subtitle = match &page {
                 Page::General => "How bibli handles files. Changes apply as you make them.",
                 Page::Appearance => "How bibli looks.",
+                Page::Reading => {
+                    "How documents, books, comics and Markdown read in the preview. Which engine reads each is on its plugin's page."
+                }
                 Page::Plugins => {
                     "Everything beyond the core is a plugin. Turning one off removes its commands, views and settings until it is turned on again."
                 }
@@ -966,6 +972,11 @@ impl Render for SettingsView {
                 Page::General => self.page_general(&mut items, &theme, window, cx),
                 Page::Appearance => {
                     if self.owner_rows(UI_OWNER, &mut items, &theme, window, cx) == 0 {
+                        Self::note(&mut items, "Nothing to adjust here yet.", &theme);
+                    }
+                }
+                Page::Reading => {
+                    if self.owner_rows(READING_OWNER, &mut items, &theme, window, cx) == 0 {
                         Self::note(&mut items, "Nothing to adjust here yet.", &theme);
                     }
                 }

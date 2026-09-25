@@ -50,6 +50,15 @@ impl PreviewPlugin {
 }
 
 fn declare(app: &App) {
+    // Where they were before audio and video were one plugin (ADR-016).
+    for (old, new) in [
+        ("preview-audio.replay_gain", REPLAY_GAIN),
+        ("ui.media_keep_playing", KEEP_PLAYING),
+        ("ui.media_autoplay", AUTOPLAY),
+        ("ui.media_continue", CONTINUE),
+    ] {
+        app.settings.rename(old, new);
+    }
     app.settings.declare(
         SettingSpec::toggle(
             KEEP_PLAYING,

@@ -421,3 +421,32 @@ fn startup_opens_the_chosen_folder_or_the_last_one_and_falls_back_to_home() {
         Some("/example/work")
     );
 }
+
+#[test]
+fn a_renamed_preference_keeps_its_value_and_the_file_forgets_the_old_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.toml");
+    std::fs::write(
+        &path,
+        "[old]\nwidth = \"wide\"\n\n[kept]\nchoice = \"a\"\nother = 1\n\n[new]\nchoice = \"b\"\n",
+    )
+    .unwrap();
+    let settings = Settings::load(&path).unwrap();
+    settings.rename("old.width", "new.width");
+    // A value already stored under the new name is not overwritten.
+    settings.rename("kept.choice", "new.choice");
+    // Nothing stored under the old name: nothing moves.
+    settings.rename("old.missing", "new.missing");
+    assert_eq!(settings.get::<String>("new.width").as_deref(), Some("wide"));
+    assert_eq!(settings.get::<String>("new.choice").as_deref(), Some("b"));
+    assert!(settings.get::<toml::Value>("new.missing").is_none());
+    settings.save().unwrap();
+    let saved: toml::Table = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+    assert!(saved.get("old").is_none(), "an emptied table goes too");
+    assert_eq!(saved["kept"]["choice"].as_str(), Some("a"));
+    assert_eq!(saved["new"]["width"].as_str(), Some("wide"));
+    // Again at the next start: already moved, nothing changes.
+    let settings = Settings::load(&path).unwrap();
+    settings.rename("old.width", "new.width");
+    assert_eq!(settings.get::<String>("new.width").as_deref(), Some("wide"));
+}

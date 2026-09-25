@@ -63,3 +63,24 @@ it (`App::notify_about_setting`) and the status bar links to it.
   layer and conflict detection, which is a separate decision.
 - The theme preference (`ui.theme`) is declared by the shell, so headless
   tools do not see it.
+
+## Addendum (2026-09-25): a page per subject
+
+The shell's preferences all lived under `ui.*`, and the dialog shows a
+namespace as a page, so Appearance held how documents read (continuous
+scrolling, reading width, printed page numbers) and, for a day, how audio
+and video play. A preference now goes where its subject is:
+
+- About one plugin's content (an engine, the player of audio and video):
+  that plugin's namespace and page, even when the shell reads it (ADR-016).
+- Applied by the shell to several plugins' content: a namespace of the
+  shell's own with a page of its own. `reading.*` (`continuous`, `width`,
+  `printed_pages`) is the Reading page: the reader and reading mode serve
+  the documents, EPUB, comics and Markdown plugins, and none of them
+  switched off may take the others' preferences with it.
+- `ui.*` is Appearance, only how bibli looks; `core.*` is General.
+
+A moved key keeps the user's value: its owner calls
+`Settings::rename(old, new)` before declaring it, which moves a stored
+value when nothing is stored under the new name, and the next save drops
+the old name from the file.

@@ -40,6 +40,10 @@ Audio and video (2026-09-25, ADR-016): `preview-audio` is folded into
 `preview-media` ("Preview: audio and video"), which declares every playback
 preference, the shell player's included (keep playing while you browse, on by
 default; play on selection; stop, play next or shuffle when a track ends).
+Settings pages follow their subject (ADR-010 addendum): the reader's
+preferences, shared by several preview plugins, moved from Appearance to a
+Reading page (`reading.*`), and a moved key keeps its value
+(`Settings::rename`).
 
 ---
 

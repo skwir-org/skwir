@@ -30,7 +30,7 @@ Read this before touching `crates/pdf-worker`, `crates/poppler-worker`, `crates/
   a preview, as the thumbnail LRU does on eviction.
 - Continuous reading is how a document opens, unless the reader's own button
   was last used to say otherwise: the choice is the user's and outlives the
-  document, so it is the `ui.reader_continuous` preference, written through
+  document, so it is the `reading.continuous` preference, written through
   `settings.apply` like any other (queued while another save runs), and
   read when a document opens, never on a later page's arrival. A document
   whose file changes is opened again where it was read (`reader_reopen`):
@@ -79,7 +79,7 @@ Read this before touching `crates/pdf-worker`, `crates/poppler-worker`, `crates/
   `/PageLabels`, a fixed-layout book's page list) says so once, when it
   opens (`DocumentInfo::labels`, filtered by `document::page_labels`, the
   same for every engine: `tools/pdf/check.py` asserts it). Counted by
-  printed pages (`ui.printed_pages`, the count's picker shared with books,
+  printed pages (`reading.printed_pages`, set by `ui.printed_pages`, the count's picker shared with books,
   `preview_bar::unit_popup`), the page field shows and takes those names;
   previous and next still turn the file's pages. PDFium reads labels
   without loading pages (`FPDF_GetPageLabel`); `MuPDF` reads them through

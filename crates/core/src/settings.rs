@@ -478,6 +478,42 @@ impl Settings {
         self.bump();
     }
 
+    /// Carry a value stored under a key's former name to its new one, when
+    /// nothing is stored under the new name yet. The owner calls it before
+    /// declaring the new key, so a moved preference keeps what the user
+    /// chose; the file is rewritten at the next save, and until then the move
+    /// is made again at each start, to the same effect.
+    pub fn rename(&self, old: &str, new: &str) {
+        let _writer = self.writer.lock();
+        let mut values = self.values.write();
+        if Self::lookup(&values, new).is_some() {
+            return;
+        }
+        let Some(value) = Self::remove(&mut values, old) else {
+            return;
+        };
+        if let Err(error) = Self::insert(&mut values, new, value) {
+            tracing::warn!(%error, "cannot move a setting");
+        }
+        drop(values);
+        self.bump();
+    }
+
+    /// Take a dotted key out, and the tables it leaves empty.
+    fn remove(table: &mut toml::Table, key: &str) -> Option<toml::Value> {
+        match key.split_once('.') {
+            None => table.remove(key),
+            Some((head, rest)) => {
+                let inner = table.get_mut(head)?.as_table_mut()?;
+                let value = Self::remove(inner, rest)?;
+                if inner.is_empty() {
+                    table.remove(head);
+                }
+                Some(value)
+            }
+        }
+    }
+
     pub fn undeclare(&self, key: &str) {
         self.schema.write().remove(key);
         self.bump();

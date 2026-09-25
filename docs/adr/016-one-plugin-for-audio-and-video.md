@@ -43,8 +43,9 @@ which the Video engine's Still frames choice already gives.
 
 - The Plugins page lists one toggle for playback, and its settings are on
   one page named after it.
-- Keys renamed without migration: `preview-audio.replay_gain` and the
-  shell's `ui.media_*` (a day old) become `preview-media.*`; a stored value
-  under an old name is ignored and returns to its default.
+- Keys renamed: `preview-audio.replay_gain` and the shell's `ui.media_*`
+  become `preview-media.*`. The plugin moves a value stored under an old
+  name before declaring the new one (`Settings::rename`, added with
+  ADR-010's addendum of 2026-09-25).
 - Video cannot be switched off apart from audio except through Still
   frames, which keeps a picture of each film.

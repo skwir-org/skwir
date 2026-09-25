@@ -27,9 +27,16 @@ use crate::elements::popover::PopoverAnchor;
 use crate::input::{InputEvent, TextInput};
 use crate::keymap::KeyHint;
 
-/// Settings namespaces that are not plugins.
+/// Settings namespaces that are not plugins, each a page of the dialog:
+/// what bibli does with files, how it looks, and how the preview reads.
+/// A preference goes where its subject is: the plugin whose content it
+/// concerns has it on its page (an engine, the player of audio and video);
+/// one the shell applies to several plugins' content is a namespace of the
+/// shell's own, as `reading` is for the reader and reading mode, shared by
+/// documents, books, comics and Markdown. `ui` is only how bibli looks.
 pub const CORE_OWNER: &str = "core";
 pub const UI_OWNER: &str = "ui";
+pub const READING_OWNER: &str = "reading";
 
 pub const THEME_KEY: &str = "ui.theme";
 pub const DATES_KEY: &str = "ui.date_format";
@@ -41,11 +48,11 @@ pub const COLUMN_KEYS: [&str; 3] = ["ui.column_size", "ui.column_modified", "ui.
 /// Whether the grid crops thumbnails to fill their box.
 pub const GRID_FILL_KEY: &str = "ui.grid_fill";
 /// How documents are read: one scrolling column, or a page at a time.
-pub const READER_CONTINUOUS_KEY: &str = "ui.reader_continuous";
+pub const READER_CONTINUOUS_KEY: &str = "reading.continuous";
 /// How wide a reading column may grow (`markdown::measure`).
-pub const READING_WIDTH_KEY: &str = "ui.reading_width";
+pub const READING_WIDTH_KEY: &str = "reading.width";
 /// Whether a book's position counts its printed pages (`ui.printed_pages`).
-pub const PRINTED_PAGES_KEY: &str = "ui.printed_pages";
+pub const PRINTED_PAGES_KEY: &str = "reading.printed_pages";
 /// The player's preferences. The audio and video plugin (`preview-media`)
 /// declares them, with the rest of what concerns playback; the shell's
 /// player reads them. With the plugin off there is no player, and they are
@@ -67,9 +74,18 @@ pub const CONTINUE_CHOICES: [&str; 3] = [
     crate::player::Continue::Shuffle.key(),
 ];
 
-/// Declare the shell's own preferences. They live in the `ui` namespace and
-/// exist only while a shell does, so headless tools never see them.
+/// Declare the shell's own preferences. They live in the shell's namespaces
+/// (`ui`, `reading`) and exist only while a shell does, so headless tools
+/// never see them.
 pub fn declare(app: &App) {
+    // Where they were before they had a page of their own.
+    for (old, new) in [
+        ("ui.reader_continuous", READER_CONTINUOUS_KEY),
+        ("ui.reading_width", READING_WIDTH_KEY),
+        ("ui.printed_pages", PRINTED_PAGES_KEY),
+    ] {
+        app.settings.rename(old, new);
+    }
     app.settings.declare(SettingSpec::choice(
         THEME_KEY,
         "Theme",
@@ -97,16 +113,16 @@ pub fn declare(app: &App) {
         SettingSpec::toggle(
             READER_CONTINUOUS_KEY,
             "Continuous scrolling",
-            "Read a document as one scrolling column. Off shows one page at a time, and the reader's own button still changes it for the document in front of you.",
+            "Read a document, a book laid out in pages or a comic as one scrolling column. Off shows one page at a time, and the reader's own button still changes it for the document in front of you.",
             true,
         )
-        .section("Documents"),
+        .section("Pages"),
     );
     app.settings.declare(
         SettingSpec::choice(
             READING_WIDTH_KEY,
             "Reading width",
-            "How long the lines of a book or a Markdown file may grow before the text stops widening and sits in the middle of the preview: about 65 characters for Narrow, 85 for Comfortable, 110 for Wide. Full width uses the whole panel, with small margins.",
+            "How long the lines of a book, a Markdown or HTML file may grow before the text stops widening and sits in the middle of the preview: about 65 characters for Narrow, 85 for Comfortable, 110 for Wide. Full width uses the whole panel, with small margins.",
             "comfortable",
             &[
                 ("narrow", "Narrow"),
@@ -115,16 +131,16 @@ pub fn declare(app: &App) {
                 ("full", "Full width"),
             ],
         )
-        .section("Documents"),
+        .section("Text"),
     );
     app.settings.declare(
         SettingSpec::toggle(
             PRINTED_PAGES_KEY,
             "Printed page numbers",
-            "Count where you are in a book by the page numbers of its printed edition, when it lists them: page 47 of 312 rather than chapter 3 of 12. A book without them counts chapters.",
+            "Count where you are in a book by the page numbers of its printed edition, when it lists them: page 47 of 312 rather than chapter 3 of 12, and in a PDF by the numbers its pages are printed with. A book without them counts chapters.",
             false,
         )
-        .section("Documents"),
+        .section("Pages"),
     );
     app.settings.declare(SettingSpec::data(
         crate::shortcuts::HINTS_KEY,
@@ -229,6 +245,7 @@ pub fn reader_mode(shell: &crate::shell::Shell) -> bool {
 pub enum Page {
     General,
     Appearance,
+    Reading,
     Plugins,
     Keyboard,
     Plugin(String),
@@ -239,6 +256,7 @@ impl Page {
         match owner {
             CORE_OWNER => Page::General,
             UI_OWNER => Page::Appearance,
+            READING_OWNER => Page::Reading,
             other => Page::Plugin(other.to_owned()),
         }
     }
@@ -247,6 +265,7 @@ impl Page {
         match name {
             "general" => Page::General,
             "appearance" => Page::Appearance,
+            "reading" => Page::Reading,
             "plugins" => Page::Plugins,
             "keyboard" => Page::Keyboard,
             other => Page::Plugin(other.to_owned()),
@@ -420,6 +439,7 @@ impl SettingsView {
         match page {
             Page::General => "General".into(),
             Page::Appearance => "Appearance".into(),
+            Page::Reading => "Reading".into(),
             Page::Plugins => "Plugins".into(),
             Page::Keyboard => "Keyboard".into(),
             Page::Plugin(id) => self.plugin_title(id),
@@ -431,6 +451,7 @@ impl SettingsView {
         let mut pages = vec![
             Page::General,
             Page::Appearance,
+            Page::Reading,
             Page::Plugins,
             Page::Keyboard,
         ];

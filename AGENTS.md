@@ -381,6 +381,15 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   section, so the dialog, the palette and agents need no key-specific
   branches. Titles are sentence case without the plugin's name; descriptions
   say what changes for the user, not what the key is called.
+- A preference goes where its subject is, and the namespace is the page.
+  One about a plugin's content (an engine, the audio and video player) is
+  that plugin's, on its page, even when the shell reads it. One the shell
+  applies to several plugins' content is a namespace of the shell's own,
+  with a page of its own: `reading.*` (the reader and reading mode) is
+  shared by documents, books, comics and Markdown. `ui.*` is only how
+  bibli looks (Appearance), `core.*` what it does with files (General).
+- Renaming or moving a key: call `Settings::rename(old, new)` before
+  declaring it, so the value the user chose follows.
 - The dialog (`crates/ui/src/settings.rs`, rendering in `settings_view.rs`,
   controls in `controls.rs`) is a self-contained entity: it holds the `App`,
   never the shell, and closes through an event. Keep it that way so it can
