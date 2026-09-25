@@ -680,7 +680,7 @@ impl Plugin for EditAsBufferPlugin {
                 menu: "context".into(),
                 title: "Edit as Text…".into(),
                 command: Invocation::new("edit_as_buffer"),
-                when: Some("empty".into()),
+                when: Some("empty folder".into()),
                 order: 108,
                 icon: Some("rename".into()),
                 submenu: None,

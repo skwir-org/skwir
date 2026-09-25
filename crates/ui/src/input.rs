@@ -108,6 +108,9 @@ pub struct TextInput {
     marked_range: Option<Range<usize>>,
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
+    /// How far the line is scrolled left, so a text longer than the field
+    /// keeps the cursor in view (`scrolled`, in prepaint).
+    scroll_x: Pixels,
     is_selecting: bool,
 }
 
@@ -125,6 +128,7 @@ impl TextInput {
             marked_range: None,
             last_layout: None,
             last_bounds: None,
+            scroll_x: px(0.),
             is_selecting: false,
         }
     }
@@ -356,7 +360,7 @@ impl TextInput {
         if position.y > bounds.bottom() {
             return self.content.len();
         }
-        self.text_offset(line.closest_index_for_x(position.x - bounds.left()))
+        self.text_offset(line.closest_index_for_x(position.x - bounds.left() + self.scroll_x))
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -537,13 +541,14 @@ impl EntityInputHandler for TextInput {
         let last_layout = self.last_layout.as_ref()?;
         let range = self.range_from_utf16(&range_utf16);
         // The layout is of what is shown: bullets, when masked.
+        let left = bounds.left() - self.scroll_x;
         Some(Bounds::from_corners(
             point(
-                bounds.left() + last_layout.x_for_index(self.shown_offset(range.start)),
+                left + last_layout.x_for_index(self.shown_offset(range.start)),
                 bounds.top(),
             ),
             point(
-                bounds.left() + last_layout.x_for_index(self.shown_offset(range.end)),
+                left + last_layout.x_for_index(self.shown_offset(range.end)),
                 bounds.bottom(),
             ),
         ))
@@ -557,7 +562,7 @@ impl EntityInputHandler for TextInput {
     ) -> Option<usize> {
         let line_point = self.last_bounds?.localize(&point)?;
         let last_layout = self.last_layout.as_ref()?;
-        let shown = last_layout.index_for_x(point.x - line_point.x)?;
+        let shown = last_layout.index_for_x(line_point.x + self.scroll_x)?;
         Some(self.offset_to_utf16(self.text_offset(shown)))
     }
 }
@@ -570,6 +575,25 @@ struct PrepaintState {
     line: Option<ShapedLine>,
     cursor: Option<PaintQuad>,
     selection: Option<PaintQuad>,
+    scroll_x: Pixels,
+}
+
+/// How far to scroll a line `width` wide in a field `field` wide, from
+/// `scroll`, so the cursor at `cursor` (and its 2 px bar) stays in view:
+/// no more than needed, never past either end, and none when it fits.
+fn scrolled(scroll: Pixels, width: Pixels, field: Pixels, cursor: Pixels) -> Pixels {
+    let bar = px(2.);
+    if width + bar <= field {
+        return px(0.);
+    }
+    let scroll = if cursor < scroll {
+        cursor
+    } else if cursor + bar > scroll + field {
+        cursor + bar - field
+    } else {
+        scroll
+    };
+    scroll.clamp(px(0.), width + bar - field)
 }
 
 impl IntoElement for TextElement {
@@ -684,12 +708,19 @@ impl Element for TextElement {
             .shape_line(display_text, font_size, &runs, None);
 
         let cursor_pos = line.x_for_index(cursor);
+        // Unfocused, a long text shows its start, as a label would.
+        let scroll_x = if input.focus_handle.is_focused(window) {
+            scrolled(input.scroll_x, line.width, bounds.size.width, cursor_pos)
+        } else {
+            px(0.)
+        };
+        let left = bounds.left() - scroll_x;
         let (selection, cursor) = if selected_range.is_empty() {
             (
                 None,
                 Some(fill(
                     Bounds::new(
-                        point(bounds.left() + cursor_pos, bounds.top()),
+                        point(left + cursor_pos, bounds.top()),
                         size(px(2.), bounds.bottom() - bounds.top()),
                     ),
                     theme.accent,
@@ -699,14 +730,8 @@ impl Element for TextElement {
             (
                 Some(fill(
                     Bounds::from_corners(
-                        point(
-                            bounds.left() + line.x_for_index(selected_range.start),
-                            bounds.top(),
-                        ),
-                        point(
-                            bounds.left() + line.x_for_index(selected_range.end),
-                            bounds.bottom(),
-                        ),
+                        point(left + line.x_for_index(selected_range.start), bounds.top()),
+                        point(left + line.x_for_index(selected_range.end), bounds.bottom()),
                     ),
                     theme.selection_bg,
                 )),
@@ -717,6 +742,7 @@ impl Element for TextElement {
             line: Some(line),
             cursor,
             selection,
+            scroll_x,
         }
     }
 
@@ -736,20 +762,27 @@ impl Element for TextElement {
             ElementInputHandler::new(bounds, self.input.clone()),
             cx,
         );
-        if let Some(selection) = prepaint.selection.take() {
-            window.paint_quad(selection);
-        }
         let line = prepaint.line.take().unwrap();
-        line.paint(bounds.origin, window.line_height(), window, cx)
-            .unwrap();
-        if focus_handle.is_focused(window)
-            && let Some(cursor) = prepaint.cursor.take()
-        {
-            window.paint_quad(cursor);
-        }
+        let scroll_x = prepaint.scroll_x;
+        // A line longer than the field is clipped to it, never drawn over
+        // what sits beside the field.
+        window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| {
+            if let Some(selection) = prepaint.selection.take() {
+                window.paint_quad(selection);
+            }
+            let origin = point(bounds.left() - scroll_x, bounds.top());
+            line.paint(origin, window.line_height(), window, cx)
+                .unwrap();
+            if focus_handle.is_focused(window)
+                && let Some(cursor) = prepaint.cursor.take()
+            {
+                window.paint_quad(cursor);
+            }
+        });
         self.input.update(cx, |input, _| {
             input.last_layout = Some(line);
             input.last_bounds = Some(bounds);
+            input.scroll_x = scroll_x;
         });
     }
 }
@@ -798,7 +831,23 @@ impl Focusable for TextInput {
 
 #[cfg(test)]
 mod tests {
-    use super::utf16_to_utf8;
+    use super::{scrolled, utf16_to_utf8};
+    use gpui::px;
+
+    #[test]
+    fn a_long_line_scrolls_just_enough_to_show_the_cursor() {
+        // Fits: never scrolled, wherever the cursor is.
+        assert_eq!(scrolled(px(40.), px(90.), px(100.), px(90.)), px(0.));
+        // The cursor at the end of a 300 px line in a 100 px field: its bar
+        // ends at the field's right edge.
+        assert_eq!(scrolled(px(0.), px(300.), px(100.), px(300.)), px(202.));
+        // Moving within what is shown scrolls nothing.
+        assert_eq!(scrolled(px(202.), px(300.), px(100.), px(250.)), px(202.));
+        // Past the left edge: the cursor becomes the first thing shown.
+        assert_eq!(scrolled(px(202.), px(300.), px(100.), px(50.)), px(50.));
+        // A line that got shorter (a deletion) is not left scrolled past its end.
+        assert_eq!(scrolled(px(202.), px(150.), px(100.), px(150.)), px(52.));
+    }
 
     #[test]
     fn utf16_offsets_become_byte_offsets_within_the_composed_text() {

@@ -102,6 +102,7 @@ fn summarize(pane: &bibli_core::workspace::Pane) -> SelectionCtx {
         all_dirs: true,
         all_files: true,
         bytes: 0,
+        folder: false,
     };
     for id in pane.selection.iter() {
         match pane.listing.get(id) {
@@ -130,16 +131,19 @@ impl Shell {
         let Some(pane) = ws.pane(self.pane) else {
             return SelectionCtx::default();
         };
+        // Where the pane is, read every time: navigating replaces the
+        // listing, whose version can then repeat the cached one.
+        let folder = pane.location().is_some_and(bibli_core::Location::is_path);
         let key = (pane.selection.revision(), pane.listing.version());
         let cache = &self.ui().list.selection;
         if let Some((at, ctx)) = cache.get()
             && at == key
         {
-            return ctx;
+            return SelectionCtx { folder, ..ctx };
         }
         let ctx = summarize(pane);
         cache.set(Some((key, ctx)));
-        ctx
+        SelectionCtx { folder, ..ctx }
     }
 
     pub fn sort_spec(&self) -> SortSpec {

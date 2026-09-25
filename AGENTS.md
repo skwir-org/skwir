@@ -111,7 +111,9 @@ current source before assuming a planned crate, command, or API exists.
   when a pane is narrow. Clicking beside the trail, or Ctrl+L, edits the path.
 - **Context menu.** An item about the folder itself (New Folder, Refresh, a
   view) says `empty` in its `when`: it belongs to the menu opened on the
-  background, which first clears the selection. Rarely used items set
+  background, which first clears the selection. One that needs a folder
+  (New Folder, Bookmark This Folder, Open Folder With) also says `folder`,
+  so a search or the shelf never offers it. Rarely used items set
   `submenu`; the menu expands that group in place. Give items an `icon`.
 - **Nothing to list is a state, not a blank.** `placeholder.rs` says why a
   pane is empty (empty folder, no results, empty shelf) or why it failed, in
@@ -122,7 +124,8 @@ current source before assuming a planned crate, command, or API exists.
 - **Tokens.** Colors, radii and shadows come from `theme.rs` (its header
   lists the scales). State colors are tokens: `hover`, `selection_*`,
   `success`/`warning`/`error`, `scrim`. Do not derive one locally.
-- **Sidebar.** Places carry a theme icon name, optionally `space` (filled in
+- **Sidebar.** Places carry a theme icon name (one the theme has only as
+  `-symbolic` is drawn tinted, `icons::themed`), optionally `space` (filled in
   by a worker: asking a volume can block), an `eject` command, `unavailable`
   (why it cannot be opened: the row dims and this is its tooltip) and `menu`,
   the place's own right-click items with their arguments. A rescan publishes
@@ -292,7 +295,7 @@ current source before assuming a planned crate, command, or API exists.
   family (the default stack costs 35-50 ms per frame when it fails to resolve).
 - **Conventions.** Key bindings use gpui notation (`ctrl-shift-n`); `when` is
   a space-separated list of tokens that must all hold (`selection`, `single`,
-  `dir`, `file`; `pane`/`address`/`palette` for context). Menu `order` groups
+  `dir`, `file`, `empty`, `folder`; `pane`/`address`/`palette` for context). Menu `order` groups
   by the hundreds digit (0xx open, 1xx edit, 2xx create, 3xx destructive,
   4xx misc); the UI draws separators between groups. `ui.*` commands are
   handled by the shell; a plugin may bind to them.

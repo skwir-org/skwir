@@ -387,8 +387,9 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
 
 /// Map a registry `when` string to a GPUI context predicate.
 /// Tokens: `pane`, `address`, `palette`, `confirm` name a context; anything
-/// else is a flag the pane sets on its key context (the selection tokens of
-/// `menu::SELECTION_TOKENS`, `split`, `usage`). All tokens must hold.
+/// else is a flag the pane sets on its key context (the tokens of
+/// `menu::SELECTION_TOKENS`, `folder` among them, `split`, `usage`). All
+/// tokens must hold.
 pub fn context_of(when: Option<&str>) -> String {
     let Some(when) = when else {
         return ROOT.to_owned();
@@ -449,6 +450,7 @@ pub fn context_label(context: &str) -> String {
             "split" => conditions.push("split view"),
             "dir" => conditions.push("on a folder"),
             "file" => conditions.push("on a file"),
+            "folder" => conditions.push("in a folder"),
             other => conditions.push(other),
         }
     }

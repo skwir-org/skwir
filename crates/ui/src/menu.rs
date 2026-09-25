@@ -11,7 +11,8 @@ use crate::modal::FocusReturn;
 use crate::shell::Shell;
 use crate::theme::Theme;
 
-/// What the selection looks like, for `when` evaluation and key contexts.
+/// What the selection looks like, and where it is, for `when` evaluation
+/// and key contexts.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SelectionCtx {
     pub count: usize,
@@ -19,11 +20,16 @@ pub struct SelectionCtx {
     pub all_files: bool,
     /// Total size of the selected files whose size is known.
     pub bytes: u64,
+    /// The pane shows a folder, not a search, the shelf or another virtual
+    /// location.
+    pub folder: bool,
 }
 
 /// What `when` can say about the selection, for menu items and key bindings
-/// alike: one vocabulary, one table. `empty` is nothing selected.
-pub const SELECTION_TOKENS: [&str; 5] = ["empty", "selection", "single", "dir", "file"];
+/// alike: one vocabulary, one table. `empty` is nothing selected; `folder`
+/// is the pane showing a folder, which an item about the folder shown (New
+/// Folder, Bookmark This Folder) needs beside `empty`.
+pub const SELECTION_TOKENS: [&str; 6] = ["empty", "selection", "single", "dir", "file", "folder"];
 
 /// A token as the table spells it: `none` is the old spelling of `empty`.
 pub fn canonical_token(token: &str) -> &str {
@@ -39,6 +45,7 @@ impl SelectionCtx {
             "single" => self.count == 1,
             "dir" => self.count > 0 && self.all_dirs,
             "file" => self.count > 0 && self.all_files,
+            "folder" => self.folder,
             _ => false,
         }
     }
@@ -564,6 +571,7 @@ mod tests {
             all_dirs,
             all_files,
             bytes: 0,
+            folder: false,
         }
     }
 
@@ -578,6 +586,15 @@ mod tests {
         assert!(when_holds(Some("single file"), ctx(1, false, true)));
         assert!(!when_holds(Some("single dir"), ctx(1, false, true)));
         assert!(!when_holds(Some("bogus"), ctx(1, true, true)));
+        let folder = SelectionCtx {
+            folder: true,
+            ..ctx(0, true, true)
+        };
+        assert!(when_holds(Some("empty folder"), folder));
+        assert!(
+            !when_holds(Some("empty folder"), ctx(0, true, true)),
+            "a search"
+        );
         assert!(when_holds(Some("empty"), ctx(0, true, true)));
         assert!(!when_holds(Some("empty"), ctx(1, true, true)));
     }

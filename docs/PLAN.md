@@ -97,10 +97,19 @@ a worker that returns its inverse, offered as Undo, then Redo. A saved
 search is known by its expression, as a bookmark by its folder, so
 `query.save` and `query.forget` changed: saving no longer replaces a search
 of the same name, and forgetting takes the expression (or, as before, the
-name). Gaps: the saved-search icon, `folder-saved-search`, exists only as a
-`-symbolic` variant in current Adwaita and Breeze, so the row shows the
-sidebar's fallback dot; the Bookmark This Folder item on the background
-menu is still offered, and refused, on a search.
+name). A theme icon that exists only as a `-symbolic` variant, as
+`folder-saved-search` does in current Adwaita and Breeze, is used as GTK
+does, drawn in the text color (`icons::themed`; the worker that finds it
+reads it, so drawing it never reads the disk). The background menu of a
+search or the shelf no longer offers what needs a folder (New Folder,
+Bookmark This Folder, Open Folder With, Edit as Text, Usage, Timeline,
+Search here): those items say `empty folder`, a token that holds while the
+pane shows a folder. The text input scrolls a line longer than its field
+to keep the cursor in view and clips it to the field, so a long search's
+address no longer runs under the pane's buttons; unfocused, it shows its
+start. Gaps: Open Terminal Here, Run Command and Paste are still offered on
+a search's background, where they fail; each works on a selected folder or
+the folder shown, which one `when` cannot say.
 
 ---
 

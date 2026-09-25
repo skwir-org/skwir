@@ -164,7 +164,7 @@ const MENU: &[(&str, &str, Option<&str>, i32, &str)] = &[
     (
         "New Folder",
         "ui.mkdir_prompt",
-        Some("empty"),
+        Some("empty folder"),
         200,
         "folder-plus",
     ),

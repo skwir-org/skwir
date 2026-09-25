@@ -227,10 +227,12 @@ pub struct Keeper {
 }
 
 /// A menu contribution. `when` is a space-separated list of tokens that must
-/// all hold (`selection`, `single`, `dir`, `file`, and `empty` for the
-/// folder's own menu, opened on its background); `None` means always. An item
-/// about the folder rather than about files (New Folder, Refresh, a view)
-/// says `empty`, so the menu of a file stays about that file.
+/// all hold (`selection`, `single`, `dir`, `file`, `empty` for the menu
+/// opened on the background, and `folder` while the pane shows a folder
+/// rather than a search or the shelf); `None` means always. An item about
+/// the location rather than about files (Refresh, a view) says `empty`, so
+/// the menu of a file stays about that file; one that needs the folder
+/// itself (New Folder, Bookmark This Folder) says `empty folder`.
 ///
 /// `submenu` moves a rarely used item under a parent row of that name,
 /// after the other groups. `icon` names a bundled symbolic icon.

@@ -317,7 +317,7 @@ impl Plugin for UsagePlugin {
                 menu: "context".into(),
                 title: "Usage view".into(),
                 command: Invocation::with_args("ui.view", &serde_json::json!({"id": ID})),
-                when: Some("empty".into()),
+                when: Some("empty folder".into()),
                 order: 430,
                 icon: Some("usage".into()),
                 submenu: None,

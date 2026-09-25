@@ -868,7 +868,7 @@ impl Plugin for PlacesPlugin {
                 "single dir",
             ),
             // The folder's own menu, on its background.
-            ("Bookmark This Folder", shown(), "empty"),
+            ("Bookmark This Folder", shown(), "empty folder"),
         ] {
             app.registry.menus.add(
                 ID,

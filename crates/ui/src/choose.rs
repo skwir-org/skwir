@@ -342,7 +342,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                     this.choose_submit(window, cx);
                 }))
                 .child(match icon {
-                    Some(path) => crate::icons::element(&path, ICON_PX),
+                    Some(path) => crate::icons::themed(&path, ICON_PX, theme.text_muted),
                     None => div().size(px(ICON_PX)).flex_none().into_any_element(),
                 })
                 .child(

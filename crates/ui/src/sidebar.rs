@@ -210,7 +210,15 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
             .as_deref()
             .and_then(|name| shell.icons.named(name, ICON_PX as u16))
         {
-            Some(path) => crate::icons::element(&path, ICON_PX),
+            Some(path) => crate::icons::themed(
+                &path,
+                ICON_PX,
+                if is_current {
+                    theme.selection_text
+                } else {
+                    theme.text_muted
+                },
+            ),
             None => div()
                 .size(px(10.))
                 .mx(px(3.))

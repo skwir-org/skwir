@@ -715,7 +715,7 @@ impl Plugin for OpenWithPlugin {
                 menu: "context".into(),
                 title: "Open Folder With…".into(),
                 command: choose(&serde_json::json!({ "here": true })),
-                when: Some("empty".into()),
+                when: Some("empty folder".into()),
                 order: 11,
                 icon: Some("open".into()),
                 submenu: None,

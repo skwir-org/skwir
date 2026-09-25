@@ -644,7 +644,7 @@ impl Plugin for TimelinePlugin {
                 menu: "context".into(),
                 title: "Timeline…".into(),
                 command: Invocation::new("ui.timeline"),
-                when: Some("empty".into()),
+                when: Some("empty folder".into()),
                 order: 440,
                 icon: Some("calendar".into()),
                 submenu: None,

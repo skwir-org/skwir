@@ -1,5 +1,11 @@
 //! Icon lookup through the platform crate, resolved on a worker and cached
 //! per (name, size), and a GPUI `AssetSource` serving absolute filesystem paths so `svg()` works.
+//!
+//! A named icon the theme has only as a symbolic variant (current Adwaita
+//! and Breeze ship `folder-saved-search` only as `-symbolic`) is used as
+//! GTK does, drawn in the text color: a symbolic SVG is a shape to tint,
+//! not a picture. The worker that finds one reads it too, so drawing it
+//! never touches the disk.
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -8,15 +14,49 @@ use std::sync::{Arc, Mutex};
 
 use bibli_core::{App, Entry};
 use bibli_platform::{icons, mime};
-use gpui::{AnyElement, AssetSource, SharedString, img, prelude::*, px};
+use gpui::{AnyElement, AssetSource, Hsla, SharedString, img, prelude::*, px, svg};
 
 /// Serves any absolute path on disk. Icon themes live outside the binary.
 pub struct FsAssets;
+
+/// Symbolic icons read by the lookup worker, by the path `svg()` asks for.
+fn preloaded() -> &'static Mutex<HashMap<String, Arc<[u8]>>> {
+    static PRELOADED: std::sync::OnceLock<Mutex<HashMap<String, Arc<[u8]>>>> =
+        std::sync::OnceLock::new();
+    PRELOADED.get_or_init(Mutex::default)
+}
+
+/// Whether `path` is a symbolic icon: a shape drawn in the text color.
+pub fn is_symbolic(path: &Path) -> bool {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| stem.ends_with("-symbolic"))
+}
+
+/// A named icon, or its symbolic variant when the theme has only that.
+/// Blocks: call it from a worker.
+fn lookup_named(name: &str, size: u16) -> Option<PathBuf> {
+    let found = icons::lookup(name, size).or_else(|| {
+        (!name.ends_with("-symbolic"))
+            .then(|| icons::lookup(&format!("{name}-symbolic"), size))
+            .flatten()
+    })?;
+    if is_symbolic(&found)
+        && let Ok(bytes) = std::fs::read(&found)
+        && let Ok(mut preloaded) = preloaded().lock()
+    {
+        preloaded.insert(found.to_string_lossy().into_owned(), bytes.into());
+    }
+    Some(found)
+}
 
 impl AssetSource for FsAssets {
     fn load(&self, path: &str) -> anyhow::Result<Option<Cow<'static, [u8]>>> {
         if let Some(bytes) = crate::toolbar::asset(path) {
             return Ok(Some(Cow::Borrowed(bytes)));
+        }
+        if let Some(bytes) = preloaded().lock().ok().and_then(|p| p.get(path).cloned()) {
+            return Ok(Some(Cow::Owned(bytes.to_vec())));
         }
         if !Path::new(path).is_absolute() {
             return Ok(None);
@@ -66,7 +106,13 @@ impl IconCache {
         }
         // Resolved by an earlier worker, or by anyone else who asked.
         let cached = match &want {
-            Want::Named(name) => icons::try_cached(name, size),
+            // Or its symbolic variant, which `lookup_named` tries next.
+            Want::Named(name) => match icons::try_cached(name, size) {
+                Some(None) if !name.ends_with("-symbolic") => {
+                    icons::try_cached(&format!("{name}-symbolic"), size)
+                }
+                other => other,
+            },
             _ => None,
         };
         let Some(found) = cached else {
@@ -134,7 +180,7 @@ impl IconCache {
                     .into_iter()
                     .map(|(want, size)| {
                         let path = match &want {
-                            Want::Named(name) => icons::lookup(name, size),
+                            Want::Named(name) => lookup_named(name, size),
                             Want::Folder => icons::folder(size),
                             Want::Mime(m) if m.is_empty() => icons::unknown(size),
                             Want::Mime(m) => icons::for_mime(&mime::Mime(m.clone()), size),
@@ -177,4 +223,35 @@ pub fn element(path: &Path, size: f32) -> AnyElement {
         .size(px(size))
         .flex_none()
         .into_any_element()
+}
+
+/// A named theme icon at `size` px: in full color, or tinted with `color`
+/// when it is symbolic.
+pub fn themed(path: &Path, size: f32, color: Hsla) -> AnyElement {
+    if !is_symbolic(path) {
+        return element(path, size);
+    }
+    svg()
+        .path(SharedString::from(path.to_string_lossy().into_owned()))
+        .size(px(size))
+        .flex_none()
+        .text_color(color)
+        .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_symbolic;
+    use std::path::Path;
+
+    #[test]
+    fn a_symbolic_icon_is_known_by_its_name() {
+        assert!(is_symbolic(Path::new(
+            "/icons/Adwaita/symbolic/places/folder-saved-search-symbolic.svg"
+        )));
+        assert!(!is_symbolic(Path::new(
+            "/icons/hicolor/16x16/places/folder.png"
+        )));
+        assert!(!is_symbolic(Path::new("/icons/x/symbolic-folder.svg")));
+    }
 }
