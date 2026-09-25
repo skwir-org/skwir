@@ -104,11 +104,20 @@ impl ColumnsView {
         self.base = Some(base.to_path_buf());
     }
 
-    fn pump(&mut self, spec: SortSpec) {
+    /// Apply what the parent folders' listings sent, a slice each
+    /// (`PUMP_BUDGET`), as the panes' are. Returns whether some is left,
+    /// for the caller to ask for another pass. A column's rows are made
+    /// once its listing is complete (or failed): remaking them for every slice of a
+    /// parent of 366 000 entries would cost more than the listing.
+    fn pump(&mut self, spec: SortSpec) -> bool {
+        let mut backlog = false;
         for a in &mut self.ancestors {
-            a.listing.drain(a.open.events());
+            a.listing
+                .drain(a.open.events(), bibli_core::workspace::PUMP_BUDGET);
+            backlog |= !a.open.events().is_empty();
             let v = a.listing.version();
-            if a.sorted_at == Some((v, spec)) {
+            let settled = a.listing.is_complete() || a.listing.error().is_some();
+            if a.sorted_at == Some((v, spec)) || !settled {
                 continue;
             }
             a.sorted_at = Some((v, spec));
@@ -130,6 +139,7 @@ impl ColumnsView {
                 a.shown_child = true;
             }
         }
+        backlog
     }
 }
 
@@ -264,7 +274,10 @@ impl PaneView for ColumnsView {
                 self.base = None;
             }
         }
-        self.pump(spec);
+        if self.pump(spec) {
+            // The rest on the next pass, after this frame is drawn.
+            shell.app.wake();
+        }
 
         let mut columns = div().size_full().flex().flex_row().overflow_hidden();
         for k in 0..self.ancestors.len() {

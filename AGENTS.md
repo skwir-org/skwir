@@ -333,6 +333,16 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   `OpenLocation::hydrate` are synchronous entry points: enqueue expensive work
   and return promptly. `pump_until_complete` and executor blocking methods are
   for headless tests/tools, never UI callbacks.
+- The UI applies listing events a slice at a time: `Listing::drain` takes
+  what was queued when called, for at most `workspace::PUMP_BUDGET`, and a
+  sync that leaves a backlog gives the event loop a turn (a real timer: a
+  zero one is a ready task in gpui) and syncs again, so a folder of
+  hundreds of thousands of entries draws as it streams, under the loading
+  banner, instead of holding the UI thread until its last batch.
+  `Listing::sorted` places arrivals in the cached order (by ranks kept
+  while the listing streams, a quarter of the order at a time) rather than
+  sorting again; any other change sorts again. Never loop on a channel
+  until it is empty while its producer runs.
 - Send listing events through `OpenContext::channel` / `EventSink`, which wake
   the UI after enqueueing. Other background results must call `App::wake` or a
   captured `waker_handle` after publishing. `Complete` ends the initial listing;

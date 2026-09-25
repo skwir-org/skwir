@@ -115,6 +115,8 @@ pub struct Shell {
     pub type_names: crate::typenames::TypeNames,
     /// Switches of the settings, resolved when their revision changes.
     pub prefs: Preferences,
+    /// Listing events were left for the next sync (`PumpReport::backlog`).
+    backlog: bool,
     /// Preferences changed from the toolbars and not saved yet
     /// (`settings::remember`).
     pub(crate) unsaved: std::collections::BTreeMap<&'static str, String>,
@@ -236,13 +238,26 @@ impl Shell {
                 if wake_rx.recv_async().await.is_err() {
                     break;
                 }
-                while wake_rx.try_recv().is_ok() {}
-                let applied = this.update_in(cx, |this, window, cx| {
-                    this.sync(window, cx);
-                    cx.notify();
-                });
-                if applied.is_err() {
-                    break;
+                loop {
+                    while wake_rx.try_recv().is_ok() {}
+                    let Ok(backlog) = this.update_in(cx, |this, window, cx| {
+                        this.sync(window, cx);
+                        cx.notify();
+                        this.backlog
+                    }) else {
+                        return;
+                    };
+                    if !backlog {
+                        break;
+                    }
+                    // A listing is still being applied, a slice per sync
+                    // (`PUMP_BUDGET`): give the event loop a turn, so the
+                    // window draws what has arrived, then go on. The wait
+                    // must go through the platform's loop: a zero timer is
+                    // a ready task in gpui, and yields to nothing.
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(1))
+                        .await;
                 }
             }
         })
@@ -285,6 +300,7 @@ impl Shell {
             type_names: crate::typenames::TypeNames::default(),
             prefs: Preferences::default(),
             unsaved: std::collections::BTreeMap::new(),
+            backlog: false,
             sidebar_folded: std::collections::HashSet::new(),
             columns: [true; 3],
             reading_measure: crate::markdown::measure("comfortable"),
@@ -1364,6 +1380,7 @@ impl Shell {
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let t0 = Instant::now();
         let report = self.app.pump_report();
+        self.backlog = report.backlog;
         self.sync_views();
         self.sync_keymap(cx);
         self.app.thumbnails.tick();

@@ -44,6 +44,13 @@ Settings pages follow their subject (ADR-010 addendum): the reader's
 preferences, shared by several preview plugins, moved from Appearance to a
 Reading page (`reading.*`), and a moved key keeps its value
 (`Settings::rename`).
+Huge folders (2026-09-25): the UI applied a listing in one drain that lasted
+as long as the worker kept sending, holding the UI thread and the workspace
+lock (0.9 s for the 366 000 entries of `/nix/store`, warm cache, release; longer
+on a slow disk), so no frame, banner included, was drawn. The drain is now a
+slice per sync (`PUMP_BUDGET`) and arrivals are placed in the sorted order
+instead of sorting again: the same folder draws its first rows at once, shows
+"Loading location…" with a growing count, and is complete in 0.75 s.
 
 ---
 

@@ -190,15 +190,23 @@ impl Pane {
         }
     }
 
+    /// Whether listing events are waiting to be applied.
+    pub fn backlog(&self) -> bool {
+        self.open
+            .as_ref()
+            .is_some_and(|open| !open.events().is_empty())
+    }
+
     pub fn location(&self) -> Option<&Location> {
         self.open.as_ref().map(|o| o.location())
     }
 
-    /// Apply pending listing events. Returns how many were applied.
-    pub fn pump(&mut self) -> usize {
+    /// Apply pending listing events, for at most `budget`. Returns how many
+    /// were applied; `backlog` says whether some are still waiting.
+    pub fn pump(&mut self, budget: std::time::Duration) -> usize {
         let Some(open) = &self.open else { return 0 };
         let rx = open.events().clone();
-        let n = self.listing.drain(&rx);
+        let n = self.listing.drain(&rx, budget);
         if n > 0 {
             self.selection.retain_in(&self.listing);
             self.take_reveal();
@@ -303,25 +311,35 @@ impl Workspace {
         self.pump_report().applied
     }
 
-    /// Pump every pane and say which ones changed.
+    /// Pump every pane, each for at most `PUMP_BUDGET`, and say which ones
+    /// changed and whether events are still waiting.
     pub fn pump_report(&mut self) -> PumpReport {
         let mut r = PumpReport::default();
         for p in &mut self.panes {
-            let n = p.pump();
+            let n = p.pump(PUMP_BUDGET);
             if n > 0 {
                 r.applied += n;
                 r.panes_changed.push(p.id);
             }
+            r.backlog |= p.backlog();
         }
         r
     }
 }
+
+/// How long one pump may apply a pane's events: a quarter of a frame at
+/// 60 Hz, so the UI thread that pumps still draws while a large folder
+/// streams in. The rest waits for the next pump (`PumpReport::backlog`).
+pub const PUMP_BUDGET: std::time::Duration = std::time::Duration::from_millis(4);
 
 /// What a pump did.
 #[derive(Clone, Debug, Default)]
 pub struct PumpReport {
     pub applied: usize,
     pub panes_changed: Vec<PaneId>,
+    /// Events are still waiting: pump again soon, without waiting for the
+    /// location to wake the caller (it already has).
+    pub backlog: bool,
 }
 
 #[cfg(test)]
