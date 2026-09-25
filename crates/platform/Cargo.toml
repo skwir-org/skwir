@@ -20,6 +20,7 @@ png.workspace = true
 parking_lot.workspace = true
 tempfile.workspace = true
 serde_json.workspace = true
+jiff.workspace = true
 scraper = "0.24"
 # The versions scraper itself builds on: publisher stylesheets are parsed and
 # matched against its tree, and XHTML read as XML is built into that tree.

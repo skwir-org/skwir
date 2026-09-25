@@ -710,6 +710,7 @@ dependencies = [
  "encoding_rs",
  "freedesktop-icons",
  "image",
+ "jiff",
  "kamadak-exif",
  "markup5ever",
  "md5",
@@ -1065,6 +1066,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "bibli-core",
+ "bibli-platform",
  "parking_lot",
  "rayon",
  "schemars",

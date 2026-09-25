@@ -18,11 +18,13 @@
 //! `k`, `M`, `G` (1024-based). Times take dates (`2026`, `2026-05`,
 //! `2026-05-01`), periods named from now (`today`, `yesterday`,
 //! `this-week`, `last-week`, `this-month`, `last-month`, `this-year`,
-//! `last-year`; weeks start on Monday), or durations relative to now
-//! (`7d`, `2h30m`, `3w`). A date or a named period is a calendar period in
-//! UTC, as the timeline's are: `modified:this-week` is within it,
-//! `modified<today` before it. `modified<7d` means within the last 7
-//! days; `modified>7d` older than that.
+//! `last-year`), or durations relative to now
+//! (`7d`, `2h30m`, `3w`, `1mo`). A date or a named period is a period of
+//! the user's calendar, in their time zone with its clock changes, weeks
+//! from their locale's first day (ADR-017; the timeline's bars are the
+//! same days): `modified:this-week` is within it, `modified<today` before
+//! it. Durations are counted back on the calendar too: `modified<7d` is
+//! within the last seven days, this time of day; `modified>7d` older.
 //!
 //! `kind:` takes what the desktop's MIME database groups files into
 //! (`image`, `video`, `audio`, `document`, `spreadsheet`, `presentation`,
@@ -48,9 +50,10 @@ use std::cell::OnceCell;
 use std::ffi::{OsStr, OsString};
 use std::fmt::{self, Write as _};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use bibli_core::entry::{EntryKind, Metadata, Value, keys};
+use bibli_platform::calendar::{Calendar, civil_from_days, days_from_civil};
 use globset::{Glob, GlobMatcher};
 use grep_regex::RegexMatcher;
 
@@ -202,6 +205,9 @@ pub enum Term {
         field: TimeField,
         after: Option<SystemTime>,
         before: Option<SystemTime>,
+        /// When the term means another period: a named one (`today`)
+        /// changes at its next start.
+        changes: Option<SystemTime>,
         text: String,
     },
     Tag(String),
@@ -383,15 +389,17 @@ struct Parser<'a> {
     pos: usize,
     case_sensitive: bool,
     now: SystemTime,
+    calendar: &'a Calendar,
 }
 
 /// Parse with the current time as the reference for relative dates.
 pub fn parse(text: &str) -> Result<Query, ParseError> {
-    parse_at(text, SystemTime::now())
+    parse_in(text, SystemTime::now(), &Calendar::system())
 }
 
-/// Parse with an explicit "now" (tests).
-pub fn parse_at(text: &str, now: SystemTime) -> Result<Query, ParseError> {
+/// Parse with an explicit "now" and calendar: dates and periods are days
+/// of `cal`, durations are counted back from `now` on it.
+pub fn parse_in(text: &str, now: SystemTime, cal: &Calendar) -> Result<Query, ParseError> {
     let toks = tokenize(text)?;
     // Options first, since `case:` changes how patterns compile.
     let mut root = None;
@@ -443,6 +451,7 @@ pub fn parse_at(text: &str, now: SystemTime) -> Result<Query, ParseError> {
         pos: 0,
         case_sensitive,
         now,
+        calendar: cal,
     };
     let expr = if rest.is_empty() {
         None
@@ -582,7 +591,7 @@ impl Parser<'_> {
                     if let Some(rest) = v.strip_prefix(field.name())
                         && rest.starts_with(['<', '>', '='])
                     {
-                        return parse_time(field, rest, self.now);
+                        return parse_time(field, rest, self.now, self.calendar);
                     }
                 }
             }
@@ -640,7 +649,7 @@ impl Parser<'_> {
                     .into_iter()
                     .find(|f| f.name() == key)
                     .ok_or_else(|| ParseError(format!("{key}: is not allowed here")))?;
-                parse_time(field, &format!(":{v}"), self.now)
+                parse_time(field, &format!(":{v}"), self.now, self.calendar)
             }
         }
     }
@@ -749,83 +758,22 @@ fn parse_size(rest: &str) -> Result<Term, ParseError> {
     })
 }
 
-/// Days since the epoch for a civil date (Howard Hinnant's algorithm).
-fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = y - era * 400;
-    let mp = (i64::from(m) + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + i64::from(d) - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
+/// A calendar period `[start, end)` in civil days.
+type Days = (i64, i64);
 
-fn civil_to_time(y: i64, m: u32, d: u32) -> SystemTime {
-    UNIX_EPOCH + Duration::from_secs((days_from_civil(y, m, d) * 86_400).max(0) as u64)
-}
-
-fn next_month(y: i64, m: u32) -> (i64, u32) {
-    if m == 12 { (y + 1, 1) } else { (y, m + 1) }
-}
-
-fn previous_month(y: i64, m: u32) -> (i64, u32) {
-    if m == 1 { (y - 1, 12) } else { (y, m - 1) }
-}
-
-/// The civil date of a day since the epoch (Howard Hinnant's algorithm,
-/// the inverse of [`days_from_civil`]).
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (yoe + era * 400 + i64::from(m <= 2), m, d)
-}
-
-/// A period named from `now` (`today`, `this-week`, `last-month`) and its
-/// exclusive end, in UTC like dates; weeks start on Monday.
-fn named_period(s: &str, now: SystemTime) -> Option<(SystemTime, SystemTime)> {
-    let secs = i64::try_from(now.duration_since(UNIX_EPOCH).ok()?.as_secs()).ok()?;
-    let today = secs.div_euclid(86_400);
-    let day = |d: i64| UNIX_EPOCH + Duration::from_secs((d * 86_400).max(0) as u64);
-    // 1970-01-01 was a Thursday: three days after a Monday.
-    let monday = today - (today + 3).rem_euclid(7);
-    let (y, m, _) = civil_from_days(today);
-    let (py, pm) = previous_month(y, m);
-    let (ny, nm) = next_month(y, m);
-    Some(match s.to_ascii_lowercase().as_str() {
-        "today" => (day(today), day(today + 1)),
-        "yesterday" => (day(today - 1), day(today)),
-        "this-week" => (day(monday), day(monday + 7)),
-        "last-week" => (day(monday - 7), day(monday)),
-        "this-month" => (civil_to_time(y, m, 1), civil_to_time(ny, nm, 1)),
-        "last-month" => (civil_to_time(py, pm, 1), civil_to_time(y, m, 1)),
-        "this-year" => (civil_to_time(y, 1, 1), civil_to_time(y + 1, 1, 1)),
-        "last-year" => (civil_to_time(y - 1, 1, 1), civil_to_time(y, 1, 1)),
-        _ => return None,
-    })
-}
-
-/// A date literal and the exclusive end of the period it denotes.
-fn parse_date(s: &str) -> Option<(SystemTime, SystemTime)> {
+/// A date literal (`2026`, `2026-05`, `2026-05-01`) as civil days.
+fn parse_date(s: &str) -> Option<Days> {
     let parts: Vec<&str> = s.split('-').collect();
     let y: i64 = parts.first()?.parse().ok()?;
     if !(1970..=9999).contains(&y) {
         return None;
     }
+    let month = |m: u32| (days_from_civil(y, m, 1), next_month_start(y, m));
     match parts.len() {
-        1 => Some((civil_to_time(y, 1, 1), civil_to_time(y + 1, 1, 1))),
+        1 => Some((days_from_civil(y, 1, 1), days_from_civil(y + 1, 1, 1))),
         2 => {
             let m: u32 = parts[1].parse().ok()?;
-            if !(1..=12).contains(&m) {
-                return None;
-            }
-            let (ny, nm) = next_month(y, m);
-            Some((civil_to_time(y, m, 1), civil_to_time(ny, nm, 1)))
+            (1..=12).contains(&m).then(|| month(m))
         }
         3 => {
             let m: u32 = parts[1].parse().ok()?;
@@ -834,28 +782,70 @@ fn parse_date(s: &str) -> Option<(SystemTime, SystemTime)> {
                 return None;
             }
             // `2026-02-31` is not a day; it must not roll into March.
-            let (ny, nm) = next_month(y, m);
-            let month_days = days_from_civil(ny, nm, 1) - days_from_civil(y, m, 1);
-            if i64::from(d) > month_days {
-                return None;
-            }
-            let start = civil_to_time(y, m, d);
-            Some((start, start + Duration::from_secs(86_400)))
+            let (first, next) = month(m);
+            let day = first + i64::from(d) - 1;
+            (day < next).then_some((day, day + 1))
         }
         _ => None,
     }
 }
 
+fn next_month_start(y: i64, m: u32) -> i64 {
+    if m == 12 {
+        days_from_civil(y + 1, 1, 1)
+    } else {
+        days_from_civil(y, m + 1, 1)
+    }
+}
+
+/// A period named from `today` (`today`, `this-week`, `last-month`), and
+/// the day it next means another period: at its unit's next start.
+fn named_period(s: &str, today: i64, cal: &Calendar) -> Option<(Days, i64)> {
+    let week = cal.week_floor(today);
+    let (y, m, _) = civil_from_days(today);
+    let month = days_from_civil(y, m, 1);
+    let (py, pm) = if m == 1 { (y - 1, 12) } else { (y, m - 1) };
+    let year = days_from_civil(y, 1, 1);
+    let next_year = days_from_civil(y + 1, 1, 1);
+    Some(match s.to_ascii_lowercase().as_str() {
+        "today" => ((today, today + 1), today + 1),
+        "yesterday" => ((today - 1, today), today + 1),
+        "this-week" => ((week, week + 7), week + 7),
+        "last-week" => ((week - 7, week), week + 7),
+        "this-month" => ((month, next_month_start(y, m)), next_month_start(y, m)),
+        "last-month" => ((days_from_civil(py, pm, 1), month), next_month_start(y, m)),
+        "this-year" => ((year, next_year), next_year),
+        "last-year" => ((days_from_civil(y - 1, 1, 1), year), next_year),
+        _ => return None,
+    })
+}
+
 enum TimeLit {
     /// An instant in the past, `now - duration`.
     Ago(SystemTime),
-    /// A calendar period `[start, end)`.
-    Period(SystemTime, SystemTime),
+    /// A calendar period `[start, end)`, and when it changes (named
+    /// periods only).
+    Period(SystemTime, SystemTime, Option<SystemTime>),
 }
 
-fn parse_time_lit(s: &str, now: SystemTime) -> Result<TimeLit, ParseError> {
-    if let Some((a, b)) = parse_date(s).or_else(|| named_period(s, now)) {
-        return Ok(TimeLit::Period(a, b));
+fn parse_time_lit(s: &str, now: SystemTime, cal: &Calendar) -> Result<TimeLit, ParseError> {
+    let period = |(a, b): Days, changes: Option<i64>| {
+        TimeLit::Period(
+            cal.day_start(a),
+            cal.day_start(b),
+            changes.map(|day| cal.day_start(day)),
+        )
+    };
+    if let Some(days) = parse_date(s) {
+        return Ok(period(days, None));
+    }
+    if let Some((days, changes)) = named_period(s, cal.day_of(now), cal) {
+        return Ok(period(days, Some(changes)));
+    }
+    // On the calendar (`7d` across a clock change is seven days), else as
+    // humantime reads it (`1month`), an exact length.
+    if let Some(t) = cal.ago(now, s) {
+        return Ok(TimeLit::Ago(t));
     }
     if let Ok(d) = humantime::parse_duration(s) {
         return Ok(TimeLit::Ago(now.checked_sub(d).unwrap_or(UNIX_EPOCH)));
@@ -866,37 +856,50 @@ fn parse_time_lit(s: &str, now: SystemTime) -> Result<TimeLit, ParseError> {
 }
 
 /// `rest` is what follows the field's name: an operator and a value.
-fn parse_time(field: TimeField, rest: &str, now: SystemTime) -> Result<Term, ParseError> {
+fn parse_time(
+    field: TimeField,
+    rest: &str,
+    now: SystemTime,
+    cal: &Calendar,
+) -> Result<Term, ParseError> {
     let (op, v) = split_cmp(rest)?;
     let text = format!("{}{rest}", field.name());
-    let mk = |after, before| Term::Time {
+    let mk = |after, before, changes| Term::Time {
         field,
         after,
         before,
+        changes,
         text: text.clone(),
     };
+    let changes = |lit: &TimeLit| match lit {
+        TimeLit::Period(_, _, changes) => *changes,
+        TimeLit::Ago(_) => None,
+    };
     if let Some((a, b)) = v.split_once("..") {
-        let start = match parse_time_lit(a, now)? {
-            TimeLit::Ago(t) | TimeLit::Period(t, _) => t,
+        let (a, b) = (parse_time_lit(a, now, cal)?, parse_time_lit(b, now, cal)?);
+        let first = [changes(&a), changes(&b)].into_iter().flatten().min();
+        let start = match a {
+            TimeLit::Ago(t) | TimeLit::Period(t, _, _) => t,
         };
-        let end = match parse_time_lit(b, now)? {
+        let end = match b {
             TimeLit::Ago(t) => t,
-            TimeLit::Period(_, e) => e,
+            TimeLit::Period(_, e, _) => e,
         };
-        return Ok(mk(Some(start), Some(end)));
+        return Ok(mk(Some(start), Some(end), first));
     }
-    let lit = parse_time_lit(v, now)?;
+    let lit = parse_time_lit(v, now, cal)?;
+    let changes = changes(&lit);
     Ok(match (op, lit) {
         // "within the last 7d" / "before the date"
-        ("<", TimeLit::Period(s, _)) => mk(None, Some(s)),
-        ("<=", TimeLit::Period(_, e)) => mk(None, Some(e)),
+        ("<", TimeLit::Period(s, _, _)) => mk(None, Some(s), changes),
+        ("<=", TimeLit::Period(_, e, _)) => mk(None, Some(e), changes),
         // "older than 7d" / "after the date"
-        (">" | ">=", TimeLit::Ago(t)) => mk(None, Some(t)),
-        (">", TimeLit::Period(_, e)) => mk(Some(e), None),
-        (">=", TimeLit::Period(s, _)) => mk(Some(s), None),
-        (_, TimeLit::Period(s, e)) => mk(Some(s), Some(e)),
+        (">" | ">=", TimeLit::Ago(t)) => mk(None, Some(t), None),
+        (">", TimeLit::Period(_, e, _)) => mk(Some(e), None, changes),
+        (">=", TimeLit::Period(s, _, _)) => mk(Some(s), None, changes),
+        (_, TimeLit::Period(s, e, _)) => mk(Some(s), Some(e), changes),
         // "within the last 7d" (also the bare `modified:7d` form)
-        (_, TimeLit::Ago(t)) => mk(Some(t), None),
+        (_, TimeLit::Ago(t)) => mk(Some(t), None, None),
     })
 }
 
@@ -1115,6 +1118,25 @@ impl Expr {
 impl Query {
     fn any(&self, pred: &dyn Fn(&Term) -> bool) -> bool {
         self.expr.as_ref().is_some_and(|e| e.any_term(pred))
+    }
+
+    /// When the query next means other periods (`today`, at midnight):
+    /// what it listed is to be listed again then. `None` when none of its
+    /// terms moves on the calendar.
+    pub fn next_change(&self) -> Option<SystemTime> {
+        fn visit(e: &Expr, first: &mut Option<SystemTime>) {
+            match e {
+                Expr::Term(Term::Time {
+                    changes: Some(t), ..
+                }) => *first = Some(first.map_or(*t, |f| f.min(*t))),
+                Expr::Term(_) => {}
+                Expr::Not(e) => visit(e, first),
+                Expr::And(v) | Expr::Or(v) => v.iter().for_each(|e| visit(e, first)),
+            }
+        }
+        let mut first = None;
+        visit(self.expr.as_ref()?, &mut first);
+        first
     }
 
     /// Size or time terms: a stat is needed to evaluate.
@@ -1363,6 +1385,18 @@ pub fn content_matches(path: &Path, pat: &ContentPat) -> bool {
 mod tests {
     use super::*;
     use bibli_core::entry::Provenance;
+    use bibli_platform::calendar::Weekday;
+    use std::time::Duration;
+
+    /// Parse on a UTC calendar with weeks from Monday: what these tests
+    /// are about is not the zone, which the ones below vary.
+    fn parse_at(s: &str, now: SystemTime) -> Result<Query, ParseError> {
+        parse_in(s, now, &Calendar::utc())
+    }
+
+    fn civil_to_time(y: i64, m: u32, d: u32) -> SystemTime {
+        UNIX_EPOCH + Duration::from_secs(days_from_civil(y, m, d).unsigned_abs() * 86_400)
+    }
 
     fn now() -> SystemTime {
         // 2026-09-18T12:00:00Z
@@ -1729,14 +1763,74 @@ mod tests {
         assert!(parse_at("modified:next-week", friday).is_err());
     }
 
+    fn paris(week_start: Weekday) -> Calendar {
+        Calendar::named("Europe/Paris", week_start).expect("the tz database has Paris")
+    }
+
+    /// The user's day, not UTC's: late on the 25th in UTC is already the
+    /// 26th in Paris, and a day of the clocks changing is 23 or 25 hours.
     #[test]
-    fn civil_dates_round_trip_through_days() {
-        for day in (-800_000..800_000).step_by(997) {
-            let (y, m, d) = civil_from_days(day);
-            assert_eq!(days_from_civil(y, m, d), day, "{y}-{m}-{d}");
-        }
-        assert_eq!(civil_from_days(0), (1970, 1, 1));
-        assert_eq!(civil_from_days(20_721), (2026, 9, 25));
+    fn dates_and_periods_are_days_of_the_users_zone() {
+        let cal = paris(Weekday::Monday);
+        let hour = |y, m, d, h: u64| civil_to_time(y, m, d) + Duration::from_secs(h * 3600);
+        let span = |expr: &str, now: SystemTime| match parse_in(expr, now, &cal).unwrap().expr {
+            Some(Expr::Term(Term::Time {
+                after: Some(a),
+                before: Some(b),
+                ..
+            })) => (a, b),
+            other => panic!("{expr}: {other:?}"),
+        };
+        // 23:30 UTC on the 25th: 01:30 on the 26th in Paris.
+        let late = hour(2026, 9, 25, 23) + Duration::from_secs(1800);
+        assert_eq!(
+            span("modified:today", late),
+            (hour(2026, 9, 25, 22), hour(2026, 9, 26, 22))
+        );
+        assert_eq!(
+            span("modified:2026-09-26", late),
+            span("modified:today", late),
+            "a date is the same day"
+        );
+        // The day the clocks go back is 25 hours long.
+        let (a, b) = span("modified:2026-10-25", late);
+        assert_eq!(b.duration_since(a).unwrap().as_secs(), 25 * 3600);
+        // A month begins at its local midnight, in winter time here.
+        assert_eq!(
+            span("modified:2026-12", late),
+            (hour(2026, 11, 30, 23), hour(2026, 12, 31, 23))
+        );
+        // Weeks start on the locale's day.
+        let sunday = paris(Weekday::Sunday);
+        let friday = hour(2026, 9, 25, 10);
+        let week = |cal: &Calendar| match parse_in("modified:this-week", friday, cal).unwrap().expr
+        {
+            Some(Expr::Term(Term::Time { after: Some(a), .. })) => a,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(week(&cal), hour(2026, 9, 20, 22), "Monday the 21st");
+        assert_eq!(week(&sunday), hour(2026, 9, 19, 22), "Sunday the 20th");
+    }
+
+    #[test]
+    fn a_named_period_says_when_it_moves_on() {
+        let cal = paris(Weekday::Monday);
+        let hour = |y, m, d, h: u64| civil_to_time(y, m, d) + Duration::from_secs(h * 3600);
+        let friday = hour(2026, 9, 25, 10);
+        let next = |expr: &str| parse_in(expr, friday, &cal).unwrap().next_change();
+        // The next local midnight, week, month.
+        assert_eq!(next("modified:today"), Some(hour(2026, 9, 25, 22)));
+        assert_eq!(next("modified:yesterday"), Some(hour(2026, 9, 25, 22)));
+        assert_eq!(next("modified>=this-week"), Some(hour(2026, 9, 27, 22)));
+        assert_eq!(next("modified:last-month"), Some(hour(2026, 9, 30, 22)));
+        // The first of several; nothing for dates and durations.
+        assert_eq!(
+            next("kind:image (modified:this-year OR created:today)"),
+            Some(hour(2026, 9, 25, 22))
+        );
+        assert_eq!(next("modified:2026-09 size>1M"), None);
+        assert_eq!(next("modified<7d"), None);
+        assert_eq!(next("NOT modified:this-month"), Some(hour(2026, 9, 30, 22)));
     }
 
     #[test]
@@ -1825,9 +1919,9 @@ mod tests {
         assert_eq!(days_from_civil(1970, 1, 1), 0);
         assert_eq!(days_from_civil(2000, 3, 1), 11_017);
         let (a, b) = parse_date("2026-02").unwrap();
-        assert_eq!(b.duration_since(a).unwrap().as_secs(), 28 * 86_400);
+        assert_eq!(b - a, 28, "days");
         let (a, b) = parse_date("2024").unwrap();
-        assert_eq!(b.duration_since(a).unwrap().as_secs(), 366 * 86_400);
+        assert_eq!(b - a, 366);
         assert!(parse_date("2026-13").is_none());
         assert!(parse_date("2026-02-31").is_none());
         assert!(parse_date("2026-02-29").is_none());

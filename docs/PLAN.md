@@ -122,10 +122,18 @@ processor files; `package-x-generic` archives) and from descent from
 type); and named periods (`modified:today`, `this-week`, `last-month`,
 `this-year`, with `<`, `>=` and ranges as for dates) are calendar periods in
 UTC like the dates, weeks starting on Monday. The search prompt's example
-uses both. Deviation: a period named "today" follows UTC, not the local day,
-because every calendar boundary in the parser and the timeline does
-(AGENTS.md); moving them all to the local time zone is a decision of its
-own.
+uses both.
+Dates are the user's (2026-09-25, ADR-017): the query text records no zone;
+dates, named periods and the timeline's bars are days of
+`bibli_platform::calendar::Calendar`, the system's time zone with its clock
+changes (a day of 23 or 25 hours, a midnight that does not exist) and the
+locale's first weekday, asked of `locale` once on a worker. Durations are
+counted on the calendar (`7d` across a clock change is seven days; `1mo`
+works). A search showing a named period lists again when it moves on,
+checking the wall clock at least every ten minutes so a sleep past midnight
+is not missed. Saved searches with dates shift by at most the zone's offset;
+the timeline's bars, labels and the queries they become now name the same
+day.
 
 ---
 

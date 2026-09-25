@@ -5,6 +5,7 @@
 //! builds everywhere and Phase 5 fills them in.
 //!
 //! - [`mime`]: type detection by name (no I/O) or by content.
+//! - [`calendar`]: the user's time zone and first weekday, for dates people read.
 //! - [`icons`]: XDG icon theme lookup with caching.
 //! - [`thumbnails`]: the freedesktop thumbnail cache: lookup, load, store.
 //! - [`thumb_providers`]: thumbnail providers for the core service: cache, image decoder, external thumbnailers.
@@ -15,6 +16,7 @@
 //! - [`uri`]: `file://` URIs escaped as the desktop escapes them.
 //! - [`process`]: bounded tool runs, and children started without waiting on them.
 
+pub mod calendar;
 pub mod document;
 pub mod exif;
 pub mod file;

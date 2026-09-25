@@ -19,8 +19,12 @@ fn timeline_selection_preserves_paths_and_filters_the_period() {
         &app,
     );
     let pane = app.workspace.read().active_id();
-    let start = 1_782_864_000; // 2026-07-01 UTC
-    let end = start + 86_400;
+    // A bar is a day of the user's calendar: 2026-07-01 from its midnight
+    // where the test runs.
+    let cal = bibli_platform::calendar::Calendar::system();
+    let day = bibli_platform::calendar::days_from_civil(2026, 7, 1);
+    let secs = |t: std::time::SystemTime| t.duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let (start, end) = (secs(cal.day_start(day)), secs(cal.day_start(day + 1)));
     for dirname in [
         "2026-08 Trip d'Example - Summit",
         "d'Example",

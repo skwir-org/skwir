@@ -13,8 +13,11 @@
 //! (files, folders and links, hidden ones only when the pane shows hidden
 //! entries), from the listing (`depth:1`) or from the whole subtree.
 //!
-//! Buckets are UTC calendar periods, like the query language's dates. Weeks
-//! start on Monday (ISO 8601), not on the Thursday the Unix epoch fell on.
+//! Buckets are periods of the user's calendar (`bibli_platform::calendar`),
+//! like the query language's dates: days from local midnight, daylight
+//! saving time included, and weeks from the locale's first weekday. Entries
+//! are folded by the civil day they fall on; a bar's instants are the
+//! starts of its first day and of the day after its last.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -29,12 +32,12 @@ use bibli_core::os_path::PathArg;
 use bibli_core::plugin::Plugin;
 use bibli_core::scheduler::Priority;
 use bibli_core::workspace::PaneId;
+use bibli_platform::calendar::{Calendar, civil_from_days, date_string, days_from_civil};
 use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 const ID: &str = "timeline";
-const DAY: u64 = 86_400;
 /// 9999-12-31T23:59:59Z: later times (a bogus mtime) count as that instant.
 const LAST_SECOND: u64 = 253_402_300_799;
 /// At most this many bars: a finer bucket that would need more is widened
@@ -58,93 +61,62 @@ pub enum Bucket {
 impl Bucket {
     const ALL: [Bucket; 4] = [Bucket::Day, Bucket::Week, Bucket::Month, Bucket::Year];
 
-    /// Start of the bucket containing `t` (seconds since the epoch, UTC).
-    pub fn floor(self, t: u64) -> u64 {
-        let days = t / DAY;
+    /// First day of the bucket holding civil day `day`.
+    pub fn floor(self, day: i64, cal: &Calendar) -> i64 {
         match self {
-            Bucket::Day => days * DAY,
-            // Day 0 was a Thursday, three days after a Monday.
-            Bucket::Week => days.saturating_sub((days + 3) % 7) * DAY,
+            Bucket::Day => day,
+            Bucket::Week => cal.week_floor(day),
             Bucket::Month => {
-                let (y, m, _) = civil_from_days(days);
-                days_from_civil(y, m, 1) * DAY
+                let (y, m, _) = civil_from_days(day);
+                days_from_civil(y, m, 1)
             }
-            Bucket::Year => {
-                let (y, _, _) = civil_from_days(days);
-                days_from_civil(y, 1, 1) * DAY
-            }
+            Bucket::Year => days_from_civil(civil_from_days(day).0, 1, 1),
         }
     }
 
-    /// Start of the bucket after the one starting at `start`.
-    pub fn next(self, start: u64) -> u64 {
+    /// First day of the bucket after the one starting on `start`.
+    pub fn next(self, start: i64) -> i64 {
         match self {
-            Bucket::Day => start + DAY,
-            // Floored again: the first week of 1970 is cut at the epoch.
-            Bucket::Week => Bucket::Week.floor(start + 7 * DAY),
+            Bucket::Day => start + 1,
+            Bucket::Week => start + 7,
             Bucket::Month => {
-                let (y, m, _) = civil_from_days(start / DAY);
+                let (y, m, _) = civil_from_days(start);
                 let (y, m) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
-                days_from_civil(y, m, 1) * DAY
+                days_from_civil(y, m, 1)
             }
-            Bucket::Year => {
-                let (y, _, _) = civil_from_days(start / DAY);
-                days_from_civil(y + 1, 1, 1) * DAY
-            }
+            Bucket::Year => days_from_civil(civil_from_days(start).0 + 1, 1, 1),
         }
     }
 
     /// How many buckets `[first, last]` spans (both are bucket starts).
-    fn span(self, first: u64, last: u64) -> u64 {
-        let month = |t: u64| {
-            let (y, m, _) = civil_from_days(t / DAY);
+    fn span(self, first: i64, last: i64) -> u64 {
+        let month = |day: i64| {
+            let (y, m, _) = civil_from_days(day);
             y * 12 + i64::from(m)
         };
-        match self {
-            Bucket::Day => (last - first) / DAY + 1,
-            // The epoch's week is cut short; every other starts on a Monday.
-            Bucket::Week => (last - first).div_ceil(7 * DAY) + 1,
-            Bucket::Month => u64::try_from(month(last) - month(first)).unwrap_or(0) + 1,
-            Bucket::Year => u64::try_from((month(last) - month(first)) / 12).unwrap_or(0) + 1,
-        }
+        let n = match self {
+            Bucket::Day => last - first,
+            Bucket::Week => (last - first) / 7,
+            Bucket::Month => month(last) - month(first),
+            Bucket::Year => (month(last) - month(first)) / 12,
+        };
+        u64::try_from(n).unwrap_or(0) + 1
     }
 }
 
-// Howard Hinnant's civil date algorithms (proleptic Gregorian, UTC).
-fn civil_from_days(days: u64) -> (i64, u32, u32) {
-    let z = i64::try_from(days).unwrap_or(i64::MAX / 2) + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (if m <= 2 { y + 1 } else { y }, m, d)
-}
-
-fn days_from_civil(y: i64, m: u32, d: u32) -> u64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let yoe = y.rem_euclid(400);
-    let mp = i64::from(if m > 2 { m - 3 } else { m + 9 });
-    let doy = (153 * mp + 2) / 5 + i64::from(d) - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    (era * 146_097 + doe - 719_468) as u64
-}
-
-/// `YYYY-MM-DD` for a bucket boundary, for the query language.
-pub fn date_string(t: u64) -> String {
-    let (y, m, d) = civil_from_days(t / DAY);
-    format!("{y:04}-{m:02}-{d:02}")
+/// Seconds since the epoch of the instant civil day `day` begins at.
+fn day_start_secs(day: i64, cal: &Calendar) -> u64 {
+    cal.day_start(day)
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
 
 /// One histogram bar.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Bar {
-    /// Bucket start, seconds since the epoch.
+    /// The first instant of the bar's first day, seconds since the epoch.
     pub start: u64,
+    /// The first instant of the day after its last.
     pub end: u64,
     pub count: u64,
     pub bytes: u64,
@@ -177,34 +149,53 @@ impl Tally {
     }
 }
 
-/// Entries folded by UTC day as they are seen: memory grows with the
-/// number of distinct days, not of files, and every bucket width can be
-/// drawn from it without walking again.
-#[derive(Clone, Debug, Default)]
-pub struct Days(BTreeMap<u64, Tally>);
+/// Entries folded by the civil day they fall on, in the calendar's zone,
+/// as they are seen: memory grows with the number of distinct days, not of
+/// files, and every bucket width can be drawn from it without walking again.
+#[derive(Clone, Debug)]
+pub struct Days {
+    days: BTreeMap<i64, Tally>,
+    calendar: Calendar,
+}
+
+impl Default for Days {
+    /// On the user's calendar.
+    fn default() -> Self {
+        Days::new(Calendar::system())
+    }
+}
 
 impl Days {
+    pub fn new(calendar: Calendar) -> Self {
+        Days {
+            days: BTreeMap::new(),
+            calendar,
+        }
+    }
+
     pub fn add(&mut self, t: SystemTime, bytes: u64) {
         let secs = t
             .duration_since(UNIX_EPOCH)
             .unwrap_or(Duration::ZERO)
             .as_secs()
             .min(LAST_SECOND);
-        self.0
-            .entry(secs / DAY)
+        let day = self.calendar.day_of(UNIX_EPOCH + Duration::from_secs(secs));
+        self.days
+            .entry(day)
             .or_default()
             .add(Tally { count: 1, bytes });
     }
 
     fn merge(&mut self, other: Days) {
-        for (day, tally) in other.0 {
-            self.0.entry(day).or_default().add(tally);
+        for (day, tally) in other.days {
+            self.days.entry(day).or_default().add(tally);
         }
     }
 
     /// Bars for `bucket` (or the first wider one that fits in [`MAX_BARS`]).
     pub fn histogram(&self, bucket: Bucket, unknown: u64) -> Histogram {
-        let total = unknown + self.0.values().map(|t| t.count).sum::<u64>();
+        let cal = &self.calendar;
+        let total = unknown + self.days.values().map(|t| t.count).sum::<u64>();
         let mut h = Histogram {
             bucket,
             bars: Vec::new(),
@@ -212,36 +203,36 @@ impl Days {
             outside: 0,
             total,
         };
-        let (Some(&first), Some(&last)) = (self.0.keys().next(), self.0.keys().next_back()) else {
+        let (Some(&first), Some(&last)) = (self.days.keys().next(), self.days.keys().next_back())
+        else {
             return h;
         };
-        let fits = |b: Bucket| b.span(b.floor(first * DAY), b.floor(last * DAY)) <= MAX_BARS as u64;
+        let fits = |b: Bucket| b.span(b.floor(first, cal), b.floor(last, cal)) <= MAX_BARS as u64;
         h.bucket = Bucket::ALL
             .into_iter()
             .filter(|b| *b >= bucket)
             .find(|b| fits(*b))
             .unwrap_or(Bucket::Year);
         let (from, to) = if fits(h.bucket) {
-            (first * DAY, last * DAY)
+            (first, last)
         } else {
             self.busiest_years()
         };
-        let mut sums: BTreeMap<u64, Tally> = BTreeMap::new();
-        for (&day, &tally) in &self.0 {
-            let t = day * DAY;
-            if t < from || t > to {
+        let mut sums: BTreeMap<i64, Tally> = BTreeMap::new();
+        for (&day, &tally) in &self.days {
+            if day < from || day > to {
                 h.outside += tally.count;
             } else {
-                sums.entry(h.bucket.floor(t)).or_default().add(tally);
+                sums.entry(h.bucket.floor(day, cal)).or_default().add(tally);
             }
         }
-        let mut s = h.bucket.floor(from);
+        let mut s = h.bucket.floor(from, cal);
         while s <= to {
             let tally = sums.get(&s).copied().unwrap_or_default();
             let end = h.bucket.next(s);
             h.bars.push(Bar {
-                start: s,
-                end,
+                start: day_start_secs(s, cal),
+                end: day_start_secs(end, cal),
                 count: tally.count,
                 bytes: tally.bytes,
             });
@@ -251,11 +242,11 @@ impl Days {
     }
 
     /// The span of at most [`MAX_BARS`] years holding the most entries, as
-    /// `(first day, last day)` in seconds: a few bogus far-future or
-    /// far-past dates must not squeeze the real ones into one bar.
-    fn busiest_years(&self) -> (u64, u64) {
+    /// `(first day, last day)`: a few bogus far-future or far-past dates
+    /// must not squeeze the real ones into one bar.
+    fn busiest_years(&self) -> (i64, i64) {
         let mut years: BTreeMap<i64, u64> = BTreeMap::new();
-        for (&day, tally) in &self.0 {
+        for (&day, tally) in &self.days {
             *years.entry(civil_from_days(day).0).or_default() += tally.count;
         }
         let years: Vec<(i64, u64)> = years.into_iter().collect();
@@ -270,19 +261,21 @@ impl Days {
                 (best, best_sum) = ((lo, hi), sum);
             }
         }
-        let first = days_from_civil(years[best.0].0, 1, 1) * DAY;
-        let last = days_from_civil(years[best.1].0 + 1, 1, 1) * DAY - DAY;
+        let first = days_from_civil(years[best.0].0, 1, 1);
+        let last = days_from_civil(years[best.1].0 + 1, 1, 1) - 1;
         (first, last)
     }
 }
 
-/// Bucket `(mtime, size)` samples into a dense, contiguous histogram.
+/// Bucket `(mtime, size)` samples into a dense, contiguous histogram of
+/// `cal`'s periods.
 pub fn histogram(
     samples: impl IntoIterator<Item = (SystemTime, u64)>,
     bucket: Bucket,
     unknown: u64,
+    cal: &Calendar,
 ) -> Histogram {
-    let mut days = Days::default();
+    let mut days = Days::new(cal.clone());
     for (t, bytes) in samples {
         days.add(t, bytes);
     }
@@ -302,7 +295,7 @@ pub struct HistogramArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SelectArgs {
-    /// Bucket start, seconds since the epoch.
+    /// A bar's start, seconds since the epoch: the first instant of a day.
     pub start: u64,
     pub end: u64,
     #[serde(default)]
@@ -555,6 +548,14 @@ impl Plugin for TimelinePlugin {
         if let Some(previous) = self.state.lock().lifetime.replace(app.lifetime().child()) {
             previous.cancel();
         }
+        // The locale's first weekday is a process away: asked once, on a
+        // worker, before anyone reads a week.
+        app.scheduler.spawn(
+            Priority::Background,
+            "calendar.week",
+            app.lifetime().child(),
+            bibli_platform::calendar::prewarm,
+        );
         let this = Arc::new(TimelinePlugin {
             state: Arc::clone(&self.state),
         });
@@ -607,10 +608,14 @@ impl Plugin for TimelinePlugin {
                 });
                 // Date ranges include the whole end date in the query language;
                 // histogram buckets instead exclude their end boundary.
+                // A bar starts at the first instant of a day of the user's
+                // calendar, the one the query's dates are read on.
+                let cal = Calendar::system();
+                let day = |secs: u64| cal.day_of(UNIX_EPOCH + Duration::from_secs(secs));
                 let mut expr = format!(
                     "modified>={} modified<{}",
-                    date_string(a.start),
-                    date_string(a.end)
+                    date_string(day(a.start)),
+                    date_string(day(a.end))
                 );
                 if !subtree {
                     expr.push_str(" depth:1");
@@ -665,49 +670,60 @@ mod tests {
     use super::*;
 
     fn at(y: i64, m: u32, d: u32) -> SystemTime {
-        UNIX_EPOCH + Duration::from_secs(days_from_civil(y, m, d) * DAY + 100)
+        Calendar::utc().day_start(days_from_civil(y, m, d)) + Duration::from_secs(100)
+    }
+
+    fn histogram(
+        samples: impl IntoIterator<Item = (SystemTime, u64)>,
+        bucket: Bucket,
+        unknown: u64,
+    ) -> Histogram {
+        super::histogram(samples, bucket, unknown, &Calendar::utc())
     }
 
     #[test]
-    fn calendar_math_round_trips() {
-        for (y, m, d) in [(1970, 1, 1), (2000, 2, 29), (2026, 9, 18), (2100, 12, 31)] {
-            let days = days_from_civil(y, m, d);
-            assert_eq!(civil_from_days(days), (y, m, d));
-        }
-        assert_eq!(
-            date_string(days_from_civil(2026, 9, 18) * DAY + 5),
-            "2026-09-18"
-        );
-        let s = Bucket::Month.floor(days_from_civil(2026, 9, 18) * DAY + 12345);
+    fn buckets_are_calendar_periods() {
+        let cal = Calendar::utc();
+        let day = days_from_civil(2026, 9, 18);
+        let s = Bucket::Month.floor(day, &cal);
         assert_eq!(date_string(s), "2026-09-01");
         assert_eq!(date_string(Bucket::Month.next(s)), "2026-10-01");
         assert_eq!(
-            date_string(Bucket::Year.next(Bucket::Year.floor(s))),
+            date_string(Bucket::Year.next(Bucket::Year.floor(s, &cal))),
+            "2027-01-01"
+        );
+        assert_eq!(
+            date_string(Bucket::Month.next(days_from_civil(2026, 12, 1))),
             "2027-01-01"
         );
     }
 
     #[test]
-    fn weeks_start_on_monday() {
+    fn weeks_start_on_the_calendars_day() {
+        let monday = Calendar::utc();
         // 2026-09-18 is a Friday; its week starts Monday 2026-09-14.
-        let friday = days_from_civil(2026, 9, 18) * DAY + 3600;
-        let start = Bucket::Week.floor(friday);
+        let friday = days_from_civil(2026, 9, 18);
+        let start = Bucket::Week.floor(friday, &monday);
         assert_eq!(date_string(start), "2026-09-14");
         assert_eq!(date_string(Bucket::Week.next(start)), "2026-09-21");
         // A Monday is its own week's start; the Sunday before is not.
-        let monday = days_from_civil(2026, 9, 14) * DAY;
-        assert_eq!(Bucket::Week.floor(monday), monday);
-        assert_eq!(date_string(Bucket::Week.floor(monday - 1)), "2026-09-07");
-        // The epoch's partial week ends on the first Monday.
-        assert_eq!(Bucket::Week.floor(0), 0);
-        assert_eq!(date_string(Bucket::Week.next(0)), "1970-01-05");
-        for (first, last) in [
-            (0, 0),
-            (0, 4 * DAY),
-            (0, 11 * DAY),
-            (friday, friday + 30 * DAY),
-        ] {
-            let (first, last) = (Bucket::Week.floor(first), Bucket::Week.floor(last));
+        let m = days_from_civil(2026, 9, 14);
+        assert_eq!(Bucket::Week.floor(m, &monday), m);
+        assert_eq!(
+            date_string(Bucket::Week.floor(m - 1, &monday)),
+            "2026-09-07"
+        );
+        // Weeks of a locale that starts them on Sunday.
+        let sunday = Calendar::new(jiff_tz_utc(), bibli_platform::calendar::Weekday::Sunday);
+        assert_eq!(
+            date_string(Bucket::Week.floor(friday, &sunday)),
+            "2026-09-13"
+        );
+        for (first, last) in [(0, 0), (0, 4), (0, 11), (friday, friday + 30)] {
+            let (first, last) = (
+                Bucket::Week.floor(first, &monday),
+                Bucket::Week.floor(last, &monday),
+            );
             let mut n = 1;
             let mut s = first;
             while s < last {
@@ -716,6 +732,36 @@ mod tests {
             }
             assert_eq!(Bucket::Week.span(first, last), n);
         }
+    }
+
+    fn jiff_tz_utc() -> bibli_platform::calendar::TimeZone {
+        Calendar::utc().time_zone().clone()
+    }
+
+    /// The user's days: a file modified at 23:30 UTC on the 25th is on the
+    /// 26th in Paris, and the bar for it begins at Paris midnight.
+    #[test]
+    fn bars_are_the_users_days() {
+        use bibli_platform::calendar::Weekday;
+        let paris = Calendar::named("Europe/Paris", Weekday::Monday).unwrap();
+        let late = Calendar::utc().day_start(days_from_civil(2026, 9, 25))
+            + Duration::from_secs(23 * 3600 + 1800);
+        let h = super::histogram([(late, 1)], Bucket::Day, 0, &paris);
+        assert_eq!(h.bars.len(), 1);
+        let bar = &h.bars[0];
+        let day26 = days_from_civil(2026, 9, 26);
+        assert_eq!(bar.start, day_start_secs(day26, &paris));
+        assert_eq!(bar.end - bar.start, 86_400);
+        assert_eq!(
+            bar.start,
+            day_start_secs(day26, &Calendar::utc()) - 2 * 3600,
+            "22:00 UTC, Paris midnight in summer"
+        );
+        // The day the clocks go back is a 25-hour bar.
+        let back =
+            Calendar::utc().day_start(days_from_civil(2026, 10, 25)) + Duration::from_secs(43_200);
+        let h = super::histogram([(back, 1)], Bucket::Day, 0, &paris);
+        assert_eq!(h.bars[0].end - h.bars[0].start, 25 * 3600);
     }
 
     #[test]
@@ -762,8 +808,8 @@ mod tests {
         std::fs::write(tmp.path().join("a/b/f1"), b"1").unwrap();
         std::fs::write(tmp.path().join("f2"), b"22").unwrap();
         std::fs::write(tmp.path().join(".git/x"), b"333").unwrap();
-        let count = |d: &Days| d.0.values().map(|t| t.count).sum::<u64>();
-        let bytes = |d: &Days| d.0.values().map(|t| t.bytes).sum::<u64>();
+        let count = |d: &Days| d.days.values().map(|t| t.count).sum::<u64>();
+        let bytes = |d: &Days| d.days.values().map(|t| t.bytes).sum::<u64>();
         // a, a/b, a/b/f1, f2: folders count, hidden entries do not.
         let d = walk_days(tmp.path(), false, &CancelToken::new()).unwrap();
         assert_eq!((count(&d), bytes(&d)), (4, 3));

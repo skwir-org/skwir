@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use bibli_core::cancel::CancelToken;
 use bibli_core::entry::{Entry, EntryId, EntryKind};
@@ -182,24 +182,82 @@ impl QueryLocation {
             walk: Mutex::new(lifetime.child()),
             lifetime,
         });
-        let this = Arc::new(QueryLocation {
+        Shared::start(&shared, &location, query);
+        Arc::new(QueryLocation {
             location,
             shared,
             rx,
-        });
-        this.start(query);
-        this
+        })
+    }
+}
+
+/// The longest a rollover waits before it looks at the clock again: the
+/// monotonic clock a wait counts stops while the machine sleeps, the wall
+/// clock does not, so a laptop asleep past midnight is at most this late.
+const ROLLOVER_CHECK: Duration = Duration::from_secs(600);
+
+impl Shared {
+    /// Walk for `query`, and list again when its periods move on
+    /// (`modified:today` at midnight).
+    fn start(this: &Arc<Self>, location: &Location, query: Query) {
+        let cancel = this.walk.lock().clone();
+        if let Some(when) = query.next_change() {
+            Shared::roll_over_at(this, location, when, cancel.clone());
+        }
+        let s = Arc::clone(this);
+        this.ctx
+            .scheduler
+            .spawn(Priority::Normal, "query.walk", cancel.clone(), move || {
+                s.run(&query, &cancel);
+            });
     }
 
-    fn start(&self, query: Query) {
-        let s = Arc::clone(&self.shared);
-        let cancel = s.walk.lock().clone();
-        self.shared.ctx.scheduler.spawn(
-            Priority::Normal,
-            "query.walk",
-            cancel.clone(),
-            move || s.run(&query, &cancel),
-        );
+    /// Walk again from scratch: parsed again, relative dates (`modified<7d`,
+    /// `today`) mean "from now".
+    fn rewalk(this: &Arc<Self>, location: &Location) {
+        let query = match lang::parse(&location.rest) {
+            Ok(query) => query,
+            Err(e) => {
+                this.tx.send(ListingEvent::Error(format!("query: {e}")));
+                return;
+            }
+        };
+        let old: Vec<EntryId> = {
+            let mut walk = this.walk.lock();
+            walk.cancel();
+            *walk = this.lifetime.child();
+            this.paths.lock().drain().map(|(id, _)| id).collect()
+        };
+        if !old.is_empty() {
+            this.tx.send(ListingEvent::Removed(old));
+        }
+        Shared::start(this, location, query);
+    }
+
+    /// At `when`, walk again, unless this walk ended first (a refresh, the
+    /// pane moving on, the plugin disabled). A thread of its own that
+    /// sleeps, not a worker: the wait can last until next year.
+    fn roll_over_at(this: &Arc<Self>, location: &Location, when: SystemTime, cancel: CancelToken) {
+        let (shared, location) = (Arc::downgrade(this), location.clone());
+        let spawned = std::thread::Builder::new()
+            .name("bibli-query-rollover".into())
+            .spawn(move || {
+                let signal = cancel.subscribe();
+                while let Ok(left) = when.duration_since(SystemTime::now()) {
+                    match signal.receiver().recv_timeout(left.min(ROLLOVER_CHECK)) {
+                        Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+                        _ => return,
+                    }
+                }
+                if let Some(shared) = shared.upgrade()
+                    && !cancel.is_cancelled()
+                {
+                    Shared::rewalk(&shared, &location);
+                }
+            });
+        if let Err(e) = spawned {
+            tracing::warn!("query rollover: {e}");
+        }
     }
 }
 
@@ -410,26 +468,7 @@ impl OpenLocation for QueryLocation {
     }
 
     fn refresh(&self) {
-        // Parse again: relative dates (`modified<7d`) mean "before now".
-        let query = match lang::parse(&self.location.rest) {
-            Ok(query) => query,
-            Err(e) => {
-                self.shared
-                    .tx
-                    .send(ListingEvent::Error(format!("query: {e}")));
-                return;
-            }
-        };
-        let old: Vec<EntryId> = {
-            let mut walk = self.shared.walk.lock();
-            walk.cancel();
-            *walk = self.shared.lifetime.child();
-            self.shared.paths.lock().drain().map(|(id, _)| id).collect()
-        };
-        if !old.is_empty() {
-            self.shared.tx.send(ListingEvent::Removed(old));
-        }
-        self.start(query);
+        Shared::rewalk(&self.shared, &self.location);
     }
 
     fn close(&self) {
@@ -440,5 +479,63 @@ impl OpenLocation for QueryLocation {
 impl Drop for QueryLocation {
     fn drop(&mut self) {
         self.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn open(root: &Path) -> (Arc<QueryLocation>, Location) {
+        let location = crate::location_for("ext:txt", Some(root));
+        let ctx = OpenContext {
+            scheduler: bibli_core::scheduler::Scheduler::new(2),
+            cancel: CancelToken::new(),
+            batch_size: 64,
+            waker: None,
+            metadata: Arc::default(),
+        };
+        let query = lang::parse(&location.rest).unwrap();
+        let open = QueryLocation::open(location.clone(), query, &ctx, &CancelToken::new());
+        (open, location)
+    }
+
+    /// The events until the listing is complete, as (added, removed).
+    fn until_complete(open: &QueryLocation) -> (usize, usize) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (mut added, mut removed) = (0, 0);
+        loop {
+            match open.rx.recv_deadline(deadline).expect("the walk completes") {
+                ListingEvent::Added(batch) => added += batch.len(),
+                ListingEvent::Removed(ids) => removed += ids.len(),
+                ListingEvent::Complete => return (added, removed),
+                ListingEvent::Error(e) => panic!("{e}"),
+                ListingEvent::Updated(_) => {}
+            }
+        }
+    }
+
+    /// A search whose period moves on (`today` at midnight) lists again
+    /// then, by itself; one whose walk ended first does not.
+    #[test]
+    fn a_search_lists_again_when_its_period_moves_on() {
+        let tmp = tempfile::tempdir().unwrap();
+        for name in ["a.txt", "b.txt", "c.png"] {
+            std::fs::write(tmp.path().join(name), "x").unwrap();
+        }
+        let (open, location) = open(tmp.path());
+        assert_eq!(until_complete(&open), (2, 0));
+        let soon = SystemTime::now() + Duration::from_millis(50);
+        let walk = open.shared.walk.lock().clone();
+        Shared::roll_over_at(&open.shared, &location, soon, walk);
+        assert_eq!(until_complete(&open), (2, 2), "removed, then found again");
+
+        // A refresh ends the walk the rollover belonged to: it never fires.
+        let walk = open.shared.walk.lock().clone();
+        Shared::roll_over_at(&open.shared, &location, soon, walk);
+        open.refresh();
+        assert_eq!(until_complete(&open), (2, 2));
+        let quiet = open.rx.recv_timeout(Duration::from_millis(300));
+        assert!(quiet.is_err(), "nothing after: {quiet:?}");
     }
 }

@@ -494,10 +494,14 @@ are about to touch, in full:
   `in:` expressions or add a dependency on the query plugin to reuse helpers.
   Handle a disabled command/provider as a normal error.
 - Query date ranges include the whole end date. A half-open histogram bucket
-  `[start, end)` needs `modified>=start modified<end`. Calendar boundaries in
-  the query parser and timeline plugin are UTC, the named periods (`today`,
-  `this-week`, weeks from Monday) included; UI labels use the system time
-  zone. Test boundary instants explicitly when changing date behavior.
+  `[start, end)` needs `modified>=start modified<end`. Dates are the
+  user's (ADR-017): the query text records no zone, and every calendar
+  boundary (dates, `today`, `this-week`, the timeline's bars) is a day of
+  `bibli_platform::calendar::Calendar`, the system's time zone with its
+  clock changes and the locale's first weekday. Count days as civil day
+  numbers and make instants only with `Calendar::day_start`; a day is not
+  86 400 seconds. Test boundary instants explicitly, with an explicit
+  calendar (`lang::parse_in`), when changing date behavior.
 - `kind:` groups files as the desktop's MIME database does
   (`bibli_platform::mime::Kind`, from each type's generic icon and its
   descent from `text/plain`); do not keep lists of types beside it.

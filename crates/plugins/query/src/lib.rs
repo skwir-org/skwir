@@ -411,6 +411,15 @@ impl Plugin for QueryPlugin {
             previous.cancel();
         }
         app.register_provider(ID, Arc::new(QueryProvider::new(lifetime.clone())));
+        // The locale's first weekday is a process away: asked once, on a
+        // worker, before anyone reads a week.
+        app.scheduler.spawn(
+            Priority::Background,
+            "calendar.week",
+            lifetime.child(),
+            bibli_platform::calendar::prewarm,
+        );
+
         app.settings.declare(SettingSpec::data(
             SAVED_KEY,
             "Saved searches shown in the sidebar, in order: [{ name, expr }]",
