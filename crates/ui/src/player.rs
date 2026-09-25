@@ -28,7 +28,8 @@ use crate::shell::Shell;
 use crate::theme::Theme;
 use crate::toolbar::Button;
 
-/// What follows a track that plays to its end (`ui.media_continue`).
+/// What follows a track that plays to its end (`preview-media.continue`,
+/// set with `ui.media_continue`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Continue {
     /// Nothing: the player stops.
@@ -45,7 +46,7 @@ impl Continue {
     pub const ALL: [Self; 3] = [Self::Stop, Self::Next, Self::Shuffle];
 
     /// The setting's value.
-    pub fn key(self) -> &'static str {
+    pub const fn key(self) -> &'static str {
         match self {
             Self::Stop => "off",
             Self::Next => "next",
@@ -85,23 +86,23 @@ impl Continue {
     }
 }
 
-/// The player's preferences (`Shell::prefs`), read with the others when
-/// the settings change.
+/// The player's preferences (`Shell::prefs`), declared by the audio and
+/// video plugin and read with the others when the settings change.
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerPrefs {
-    /// `ui.media_keep_playing`: a track that starts to play is pinned.
+    /// `preview-media.keep_playing`: a track that starts to play is pinned.
     pub keep_playing: bool,
-    /// `ui.media_autoplay`: music and films play once selected.
+    /// `preview-media.autoplay`: audio and video play once selected.
     pub autoplay: bool,
-    /// `ui.media_continue`: what follows a track that ends.
+    /// `preview-media.continue`: what follows a track that ends.
     pub continue_with: Continue,
 }
 
 impl Default for PlayerPrefs {
     fn default() -> Self {
         Self {
-            keep_playing: true,
-            autoplay: false,
+            keep_playing: crate::settings::KEEP_PLAYING_DEFAULT,
+            autoplay: crate::settings::AUTOPLAY_DEFAULT,
             continue_with: Continue::Stop,
         }
     }
@@ -421,7 +422,7 @@ impl Shell {
         cx.notify();
     }
 
-    /// `ui.media_autoplay`: music and films play once selected.
+    /// `ui.media_autoplay`: audio and video play once selected.
     pub fn set_autoplay(&mut self, on: bool, cx: &mut Context<Self>) {
         self.prefs.player.autoplay = on;
         crate::settings::remember(self, crate::settings::AUTOPLAY_KEY, on.to_string(), cx);
@@ -454,9 +455,11 @@ impl Shell {
     /// The player's preferences, from the settings or a change not saved yet.
     pub(crate) fn read_player_prefs(&mut self) {
         use crate::settings::{AUTOPLAY_KEY, CONTINUE_KEY, KEEP_PLAYING_KEY, preference};
+        let defaults = PlayerPrefs::default();
         self.prefs.player.keep_playing =
-            preference(self, KEEP_PLAYING_KEY).is_none_or(|on| on != "false");
-        self.prefs.player.autoplay = preference(self, AUTOPLAY_KEY).is_some_and(|on| on == "true");
+            preference(self, KEEP_PLAYING_KEY).map_or(defaults.keep_playing, |on| on == "true");
+        self.prefs.player.autoplay =
+            preference(self, AUTOPLAY_KEY).map_or(defaults.autoplay, |on| on == "true");
         self.prefs.player.continue_with = preference(self, CONTINUE_KEY)
             .map_or_else(Continue::default, |mode| Continue::parse(&mode));
     }

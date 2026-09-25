@@ -574,7 +574,6 @@ dependencies = [
  "bibli-plugin-ops-basic",
  "bibli-plugin-places",
  "bibli-plugin-preview-archives",
- "bibli-plugin-preview-audio",
  "bibli-plugin-preview-comics",
  "bibli-plugin-preview-documents",
  "bibli-plugin-preview-email",
@@ -599,6 +598,7 @@ dependencies = [
  "flate2",
  "serde_json",
  "tempfile",
+ "toml 0.9.12+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
  "xattr 1.6.1",
@@ -835,16 +835,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bibli-plugin-preview-audio"
-version = "0.0.1"
-dependencies = [
- "bibli-core",
- "bibli-platform",
- "tempfile",
- "toml 0.9.12+spec-1.1.0",
-]
-
-[[package]]
 name = "bibli-plugin-preview-comics"
 version = "0.0.1"
 dependencies = [
@@ -935,6 +925,7 @@ version = "0.0.1"
 dependencies = [
  "bibli-core",
  "bibli-platform",
+ "tempfile",
  "toml 0.9.12+spec-1.1.0",
 ]
 

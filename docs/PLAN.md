@@ -16,7 +16,7 @@ Durations are relative sizes for one developer working with an AI assistant, not
 Each phase has a **Done when** gate. Do not start the next phase before the gate passes.
 
 Status (2026-09-20): Phases 0 to 4 are built; Phase 2's gate (one week of daily use) is
-still yours to run. Phase 4's gate holds: every plugin (now 25, including ten structured
+still yours to run. Phase 4's gate holds: every plugin (now 26, including nine structured
 preview plugins) is proven by `crates/bibli/tests/plugins_toggle.rs` to disable at runtime
 with no trace and to re-enable. Beyond the plan, the tree now has: a settings dialog
 (ADR-010: category column, search, controls chosen by the schema, changes applied
@@ -35,6 +35,11 @@ Poppler, GStreamer or libarchive. Open gate: idle PSS is about 118 to 120 MB aga
 100 MB budget of ADR-002 on the reference machine (see the ADR-002 addendum); it has not
 been loosened. The per-change validation history that used to sit here is in
 `docs/STATUS-LOG.md`.
+
+Audio and video (2026-09-25, ADR-016): `preview-audio` is folded into
+`preview-media` ("Preview: audio and video"), which declares every playback
+preference, the shell player's included (keep playing while you browse, on by
+default; play on selection; stop, play next or shuffle when a track ends).
 
 ---
 

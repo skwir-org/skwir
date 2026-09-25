@@ -82,7 +82,7 @@ pub struct Preferences {
     pub grid_fill: bool,
     /// `ui.printed_pages`: a book's position counts its printed pages.
     pub printed_pages: bool,
-    /// How music and films play.
+    /// How audio and video play.
     pub player: crate::player::PlayerPrefs,
 }
 

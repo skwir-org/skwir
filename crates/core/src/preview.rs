@@ -270,6 +270,21 @@ impl Previews {
         self.revision.fetch_add(1, Ordering::Release);
     }
 
+    /// Withdraw one of `owner`'s providers, `id`, leaving its others (and
+    /// the sessions they opened) as they are: an owner of several refreshes
+    /// only the one a changed preference concerns.
+    pub fn unregister(&self, owner: &str, id: &str) {
+        self.providers.write().retain(|p| {
+            if p.owner == owner && p.provider.id() == id {
+                p.lifetime.cancel();
+                false
+            } else {
+                true
+            }
+        });
+        self.revision.fetch_add(1, Ordering::Release);
+    }
+
     pub fn unregister_owner(&self, owner: &str) {
         self.providers.write().retain(|p| {
             if p.owner == owner {

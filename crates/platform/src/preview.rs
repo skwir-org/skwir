@@ -131,6 +131,10 @@ fn finish(
 /// the next track and never stops the one playing.
 pub type SharedTuning = std::sync::Arc<parking_lot::Mutex<crate::media::Tuning>>;
 
+/// The ids of the audio and the video provider (`PreviewProvider::id`).
+pub const AUDIO_PROVIDER: &str = "preview-media.audio";
+pub const VIDEO_PROVIDER: &str = "preview-media.video";
+
 pub struct MediaPreviews {
     audio: bool,
     backend: String,
@@ -186,9 +190,9 @@ impl PreviewProvider for MediaPreviews {
     }
     fn id(&self) -> &'static str {
         if self.audio {
-            "preview-audio"
+            AUDIO_PROVIDER
         } else {
-            "preview-media"
+            VIDEO_PROVIDER
         }
     }
     fn accepts(&self, req: &PreviewRequest) -> bool {

@@ -13,8 +13,10 @@ fn changing_document_engine_refreshes_only_document_previews() {
         Arc::new(bibli_plugin_preview_documents::PreviewPlugin),
         &app,
     );
-    app.plugins
-        .add(Arc::new(bibli_plugin_preview_media::PreviewPlugin), &app);
+    app.plugins.add(
+        Arc::new(bibli_plugin_preview_media::PreviewPlugin::default()),
+        &app,
+    );
     let revision = app.previews.revision();
     let providers = app.previews.ids();
     let (tx, rx) = std::sync::mpsc::channel();
@@ -53,5 +55,51 @@ fn changing_document_engine_refreshes_only_document_previews() {
             .get::<String>("preview-documents.backend")
             .as_deref(),
         Some("poppler")
+    );
+}
+
+/// The shell's player reads preferences the audio and video plugin
+/// declares (ADR-016): the two agree on their names, kinds, defaults and
+/// choices, or the player would follow a key nobody can set.
+#[test]
+fn the_player_reads_what_the_media_plugin_declares() {
+    use bibli_core::settings::SettingKind;
+    use bibli_ui::settings::{
+        AUTOPLAY_DEFAULT, AUTOPLAY_KEY, CONTINUE_CHOICES, CONTINUE_KEY, KEEP_PLAYING_DEFAULT,
+        KEEP_PLAYING_KEY,
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+    app.plugins.add(
+        Arc::new(bibli_plugin_preview_media::PreviewPlugin::default()),
+        &app,
+    );
+    let spec = |key: &str| {
+        app.settings
+            .spec(key)
+            .unwrap_or_else(|| panic!("{key} is not declared"))
+    };
+    for (key, default) in [
+        (KEEP_PLAYING_KEY, KEEP_PLAYING_DEFAULT),
+        (AUTOPLAY_KEY, AUTOPLAY_DEFAULT),
+    ] {
+        let spec = spec(key);
+        assert_eq!(spec.kind, SettingKind::Toggle, "{key}");
+        assert_eq!(spec.default, toml::Value::Boolean(default), "{key}");
+    }
+    let spec = spec(CONTINUE_KEY);
+    assert_eq!(spec.kind, SettingKind::Choice);
+    assert_eq!(spec.constraints.choices, CONTINUE_CHOICES);
+    assert_eq!(
+        spec.default,
+        toml::Value::String(CONTINUE_CHOICES[0].into())
+    );
+    assert!(
+        app.plugins.set_enabled("preview-media", false, &app),
+        "the plugin switches off"
+    );
+    assert!(
+        app.settings.spec(CONTINUE_KEY).is_none(),
+        "and its preferences go with it"
     );
 }

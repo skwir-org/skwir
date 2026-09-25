@@ -69,7 +69,6 @@ bibli-plugin-preview-structured = { path = "crates/plugins/preview-structured" }
 bibli-plugin-preview-fonts = { path = "crates/plugins/preview-fonts" }
 bibli-plugin-preview-email = { path = "crates/plugins/preview-email" }
 bibli-plugin-preview-comics = { path = "crates/plugins/preview-comics" }
-bibli-plugin-preview-audio = { path = "crates/plugins/preview-audio" }
 bibli-plugin-preview-documents = { path = "crates/plugins/preview-documents" }
 
 # UI toolkit (ADR-001). Pinned exactly: the API moves between releases.

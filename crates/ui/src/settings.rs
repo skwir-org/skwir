@@ -46,12 +46,26 @@ pub const READER_CONTINUOUS_KEY: &str = "ui.reader_continuous";
 pub const READING_WIDTH_KEY: &str = "ui.reading_width";
 /// Whether a book's position counts its printed pages (`ui.printed_pages`).
 pub const PRINTED_PAGES_KEY: &str = "ui.printed_pages";
+/// The player's preferences. The audio and video plugin (`preview-media`)
+/// declares them, with the rest of what concerns playback; the shell's
+/// player reads them. With the plugin off there is no player, and they are
+/// gone with it. `crates/bibli/tests/settings.rs` holds the two to the
+/// same names and choices.
 /// Whether a track that starts to play keeps playing while you browse.
-pub const KEEP_PLAYING_KEY: &str = "ui.media_keep_playing";
-/// Whether music and films start to play as soon as they are selected.
-pub const AUTOPLAY_KEY: &str = "ui.media_autoplay";
+pub const KEEP_PLAYING_KEY: &str = "preview-media.keep_playing";
+/// Whether audio and video start to play as soon as they are selected.
+pub const AUTOPLAY_KEY: &str = "preview-media.autoplay";
 /// What follows a track that ends (`player::Continue`).
-pub const CONTINUE_KEY: &str = "ui.media_continue";
+pub const CONTINUE_KEY: &str = "preview-media.continue";
+/// What the player does with nothing stored, as the plugin must declare it.
+pub const KEEP_PLAYING_DEFAULT: bool = true;
+pub const AUTOPLAY_DEFAULT: bool = false;
+/// The values of `CONTINUE_KEY`, the first the default.
+pub const CONTINUE_CHOICES: [&str; 3] = [
+    crate::player::Continue::Stop.key(),
+    crate::player::Continue::Next.key(),
+    crate::player::Continue::Shuffle.key(),
+];
 
 /// Declare the shell's own preferences. They live in the `ui` namespace and
 /// exist only while a shell does, so headless tools never see them.
@@ -111,34 +125,6 @@ pub fn declare(app: &App) {
             false,
         )
         .section("Documents"),
-    );
-    app.settings.declare(
-        SettingSpec::toggle(
-            KEEP_PLAYING_KEY,
-            "Keep playing while you browse",
-            "Music or a film you play goes on when you select another file, in a player at the foot of the preview. Off, it stops when the selection moves.",
-            true,
-        )
-        .section("Music and films"),
-    );
-    app.settings.declare(
-        SettingSpec::toggle(
-            AUTOPLAY_KEY,
-            "Play on selection",
-            "Start music and films as soon as they are selected, instead of waiting for Play.",
-            false,
-        )
-        .section("Music and films"),
-    );
-    app.settings.declare(
-        SettingSpec::choice(
-            CONTINUE_KEY,
-            "When a track ends",
-            "Stop, go on with the next file of the same kind in the folder (or the playlist), or with one of them at random.",
-            crate::player::Continue::Stop.key(),
-            &crate::player::Continue::ALL.map(|mode| (mode.key(), mode.label())),
-        )
-        .section("Music and films"),
     );
     app.settings.declare(SettingSpec::data(
         crate::shortcuts::HINTS_KEY,

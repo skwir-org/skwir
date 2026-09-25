@@ -4,7 +4,15 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
 
 - GStreamer loads only in `bibli-media-worker`. The media provider owns the
   runtime setting; the shared session interface stays independent of GPUI.
-- Playback starts paused, unless Play on selection (`ui.media_autoplay`) is
+- One plugin, `preview-media` ("Preview: audio and video"), registers the
+  audio and the video provider and declares every preference of playback:
+  the player's own (`preview-media.keep_playing`, `.autoplay`, `.continue`,
+  read by the shell's player), loudness and the video engine. Audio and
+  video share one player, so a preference of the player is never one
+  kind's; with the plugin off there is no player. A changed engine
+  re-registers the video provider alone (`PreviewRegistry::unregister`), so
+  audio playing goes on. See ADR-016.
+- Playback starts paused, unless Play on selection (`preview-media.autoplay`) is
   on, and follows the selected preview and provider lifetime.
   UI controls enqueue only; child cleanup and pixel I/O belong to the manager.
   Show the shared thumbnail immediately, then an optional native-resolution
@@ -101,7 +109,7 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
   all of it sits in the first five. What the stream says beyond title, artist
   and album (track, year, genre, codec, bitrate, rate, channels) travels in
   `Playback::details`, bounded by the worker, to the panel's Details.
-- Tracks. The files of the same kind (music, or films) before and after the
+- Tracks. The files of the same kind (audio, or video) before and after the
   one shown, in the pane's own order, are found when the listing or the entry
   changes (`Shell::media_neighbours`, bounded in reach), never while painting;
   the player shows Previous and Next only when there are any. Stepping moves
@@ -109,7 +117,7 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
   so the list shows what is playing; it keeps playing if it was
   (`PreviewState::autoplay`, the wish Play on selection also makes). What a
   track that plays to its end hands over to is a preference
-  (`ui.media_continue`, `player::Continue`): nothing (the default), the next,
+  (`preview-media.continue`, `player::Continue`): nothing (the default), the next,
   or one at random. The pin draws a shuffle once, starting with the track
   playing, and walks it, so Previous goes back the way Next came; a step to
   another track of the same folder keeps it. Its button is in the player's
@@ -124,7 +132,7 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
   session with it; pinned, the session belongs to the window. A track is
   pinned when it starts to play (`Shell::media_started`, from the one path
   every start takes, `media_send`) while Keep playing
-  (`ui.media_keep_playing`, a row of More) is on, the default; `ui.media_pin`
+  (`preview-media.keep_playing`, a row of More) is on, the default; `ui.media_pin`
   pins or lets go of one track by hand. A media session has a lifetime of its own
   (`MediaState`), not the reader's, which the pin takes with it and gives
   back when unpinned, so neither going away ends the other's session. The
@@ -191,7 +199,7 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
   a session bus logs once and does without. `player.request` and `player.now`
   are the same surface for scripts and agents. Test it on a private bus
   (`dbus-run-session`), never on the user's.
-- ReplayGain is a setting of the audio plugin (`preview-audio.replay_gain`:
+- ReplayGain is a setting of the audio and video plugin (`preview-media.replay_gain`:
   off, per track, per album), carried to the worker as `Tuning` when a
   session opens: it applies from the next track, never mid-stream. The
   worker's audio filter is then `rgvolume` and `rglimiter` ahead of

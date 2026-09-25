@@ -69,8 +69,10 @@ fn asf_media_ownership_precedes_hex_fallback_but_allows_explicit_hex() {
     let path = tmp.path().join("Synthetic container.ASF");
     std::fs::write(&path, b"synthetic container marker").unwrap();
     let app = app(tmp.path());
-    app.plugins
-        .add(Arc::new(bibli_plugin_preview_media::PreviewPlugin), &app);
+    app.plugins.add(
+        Arc::new(bibli_plugin_preview_media::PreviewPlugin::default()),
+        &app,
+    );
     let request = request(&path); // `.asf` is not in the table: generic bytes.
     let default = InspectRequest::default();
     assert!(
@@ -397,15 +399,11 @@ fn all_preview_plugins() -> Vec<(&'static str, Arc<dyn Plugin>)> {
     vec![
         (
             "preview-media",
-            Arc::new(bibli_plugin_preview_media::PreviewPlugin),
+            Arc::new(bibli_plugin_preview_media::PreviewPlugin::default()),
         ),
         (
             "preview-documents",
             Arc::new(bibli_plugin_preview_documents::PreviewPlugin),
-        ),
-        (
-            "preview-audio",
-            Arc::new(bibli_plugin_preview_audio::PreviewPlugin::default()),
         ),
         (
             "preview-markdown",
@@ -522,7 +520,7 @@ fn format_providers_never_compete_for_the_same_file() {
     assert_eq!(owner("bundle.tar.gz"), ["preview-archives"]);
     assert_eq!(owner("pages.cbr"), ["preview-comics"]);
     assert_eq!(owner("clip.asf"), ["preview-media"]);
-    assert_eq!(owner("song.mp3"), ["preview-audio"]);
+    assert_eq!(owner("song.mp3"), ["preview-media"]);
     assert_eq!(owner("paper.pdf"), ["preview-documents"]);
     assert_eq!(
         owner("blob.bin"),
