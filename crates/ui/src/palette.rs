@@ -306,6 +306,27 @@ impl Shell {
                 required: Vec::new(),
             });
         }
+        // A plugin's context-menu item that runs a shell command with its
+        // own arguments (Open With… is `ui.choose` over the plugin's list)
+        // has no command of its own to be listed by: list the item.
+        for item in self.app.registry.menus.all() {
+            let command = &item.command;
+            if item.menu != "context"
+                || !command.name.starts_with("ui.")
+                || items
+                    .iter()
+                    .any(|i| *i.name == *command.name && i.args == command.args)
+            {
+                continue;
+            }
+            items.push(PaletteItem {
+                keys: self.keys_for(&command.name, &command.args),
+                name: command.name.to_string(),
+                args: command.args.clone(),
+                title: item.title,
+                required: Vec::new(),
+            });
+        }
         items
     }
 

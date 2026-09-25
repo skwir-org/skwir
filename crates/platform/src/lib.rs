@@ -10,6 +10,7 @@
 //! - [`thumb_providers`]: thumbnail providers for the core service: cache, image decoder, external thumbnailers.
 //! - [`places`]: home, XDG user dirs, GTK bookmarks, mounted volumes.
 //! - [`open`]: open with the default application, open a terminal.
+//! - [`apps`]: the desktop's applications, what opens which type, launching one.
 //! - [`file`]: opening the user's files for reading without blocking on a FIFO.
 //! - [`uri`]: `file://` URIs escaped as the desktop escapes them.
 //! - [`process`]: bounded tool runs, and children started without waiting on them.
@@ -36,4 +37,5 @@ pub use inspection::limits;
 
 pub mod rich_preview;
 
+pub mod apps;
 pub mod archive;

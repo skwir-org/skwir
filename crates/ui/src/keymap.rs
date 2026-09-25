@@ -26,6 +26,8 @@ pub const IMAGE: &str = "ImagePreview";
 pub const PLAYER: &str = "Player";
 pub const REVIEW: &str = "Review";
 pub const JUMP: &str = "Jump";
+/// `ui.choose`'s picker.
+pub const CHOOSE: &str = "Choose";
 pub const BULK: &str = "BulkRename";
 pub const MENU: &str = "ContextMenu";
 
@@ -119,6 +121,8 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("escape", "ui.review_cancel", Some("review")),
     ("up", "ui.jump_up", Some("jump")),
     ("down", "ui.jump_down", Some("jump")),
+    ("up", "ui.choose_up", Some("choose")),
+    ("down", "ui.choose_down", Some("choose")),
     ("tab", "ui.rename_bulk_next", Some("bulk")),
     ("shift-tab", "ui.rename_bulk_prev", Some("bulk")),
     ("ctrl-k", "ui.rename_bulk_case", Some("bulk")),
@@ -399,6 +403,7 @@ pub fn context_of(when: Option<&str>) -> String {
             "reader" => READER.to_owned(),
             "review" => REVIEW.to_owned(),
             "jump" => JUMP.to_owned(),
+            "choose" => CHOOSE.to_owned(),
             "bulk" => BULK.to_owned(),
             other => crate::menu::canonical_token(other).to_owned(),
         })
@@ -428,6 +433,7 @@ pub fn context_label(context: &str) -> String {
             "InspectorFind" => place = "Preview search",
             "Review" => place = "Plan review",
             "Jump" => place = "Jump",
+            "Choose" => place = "Choosing from a list",
             "BulkRename" => place = "Bulk rename",
             "MediaPlayer" => place = "Media player",
             "Player" => place = "Pinned player",

@@ -12,7 +12,7 @@ use bibli_core::plugin::Plugin;
 pub fn plugins() -> Vec<Arc<dyn Plugin>> {
     vec![
         Arc::new(bibli_plugin_ops_basic::OpsBasicPlugin::default()),
-        Arc::new(bibli_plugin_open_with::OpenWithPlugin),
+        Arc::new(bibli_plugin_open_with::OpenWithPlugin::default()),
         Arc::new(bibli_plugin_places::PlacesPlugin::default()),
         Arc::new(bibli_plugin_thumbnails::ThumbnailsPlugin::default()),
         // Phase 4 power features, each a plugin with a runtime toggle.

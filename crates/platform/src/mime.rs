@@ -124,6 +124,35 @@ pub fn is_directory(mime: &Mime) -> bool {
     mime.0 == "inode/directory"
 }
 
+/// `mime` and the types it descends from, nearest first, each once: its
+/// declared parents and theirs, then the ones every type implies, as the
+/// desktop reads them to find an application: `text/plain` under any
+/// `text/*`, `application/octet-stream` under any file (not a folder).
+/// Aliases are resolved first. No I/O once the database is loaded.
+pub fn lineage(mime: &Mime) -> Vec<Mime> {
+    let mut out = vec![imp::unalias(mime)];
+    let mut next = 0;
+    while next < out.len() {
+        for parent in imp::parents(&out[next]) {
+            if !out.contains(&parent) {
+                out.push(parent);
+            }
+        }
+        next += 1;
+    }
+    let implied = [
+        (mime.top_level() == "text").then_some("text/plain"),
+        (mime.top_level() != "inode").then_some("application/octet-stream"),
+    ];
+    for m in implied.into_iter().flatten() {
+        let m = Mime(m.to_owned());
+        if !out.contains(&m) {
+            out.push(m);
+        }
+    }
+    out
+}
+
 #[cfg(target_os = "linux")]
 mod imp {
     use std::ffi::OsStr;
@@ -233,6 +262,51 @@ mod imp {
         )
     }
 
+    pub fn unalias(m: &Mime) -> Mime {
+        parse(m)
+            .and_then(|p| db().unalias_mime_type(&p))
+            .map_or_else(|| m.clone(), |p| to_mime(&p))
+    }
+
+    /// The declared parents of `m`, not `m` itself. xdg-mime 0.4 keeps its
+    /// subclass table private and its `get_parents` answers only for
+    /// aliases, so the database's `subclasses` files are read here, once.
+    pub fn parents(m: &Mime) -> Vec<Mime> {
+        static PARENTS: OnceLock<std::collections::HashMap<String, Vec<String>>> = OnceLock::new();
+        PARENTS
+            .get_or_init(|| {
+                let mut map = std::collections::HashMap::<String, Vec<String>>::new();
+                // Most specific directory first: its lines come first.
+                for dir in data_dirs() {
+                    let Ok(text) = std::fs::read_to_string(dir.join("mime/subclasses")) else {
+                        continue;
+                    };
+                    for (child, parent) in text.lines().filter_map(|l| l.split_once(' ')) {
+                        let parents = map.entry(child.to_owned()).or_default();
+                        if !parents.iter().any(|p| p == parent) {
+                            parents.push(parent.to_owned());
+                        }
+                    }
+                }
+                map
+            })
+            .get(m.as_str())
+            .map(|all| all.iter().map(|p| Mime(p.clone())).collect())
+            .unwrap_or_default()
+    }
+
+    /// `$XDG_DATA_HOME`, then `$XDG_DATA_DIRS`: where the database lives.
+    fn data_dirs() -> Vec<std::path::PathBuf> {
+        let home = std::env::var_os("XDG_DATA_HOME")
+            .map(std::path::PathBuf::from)
+            .or_else(|| dirs::home_dir().map(|home| home.join(".local/share")));
+        let system = std::env::var_os("XDG_DATA_DIRS")
+            .unwrap_or_else(|| "/usr/local/share:/usr/share".into());
+        home.into_iter()
+            .chain(std::env::split_paths(&system))
+            .collect()
+    }
+
     pub fn generic_icon_name(m: &Mime) -> String {
         parse(m)
             .and_then(|p| db().lookup_generic_icon_name(&p))
@@ -243,18 +317,11 @@ mod imp {
     /// the per-type XML the database installs. Reads a file: call from a
     /// worker and cache the answer.
     pub fn description(m: &Mime) -> Option<String> {
-        let home = std::env::var_os("XDG_DATA_HOME")
-            .map(std::path::PathBuf::from)
-            .or_else(|| dirs::home_dir().map(|home| home.join(".local/share")));
-        let system = std::env::var_os("XDG_DATA_DIRS")
-            .unwrap_or_else(|| "/usr/local/share:/usr/share".into());
-        home.into_iter()
-            .chain(std::env::split_paths(&system))
-            .find_map(|dir| {
-                let xml =
-                    std::fs::read_to_string(dir.join("mime").join(format!("{}.xml", m.0))).ok()?;
-                super::comment_of(&xml)
-            })
+        data_dirs().into_iter().find_map(|dir| {
+            let xml =
+                std::fs::read_to_string(dir.join("mime").join(format!("{}.xml", m.0))).ok()?;
+            super::comment_of(&xml)
+        })
     }
 }
 
@@ -277,6 +344,12 @@ mod imp {
     pub fn identify(_name: &OsStr, _path: &Path) -> Option<Mime> {
         None
     }
+    pub fn unalias(m: &Mime) -> Mime {
+        m.clone()
+    }
+    pub fn parents(_m: &Mime) -> Vec<Mime> {
+        Vec::new()
+    }
     pub fn generic_icon_name(m: &Mime) -> String {
         format!("{}-x-generic", m.top_level())
     }
@@ -288,6 +361,24 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn lineage_goes_from_the_type_to_what_every_type_implies() {
+        let svg = lineage(&Mime("image/svg+xml".into()));
+        let at = |m: &str| svg.iter().position(|x| x.as_str() == m);
+        assert_eq!(at("image/svg+xml"), Some(0));
+        let xml = at("application/xml").expect("svg is xml");
+        let text = at("text/plain").expect("xml is text");
+        assert!(xml < text);
+        assert_eq!(svg.last().unwrap().as_str(), "application/octet-stream");
+        assert_eq!(
+            lineage(&Mime("inode/directory".into())),
+            [Mime("inode/directory".into())]
+        );
+        let c = lineage(&Mime("text/x-csrc".into()));
+        assert!(c.contains(&Mime("text/plain".into())));
+    }
 
     #[test]
     #[cfg(target_os = "linux")]

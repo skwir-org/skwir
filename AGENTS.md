@@ -135,7 +135,9 @@ current source before assuming a planned crate, command, or API exists.
   (then Redo, `App::notify_with_action`), and lines other applications
   wrote are kept. The plugin watches the file, so other file managers'
   edits appear. A plugin that needs a line of text from the user dispatches
-  `ui.ask` with the command to complete, not a prompt kind of its own.
+  `ui.ask` with the command to complete, not a prompt kind of its own;
+  one that needs a choice dispatches `ui.choose` with its choices or the
+  command that lists them on a worker (`choose.rs`), not a picker of its own.
 - **Learning the keys.** F1 (`shortcuts.rs`) lists the bindings that apply
   to the focused element, read from its key contexts, so a new context needs
   only a name in `keymap::context_label`. A command run three times with the

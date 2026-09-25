@@ -65,6 +65,16 @@ bookmark the folder shown, and a button in each pane's row shows whether it
 is bookmarked and toggles it. The GTK file is watched, so edits made in other
 file managers appear, and a bookmark whose folder is gone is dimmed with the
 reason. Edits keep the lines they do not touch, remote bookmarks included.
+Open With (2026-09-25): the `open-with` plugin lets the user choose the
+application that opens the selection (Open With…, Shift+Enter) or the folder
+shown (Open Folder With… on the background). The applications come from the
+desktop's entries and `mimeapps.list` files (`bibli_platform::apps`): the
+default first, then those that declare the type, then those that open a
+parent type (plain text for a C source), then every other application, read
+on a worker and read again when an install or a changed default moves the
+stamp. The list is the shell's `ui.choose`, a filterable picker a plugin
+fills with choices or with a command that lists them, as `ui.ask` asks for a
+line of text. Setting the default application is not done yet.
 
 ---
 

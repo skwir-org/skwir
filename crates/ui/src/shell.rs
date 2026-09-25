@@ -15,6 +15,7 @@ use gpui::{
     div, prelude::*, px,
 };
 
+use crate::choose::ChooseState;
 use crate::icons::IconCache;
 use crate::input::{InputEvent, TextInput};
 use crate::jump::JumpState;
@@ -140,6 +141,8 @@ pub struct Shell {
     pub player: crate::player::PlayerState,
     pub palette: Option<PaletteState>,
     pub jump: Option<JumpState>,
+    /// `ui.choose`: a list to pick one from.
+    pub choose: Option<ChooseState>,
     pub bulk: Option<BulkState>,
     pub prompt: Option<PromptState>,
     pub confirm: Option<ConfirmState>,
@@ -312,6 +315,7 @@ impl Shell {
             player: crate::player::PlayerState::default(),
             palette: None,
             jump: None,
+            choose: None,
             bulk: None,
             prompt: None,
             confirm: None,
@@ -1003,6 +1007,9 @@ impl Shell {
             name if name.starts_with("settings_") => self.settings_command(name, args, window, cx),
             "shortcuts" => self.toggle_shortcuts(window, cx),
             "ask" => self.open_ask(args, window, cx),
+            "choose" => self.open_choose(args, window, cx),
+            "choose_up" => self.choose_move(-1, cx),
+            "choose_down" => self.choose_move(1, cx),
             "unlock_prompt" => {
                 if let Some(device) = arg("device") {
                     let title = arg("title").unwrap_or_else(|| "this volume".into());
@@ -1682,6 +1689,7 @@ impl Render for Shell {
             prompts::render_prompt(self, cx),
             prompts::render_confirm(self, cx),
             jump::render(self, cx),
+            crate::choose::render(self, cx),
             renamebulk::render(self, window, cx),
             palette::render(self, cx),
             preview::render_peek(self, cx),

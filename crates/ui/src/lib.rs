@@ -16,6 +16,7 @@
 
 pub mod address;
 mod archive_preview;
+pub mod choose;
 mod code_preview;
 pub mod controls;
 mod details;
