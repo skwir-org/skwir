@@ -394,20 +394,28 @@ pub fn context_of(when: Option<&str>) -> String {
     let Some(when) = when else {
         return ROOT.to_owned();
     };
+    let one = |t: &str| match t {
+        "pane" => PANE.to_owned(),
+        "address" => ADDRESS.to_owned(),
+        "palette" => PALETTE.to_owned(),
+        "confirm" => CONFIRM.to_owned(),
+        "peek" => PEEK.to_owned(),
+        "reader" => READER.to_owned(),
+        "review" => REVIEW.to_owned(),
+        "jump" => JUMP.to_owned(),
+        "choose" => CHOOSE.to_owned(),
+        "bulk" => BULK.to_owned(),
+        other => crate::menu::canonical_token(other).to_owned(),
+    };
     let parts: Vec<String> = when
         .split_whitespace()
-        .map(|t| match t {
-            "pane" => PANE.to_owned(),
-            "address" => ADDRESS.to_owned(),
-            "palette" => PALETTE.to_owned(),
-            "confirm" => CONFIRM.to_owned(),
-            "peek" => PEEK.to_owned(),
-            "reader" => READER.to_owned(),
-            "review" => REVIEW.to_owned(),
-            "jump" => JUMP.to_owned(),
-            "choose" => CHOOSE.to_owned(),
-            "bulk" => BULK.to_owned(),
-            other => crate::menu::canonical_token(other).to_owned(),
+        .map(|t| {
+            if t.contains('|') {
+                let alts: Vec<String> = t.split('|').map(one).collect();
+                format!("({})", alts.join(" || "))
+            } else {
+                one(t)
+            }
         })
         .collect();
     if parts.is_empty() {
@@ -417,11 +425,32 @@ pub fn context_of(when: Option<&str>) -> String {
     }
 }
 
+/// A flag of the pane's key context in plain words.
+fn condition(flag: &str) -> String {
+    match flag {
+        "single" => "one item selected",
+        "selection" => "with a selection",
+        "empty" => "nothing selected",
+        "split" => "split view",
+        "dir" => "on a folder",
+        "file" => "on a file",
+        "folder" => "in a folder",
+        other => other,
+    }
+    .to_owned()
+}
+
 /// A GPUI context predicate (`Pane && single`) in plain words.
 pub fn context_label(context: &str) -> String {
     let mut place = "Anywhere";
-    let mut conditions = Vec::new();
+    let mut conditions: Vec<String> = Vec::new();
     for token in context.split("&&").map(str::trim) {
+        // Alternatives, `(selection || folder)`: each in words, joined.
+        if let Some(alts) = token.strip_prefix('(').and_then(|t| t.strip_suffix(')')) {
+            let words: Vec<String> = alts.split("||").map(|a| condition(a.trim())).collect();
+            conditions.push(words.join(" or "));
+            continue;
+        }
         match token {
             "Shell" | "" => {}
             "Pane" => place = "File list",
@@ -444,14 +473,7 @@ pub fn context_label(context: &str) -> String {
             "ContextMenu" => place = "Context menu",
             "Shortcuts" => place = "Shortcut overview",
             "Settings" | "SettingsNav" | "SettingControl" | "SettingNumber" => place = "Settings",
-            "single" => conditions.push("one item selected"),
-            "selection" => conditions.push("with a selection"),
-            "empty" => conditions.push("nothing selected"),
-            "split" => conditions.push("split view"),
-            "dir" => conditions.push("on a folder"),
-            "file" => conditions.push("on a file"),
-            "folder" => conditions.push("in a folder"),
-            other => conditions.push(other),
+            other => conditions.push(condition(other)),
         }
     }
     if conditions.is_empty() {
@@ -684,6 +706,14 @@ mod tests {
             context_of(Some("pane none")),
             "Pane && empty",
             "the old spelling of nothing selected"
+        );
+        assert_eq!(
+            context_of(Some("pane selection|folder")),
+            "Pane && (selection || folder)"
+        );
+        assert_eq!(
+            context_label(&context_of(Some("pane selection|folder"))),
+            "File list (with a selection or in a folder)"
         );
     }
 }

@@ -59,9 +59,14 @@ impl SelectionCtx {
     }
 }
 
-/// Space-separated tokens, all of which must hold. `None` always holds.
+/// Space-separated tokens, all of which must hold; a token of
+/// alternatives (`selection|folder`) holds when one of them does. `None`
+/// always holds.
 pub fn when_holds(when: Option<&str>, ctx: SelectionCtx) -> bool {
-    when.is_none_or(|when| when.split_whitespace().all(|t| ctx.holds(t)))
+    when.is_none_or(|when| {
+        when.split_whitespace()
+            .all(|t| t.split('|').any(|alt| ctx.holds(alt)))
+    })
 }
 
 pub struct MenuState {
@@ -595,6 +600,11 @@ mod tests {
             !when_holds(Some("empty folder"), ctx(0, true, true)),
             "a search"
         );
+        // Alternatives: a selection anywhere, or the folder itself.
+        assert!(when_holds(Some("selection|folder"), folder));
+        assert!(when_holds(Some("selection|folder"), ctx(1, false, true)));
+        assert!(!when_holds(Some("selection|folder"), ctx(0, true, true)));
+        assert!(!when_holds(Some("single selection|folder"), folder));
         assert!(when_holds(Some("empty"), ctx(0, true, true)));
         assert!(!when_holds(Some("empty"), ctx(1, true, true)));
     }

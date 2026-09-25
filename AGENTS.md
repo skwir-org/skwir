@@ -295,7 +295,9 @@ current source before assuming a planned crate, command, or API exists.
   family (the default stack costs 35-50 ms per frame when it fails to resolve).
 - **Conventions.** Key bindings use gpui notation (`ctrl-shift-n`); `when` is
   a space-separated list of tokens that must all hold (`selection`, `single`,
-  `dir`, `file`, `empty`, `folder`; `pane`/`address`/`palette` for context). Menu `order` groups
+  `dir`, `file`, `empty`, `folder`; `pane`/`address`/`palette` for context);
+  `a|b` holds when either does. A command that works in a folder but can
+  run from a search uses `App::work_dir`, not `pane_dir`. Menu `order` groups
   by the hundreds digit (0xx open, 1xx edit, 2xx create, 3xx destructive,
   4xx misc); the UI draws separators between groups. `ui.*` commands are
   handled by the shell; a plugin may bind to them.

@@ -107,9 +107,12 @@ Search here): those items say `empty folder`, a token that holds while the
 pane shows a folder. The text input scrolls a line longer than its field
 to keep the cursor in view and clips it to the field, so a long search's
 address no longer runs under the pane's buttons; unfocused, it shows its
-start. Gaps: Open Terminal Here, Run Command and Paste are still offered on
-a search's background, where they fail; each works on a selected folder or
-the folder shown, which one `when` cannot say.
+start. A `when` token may list alternatives (`selection|folder`, a GPUI
+`(selection || folder)` for keys): Open Terminal Here and Run Command say
+so, and work in `App::work_dir`, the folder shown or, in a search, the
+nearest folder holding the selection; Paste, always into the folder
+shown, says `folder`. Run Command asked for no command and failed
+everywhere; it now asks through `ui.ask`.
 
 ---
 

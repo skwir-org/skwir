@@ -3,7 +3,7 @@
 //! calls `pump` to apply pending events and `dispatch` for everything else.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use parking_lot::RwLock;
@@ -463,6 +463,18 @@ impl App {
             .ok_or_else(|| anyhow::anyhow!("pane is not showing a directory"))
     }
 
+    /// The folder work on `pane` happens in (a terminal, a command): the
+    /// one it shows, else, for a search or the shelf, the one holding the
+    /// selected entries (the nearest folder they share). An error a
+    /// command can return as is when there is neither.
+    pub fn work_dir(&self, pane: PaneId) -> anyhow::Result<PathBuf> {
+        if let Ok(dir) = self.pane_dir(pane) {
+            return Ok(dir);
+        }
+        common_parent(self.selected_refs(pane).iter().map(|r| r.path.as_path()))
+            .ok_or_else(|| anyhow::anyhow!("select something, or open a folder"))
+    }
+
     /// A pane's open location and a snapshot taken with it, outside the
     /// workspace lock: the location's methods are plugin code that may
     /// take other locks, send and wake.
@@ -484,6 +496,24 @@ impl Drop for App {
 }
 
 // ================================================================ built-in commands
+
+/// The nearest folder holding every one of `paths`; `None` for none.
+pub fn common_parent<'a>(paths: impl IntoIterator<Item = &'a Path>) -> Option<PathBuf> {
+    let mut common: Option<PathBuf> = None;
+    for path in paths {
+        let parent = path.parent()?;
+        common = Some(match common {
+            None => parent.to_path_buf(),
+            Some(so_far) => so_far
+                .components()
+                .zip(parent.components())
+                .take_while(|(a, b)| a == b)
+                .map(|(a, _)| a)
+                .collect(),
+        });
+    }
+    common.filter(|c| !c.as_os_str().is_empty())
+}
 
 /// Arguments shared by commands that act on a pane.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -985,5 +1015,28 @@ mod builtin {
             "Return every registered command with its argument schema",
             |_, app| Ok(Outcome::Value(serde_json::to_value(app.commands.list())?)),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::common_parent;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn the_common_parent_is_the_nearest_folder_they_share() {
+        let parent = |paths: &[&str]| common_parent(paths.iter().map(Path::new));
+        assert_eq!(parent(&[]), None);
+        assert_eq!(parent(&["/a/b/c.txt"]), Some(PathBuf::from("/a/b")));
+        assert_eq!(
+            parent(&["/a/b/c.txt", "/a/b/d e/f.txt", "/a/b/g"]),
+            Some(PathBuf::from("/a/b"))
+        );
+        // By whole components, never a shared prefix of a name.
+        assert_eq!(
+            parent(&["/data/ab/x", "/data/ac/y"]),
+            Some(PathBuf::from("/data"))
+        );
+        assert_eq!(parent(&["/x/1", "/y/2"]), Some(PathBuf::from("/")));
     }
 }

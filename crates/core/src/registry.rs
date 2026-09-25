@@ -232,7 +232,8 @@ pub struct Keeper {
 /// rather than a search or the shelf); `None` means always. An item about
 /// the location rather than about files (Refresh, a view) says `empty`, so
 /// the menu of a file stays about that file; one that needs the folder
-/// itself (New Folder, Bookmark This Folder) says `empty folder`.
+/// itself (New Folder, Bookmark This Folder) says `empty folder`. A token
+/// of alternatives, `selection|folder`, holds when either does.
 ///
 /// `submenu` moves a rarely used item under a parent row of that name,
 /// after the other groups. `icon` names a bundled symbolic icon.

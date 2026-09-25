@@ -932,6 +932,35 @@ mod tests {
         assert!(app.dispatch(&Invocation::new("keep")).is_err());
     }
 
+    /// A terminal or a command run from a search works in the folder that
+    /// holds the selection: the search itself is no folder.
+    #[test]
+    fn a_search_works_in_the_folder_of_its_selection() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("t");
+        std::fs::create_dir(&root).unwrap();
+        tree(&root);
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &location_for("*.txt", Some(&root)))
+            .unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        assert!(app.pane_dir(pane).is_err());
+        assert!(app.work_dir(pane).is_err(), "nothing selected, no folder");
+        let select = |names: &[&str]| {
+            app.dispatch(&Invocation::with_args(
+                "select",
+                &serde_json::json!({ "names": names }),
+            ))
+            .unwrap();
+        };
+        select(&["old.txt"]);
+        assert_eq!(app.work_dir(pane).unwrap(), root.join("docs/deep"));
+        select(&["old.txt", "notes.txt"]);
+        assert_eq!(app.work_dir(pane).unwrap(), root.join("docs"));
+    }
+
     #[test]
     fn a_suggested_name_says_what_and_where() {
         assert_eq!(suggested_name("*.pdf modified<7d"), "*.pdf modified<7d");

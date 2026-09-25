@@ -110,7 +110,12 @@ fn run(
     with_selection: bool,
 ) -> anyhow::Result<Outcome> {
     let pane = app.pane_or_active(pane);
-    let dir = app.pane_dir(pane)?;
+    // The folder shown, or the one holding the selection in a search.
+    let dir = if with_selection {
+        app.work_dir(pane)?
+    } else {
+        app.pane_dir(pane)?
+    };
     let paths = if with_selection {
         selected_paths(app, pane)
     } else {
@@ -205,8 +210,17 @@ impl Plugin for ShellPlugin {
             MenuItem {
                 menu: "context".into(),
                 title: "Run Command…".into(),
-                command: Invocation::new("shell.run"),
-                when: None,
+                // The command is asked for: `shell.run` cannot run without one.
+                command: Invocation::with_args(
+                    "ui.ask",
+                    &serde_json::json!({
+                        "title": "Run command on selection",
+                        "placeholder": "Command; the selected paths are its arguments",
+                        "command": "shell.run",
+                        "field": "command",
+                    }),
+                ),
+                when: Some("selection|folder".into()),
                 order: 410,
                 icon: Some("command".into()),
                 submenu: Some("More".into()),

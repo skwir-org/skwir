@@ -163,7 +163,8 @@ fn target_dir(pane: PaneId, app: &App) -> anyhow::Result<std::path::PathBuf> {
         return Ok(path);
     }
     drop(ws);
-    app.pane_dir(pane)
+    // The folder shown, or the one holding the selection in a search.
+    app.work_dir(pane)
 }
 
 fn open_terminal(pane: Option<PaneId>, app: &App) -> anyhow::Result<Outcome> {
@@ -613,7 +614,7 @@ impl Plugin for OpenWithPlugin {
             ID,
             "open_terminal",
             "Open terminal here",
-            "Open a terminal in the selected folder, or in the current directory",
+            "Open a terminal in the selected folder, else the folder shown, else (in a search) the folder holding the selection",
             |a, app| open_terminal(a.pane, app),
         );
         app.registry.menus.add(
@@ -634,7 +635,7 @@ impl Plugin for OpenWithPlugin {
                 menu: "context".into(),
                 title: "Open Terminal Here".into(),
                 command: Invocation::new("open_terminal"),
-                when: None,
+                when: Some("selection|folder".into()),
                 order: 10,
                 icon: Some("command".into()),
                 submenu: None,

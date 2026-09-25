@@ -136,7 +136,8 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
     ("delete", "trash", Some("pane selection")),
     ("ctrl-c", "clipboard_copy", Some("pane selection")),
     ("ctrl-x", "clipboard_cut", Some("pane selection")),
-    ("ctrl-v", "clipboard_paste", Some("pane")),
+    // Into the folder shown: a search or the shelf has none.
+    ("ctrl-v", "clipboard_paste", Some("pane folder")),
     ("ctrl-z", "undo", None),
     ("ctrl-shift-z", "redo", None),
     ("ctrl-a", "select_all", Some("pane")),
@@ -159,7 +160,7 @@ const MENU: &[(&str, &str, Option<&str>, i32, &str)] = &[
     ("Rename", "ui.rename_prompt", Some("single"), 100, "rename"),
     ("Cut", "clipboard_cut", Some("selection"), 110, "cut"),
     ("Copy", "clipboard_copy", Some("selection"), 120, "copy"),
-    ("Paste", "clipboard_paste", None, 130, "paste"),
+    ("Paste", "clipboard_paste", Some("folder"), 130, "paste"),
     // The folder's own menu, on its background.
     (
         "New Folder",
