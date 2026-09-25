@@ -6,6 +6,8 @@
 /result-*
 /.direnv/
 /.envrc.local
+# Local agent memory scope
+/.ai-memory.toml
 # Editors
 /.idea/
 /.vscode/
