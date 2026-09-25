@@ -141,6 +141,10 @@ impl Plugin for QueryPlugin {
         "Search as a location: name, size, date, tag, MIME, and content queries; saved queries as smart folders"
     }
 
+    fn category(&self) -> bibli_core::plugin::Category {
+        bibli_core::plugin::Category::Browsing
+    }
+
     fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
         vec![bibli_core::plugin::Requirement::program(
             "plocate",

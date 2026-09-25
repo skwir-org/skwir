@@ -21,6 +21,9 @@ impl Plugin for Preferences {
     fn title(&self) -> &'static str {
         "Sample"
     }
+    fn category(&self) -> bibli_core::plugin::Category {
+        bibli_core::plugin::Category::Files
+    }
     fn register(&self, app: &App) {
         for spec in [
             SettingSpec::choice(
@@ -354,6 +357,7 @@ fn plugins_toggle_through_the_command_and_the_choice_is_persisted() {
     };
     assert_eq!(list[0]["id"], "sample");
     assert_eq!(list[0]["enabled"], false);
+    assert_eq!(list[0]["category"], "files");
 }
 
 #[test]

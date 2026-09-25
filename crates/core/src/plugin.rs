@@ -18,6 +18,8 @@ pub trait Plugin: Send + Sync {
     fn description(&self) -> &'static str {
         ""
     }
+    /// Where the plugin is listed among the others.
+    fn category(&self) -> Category;
     /// Contribute to the app. Called on enable.
     fn register(&self, app: &App);
     /// Apply changed preferences on a worker. Read-through settings need no hook.
@@ -29,6 +31,40 @@ pub trait Plugin: Send + Sync {
     /// when a settings UI asks; they are never called during registration.
     fn requirements(&self) -> Vec<Requirement> {
         Vec::new()
+    }
+}
+
+/// What a plugin is about, so a list of plugins can be browsed by subject.
+/// The declaration order is the order they are listed in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Category {
+    /// Getting to files: places, search, jumping, views of a tree.
+    Browsing,
+    /// Acting on files: operations, renaming, collecting, tagging.
+    Files,
+    /// Showing what a file holds: previews and thumbnails.
+    Previews,
+    /// Working with the rest of the desktop: applications, terminals, media keys.
+    Desktop,
+}
+
+impl Category {
+    pub const ALL: [Category; 4] = [
+        Category::Browsing,
+        Category::Files,
+        Category::Previews,
+        Category::Desktop,
+    ];
+
+    /// The heading a settings UI shows above the category's plugins.
+    pub fn title(self) -> &'static str {
+        match self {
+            Category::Browsing => "Browsing and finding",
+            Category::Files => "Working with files",
+            Category::Previews => "Previews and thumbnails",
+            Category::Desktop => "Desktop integration",
+        }
     }
 }
 
@@ -147,6 +183,7 @@ pub struct PluginInfo {
     pub id: &'static str,
     pub title: String,
     pub description: String,
+    pub category: Category,
     pub enabled: bool,
 }
 
@@ -281,6 +318,7 @@ impl PluginHost {
                 id: p.id(),
                 title: p.title().into(),
                 description: p.description().into(),
+                category: p.category(),
                 enabled: *e,
             })
             .collect()

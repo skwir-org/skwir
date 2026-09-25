@@ -685,6 +685,10 @@ impl Plugin for PlacesPlugin {
         "Sidebar entries from your home, XDG user folders, GTK bookmarks, and mounted volumes"
     }
 
+    fn category(&self) -> bibli_core::plugin::Category {
+        bibli_core::plugin::Category::Browsing
+    }
+
     fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
         vec![bibli_core::plugin::Requirement::program(
             "udisksctl",

@@ -132,6 +132,10 @@ impl Plugin for OpenWithPlugin {
         "Open files with their default application and open a terminal here"
     }
 
+    fn category(&self) -> bibli_core::plugin::Category {
+        bibli_core::plugin::Category::Desktop
+    }
+
     fn register(&self, app: &App) {
         app.commands.register::<OpenArgs, _>(ID, "open", "Open", "Enter the selected directory, or open the selected files with their default application", open);
         app.commands.register::<PaneArg, _>(

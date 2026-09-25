@@ -652,6 +652,10 @@ impl Plugin for EditAsBufferPlugin {
         "Edit the listing in your editor; the difference becomes a plan to review"
     }
 
+    fn category(&self) -> bibli_core::plugin::Category {
+        bibli_core::plugin::Category::Files
+    }
+
     fn register(&self, app: &App) {
         let lifetime = app.lifetime().child();
         *self.lifetime.lock() = lifetime.clone();

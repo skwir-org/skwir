@@ -43,7 +43,9 @@ default; play on selection; stop, play next or shuffle when a track ends).
 Settings pages follow their subject (ADR-010 addendum): the reader's
 preferences, shared by several preview plugins, moved from Appearance to a
 Reading page (`reading.*`), and a moved key keeps its value
-(`Settings::rename`).
+(`Settings::rename`). The Plugins page lists plugins under the category
+each declares (`Plugin::category`: browsing, files, previews, desktop), which
+`plugins.list` also reports.
 Huge folders (2026-09-25): the UI applied a listing in one drain that lasted
 as long as the worker kept sending, holding the UI thread and the workspace
 lock (0.9 s for the 366 000 entries of `/nix/store`, warm cache, release; longer

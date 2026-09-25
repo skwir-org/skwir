@@ -215,6 +215,9 @@ impl Plugin for UsagePlugin {
     fn description(&self) -> &'static str {
         "Browse folder sizes in a treemap with live updates"
     }
+    fn category(&self) -> bibli_core::plugin::Category {
+        bibli_core::plugin::Category::Browsing
+    }
     fn register(&self, app: &App) {
         app.registry.views.add(
             ID,

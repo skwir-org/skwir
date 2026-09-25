@@ -190,6 +190,10 @@ impl Plugin for OpsBasicPlugin {
         "Default key bindings, context menu, and clipboard"
     }
 
+    fn category(&self) -> bibli_core::plugin::Category {
+        bibli_core::plugin::Category::Files
+    }
+
     fn register(&self, app: &App) {
         let cb = Arc::clone(&self.clipboard);
         app.commands.register::<PaneArg, _>(

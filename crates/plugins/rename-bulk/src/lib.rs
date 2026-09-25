@@ -433,6 +433,10 @@ impl Plugin for RenameBulkPlugin {
         "Rename the selection from a template, a regex, and case rules"
     }
 
+    fn category(&self) -> bibli_core::plugin::Category {
+        bibli_core::plugin::Category::Files
+    }
+
     fn register(&self, app: &App) {
         app.commands.register::<Args, _>(
             ID,

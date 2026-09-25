@@ -21,6 +21,9 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> &'static str {
         "List the contents of ZIP, tar, 7z and other archives and preview their members without extracting"
     }
+    fn category(&self) -> bibli_core::plugin::Category {
+        bibli_core::plugin::Category::Previews
+    }
     fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
         vec![
             bibli_core::plugin::Requirement::new(

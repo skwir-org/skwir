@@ -123,6 +123,9 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> &'static str {
         "Play audio and video files in the preview panel: audio with its cover and a spectrum, video with a still frame when playback is unavailable"
     }
+    fn category(&self) -> bibli_core::plugin::Category {
+        bibli_core::plugin::Category::Previews
+    }
     fn on_settings_changed(&self, app: &App, keys: &[String]) {
         if keys.iter().any(|key| key == REPLAY_GAIN) {
             self.read_tuning(app);

@@ -246,6 +246,9 @@ impl Plugin for TagsPlugin {
     fn description(&self) -> &'static str {
         "Tags stored as extended attributes, no database"
     }
+    fn category(&self) -> bibli_core::plugin::Category {
+        bibli_core::plugin::Category::Files
+    }
     fn register(&self, app: &App) {
         app.metadata.register(ID, Arc::new(TagsProvider));
         app.ops.register::<SetTags>(ID, "set_tags");

@@ -41,7 +41,9 @@ the right and a revert button on rows that differ from their default.
 
 **Plugins are managed through commands.** `plugins.set_enabled` runs the
 lifecycle callbacks on a worker and persists the choice; `plugins.list` reports
-the state. `Plugin::requirements` lists external tools with a probe; the dialog
+the state. Each plugin states its `Plugin::category` (browsing, files,
+previews, desktop), and the Plugins page lists them under those headings.
+`Plugin::requirements` lists external tools with a probe; the dialog
 runs the probes on a worker when it opens and shows what is missing and what
 that costs.
 

@@ -39,6 +39,9 @@ impl Plugin for MprisPlugin {
     fn description(&self) -> &'static str {
         "Let the desktop show and steer what is playing: media keys, the panel's player, headset buttons (MPRIS)"
     }
+    fn category(&self) -> bibli_core::plugin::Category {
+        bibli_core::plugin::Category::Desktop
+    }
     fn register(&self, app: &App) {
         let stop = app.lifetime().child();
         let (weak, changes, token) = (app.weak(), app.player.subscribe(self.id()), stop.clone());

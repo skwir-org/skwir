@@ -226,6 +226,9 @@ impl Plugin for JumpPlugin {
     fn description(&self) -> &'static str {
         "Frecency jump from zoxide and recently used files; the recent: location"
     }
+    fn category(&self) -> bibli_core::plugin::Category {
+        bibli_core::plugin::Category::Browsing
+    }
     fn register(&self, app: &App) {
         let lifetime = app.lifetime().child();
         *self.lifetime.lock() = lifetime.clone();

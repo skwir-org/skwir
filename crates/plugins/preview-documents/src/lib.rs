@@ -16,6 +16,9 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> &'static str {
         "Read PDF and office documents: continuous scrolling, search, text selection, links and contents"
     }
+    fn category(&self) -> bibli_core::plugin::Category {
+        bibli_core::plugin::Category::Previews
+    }
     fn on_settings_changed(&self, app: &App, _keys: &[String]) {
         app.previews.unregister_owner(self.id());
         self.register(app);

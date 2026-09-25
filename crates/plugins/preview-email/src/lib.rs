@@ -23,6 +23,9 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> &'static str {
         "Read EML messages: headers, body and attachments, with remote content blocked"
     }
+    fn category(&self) -> bibli_core::plugin::Category {
+        bibli_core::plugin::Category::Previews
+    }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
     }

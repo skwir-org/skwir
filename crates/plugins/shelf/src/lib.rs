@@ -450,6 +450,10 @@ impl Plugin for ShelfPlugin {
         "Collect entries from anywhere and move, copy, or trash them together"
     }
 
+    fn category(&self) -> bibli_core::plugin::Category {
+        bibli_core::plugin::Category::Files
+    }
+
     fn register(&self, app: &App) {
         {
             let mut s = self.state.lock();

@@ -548,6 +548,9 @@ impl Plugin for TimelinePlugin {
     fn description(&self) -> &'static str {
         "Files by modification date, as a histogram you can scrub"
     }
+    fn category(&self) -> bibli_core::plugin::Category {
+        bibli_core::plugin::Category::Browsing
+    }
     fn register(&self, app: &App) {
         if let Some(previous) = self.state.lock().lifetime.replace(app.lifetime().child()) {
             previous.cancel();

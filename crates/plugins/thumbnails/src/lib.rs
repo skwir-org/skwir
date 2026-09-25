@@ -92,6 +92,10 @@ impl Plugin for ThumbnailsPlugin {
         "Thumbnails from the desktop cache, an image decoder, and installed thumbnailers"
     }
 
+    fn category(&self) -> bibli_core::plugin::Category {
+        bibli_core::plugin::Category::Previews
+    }
+
     fn on_settings_changed(&self, app: &App, keys: &[String]) {
         if keys.iter().any(|k| k == BUDGET_MB) {
             budget(app);

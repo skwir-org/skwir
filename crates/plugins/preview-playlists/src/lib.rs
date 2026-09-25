@@ -27,6 +27,9 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> &'static str {
         "List the tracks of M3U, PLS, XSPF and CUE files, and play the ones that are on this machine. Remote entries are named, never fetched"
     }
+    fn category(&self) -> bibli_core::plugin::Category {
+        bibli_core::plugin::Category::Previews
+    }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
     }

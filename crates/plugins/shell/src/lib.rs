@@ -140,6 +140,9 @@ impl Plugin for ShellPlugin {
     fn description(&self) -> &'static str {
         "Copy selected paths for a shell; run a command on the selection in a terminal"
     }
+    fn category(&self) -> bibli_core::plugin::Category {
+        bibli_core::plugin::Category::Desktop
+    }
     fn register(&self, app: &App) {
         app.settings.declare(SettingSpec::command(
             PROGRAM_KEY,

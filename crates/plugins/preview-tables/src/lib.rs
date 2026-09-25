@@ -18,6 +18,9 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> &'static str {
         "Show CSV and TSV files as aligned tables"
     }
+    fn category(&self) -> bibli_core::plugin::Category {
+        bibli_core::plugin::Category::Previews
+    }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
     }

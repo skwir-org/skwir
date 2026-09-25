@@ -19,6 +19,9 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> &'static str {
         "Read CBZ and CBR comic books, continuously or a page at a time"
     }
+    fn category(&self) -> bibli_core::plugin::Category {
+        bibli_core::plugin::Category::Previews
+    }
     fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
         vec![
             bibli_core::plugin::Requirement::new(

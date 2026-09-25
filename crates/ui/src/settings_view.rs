@@ -4,7 +4,7 @@
 //! keyboard stop can be brought into view by its child index. Cards are drawn
 //! by giving the first and last row of a group their rounded corners.
 
-use bibli_core::plugin::PluginInfo;
+use bibli_core::plugin::{Category, PluginInfo};
 use bibli_core::settings::{SettingKind, SettingSpec};
 use gpui::{
     AnyElement, ClickEvent, Context, Entity, Focusable, MouseButton, SharedString, Window, div,
@@ -981,14 +981,25 @@ impl Render for SettingsView {
                     }
                 }
                 Page::Plugins => {
-                    let mut plugins = self.plugins.clone();
-                    plugins.sort_by_key(|plugin| plugin.title.to_lowercase());
-                    for (index, plugin) in plugins.iter().enumerate() {
-                        let edge = Edge {
-                            first: index == 0,
-                            last: index + 1 == plugins.len(),
-                        };
-                        self.plugin_row(plugin, true, edge, &mut items, &theme, cx);
+                    for category in Category::ALL {
+                        let mut plugins: Vec<PluginInfo> = self
+                            .plugins
+                            .iter()
+                            .filter(|plugin| plugin.category == category)
+                            .cloned()
+                            .collect();
+                        if plugins.is_empty() {
+                            continue;
+                        }
+                        plugins.sort_by_key(|plugin| plugin.title.to_lowercase());
+                        Self::caption(&mut items, category.title(), &theme);
+                        for (index, plugin) in plugins.iter().enumerate() {
+                            let edge = Edge {
+                                first: index == 0,
+                                last: index + 1 == plugins.len(),
+                            };
+                            self.plugin_row(plugin, true, edge, &mut items, &theme, cx);
+                        }
                     }
                 }
                 Page::Keyboard => {
