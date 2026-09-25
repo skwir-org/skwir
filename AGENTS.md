@@ -495,8 +495,12 @@ are about to touch, in full:
   Handle a disabled command/provider as a normal error.
 - Query date ranges include the whole end date. A half-open histogram bucket
   `[start, end)` needs `modified>=start modified<end`. Calendar boundaries in
-  the query parser and timeline plugin are UTC; UI labels use the system time
+  the query parser and timeline plugin are UTC, the named periods (`today`,
+  `this-week`, weeks from Monday) included; UI labels use the system time
   zone. Test boundary instants explicitly when changing date behavior.
+- `kind:` groups files as the desktop's MIME database does
+  (`bibli_platform::mime::Kind`, from each type's generic icon and its
+  descent from `text/plain`); do not keep lists of types beside it.
 
 ## Build, test, lint
 

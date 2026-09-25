@@ -331,7 +331,7 @@ fn place(search: SavedQuery) -> Place {
                 "ui.ask",
                 &serde_json::json!({
                     "title": "Edit saved search",
-                    "placeholder": "*.pdf modified<7d size>10M  (in: picks the root)",
+                    "placeholder": "kind:document modified:this-week *.pdf  (in: picks the root)",
                     "text": search.expr,
                     "command": "query.edit",
                     "args": { "expr": expr },
@@ -726,6 +726,24 @@ mod tests {
         assert_eq!(
             run(&app, "mime:image/*", &root),
             set(&["pics/cat.png", "pics/dog.JPG"])
+        );
+        assert_eq!(
+            run(&app, "kind:image", &root),
+            set(&["pics/cat.png", "pics/dog.JPG"])
+        );
+        assert_eq!(
+            run(&app, "kind:documents,folders depth:1", &root),
+            set(&["docs", "pics"])
+        );
+        assert_eq!(
+            run(&app, "kind:document", &root),
+            set(&["docs/report.pdf", "docs/deep/deeper/bottom.md"])
+        );
+        // Whatever the time of day: last week began at least seven days ago,
+        // and old.txt was modified thirty days ago.
+        assert_eq!(
+            run(&app, "kind:text modified>=last-week", &root),
+            set(&["docs/notes.txt", "docs/deep/deeper/bottom.md"])
         );
         assert_eq!(
             run(&app, "(report OR notes) ext:txt", &root),

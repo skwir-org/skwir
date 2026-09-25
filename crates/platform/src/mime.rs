@@ -120,6 +120,156 @@ fn comment_of(xml: &str) -> Option<String> {
     Some(first.to_uppercase().chain(chars).collect())
 }
 
+/// What sort of file a type is, as the desktop groups them for people:
+/// read from the database, not from a list of our own. A type's generic
+/// icon says it (`x-office-document` for PDF, EPUB, Markdown and word
+/// processor files; `package-x-generic` for archives), else its top-level
+/// type; text is any type that descends from `text/plain`, code included.
+/// A type can be of several kinds (Markdown is a document and text).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
+    Folder,
+    Image,
+    Video,
+    Audio,
+    Document,
+    Spreadsheet,
+    Presentation,
+    Text,
+    Archive,
+    Font,
+    Program,
+}
+
+impl Kind {
+    pub const ALL: [Kind; 11] = [
+        Kind::Folder,
+        Kind::Image,
+        Kind::Video,
+        Kind::Audio,
+        Kind::Document,
+        Kind::Spreadsheet,
+        Kind::Presentation,
+        Kind::Text,
+        Kind::Archive,
+        Kind::Font,
+        Kind::Program,
+    ];
+
+    /// The word a query uses: `image`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Kind::Folder => "folder",
+            Kind::Image => "image",
+            Kind::Video => "video",
+            Kind::Audio => "audio",
+            Kind::Document => "document",
+            Kind::Spreadsheet => "spreadsheet",
+            Kind::Presentation => "presentation",
+            Kind::Text => "text",
+            Kind::Archive => "archive",
+            Kind::Font => "font",
+            Kind::Program => "program",
+        }
+    }
+
+    /// What people call a group of them: `Images`.
+    pub fn title(self) -> &'static str {
+        match self {
+            Kind::Folder => "Folders",
+            Kind::Image => "Images",
+            Kind::Video => "Videos",
+            Kind::Audio => "Music and audio",
+            Kind::Document => "Documents",
+            Kind::Spreadsheet => "Spreadsheets",
+            Kind::Presentation => "Presentations",
+            Kind::Text => "Text and code",
+            Kind::Archive => "Archives",
+            Kind::Font => "Fonts",
+            Kind::Program => "Programs",
+        }
+    }
+
+    /// A kind by its word, its plural or a common synonym (`music`,
+    /// `photos`), in any case.
+    pub fn from_name(word: &str) -> Option<Kind> {
+        Some(match word.to_ascii_lowercase().as_str() {
+            "folder" | "folders" | "dir" | "dirs" | "directory" | "directories" => Kind::Folder,
+            "image" | "images" | "picture" | "pictures" | "photo" | "photos" => Kind::Image,
+            "video" | "videos" | "movie" | "movies" | "film" | "films" => Kind::Video,
+            "audio" | "music" | "sound" | "sounds" | "song" | "songs" => Kind::Audio,
+            "document" | "documents" | "doc" | "docs" => Kind::Document,
+            "spreadsheet" | "spreadsheets" => Kind::Spreadsheet,
+            "presentation" | "presentations" | "slides" => Kind::Presentation,
+            "text" | "code" => Kind::Text,
+            "archive" | "archives" => Kind::Archive,
+            "font" | "fonts" => Kind::Font,
+            "program" | "programs" | "executable" | "executables" | "app" | "apps" => Kind::Program,
+            _ => return None,
+        })
+    }
+
+    fn bit(self) -> u16 {
+        1 << (self as u16)
+    }
+}
+
+/// The kinds of `mime`. Cached per type: a walk asks for every file.
+pub fn kinds(mime: &Mime) -> Vec<Kind> {
+    let bits = kind_bits(mime);
+    Kind::ALL
+        .into_iter()
+        .filter(|k| bits & k.bit() != 0)
+        .collect()
+}
+
+/// Whether `mime` is of `kind`. Cached per type: no I/O once the database
+/// is loaded.
+pub fn is_kind(mime: &Mime, kind: Kind) -> bool {
+    kind_bits(mime) & kind.bit() != 0
+}
+
+fn kind_bits(mime: &Mime) -> u16 {
+    use std::collections::HashMap;
+    use std::sync::{OnceLock, RwLock};
+    static CACHE: OnceLock<RwLock<HashMap<String, u16>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(RwLock::default);
+    if let Some(bits) = cache
+        .read()
+        .ok()
+        .and_then(|c| c.get(mime.as_str()).copied())
+    {
+        return bits;
+    }
+    let bits = classify(mime);
+    if let Ok(mut c) = cache.write() {
+        c.insert(mime.as_str().to_owned(), bits);
+    }
+    bits
+}
+
+fn classify(mime: &Mime) -> u16 {
+    if is_directory(mime) {
+        return Kind::Folder.bit();
+    }
+    let mime = imp::unalias(mime);
+    let by_icon = match mime.generic_icon_name().as_str() {
+        "image-x-generic" => Some(Kind::Image),
+        "video-x-generic" => Some(Kind::Video),
+        "audio-x-generic" => Some(Kind::Audio),
+        "x-office-document" => Some(Kind::Document),
+        "x-office-spreadsheet" => Some(Kind::Spreadsheet),
+        "x-office-presentation" => Some(Kind::Presentation),
+        "package-x-generic" => Some(Kind::Archive),
+        "font-x-generic" => Some(Kind::Font),
+        "application-x-executable" => Some(Kind::Program),
+        _ => None,
+    };
+    let text = lineage(&mime).iter().any(|m| m.as_str() == "text/plain");
+    by_icon.map_or(0, Kind::bit) | if text { Kind::Text.bit() } else { 0 }
+}
+
 pub fn is_directory(mime: &Mime) -> bool {
     mime.0 == "inode/directory"
 }
@@ -532,6 +682,43 @@ mod tests {
             <comment xml:lang="fr">document</comment></mime-type>"#;
         assert_eq!(comment_of(xml).as_deref(), Some("Plain & simple document"));
         assert_eq!(comment_of("<mime-type/>"), None);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn kinds_come_from_the_database() {
+        use super::{Kind, kinds};
+        let of = |name: &str| {
+            by_name(OsStr::new(name))
+                .map(|m| kinds(&m))
+                .unwrap_or_default()
+        };
+        assert_eq!(of("a.png"), [Kind::Image]);
+        assert_eq!(of("a.mp4"), [Kind::Video]);
+        assert_eq!(of("a.flac"), [Kind::Audio]);
+        assert_eq!(of("a.pdf"), [Kind::Document]);
+        assert_eq!(of("a.epub"), [Kind::Document]);
+        assert_eq!(of("a.odt"), [Kind::Document]);
+        assert_eq!(of("a.ods"), [Kind::Spreadsheet]);
+        assert_eq!(of("a.odp"), [Kind::Presentation]);
+        assert_eq!(of("a.zip"), [Kind::Archive]);
+        assert_eq!(of("a.tar.gz"), [Kind::Archive]);
+        assert_eq!(of("a.ttf"), [Kind::Font]);
+        assert_eq!(of("a.rs"), [Kind::Text], "code is text");
+        assert_eq!(of("a.txt"), [Kind::Text]);
+        assert_eq!(
+            of("a.md"),
+            [Kind::Document, Kind::Text],
+            "one type, two kinds"
+        );
+        assert_eq!(kinds(&Mime("inode/directory".into())), [Kind::Folder]);
+        assert!(of("a.unknown-extension").is_empty());
+        for kind in Kind::ALL {
+            assert_eq!(Kind::from_name(kind.name()), Some(kind));
+        }
+        assert_eq!(Kind::from_name("Photos"), Some(Kind::Image));
+        assert_eq!(Kind::from_name("music"), Some(Kind::Audio));
+        assert_eq!(Kind::from_name("pdf"), None);
     }
 
     #[test]

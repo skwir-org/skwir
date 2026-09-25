@@ -9,15 +9,26 @@
 //! and_expr:= unary+
 //! unary   := "NOT" unary | "-" unary | "(" or_expr ")" | term
 //! term    := word | "name:" pat | "ext:" list | "type:" kind | "mime:" glob
-//!          | "size" cmp | "modified" cmp | "created" cmp | "accessed" cmp
+//!          | "kind:" kinds | "size" cmp | "modified" cmp | "created" cmp | "accessed" cmp
 //!          | "tag:" word | "content:" text | "content:/" regex "/" flags?
 //! options := "in:" path | "depth:" n | "hidden:" bool | "case:" ("sensitive"|"insensitive")
 //! ```
 //!
 //! `cmp` is `>`, `<`, `>=`, `<=`, `=`/`:` a value, or `:` `a..b`. Sizes take
 //! `k`, `M`, `G` (1024-based). Times take dates (`2026`, `2026-05`,
-//! `2026-05-01`) or durations relative to now (`7d`, `2h30m`, `3w`).
-//! `modified<7d` means within the last 7 days; `modified>7d` older than that.
+//! `2026-05-01`), periods named from now (`today`, `yesterday`,
+//! `this-week`, `last-week`, `this-month`, `last-month`, `this-year`,
+//! `last-year`; weeks start on Monday), or durations relative to now
+//! (`7d`, `2h30m`, `3w`). A date or a named period is a calendar period in
+//! UTC, as the timeline's are: `modified:this-week` is within it,
+//! `modified<today` before it. `modified<7d` means within the last 7
+//! days; `modified>7d` older than that.
+//!
+//! `kind:` takes what the desktop's MIME database groups files into
+//! (`image`, `video`, `audio`, `document`, `spreadsheet`, `presentation`,
+//! `text`, `archive`, `font`, `program`, `folder`; plurals and synonyms
+//! such as `music` or `photos` too), several separated by commas:
+//! `kind:image,video`. See [`bibli_platform::mime::Kind`].
 //!
 //! Quoting: a quote opens only at the start of a word, after a leading `-`,
 //! or right after one of the keys above (`name:"a b"`), so `don't` is an
@@ -180,6 +191,8 @@ pub enum Term {
     Ext(Vec<String>),
     Type(KindSel),
     Mime(GlobMatcher, String),
+    /// Any of these kinds.
+    Kind(Vec<bibli_platform::mime::Kind>),
     Size {
         min: Option<u64>,
         max: Option<u64>,
@@ -209,9 +222,9 @@ impl std::error::Error for ParseError {}
 
 /// The keys a word can start with. Only these open a quote after their
 /// colon; any other word with a colon (`http://x`, `a:'b`) is a name.
-const KEYS: [&str; 14] = [
-    "name", "ext", "type", "mime", "tag", "content", "size", "modified", "created", "accessed",
-    "in", "depth", "hidden", "case",
+const KEYS: [&str; 15] = [
+    "name", "ext", "type", "mime", "kind", "tag", "content", "size", "modified", "created",
+    "accessed", "in", "depth", "hidden", "case",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -604,6 +617,21 @@ impl Parser<'_> {
                     Glob::new(v).map_err(|e| ParseError(format!("bad mime glob `{v}`: {e}")))?;
                 Ok(Term::Mime(g.compile_matcher(), v.to_owned()))
             }
+            "kind" => {
+                let mut kinds = Vec::new();
+                for word in v.split(',').filter(|w| !w.is_empty()) {
+                    let kind = bibli_platform::mime::Kind::from_name(word).ok_or_else(|| {
+                        ParseError(format!("kind: expects {}, got `{word}`", kind_words()))
+                    })?;
+                    if !kinds.contains(&kind) {
+                        kinds.push(kind);
+                    }
+                }
+                if kinds.is_empty() {
+                    return Err(ParseError(format!("kind: expects {}", kind_words())));
+                }
+                Ok(Term::Kind(kinds))
+            }
             "tag" => Ok(Term::Tag(v.to_owned())),
             "content" => Ok(Term::Content(parse_content(v, w.quoted, cs)?)),
             "size" => parse_size(&format!(":{v}")),
@@ -616,6 +644,15 @@ impl Parser<'_> {
             }
         }
     }
+}
+
+/// The words `kind:` takes, for an error message.
+fn kind_words() -> String {
+    let words: Vec<&str> = bibli_platform::mime::Kind::ALL
+        .iter()
+        .map(|k| k.name())
+        .collect();
+    words.join(", ")
 }
 
 fn parse_content(v: &str, quoted: bool, cs: bool) -> Result<ContentPat, ParseError> {
@@ -731,6 +768,48 @@ fn next_month(y: i64, m: u32) -> (i64, u32) {
     if m == 12 { (y + 1, 1) } else { (y, m + 1) }
 }
 
+fn previous_month(y: i64, m: u32) -> (i64, u32) {
+    if m == 1 { (y - 1, 12) } else { (y, m - 1) }
+}
+
+/// The civil date of a day since the epoch (Howard Hinnant's algorithm,
+/// the inverse of [`days_from_civil`]).
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (yoe + era * 400 + i64::from(m <= 2), m, d)
+}
+
+/// A period named from `now` (`today`, `this-week`, `last-month`) and its
+/// exclusive end, in UTC like dates; weeks start on Monday.
+fn named_period(s: &str, now: SystemTime) -> Option<(SystemTime, SystemTime)> {
+    let secs = i64::try_from(now.duration_since(UNIX_EPOCH).ok()?.as_secs()).ok()?;
+    let today = secs.div_euclid(86_400);
+    let day = |d: i64| UNIX_EPOCH + Duration::from_secs((d * 86_400).max(0) as u64);
+    // 1970-01-01 was a Thursday: three days after a Monday.
+    let monday = today - (today + 3).rem_euclid(7);
+    let (y, m, _) = civil_from_days(today);
+    let (py, pm) = previous_month(y, m);
+    let (ny, nm) = next_month(y, m);
+    Some(match s.to_ascii_lowercase().as_str() {
+        "today" => (day(today), day(today + 1)),
+        "yesterday" => (day(today - 1), day(today)),
+        "this-week" => (day(monday), day(monday + 7)),
+        "last-week" => (day(monday - 7), day(monday)),
+        "this-month" => (civil_to_time(y, m, 1), civil_to_time(ny, nm, 1)),
+        "last-month" => (civil_to_time(py, pm, 1), civil_to_time(y, m, 1)),
+        "this-year" => (civil_to_time(y, 1, 1), civil_to_time(y + 1, 1, 1)),
+        "last-year" => (civil_to_time(y - 1, 1, 1), civil_to_time(y, 1, 1)),
+        _ => return None,
+    })
+}
+
 /// A date literal and the exclusive end of the period it denotes.
 fn parse_date(s: &str) -> Option<(SystemTime, SystemTime)> {
     let parts: Vec<&str> = s.split('-').collect();
@@ -775,14 +854,14 @@ enum TimeLit {
 }
 
 fn parse_time_lit(s: &str, now: SystemTime) -> Result<TimeLit, ParseError> {
-    if let Some((a, b)) = parse_date(s) {
+    if let Some((a, b)) = parse_date(s).or_else(|| named_period(s, now)) {
         return Ok(TimeLit::Period(a, b));
     }
     if let Ok(d) = humantime::parse_duration(s) {
         return Ok(TimeLit::Ago(now.checked_sub(d).unwrap_or(UNIX_EPOCH)));
     }
     Err(ParseError(format!(
-        "bad date or duration `{s}` (try 2026-05-01 or 7d)"
+        "bad date or duration `{s}` (try 2026-05-01, this-week or 7d)"
     )))
 }
 
@@ -832,6 +911,10 @@ impl fmt::Display for Term {
             Term::Type(KindSel::Dir) => f.write_str("type:dir"),
             Term::Type(KindSel::Symlink) => f.write_str("type:symlink"),
             Term::Mime(_, s) => write!(f, "mime:{}", quote(s)),
+            Term::Kind(kinds) => {
+                let words: Vec<&str> = kinds.iter().map(|k| k.name()).collect();
+                write!(f, "kind:{}", words.join(","))
+            }
             Term::Size { text, .. } | Term::Time { text, .. } => f.write_str(text),
             Term::Tag(t) => write!(f, "tag:{}", quote(t)),
             Term::Content(p) if p.regex => {
@@ -1147,6 +1230,16 @@ impl Term {
                     bibli_platform::mime::by_name(c.name).is_some_and(|m| g.is_match(m.as_str())),
                 )
             }
+            Term::Kind(kinds) => {
+                use bibli_platform::mime::{Kind, is_kind};
+                if c.kind == EntryKind::Directory {
+                    return yes_no(kinds.contains(&Kind::Folder));
+                }
+                yes_no(
+                    bibli_platform::mime::by_name(c.name)
+                        .is_some_and(|m| kinds.iter().any(|k| is_kind(&m, *k))),
+                )
+            }
             Term::Size { min, max, .. } => {
                 let Some(m) = c.metadata else {
                     return Verdict::Unknown;
@@ -1425,6 +1518,9 @@ mod tests {
             "tag:work content:hello",
             "content:/foo.*bar/i",
             "mime:image/*",
+            "kind:image,video",
+            "modified:this-week",
+            "modified>=last-month",
             "report in:/tmp/x depth:2 hidden:true case:sensitive",
             "name:\"two words\"",
         ] {
@@ -1457,7 +1553,7 @@ mod tests {
             ("a)", "unexpected"),
             ("depth:x", "number"),
             ("size>1x", "bad size"),
-            ("modified<yesterday", "bad date"),
+            ("modified<someday", "bad date"),
             ("type:blob", "type:"),
             ("content:/[/", "bad regex"),
             ("OR a", "term"),
@@ -1522,6 +1618,125 @@ mod tests {
             q("nope OR report").expr.unwrap().eval(&f, false),
             Verdict::Yes
         );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn kinds_come_from_the_mime_database() {
+        let yes = |expr: &str, name: &str, kind: EntryKind| {
+            q(expr).expr.unwrap().eval(&cand(name, kind, None), false) == Verdict::Yes
+        };
+        assert!(yes("kind:document", "Report-Final.PDF", EntryKind::File));
+        assert!(
+            yes("kind:documents", "notes.md", EntryKind::File),
+            "a plural"
+        );
+        assert!(
+            yes("kind:text", "notes.md", EntryKind::File),
+            "and text too"
+        );
+        assert!(yes("kind:image,video", "clip.mp4", EntryKind::File));
+        assert!(yes("kind:photos", "cat.JPG", EntryKind::File));
+        assert!(yes("kind:music", "song.flac", EntryKind::File));
+        assert!(yes("kind:archive", "backup.tar.gz", EntryKind::File));
+        assert!(yes("kind:folder", "photos", EntryKind::Directory));
+        assert!(
+            !yes("kind:image", "photos", EntryKind::Directory),
+            "a folder is a folder"
+        );
+        assert!(!yes("kind:image", "Report-Final.PDF", EntryKind::File));
+        assert!(!yes("kind:document", "no-extension", EntryKind::File));
+        assert!(yes("-kind:image", "Report-Final.PDF", EntryKind::File));
+        assert_eq!(
+            q("kind:Photos,images,video").to_string(),
+            "kind:image,video"
+        );
+        for bad in ["kind:pdf", "kind:", "kind:,"] {
+            let error = parse_at(bad, now()).unwrap_err().to_string();
+            assert!(error.starts_with("kind:"), "{bad}: {error}");
+        }
+    }
+
+    /// The instants a named period covers, `[start, end)`, from `now`.
+    fn period(expr: &str, now: SystemTime) -> (SystemTime, SystemTime) {
+        match parse_at(expr, now).unwrap().expr {
+            Some(Expr::Term(Term::Time {
+                after: Some(a),
+                before: Some(b),
+                ..
+            })) => (a, b),
+            other => panic!("{expr}: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn named_periods_are_calendar_periods_from_now() {
+        let at = |y, m, d| civil_to_time(y, m, d);
+        // Friday 2026-09-25, 23:59:59 UTC.
+        let friday = at(2026, 9, 26) - Duration::from_secs(1);
+        let p = |name: &str| period(&format!("modified:{name}"), friday);
+        assert_eq!(p("today"), (at(2026, 9, 25), at(2026, 9, 26)));
+        assert_eq!(p("yesterday"), (at(2026, 9, 24), at(2026, 9, 25)));
+        assert_eq!(
+            p("this-week"),
+            (at(2026, 9, 21), at(2026, 9, 28)),
+            "from Monday"
+        );
+        assert_eq!(p("last-week"), (at(2026, 9, 14), at(2026, 9, 21)));
+        assert_eq!(p("this-month"), (at(2026, 9, 1), at(2026, 10, 1)));
+        assert_eq!(p("last-month"), (at(2026, 8, 1), at(2026, 9, 1)));
+        assert_eq!(p("this-year"), (at(2026, 1, 1), at(2027, 1, 1)));
+        assert_eq!(p("Last-Year"), (at(2025, 1, 1), at(2026, 1, 1)), "any case");
+        // On a Monday at midnight the week has just begun.
+        let monday = at(2026, 9, 21);
+        assert_eq!(
+            period("modified:this-week", monday),
+            (at(2026, 9, 21), at(2026, 9, 28))
+        );
+        assert_eq!(
+            period("modified:this-week", monday - Duration::from_secs(1)),
+            (at(2026, 9, 14), at(2026, 9, 21)),
+            "one second before, the week before"
+        );
+        // A week across the new year, and last month in January.
+        let new_year = at(2027, 1, 1);
+        assert_eq!(
+            period("modified:this-week", new_year),
+            (at(2026, 12, 28), at(2027, 1, 4))
+        );
+        assert_eq!(
+            period("modified:last-month", new_year),
+            (at(2026, 12, 1), at(2027, 1, 1))
+        );
+        // The comparisons read them as they read dates.
+        let t = |expr: &str, instant: SystemTime| {
+            let m = md(1, instant, &[]);
+            parse_at(expr, friday)
+                .unwrap()
+                .expr
+                .unwrap()
+                .eval(&cand("f", EntryKind::File, Some(&m)), false)
+        };
+        let monday_noon = at(2026, 9, 21) + Duration::from_secs(12 * 3600);
+        assert_eq!(t("modified:this-week", monday_noon), Verdict::Yes);
+        assert_eq!(t("modified<this-week", monday_noon), Verdict::No);
+        assert_eq!(t("modified<today", monday_noon), Verdict::Yes);
+        assert_eq!(t("modified>=this-month", at(2026, 8, 31)), Verdict::No);
+        assert_eq!(
+            t("modified:last-month..yesterday", at(2026, 9, 24)),
+            Verdict::Yes
+        );
+        assert!(parse_at("modified:next-week", friday).is_err());
+    }
+
+    #[test]
+    fn civil_dates_round_trip_through_days() {
+        for day in (-800_000..800_000).step_by(997) {
+            let (y, m, d) = civil_from_days(day);
+            assert_eq!(days_from_civil(y, m, d), day, "{y}-{m}-{d}");
+        }
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+        assert_eq!(civil_from_days(20_721), (2026, 9, 25));
     }
 
     #[test]

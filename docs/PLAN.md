@@ -113,6 +113,19 @@ so, and work in `App::work_dir`, the folder shown or, in a search, the
 nearest folder holding the selection; Paste, always into the folder
 shown, says `folder`. Run Command asked for no command and failed
 everywhere; it now asks through `ui.ask`.
+Query words for people (2026-09-25), the first step toward a query designer
+that needs no syntax: `kind:` (`kind:image,video`, `kind:documents`,
+`kind:music`) groups files as the desktop's MIME database does, from each
+type's generic icon (`x-office-document` covers PDF, EPUB, Markdown and word
+processor files; `package-x-generic` archives) and from descent from
+`text/plain` for text and code (`bibli_platform::mime::Kind`, cached per
+type); and named periods (`modified:today`, `this-week`, `last-month`,
+`this-year`, with `<`, `>=` and ranges as for dates) are calendar periods in
+UTC like the dates, weeks starting on Monday. The search prompt's example
+uses both. Deviation: a period named "today" follows UTC, not the local day,
+because every calendar boundary in the parser and the timeline does
+(AGENTS.md); moving them all to the local time zone is a decision of its
+own.
 
 ---
 

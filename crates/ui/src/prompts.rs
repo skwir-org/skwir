@@ -71,7 +71,9 @@ impl Shell {
             PromptKind::Passphrase => "Passphrase",
             PromptKind::Rename => "New name",
             PromptKind::Mkdir => "Folder name",
-            PromptKind::Search => "*.pdf modified<7d size>10M  (in: picks the root)",
+            PromptKind::Search => {
+                "kind:document modified:this-week *.pdf size>10M  (in: picks the root)"
+            }
             PromptKind::Tags => "tag1, tag2 (empty clears)",
             PromptKind::Ask => "",
         };

@@ -1063,7 +1063,7 @@ impl Shell {
                 let last = self.last_search.clone();
                 self.open_prompt(
                     PromptKind::Search,
-                    "Search (e.g. *.pdf modified<7d size>10M)",
+                    "Search (e.g. kind:image modified:this-week)",
                     &last,
                     None,
                     window,
