@@ -13,7 +13,7 @@
 //! - [`scheduler`]: the priority work queue with cancellation.
 //! - [`cache`] and [`settings`]: the throwaway cache and namespaced settings.
 //! - [`thumbs`]: the thumbnail service: providers, LRU of decoded images, viewport priority.
-//! - [`workspace`]: panes, selection, focus.
+//! - [`workspace`]: panes, selection, focus; [`tabs`]: the tabs that group panes.
 //! - [`collate`] and [`lru`]: the natural name order and the byte-budgeted LRU every cache shares.
 //! - [`app`]: the object that ties them together and hosts the built-in commands.
 //!
@@ -41,6 +41,7 @@ pub mod preview;
 pub mod registry;
 pub mod scheduler;
 pub mod settings;
+pub mod tabs;
 pub mod tally;
 pub mod thumbs;
 pub mod workspace;

@@ -289,7 +289,10 @@ pub(crate) fn register(app: &crate::App) {
             "Open at startup",
             "Where a new window starts when no folder is given on the command line.",
             "folder",
-            &[("folder", "A chosen folder"), ("last", "The last folder")],
+            &[
+                ("folder", "A chosen folder"),
+                ("last", "The folders and tabs left open"),
+            ],
         )
         .section("Startup"),
     );

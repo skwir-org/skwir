@@ -64,7 +64,23 @@ pub struct PaneUi {
     pub chips: crate::search_bar::Chips,
     /// The placeholder's button, kept so Tab can reach it.
     placeholder_focus: FocusHandle,
+    /// Its pane waits to give back the selection it had while dormant.
+    restoring: bool,
     _sub: Subscription,
+}
+
+impl PaneUi {
+    /// Its pane went dormant with its tab (ADR-018): nothing it drew from is
+    /// kept. The views start over when the listing comes back, as after a
+    /// navigation.
+    pub(crate) fn let_go(&mut self) {
+        self.list = ListState::default();
+        for view in self.views.values_mut() {
+            view.reset();
+        }
+        self.usage = UsageState::default();
+        self.loading = crate::loading::State::default();
+    }
 }
 
 /// A pending "show me this file": the pane it belongs to, the file name to
@@ -106,6 +122,15 @@ pub struct Shell {
     /// being rendered while a pane renders.
     pub pane: PaneId,
     pub panes: Vec<PaneUi>,
+    /// The panes of the tabs not shown, what they drew from let go
+    /// (`Shell::sync_tabs`).
+    pub(crate) hidden: HashMap<PaneId, PaneUi>,
+    /// Workspace revision the panes above follow.
+    pub(crate) tabs_revision: u64,
+    pub(crate) shown_tab: Option<bibli_core::workspace::TabId>,
+    /// The own arrangement of the splits of tabs not shown.
+    pub(crate) tab_splits: HashMap<bibli_core::workspace::TabId, crate::layout::Panes>,
+    pub(crate) tab_labels: crate::tabs::Labels,
     pub font: SharedString,
     pub mono_font: SharedString,
     pub key_hints: Vec<KeyHint>,
@@ -297,6 +322,11 @@ impl Shell {
             app,
             pane,
             panes: Vec::new(),
+            hidden: HashMap::new(),
+            tabs_revision: u64::MAX,
+            shown_tab: None,
+            tab_splits: HashMap::new(),
+            tab_labels: crate::tabs::Labels::default(),
             font,
             mono_font,
             key_hints: keymap.hints,
@@ -351,21 +381,29 @@ impl Shell {
             first_frame_logged: false,
             _subscriptions: subs,
         };
-        let ui = shell.make_pane_ui(pane, window, cx);
-        shell.panes.push(ui);
+        shell.sync_tabs(window, cx);
+        // Without a location to show, the last window's tabs came back
+        // (`App::restore_tabs`), their splits with them.
+        let initial_given = initial.is_some();
         if let Some(loc) = initial
-            && let Err(e) = shell.app.navigate(pane, &loc)
+            && let Err(e) = shell.app.navigate(shell.pane, &loc)
         {
             shell.set_status(format!("{e:#}"), true, cx);
         }
-        shell.restore_session(window, cx);
+        // Tabs restored from the last window open the one shown, now that
+        // the listing has a UI to wake.
+        if let Err(e) = shell.app.resume_shown() {
+            shell.set_status(format!("{e:#}"), true, cx);
+        }
+        shell.restore_session(initial_given, window, cx);
         shell
     }
 
     /// Put the window back the way it was left: the same view, the same
-    /// split, the same panels. The view waits for `sync_views`, which is
-    /// what decides which views this build and its plugins actually have.
-    fn restore_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// split (unless `split` is false: tabs that came back bring their own),
+    /// the same panels. The view waits for `sync_views`, which is what
+    /// decides which views this build and its plugins actually have.
+    fn restore_session(&mut self, split: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(session) = crate::session::restore(&self.app) else {
             return;
         };
@@ -387,7 +425,8 @@ impl Shell {
             self.player.height = session.player_height;
         }
         self.timeline.open = session.timeline;
-        if session.split {
+        // Restored tabs bring their own splits.
+        if split && session.split && !self.is_split() {
             let split = self.layout.split;
             self.toggle_split(window, cx);
             self.layout.split = split;
@@ -402,7 +441,12 @@ impl Shell {
         self.stored_session = self.session();
     }
 
-    fn make_pane_ui(&self, id: PaneId, window: &mut Window, cx: &mut Context<Self>) -> PaneUi {
+    pub(crate) fn make_pane_ui(
+        &self,
+        id: PaneId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> PaneUi {
         let address = cx.new(|cx| TextInput::new("Path, query:… or location", cx));
         let sub = cx.subscribe_in(
             &address,
@@ -456,6 +500,7 @@ impl Shell {
             last_search: String::new(),
             chips: crate::search_bar::Chips::default(),
             placeholder_focus: cx.focus_handle(),
+            restoring: false,
             _sub: sub,
         }
     }
@@ -637,21 +682,17 @@ impl Shell {
         cx.notify();
     }
 
-    /// Split the window, or close the split, arranged as `layout` says.
+    /// Split the tab shown, or close its split, arranged as `layout` says.
+    /// The workspace changes; `sync_tabs` makes and releases the panes' UI.
     pub(crate) fn toggle_split(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.is_split() {
             // An arrangement made for this split ends with it.
             self.layout.split = None;
             // Close the other pane; keep the active one.
-            let other = self.other_pane();
-            if let Some(o) = other {
-                let _ = self.app.dispatch(&Invocation::with_args(
-                    "usage.release",
-                    &serde_json::json!({"pane":o}),
-                ));
-                self.app.workspace.write().close_pane(o);
-                self.panes.retain(|p| p.id != o);
+            if let Some(other) = self.other_pane() {
+                self.app.workspace.write().close_pane(other);
             }
+            self.sync_tabs(window, cx);
             window.focus(&self.ui().focus);
             self.remember_session();
             cx.notify();
@@ -661,13 +702,10 @@ impl Shell {
             let ws = self.app.workspace.read();
             ws.pane(self.pane).and_then(|p| p.location().cloned())
         };
-        let view = self.ui().view_id;
+        // A split shows the same folder, in the same view: showing it in
+        // another view as well would be a second surprise.
         let id = self.app.workspace.write().add_pane();
-        let mut ui = self.make_pane_ui(id, window, cx);
-        // A split shows the same folder; showing it in another view as well
-        // would be a second surprise.
-        ui.view_id = view;
-        self.panes.push(ui);
+        self.sync_tabs(window, cx);
         if let Some(loc) = here
             && let Err(e) = self.app.navigate(id, &loc)
         {
@@ -1476,11 +1514,8 @@ impl Shell {
             self.add_reviews(proposals, window, cx);
         }
         self.sync_review_focus(window, cx);
-        // Follow the workspace's active pane (commands may change it).
-        let active = self.app.workspace.read().active_id();
-        if self.panes.iter().any(|p| p.id == active) {
-            self.pane = active;
-        }
+        // Follow the workspace's tabs and active pane (commands change them).
+        self.sync_tabs(window, cx);
         let saved = self.pane;
         let ids: Vec<PaneId> = self.panes.iter().map(|p| p.id).collect();
         let mut resorted_any = false;
@@ -1507,20 +1542,32 @@ impl Shell {
             if let Some(wanted) = wanted {
                 app.keep_locations(id, &wanted);
             }
-            let (location, resorted, replaced) = {
+            let (location, resorted, replaced, restoring) = {
                 let ws = app.workspace.read();
                 let Some(pane) = ws.pane(id) else { continue };
                 let location = pane.location().map(ToString::to_string).unwrap_or_default();
                 let list = &mut self.ui_mut().list;
                 let before = list.listing();
                 let resorted = list.sync(&pane.listing, pane.sort);
-                (location, resorted, list.listing() != before)
+                (
+                    location,
+                    resorted,
+                    list.listing() != before,
+                    pane.restoring(),
+                )
             };
             resorted_any |= resorted;
             if replaced {
                 for v in self.ui_mut().views.values_mut() {
                     v.reset();
                 }
+            }
+            // A tab shown again got its selection back: show its cursor.
+            if std::mem::replace(&mut self.ui_mut().restoring, restoring)
+                && !restoring
+                && let Some(ix) = self.cursor_index()
+            {
+                self.with_view(|view, _| view.scroll_to(ix));
             }
             if location != self.ui().address_shown {
                 self.ui_mut().address_shown.clone_from(&location);
@@ -1674,6 +1721,7 @@ impl Render for Shell {
         let side = self
             .sidebar_fits(f32::from(window.viewport_size().width))
             .then(|| sidebar::render(self, cx));
+        let strip = crate::tabs::render(self, cx);
         let pane_ids: Vec<PaneId> = self.panes.iter().map(|p| p.id).collect();
         let mut columns = Vec::new();
         for id in pane_ids {
@@ -1736,14 +1784,24 @@ impl Render for Shell {
                             .min_w_0()
                             .min_h_0()
                             .when(bottom, gpui::Styled::flex_col)
+                            // The tabs over the panes they arrange.
                             .child(
                                 div()
                                     .flex()
+                                    .flex_col()
                                     .flex_1()
                                     .min_w_0()
                                     .min_h_0()
-                                    .when(stacked, gpui::Styled::flex_col)
-                                    .children(columns),
+                                    .children(strip)
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .min_h_0()
+                                            .when(stacked, gpui::Styled::flex_col)
+                                            .children(columns),
+                                    ),
                             )
                             .children(panel),
                     ),

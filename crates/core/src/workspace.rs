@@ -23,6 +23,30 @@ use crate::location::{Listing, Location, OpenLocation, SortSpec};
 )]
 pub struct PaneId(pub u32);
 
+/// Identifier of a tab within the workspace.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+pub struct TabId(pub u32);
+
+/// Panes shown together (ADR-018): one, or two when split, in the order
+/// they are laid out. The tabs not shown are dormant (`Pane::suspend`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Tab {
+    pub id: TabId,
+    pub panes: Vec<PaneId>,
+    /// The pane commands act on while this tab is shown.
+    pub active: PaneId,
+}
+
 /// Multi-selection with an anchor (for range selection) and a cursor (keyboard focus).
 #[derive(Clone, Debug, Default)]
 pub struct Selection {
@@ -168,6 +192,18 @@ impl Drop for Kept {
     }
 }
 
+/// What a suspended pane let go of; closed when dropped.
+pub(crate) struct Released {
+    open: Arc<dyn OpenLocation>,
+    _kept: Vec<Kept>,
+}
+
+impl Drop for Released {
+    fn drop(&mut self) {
+        self.open.close();
+    }
+}
+
 /// One pane: an open location, its listing, selection, and history.
 pub struct Pane {
     pub id: PaneId,
@@ -187,6 +223,9 @@ pub struct Pane {
     pub history_pos: usize,
     /// A name to select once the listing has it; see [`Pane::reveal`].
     reveal: Option<OsString>,
+    /// The selection a dormant pane had, given back once its listing is
+    /// complete again (see [`Pane::suspend`]).
+    restore: Option<Selection>,
 }
 
 impl Pane {
@@ -203,7 +242,17 @@ impl Pane {
             history: Vec::new(),
             history_pos: 0,
             reveal: None,
+            restore: None,
         }
+    }
+
+    /// A pane that will show `location` when its tab is shown: dormant
+    /// until then, with a history of that one location.
+    fn dormant(id: PaneId, location: Location, sort: SortSpec) -> Self {
+        let mut pane = Pane::new(id);
+        pane.history.push(location);
+        pane.sort = sort;
+        pane
     }
 
     /// Work tied to this location stops immediately on navigation or pane close.
@@ -225,6 +274,88 @@ impl Pane {
         // Nothing of the old location survives, the cursor included.
         self.selection = Selection::default();
         self.reveal = None;
+        self.restore = None;
+    }
+
+    /// Let go of what the pane shows while its tab is not shown (ADR-018):
+    /// the open location, its listing and watcher, the locations kept
+    /// beside it, and the work tied to it. The history, the sort and the
+    /// selection stay; the selection comes back when the pane is shown
+    /// again and its listing is complete. What it let go of closes when
+    /// the returned value drops: after the workspace lock, since closing
+    /// runs the location's code.
+    pub(crate) fn suspend(&mut self) -> Option<Released> {
+        let open = self.open.take()?;
+        self.location_lifetime.cancel();
+        self.location_lifetime = CancelToken::new();
+        let selection = std::mem::take(&mut self.selection);
+        if !selection.is_empty() {
+            self.restore = Some(selection);
+        }
+        self.listing = Listing::default();
+        self.reveal = None;
+        let mut kept = std::mem::take(&mut self.kept);
+        kept.extend(self.left.take());
+        Some(Released { open, _kept: kept })
+    }
+
+    /// The selection to give back once the listing is complete.
+    pub(crate) fn set_restore(&mut self, selection: Option<Selection>) {
+        self.restore = selection.filter(|s| !s.is_empty());
+    }
+
+    /// Take the selection a dormant pane keeps, to open it again.
+    pub(crate) fn take_restore_selection(&mut self) -> Option<Selection> {
+        self.restore.take()
+    }
+
+    /// Whether the pane waits for its tab to be shown to open its location.
+    pub fn is_dormant(&self) -> bool {
+        self.open.is_none() && !self.history.is_empty()
+    }
+
+    /// The location the pane shows, or will show once its tab is shown.
+    pub fn shown(&self) -> Option<&Location> {
+        self.location()
+            .or_else(|| self.history.get(self.history_pos))
+    }
+
+    /// Whether a selection is waiting for the listing to be complete.
+    pub fn restoring(&self) -> bool {
+        self.restore.is_some()
+    }
+
+    /// The selection it has, or will have again once it is shown.
+    pub fn kept_selection(&self) -> &Selection {
+        match &self.restore {
+            Some(restore) if self.selection.is_empty() => restore,
+            _ => &self.selection,
+        }
+    }
+
+    /// Give back the selection kept while dormant, once the listing is
+    /// complete: before that, the entries it names may not have arrived.
+    /// A selection made in the meantime wins; a listing that failed ends
+    /// the wait.
+    fn take_restore(&mut self) {
+        if self.restore.is_none() {
+            return;
+        }
+        if self.listing.error().is_some() {
+            self.restore = None;
+            return;
+        }
+        if !self.listing.is_complete() {
+            return;
+        }
+        let Some(mut restore) = self.restore.take() else {
+            return;
+        };
+        if self.selection.is_empty() {
+            restore.retain_in(&self.listing);
+            restore.touch();
+            self.selection = restore;
+        }
     }
 
     /// The kept location `location`, taken out to be shown.
@@ -321,6 +452,7 @@ impl Pane {
             self.selection.retain_in(&self.listing);
             self.take_reveal();
         }
+        self.take_restore();
         n
     }
 }
@@ -334,31 +466,112 @@ impl Drop for Pane {
     }
 }
 
-/// All panes and which one is active.
+/// All panes, the tabs that group them, and which ones are active.
 pub struct Workspace {
     panes: Vec<Pane>,
-    active: usize,
+    /// Never empty; every pane is in exactly one tab.
+    tabs: Vec<Tab>,
+    active_tab: usize,
     next_id: u32,
+    next_tab: u32,
+    /// The tab the last tab opened beside the shown one went to, and the
+    /// shown tab then: tabs opened one after another from the same tab
+    /// line up after it in the order they were opened.
+    opened_beside: Option<(TabId, TabId)>,
+    /// Bumped whenever panes or tabs come, go, move or change which is
+    /// active, so the UI compares one number to follow them.
+    revision: u64,
 }
 
 impl Default for Workspace {
     fn default() -> Self {
         let mut w = Workspace {
             panes: Vec::new(),
-            active: 0,
+            tabs: Vec::new(),
+            active_tab: 0,
             next_id: 0,
+            next_tab: 0,
+            opened_beside: None,
+            revision: 0,
         };
-        w.add_pane();
+        w.add_tab(0);
         w
     }
 }
 
 impl Workspace {
-    pub fn add_pane(&mut self) -> PaneId {
+    fn new_pane_id(&mut self) -> PaneId {
         let id = PaneId(self.next_id);
         self.next_id += 1;
-        self.panes.push(Pane::new(id));
         id
+    }
+
+    /// A new pane in the tab shown: the other side of a split.
+    pub fn add_pane(&mut self) -> PaneId {
+        let id = self.new_pane_id();
+        self.panes.push(Pane::new(id));
+        self.tabs[self.active_tab].panes.push(id);
+        self.revision += 1;
+        id
+    }
+
+    /// A new tab of one new pane, at position `at` (clamped), not shown.
+    pub fn add_tab(&mut self, at: usize) -> (TabId, PaneId) {
+        let pane = self.new_pane_id();
+        self.panes.push(Pane::new(pane));
+        (self.insert_tab(at, vec![pane]), pane)
+    }
+
+    fn insert_tab(&mut self, at: usize, panes: Vec<PaneId>) -> TabId {
+        let id = TabId(self.next_tab);
+        self.next_tab += 1;
+        let at = at.min(self.tabs.len());
+        let active = panes[0];
+        self.tabs.insert(at, Tab { id, panes, active });
+        if at <= self.active_tab && self.tabs.len() > 1 {
+            self.active_tab += 1;
+        }
+        self.revision += 1;
+        id
+    }
+
+    /// A tab of dormant panes, one per `(location, sort)`, at `at`, not
+    /// shown: they open their locations when it is.
+    pub(crate) fn add_dormant_tab(
+        &mut self,
+        at: usize,
+        panes: Vec<(Location, SortSpec)>,
+    ) -> (TabId, Vec<PaneId>) {
+        let ids: Vec<PaneId> = panes
+            .into_iter()
+            .map(|(location, sort)| {
+                let id = self.new_pane_id();
+                self.panes.push(Pane::dormant(id, location, sort));
+                id
+            })
+            .collect();
+        (self.insert_tab(at, ids.clone()), ids)
+    }
+
+    /// Where a tab opened beside the shown one goes: right after it, or
+    /// after the tabs already opened beside it.
+    pub(crate) fn beside_position(&self) -> usize {
+        let shown = self.tabs[self.active_tab].id;
+        match self.opened_beside {
+            Some((from, last)) if from == shown => {
+                self.tab_index(last).map_or(self.active_tab + 1, |i| i + 1)
+            }
+            _ => self.active_tab + 1,
+        }
+    }
+
+    pub(crate) fn opened_beside(&mut self, tab: TabId) {
+        self.opened_beside = Some((self.tabs[self.active_tab].id, tab));
+    }
+
+    pub(crate) fn tab_mut(&mut self, id: TabId) -> Option<&mut Tab> {
+        self.revision += 1;
+        self.tabs.iter_mut().find(|t| t.id == id)
     }
 
     pub fn close_pane(&mut self, id: PaneId) -> bool {
@@ -368,14 +581,114 @@ impl Workspace {
         let Some(i) = self.panes.iter().position(|p| p.id == id) else {
             return false;
         };
+        let t = self
+            .tabs
+            .iter()
+            .position(|t| t.panes.contains(&id))
+            .expect("every pane is in a tab");
         self.panes.remove(i);
-        // The active pane stays active when one before it closes; closing
-        // the active pane activates the one that took its place.
-        if i < self.active {
-            self.active -= 1;
+        self.revision += 1;
+        let tab = &mut self.tabs[t];
+        let at = tab.panes.iter().position(|p| *p == id).expect("in its tab");
+        tab.panes.remove(at);
+        if tab.panes.is_empty() {
+            self.remove_tab_at(t);
+        } else if tab.active == id {
+            // Closing the active pane activates the one that took its place.
+            tab.active = tab.panes[at.min(tab.panes.len() - 1)];
         }
-        self.active = self.active.min(self.panes.len() - 1);
         true
+    }
+
+    fn remove_tab_at(&mut self, t: usize) -> Tab {
+        self.revision += 1;
+        let tab = self.tabs.remove(t);
+        // The shown tab stays shown when one before it closes; closing the
+        // shown tab shows the one that took its place.
+        if t < self.active_tab {
+            self.active_tab -= 1;
+        }
+        self.active_tab = self.active_tab.min(self.tabs.len().saturating_sub(1));
+        tab
+    }
+
+    /// Take tab `id` and its panes out, in the tab's order, with the index
+    /// it had. Refused for the last tab. Dropping the panes closes what
+    /// they show: do it after releasing the workspace lock.
+    pub(crate) fn close_tab(&mut self, id: TabId) -> Option<(usize, Tab, Vec<Pane>)> {
+        if self.tabs.len() <= 1 {
+            return None;
+        }
+        let t = self.tab_index(id)?;
+        let tab = self.remove_tab_at(t);
+        let mut panes = Vec::with_capacity(tab.panes.len());
+        for pane in &tab.panes {
+            if let Some(i) = self.panes.iter().position(|p| p.id == *pane) {
+                panes.push(self.panes.remove(i));
+            }
+        }
+        Some((t, tab, panes))
+    }
+
+    /// Put tab `id` at position `to` (clamped). The shown tab stays shown.
+    pub fn move_tab(&mut self, id: TabId, to: usize) -> bool {
+        let Some(from) = self.tab_index(id) else {
+            return false;
+        };
+        let shown = self.tabs[self.active_tab].id;
+        let tab = self.tabs.remove(from);
+        let to = to.min(self.tabs.len());
+        self.tabs.insert(to, tab);
+        self.active_tab = self.tab_index(shown).expect("still there");
+        self.revision += 1;
+        true
+    }
+
+    /// Changes whenever panes or tabs come, go, move, or another one is
+    /// made active.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    pub fn tabs(&self) -> &[Tab] {
+        &self.tabs
+    }
+
+    pub fn tab(&self, id: TabId) -> Option<&Tab> {
+        self.tabs.iter().find(|t| t.id == id)
+    }
+
+    pub fn tab_index(&self, id: TabId) -> Option<usize> {
+        self.tabs.iter().position(|t| t.id == id)
+    }
+
+    /// The tab shown.
+    pub fn active_tab(&self) -> &Tab {
+        &self.tabs[self.active_tab]
+    }
+
+    /// The tab `pane` belongs to.
+    pub fn tab_of(&self, pane: PaneId) -> Option<TabId> {
+        self.tabs
+            .iter()
+            .find(|t| t.panes.contains(&pane))
+            .map(|t| t.id)
+    }
+
+    /// Show tab `id`. Only the order changes: `App::select_tab` suspends
+    /// the panes of the tab left and opens those of the tab shown.
+    pub(crate) fn set_active_tab(&mut self, id: TabId) -> bool {
+        match self.tab_index(id) {
+            Some(i) => {
+                self.active_tab = i;
+                self.revision += 1;
+                // Tabs opened beside another line up after it only until
+                // another tab is shown.
+                self.opened_beside = None;
+                true
+            }
+            None => false,
+        }
     }
 
     pub fn panes(&self) -> &[Pane] {
@@ -387,24 +700,31 @@ impl Workspace {
     }
 
     pub fn active(&self) -> &Pane {
-        &self.panes[self.active]
+        let id = self.active_id();
+        self.pane(id).expect("the active pane exists")
     }
 
     pub fn active_mut(&mut self) -> &mut Pane {
-        &mut self.panes[self.active]
+        let id = self.active_id();
+        self.pane_mut(id).expect("the active pane exists")
     }
 
     pub fn active_id(&self) -> PaneId {
-        self.panes[self.active].id
+        self.tabs[self.active_tab].active
     }
 
+    /// Make `id` the active pane. Refused for a pane of a tab not shown:
+    /// showing it is `App::select_tab`, which opens its panes.
     pub fn set_active(&mut self, id: PaneId) -> bool {
-        match self.panes.iter().position(|p| p.id == id) {
-            Some(i) => {
-                self.active = i;
-                true
+        let tab = &mut self.tabs[self.active_tab];
+        if tab.panes.contains(&id) {
+            if tab.active != id {
+                tab.active = id;
+                self.revision += 1;
             }
-            None => false,
+            true
+        } else {
+            false
         }
     }
 

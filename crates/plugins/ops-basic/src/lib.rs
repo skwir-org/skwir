@@ -148,7 +148,31 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
     ("f5", "refresh", None),
     // The folder or search being looked at, as in Nautilus and browsers.
     ("ctrl-d", "keep", None),
-    ("ctrl-t", "open_terminal", None),
+    // Dolphin's key for it: Ctrl+T opens a tab, as everywhere.
+    ("shift-f4", "open_terminal", None),
+    ("ctrl-t", "tab.new", None),
+    ("ctrl-w", "tab.close", None),
+    ("ctrl-shift-t", "tab.reopen", None),
+];
+
+// Keys for core commands that take arguments: moving between tabs.
+const BINDINGS_ARGS: &[(&str, &str, &str)] = &[
+    ("ctrl-tab", "tab.select", r#"{"delta":1}"#),
+    ("ctrl-shift-tab", "tab.select", r#"{"delta":-1}"#),
+    ("ctrl-pagedown", "tab.select", r#"{"delta":1}"#),
+    ("ctrl-pageup", "tab.select", r#"{"delta":-1}"#),
+    ("ctrl-shift-pagedown", "tab.move", r#"{"delta":1}"#),
+    ("ctrl-shift-pageup", "tab.move", r#"{"delta":-1}"#),
+    ("alt-1", "tab.select", r#"{"index":0}"#),
+    ("alt-2", "tab.select", r#"{"index":1}"#),
+    ("alt-3", "tab.select", r#"{"index":2}"#),
+    ("alt-4", "tab.select", r#"{"index":3}"#),
+    ("alt-5", "tab.select", r#"{"index":4}"#),
+    ("alt-6", "tab.select", r#"{"index":5}"#),
+    ("alt-7", "tab.select", r#"{"index":6}"#),
+    ("alt-8", "tab.select", r#"{"index":7}"#),
+    // The last tab, however many there are, as in browsers.
+    ("alt-9", "tab.select", r#"{"index":-1}"#),
 ];
 
 // Context menu items: (title, command, when, order). Order follows the
@@ -157,6 +181,7 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
 // draws a separator between groups. "Open" and "Open Terminal Here" are
 // contributed by the open-with plugin, which owns those commands.
 const MENU: &[(&str, &str, Option<&str>, i32, &str)] = &[
+    ("Open in New Tab", "tab.open", Some("dir"), 2, "tab-new"),
     ("Rename", "ui.rename_prompt", Some("single"), 100, "rename"),
     ("Cut", "clipboard_cut", Some("selection"), 110, "cut"),
     ("Copy", "clipboard_copy", Some("selection"), 120, "copy"),
@@ -266,6 +291,17 @@ impl Plugin for OpsBasicPlugin {
                     keys: (*keys).into(),
                     command: Invocation::new(*command),
                     when: when.map(str::to_owned),
+                },
+            );
+        }
+        for (keys, command, args) in BINDINGS_ARGS {
+            let args: serde_json::Value = serde_json::from_str(args).expect("valid arguments");
+            app.registry.keymap.add(
+                ID,
+                KeyBinding {
+                    keys: (*keys).into(),
+                    command: Invocation::with_args(*command, &args),
+                    when: None,
                 },
             );
         }

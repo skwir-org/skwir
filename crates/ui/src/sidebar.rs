@@ -74,11 +74,7 @@ pub fn drop_target<T: Clone>(order: &[T], from: usize, gap: usize) -> Option<Opt
 /// Whether two locations are the same place: a folder by its path (`~`
 /// and the exact bytes resolved), anything else as written.
 pub fn same_place(a: &Location, b: &Location) -> bool {
-    match (a.path(), b.path()) {
-        (Some(a), Some(b)) => a == b,
-        (None, None) => a == b,
-        _ => false,
-    }
+    a.same_place(b)
 }
 
 /// What activating `place` runs: its own command (mount, unlock), or
@@ -95,6 +91,19 @@ pub fn open_invocation(place: &Place) -> Invocation {
     Invocation {
         name: "navigate".into(),
         args: serde_json::json!({ "location": location }),
+    }
+}
+
+/// Opening `place` in a tab behind the one shown: a middle click on its
+/// row, or its menu.
+pub fn open_in_tab(place: &Place) -> Invocation {
+    let location = match place.location.path() {
+        Some(path) => serde_json::json!(PathArg::from(path)),
+        None => serde_json::json!(place.location.to_string()),
+    };
+    Invocation {
+        name: "tab.new".into(),
+        args: serde_json::json!({ "location": location, "show": false }),
     }
 }
 
@@ -285,6 +294,17 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
                     }
                 }),
             )
+            // The middle button opens it in a tab behind the one shown.
+            .when(place.activate.is_none(), |row| {
+                let tab = open_in_tab(&place);
+                row.on_mouse_down(
+                    MouseButton::Middle,
+                    cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.run(&tab.name, tab.args.clone(), window, cx);
+                    }),
+                )
+            })
             .child(
                 div()
                     .flex_none()

@@ -78,7 +78,9 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "shuffle",
         "reading",
         "bookmark",
-        "bookmark-filled"
+        "bookmark-filled",
+        "folder",
+        "tab-new"
     )
 }
 

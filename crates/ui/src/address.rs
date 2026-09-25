@@ -312,7 +312,7 @@ fn group_title(title: &'static str, theme: &Theme) -> gpui::Div {
 }
 
 /// The More menu. It holds what has no button in the chosen toolbar variant:
-/// always Timeline, the palette and Settings; in the narrowest variant also
+/// always New tab, Timeline, the palette and Settings; in the narrowest variant also
 /// the views, panels and folder tools that variant dropped.
 fn more_panel(
     shell: &Shell,
@@ -378,6 +378,10 @@ fn more_panel(
         panel = group(panel, "bibli");
     }
     for (button, label) in [
+        (
+            Button::new("menu-new-tab", "tab-new", "New tab", "tab.new"),
+            "New tab",
+        ),
         (
             Button::new("menu-timeline", "calendar", "Timeline", "ui.timeline")
                 .active(shell.timeline.open),
@@ -638,6 +642,7 @@ fn breadcrumbs(
     for (index, (label, target)) in crumbs.into_iter().enumerate().rev() {
         let hover = theme.hover;
         let open = target.clone();
+        let in_tab = target.clone();
         let segment = div()
             .id(("crumb", index))
             .h(px(24.))
@@ -662,6 +667,23 @@ fn breadcrumbs(
                     cx,
                 );
             }))
+            // The middle button opens the folder in a tab behind this one.
+            .on_mouse_down(
+                gpui::MouseButton::Middle,
+                cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.run(
+                        "tab.new",
+                        serde_json::json!({
+                            "location": PathArg::from(in_tab.as_path()),
+                            "show": false,
+                            "pane": pane,
+                        }),
+                        window,
+                        cx,
+                    );
+                }),
+            )
             .child(label);
         let segment = crate::dnd::droppable_dir(segment, target, cx);
         trail = trail.child(

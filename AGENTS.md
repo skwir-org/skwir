@@ -221,6 +221,20 @@ current source before assuming a planned crate, command, or API exists.
   foot, bounded by the panel's height (`Shell::dock_height_limit`), and
   until the edge is dragged the default height adds the dock's, so a pin
   does not take its room from the preview.
+- **Tabs** (ADR-018) are core data: the workspace groups its panes in tabs
+  (one pane, or two when that tab is split) and the `tab.*` commands change
+  them. A tab not shown is dormant: its panes keep history, sort and
+  selection and let go of listing, watchers and kept columns
+  (`Pane::suspend`); showing it opens them again through `App::show`, and
+  the selection returns once the listing is complete. The shell never
+  creates or drops a `PaneUi` itself: it changes the workspace and
+  `Shell::sync_tabs` follows its revision, so `Shell::panes` is always the
+  panes on screen (`is_split`, `other_pane` rely on it), hidden panes wait
+  in `Shell::hidden` with their views reset, and a pane gone is released
+  there whoever closed it. Anything a plugin keeps per pane ends with the
+  pane's `location_lifetime`, which dormancy ends too. The window's tabs
+  are remembered only with `core.startup = last` (`core.last_tabs`), and
+  only the shown tab opens at startup.
 - **A menu that depends on a toolbar variant** is built once per variant and
   chosen in the popover's deferred prepaint from `AdaptiveRow::chosen`, in the
   same frame (`PopoverAnchor::popup_for`). More holds what has no button.

@@ -61,6 +61,7 @@ pub mod shell;
 pub mod shortcuts;
 pub mod sidebar;
 pub mod status;
+pub mod tabs;
 pub mod theme;
 pub mod thumbs;
 pub mod timeline;
@@ -238,15 +239,7 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
     Ok(())
 }
 
-/// Note where the active pane is, for "open the last folder at startup".
+/// Note where the window is, for "open the folders and tabs left open".
 pub(crate) fn remember_location(app: &App) {
-    let folder = app
-        .workspace
-        .read()
-        .active()
-        .location()
-        .and_then(bibli_core::Location::path);
-    if let Some(folder) = folder {
-        bibli_core::settings::remember_location(&app.settings, &folder);
-    }
+    bibli_core::tabs::remember(app);
 }

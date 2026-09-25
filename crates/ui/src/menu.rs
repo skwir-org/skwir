@@ -196,6 +196,48 @@ impl Shell {
 
     /// A sidebar place's menu: Open, what its owner lists for it (rename
     /// or remove a bookmark, bookmark a folder), and Eject for a volume.
+    /// The menu of a tab of the strip.
+    pub fn open_tab_menu(
+        &mut self,
+        tab: bibli_core::workspace::TabId,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let item = |title: &str, command, order, icon: &str| MenuItem {
+            menu: "tab".into(),
+            title: title.into(),
+            command,
+            when: None,
+            order,
+            icon: Some(icon.into()),
+            submenu: None,
+        };
+        let tab_args = serde_json::json!({ "tab": tab });
+        let items = vec![
+            item(
+                "New Tab",
+                bibli_core::command::Invocation::new("tab.new"),
+                200,
+                "tab-new",
+            ),
+            item(
+                "Reopen Closed Tab",
+                bibli_core::command::Invocation::new("tab.reopen"),
+                210,
+                "revert",
+            ),
+            item(
+                "Close Tab",
+                bibli_core::command::Invocation::with_args("tab.close", &tab_args),
+                300,
+                "close",
+            ),
+        ];
+        self.menu = Some(MenuState::open(position, items, window, cx));
+        cx.notify();
+    }
+
     pub fn open_place_menu(
         &mut self,
         place: &bibli_core::registry::Place,
@@ -218,6 +260,16 @@ impl Shell {
             0,
             "open",
         )];
+        // A place that must be mounted or unlocked first has nothing to show
+        // in a tab yet.
+        if place.activate.is_none() {
+            items.push(item(
+                "Open in New Tab",
+                crate::sidebar::open_in_tab(place),
+                2,
+                "tab-new",
+            ));
+        }
         items.extend(place.menu.iter().cloned());
         if let Some(eject) = &place.eject {
             items.push(item("Eject", eject.clone(), 350, "eject"));

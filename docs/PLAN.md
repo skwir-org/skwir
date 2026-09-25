@@ -155,6 +155,28 @@ of about its size (half to twice) or sharing a tag, built on a worker from
 the file's own properties. A keyboard click fires only on the element its
 key went down on (vendored patch 0007): a picker closed with Enter gave the
 focus back to the chip that opened it and the key's release reopened it.
+Tabs (2026-09-26, ADR-018): a tab is an arrangement of panes, one or two
+when that tab is split, and the core workspace owns them (`Workspace::tabs`,
+`bibli_core::tabs`, the `tab.*` commands, so scripts and agents list, open,
+show, move and close them). A tab not shown is dormant: its panes keep
+history, sort and selection and let go of listing, watchers and kept
+columns; showing it lists again and gives the selection back once the
+listing is complete, scrolled to. The strip appears above the panes with
+two tabs, names each after its place or folder, takes drops like a sidebar
+row, reorders by dragging, and closes with its ×, a middle click or
+Ctrl+W, answered by a toast with Undo (Ctrl+Shift+T reopens with the
+history). Middle-click on a folder, a place or a breadcrumb, or "Open in
+New Tab", opens it behind the current tab. With `core.startup = last` the
+tabs come back at startup, only the shown one listed. The shell no longer
+makes or drops a pane's UI itself: `Shell::sync_tabs` follows the
+workspace's revision, which also gave closing a split one release path.
+Two keys moved (the user's choice): Open Terminal Here from Ctrl+T to
+Shift+F4, Tags… from Ctrl+Shift+T to Ctrl+Shift+G. Measured: ten dormant
+tabs cost no PSS beyond noise over one (ADR-018 addendum, now a budget).
+Open: `listing::pending_opens_report_errors_asynchronously_and_can_be_replaced`
+is flaky ("cancelled open must not publish late events"): it failed eight
+runs in a row at the parent commit and on this work, then passed in later
+full runs; not investigated here.
 
 ---
 

@@ -331,7 +331,8 @@ impl Plugin for TagsPlugin {
         app.registry.keymap.add(
             ID,
             KeyBinding {
-                keys: "ctrl-shift-t".into(),
+                // Ctrl+Shift+T reopens a closed tab, as in file managers.
+                keys: "ctrl-shift-g".into(),
                 command: Invocation::new("ui.tags_prompt"),
                 when: Some("pane selection".into()),
             },

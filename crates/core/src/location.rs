@@ -91,6 +91,16 @@ impl Location {
         &*self.scheme == PATH_SCHEME
     }
 
+    /// Whether `other` is the same place: a folder by its path (`~` and the
+    /// exact bytes resolved), anything else as written.
+    pub fn same_place(&self, other: &Location) -> bool {
+        match (self.path(), other.path()) {
+            (Some(a), Some(b)) => a == b,
+            (None, None) => self == other,
+            _ => false,
+        }
+    }
+
     /// The filesystem path, with `~` expanded, for `path` locations.
     pub fn path(&self) -> Option<PathBuf> {
         if !self.is_path() {

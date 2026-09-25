@@ -306,7 +306,9 @@ impl Shell {
         }
     }
 
-    /// Mouse down on row/cell `ix` of `pane` (which becomes active).
+    /// Mouse down on row/cell `ix` of `pane` (which becomes active). The
+    /// middle button opens a folder in a tab behind the one shown and
+    /// leaves the selection alone.
     pub fn on_entry_mouse_down(
         &mut self,
         pane: PaneId,
@@ -321,6 +323,10 @@ impl Shell {
         let Some(&id) = self.ui().list.sorted.get(ix) else {
             return;
         };
+        if ev.button == MouseButton::Middle {
+            self.open_in_tab(id, window, cx);
+            return;
+        }
         let selected = {
             let ws = self.app.workspace.read();
             ws.pane(self.pane).is_some_and(|p| p.selection.contains(id))
@@ -352,6 +358,31 @@ impl Shell {
             _ => {}
         }
         cx.notify();
+    }
+
+    /// Open entry `id` of the pane in a tab behind the one shown, if it is
+    /// a folder.
+    fn open_in_tab(&mut self, id: EntryId, window: &mut Window, cx: &mut Context<Self>) {
+        let folder = {
+            let ws = self.app.workspace.read();
+            ws.pane(self.pane).and_then(|p| {
+                p.listing.get(id).filter(|e| e.is_dir())?;
+                p.open.as_ref()?.path_of(id)
+            })
+        };
+        if let Some(folder) = folder {
+            let pane = self.pane;
+            self.run(
+                "tab.new",
+                serde_json::json!({
+                    "location": bibli_core::os_path::PathArg::from(folder),
+                    "show": false,
+                    "pane": pane,
+                }),
+                window,
+                cx,
+            );
+        }
     }
 
     /// The release of a plain click on a row of a multi-selection: the
@@ -569,6 +600,7 @@ pub fn entry_mouse<E: InteractiveElement>(
     };
     el.on_mouse_down(MouseButton::Left, cx.listener(press))
         .on_mouse_down(MouseButton::Right, cx.listener(press))
+        .on_mouse_down(MouseButton::Middle, cx.listener(press))
         .on_mouse_up(
             MouseButton::Left,
             cx.listener(move |this, _: &gpui::MouseUpEvent, window, cx| {

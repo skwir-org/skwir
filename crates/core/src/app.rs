@@ -114,6 +114,8 @@ pub struct App {
     proposals: parking_lot::Mutex<Vec<Plan>>,
     /// Messages from background work for the UI to show.
     notifications: parking_lot::Mutex<Vec<Notification>>,
+    /// The tabs closed last, to reopen (`tab.reopen`).
+    pub(crate) closed_tabs: parking_lot::Mutex<crate::tabs::Closed>,
     /// Self reference so background work can keep a `Weak<App>`.
     weak: std::sync::Weak<App>,
     providers: RwLock<HashMap<Arc<str>, (Arc<str>, Arc<dyn LocationProvider>)>>,
@@ -134,6 +136,7 @@ impl App {
         let app = Arc::new_cyclic(|weak| App {
             weak: weak.clone(),
             notifications: parking_lot::Mutex::new(Vec::new()),
+            closed_tabs: parking_lot::Mutex::default(),
             executor: Executor::new(scheduler.clone()),
             thumbnails: crate::thumbs::Thumbnails::with_lifetime(
                 scheduler.clone(),
@@ -161,6 +164,7 @@ impl App {
         app.register_provider("core", Arc::new(PathProvider));
         op::register_builtin(&app.ops);
         builtin::register(&app);
+        crate::tabs::register(&app);
         crate::settings::register(&app);
         crate::plugin::register(&app);
         crate::playing::register(&app);
@@ -261,7 +265,7 @@ impl App {
     /// location the pane keeps (a column of its view, the folder it just
     /// left) is adopted with its listing as it stands, kept current by its
     /// watcher, instead of listing it anew.
-    fn show(
+    pub(crate) fn show(
         &self,
         pane: PaneId,
         location: &Location,
