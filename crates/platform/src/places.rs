@@ -555,51 +555,11 @@ pub fn bookmarks_folders() -> Vec<PathBuf> {
 }
 
 /// Apply `edit` to the GTK bookmarks. Returns the edit that reverts it, or
-/// `None` when nothing changed. Writes a file: call from a worker.
-///
-/// A bookmarks file that is a link (a dotfile manager's) is updated where
-/// it points, keeping its mode; if that is read-only, as a declarative
-/// configuration is, it is refused rather than replaced by a copy that
-/// silently parts from the declaration.
+/// `None` when nothing changed. Writes a file: call from a worker. A link
+/// is followed and a read-only file refused ([`crate::file::rewrite`]).
 pub fn edit_bookmarks(edit: &BookmarkEdit) -> anyhow::Result<Option<BookmarkEdit>> {
-    use std::io::Write as _;
     let link = bookmarks_file().ok_or_else(|| anyhow::anyhow!("no configuration directory"))?;
-    let file = match std::fs::canonicalize(&link) {
-        Ok(target) => target,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => link.clone(),
-        Err(error) => return Err(error.into()),
-    };
-    let text = match std::fs::read_to_string(&file) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(error.into()),
-    };
-    let Some((updated, inverse)) = edit_text(&text, edit) else {
-        return Ok(None);
-    };
-    let parent = file
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("the bookmarks file has no folder"))?;
-    std::fs::create_dir_all(parent)?;
-    let read_only = |error: &std::io::Error| {
-        matches!(
-            error.kind(),
-            std::io::ErrorKind::ReadOnlyFilesystem | std::io::ErrorKind::PermissionDenied
-        )
-    };
-    let mut staged = match tempfile::NamedTempFile::new_in(parent) {
-        Ok(staged) => staged,
-        Err(error) if read_only(&error) => {
-            anyhow::bail!("the bookmarks file is read-only; change it where it is managed")
-        }
-        Err(error) => return Err(error.into()),
-    };
-    if let Ok(metadata) = std::fs::metadata(&file) {
-        std::fs::set_permissions(staged.path(), metadata.permissions())?;
-    }
-    staged.write_all(updated.as_bytes())?;
-    staged.persist(&file)?;
-    Ok(Some(inverse))
+    crate::file::rewrite(&link, "the bookmarks file", |text| edit_text(text, edit))
 }
 
 /// Mounted volumes the user cares about.

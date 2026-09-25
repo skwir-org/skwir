@@ -15,18 +15,53 @@ use bibli_core::app::{App, NotifyLevel, PaneArg};
 use bibli_core::command::{Invocation, Outcome};
 use bibli_core::entry::{EntryId, EntryKind};
 use bibli_core::location::Location;
+use bibli_core::os_path::PathArg;
 use bibli_core::plugin::Plugin;
 use bibli_core::registry::{KeyBinding, MenuItem};
 use bibli_core::scheduler::Priority;
 use bibli_core::workspace::PaneId;
-use bibli_platform::apps::{Application, Catalog, Stamp};
+use bibli_platform::apps::{Application, AssociationEdit, Catalog, Stamp};
 use bibli_platform::mime::{self, Mime};
 use parking_lot::Mutex;
 
 const ID: &str = "open-with";
 
-/// The catalog of applications last read, with the stamp it was read at.
-type Cached = Arc<Mutex<Option<(Stamp, Arc<Catalog>)>>>;
+/// Where the applications are read from, and the catalog last read with
+/// the stamp it was read at.
+#[derive(Debug, Default)]
+struct CatalogCache {
+    /// Explicit applications directories and lists, most important first,
+    /// the lists also where defaults are written (tests); the desktop's
+    /// when `None`.
+    sources: Option<(Vec<PathBuf>, Vec<PathBuf>)>,
+    last: Mutex<Option<(Stamp, Arc<Catalog>)>>,
+}
+
+type Cached = Arc<CatalogCache>;
+
+impl CatalogCache {
+    fn stamp(&self) -> Stamp {
+        match &self.sources {
+            Some((dirs, lists)) => Stamp::of(dirs, lists),
+            None => Stamp::current(),
+        }
+    }
+
+    fn load(&self) -> Catalog {
+        match &self.sources {
+            Some((dirs, lists)) => Catalog::from_paths(dirs, lists),
+            None => Catalog::load(),
+        }
+    }
+
+    /// The lists a default may be written to.
+    fn user_lists(&self) -> Vec<PathBuf> {
+        match &self.sources {
+            Some((_, lists)) => lists.clone(),
+            None => bibli_platform::apps::user_lists(),
+        }
+    }
+}
 
 /// The open-with plugin.
 #[derive(Debug, Default)]
@@ -141,14 +176,14 @@ fn open_terminal(pane: Option<PaneId>, app: &App) -> anyhow::Result<Outcome> {
 /// applications directories and lists, and reads them when they changed:
 /// call from a worker.
 fn catalog(cache: &Cached) -> Arc<Catalog> {
-    let stamp = Stamp::current();
-    if let Some((at, catalog)) = &*cache.lock()
+    let stamp = cache.stamp();
+    if let Some((at, catalog)) = &*cache.last.lock()
         && *at == stamp
     {
         return Arc::clone(catalog);
     }
-    let catalog = Arc::new(Catalog::load());
-    *cache.lock() = Some((stamp, Arc::clone(&catalog)));
+    let catalog = Arc::new(cache.load());
+    *cache.last.lock() = Some((stamp, Arc::clone(&catalog)));
     catalog
 }
 
@@ -169,8 +204,36 @@ struct OpenWithArgs {
     /// The application's desktop file ID (`org.gnome.Loupe.desktop`), as
     /// `open_with.choices` lists them.
     app: String,
+    /// Also make it the default for the entries' type (they must share one).
+    #[serde(default)]
+    set_default: bool,
     #[serde(flatten)]
     target: TargetArgs,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct SetDefaultArgs {
+    /// The type, as `image/png`, or `inode/directory` for folders.
+    mime: String,
+    /// The application's desktop file ID.
+    app: String,
+}
+
+/// An [`AssociationEdit`] as a command argument: the lines one type has in
+/// one `mimeapps.list`, each `None` for no line.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct EditArgs {
+    file: PathArg,
+    mime: String,
+    #[serde(default)]
+    default: Option<String>,
+    #[serde(default)]
+    added: Option<String>,
+    #[serde(default)]
+    removed: Option<String>,
+    /// This takes back an earlier edit: the notification offers Redo.
+    #[serde(default)]
+    undo: bool,
 }
 
 /// What is opened: a path, and whether it is known to be a folder (a link
@@ -367,37 +430,152 @@ fn choices(args: TargetArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcom
             }
         })
         .collect();
-    Ok(Outcome::Value(serde_json::json!({
+    let mut answer = serde_json::json!({
         "title": title,
         "empty": "No applications found",
         "choices": choices,
-    })))
+    });
+    // One type: the chosen application can become its default.
+    if let [only] = types.as_slice() {
+        answer["option"] = serde_json::json!({
+            "title": format!("Always use for {}", files_of(only.as_str())),
+            "field": "set_default",
+        });
+    }
+    Ok(Outcome::Value(answer))
 }
 
 fn open_with(args: OpenWithArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
     let (_, _, targets) = targets(args.target, app)?;
-    let paths: Vec<PathBuf> = targets.into_iter().map(|t| t.path).collect();
     let id = args.app;
-    // Reading the catalog and starting the program touch the disk.
+    let set_default = args.set_default;
+    // Reading the catalog, the types and the lists, and starting the
+    // program, touch the disk.
     let cache = Arc::clone(cache);
+    spawn(app, "open-with.launch", move |app| {
+        if set_default {
+            let mut types = targets.iter().map(Target::mime);
+            let first = types.next().expect("targets are never empty");
+            if types.any(|m| m != first) {
+                app.notify(
+                    NotifyLevel::Error,
+                    "A default application is chosen for one type of file at a time",
+                );
+            } else {
+                make_default(app, &cache, first.as_str(), &id);
+            }
+        }
+        let paths: Vec<PathBuf> = targets.into_iter().map(|t| t.path).collect();
+        let catalog = catalog(&cache);
+        let result = match catalog.get(&id) {
+            Some(application) => application.launch(&paths),
+            None => Err(anyhow::anyhow!("no application “{id}” is installed")),
+        };
+        if let Err(e) = result {
+            app.notify(NotifyLevel::Error, format!("{e:#}"));
+        }
+    });
+    Ok(Outcome::Done)
+}
+
+/// Run `work` on a worker for as long as the app lives.
+fn spawn(app: &App, label: &'static str, work: impl FnOnce(&App) + Send + 'static) {
     let weak = app.weak();
     app.scheduler.spawn(
         Priority::Visible,
-        "open-with.launch",
+        label,
         app.lifetime().child(),
         move || {
-            let Some(app) = weak.upgrade() else { return };
-            let catalog = catalog(&cache);
-            let result = match catalog.get(&id) {
-                Some(application) => application.launch(&paths),
-                None => Err(anyhow::anyhow!("no application “{id}” is installed")),
-            };
-            if let Err(e) = result {
-                app.notify(NotifyLevel::Error, format!("{e:#}"));
+            if let Some(app) = weak.upgrade() {
+                work(&app);
             }
         },
     );
-    Ok(Outcome::Done)
+}
+
+/// How a sentence names the files of `mime`: `folders`, `PNG image files`,
+/// `plain text document files`.
+fn files_of(mime: &str) -> String {
+    if mime == "inode/directory" {
+        return "folders".to_owned();
+    }
+    let Some(description) = Mime(mime.to_owned()).description() else {
+        return format!("{mime} files");
+    };
+    // Lower the first letter of a word, not of an acronym ("PNG").
+    let mut chars = description.chars();
+    let lowered = match (chars.next(), chars.next()) {
+        (Some(first), Some(second)) if !second.is_uppercase() => first
+            .to_lowercase()
+            .chain(description.chars().skip(1))
+            .collect(),
+        _ => description,
+    };
+    format!("{lowered} files")
+}
+
+/// Make `id` the default for `mime` in the user's lists, and say so with
+/// Undo. On a worker.
+fn make_default(app: &App, cache: &Cached, mime: &str, id: &str) {
+    if catalog(cache).get(id).is_none() {
+        app.notify(
+            NotifyLevel::Error,
+            format!("no application “{id}” is installed"),
+        );
+        return;
+    }
+    match AssociationEdit::make_default_in(&cache.user_lists(), mime, id) {
+        Ok(edit) => apply_edit(app, cache, &edit, false),
+        Err(e) => app.notify(
+            NotifyLevel::Error,
+            format!("The default application was not changed: {e:#}"),
+        ),
+    }
+}
+
+/// Write `edit` and say what opens its type now, with the way back: Undo,
+/// or Redo when this was an undo. On a worker.
+fn apply_edit(app: &App, cache: &Cached, edit: &AssociationEdit, undo: bool) {
+    let files = files_of(&edit.mime);
+    match bibli_platform::apps::edit_associations(edit) {
+        Ok(changed) => {
+            let catalog = catalog(cache);
+            let now = catalog.default_for(&edit.mime);
+            let text = match (now, &changed) {
+                (Some(application), Some(_)) => format!("{} now opens {files}", application.name),
+                (Some(application), None) => format!("{} already opens {files}", application.name),
+                (None, _) => format!("No application is the default for {files}"),
+            };
+            match changed {
+                Some(inverse) => app.notify_with_action(
+                    NotifyLevel::Info,
+                    text,
+                    if undo { "Redo" } else { "Undo" },
+                    edit_invocation(&inverse, !undo),
+                ),
+                None => app.notify(NotifyLevel::Info, text),
+            }
+        }
+        Err(e) => app.notify(
+            NotifyLevel::Error,
+            format!("The default application was not changed: {e:#}"),
+        ),
+    }
+}
+
+/// The command that writes `edit`, from a notification's button.
+fn edit_invocation(edit: &AssociationEdit, undo: bool) -> Invocation {
+    Invocation::with_args(
+        "open_with.edit_associations",
+        &serde_json::json!({
+            "file": PathArg(edit.file.clone()),
+            "mime": edit.mime,
+            "default": edit.default,
+            "added": edit.added,
+            "removed": edit.removed,
+            "undo": undo,
+        }),
+    )
 }
 
 /// `ui.choose` over `open_with.choices` with these arguments.
@@ -478,6 +656,47 @@ impl Plugin for OpenWithPlugin {
             "Open the selected entries (or the pane's folder with `here`) with the application whose desktop file ID is `app`",
             move |a, app| open_with(a, &cache, app),
         );
+        let cache = Arc::clone(&self.catalog);
+        app.commands.register::<SetDefaultArgs, _>(
+            ID,
+            "open_with.set_default",
+            "Set the default application for a type",
+            "Make the application whose desktop file ID is `app` the default for the MIME type `mime`, in the user's mimeapps.list; the notification offers Undo",
+            move |a, app| {
+                let cache = Arc::clone(&cache);
+                spawn(app, "open-with.default", move |app| {
+                    make_default(app, &cache, &a.mime, &a.app);
+                });
+                Ok(Outcome::Done)
+            },
+        );
+        let cache = Arc::clone(&self.catalog);
+        app.commands.register::<EditArgs, _>(
+            ID,
+            "open_with.edit_associations",
+            "Rewrite a type's default application lines",
+            "Set the lines a MIME type has in one mimeapps.list (default, added and removed associations); what Undo and Redo of a default run",
+            move |a, app| {
+                // Only the user's own lists: the arguments name a file.
+                anyhow::ensure!(
+                    cache.user_lists().contains(&a.file.0),
+                    "{} is not one of your lists of default applications",
+                    a.file.display()
+                );
+                let edit = AssociationEdit {
+                    file: a.file.into_inner(),
+                    mime: a.mime,
+                    default: a.default,
+                    added: a.added,
+                    removed: a.removed,
+                };
+                let cache = Arc::clone(&cache);
+                spawn(app, "open-with.default", move |app| {
+                    apply_edit(app, &cache, &edit, a.undo);
+                });
+                Ok(Outcome::Done)
+            },
+        );
         app.registry.menus.add(
             ID,
             MenuItem {
@@ -513,7 +732,7 @@ impl Plugin for OpenWithPlugin {
     }
 
     fn on_disable(&self, _app: &App) {
-        self.catalog.lock().take();
+        self.catalog.last.lock().take();
     }
 }
 
@@ -684,8 +903,15 @@ mod tests {
         Catalog::from_paths(&[apps], &[list])
     }
 
-    fn cached(catalog: Catalog) -> Cached {
-        Arc::new(Mutex::new(Some((Stamp::current(), Arc::new(catalog)))))
+    /// The catalog [`fake_catalog`] wrote in `dir`, read from there.
+    fn cached(dir: &std::path::Path) -> Cached {
+        Arc::new(CatalogCache {
+            sources: Some((
+                vec![dir.join("applications")],
+                vec![dir.join("mimeapps.list")],
+            )),
+            last: Mutex::default(),
+        })
     }
 
     fn ranked(catalog: &Catalog, types: &[&str]) -> Vec<(String, Option<Fit>, bool)> {
@@ -745,8 +971,12 @@ mod tests {
         std::fs::create_dir_all(root.join("sub")).unwrap();
         let photo = "it's a “photo” .png";
         std::fs::write(root.join(photo), b"").unwrap();
+        std::fs::write(root.join("notes.txt"), b"text").unwrap();
         let plugin = OpenWithPlugin {
-            catalog: cached(fake_catalog(tmp.path(), std::path::Path::new("record"))),
+            catalog: {
+                fake_catalog(tmp.path(), std::path::Path::new("record"));
+                cached(tmp.path())
+            },
         };
         let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
         app.plugins.add(Arc::new(plugin), &app);
@@ -777,6 +1007,22 @@ mod tests {
         assert_eq!(args["app"], "viewer.desktop");
         assert_eq!(args["pane"], serde_json::to_value(pane).unwrap());
         assert_eq!(args["ids"], serde_json::json!([id]));
+        assert_eq!(
+            answer["option"],
+            serde_json::json!({ "title": "Always use for PNG image files", "field": "set_default" }),
+            "one type: the choice can become its default"
+        );
+
+        select(&app, pane, &[photo, "notes.txt"]);
+        let Outcome::Value(answer) = app.dispatch(&Invocation::new("open_with.choices")).unwrap()
+        else {
+            panic!("choices are a value")
+        };
+        assert_eq!(answer["title"], "Open 2 items with");
+        assert!(
+            answer.get("option").is_none(),
+            "no one default for two types"
+        );
 
         select(&app, pane, &[]);
         let Outcome::Value(answer) = app
@@ -822,7 +1068,10 @@ mod tests {
         std::fs::set_permissions(&record, std::os::unix::fs::PermissionsExt::from_mode(0o755))
             .unwrap();
         let plugin = OpenWithPlugin {
-            catalog: cached(fake_catalog(tmp.path(), &record)),
+            catalog: {
+                fake_catalog(tmp.path(), &record);
+                cached(tmp.path())
+            },
         };
         let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
         app.plugins.add(Arc::new(plugin), &app);
@@ -832,7 +1081,7 @@ mod tests {
         select(&app, pane, &names);
         app.dispatch(&Invocation::with_args(
             "open_with",
-            &serde_json::json!({ "app": "viewer.desktop" }),
+            &serde_json::json!({ "app": "viewer.desktop", "set_default": true }),
         ))
         .unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
@@ -851,5 +1100,106 @@ mod tests {
             .map(|n| root.join(n).display().to_string())
             .collect();
         assert_eq!(got, want, "one run with every file, as %F says");
+        assert_eq!(
+            next_notification(&app).text,
+            "Viewer now opens PNG image files",
+            "and it is their default from now on"
+        );
+    }
+
+    /// The next notification, waiting for a worker to send it.
+    fn next_notification(app: &App) -> bibli_core::app::Notification {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(n) = app.take_notifications().into_iter().next() {
+                return n;
+            }
+            assert!(std::time::Instant::now() < deadline, "nothing was said");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn a_chosen_default_is_written_said_and_undone_then_redone() {
+        let tmp = tempfile::tempdir().unwrap();
+        fake_catalog(tmp.path(), std::path::Path::new("record"));
+        let list = tmp.path().join("mimeapps.list");
+        std::fs::write(
+            &list,
+            "# kept\n[Default Applications]\nimage/png=viewer.desktop\ntext/plain=editor.desktop\n",
+        )
+        .unwrap();
+        let before = std::fs::read_to_string(&list).unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        let plugin = OpenWithPlugin {
+            catalog: cached(tmp.path()),
+        };
+        app.plugins.add(Arc::new(plugin), &app);
+        app.dispatch(&Invocation::with_args(
+            "open_with.set_default",
+            &serde_json::json!({ "mime": "image/png", "app": "editor.desktop" }),
+        ))
+        .unwrap();
+        let said = next_notification(&app);
+        assert_eq!(said.text, "Editor now opens PNG image files");
+        let undo = said.action.expect("Undo");
+        assert_eq!(undo.label, "Undo");
+        let written = std::fs::read_to_string(&list).unwrap();
+        assert!(written.starts_with(
+            "# kept\n[Default Applications]\nimage/png=editor.desktop;\ntext/plain=editor.desktop\n"
+        ));
+        assert!(written.contains("[Added Associations]\nimage/png=editor.desktop;\n"));
+
+        app.dispatch(&undo.command).unwrap();
+        let said = next_notification(&app);
+        assert_eq!(said.text, "Viewer now opens PNG image files");
+        let redo = said.action.expect("Redo");
+        assert_eq!(redo.label, "Redo");
+        assert_eq!(
+            std::fs::read_to_string(&list).unwrap(),
+            before.clone() + "\n[Added Associations]\n",
+            "the lines as they were; an emptied group stays"
+        );
+
+        app.dispatch(&redo.command).unwrap();
+        let said = next_notification(&app);
+        assert_eq!(said.text, "Editor now opens PNG image files");
+        assert_eq!(said.action.expect("Undo again").label, "Undo");
+    }
+
+    #[test]
+    fn only_the_users_lists_are_rewritten() {
+        let tmp = tempfile::tempdir().unwrap();
+        fake_catalog(tmp.path(), std::path::Path::new("record"));
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        let plugin = OpenWithPlugin {
+            catalog: cached(tmp.path()),
+        };
+        app.plugins.add(Arc::new(plugin), &app);
+        let elsewhere = tmp.path().join("notes");
+        std::fs::write(&elsewhere, "mine\n").unwrap();
+        assert!(
+            app.dispatch(&Invocation::with_args(
+                "open_with.edit_associations",
+                &serde_json::json!({
+                    "file": PathArg(elsewhere.clone()),
+                    "mime": "image/png",
+                    "default": "viewer.desktop;",
+                }),
+            ))
+            .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(&elsewhere).unwrap(), "mine\n");
+    }
+
+    #[test]
+    fn a_type_is_named_as_a_sentence_names_it() {
+        assert_eq!(files_of("inode/directory"), "folders");
+        assert_eq!(files_of("image/png"), "PNG image files");
+        assert_eq!(files_of("text/plain"), "plain text document files");
+        assert_eq!(
+            files_of("application/x-no-such-type"),
+            "application/x-no-such-type files"
+        );
     }
 }

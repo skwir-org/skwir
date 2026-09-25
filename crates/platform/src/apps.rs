@@ -73,11 +73,16 @@ impl Stamp {
     /// Stats the directories and lists: call from a worker.
     pub fn current() -> Self {
         let paths = Sources::from_env();
+        Self::of(&paths.app_dirs, &paths.lists)
+    }
+
+    /// The stamp of explicit directories and lists, as
+    /// [`Catalog::from_paths`] reads them.
+    pub fn of(app_dirs: &[PathBuf], lists: &[PathBuf]) -> Self {
         Stamp(
-            paths
-                .app_dirs
+            app_dirs
                 .iter()
-                .chain(&paths.lists)
+                .chain(lists)
                 .map(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
                 .collect(),
         )
@@ -88,6 +93,9 @@ impl Stamp {
 struct Sources {
     app_dirs: Vec<PathBuf>,
     lists: Vec<PathBuf>,
+    /// The lists in `$XDG_CONFIG_HOME`, the user's own: where a default the
+    /// user chooses is written.
+    user_lists: Vec<PathBuf>,
 }
 
 impl Sources {
@@ -107,6 +115,15 @@ impl Sources {
             .chain(data_dirs)
             .map(|d| d.join("applications"))
             .collect();
+        let user_lists: Vec<PathBuf> = config_home
+            .iter()
+            .flat_map(|dir| {
+                current_desktops()
+                    .into_iter()
+                    .map(|d| dir.join(format!("{}-mimeapps.list", d.to_lowercase())))
+                    .chain([dir.join("mimeapps.list")])
+            })
+            .collect();
         let config: Vec<PathBuf> = config_home.into_iter().chain(config_dirs).collect();
         let mut app_dirs = data.clone();
         dedup(&mut app_dirs);
@@ -119,7 +136,11 @@ impl Sources {
             lists.push(dir.join("mimeapps.list"));
         }
         dedup(&mut lists);
-        Sources { app_dirs, lists }
+        Sources {
+            app_dirs,
+            lists,
+            user_lists,
+        }
     }
 }
 
@@ -679,6 +700,205 @@ pub fn type_of(path: &Path, is_dir: bool) -> Mime {
         .unwrap_or_else(|| Mime("application/octet-stream".into()))
 }
 
+// ------------------------------------------------------ choosing a default
+
+/// What one type's lines say in one `mimeapps.list`, as data: what a
+/// command writes, and what [`edit_associations`] hands back to take it
+/// back. Each is the value after `=` (`org.gnome.Loupe.desktop;`), `None`
+/// for no line.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssociationEdit {
+    pub file: PathBuf,
+    pub mime: String,
+    /// `[Default Applications]`.
+    pub default: Option<String>,
+    /// `[Added Associations]`.
+    pub added: Option<String>,
+    /// `[Removed Associations]`.
+    pub removed: Option<String>,
+}
+
+/// The lists in `$XDG_CONFIG_HOME`, the only ones a default is written to:
+/// the desktop's own first, then `mimeapps.list`.
+pub fn user_lists() -> Vec<PathBuf> {
+    Sources::from_env().user_lists
+}
+
+const DEFAULTS: &str = "Default Applications";
+const ADDED: &str = "Added Associations";
+const REMOVED: &str = "Removed Associations";
+
+impl AssociationEdit {
+    /// The edit that makes `app` the default for `mime` in the user's
+    /// lists: in the one of `$XDG_CONFIG_HOME` that already names a default
+    /// for it (a desktop's own list is read first and would win), else in
+    /// `mimeapps.list`. As the desktop does, the application is also added
+    /// to the type's associations and taken out of its removals, so it is
+    /// recommended for the type from then on. Reads the lists: call from a
+    /// worker.
+    ///
+    /// # Errors
+    /// When there is no configuration directory, or a list cannot be read.
+    pub fn make_default(mime: &str, app: &str) -> anyhow::Result<Self> {
+        Self::make_default_in(&user_lists(), mime, app)
+    }
+
+    /// [`AssociationEdit::make_default`] among explicit `lists`, most
+    /// important first.
+    ///
+    /// # Errors
+    /// When there is no `mimeapps.list` among them, or one cannot be read.
+    pub fn make_default_in(lists: &[PathBuf], mime: &str, app: &str) -> anyhow::Result<Self> {
+        let mut texts = Vec::new();
+        for list in lists {
+            let text = match std::fs::read_to_string(list) {
+                Ok(text) => text,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+                Err(e) => return Err(anyhow::anyhow!("{}: {e}", list.display())),
+            };
+            texts.push(text);
+        }
+        let index = texts
+            .iter()
+            .position(|text| line(text, DEFAULTS, mime).is_some())
+            .or_else(|| {
+                lists
+                    .iter()
+                    .position(|l| l.file_name().is_some_and(|n| n == "mimeapps.list"))
+            })
+            .ok_or_else(|| anyhow::anyhow!("no configuration directory"))?;
+        Ok(Self::making_default(
+            lists[index].clone(),
+            &texts[index],
+            mime,
+            app,
+        ))
+    }
+
+    /// [`AssociationEdit::make_default`] in `file`, whose text is `text`.
+    fn making_default(file: PathBuf, text: &str, mime: &str, app: &str) -> Self {
+        let ids = |value: Option<String>| -> Vec<String> {
+            value.as_deref().map(list).unwrap_or_default()
+        };
+        let joined = |ids: Vec<String>| {
+            (!ids.is_empty()).then(|| {
+                ids.iter()
+                    .flat_map(|id| [id.as_str(), ";"])
+                    .collect::<String>()
+            })
+        };
+        let mut added = ids(line(text, ADDED, mime));
+        added.retain(|id| id != app);
+        added.insert(0, app.to_owned());
+        let mut removed = ids(line(text, REMOVED, mime));
+        removed.retain(|id| id != app);
+        AssociationEdit {
+            file,
+            mime: mime.to_owned(),
+            default: Some(format!("{app};")),
+            added: joined(added),
+            removed: joined(removed),
+        }
+    }
+}
+
+/// The value of `key` in `group`, the first if written twice.
+fn line(text: &str, group: &str, key: &str) -> Option<String> {
+    key_file(text)
+        .find(|&(g, k, _)| g == group && k == key)
+        .map(|(_, _, v)| v.trim_end().to_owned())
+}
+
+/// Set `key` in `group` to `value`, or remove it for `None`. Other lines,
+/// comments and blank lines stay as written; a missing group is added at
+/// the end.
+fn set_line(lines: &mut Vec<String>, group: &str, key: &str, value: Option<&str>) {
+    let header = format!("[{group}]");
+    let is_header = |l: &str| l.trim_start().starts_with('[');
+    let Some(start) = lines.iter().position(|l| l.trim() == header) else {
+        if let Some(value) = value {
+            if lines.last().is_some_and(|l| !l.trim().is_empty()) {
+                lines.push(String::new());
+            }
+            lines.push(header);
+            lines.push(format!("{key}={value}"));
+        }
+        return;
+    };
+    let end = lines[start + 1..]
+        .iter()
+        .position(|l| is_header(l))
+        .map_or(lines.len(), |i| start + 1 + i);
+    let existing = (start + 1..end).find(|&i| {
+        let l = lines[i].trim_start();
+        !l.starts_with('#') && l.split_once('=').is_some_and(|(k, _)| k.trim_end() == key)
+    });
+    match (existing, value) {
+        (Some(i), Some(value)) => lines[i] = format!("{key}={value}"),
+        (Some(i), None) => {
+            lines.remove(i);
+        }
+        (None, Some(value)) => {
+            // After the group's last line, before the blank lines that
+            // separate it from the next.
+            let at = (start + 1..end)
+                .rev()
+                .find(|&i| !lines[i].trim().is_empty())
+                .map_or(start + 1, |i| i + 1);
+            lines.insert(at, format!("{key}={value}"));
+        }
+        (None, None) => {}
+    }
+}
+
+/// Apply `edit` to the text of a `mimeapps.list`: the new text and the edit
+/// that reverts it, or `None` when the lines already say that.
+fn edit_list_text(text: &str, edit: &AssociationEdit) -> Option<(String, AssociationEdit)> {
+    let groups = [
+        (DEFAULTS, &edit.default),
+        (ADDED, &edit.added),
+        (REMOVED, &edit.removed),
+    ];
+    let before: Vec<Option<String>> = groups
+        .iter()
+        .map(|(group, _)| line(text, group, &edit.mime))
+        .collect();
+    if groups
+        .iter()
+        .zip(&before)
+        .all(|((_, want), have)| *want == have)
+    {
+        return None;
+    }
+    let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    for (group, value) in groups {
+        set_line(&mut lines, group, &edit.mime, value.as_deref());
+    }
+    let mut updated = lines.join("\n");
+    updated.push('\n');
+    let mut before = before.into_iter();
+    let inverse = AssociationEdit {
+        file: edit.file.clone(),
+        mime: edit.mime.clone(),
+        default: before.next().flatten(),
+        added: before.next().flatten(),
+        removed: before.next().flatten(),
+    };
+    Some((updated, inverse))
+}
+
+/// Write `edit` into its list. Returns the edit that reverts it, or `None`
+/// when the list already said that. A link is followed and a read-only list
+/// refused ([`crate::file::rewrite`]). Writes a file: call from a worker.
+///
+/// # Errors
+/// When the list cannot be read or written.
+pub fn edit_associations(edit: &AssociationEdit) -> anyhow::Result<Option<AssociationEdit>> {
+    crate::file::rewrite(&edit.file, "the list of default applications", |text| {
+        edit_list_text(text, edit)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -862,5 +1082,86 @@ mod tests {
         );
         let lineage = [Mime("text/x-csrc".into()), Mime("text/plain".into())];
         assert!(catalog.default_for_lineage(&lineage).is_none());
+    }
+
+    #[test]
+    fn a_default_is_written_among_the_lines_others_wrote_and_undone_exactly() {
+        let text = "# managed by hand\n[Default Applications]\ntext/plain=editor.desktop\nimage/png=old.desktop;\n\n[Added Associations]\nimage/png=other.desktop;viewer.desktop;\n\n[Removed Associations]\nimage/png=viewer.desktop;gone.desktop;\n";
+        let edit =
+            AssociationEdit::making_default("/list".into(), text, "image/png", "viewer.desktop");
+        assert_eq!(edit.default.as_deref(), Some("viewer.desktop;"));
+        assert_eq!(
+            edit.added.as_deref(),
+            Some("viewer.desktop;other.desktop;"),
+            "added first, once"
+        );
+        assert_eq!(
+            edit.removed.as_deref(),
+            Some("gone.desktop;"),
+            "no longer removed"
+        );
+        let (updated, inverse) = edit_list_text(text, &edit).unwrap();
+        assert_eq!(
+            updated,
+            "# managed by hand\n[Default Applications]\ntext/plain=editor.desktop\nimage/png=viewer.desktop;\n\n[Added Associations]\nimage/png=viewer.desktop;other.desktop;\n\n[Removed Associations]\nimage/png=gone.desktop;\n"
+        );
+        assert!(
+            edit_list_text(&updated, &edit).is_none(),
+            "applying again changes nothing"
+        );
+        let (restored, redo) = edit_list_text(&updated, &inverse).unwrap();
+        assert_eq!(restored, text);
+        assert_eq!(redo, edit);
+    }
+
+    #[test]
+    fn a_first_default_creates_its_groups_and_its_undo_removes_the_lines() {
+        let text = "[Added Associations]\ntext/plain=editor.desktop;\n";
+        let edit = AssociationEdit::making_default(
+            "/list".into(),
+            text,
+            "inode/directory",
+            "files.desktop",
+        );
+        let (updated, inverse) = edit_list_text(text, &edit).unwrap();
+        assert_eq!(
+            updated,
+            "[Added Associations]\ntext/plain=editor.desktop;\ninode/directory=files.desktop;\n\n[Default Applications]\ninode/directory=files.desktop;\n"
+        );
+        assert_eq!(inverse.default, None);
+        let (restored, _) = edit_list_text(&updated, &inverse).unwrap();
+        assert_eq!(
+            restored,
+            "[Added Associations]\ntext/plain=editor.desktop;\n\n[Default Applications]\n",
+            "the lines go; an empty group is harmless"
+        );
+        let (empty, _) = edit_list_text("", &edit).unwrap();
+        assert_eq!(
+            empty,
+            "[Default Applications]\ninode/directory=files.desktop;\n\n[Added Associations]\ninode/directory=files.desktop;\n"
+        );
+    }
+
+    #[test]
+    fn a_default_written_to_a_file_is_what_the_catalog_reads() {
+        let tmp = tempfile::tempdir().unwrap();
+        let apps = tmp.path().join("applications");
+        write(
+            &apps,
+            "viewer.desktop",
+            "[Desktop Entry]\nType=Application\nName=Viewer\nExec=viewer %f\n",
+        );
+        let list = tmp.path().join("config/mimeapps.list");
+        let edit = AssociationEdit::making_default(list.clone(), "", "image/png", "viewer.desktop");
+        let inverse = edit_associations(&edit).unwrap().unwrap();
+        let catalog = Catalog::from_paths(std::slice::from_ref(&apps), std::slice::from_ref(&list));
+        assert_eq!(
+            catalog.default_for("image/png").unwrap().id,
+            "viewer.desktop"
+        );
+        assert_eq!(catalog.for_type("image/png")[0].id, "viewer.desktop");
+        edit_associations(&inverse).unwrap().unwrap();
+        let catalog = Catalog::from_paths(&[apps], &[list]);
+        assert!(catalog.default_for("image/png").is_none());
     }
 }

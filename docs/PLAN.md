@@ -74,7 +74,13 @@ parent type (plain text for a C source), then every other application, read
 on a worker and read again when an install or a changed default moves the
 stamp. The list is the shell's `ui.choose`, a filterable picker a plugin
 fills with choices or with a command that lists them, as `ui.ask` asks for a
-line of text. Setting the default application is not done yet.
+line of text. The picker's switch, "Always use for PNG image files" (Alt+A,
+offered when the selection is one type), also makes the chosen application
+the type's default: `bibli_platform::apps::AssociationEdit` rewrites the
+user's `mimeapps.list` (the one that already decides, a desktop's own list
+first), keeping the lines others wrote, and returns the edit that reverts it,
+which the toast offers as Undo, then Redo, as bookmark edits do; both files
+go through `file::rewrite`, which follows links and refuses a read-only one.
 
 ---
 

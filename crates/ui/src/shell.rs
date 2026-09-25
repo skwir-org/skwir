@@ -1010,6 +1010,7 @@ impl Shell {
             "choose" => self.open_choose(args, window, cx),
             "choose_up" => self.choose_move(-1, cx),
             "choose_down" => self.choose_move(1, cx),
+            "choose_option" => self.choose_toggle_option(window, cx),
             "unlock_prompt" => {
                 if let Some(device) = arg("device") {
                     let title = arg("title").unwrap_or_else(|| "this volume".into());

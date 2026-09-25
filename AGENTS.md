@@ -137,7 +137,10 @@ current source before assuming a planned crate, command, or API exists.
   edits appear. A plugin that needs a line of text from the user dispatches
   `ui.ask` with the command to complete, not a prompt kind of its own;
   one that needs a choice dispatches `ui.choose` with its choices or the
-  command that lists them on a worker (`choose.rs`), not a picker of its own.
+  command that lists them on a worker (`choose.rs`), not a picker of its own
+  (an `option` switch adds a flag to the chosen command: "Always use for…").
+  Files the desktop shares (bookmarks, `mimeapps.list`) are rewritten only
+  through `bibli_platform::file::rewrite`, by an edit that returns its inverse.
 - **Learning the keys.** F1 (`shortcuts.rs`) lists the bindings that apply
   to the focused element, read from its key contexts, so a new context needs
   only a name in `keymap::context_label`. A command run three times with the

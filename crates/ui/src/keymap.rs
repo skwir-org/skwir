@@ -123,6 +123,7 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("down", "ui.jump_down", Some("jump")),
     ("up", "ui.choose_up", Some("choose")),
     ("down", "ui.choose_down", Some("choose")),
+    ("alt-a", "ui.choose_option", Some("choose")),
     ("tab", "ui.rename_bulk_next", Some("bulk")),
     ("shift-tab", "ui.rename_bulk_prev", Some("bulk")),
     ("ctrl-k", "ui.rename_bulk_case", Some("bulk")),

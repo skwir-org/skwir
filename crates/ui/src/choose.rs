@@ -3,9 +3,12 @@
 //! this with its choices or with the command that lists them, as `ui.ask`
 //! asks for a line of text: it needs no picker of its own.
 //!
-//! `ui.choose { title?, placeholder?, choices? | source? }`. `source` is an
-//! invocation run on a worker (listing choices can read the disk); it
-//! answers `{ title?, empty?, choices }`, its title replacing the one given.
+//! `ui.choose { title?, placeholder?, option?, choices? | source? }`.
+//! `source` is an invocation run on a worker (listing choices can read the
+//! disk); it answers `{ title?, empty?, option?, choices }`, its title
+//! replacing the one given. `option` is `{ title, field }`: a switch under
+//! the list (Alt+A) that, when on, runs the chosen command with `field` set
+//! to `true` ("Always use for PNG image files").
 //! A choice is `{ title, detail?, icon?, section?, command }`: `icon` is a
 //! theme icon name or an absolute path, and consecutive choices of one
 //! `section` are shown under its name. Until the source answers the list is
@@ -37,6 +40,13 @@ pub struct Choice {
     pub command: Invocation,
 }
 
+/// A switch that adds `field: true` to the chosen command.
+#[derive(Clone, Debug, Deserialize)]
+pub struct ChoiceOption {
+    pub title: String,
+    pub field: String,
+}
+
 /// What a source answers.
 #[derive(Debug, Default, Deserialize)]
 struct Answer {
@@ -44,6 +54,8 @@ struct Answer {
     title: Option<String>,
     #[serde(default)]
     empty: Option<String>,
+    #[serde(default)]
+    option: Option<ChoiceOption>,
     choices: Vec<Choice>,
 }
 
@@ -56,6 +68,10 @@ pub struct ChooseState {
     /// Indices into `choices`, in the order shown.
     pub filtered: Vec<usize>,
     pub picker: Picker,
+    pub option: Option<ChoiceOption>,
+    /// The option's switch is on.
+    pub option_on: bool,
+    option_focus: gpui::FocusHandle,
     /// The choices arrived.
     loaded: bool,
     /// The query `filtered` was computed for.
@@ -108,6 +124,9 @@ impl Shell {
         );
         input.update(cx, |i, _| i.focus(window));
         let request = REQUESTS.fetch_add(1, Ordering::Relaxed);
+        let option = args
+            .get("option")
+            .and_then(|o| serde_json::from_value(o.clone()).ok());
         let loaded = choices.is_some();
         self.choose = Some(ChooseState {
             input,
@@ -116,6 +135,9 @@ impl Shell {
             choices: choices.unwrap_or_default(),
             filtered: Vec::new(),
             picker: Picker::default(),
+            option,
+            option_on: false,
+            option_focus: cx.focus_handle(),
             loaded,
             query: None,
             request,
@@ -145,6 +167,9 @@ impl Shell {
                                 }
                                 if let Some(empty) = answer.empty {
                                     c.empty = empty;
+                                }
+                                if answer.option.is_some() {
+                                    c.option = answer.option;
                                 }
                                 c.choices = answer.choices;
                                 c.loaded = true;
@@ -180,11 +205,29 @@ impl Shell {
         }
     }
 
+    /// Turn the option's switch on or off; the keyboard stays in the
+    /// filter.
+    pub fn choose_toggle_option(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(c) = &mut self.choose
+            && c.option.is_some()
+        {
+            c.option_on = !c.option_on;
+            c.input.update(cx, |i, _| i.focus(window));
+            cx.notify();
+        }
+    }
+
     fn choose_submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.choose_refilter(cx);
         let command = self.choose.as_ref().and_then(|c| {
             let ix = *c.filtered.get(c.picker.highlighted)?;
-            Some(c.choices[ix].command.clone())
+            let mut command = c.choices[ix].command.clone();
+            if let Some(option) = c.option.as_ref().filter(|_| c.option_on)
+                && let Some(args) = command.args.as_object_mut()
+            {
+                args.insert(option.field.clone(), true.into());
+            }
+            Some(command)
         });
         let Some(command) = command else { return };
         self.close_choose(window, cx);
@@ -254,6 +297,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
             })
             .collect()
     };
+    let option_keys = shell.keys_for("ui.choose_option", &serde_json::json!({}));
     let c = shell.choose.as_ref()?;
     let mut list = div().flex().flex_col().py_1().overflow_hidden();
     let mut previous: Option<&str> = None;
@@ -328,6 +372,33 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 .child(c.empty.clone()),
         );
     }
+    let option = c.option.as_ref().map(|option| {
+        div()
+            .id("choose-option")
+            .px_3()
+            .py_2()
+            .flex()
+            .items_center()
+            .gap_2()
+            .border_t_1()
+            .border_color(theme.border)
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _, window, cx| this.choose_toggle_option(window, cx)))
+            .child(crate::controls::switch(
+                "choose-option-switch",
+                c.option_on,
+                &c.option_focus,
+                &theme,
+            ))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .child(option.title.clone()),
+            )
+            .children(option_keys.map(|keys| crate::controls::keycap(keys, &theme)))
+    });
     let panel = modal::panel(520., &theme)
         .key_context(keymap::CHOOSE)
         .child(
@@ -352,7 +423,8 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 )
                 .child(c.input.clone()),
         )
-        .child(list);
+        .child(list)
+        .children(option);
     Some(modal::modal(panel, 80., 4, Shell::close_choose, &theme, cx))
 }
 
