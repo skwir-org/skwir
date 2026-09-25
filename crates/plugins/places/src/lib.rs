@@ -11,7 +11,7 @@ use bibli_core::command::{Invocation, NoArgs, Outcome};
 use bibli_core::location::Location;
 use bibli_core::os_path::PathArg;
 use bibli_core::plugin::Plugin;
-use bibli_core::registry::{KeyBinding, MenuItem, Place};
+use bibli_core::registry::{Keeper, MenuItem, Place, Reorder};
 use bibli_core::scheduler::Priority;
 use bibli_core::workspace::PaneId;
 use bibli_platform::places::BookmarkEdit;
@@ -146,6 +146,8 @@ fn volume_place(volume: &bibli_platform::places::Volume) -> Place {
         activate: Some(activate),
         unavailable: Some(unavailable.into()),
         menu: Vec::new(),
+        forget: None,
+        reorder: None,
     }
 }
 
@@ -230,6 +232,8 @@ pub fn scan() -> Vec<Place> {
         eject: None,
         activate: None,
         unavailable: None,
+        forget: None,
+        reorder: None,
     };
     let mut out = Vec::new();
     if let Some(home) = bibli_platform::places::home() {
@@ -239,8 +243,20 @@ pub fn scan() -> Vec<Place> {
         out.push(folder(d.name, d.path, icon_for_user_dir(&d.kind), "places"));
     }
     for b in bibli_platform::places::bookmarks() {
+        let path = serde_json::json!(PathArg::from(b.path.as_path()));
         out.push(Place {
             menu: bookmark_menu(&b),
+            forget: Some(Invocation::with_args(
+                "places.unbookmark",
+                &serde_json::json!({ "path": path }),
+            )),
+            reorder: Some(Reorder {
+                command: Invocation::with_args(
+                    "places.move_bookmark",
+                    &serde_json::json!({ "path": path }),
+                ),
+                before: path,
+            }),
             ..folder(b.title, b.path, "folder", "bookmarks")
         });
     }
@@ -867,13 +883,15 @@ impl Plugin for PlacesPlugin {
                 },
             );
         }
-        // As in Nautilus and browsers: the folder being looked at.
-        app.registry.keymap.add(
+        // Ctrl+D and the pane's button (the core `keep` command) bookmark
+        // the folder being looked at, as in Nautilus and browsers.
+        app.registry.keepers.add(
             ID,
-            KeyBinding {
-                keys: "ctrl-d".into(),
-                command: shown(),
-                when: None,
+            Keeper {
+                scheme: bibli_core::location::PATH_SCHEME.into(),
+                save: shown(),
+                save_title: "Bookmark this folder".into(),
+                forget_title: "Remove from bookmarks".into(),
             },
         );
     }
@@ -916,6 +934,8 @@ mod tests {
             activate: None,
             unavailable: None,
             menu: Vec::new(),
+            forget: None,
+            reorder: None,
         };
         places.0.lock().lifetime = Some(CancelToken::new());
         places.0.lock().generation = 2;
@@ -947,6 +967,8 @@ mod tests {
             activate: None,
             unavailable: None,
             menu: Vec::new(),
+            forget: None,
+            reorder: None,
         };
         let mut disk = place("devices", "/run/media/example/disk");
         disk.space = Some((1, 2));
@@ -1029,7 +1051,7 @@ mod tests {
         // The folder the pane shows, as Ctrl+D and the pane's button do.
         let pane = app.workspace.read().active_id();
         app.navigate(pane, &Location::from_path(&a)).unwrap();
-        let added = run("places.bookmark", serde_json::json!({ "shown": true }));
+        let added = run("keep", serde_json::json!({}));
         assert_eq!(added.text, "Bookmarked “it's 100% a folder”");
         let again = run("places.bookmark", serde_json::json!({ "path": path(&a) }));
         assert_eq!(again.text, "“it's 100% a folder” is already bookmarked");
@@ -1042,10 +1064,12 @@ mod tests {
         let menu = &bookmarks(&app)[0].menu;
         assert!(menu.iter().any(|m| m.title == "Remove from Bookmarks"));
 
-        let moved = run(
-            "places.move_bookmark",
-            serde_json::json!({ "path": path(&b), "before": path(&a) }),
-        );
+        // Dragged before the first, as the sidebar does: the dragged
+        // place's move command, with the other's `before`.
+        let (first, second) = (bookmarks(&app)[0].clone(), bookmarks(&app)[1].clone());
+        let mut drag = second.reorder.unwrap().command;
+        drag.args["before"] = first.reorder.unwrap().before;
+        let moved = run(&drag.name, drag.args);
         assert_eq!(moved.text, "Moved bookmark “Bee”");
         assert_eq!(titles(&app), ["Bee", "it's 100% a folder"]);
 
@@ -1063,7 +1087,10 @@ mod tests {
         undo(&undone, "Redo");
         assert_eq!(titles(&app), ["Bee", "Reports"]);
 
-        let removed = run("places.unbookmark", serde_json::json!({ "path": path(&b) }));
+        // The pane's button, filled while the pane shows a bookmark.
+        let forget = bookmarks(&app)[0].forget.clone().unwrap();
+        assert_eq!(forget.args["path"], path(&b));
+        let removed = run(&forget.name, forget.args);
         assert_eq!(removed.text, "Removed “Bee” from bookmarks");
         assert_eq!(titles(&app), ["Reports"]);
         undo(&removed, "Undo");

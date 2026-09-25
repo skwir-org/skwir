@@ -11,7 +11,8 @@ works and what was left out.
 ## What it is like
 
 - **A query is a place.** Type `*.pdf modified<7d size>10M` and the results
-  are a location you can navigate to, come back to, and save as a smart folder.
+  are a location you can navigate to, come back to, and keep in the sidebar
+  like a bookmark.
 - **Everything is a command.** Every action is a named command with a JSON
   schema, reachable from the keyboard, the palette, and, later, a CLI and an
   MCP server. An agent uses the same surface you do.

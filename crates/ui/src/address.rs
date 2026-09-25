@@ -446,7 +446,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
     let theme = cx.global::<Theme>().clone();
     let ui = shell.ui();
     let focused = ui.address.read(cx).is_focused(window);
-    let (back, forward, path, up, is_shelf, active) = {
+    let (back, forward, path, up, is_shelf, active, location) = {
         let ws = shell.app.workspace.read();
         let pane = ws.pane(shell.pane);
         (
@@ -460,6 +460,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
             pane.and_then(|p| p.location())
                 .is_some_and(|l| &*l.scheme == "shelf"),
             ws.active_id() == shell.pane,
+            pane.and_then(|p| p.location()).cloned(),
         )
     };
     let mut bar = div()
@@ -527,31 +528,35 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
                 None => field.px_2().child(ui.address.clone()),
             }
         });
-    // The folder's bookmark, while the places plugin keeps them: filled
-    // when the folder is one, and pressing it takes it back.
-    if let Some(path) = &path
-        && shell.app.commands.get("places.bookmark").is_some()
-    {
-        let bookmarked = shell
-            .app
-            .registry
+    // Keep what the pane shows in the sidebar, a folder as a bookmark or a
+    // search as a saved search, while a plugin keeps such locations:
+    // filled when it is kept, and pressing it then takes it back with the
+    // place's own command.
+    if let Some(location) = &location {
+        let registry = &shell.app.registry;
+        let keeper = registry.keepers.find(|k| *k.scheme == *location.scheme);
+        let kept = registry
             .places
-            .find(|p| p.group == "bookmarks" && p.location.path().as_ref() == Some(path))
-            .is_some();
-        let (icon, title, command) = if bookmarked {
-            (
-                "bookmark-filled",
-                "Remove from bookmarks",
-                "places.unbookmark",
-            )
-        } else {
-            ("bookmark", "Bookmark this folder", "places.bookmark")
+            .find(|p| p.forget.is_some() && crate::sidebar::same_place(&p.location, location))
+            .and_then(|p| p.forget);
+        let button = match (kept, keeper) {
+            (Some(forget), keeper) => Some(
+                Button::new(
+                    "keep",
+                    "bookmark-filled",
+                    keeper.map_or_else(|| "Remove from sidebar".into(), |k| k.forget_title),
+                    forget.name.to_string(),
+                )
+                .args(forget.args),
+            ),
+            (None, Some(keeper)) => {
+                Some(Button::new("keep", "bookmark", keeper.save_title, "keep"))
+            }
+            (None, None) => None,
         };
-        bar = bar.child(
-            Button::new("bookmark", icon, title, command)
-                .args(serde_json::json!({ "shown": true }))
-                .render(shell, cx),
-        );
+        if let Some(button) = button {
+            bar = bar.child(button.render(shell, cx));
+        }
     }
     if is_shelf {
         for (id, icon, title, command) in [

@@ -964,6 +964,37 @@ impl fmt::Display for Expr {
     }
 }
 
+impl Expr {
+    /// The expression for a label (a saved search's name): as printed, but
+    /// a name as it was written, without its key or quotes. Never parsed
+    /// back.
+    pub fn label(&self) -> String {
+        let term = |t: &Term| match t {
+            Term::Name(p) => p.text.clone(),
+            other => other.to_string(),
+        };
+        let join = |items: &[Expr], sep: &str| {
+            items
+                .iter()
+                .map(|e| match e {
+                    Expr::Or(_) if sep == " " => format!("({})", e.label()),
+                    _ => e.label(),
+                })
+                .collect::<Vec<_>>()
+                .join(sep)
+        };
+        match self {
+            Expr::Term(t) => term(t),
+            Expr::Not(e) => match &**e {
+                Expr::Term(t) => format!("NOT {}", term(t)),
+                other => format!("NOT ({})", other.label()),
+            },
+            Expr::And(items) => join(items, " "),
+            Expr::Or(alts) => join(alts, " OR "),
+        }
+    }
+}
+
 impl fmt::Display for Query {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut parts: Vec<String> = Vec::new();

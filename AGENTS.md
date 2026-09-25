@@ -134,7 +134,14 @@ current source before assuming a planned crate, command, or API exists.
   each edit returns its inverse, which the notification offers as Undo
   (then Redo, `App::notify_with_action`), and lines other applications
   wrote are kept. The plugin watches the file, so other file managers'
-  edits appear. A plugin that needs a line of text from the user dispatches
+  edits appear. Keeping a location is one gesture whatever it is: Ctrl+D
+  and the pane's button run the core `keep` command, which hands the
+  location shown to the `Keeper` registered for its scheme (bookmarks for
+  folders, saved searches for queries); a place the user kept carries
+  `forget`, which the button runs while the pane shows it, and `reorder`,
+  which lets it be dragged within its group. A new kind of kept place
+  registers a keeper and fills those two fields; the UI needs no branch.
+  A plugin that needs a line of text from the user dispatches
   `ui.ask` with the command to complete, not a prompt kind of its own;
   one that needs a choice dispatches `ui.choose` with its choices or the
   command that lists them on a worker (`choose.rs`), not a picker of its own

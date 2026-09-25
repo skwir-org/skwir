@@ -112,7 +112,7 @@ pub struct Button {
     id: SharedString,
     icon: SharedString,
     title: SharedString,
-    command: &'static str,
+    command: SharedString,
     args: serde_json::Value,
     label: Option<SharedString>,
     anchor: Option<crate::elements::popover::PopoverAnchor>,
@@ -127,13 +127,13 @@ impl Button {
         id: impl Into<SharedString>,
         icon: impl Into<SharedString>,
         title: impl Into<SharedString>,
-        command: &'static str,
+        command: impl Into<SharedString>,
     ) -> Self {
         Self {
             id: id.into(),
             icon: icon.into(),
             title: title.into(),
-            command,
+            command: command.into(),
             args: serde_json::json!({}),
             label: None,
             anchor: None,
@@ -179,12 +179,12 @@ impl Button {
         let theme = cx.global::<Theme>().clone();
         let font = shell.font.clone();
         let pane = shell.pane;
-        let command = self.command;
+        let command = self.command.clone();
         let args = self.args.clone();
         let enabled = self.enabled;
         // The shortcut comes from the keymap, never from the title: it
         // follows what is bound, and goes when its plugin does.
-        let title: SharedString = match shell.keys_for(command, &args) {
+        let title: SharedString = match shell.keys_for(&command, &args) {
             Some(keys) => format!("{} · {keys}", self.title).into(),
             None => self.title,
         };
@@ -242,7 +242,7 @@ impl Button {
             .children(self.anchor.map(|anchor| anchor.marker()))
             .on_click(cx.listener(move |this, _, window, cx| {
                 if enabled {
-                    invoke(this, pane, command, args.clone(), window, cx);
+                    invoke(this, pane, &command, args.clone(), window, cx);
                 }
             }))
             .on_action(cx.listener(move |_, action: &RunCommand, _, cx| {

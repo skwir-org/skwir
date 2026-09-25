@@ -145,6 +145,8 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
     // cut or copy. Later bindings win, and `empty` holds only then.
     ("escape", "clipboard_clear", Some("pane empty")),
     ("f5", "refresh", None),
+    // The folder or search being looked at, as in Nautilus and browsers.
+    ("ctrl-d", "keep", None),
     ("ctrl-t", "open_terminal", None),
 ];
 

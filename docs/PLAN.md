@@ -81,6 +81,26 @@ user's `mimeapps.list` (the one that already decides, a desktop's own list
 first), keeping the lines others wrote, and returns the edit that reverts it,
 which the toast offers as Undo, then Redo, as bookmark edits do; both files
 go through `file::rewrite`, which follows links and refuses a read-only one.
+Saved searches (2026-09-25): kept like bookmarks, under their own Searches
+heading below Bookmarks. They stay in bibli's settings (`query.saved`), not
+in the GTK file, which every GTK file chooser reads and would show as broken
+rows; one list mixing both would need an order file of our own over two
+stores. What is shared is the gesture: Ctrl+D and the pane's button run the
+core `keep` command, which hands the location shown to the plugin that keeps
+its scheme (`registry::Keeper`: the places plugin for folders, the query
+plugin for searches), and the button is filled while a place with a
+`forget` command is the location shown. A search is saved under a name made
+from it (`ext:pdf in Documents`) and, from its right-click menu, renamed,
+edited (its name and place stay) or removed; any place with a `reorder`
+moves by dragging within its group. Each edit is a `saved::Edit` applied on
+a worker that returns its inverse, offered as Undo, then Redo. A saved
+search is known by its expression, as a bookmark by its folder, so
+`query.save` and `query.forget` changed: saving no longer replaces a search
+of the same name, and forgetting takes the expression (or, as before, the
+name). Gaps: the saved-search icon, `folder-saved-search`, exists only as a
+`-symbolic` variant in current Adwaita and Breeze, so the row shows the
+sidebar's fallback dot; the Bookmark This Folder item on the background
+menu is still offered, and refused, on a search.
 
 ---
 
@@ -373,7 +393,7 @@ visible-first order, and all three views pass the budgets.
 Goal: the UX bets. Order is by leverage; each is independently shippable and toggleable.
 
 1. `query` — query language (`*.pdf modified<7d size>10M`), a `LocationProvider`, so search results
-   are a location. Saved queries = smart folders.
+   are a location. Saved searches are kept in the sidebar like bookmarks.
 2. `search` — parallel subtree walk (`ignore` crate walker), results cached by directory mtime;
    uses `plocate` when present. Content search via the ripgrep crates.
 3. `shelf` — collect entries from anywhere, apply one plan to all of them.

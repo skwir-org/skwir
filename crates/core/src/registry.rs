@@ -1,4 +1,5 @@
-//! UI-facing registries: views, panels, places, menu items, key bindings.
+//! UI-facing registries: views, panels, places, menu items, key bindings,
+//! and what keeps a location in the sidebar.
 //! The core stores descriptors tagged by owner; the UI crate interprets them.
 //! Every contribution can be withdrawn by owner when a plugin is disabled.
 
@@ -174,7 +175,7 @@ pub struct Place {
     pub title: String,
     pub location: Location,
     pub icon: Option<String>,
-    /// Sidebar section, e.g. `places`, `devices`, `bookmarks`.
+    /// Sidebar section, e.g. `places`, `bookmarks`, `searches`, `devices`.
     pub group: String,
     /// Free and total bytes, for volumes; filled in after a worker asked.
     pub space: Option<(u64, u64)>,
@@ -191,6 +192,38 @@ pub struct Place {
     /// bookmark), with their arguments; the UI adds Open and Eject. `when`
     /// is not evaluated: the owner lists what applies to this place.
     pub menu: Vec<MenuItem>,
+    /// The command that takes this place out of the sidebar (removes the
+    /// bookmark, forgets the saved search), for a place the user kept: the
+    /// pane's keep button runs it while the pane shows `location`.
+    pub forget: Option<Invocation>,
+    /// How the place is put in order among its group by dragging.
+    pub reorder: Option<Reorder>,
+}
+
+/// How a place moves among the places of its group that have one: `command`
+/// moves this place (its arguments name it), with `"before"` set to the
+/// `before` of the place it goes in front of, or left out for last.
+#[derive(Clone, Debug, Serialize)]
+pub struct Reorder {
+    pub command: Invocation,
+    /// This place as the `before` argument of the group's move command.
+    pub before: serde_json::Value,
+}
+
+/// What keeps locations of one scheme in the sidebar: folders as
+/// bookmarks, searches as saved searches. The core `keep` command runs
+/// `save` for the location a pane shows, adding the pane's id; each place
+/// it kept carries its own [`Place::forget`]. The words are the pane
+/// button's.
+#[derive(Clone, Debug, Serialize)]
+pub struct Keeper {
+    /// The [`Location::scheme`] it keeps (`path`, `query`).
+    pub scheme: String,
+    pub save: Invocation,
+    /// "Bookmark this folder".
+    pub save_title: String,
+    /// "Remove from bookmarks".
+    pub forget_title: String,
 }
 
 /// A menu contribution. `when` is a space-separated list of tokens that must
@@ -233,6 +266,7 @@ pub struct Registry {
     pub places: Contributions<Place>,
     pub menus: Contributions<MenuItem>,
     pub keymap: Contributions<KeyBinding>,
+    pub keepers: Contributions<Keeper>,
     gate: Arc<OwnerGate>,
 }
 
@@ -245,6 +279,7 @@ impl Default for Registry {
             places: Contributions::gated(Arc::clone(&gate)),
             menus: Contributions::gated(Arc::clone(&gate)),
             keymap: Contributions::gated(Arc::clone(&gate)),
+            keepers: Contributions::gated(Arc::clone(&gate)),
             gate,
         }
     }
@@ -264,6 +299,7 @@ impl Registry {
         self.places.remove_owner(owner);
         self.menus.remove_owner(owner);
         self.keymap.remove_owner(owner);
+        self.keepers.remove_owner(owner);
     }
 }
 

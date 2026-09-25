@@ -2,47 +2,49 @@
 //!
 //! A query (`*.pdf modified<7d size>10M in:~/docs`) is a location. Results
 //! stream in as a virtual listing, so every view, selection, and operation
-//! works on them unchanged. Saved queries are smart folders in the sidebar.
-//! The plan's `search` item (walker, content search, plocate) lives here too.
+//! works on them unchanged. Saved searches sit in the sidebar under their
+//! own heading and are kept like bookmarks: the pane's keep button and
+//! Ctrl+D save the search shown, and each is renamed, edited, removed and
+//! put in order with Undo (`saved`). The plan's `search` item (walker,
+//! content search, plocate) lives here too.
 
 pub mod lang;
 pub mod plocate;
 pub mod provider;
+pub mod saved;
 
 use std::sync::Arc;
 
-use bibli_core::app::App;
+use bibli_core::app::{App, NotifyLevel};
 use bibli_core::cancel::CancelToken;
 use bibli_core::command::{Invocation, NoArgs, Outcome};
 use bibli_core::location::Location;
 use bibli_core::os_path::PathArg;
 use bibli_core::plugin::Plugin;
-use bibli_core::registry::{KeyBinding, MenuItem, Place};
+use bibli_core::registry::{Keeper, KeyBinding, MenuItem, Place, Reorder};
+use bibli_core::scheduler::Priority;
 use bibli_core::settings::SettingSpec;
 use bibli_core::workspace::PaneId;
 use parking_lot::Mutex;
 
 pub use provider::{QueryProvider, SCHEME};
+use saved::Edit;
+pub use saved::SavedQuery;
 
 const ID: &str = "query";
 const SAVED_KEY: &str = "query.saved";
+/// The sidebar section of saved searches.
+const GROUP: &str = "searches";
 
 /// The query plugin.
 #[derive(Debug, Default)]
 pub struct QueryPlugin {
-    /// Cancelled on disable: every walk and stat the provider started ends.
+    /// Cancelled on disable: every walk and stat the provider started ends,
+    /// and no saved-search edit still queued runs.
     lifetime: Mutex<Option<CancelToken>>,
-    /// Held across a read-modify-write of the saved queries, so two saves
+    /// Held across a read-modify-write of the saved searches, so two edits
     /// never drop each other's change.
     saving: Arc<Mutex<()>>,
-}
-
-#[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema, PartialEq, Eq,
-)]
-pub struct SavedQuery {
-    pub name: String,
-    pub expr: String,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -58,13 +60,63 @@ struct SearchArgs {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct SaveArgs {
-    name: String,
-    expr: String,
+    /// The search; the one the pane shows when omitted.
+    #[serde(default)]
+    expr: Option<String>,
+    /// Its name in the sidebar; made from the search when omitted.
+    #[serde(default)]
+    name: Option<String>,
+    /// The saved search it goes before; last when omitted.
+    #[serde(default)]
+    before: Option<String>,
+    #[serde(default)]
+    pane: Option<PaneId>,
+    /// Set by a toast's Undo: the result offers Redo instead.
+    #[serde(default)]
+    undo: bool,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct ForgetArgs {
+    /// The saved search.
+    #[serde(default)]
+    expr: Option<String>,
+    /// Or its name, when `expr` is omitted.
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    undo: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct RenameArgs {
+    /// The saved search.
+    expr: String,
+    /// Its new name; empty for one made from the search.
     name: String,
+    #[serde(default)]
+    undo: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct MoveArgs {
+    /// The saved search.
+    expr: String,
+    /// The saved search it goes before; last when omitted.
+    #[serde(default)]
+    before: Option<String>,
+    #[serde(default)]
+    undo: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct EditArgs {
+    /// The saved search.
+    expr: String,
+    /// What it searches for from now on; its name and place stay.
+    to: String,
+    #[serde(default)]
+    undo: bool,
 }
 
 /// The location string for `expr` rooted at `root` (unless `expr` names a
@@ -78,22 +130,62 @@ pub fn location_for(expr: &str, root: Option<&std::path::Path>) -> Location {
     Location::new(SCHEME, rest)
 }
 
-/// Saved queries from settings.
+/// A name for a search saved without one: what it looks for and where
+/// (`*.pdf modified<7d in Documents`).
+pub fn suggested_name(expr: &str) -> String {
+    let Ok(query) = lang::parse(expr) else {
+        return expr.to_owned();
+    };
+    let what = query
+        .expr
+        .as_ref()
+        .map_or_else(|| "Everything".to_owned(), lang::Expr::label);
+    if !query.root_given {
+        return what;
+    }
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let place = if home.as_deref() == Some(query.root.as_path()) {
+        "Home".to_owned()
+    } else {
+        query.root.file_name().map_or_else(
+            || query.root.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        )
+    };
+    format!("{what} in {place}")
+}
+
+/// Saved searches from settings.
 pub fn saved(app: &App) -> Vec<SavedQuery> {
     app.settings
         .get::<Vec<SavedQuery>>(SAVED_KEY)
         .unwrap_or_default()
 }
 
-/// Change the saved queries and persist them, one change at a time.
-fn edit_saved(
-    app: &App,
-    saving: &Mutex<()>,
-    edit: impl FnOnce(&mut Vec<SavedQuery>) -> anyhow::Result<()>,
-) -> anyhow::Result<()> {
+fn check(expr: &str) -> anyhow::Result<()> {
+    lang::parse(expr)
+        .map(drop)
+        .map_err(|e| anyhow::anyhow!("query: {e}"))
+}
+
+/// The name a new name means: the one made from the search when empty.
+fn name_or_suggested(name: &str, expr: &str) -> String {
+    let name = name.trim();
+    if name.is_empty() {
+        suggested_name(expr)
+    } else {
+        name.to_owned()
+    }
+}
+
+/// Apply `edit` to the saved searches and persist them: the edit that
+/// reverts it, `None` when it changed nothing. One edit at a time.
+fn apply_edit(app: &App, saving: &Mutex<()>, edit: &Edit) -> anyhow::Result<Option<Edit>> {
     let _saving = saving.lock();
     let mut list = saved(app);
-    edit(&mut list)?;
+    let Some(inverse) = edit.apply(&mut list).map_err(anyhow::Error::msg)? else {
+        return Ok(None);
+    };
     let arr = list
         .iter()
         .map(|s| {
@@ -106,26 +198,181 @@ fn edit_saved(
     app.settings.set(SAVED_KEY, toml::Value::Array(arr));
     app.settings
         .save()
-        .map_err(|e| anyhow::anyhow!("the saved queries were not written: {e:#}"))?;
+        .map_err(|e| anyhow::anyhow!("the saved searches were not written: {e:#}"))?;
     register_places(app);
-    Ok(())
+    Ok(Some(inverse))
+}
+
+/// The command that applies `edit`, from a toast's button.
+fn invocation(edit: &Edit, undo: bool) -> Invocation {
+    let (name, mut args) = match edit {
+        Edit::Add { name, expr, before } => (
+            "query.save",
+            serde_json::json!({ "expr": expr, "name": name, "before": before }),
+        ),
+        Edit::Remove { expr } => ("query.forget", serde_json::json!({ "expr": expr })),
+        Edit::Rename { expr, name } => (
+            "query.rename",
+            serde_json::json!({ "expr": expr, "name": name }),
+        ),
+        Edit::Move { expr, before } => (
+            "query.move",
+            serde_json::json!({ "expr": expr, "before": before }),
+        ),
+        Edit::Change { expr, to } => ("query.edit", serde_json::json!({ "expr": expr, "to": to })),
+    };
+    args["undo"] = serde_json::json!(undo);
+    Invocation::with_args(name, &args)
+}
+
+/// What an edit did, in a sentence, or what it found when it did nothing.
+/// `shown` is the search's name before the edit, when it was saved.
+fn describe(edit: &Edit, shown: Option<&str>, done: bool) -> Option<String> {
+    let name = || shown.map_or_else(|| suggested_name(edit.expr()), str::to_owned);
+    Some(match (edit, done) {
+        (Edit::Add { name: new, .. }, true) => format!("Saved search “{new}”"),
+        (Edit::Add { .. }, false) => format!("This search is already saved as “{}”", name()),
+        (Edit::Remove { .. }, true) => format!("Removed saved search “{}”", name()),
+        (Edit::Remove { .. }, false) => "This search is not saved".to_owned(),
+        (Edit::Rename { name: new, .. }, true) => {
+            format!("Renamed saved search “{}” to “{new}”", name())
+        }
+        (Edit::Move { .. }, true) => format!("Moved saved search “{}”", name()),
+        (Edit::Change { .. }, true) => format!("Changed saved search “{}”", name()),
+        // Renamed to its own name, dropped where it was, edited to the same
+        // search, or no longer saved: nothing to say.
+        (Edit::Rename { .. } | Edit::Move { .. } | Edit::Change { .. }, false) => return None,
+    })
+}
+
+/// Edits the saved searches on a worker (the settings file is written) and
+/// says what happened with the way back: Undo, or Redo after an undo.
+#[derive(Clone)]
+struct Editor {
+    saving: Arc<Mutex<()>>,
+    lifetime: CancelToken,
+}
+
+impl Editor {
+    fn run(&self, app: &App, edit: Edit, undo: bool) {
+        let (saving, weak) = (Arc::clone(&self.saving), app.weak());
+        app.scheduler.spawn(
+            Priority::Normal,
+            "query-saved",
+            self.lifetime.child(),
+            move || {
+                let Some(app) = weak.upgrade() else { return };
+                let shown = saved(&app)
+                    .into_iter()
+                    .find(|s| s.expr == edit.expr())
+                    .map(|s| s.name);
+                match apply_edit(&app, &saving, &edit) {
+                    Ok(Some(inverse)) => {
+                        if let Some(text) = describe(&edit, shown.as_deref(), true) {
+                            app.notify_with_action(
+                                NotifyLevel::Info,
+                                text,
+                                if undo { "Redo" } else { "Undo" },
+                                invocation(&inverse, !undo),
+                            );
+                        }
+                    }
+                    Ok(None) => {
+                        if let Some(text) = describe(&edit, shown.as_deref(), false) {
+                            app.notify(NotifyLevel::Info, text);
+                        }
+                    }
+                    Err(error) => app.notify(
+                        NotifyLevel::Error,
+                        format!("The saved searches were not changed: {error:#}"),
+                    ),
+                }
+                app.wake();
+            },
+        );
+    }
+}
+
+/// An item of a saved search's own menu.
+fn menu_item(title: &str, command: Invocation, order: i32, icon: &str) -> MenuItem {
+    MenuItem {
+        menu: "place".into(),
+        title: title.into(),
+        command,
+        when: None,
+        order,
+        icon: Some(icon.into()),
+        submenu: None,
+    }
+}
+
+fn place(search: SavedQuery) -> Place {
+    let expr = serde_json::json!(search.expr);
+    let menu = vec![
+        menu_item(
+            "Rename…",
+            Invocation::with_args(
+                "ui.ask",
+                &serde_json::json!({
+                    "title": "Rename saved search",
+                    "placeholder": "Name (empty: made from the search)",
+                    "text": search.name,
+                    "command": "query.rename",
+                    "args": { "expr": expr },
+                    "field": "name",
+                }),
+            ),
+            100,
+            "rename",
+        ),
+        menu_item(
+            "Edit Search…",
+            Invocation::with_args(
+                "ui.ask",
+                &serde_json::json!({
+                    "title": "Edit saved search",
+                    "placeholder": "*.pdf modified<7d size>10M  (in: picks the root)",
+                    "text": search.expr,
+                    "command": "query.edit",
+                    "args": { "expr": expr },
+                    "field": "to",
+                }),
+            ),
+            110,
+            "search",
+        ),
+        menu_item(
+            "Remove Saved Search",
+            Invocation::with_args("query.forget", &serde_json::json!({ "expr": expr })),
+            300,
+            "minus",
+        ),
+    ];
+    Place {
+        title: search.name,
+        location: Location::new(SCHEME, search.expr),
+        icon: Some("folder-saved-search".into()),
+        group: GROUP.into(),
+        space: None,
+        eject: None,
+        activate: None,
+        unavailable: None,
+        menu,
+        forget: Some(Invocation::with_args(
+            "query.forget",
+            &serde_json::json!({ "expr": expr }),
+        )),
+        reorder: Some(Reorder {
+            command: Invocation::with_args("query.move", &serde_json::json!({ "expr": expr })),
+            before: expr,
+        }),
+    }
 }
 
 fn register_places(app: &App) {
-    app.registry.places.replace_owner(
-        ID,
-        saved(app).into_iter().map(|s| Place {
-            title: s.name,
-            location: Location::new(SCHEME, s.expr),
-            icon: Some("folder-saved-search".into()),
-            group: "queries".into(),
-            space: None,
-            eject: None,
-            activate: None,
-            unavailable: None,
-            menu: Vec::new(),
-        }),
-    );
+    app.registry
+        .places
+        .replace_owner(ID, saved(app).into_iter().map(place));
 }
 
 impl Plugin for QueryPlugin {
@@ -138,7 +385,7 @@ impl Plugin for QueryPlugin {
     }
 
     fn description(&self) -> &'static str {
-        "Search as a location: name, size, date, tag, MIME, and content queries; saved queries as smart folders"
+        "Search as a location: name, size, date, tag, MIME, and content queries; saved searches in the sidebar"
     }
 
     fn category(&self) -> bibli_core::plugin::Category {
@@ -163,10 +410,10 @@ impl Plugin for QueryPlugin {
         if let Some(previous) = self.lifetime.lock().replace(lifetime.clone()) {
             previous.cancel();
         }
-        app.register_provider(ID, Arc::new(QueryProvider::new(lifetime)));
+        app.register_provider(ID, Arc::new(QueryProvider::new(lifetime.clone())));
         app.settings.declare(SettingSpec::data(
             SAVED_KEY,
-            "Saved queries shown in the sidebar: [{ name, expr }]",
+            "Saved searches shown in the sidebar, in order: [{ name, expr }]",
             toml::Value::Array(Vec::new()),
         ));
         register_places(app);
@@ -193,39 +440,98 @@ impl Plugin for QueryPlugin {
             },
         );
 
-        let saving = Arc::clone(&self.saving);
+        let editor = Editor {
+            saving: Arc::clone(&self.saving),
+            lifetime: lifetime.clone(),
+        };
+        let edits = editor.clone();
         app.commands.register::<SaveArgs, _>(
             ID,
             "query.save",
-            "Save query",
-            "Keep a query as a smart folder in the sidebar",
+            "Save search",
+            "Keep a search in the sidebar, the one the pane shows when `expr` is omitted",
             move |a, app| {
-                lang::parse(&a.expr).map_err(|e| anyhow::anyhow!("query: {e}"))?;
-                edit_saved(app, &saving, |list| {
-                    list.retain(|s| s.name != a.name);
-                    list.push(SavedQuery {
-                        name: a.name,
-                        expr: a.expr,
-                    });
-                    Ok(())
-                })?;
+                let expr = if let Some(expr) = a.expr {
+                    expr
+                } else {
+                    let pane = app.pane_or_active(a.pane);
+                    app.pane_location(pane)
+                        .filter(|l| &*l.scheme == SCHEME)
+                        .map(|l| l.rest)
+                        .ok_or_else(|| anyhow::anyhow!("the pane is not showing a search"))?
+                };
+                check(&expr)?;
+                let name = name_or_suggested(a.name.as_deref().unwrap_or_default(), &expr);
+                let edit = Edit::Add {
+                    name,
+                    expr,
+                    before: a.before,
+                };
+                edits.run(app, edit, a.undo);
                 Ok(Outcome::Done)
             },
         );
 
-        let saving = Arc::clone(&self.saving);
+        let edits = editor.clone();
         app.commands.register::<ForgetArgs, _>(
             ID,
             "query.forget",
-            "Forget saved query",
-            "Remove a saved query from the sidebar",
+            "Remove saved search",
+            "Take a saved search out of the sidebar, named by its search or its name",
             move |a, app| {
-                edit_saved(app, &saving, |list| {
-                    let before = list.len();
-                    list.retain(|s| s.name != a.name);
-                    anyhow::ensure!(list.len() != before, "no saved query named `{}`", a.name);
-                    Ok(())
-                })?;
+                let expr = match (a.expr, a.name) {
+                    (Some(expr), _) => expr,
+                    (None, Some(name)) => saved(app)
+                        .into_iter()
+                        .find(|s| s.name == name)
+                        .map(|s| s.expr)
+                        .ok_or_else(|| anyhow::anyhow!("no saved search named “{name}”"))?,
+                    (None, None) => anyhow::bail!("which saved search? pass its expr or name"),
+                };
+                edits.run(app, Edit::Remove { expr }, a.undo);
+                Ok(Outcome::Done)
+            },
+        );
+
+        let edits = editor.clone();
+        app.commands.register::<RenameArgs, _>(
+            ID,
+            "query.rename",
+            "Rename saved search",
+            "Change the name a saved search shows in the sidebar",
+            move |a, app| {
+                let name = name_or_suggested(&a.name, &a.expr);
+                edits.run(app, Edit::Rename { expr: a.expr, name }, a.undo);
+                Ok(Outcome::Done)
+            },
+        );
+
+        let edits = editor.clone();
+        app.commands.register::<MoveArgs, _>(
+            ID,
+            "query.move",
+            "Move saved search",
+            "Put a saved search before another in the sidebar, or last",
+            move |a, app| {
+                let edit = Edit::Move {
+                    expr: a.expr,
+                    before: a.before,
+                };
+                edits.run(app, edit, a.undo);
+                Ok(Outcome::Done)
+            },
+        );
+
+        let edits = editor;
+        app.commands.register::<EditArgs, _>(
+            ID,
+            "query.edit",
+            "Edit saved search",
+            "Change what a saved search looks for; its name and place in the sidebar stay",
+            move |a, app| {
+                let to = a.to.trim().to_owned();
+                check(&to)?;
+                edits.run(app, Edit::Change { expr: a.expr, to }, a.undo);
                 Ok(Outcome::Done)
             },
         );
@@ -233,9 +539,18 @@ impl Plugin for QueryPlugin {
         app.commands.register::<NoArgs, _>(
             ID,
             "query.list",
-            "List saved queries",
-            "Return the saved queries",
+            "List saved searches",
+            "Return the saved searches, in sidebar order",
             |_, app| Ok(Outcome::Value(serde_json::to_value(saved(app))?)),
+        );
+        app.registry.keepers.add(
+            ID,
+            Keeper {
+                scheme: SCHEME.into(),
+                save: Invocation::new("query.save"),
+                save_title: "Save this search".into(),
+                forget_title: "Remove saved search".into(),
+            },
         );
 
         app.registry.keymap.add(
@@ -467,51 +782,144 @@ mod tests {
         assert!(listing.is_empty());
     }
 
+    /// The notification the last edit ended with: edits run on a worker,
+    /// so each test step waits for it before the next.
+    fn note(app: &App) -> bibli_core::app::Notification {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let mut notes = app.take_notifications();
+            if let Some(last) = notes.pop() {
+                assert!(notes.is_empty(), "one edit, one notification: {notes:?}");
+                return last;
+            }
+            assert!(std::time::Instant::now() < deadline, "no notification");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// Run `name` and return its notification's action (Undo or Redo).
+    fn edit(app: &App, name: &str, args: serde_json::Value) -> Invocation {
+        let invocation = Invocation {
+            name: name.into(),
+            args,
+        };
+        app.dispatch(&invocation).unwrap();
+        let note = note(app);
+        note.action
+            .unwrap_or_else(|| panic!("{name}: {}", note.text))
+            .command
+    }
+
+    fn exprs(app: &App) -> Vec<String> {
+        saved(app).into_iter().map(|s| s.expr).collect()
+    }
+
     #[test]
-    fn saved_queries_become_places_and_disable_withdraws_everything() {
+    fn saved_searches_are_kept_edited_and_undone() {
         let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("it's a \"root\"");
+        std::fs::create_dir(&root).unwrap();
         let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
         app.plugins.add(Arc::new(QueryPlugin::default()), &app);
         assert!(app.provider(SCHEME).is_some());
+
+        // The pane's search, kept through the core command the button and
+        // Ctrl+D run, named after what it looks for and where.
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&root)).unwrap();
         app.dispatch(&Invocation::with_args(
-            "query.save",
-            &serde_json::json!({"name": "Big PDFs", "expr": "ext:pdf size>10M"}),
+            "query.search",
+            &serde_json::json!({ "expr": "ext:pdf" }),
         ))
         .unwrap();
+        let shown = app.pane_location(pane).unwrap();
+        let first = shown.rest.clone();
+        let undo = edit(&app, "keep", serde_json::json!({}));
+        assert_eq!(exprs(&app), [first.as_str()]);
+        assert_eq!(saved(&app)[0].name, "ext:pdf in it's a \"root\"");
         let places = app.registry.places.all();
         assert_eq!(places.len(), 1);
-        assert_eq!(places[0].group, "queries");
-        assert_eq!(places[0].location.to_string(), "query:ext:pdf size>10M");
-        assert!(
-            app.dispatch(&Invocation::with_args(
-                "query.save",
-                &serde_json::json!({"name": "bad", "expr": "(x"})
-            ))
-            .is_err()
+        assert_eq!(places[0].group, GROUP);
+        assert_eq!(
+            places[0].location, shown,
+            "the place is what the pane shows"
         );
-        app.dispatch(&Invocation::with_args(
+        assert!(places[0].forget.is_some() && places[0].reorder.is_some());
+        // Keeping it again says so and changes nothing.
+        app.dispatch(&Invocation::new("keep")).unwrap();
+        let again = note(&app);
+        assert!(again.action.is_none() && again.text.contains("already saved"));
+        // Undo, then Redo, from the notifications' buttons.
+        let redo = edit(&app, &undo.name, undo.args.clone());
+        assert!(exprs(&app).is_empty());
+        assert_eq!(redo.args["undo"], serde_json::json!(false));
+        edit(&app, &redo.name, redo.args.clone());
+        assert_eq!(exprs(&app), [first.as_str()]);
+
+        // An invalid search is refused before anything is written.
+        let save = |name: &str, expr: &str| serde_json::json!({ "name": name, "expr": expr });
+        assert!(
+            app.dispatch(&Invocation::with_args("query.save", &save("bad", "(x")))
+                .is_err()
+        );
+        edit(&app, "query.save", save("Big PDFs", "ext:pdf size>10M"));
+        edit(&app, "query.save", save("Recent", "modified<7d"));
+        let all = [first.as_str(), "ext:pdf size>10M", "modified<7d"];
+        assert_eq!(exprs(&app), all);
+
+        // Put in order by dragging: before another, or last; and back.
+        let undo = edit(
+            &app,
+            "query.move",
+            serde_json::json!({ "expr": "modified<7d", "before": first }),
+        );
+        assert_eq!(exprs(&app), [all[2], all[0], all[1]]);
+        edit(&app, &undo.name, undo.args.clone());
+        assert_eq!(exprs(&app), all);
+
+        // Renamed; an empty name is the one made from the search.
+        let undo = edit(
+            &app,
+            "query.rename",
+            serde_json::json!({ "expr": "modified<7d", "name": "  " }),
+        );
+        assert_eq!(saved(&app)[2].name, "modified<7d");
+        edit(&app, &undo.name, undo.args.clone());
+        assert_eq!(saved(&app)[2].name, "Recent");
+
+        // Edited: the search changes, its name and place stay.
+        let change = |to: &str| serde_json::json!({ "expr": "ext:pdf size>10M", "to": to });
+        assert!(
+            app.dispatch(&Invocation::with_args("query.edit", &change("size>")))
+                .is_err()
+        );
+        edit(&app, "query.edit", change(" ext:pdf size>1G "));
+        assert_eq!(exprs(&app), [all[0], "ext:pdf size>1G", all[2]]);
+        assert_eq!(saved(&app)[1].name, "Big PDFs");
+
+        // Removed by its name, as before, or by the place's own command.
+        edit(
+            &app,
             "query.forget",
-            &serde_json::json!({"name": "Big PDFs"}),
-        ))
-        .unwrap();
-        assert!(app.registry.places.all().is_empty());
+            serde_json::json!({ "name": "Recent" }),
+        );
         assert!(
             app.dispatch(&Invocation::with_args(
                 "query.forget",
-                &serde_json::json!({"name": "Big PDFs"})
+                &serde_json::json!({ "name": "Recent" })
             ))
             .is_err()
         );
-        app.dispatch(&Invocation::with_args(
-            "query.save",
-            &serde_json::json!({"name": "Recent", "expr": "modified<7d"}),
-        ))
-        .unwrap();
+        let forget = app.registry.places.all()[0].forget.clone().unwrap();
+        edit(&app, &forget.name, forget.args.clone());
+        assert_eq!(exprs(&app), ["ext:pdf size>1G"]);
+
         assert!(app.registry.keymap.all().iter().any(|b| b.keys == "ctrl-f"));
         assert!(app.plugins.set_enabled(ID, false, &app));
         assert!(app.provider(SCHEME).is_none());
         assert!(app.commands.get("query.search").is_none());
         assert!(app.registry.places.all().is_empty());
+        assert!(app.registry.keepers.all().is_empty());
         assert!(app.registry.keymap.all().is_empty());
         assert!(app.registry.menus.all().is_empty());
         assert!(
@@ -519,6 +927,23 @@ mod tests {
                 .schema()
                 .iter()
                 .all(|s| !s.key.starts_with("query."))
+        );
+        // Nothing keeps searches any more.
+        assert!(app.dispatch(&Invocation::new("keep")).is_err());
+    }
+
+    #[test]
+    fn a_suggested_name_says_what_and_where() {
+        assert_eq!(suggested_name("*.pdf modified<7d"), "*.pdf modified<7d");
+        assert_eq!(
+            suggested_name(r#"ext:png in:"/pics/two words" depth:2"#),
+            "ext:png in two words"
+        );
+        assert_eq!(suggested_name("in:/srv"), "Everything in srv");
+        assert_eq!(suggested_name("in:/"), "Everything in /");
+        assert_eq!(
+            suggested_name(r#""two words" OR -draft type:file"#),
+            "two words OR NOT draft type:file"
         );
     }
 

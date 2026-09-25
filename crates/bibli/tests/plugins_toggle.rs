@@ -14,6 +14,8 @@ struct Snapshot {
     keymap: usize,
     menus: usize,
     places: usize,
+    /// What keeps a kind of location in the sidebar (bookmarks, searches).
+    keepers: Vec<String>,
     views: usize,
     panels: usize,
     providers: BTreeSet<&'static str>,
@@ -36,6 +38,13 @@ fn snapshot(app: &App) -> Snapshot {
         keymap: app.registry.keymap.all().len(),
         menus: app.registry.menus.all().len(),
         places: app.registry.places.all().len(),
+        keepers: app
+            .registry
+            .keepers
+            .all()
+            .into_iter()
+            .map(|k| k.scheme)
+            .collect(),
         views: app.registry.views.all().len(),
         panels: app.registry.panels.all().len(),
         providers: ["path", "query", "shelf", "recent"]

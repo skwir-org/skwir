@@ -447,6 +447,11 @@ impl App {
         pane.unwrap_or_else(|| self.workspace.read().active_id())
     }
 
+    /// The location a pane shows, if it shows one.
+    pub fn pane_location(&self, pane: PaneId) -> Option<Location> {
+        self.workspace.read().pane(pane)?.location().cloned()
+    }
+
     /// The directory a pane shows, or an error a command can return as is.
     pub fn pane_dir(&self, pane: PaneId) -> anyhow::Result<PathBuf> {
         let ws = self.workspace.read();
@@ -603,6 +608,30 @@ mod builtin {
                 let pane = app.pane_or_active(a.pane);
                 app.navigate(pane, &Location::parse_os(a.location.as_os_str()))?;
                 Ok(Outcome::Done)
+            },
+        );
+
+        c.register::<PaneArg, _>(
+            "core",
+            "keep",
+            "Add to sidebar",
+            "Keep what the pane shows in the sidebar: a folder as a bookmark, a search as a saved search",
+            |a, app| {
+                let pane = app.pane_or_active(a.pane);
+                let location = app
+                    .pane_location(pane)
+                    .ok_or_else(|| anyhow::anyhow!("the pane shows nothing to keep"))?;
+                let keeper = app
+                    .registry
+                    .keepers
+                    .find(|k| *k.scheme == *location.scheme)
+                    .ok_or_else(|| anyhow::anyhow!("this location cannot be kept in the sidebar"))?;
+                let mut save = keeper.save;
+                if !save.args.is_object() {
+                    save.args = serde_json::json!({});
+                }
+                save.args["pane"] = serde_json::json!(pane);
+                app.dispatch(&save)
             },
         );
 

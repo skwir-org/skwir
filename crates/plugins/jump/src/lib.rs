@@ -268,6 +268,8 @@ impl Plugin for JumpPlugin {
                 activate: None,
                 unavailable: None,
                 menu: Vec::new(),
+                forget: None,
+                reorder: None,
             },
         );
         app.registry.keymap.add(
