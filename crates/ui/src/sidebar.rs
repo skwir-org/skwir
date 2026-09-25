@@ -45,17 +45,12 @@ pub struct BookmarkDrag {
     pub index: usize,
 }
 
-/// Where a bookmark dragged from `from` and dropped on the one at `to`
-/// goes: it takes that one's place, so it lands after it when it moved
-/// down and before it when it moved up. `None` for the end of the list;
-/// the outer `None` when it stays where it was.
-pub fn drop_before(order: &[PathBuf], from: usize, to: usize) -> Option<Option<PathBuf>> {
-    use std::cmp::Ordering;
-    match from.cmp(&to) {
-        Ordering::Equal => None,
-        Ordering::Less => Some(order.get(to + 1).cloned()),
-        Ordering::Greater => Some(order.get(to).cloned()),
-    }
+/// Where a bookmark dragged from `from` goes when dropped in the gap
+/// before the bookmark at `gap` (`order.len()` for the end): before that
+/// bookmark, `None` for last. The outer `None` when the gap is on either side
+/// of the dragged bookmark, where it already is.
+pub fn drop_target(order: &[PathBuf], from: usize, gap: usize) -> Option<Option<PathBuf>> {
+    (gap != from && gap != from + 1).then(|| order.get(gap).cloned())
 }
 
 /// What activating `place` runs: its own command (mount, unlock), or
@@ -311,7 +306,10 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
         .into_any_element()
 }
 
-/// A bookmark's row: dragged onto another bookmark, it takes its place.
+/// A bookmark's row. It can be dragged, and while a bookmark is dragged
+/// over it, a line marks the gap it would land in: the one above the row
+/// over its upper half, the one below over its lower half. A line, not a
+/// highlighted row, because a highlighted row reads as "into this folder".
 fn bookmark_row(
     row: gpui::Stateful<gpui::Div>,
     path: PathBuf,
@@ -319,32 +317,46 @@ fn bookmark_row(
     order: &[PathBuf],
     cx: &mut Context<Shell>,
 ) -> gpui::Stateful<gpui::Div> {
-    let theme = cx.global::<Theme>().clone();
-    let (tint, edge) = (theme.drop_target, theme.accent);
-    let order = order.to_vec();
     let label = path.file_name().map_or_else(
         || path.display().to_string(),
         |name| name.to_string_lossy().into_owned(),
     );
-    row.on_drag(
-        BookmarkDrag {
-            path: path.clone(),
-            index,
-        },
-        move |_, position, _, cx| {
-            cx.new(|_| crate::dnd::DragPreview::named(label.clone(), position))
-        },
-    )
-    .drag_over::<BookmarkDrag>(move |s, drag, _, _| {
-        if drag.index == index {
+    row.relative()
+        .on_drag(
+            BookmarkDrag {
+                path: path.clone(),
+                index,
+            },
+            move |_, position, _, cx| {
+                cx.new(|_| crate::dnd::DragPreview::named(label.clone(), position))
+            },
+        )
+        .child(gap(order, index, true, cx))
+        .child(gap(order, index + 1, false, cx))
+}
+
+/// Half of a bookmark's row, over it: the drop zone of the gap before the
+/// bookmark at `before`, drawn as a line on the row's top or bottom edge.
+/// Its hitbox does not block the row's own clicks.
+fn gap(order: &[PathBuf], before: usize, top: bool, cx: &mut Context<Shell>) -> gpui::Div {
+    let edge = cx.global::<Theme>().accent;
+    let order = order.to_vec();
+    let zone = div().absolute().left_0().right_0().h(gpui::relative(0.5));
+    let zone = if top { zone.top_0() } else { zone.bottom_0() };
+    zone.drag_over::<BookmarkDrag>(move |s, drag, _, _| {
+        if drag.index == before || drag.index + 1 == before {
             s
+        } else if top {
+            s.border_t_2().border_color(edge)
         } else {
-            s.bg(tint).border_color(edge)
+            s.border_b_2().border_color(edge)
         }
     })
     .on_drop(cx.listener(move |this, drag: &BookmarkDrag, window, cx| {
+        // Handled here even where nothing moves: the sidebar's own drop
+        // would put the bookmark last.
         cx.stop_propagation();
-        if let Some(before) = drop_before(&order, drag.index, index) {
+        if let Some(before) = drop_target(&order, drag.index, before) {
             this.run(
                 "places.move_bookmark",
                 serde_json::json!({
@@ -378,18 +390,20 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::{drop_before, group_title, used_fraction};
+    use super::{drop_target, group_title, used_fraction};
     use std::path::PathBuf;
 
     #[test]
-    fn a_dropped_bookmark_takes_the_place_of_the_one_it_lands_on() {
+    fn a_dropped_bookmark_lands_in_the_gap_the_line_marks() {
         let order: Vec<PathBuf> = ["/a", "/b", "/c"].map(PathBuf::from).into();
-        // Down: after the target, so before the one that follows it.
-        assert_eq!(drop_before(&order, 0, 1), Some(Some(PathBuf::from("/c"))));
-        assert_eq!(drop_before(&order, 0, 2), Some(None), "last");
-        // Up: before the target.
-        assert_eq!(drop_before(&order, 2, 0), Some(Some(PathBuf::from("/a"))));
-        assert_eq!(drop_before(&order, 1, 1), None, "where it was");
+        let before = |p: &str| Some(Some(PathBuf::from(p)));
+        assert_eq!(drop_target(&order, 0, 2), before("/c"), "down, below /b");
+        assert_eq!(drop_target(&order, 0, 3), Some(None), "last");
+        assert_eq!(drop_target(&order, 2, 0), before("/a"), "up, first");
+        assert_eq!(drop_target(&order, 2, 1), before("/b"));
+        // The gaps on either side of it leave it where it is.
+        assert_eq!(drop_target(&order, 1, 1), None);
+        assert_eq!(drop_target(&order, 1, 2), None);
     }
 
     #[test]
