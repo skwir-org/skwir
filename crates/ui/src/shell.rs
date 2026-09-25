@@ -60,6 +60,8 @@ pub struct PaneUi {
     pub loading: crate::loading::State,
     /// What this pane last searched for, for its "Nothing found".
     pub last_search: String,
+    /// The chips of the search it shows (`search_bar`).
+    pub chips: crate::search_bar::Chips,
     /// The placeholder's button, kept so Tab can reach it.
     placeholder_focus: FocusHandle,
     _sub: Subscription,
@@ -148,6 +150,8 @@ pub struct Shell {
     pub confirm: Option<ConfirmState>,
     pub menu: Option<MenuState>,
     pub toolbar_menu: Option<crate::toolbar::Popup>,
+    /// A search chip's open choices.
+    pub search_menu: Option<crate::search_bar::ChipMenu>,
     pub settings: Option<Entity<crate::settings::SettingsView>>,
     pub(crate) settings_subscription: Option<Subscription>,
     /// Settings revision the theme was last resolved against.
@@ -321,6 +325,7 @@ impl Shell {
             confirm: None,
             menu: None,
             toolbar_menu: None,
+            search_menu: None,
             settings: None,
             settings_subscription: None,
             theme_revision: 0,
@@ -449,6 +454,7 @@ impl Shell {
             usage: UsageState::default(),
             loading: crate::loading::State::default(),
             last_search: String::new(),
+            chips: crate::search_bar::Chips::default(),
             placeholder_focus: cx.focus_handle(),
             _sub: sub,
         }
@@ -1004,6 +1010,7 @@ impl Shell {
             "toolbar_next" => window.focus_next(),
             "toolbar_prev" => window.focus_prev(),
             "toolbar_menu" => self.toggle_toolbar_menu(args, window, cx),
+            "search_chip" => self.toggle_search_chip(args, window, cx),
             name if name.starts_with("settings_") => self.settings_command(name, args, window, cx),
             "shortcuts" => self.toggle_shortcuts(window, cx),
             "ask" => self.open_ask(args, window, cx),
@@ -1580,6 +1587,7 @@ impl Shell {
         let theme = cx.global::<Theme>().clone();
         let active = self.app.workspace.read().active_id() == id;
         let address_bar = address::render_address(self, window, cx);
+        let search_bar = crate::search_bar::render(self, window, cx);
         // The Usage view draws its own scanning and empty states.
         let placeholder = (self.ui().view_id != "usage")
             .then(|| crate::placeholder::of(self, id))
@@ -1623,6 +1631,7 @@ impl Shell {
                     .border_color(if active { theme.accent } else { theme.border })
             })
             .child(address_bar)
+            .children(search_bar)
             .when_some(message, |d, message| {
                 d.child(
                     div()

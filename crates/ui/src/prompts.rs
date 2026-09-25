@@ -240,7 +240,8 @@ impl Shell {
             PromptKind::Mkdir if !text.is_empty() => {
                 self.run("mkdir", serde_json::json!({ "name": text }), window, cx);
             }
-            PromptKind::Search if !text.is_empty() => {
+            // Empty, everything below the folder: the chips then narrow it.
+            PromptKind::Search => {
                 self.last_search.clone_from(&text);
                 self.ui_mut().last_search.clone_from(&text);
                 let pane = self.pane;

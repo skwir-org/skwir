@@ -134,6 +134,20 @@ checking the wall clock at least every ten minutes so a sleep past midnight
 is not missed. Saved searches with dates shift by at most the zone's offset;
 the timeline's bars, labels and the queries they become now name the same
 day.
+Search chips (2026-09-25), a query designer that needs no syntax: a pane
+showing a search has a row of chips under its address row (Name, Kind,
+Modified, Size, Tag, Contains, In <folder>), each opening its choices in a
+popover anchored to it (the kinds, periods from Today to Older than a year,
+sizes, Custom… for a value to type). A choice refines the search and moves
+the pane, so results follow every click and Back undoes it; a set chip
+reads its value and has a × and a Remove item. An empty search (Enter with
+nothing typed) is every entry below the folder, which the chips then
+narrow. The query plugin owns the meaning (`query.describe`,
+`query.refine`, `facets.rs`), so the CLI and agents get the same chips as
+data; a part no facet holds (an OR across facets, a NOT, `ext:`) is a chip
+of its own showing its text, so nothing typed is lost. Not yet: choosing a
+tag from the tags known (it is typed), and starting from a file's own
+properties ("Find similar").
 
 ---
 

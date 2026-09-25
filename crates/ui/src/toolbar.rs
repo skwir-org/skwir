@@ -278,6 +278,9 @@ fn invoke(
             popup.restore(window);
         }
     }
+    if command != "ui.search_chip" {
+        shell.close_search_chip(window);
+    }
     shell.note_pointer_use(command, &args, cx);
     if !command.starts_with("ui.") {
         args["pane"] = serde_json::json!(pane);

@@ -8,6 +8,7 @@
 //! put in order with Undo (`saved`). The plan's `search` item (walker,
 //! content search, plocate) lives here too.
 
+pub mod facets;
 pub mod lang;
 pub mod plocate;
 pub mod provider;
@@ -110,6 +111,29 @@ struct MoveArgs {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct DescribeArgs {
+    /// The search; the one the pane shows when omitted.
+    #[serde(default)]
+    expr: Option<String>,
+    #[serde(default)]
+    pane: Option<PaneId>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct RefineArgs {
+    /// A chip's id: `words`, `kind`, `modified`, `size`, `tag`, `content`,
+    /// `where` or `advanced`.
+    facet: String,
+    /// What to set it to (a kind toggles, `where` takes `subtree`, `here`
+    /// or `hidden`, `advanced` the index of the part to remove); omitted,
+    /// the facet is cleared.
+    #[serde(default)]
+    value: Option<String>,
+    #[serde(default)]
+    pane: Option<PaneId>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct EditArgs {
     /// The saved search.
     expr: String,
@@ -127,6 +151,9 @@ pub fn location_for(expr: &str, root: Option<&std::path::Path>) -> Location {
         Some(r) if !has_root => format!("{expr} in:{}", lang::quote_os(r.as_os_str())),
         _ => expr.to_owned(),
     };
+    // An empty search is every entry below the root: ` in:/x` reads the
+    // same as `in:/x`, but only one of them is the text a person expects.
+    let rest = rest.trim().to_owned();
     Location::new(SCHEME, rest)
 }
 
@@ -153,6 +180,18 @@ pub fn suggested_name(expr: &str) -> String {
         )
     };
     format!("{what} in {place}")
+}
+
+/// The search a pane shows, or for a folder, an empty one rooted there
+/// (every entry below it), which a first chip then narrows.
+fn pane_search(app: &App, pane: PaneId) -> anyhow::Result<String> {
+    if let Some(location) = app.pane_location(pane).filter(|l| &*l.scheme == SCHEME) {
+        return Ok(location.rest);
+    }
+    let dir = app
+        .pane_dir(pane)
+        .map_err(|_| anyhow::anyhow!("the pane shows no search and no folder"))?;
+    Ok(location_for("", Some(&dir)).rest)
 }
 
 /// Saved searches from settings.
@@ -551,6 +590,34 @@ impl Plugin for QueryPlugin {
             "List saved searches",
             "Return the saved searches, in sidebar order",
             |_, app| Ok(Outcome::Value(serde_json::to_value(saved(app))?)),
+        );
+        app.commands.register::<DescribeArgs, _>(
+            ID,
+            "query.describe",
+            "Describe search",
+            "The search's chips for the designer: each facet (words, kind, modified, size, tag, content, where) with its value and the invocation every choice runs, then the parts no facet holds",
+            |a, app| {
+                let expr = match a.expr {
+                    Some(expr) => expr,
+                    None => pane_search(app, app.pane_or_active(a.pane))?,
+                };
+                let description = facets::describe(&expr).map_err(|e| anyhow::anyhow!("query: {e}"))?;
+                Ok(Outcome::Value(serde_json::to_value(description)?))
+            },
+        );
+        app.commands.register::<RefineArgs, _>(
+            ID,
+            "query.refine",
+            "Refine search",
+            "Change one facet of the pane's search (or start one in its folder) and show the result",
+            |a, app| {
+                let pane = app.pane_or_active(a.pane);
+                let expr = pane_search(app, pane)?;
+                let refined = facets::refine(&expr, &a.facet, a.value.as_deref())
+                    .map_err(|e| anyhow::anyhow!("query: {e}"))?;
+                app.navigate(pane, &Location::new(SCHEME, refined))?;
+                Ok(Outcome::Done)
+            },
         );
         app.registry.keepers.add(
             ID,
@@ -986,6 +1053,64 @@ mod tests {
         assert_eq!(app.work_dir(pane).unwrap(), root.join("docs/deep"));
         select(&["old.txt", "notes.txt"]);
         assert_eq!(app.work_dir(pane).unwrap(), root.join("docs"));
+    }
+
+    /// The designer's path: a chip on a folder starts a search there, each
+    /// further chip narrows it, and the pane's search describes itself.
+    #[test]
+    fn chips_start_and_narrow_a_search() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("it's here");
+        std::fs::create_dir(&root).unwrap();
+        tree(&root);
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&root)).unwrap();
+        let refine = |facet: &str, value: &str| {
+            app.dispatch(&Invocation::with_args(
+                "query.refine",
+                &serde_json::json!({ "facet": facet, "value": value }),
+            ))
+            .unwrap();
+            assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        };
+        let names = || -> BTreeSet<String> {
+            let ws = app.workspace.read();
+            ws.pane(pane)
+                .unwrap()
+                .listing
+                .iter()
+                .map(|e| e.name_str().into_owned())
+                .collect()
+        };
+        refine("kind", "image");
+        assert_eq!(names(), set(&["cat.png", "dog.JPG"]));
+        refine("size", ">1k");
+        assert_eq!(names(), set(&["cat.png"]));
+        let location = app.pane_location(pane).unwrap();
+        assert_eq!(lang::parse(&location.rest).unwrap().root, root);
+        let described = match app.dispatch(&Invocation::new("query.describe")).unwrap() {
+            Outcome::Value(v) => v,
+            other => panic!("{other:?}"),
+        };
+        let chip = |id: &str| {
+            described["chips"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|c| c["id"] == id)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(chip("kind")["value"], "Images");
+        assert_eq!(chip("size")["value"], ">1k");
+        assert_eq!(chip("where")["title"], "In it's here");
+        // A choice's command is what the UI runs: clearing the size.
+        let clear: Invocation = serde_json::from_value(chip("size")["clear"].clone()).unwrap();
+        app.dispatch(&clear).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        assert_eq!(names(), set(&["cat.png", "dog.JPG"]));
     }
 
     #[test]
