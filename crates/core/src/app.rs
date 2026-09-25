@@ -239,18 +239,67 @@ impl App {
     /// Open a location in a pane, replacing what it showed. Returns immediately;
     /// entries arrive through `pump`.
     pub fn navigate(&self, pane: PaneId, location: &Location) -> anyhow::Result<()> {
-        let open = self.open_location(location)?;
+        self.show(pane, location, |p| {
+            p.history.truncate(p.history_pos + 1);
+            p.history.push(location.clone());
+            p.history_pos = p.history.len() - 1;
+        })
+    }
+
+    /// Show `location` in `pane`, then let `then` update its history. A
+    /// location the pane keeps (a column of its view, the folder it just
+    /// left) is adopted with its listing as it stands, kept current by its
+    /// watcher, instead of listing it anew.
+    fn show(
+        &self,
+        pane: PaneId,
+        location: &Location,
+        then: impl FnOnce(&mut crate::workspace::Pane),
+    ) -> anyhow::Result<()> {
+        let kept = self
+            .workspace
+            .write()
+            .pane_mut(pane)
+            .ok_or_else(|| anyhow::anyhow!("no such pane"))?
+            .take_kept(location);
+        let (open, listing) = match kept {
+            Some(kept) => kept,
+            None => (self.open_location(location)?, crate::Listing::default()),
+        };
         let mut ws = self.workspace.write();
         let p = ws
             .pane_mut(pane)
             .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-        p.replace_open(open);
-        p.history.truncate(p.history_pos + 1);
-        p.history.push(location.clone());
-        p.history_pos = p.history.len() - 1;
+        p.replace_open(open, listing);
+        then(p);
         drop(ws);
         self.wake();
         Ok(())
+    }
+
+    /// Keep `wanted` open beside what `pane` shows, listed and current, and
+    /// nothing else: what the pane's view shows aside (the columns of the
+    /// folders above). The location just left stays if wanted. Opening only
+    /// enqueues, like `open_location`.
+    pub fn keep_locations(&self, pane: PaneId, wanted: &[Location]) {
+        let missing = {
+            let mut ws = self.workspace.write();
+            let Some(p) = ws.pane_mut(pane) else { return };
+            if wanted.is_empty() && !p.keeps_any() {
+                return;
+            }
+            p.keep_only(wanted)
+        };
+        for location in missing {
+            match self.open_location(&location) {
+                Ok(open) => {
+                    if let Some(p) = self.workspace.write().pane_mut(pane) {
+                        p.add_kept(open);
+                    }
+                }
+                Err(error) => tracing::warn!(%location, "cannot keep: {error:#}"),
+            }
+        }
     }
 
     /// Apply pending listing events on every pane. Returns the number applied.
@@ -562,15 +611,7 @@ mod builtin {
                     pos.and_then(|pos| Some((pos, p.history.get(pos)?.clone())))
                 };
                 if let Some((pos, loc)) = target {
-                    let open = app.open_location(&loc)?;
-                    let mut ws = app.workspace.write();
-                    let p = ws
-                        .pane_mut(pane)
-                        .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-                    p.replace_open(open);
-                    p.history_pos = pos;
-                    drop(ws);
-                    app.wake();
+                    app.show(pane, &loc, |p| p.history_pos = pos)?;
                 }
                 Ok(Outcome::Done)
             });

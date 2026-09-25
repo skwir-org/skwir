@@ -359,10 +359,17 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   current request (e.g. the generation check in `crates/ui/src/preview.rs`);
   cancellation alone does not prevent stale results.
 - Pane-owned background work links to `Pane::location_lifetime`; navigation,
-  Back and pane close cancel it independently of the next UI render. Replace
-  locations through `Pane::replace_open` so no navigation path misses this.
+  Back and pane close cancel it independently of the next UI render. Show
+  locations through `App::show` (navigate, Back, Forward) and
+  `Pane::replace_open` so no navigation path misses this.
   Directory open/stat/watch setup belongs on workers too: a sleeping disk can
   block any of those calls. Opening failures arrive as listing errors.
+- A folder is listed once while something shows it. A pane keeps open, beside
+  the location it shows, what its view shows too (`PaneView::kept_locations`:
+  the columns view's folders above), kept current by their watchers and
+  pumped with the pane; going to one adopts its listing as it stands, and the
+  folder just left waits until the next sync for the view to keep it or let
+  it go (`App::keep_locations`). A view never opens a location of its own.
 - Usage installs non-recursive watches as its cancellable scanner visits each
   directory, before reading it. Never delegate a whole recursive walk to a
   watcher API: it cannot observe our request cancellation. Cache only completed

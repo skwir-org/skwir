@@ -51,6 +51,10 @@ on a slow disk), so no frame, banner included, was drawn. The drain is now a
 slice per sync (`PUMP_BUDGET`) and arrivals are placed in the sorted order
 instead of sorting again: the same folder draws its first rows at once, shows
 "Loading location…" with a growing count, and is complete in 0.75 s.
+The columns view no longer lists its folders a second time: the pane keeps
+the folders above open beside the one shown, and going up or down adopts the
+listing already there (`App::keep_locations`), so `/nix/store` comes back at
+once, complete, and its column is whole as soon as a child is entered.
 
 ---
 

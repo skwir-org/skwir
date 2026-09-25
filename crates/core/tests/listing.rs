@@ -457,3 +457,54 @@ fn virtual_locations_hydrate_by_path_in_one_batch() {
     assert!(found.iter().any(|e| e.id == id(2) && e.is_dir()));
     assert!(matches!(rx.try_recv().unwrap(), ListingEvent::Removed(ids) if ids == [id(3)]));
 }
+
+/// A location the pane keeps beside the one it shows (a column of the
+/// columns view) is adopted when the pane goes there: its listing, complete
+/// and the same, rather than the folder listed again. The folder left
+/// becomes kept when the view wants it, and goes when it does not.
+#[test]
+fn going_up_adopts_the_kept_listing_and_going_down_keeps_the_one_left() {
+    let tmp = tempfile::tempdir().unwrap();
+    let parent = tmp.path().join("parent");
+    let child = parent.join("child");
+    std::fs::create_dir_all(&child).unwrap();
+    for i in 0..50 {
+        std::fs::File::create(parent.join(format!("f{i:02}"))).unwrap();
+    }
+    let app = app(tmp.path());
+    let pane = active(&app);
+    navigate(&app, &parent);
+    let listed = app.workspace.read().pane(pane).unwrap().listing.id();
+
+    // Down: the view keeps the folder left, as a column.
+    navigate(&app, &child);
+    let above = Location::from_path(&parent);
+    app.keep_locations(pane, std::slice::from_ref(&above));
+    {
+        let ws = app.workspace.read();
+        let kept = ws.pane(pane).unwrap().kept(&above).expect("kept");
+        assert_eq!(kept.id(), listed, "the pane's own listing, not a new one");
+        assert!(kept.is_complete());
+    }
+
+    // Up: adopted as it is.
+    app.navigate(pane, &above).unwrap();
+    {
+        let ws = app.workspace.read();
+        let shown = &ws.pane(pane).unwrap().listing;
+        assert_eq!(shown.id(), listed);
+        assert!(shown.is_complete());
+        assert_eq!(shown.len(), 51);
+    }
+
+    // A view that keeps nothing lets the folder left go: going down again
+    // lists it anew.
+    app.keep_locations(pane, &[]);
+    navigate(&app, &child);
+    app.keep_locations(pane, &[]);
+    app.navigate(pane, &above).unwrap();
+    assert_ne!(
+        app.workspace.read().pane(pane).unwrap().listing.id(),
+        listed
+    );
+}

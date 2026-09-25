@@ -1457,6 +1457,23 @@ impl Shell {
             // A new listing, not a new address, is what starts the pane's
             // state over: reopening the folder already shown (revealing the
             // playing track in it) replaces the listing under the same text.
+            // What the view shows beside the location (the columns of the
+            // folders above) stays open; the rest, the folder just left
+            // included when it is not among them, is let go.
+            let wanted = {
+                let ws = app.workspace.read();
+                let Some(pane) = ws.pane(id) else { continue };
+                let wanted = self
+                    .ui()
+                    .views
+                    .get(self.ui().view_id)
+                    .map(|view| view.kept_locations(pane.location()))
+                    .unwrap_or_default();
+                (!wanted.is_empty() || pane.keeps_any()).then_some(wanted)
+            };
+            if let Some(wanted) = wanted {
+                app.keep_locations(id, &wanted);
+            }
             let (location, resorted, replaced) = {
                 let ws = app.workspace.read();
                 let Some(pane) = ws.pane(id) else { continue };

@@ -122,12 +122,63 @@ impl Selection {
     }
 }
 
+/// A location a pane keeps open beside the one it shows, with its listing
+/// kept current: what its view shows next to it (the columns of the folders
+/// above), and what going there again adopts instead of listing it anew.
+pub struct Kept {
+    pub location: Location,
+    /// Closed when the kept location goes, unless it was taken to be shown.
+    open: Option<Arc<dyn OpenLocation>>,
+    pub listing: Listing,
+}
+
+impl Kept {
+    fn new(open: Arc<dyn OpenLocation>, listing: Listing) -> Self {
+        Kept {
+            location: open.location().clone(),
+            open: Some(open),
+            listing,
+        }
+    }
+
+    /// The location and its listing, to be shown: they go on as they were.
+    fn into_shown(mut self) -> (Arc<dyn OpenLocation>, Listing) {
+        let open = self.open.take().expect("a kept location is open");
+        (open, std::mem::take(&mut self.listing))
+    }
+
+    /// Apply its pending events, like the shown listing's.
+    fn pump(&mut self, budget: std::time::Duration) -> usize {
+        let Some(open) = &self.open else { return 0 };
+        self.listing.drain(open.events(), budget)
+    }
+
+    fn backlog(&self) -> bool {
+        self.open
+            .as_ref()
+            .is_some_and(|open| !open.events().is_empty())
+    }
+}
+
+impl Drop for Kept {
+    fn drop(&mut self) {
+        if let Some(open) = self.open.take() {
+            open.close();
+        }
+    }
+}
+
 /// One pane: an open location, its listing, selection, and history.
 pub struct Pane {
     pub id: PaneId,
     pub open: Option<Arc<dyn OpenLocation>>,
     location_lifetime: CancelToken,
     pub listing: Listing,
+    /// The locations the pane's view asked to keep (`App::keep_locations`).
+    kept: Vec<Kept>,
+    /// The location navigation just left, until the view says whether it
+    /// keeps it: entering a folder makes the one left a column beside it.
+    left: Option<Kept>,
     pub selection: Selection,
     /// Sort and hidden-file settings; views render `listing.sorted(sort)`.
     pub sort: SortSpec,
@@ -145,6 +196,8 @@ impl Pane {
             open: None,
             location_lifetime: CancelToken::new(),
             listing: Listing::default(),
+            kept: Vec::new(),
+            left: None,
             selection: Selection::default(),
             sort: SortSpec::default(),
             history: Vec::new(),
@@ -158,16 +211,67 @@ impl Pane {
         self.location_lifetime.child()
     }
 
-    pub(crate) fn replace_open(&mut self, open: Arc<dyn OpenLocation>) {
+    /// Show `open` with `listing` (a new one, or a kept one going on as it
+    /// was). The location shown before waits in `left` for the view to keep
+    /// it or let it go (`App::keep_locations`); whatever waited there goes.
+    pub(crate) fn replace_open(&mut self, open: Arc<dyn OpenLocation>, listing: Listing) {
         self.location_lifetime.cancel();
         self.location_lifetime = CancelToken::new();
-        if let Some(old) = self.open.replace(open) {
-            old.close();
-        }
-        self.listing = Listing::default();
+        let old_listing = std::mem::replace(&mut self.listing, listing);
+        self.left = self
+            .open
+            .replace(open)
+            .map(|old| Kept::new(old, old_listing));
         // Nothing of the old location survives, the cursor included.
         self.selection = Selection::default();
         self.reveal = None;
+    }
+
+    /// The kept location `location`, taken out to be shown.
+    pub(crate) fn take_kept(
+        &mut self,
+        location: &Location,
+    ) -> Option<(Arc<dyn OpenLocation>, Listing)> {
+        if self.left.as_ref().is_some_and(|k| &k.location == location) {
+            return self.left.take().map(Kept::into_shown);
+        }
+        let i = self.kept.iter().position(|k| &k.location == location)?;
+        Some(self.kept.remove(i).into_shown())
+    }
+
+    /// Keep exactly the locations of `wanted` (the one shown aside): the
+    /// one just left stays if it is wanted, the others go. Returns the
+    /// wanted ones that are not open yet, for the caller to open.
+    pub(crate) fn keep_only(&mut self, wanted: &[Location]) -> Vec<Location> {
+        if let Some(left) = self.left.take()
+            && wanted.contains(&left.location)
+        {
+            self.kept.push(left);
+        }
+        self.kept.retain(|k| wanted.contains(&k.location));
+        let shown = self.location().cloned();
+        wanted
+            .iter()
+            .filter(|w| Some(*w) != shown.as_ref() && !self.kept.iter().any(|k| &k.location == *w))
+            .cloned()
+            .collect()
+    }
+
+    pub(crate) fn add_kept(&mut self, open: Arc<dyn OpenLocation>) {
+        self.kept.push(Kept::new(open, Listing::default()));
+    }
+
+    /// Whether anything is kept or waiting to be: `keep_only` has work.
+    pub fn keeps_any(&self) -> bool {
+        !self.kept.is_empty() || self.left.is_some()
+    }
+
+    /// The listing of a location kept beside the one shown.
+    pub fn kept(&self, location: &Location) -> Option<&Listing> {
+        self.kept
+            .iter()
+            .find(|k| &k.location == location)
+            .map(|k| &k.listing)
     }
 
     /// Select the entry called `name` as soon as the listing has it: how a
@@ -190,20 +294,26 @@ impl Pane {
         }
     }
 
-    /// Whether listing events are waiting to be applied.
+    /// Whether listing events are waiting to be applied, the kept
+    /// locations' included.
     pub fn backlog(&self) -> bool {
         self.open
             .as_ref()
             .is_some_and(|open| !open.events().is_empty())
+            || self.kept.iter().any(Kept::backlog)
     }
 
     pub fn location(&self) -> Option<&Location> {
         self.open.as_ref().map(|o| o.location())
     }
 
-    /// Apply pending listing events, for at most `budget`. Returns how many
-    /// were applied; `backlog` says whether some are still waiting.
+    /// Apply pending listing events, for at most `budget` each, the kept
+    /// locations' too. Returns how many changed the shown listing;
+    /// `backlog` says whether some are still waiting.
     pub fn pump(&mut self, budget: std::time::Duration) -> usize {
+        for kept in &mut self.kept {
+            kept.pump(budget);
+        }
         let Some(open) = &self.open else { return 0 };
         let rx = open.events().clone();
         let n = self.listing.drain(&rx, budget);

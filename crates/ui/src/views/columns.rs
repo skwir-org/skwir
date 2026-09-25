@@ -1,16 +1,17 @@
 //! Miller columns: ancestor directories to the left, the pane's listing as
-//! the deepest column. Ancestors are opened by the view through
-//! `App::open_location` (which only enqueues the listing) when the pane's
-//! folder changes, kept while they stay ancestors, pumped here, and closed
-//! when the view drops them.
+//! the deepest column. The ancestors are locations the pane keeps open
+//! beside the one it shows (`PaneView::kept_locations`, `App::keep_locations`):
+//! the core keeps their listings current and pumps them with the pane's,
+//! and going up or down one level adopts a listing already there instead of
+//! listing that folder again. A column draws only its visible rows, from
+//! the kept listing, so a parent of 366 000 entries costs no copy of them.
 
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use bibli_core::location::OpenLocation;
 use bibli_core::os_path::PathArg;
-use bibli_core::{EntryId, Listing, Location, SortSpec};
+use bibli_core::{EntryId, Location, SortSpec};
 use gpui::{
     AnyElement, Context, MouseButton, ScrollStrategy, UniformListScrollHandle, Window, div,
     prelude::*, px, uniform_list,
@@ -27,30 +28,16 @@ const MAX_ANCESTORS: usize = 3;
 const COLUMN_W: f32 = 240.0;
 const ICON_PX: u16 = 18;
 
-/// One row of an ancestor column, built when its listing changes.
-struct AncestorRow {
-    name: std::ffi::OsString,
-    label: gpui::SharedString,
-    is_dir: bool,
-}
-
 struct Ancestor {
     path: PathBuf,
+    location: Location,
     /// Name of the child on the way to the pane's directory.
     child: std::ffi::OsString,
-    open: Arc<dyn OpenLocation>,
-    listing: Listing,
-    rows: Arc<[AncestorRow]>,
-    sorted_at: Option<(u64, SortSpec)>,
     scroll: UniformListScrollHandle,
-    /// The row on the way down was scrolled into view once it listed.
+    /// The row on the way down was scrolled into view once it listed; until
+    /// then, the listing version it was last looked for in.
     shown_child: bool,
-}
-
-impl Drop for Ancestor {
-    fn drop(&mut self) {
-        self.open.close();
-    }
+    looked_at: Option<u64>,
 }
 
 #[derive(Default)]
@@ -60,109 +47,92 @@ pub struct ColumnsView {
     scroll: UniformListScrollHandle,
 }
 
-impl ColumnsView {
-    /// The ancestors of `base`, nearest last. Those already open (going one
-    /// level down or up keeps most of them) are kept with their listing and
-    /// scroll; only the new ones are opened.
-    fn rebuild(&mut self, shell: &Shell, base: &Path) {
-        let mut chain: Vec<(PathBuf, std::ffi::OsString)> = Vec::new();
-        let mut cur = base.to_path_buf();
-        while let Some(parent) = cur.parent().map(Path::to_path_buf) {
-            let child = cur.file_name().map(ToOwned::to_owned).unwrap_or_default();
-            chain.push((parent.clone(), child));
-            cur = parent;
-            if chain.len() >= MAX_ANCESTORS {
-                break;
-            }
+/// The folders above `base` that are shown as columns, farthest first,
+/// each with the name of the child on the way down.
+fn chain(base: &Path) -> Vec<(PathBuf, std::ffi::OsString)> {
+    let mut chain = Vec::new();
+    let mut cur = base.to_path_buf();
+    while let Some(parent) = cur.parent().map(Path::to_path_buf) {
+        let child = cur.file_name().map(ToOwned::to_owned).unwrap_or_default();
+        chain.push((parent.clone(), child));
+        cur = parent;
+        if chain.len() >= MAX_ANCESTORS {
+            break;
         }
-        chain.reverse();
+    }
+    chain.reverse();
+    chain
+}
+
+impl ColumnsView {
+    /// The ancestors of `base`, nearest last. Those already shown (going one
+    /// level down or up keeps most of them) keep their scroll.
+    fn rebuild(&mut self, base: &Path) {
         let mut old: Vec<Ancestor> = std::mem::take(&mut self.ancestors);
-        for (path, child) in chain {
+        for (path, child) in chain(base) {
             if let Some(i) = old.iter().position(|a| a.path == path) {
                 let mut kept = old.swap_remove(i);
                 if kept.child != child {
                     kept.child = child;
                     kept.shown_child = false;
+                    kept.looked_at = None;
                 }
                 self.ancestors.push(kept);
                 continue;
             }
-            match shell.app.open_location(&Location::from_path(&path)) {
-                Ok(open) => self.ancestors.push(Ancestor {
-                    path,
-                    child,
-                    open,
-                    listing: Listing::default(),
-                    rows: Arc::from([]),
-                    sorted_at: None,
-                    scroll: UniformListScrollHandle::new(),
-                    shown_child: false,
-                }),
-                Err(e) => tracing::warn!(path = %path.display(), "columns: {e:#}"),
-            }
+            self.ancestors.push(Ancestor {
+                location: Location::from_path(&path),
+                path,
+                child,
+                scroll: UniformListScrollHandle::new(),
+                shown_child: false,
+                looked_at: None,
+            });
         }
         self.base = Some(base.to_path_buf());
     }
+}
 
-    /// Apply what the parent folders' listings sent, a slice each
-    /// (`PUMP_BUDGET`), as the panes' are. Returns whether some is left,
-    /// for the caller to ask for another pass. A column's rows are made
-    /// once its listing is complete (or failed): remaking them for every slice of a
-    /// parent of 366 000 entries would cost more than the listing.
-    fn pump(&mut self, spec: SortSpec) -> bool {
-        let mut backlog = false;
-        for a in &mut self.ancestors {
-            a.listing
-                .drain(a.open.events(), bibli_core::workspace::PUMP_BUDGET);
-            backlog |= !a.open.events().is_empty();
-            let v = a.listing.version();
-            let settled = a.listing.is_complete() || a.listing.error().is_some();
-            if a.sorted_at == Some((v, spec)) || !settled {
-                continue;
-            }
-            a.sorted_at = Some((v, spec));
-            let listing = &a.listing;
-            a.rows = listing
-                .sorted(spec)
-                .iter()
-                .filter_map(|id| listing.get(*id))
-                .map(|e| AncestorRow {
-                    name: e.name.clone(),
-                    label: e.name_str().into_owned().into(),
-                    is_dir: e.is_dir(),
-                })
-                .collect();
-            if !a.shown_child
-                && let Some(ix) = a.rows.iter().position(|row| row.name == a.child)
-            {
-                a.scroll.scroll_to_item(ix, ScrollStrategy::Center);
-                a.shown_child = true;
-            }
-        }
-        backlog
-    }
+/// One row of an ancestor column, read from its listing as it is drawn.
+struct AncestorRow {
+    name: std::ffi::OsString,
+    label: gpui::SharedString,
+    is_dir: bool,
 }
 
 fn ancestor_column(
     view: &ColumnsView,
     k: usize,
+    ids: Arc<[EntryId]>,
     pane: bibli_core::workspace::PaneId,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let a = &view.ancestors[k];
-    let rows = Arc::clone(&a.rows);
     let path = a.path.clone();
     let child = a.child.clone();
+    let location = a.location.clone();
     let list = uniform_list(
         ("column", k),
-        rows.len(),
+        ids.len(),
         cx.processor(move |this: &mut Shell, range: Range<usize>, _window, cx| {
             let theme = cx.global::<Theme>().clone();
-            let mut out = Vec::with_capacity(range.len());
-            for ix in range {
-                let Some(row) = rows.get(ix) else {
-                    break;
+            // Only the rows drawn are read from the kept listing.
+            let rows: Vec<(std::ffi::OsString, bool)> = {
+                let ws = this.app.workspace.read();
+                let listing = ws.pane(pane).and_then(|p| p.kept(&location));
+                ids[range.clone()]
+                    .iter()
+                    .filter_map(|id| listing?.get(*id))
+                    .map(|e| (e.name.clone(), e.is_dir()))
+                    .collect()
+            };
+            let mut out = Vec::with_capacity(rows.len());
+            for (ix, (name, is_dir)) in range.zip(rows) {
+                let row = AncestorRow {
+                    label: name.to_string_lossy().into_owned().into(),
+                    name,
+                    is_dir,
                 };
                 let target = path.join(&row.name);
                 let is_on_path = row.name == child;
@@ -268,20 +238,42 @@ impl PaneView for ColumnsView {
         };
         if base != self.base {
             if let Some(b) = &base {
-                self.rebuild(shell, b);
+                self.rebuild(b);
             } else {
                 self.ancestors.clear();
                 self.base = None;
             }
         }
-        if self.pump(spec) {
-            // The rest on the next pass, after this frame is drawn.
-            shell.app.wake();
-        }
+        // Each column's order, from the kept listing; the child on the way
+        // down is scrolled into view once, when it has listed.
+        let orders: Vec<Arc<[EntryId]>> = {
+            let ws = shell.app.workspace.read();
+            let pane = ws.pane(shell.pane);
+            self.ancestors
+                .iter_mut()
+                .map(|a| {
+                    let Some(listing) = pane.and_then(|p| p.kept(&a.location)) else {
+                        return Arc::from([]);
+                    };
+                    let ids = listing.sorted(spec);
+                    if !a.shown_child && a.looked_at != Some(listing.version()) {
+                        a.looked_at = Some(listing.version());
+                        if let Some(ix) = ids
+                            .iter()
+                            .position(|id| listing.get(*id).is_some_and(|e| e.name == a.child))
+                        {
+                            a.scroll.scroll_to_item(ix, ScrollStrategy::Center);
+                            a.shown_child = true;
+                        }
+                    }
+                    ids
+                })
+                .collect()
+        };
 
         let mut columns = div().size_full().flex().flex_row().overflow_hidden();
-        for k in 0..self.ancestors.len() {
-            columns = columns.child(ancestor_column(self, k, shell.pane, &theme, cx));
+        for (k, ids) in orders.into_iter().enumerate() {
+            columns = columns.child(ancestor_column(self, k, ids, shell.pane, &theme, cx));
         }
         let count = shell.ui().list.sorted.len();
         let pane = shell.pane;
@@ -328,6 +320,18 @@ impl PaneView for ColumnsView {
 
     fn scroll_to(&mut self, ix: usize) {
         self.scroll.scroll_to_item(ix, ScrollStrategy::Top);
+    }
+
+    fn kept_locations(&self, shown: Option<&Location>) -> Vec<Location> {
+        shown
+            .and_then(Location::path)
+            .map(|base| {
+                chain(&base)
+                    .into_iter()
+                    .map(|(path, _)| Location::from_path(&path))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     fn nav_delta(&self, nav: Nav, shell: &Shell) -> Option<isize> {

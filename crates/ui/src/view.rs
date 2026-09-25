@@ -12,6 +12,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use bibli_core::Location;
 use bibli_core::registry::{Factory, ViewSpec};
 use gpui::{AnyElement, Context, Window};
 
@@ -58,6 +59,13 @@ pub trait PaneView {
     }
     /// The pane's location changed.
     fn reset(&mut self) {}
+    /// Locations the pane should keep open beside `shown`, listed and
+    /// current, because this view shows them too (the columns view's
+    /// ancestors). Asked on every sync; the pane lets go of the rest,
+    /// the location it just left included (`App::keep_locations`).
+    fn kept_locations(&self, _shown: Option<&Location>) -> Vec<Location> {
+        Vec::new()
+    }
 }
 
 /// What a view's `ViewSpec::factory` holds: a constructor.
