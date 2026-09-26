@@ -67,8 +67,9 @@ pub struct PaneUi {
     /// Its pane came back (or is new) and has not been put in place yet
     /// (`Shell::place_pane`).
     pub(crate) returning: bool,
-    /// The first entry it showed when its tab was left.
-    pub(crate) anchor: Option<bibli_core::EntryId>,
+    /// Where it was scrolled when its tab was left: the entry at the top,
+    /// its index then, and how many pixels into its row the view began.
+    pub(crate) anchor: Option<(bibli_core::EntryId, usize, f32)>,
     /// What it will show first, still waiting for metadata.
     pub(crate) warm: Vec<bibli_core::EntryId>,
     _sub: Subscription,
@@ -79,7 +80,11 @@ impl PaneUi {
     /// kept. The views start over when the listing comes back, as after a
     /// navigation.
     pub(crate) fn let_go(&mut self) {
-        self.anchor = self.list.sorted.get(self.list.first_visible).copied();
+        self.anchor = self
+            .views
+            .get(self.view_id)
+            .and_then(|view| view.scroll_anchor())
+            .and_then(|(ix, within)| Some((*self.list.sorted.get(ix)?, ix, within)));
         let (rows, items) = (self.list.visible_rows, self.list.visible_items);
         self.list = ListState::default();
         self.list.visible_rows = rows;

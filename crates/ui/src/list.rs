@@ -35,9 +35,8 @@ pub struct ListState {
     /// The listing (`Listing::id`) everything here describes.
     listing: Option<u64>,
     pub visible_rows: usize,
-    /// Index of the first entry the view laid out, and how many it did:
-    /// where a tab left comes back to, and what it shows first.
-    pub first_visible: usize,
+    /// How many entries the view laid out: what a tab shown again shows
+    /// first.
     pub visible_items: usize,
     typeahead: String,
     typeahead_at: Option<Instant>,
@@ -55,7 +54,6 @@ impl Default for ListState {
             pending_hydrate: HashSet::new(),
             listing: None,
             visible_rows: 20,
-            first_visible: 0,
             visible_items: 0,
             typeahead: String::new(),
             typeahead_at: None,

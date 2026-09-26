@@ -320,7 +320,6 @@ impl PaneView for GridView {
                     let theme = cx.global::<Theme>().clone();
                     let list = &mut this.ui_mut().list;
                     list.visible_rows = range.len().div_ceil(cols.max(1)).max(1);
-                    list.first_visible = range.start;
                     list.visible_items = range.len();
                     let ids: Vec<(usize, EntryId)> = range
                         .filter_map(|ix| this.ui().list.sorted.get(ix).map(|id| (ix, *id)))
@@ -428,8 +427,12 @@ impl PaneView for GridView {
         self.scroll.scroll_to_item(ix);
     }
 
-    fn scroll_to_top(&mut self, ix: usize) {
-        self.scroll.scroll_to_item_strict(ix);
+    fn scroll_anchor(&self) -> Option<(usize, f32)> {
+        Some(self.scroll.anchor())
+    }
+
+    fn restore_anchor(&mut self, anchor: (usize, f32)) {
+        self.scroll.scroll_to_anchor(anchor);
     }
 
     fn nav_delta(&self, nav: Nav, _: &Shell) -> Option<isize> {

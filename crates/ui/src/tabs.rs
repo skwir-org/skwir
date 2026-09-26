@@ -274,11 +274,20 @@ impl Shell {
         }
         if std::mem::replace(&mut self.ui_mut().returning, false) {
             let ui = self.ui();
-            let anchor = ui.anchor.and_then(|id| ui.list.index_of(id));
+            // The entry that was at the top, where it is now; if it went,
+            // the place it had.
+            let len = ui.list.sorted.len();
+            let anchor =
+                ui.anchor
+                    .filter(|_| len > 0)
+                    .map(|(id, ix, within)| match ui.list.index_of(id) {
+                        Some(now) => (now, within),
+                        None => (ix.min(len - 1), 0.),
+                    });
             let items = ui.list.visible_items.max(ui.list.visible_rows).max(1);
             let (lo, hi) = match (anchor, self.cursor_index()) {
-                (Some(ix), _) => {
-                    self.with_view(|view, _| view.scroll_to_top(ix));
+                (Some((ix, within)), _) => {
+                    self.with_view(|view, _| view.restore_anchor((ix, within)));
                     (ix, ix + items)
                 }
                 (None, Some(ix)) => {

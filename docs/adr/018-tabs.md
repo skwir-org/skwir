@@ -94,8 +94,14 @@ ten for folders nobody is looking at.
   navigating there costs (usually a warm dentry cache); for a search it
   runs the query again. Keeping the last one or two tabs warm is possible
   later and would be a budgeted change to this ADR, not a default.
-- The scroll position comes back by the first entry shown (one id kept
-  per pane), or the view scrolls to the restored cursor.
+- The scroll position comes back to the pixel: a pane keeps the entry at
+  the top of its view and how far into its row the view began
+  (`PaneView::scroll_anchor`), and the view puts that entry back at that
+  offset from its rows as they are then (`restore_anchor`; the grid through
+  the same anchor math as its reflow), so an entry added above or a window
+  resized while away does not move what was shown. An entry that went
+  leaves its index; a view that does not scroll by items (columns) shows
+  the restored cursor.
 - A drag does not switch tabs when it hovers one (spring-loading): the
   source pane of a drag must stay listed until the drop reads its
   selection. Dropping on a tab is the way to reach a tab's folder.
@@ -165,3 +171,7 @@ screenshot burst across the switch shows the tab left, then the tab shown
 finished, with no frame between. The type icons of entries never shown
 before in the session still arrive a frame later: they are looked up on a
 worker, as on any navigation.
+
+Checked in the real app: a list and a grid scrolled to half a row, shown
+again after another tab, give screenshots identical to the pixel (0
+differing pixels for each).

@@ -360,10 +360,19 @@ pub struct GridLayout {
     pub origin: (f32, f32),
 }
 
+/// A scroll asked for before the next prepaint, which has the real rows.
+#[derive(Clone, Copy, Debug)]
+enum Deferred {
+    /// Bring an item into view, its row at the top when `strict`.
+    Item { ix: usize, strict: bool },
+    /// Put an item's row at the top, `within` pixels scrolled into it.
+    Anchor { ix: usize, within: f32 },
+}
+
 #[derive(Debug, Default)]
 pub struct GridScrollState {
     pub base_handle: ScrollHandle,
-    deferred: Option<(usize, bool)>,
+    deferred: Option<Deferred>,
     layout: GridLayout,
     /// What `layout.slots` was built from: rebuilt only when this changes.
     built_from: Option<(usize, math::Columns, f32, u64)>,
@@ -380,12 +389,30 @@ impl UniformGridScrollHandle {
 
     /// Bring item `ix` into view with the minimum scroll.
     pub fn scroll_to_item(&self, ix: usize) {
-        self.0.borrow_mut().deferred = Some((ix, false));
+        self.0.borrow_mut().deferred = Some(Deferred::Item { ix, strict: false });
     }
 
     /// Put item `ix`'s row at the top.
     pub fn scroll_to_item_strict(&self, ix: usize) {
-        self.0.borrow_mut().deferred = Some((ix, true));
+        self.0.borrow_mut().deferred = Some(Deferred::Item { ix, strict: true });
+    }
+
+    /// The first item of the row at the top of the last prepaint, and how
+    /// many pixels into that row the view began: what `scroll_to_anchor`
+    /// puts back, exactly.
+    pub fn anchor(&self) -> (usize, f32) {
+        let state = self.0.borrow();
+        state
+            .layout
+            .slots
+            .anchor(f32::from(state.base_handle.offset().y))
+    }
+
+    /// Scroll back to an `anchor`: its item's row at the top, as far into
+    /// it as it was, from the rows as they are then (the window may have
+    /// been resized, the zoom changed, entries added before it).
+    pub fn scroll_to_anchor(&self, (ix, within): (usize, f32)) {
+        self.0.borrow_mut().deferred = Some(Deferred::Anchor { ix, within });
     }
 
     /// Column count of the last prepaint (1 before the first).
@@ -561,9 +588,15 @@ impl Element for UniformGrid {
                 if let Some(before) = &before {
                     y = slots.offset_for_anchor(before.anchor(y));
                 }
-                if let Some((ix, strict)) = deferred {
-                    let ix = ix.min(item_count.saturating_sub(1));
-                    y = slots.offset_for_item(ix, viewport_h, content_h, y, strict);
+                match deferred {
+                    Some(Deferred::Item { ix, strict }) => {
+                        let ix = ix.min(item_count.saturating_sub(1));
+                        y = slots.offset_for_item(ix, viewport_h, content_h, y, strict);
+                    }
+                    Some(Deferred::Anchor { ix, within }) => {
+                        y = slots.offset_for_anchor((ix.min(item_count.saturating_sub(1)), within));
+                    }
+                    None => {}
                 }
                 let max_scroll = (content_h - viewport_h).max(0.0);
                 y = y.clamp(-max_scroll, 0.0);

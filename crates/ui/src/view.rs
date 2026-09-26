@@ -44,9 +44,16 @@ pub trait PaneView {
     ) -> AnyElement;
     /// Bring index `ix` of the sorted order into view.
     fn scroll_to(&mut self, ix: usize);
-    /// Put index `ix` at the top: where a tab shown again was scrolled to.
-    fn scroll_to_top(&mut self, ix: usize) {
-        self.scroll_to(ix);
+    /// Where the view is scrolled: the index of the item at the top (the
+    /// first of its row) and how many pixels into it the view begins.
+    /// `None` for a view that does not scroll by items.
+    fn scroll_anchor(&self) -> Option<(usize, f32)> {
+        None
+    }
+    /// Scroll back to an anchor `scroll_anchor` gave, as exactly as the
+    /// rows as they are now allow: how a tab shown again looks the same.
+    fn restore_anchor(&mut self, anchor: (usize, f32)) {
+        self.scroll_to(anchor.0);
     }
     /// Index delta for a navigation key (`None`: the view handles it in `nav`
     /// or ignores it).

@@ -136,6 +136,19 @@ fn resize_edge(column: usize, cx: &mut Context<Shell>) -> Stateful<Div> {
         })
 }
 
+/// The row at the top of rows scrolled to `offset_y`, and how many pixels
+/// into it the view begins. Rows are `ROW_HEIGHT` tall, from the top.
+fn row_anchor(offset_y: f32) -> (usize, f32) {
+    let top = (-offset_y).max(0.);
+    let row = (top / ROW_HEIGHT).floor();
+    (row as usize, top - row * ROW_HEIGHT)
+}
+
+/// The offset that shows `anchor` again (the list clamps it to its rows).
+fn row_offset((row, within): (usize, f32)) -> f32 {
+    -(row as f32 * ROW_HEIGHT + within.clamp(0., ROW_HEIGHT - 1.))
+}
+
 #[derive(Default)]
 pub struct ListView {
     scroll: UniformListScrollHandle,
@@ -539,7 +552,6 @@ impl PaneView for ListView {
                     let theme = cx.global::<Theme>().clone();
                     let list = &mut this.ui_mut().list;
                     list.visible_rows = range.len().max(1);
-                    list.first_visible = range.start;
                     list.visible_items = range.len();
                     let rows = this.rows(range, ICON_PX as u16, false);
                     let need: Vec<EntryId> =
@@ -588,8 +600,20 @@ impl PaneView for ListView {
         self.scroll.scroll_to_item(ix, ScrollStrategy::Top);
     }
 
-    fn scroll_to_top(&mut self, ix: usize) {
-        self.scroll.scroll_to_item_strict(ix, ScrollStrategy::Top);
+    fn scroll_anchor(&self) -> Option<(usize, f32)> {
+        Some(row_anchor(f32::from(
+            self.scroll.0.borrow().base_handle.offset().y,
+        )))
+    }
+
+    fn restore_anchor(&mut self, anchor: (usize, f32)) {
+        let mut state = self.scroll.0.borrow_mut();
+        // A pending scroll (the reset of a new listing) would move it again.
+        state.deferred_scroll_to_item = None;
+        let offset = state.base_handle.offset();
+        state
+            .base_handle
+            .set_offset(gpui::point(offset.x, px(row_offset(anchor))));
     }
 
     fn nav_delta(&self, nav: Nav, shell: &Shell) -> Option<isize> {
@@ -605,5 +629,26 @@ impl PaneView for ListView {
 
     fn reset(&mut self) {
         self.scroll.scroll_to_item_strict(0, ScrollStrategy::Top);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ROW_HEIGHT, row_anchor, row_offset};
+
+    #[test]
+    fn a_scroll_position_comes_back_to_the_pixel() {
+        for offset in [0., -1., -13., -ROW_HEIGHT, -(40. * ROW_HEIGHT + 11.5)] {
+            let anchor = row_anchor(offset);
+            assert!((row_offset(anchor) - offset).abs() < 1e-3, "{offset}");
+        }
+        // Half a row down: the row at the top and half of it scrolled.
+        let (row, within) = row_anchor(-(3.5 * ROW_HEIGHT));
+        assert_eq!(row, 3);
+        assert!((within - ROW_HEIGHT / 2.).abs() < 1e-3);
+        // An entry that moved keeps how far into its row the view began.
+        assert!((row_offset((5, 7.)) - -(5. * ROW_HEIGHT + 7.)).abs() < 1e-3);
+        // What no row can hold is clamped into the row.
+        assert!((row_offset((2, 99.)) - -(3. * ROW_HEIGHT - 1.)).abs() < 1e-3);
     }
 }
