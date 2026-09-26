@@ -12,6 +12,7 @@
 //! - [`plugin`]: the plugin lifecycle with runtime toggles.
 //! - [`scheduler`]: the priority work queue with cancellation.
 //! - [`cache`] and [`settings`]: the throwaway cache and namespaced settings.
+//! - [`terminal`]: the screen a terminal shows and what it is sent (ADR-019).
 //! - [`thumbs`]: the thumbnail service: providers, LRU of decoded images, viewport priority.
 //! - [`workspace`]: panes, selection, focus; [`tabs`]: the tabs that group panes.
 //! - [`collate`] and [`lru`]: the natural name order and the byte-budgeted LRU every cache shares.
@@ -43,6 +44,7 @@ pub mod scheduler;
 pub mod settings;
 pub mod tabs;
 pub mod tally;
+pub mod terminal;
 pub mod thumbs;
 pub mod workspace;
 

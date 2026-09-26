@@ -63,6 +63,9 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.zoom", r#"{"dir":"out"}"#, "Zoom out"),
     ("ui.zoom", r#"{"dir":"reset"}"#, "Zoom reset"),
     ("ui.toggle_preview", "{}", "Toggle preview panel"),
+    ("ui.terminal", "{}", "Toggle terminal"),
+    ("ui.terminal_copy", "{}", "Terminal: copy"),
+    ("ui.terminal_paste", "{}", "Terminal: paste"),
     (
         "ui.preview_page",
         r#"{"delta":-1}"#,

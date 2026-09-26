@@ -2,8 +2,8 @@
 //!
 //! A preference is something the user chose in Settings; this is not that. It
 //! is the shape of the last window — which view each pane showed, whether it
-//! was split and how, whether the preview and the timeline were open, where
-//! the preview was and how big — kept as application data under one key and
+//! was split and how, whether the preview, the timeline and the terminal were
+//! open, where the preview was and how big — kept as application data under one key and
 //! restored at startup. Nothing here is worth a dialog, and all of it is annoying to set
 //! up again every morning.
 //!
@@ -49,6 +49,10 @@ pub struct Session {
     pub timeline: bool,
     /// How tall the pinned player's dock was dragged.
     pub player_height: f32,
+    /// Whether the terminal was open under the panes.
+    pub terminal: bool,
+    /// How tall its edge was dragged; 0 until then.
+    pub terminal_height: f32,
 }
 
 impl Shell {
@@ -71,17 +75,25 @@ impl Shell {
             details: self.preview.details_open,
             timeline: self.timeline.open,
             player_height: self.player.height,
+            terminal: self.terminal.open,
+            terminal_height: self.terminal.height.unwrap_or(0.),
         }
     }
 
     /// Remember the shape, if it changed. Called after the handful of actions
     /// that change it, never per frame.
     pub(crate) fn remember_session(&mut self) {
+        // Nothing is written before the last window's shape was read: the
+        // tabs are put in place (and present themselves) before the shape
+        // is restored, and writing then would replace it with defaults.
+        let Some(stored) = &self.stored_session else {
+            return;
+        };
         let session = self.session();
-        if session == self.stored_session {
+        if session == *stored {
             return;
         }
-        self.stored_session = session.clone();
+        self.stored_session = Some(session.clone());
         match toml::Value::try_from(&session) {
             Ok(value) => {
                 self.app.settings.set(SESSION_KEY, value);

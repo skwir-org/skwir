@@ -10,3 +10,4 @@ pub mod halo;
 pub mod marquee;
 pub mod popover;
 pub mod scrollbar;
+pub mod terminal;

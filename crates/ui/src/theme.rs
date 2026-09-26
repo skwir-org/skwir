@@ -12,6 +12,8 @@
 //!   whatever is under the pointer, `selection_*` for what is chosen,
 //!   `success`/`warning`/`error` for outcomes, `scrim` behind a dialog,
 //!   `drop_target` under a drag, `on_fill` for text on a saturated fill.
+//!   `terminal` is the sixteen ANSI colours a terminal's programs name; its
+//!   default text and background are `text` and `bg`.
 //!   Do not derive a hover from `border` or `surface` locally.
 //! - radius: `rounded_sm` inside controls (segments, menu rows, key caps),
 //!   `rounded_md` for controls and rows, `rounded_lg` for panels (menus,
@@ -63,7 +65,15 @@ pub struct Theme {
     pub placeholder: Hsla,
     /// Bars of a chart; the one under the pointer is `accent`.
     pub chart: Hsla,
+    /// The ANSI colours, black to white then their bright kin, readable on
+    /// `bg`. They are VS Code's defaults for its light and dark themes,
+    /// whose backgrounds are close to ours.
+    pub terminal: [Hsla; 16],
     pub is_dark: bool,
+}
+
+fn palette(hex: [u32; 16]) -> [Hsla; 16] {
+    hex.map(|value| rgb(value).into())
 }
 
 impl Global for Theme {}
@@ -95,6 +105,10 @@ impl Theme {
             tag_bg: Hsla::from(rgb(0x2f6feb)).opacity(0.18),
             placeholder: Hsla::from(rgb(0xd8d8d8)).opacity(0.6),
             chart: Hsla::from(rgb(0x2f6feb)).opacity(0.6),
+            terminal: palette([
+                0x000000, 0xcd3131, 0x00bc00, 0x949800, 0x0451a5, 0xbc05bc, 0x0598bc, 0x555555,
+                0x666666, 0xcd3131, 0x14ce14, 0xb5ba00, 0x0451a5, 0xbc05bc, 0x0598bc, 0xa5a5a5,
+            ]),
             is_dark: false,
         }
     }
@@ -125,6 +139,10 @@ impl Theme {
             tag_bg: Hsla::from(rgb(0x6ea8fe)).opacity(0.18),
             placeholder: Hsla::from(rgb(0x3a3a3a)).opacity(0.6),
             chart: Hsla::from(rgb(0x6ea8fe)).opacity(0.6),
+            terminal: palette([
+                0x000000, 0xcd3131, 0x0dbc79, 0xe5e510, 0x2472c8, 0xbc3fbc, 0x11a8cd, 0xe5e5e5,
+                0x666666, 0xf14c4c, 0x23d18b, 0xf5f543, 0x3b8eea, 0xd670d6, 0x29b8db, 0xe5e5e5,
+            ]),
             is_dark: true,
         }
     }

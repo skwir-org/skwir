@@ -184,6 +184,25 @@ Open: `listing::pending_opens_report_errors_asynchronously_and_can_be_replaced`
 is flaky ("cancelled open must not publish late events"): it failed eight
 runs in a row at the parent commit and on this work, then passed in later
 full runs; not investigated here.
+Terminal (2026-09-26, ADR-019): F4 opens a terminal under the panes, as in
+Dolphin: the new `terminal` plugin runs the shell on a pseudo-terminal with
+`alacritty_terminal` and publishes core's `terminal::Screen`, which the UI
+draws with an element of its own; the engine never leaves the plugin, so
+libghostty-vt can replace it there once it is stable and builds without
+fetching sources. The pane and the shell follow each other: the plugin
+types a `cd` when the pane goes elsewhere, only while the shell has the
+terminal, and a `cd` typed by the user takes the pane there (read from
+`/proc`, any shell). While the terminal has the keyboard every window key
+is the shell's except F4 and the palette. Measured (ADR-019 addendum):
++0.5 MB stripped binary, no idle cost with the panel closed, +2.3 MB when
+opened. Not yet: mouse reporting to programs, an input method's text while
+composing, search in the history. Found on the way: no part of the
+window's shape was restored at startup (at the parent commit too), because
+presenting the first tab wrote the default shape over the saved one before
+it was read; `remember_session` now writes nothing until
+`restore_session` has run. Open: on Xvfb a restored panel (preview or
+terminal) appears only at the first input after startup; not investigated
+on a real compositor.
 
 ---
 

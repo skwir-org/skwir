@@ -398,6 +398,11 @@ fn more_panel(
             "Timeline",
         ),
         (
+            Button::new("menu-terminal", "terminal", "Terminal", "ui.terminal")
+                .active(shell.terminal.open),
+            "Terminal",
+        ),
+        (
             Button::new("menu-palette", "command", "Command palette", "ui.palette"),
             "Command palette…",
         ),
@@ -415,6 +420,10 @@ fn more_panel(
             "Settings…",
         ),
     ] {
+        // The terminal is a plugin's: without it, nothing says it exists.
+        if label == "Terminal" && shell.app.terminals.provider().is_none() {
+            continue;
+        }
         panel = panel.child(menu_item(button, label).render(shell, cx));
     }
     panel.into_any_element()

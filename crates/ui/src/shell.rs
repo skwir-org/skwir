@@ -221,6 +221,8 @@ pub struct Shell {
     pub reviews: VecDeque<crate::review::Review>,
     pub review_focus: Option<crate::review::ReviewFocus>,
     pub timeline: TimelineState,
+    /// The terminal under the panes (F4).
+    pub terminal: crate::terminal::TerminalState,
     /// Panes side by side or stacked, the preview at the right or the bottom.
     pub layout: crate::layout::Layout,
     pub toasts: crate::toast::ToastState,
@@ -249,7 +251,9 @@ pub struct Shell {
     reveal_asked: u64,
     /// The window's shape as last written to settings; `remember_session`
     /// compares against it so nothing is written on an ordinary frame.
-    pub(crate) stored_session: crate::session::Session,
+    /// `None` until the last window's shape was read (`restore_session`):
+    /// until then nothing is written.
+    pub(crate) stored_session: Option<crate::session::Session>,
     /// Scroll position of the sidebar, so it can have a scrollbar.
     pub sidebar_scroll: gpui::ScrollHandle,
     started: Instant,
@@ -423,6 +427,7 @@ impl Shell {
             reviews: VecDeque::new(),
             review_focus: None,
             timeline: TimelineState::default(),
+            terminal: crate::terminal::TerminalState::new(cx.focus_handle()),
             layout: crate::layout::Layout::default(),
             toasts: crate::toast::ToastState::default(),
             pending: Arc::default(),
@@ -436,7 +441,7 @@ impl Shell {
             press_collapse: None,
             reveal: None,
             reveal_asked: 0,
-            stored_session: crate::session::Session::default(),
+            stored_session: None,
             sidebar_scroll: gpui::ScrollHandle::new(),
             started,
             first_frame_logged: false,
@@ -468,6 +473,7 @@ impl Shell {
     /// decides which views this build and its plugins actually have.
     fn restore_session(&mut self, split: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(session) = crate::session::restore(&self.app) else {
+            self.stored_session = Some(self.session());
             return;
         };
         if session.zoom > 0 {
@@ -498,6 +504,11 @@ impl Shell {
             self.player.height = session.player_height;
         }
         self.timeline.open = session.timeline;
+        // Its shell starts on a worker at the first sync.
+        self.terminal.open = session.terminal && self.app.terminals.provider().is_some();
+        if session.terminal_height > 0. {
+            self.terminal.height = Some(session.terminal_height);
+        }
         // Restored tabs bring their own splits. One made here starts even:
         // the remembered share is put back after it.
         if split && session.split && !self.is_split() {
@@ -513,7 +524,7 @@ impl Shell {
                 pane.view_id = known;
             }
         }
-        self.stored_session = self.session();
+        self.stored_session = Some(self.session());
     }
 
     pub(crate) fn make_pane_ui(
@@ -1265,6 +1276,10 @@ impl Shell {
             "usage_close" => self.set_view(view::LIST, cx),
             "usage_refresh" => self.refresh_usage(cx),
             "timeline" => self.toggle_timeline(cx),
+            "terminal" => self.toggle_terminal(window, cx),
+            "terminal_copy" => self.terminal_copy(cx),
+            "terminal_paste" => self.terminal_paste(cx),
+            "terminal_page" => self.terminal_page(args),
             "timeline_bucket" => {
                 let b = arg("bucket").unwrap_or_else(|| "month".into());
                 self.timeline_set_bucket(&b, cx);
@@ -1743,6 +1758,7 @@ impl Shell {
         }
         self.sync_timeline(cx);
         self.sync_shelf(cx);
+        self.sync_terminal(window, cx);
     }
 
     /// The shelf publishes how many items it holds in `App::tallies`; read
@@ -1991,6 +2007,7 @@ impl Render for Shell {
             self.preview_width_limit(window)
         };
         let panel = preview::render_panel(self, bottom, limit, self.dock_height_limit(window), cx);
+        let terminal = self.render_terminal(window, cx);
         let status_bar = status::render(self, cx);
         // Not deferred: GPUI cannot nest deferred draws and the dialog's own
         // dropdowns are. It is the last overlay, so it paints above the rest.
@@ -2056,7 +2073,9 @@ impl Render for Shell {
                             .min_w_0()
                             .min_h_0()
                             .when(bottom, gpui::Styled::flex_col)
-                            // The tabs over the panes they arrange.
+                            // The tabs over the panes they arrange, and
+                            // the terminal under them, whose top edge is
+                            // dragged within this column.
                             .child(
                                 div()
                                     .flex()
@@ -2064,6 +2083,7 @@ impl Render for Shell {
                                     .flex_1()
                                     .min_w_0()
                                     .min_h_0()
+                                    .on_drag_move(cx.listener(Self::on_terminal_height_drag))
                                     .children(strip)
                                     .child(
                                         div()
@@ -2076,7 +2096,8 @@ impl Render for Shell {
                                             // dragged within these bounds.
                                             .on_drag_move(cx.listener(Self::on_split_drag))
                                             .children(columns),
-                                    ),
+                                    )
+                                    .children(terminal),
                             )
                             .children(panel),
                     ),

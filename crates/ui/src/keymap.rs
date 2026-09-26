@@ -28,6 +28,15 @@ pub const REVIEW: &str = "Review";
 pub const JUMP: &str = "Jump";
 /// `ui.choose`'s picker.
 pub const CHOOSE: &str = "Choose";
+/// The terminal panel: it takes every key the window binds, but these.
+pub const TERMINAL: &str = "Terminal";
+
+/// What still reaches the window from the terminal: the key that closes
+/// the panel, and the palette, from which everything else can be run. Every
+/// other key bound anywhere in the window belongs to the shell and its
+/// programs while the terminal has the keyboard (Tab completes, Ctrl+L
+/// clears, F-keys drive a file manager). `install` shadows them.
+const TERMINAL_PASSTHROUGH: [&str; 2] = ["ui.terminal", "ui.palette"];
 pub const BULK: &str = "BulkRename";
 pub const MENU: &str = "ContextMenu";
 
@@ -352,6 +361,18 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         r#"{"delta":1}"#,
         Some("SettingNumber"),
     ),
+    (
+        "shift-pageup",
+        "ui.terminal_page",
+        r#"{"pages":1}"#,
+        Some("terminal"),
+    ),
+    (
+        "shift-pagedown",
+        "ui.terminal_page",
+        r#"{"pages":-1}"#,
+        Some("terminal"),
+    ),
     ("ctrl-1", "ui.view", r#"{"id":"list"}"#, None),
     ("ctrl-2", "ui.view", r#"{"id":"grid"}"#, None),
     ("ctrl-3", "ui.view", r#"{"id":"columns"}"#, None),
@@ -416,6 +437,7 @@ pub fn context_of(when: Option<&str>) -> String {
         "jump" => JUMP.to_owned(),
         "choose" => CHOOSE.to_owned(),
         "bulk" => BULK.to_owned(),
+        "terminal" => TERMINAL.to_owned(),
         other => crate::menu::canonical_token(other).to_owned(),
     };
     let parts: Vec<String> = when
@@ -477,6 +499,7 @@ pub fn context_label(context: &str) -> String {
             "Jump" => place = "Jump",
             "Choose" => place = "Choosing from a list",
             "BulkRename" => place = "Bulk rename",
+            "Terminal" => place = "Terminal",
             "MediaPlayer" => place = "Media player",
             "Player" => place = "Pinned player",
             "Inspector" => place = "Structured previews",
@@ -666,6 +689,11 @@ pub fn install(app: &App, cx: &mut gpui::App) -> Keymap {
         if !valid_keys(&keys) {
             tracing::warn!(keys, name, "skipping key binding with unparsable keys");
             continue;
+        }
+        if context == ROOT && !TERMINAL_PASSTHROUGH.contains(&name.as_str()) {
+            // The deeper context's binding to nothing wins, and the key
+            // goes on to the terminal's own listener.
+            bindings.push(KeyBinding::new(&keys, gpui::NoAction, Some(TERMINAL)));
         }
         hints.push(KeyHint {
             keys: keys.clone(),

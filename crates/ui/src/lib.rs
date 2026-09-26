@@ -62,6 +62,7 @@ pub mod shortcuts;
 pub mod sidebar;
 pub mod status;
 pub mod tabs;
+pub mod terminal;
 pub mod theme;
 pub mod thumbs;
 pub mod timeline;

@@ -25,6 +25,8 @@ struct Snapshot {
     settings: BTreeSet<String>,
     /// Who listens to what plays (the desktop's media controls).
     player: Vec<String>,
+    /// Who runs the terminal panel's shells.
+    terminals: Option<String>,
 }
 
 fn snapshot(app: &App) -> Snapshot {
@@ -56,6 +58,7 @@ fn snapshot(app: &App) -> Snapshot {
         thumbs: app.thumbnails.provider_ids(),
         settings: app.settings.schema().into_iter().map(|s| s.key).collect(),
         player: app.player.listeners(),
+        terminals: app.terminals.owner(),
     }
 }
 

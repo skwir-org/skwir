@@ -265,6 +265,18 @@ current source before assuming a planned crate, command, or API exists.
   as its top edge is dragged; with the panel closed the status bar keeps a
   strip of its controls, an exception to "state, never messages" only in
   that a player is state. See `docs/invariants/media.md`.
+- **The terminal panel** (ADR-019) draws core's `terminal::Screen` and
+  sends `terminal::Input`; the VT engine (`alacritty_terminal`) never
+  leaves the `terminal` plugin, so it can be replaced there alone. The
+  session's own threads parse, build screens (at most one per 8 ms) and
+  wake the app; the UI thread only compares a revision, and the shell
+  starts on a worker. While it has the keyboard every root binding is the
+  shell's (`NoAction` in the `Terminal` context, built by
+  `keymap::install`) except `TERMINAL_PASSTHROUGH`: a new window-wide key
+  is shadowed there automatically, and one that must also work from the
+  terminal is added to that list. The plugin types a `cd` only while the
+  shell's process group has the terminal; test it with a real `/bin/sh`
+  (`crates/plugins/terminal/tests/session.rs`), not a mock.
 - **Volumes.** The places plugin lists mounted volumes from mountinfo and
   present-but-unmounted ones from `lsblk` (on a worker). A place with
   `activate` runs that command instead of navigating: `places.mount`, or

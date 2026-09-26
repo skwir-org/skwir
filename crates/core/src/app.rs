@@ -106,6 +106,8 @@ pub struct App {
     pub player: crate::playing::Player,
     /// Counts plugins publish for others to show (`shelf.items`).
     pub tallies: crate::tally::Tallies,
+    /// Who runs terminals (the terminal plugin), for the UI's panel.
+    pub terminals: crate::terminal::Terminals,
     pub thumbnails: Arc<crate::thumbs::Thumbnails>,
     pub metadata: Arc<crate::metadata::MetadataProviders>,
     pub previews: Arc<crate::preview::Previews>,
@@ -156,6 +158,7 @@ impl App {
             pending: crate::pending::PendingTransfer::default(),
             player: crate::playing::Player::default(),
             tallies: crate::tally::Tallies::default(),
+            terminals: crate::terminal::Terminals::default(),
             providers: RwLock::new(HashMap::new()),
             waker: RwLock::new(None),
             batch_size: config.batch_size,
@@ -223,6 +226,7 @@ impl App {
         self.pending.unregister_owner(owner);
         self.player.unregister_owner(owner);
         self.tallies.unregister_owner(owner);
+        self.terminals.unregister_owner(owner);
         self.registry.remove_owner(owner);
         self.providers.write().retain(|_, (o, _)| &**o != owner);
         for spec in self.settings.schema() {
