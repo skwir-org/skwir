@@ -97,6 +97,11 @@ impl Shell {
         };
         self.tabs_revision = revision;
         let current: Vec<PaneId> = self.panes.iter().map(|p| p.id).collect();
+        // The tab shown was split or lost its split, by whatever route (F3,
+        // a pane closed, a script): a new split starts even.
+        if self.shown_tab == Some(shown) && current.len() != wanted.len() {
+            self.split_share = crate::shell::SPLIT_SHARE;
+        }
         // What is on screen: the tab left while it is held, else the panes.
         let on_screen: Vec<PaneId> = match &self.presented {
             Some(left) => left.iter().map(|p| p.id).collect(),
@@ -217,17 +222,26 @@ impl Shell {
         }
         self.app.settle_tabs();
         if self.presented_tab != self.shown_tab {
-            // A split's own arrangement belongs to its tab.
+            // A split's own arrangement and share belong to its tab.
             if let Some(left) = self.presented_tab {
-                match self.layout.split.take() {
-                    Some(split) => self.tab_splits.insert(left, split),
-                    None => self.tab_splits.remove(&left),
+                let split = crate::layout::TabSplit {
+                    panes: self.layout.split.take(),
+                    share: std::mem::replace(&mut self.split_share, crate::shell::SPLIT_SHARE),
                 };
+                if split == crate::layout::TabSplit::default() {
+                    self.tab_splits.remove(&left);
+                } else {
+                    self.tab_splits.insert(left, split);
+                }
             }
             if let Some(shown) = self.shown_tab {
-                self.layout.split = self.tab_splits.remove(&shown);
+                let split = self.tab_splits.remove(&shown).unwrap_or_default();
+                self.layout.split = split.panes;
+                self.split_share = split.share;
             }
             self.presented_tab = self.shown_tab;
+            // The window's shape is now the tab shown's, split included.
+            self.remember_session();
             if had_focus {
                 window.focus(&self.ui().focus);
             }

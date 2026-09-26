@@ -16,6 +16,23 @@ use gpui::{Context, Window};
 
 use crate::shell::Shell;
 
+/// What a tab's split keeps while another tab is shown: its own
+/// arrangement, if it was made the other way, and how its edge was dragged.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TabSplit {
+    pub panes: Option<Panes>,
+    pub share: f32,
+}
+
+impl Default for TabSplit {
+    fn default() -> Self {
+        TabSplit {
+            panes: None,
+            share: crate::shell::SPLIT_SHARE,
+        }
+    }
+}
+
 /// How split panes are arranged.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]

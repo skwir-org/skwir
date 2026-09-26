@@ -144,8 +144,8 @@ pub struct Shell {
     /// Workspace revision the panes above follow.
     pub(crate) tabs_revision: u64,
     pub(crate) shown_tab: Option<bibli_core::workspace::TabId>,
-    /// The own arrangement of the splits of tabs not shown.
-    pub(crate) tab_splits: HashMap<bibli_core::workspace::TabId, crate::layout::Panes>,
+    /// The splits of tabs not shown: their own arrangement and share.
+    pub(crate) tab_splits: HashMap<bibli_core::workspace::TabId, crate::layout::TabSplit>,
     pub(crate) tab_labels: crate::tabs::Labels,
     /// The panes of the tab left, still drawn while the tab shown gets
     /// ready (`Shell::present`), and which tab they are.
@@ -169,7 +169,8 @@ pub struct Shell {
     pub sidebar_hidden: bool,
     /// How wide the sidebar was dragged (`Shell::sidebar_drawn_width`).
     pub sidebar_width: f32,
-    /// The first pane's share of a split, the second has the rest.
+    /// The first pane's share of the shown tab's split, the second has the
+    /// rest. Each tab keeps its own (`tab_splits`); a new split starts even.
     pub split_share: f32,
     pub thumbs: ThumbCache,
     pub icons: IconCache,
@@ -497,11 +498,13 @@ impl Shell {
             self.player.height = session.player_height;
         }
         self.timeline.open = session.timeline;
-        // Restored tabs bring their own splits.
+        // Restored tabs bring their own splits. One made here starts even:
+        // the remembered share is put back after it.
         if split && session.split && !self.is_split() {
-            let split = self.layout.split;
+            let (split, share) = (self.layout.split, self.split_share);
             self.toggle_split(window, cx);
             self.layout.split = split;
+            self.split_share = share;
         }
         // The views this build and its plugins have were instantiated with
         // the panes; a remembered one that is gone leaves the List.
@@ -1889,7 +1892,7 @@ impl Shell {
 
 /// A split's panes share the room evenly until their edge is dragged, and
 /// again after a double click on it.
-const SPLIT_SHARE: f32 = 0.5;
+pub(crate) const SPLIT_SHARE: f32 = 0.5;
 
 /// Marker type for dragging the edge between split panes.
 #[derive(Clone)]

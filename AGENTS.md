@@ -227,7 +227,10 @@ current source before assuming a planned crate, command, or API exists.
   The edge between split panes stores a share, not pixels: the panes' flex
   grow is the share, and the drag reads the bounds GPUI hands its
   `DragMoveEvent` (the panes' container), so nothing is measured; each pane
-  keeps `PANE_KEEP` across, `PANE_KEEP_HEIGHT` stacked.
+  keeps `PANE_KEEP` across, `PANE_KEEP_HEIGHT` stacked. The share, like the
+  split's own arrangement, belongs to its tab (`tab_splits`, swapped in
+  `Shell::present`); a tab that gains or loses its split, by any route,
+  starts even again (`sync_tabs`), and only the shown tab's is remembered.
 - **Tabs** (ADR-018) are core data: the workspace groups its panes in tabs
   (one pane, or two when that tab is split) and the `tab.*` commands change
   them. A tab not shown is dormant: its panes keep history, sort and
