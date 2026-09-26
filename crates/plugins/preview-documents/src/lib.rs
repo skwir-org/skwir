@@ -1,9 +1,10 @@
 //! Optional documents previews, registered independently of the UI toolkit,
-//! and PDF thumbnails for a desktop that has no thumbnailer for them.
+//! and thumbnails for a desktop that has no thumbnailer for them: PDFs, and
+//! Office documents once the preview has converted them.
 
 use bibli_core::{App, plugin::Plugin};
 use bibli_platform::preview::DocumentPreviews;
-use bibli_platform::thumb_providers::PdfPages;
+use bibli_platform::thumb_providers::{OfficePages, PdfPages};
 use std::sync::Arc;
 
 pub struct PreviewPlugin;
@@ -72,14 +73,23 @@ impl Plugin for PreviewPlugin {
             .get::<String>("preview-documents.pdfium_library")
             .filter(|s| !s.is_empty())
             .map(Into::into);
+        // A document converted for its preview has a thumbnail from then on:
+        // a tile that had none asks again.
+        let thumbnails = Arc::clone(&app.thumbnails);
         app.previews.register(
             self.id(),
             Arc::new(
-                DocumentPreviews::new(app.cache.namespace(self.id())).with_reader(backend, library),
+                DocumentPreviews::new(app.cache.namespace(self.id()))
+                    .with_reader(backend, library)
+                    .on_converted(Arc::new(move |id| thumbnails.retry(id))),
             ),
         );
         // A fallback stage: the desktop's cache and thumbnailers come first
         // whichever plugin registers first.
         app.thumbnails.register(self.id(), Arc::new(PdfPages));
+        app.thumbnails.register(
+            self.id(),
+            Arc::new(OfficePages::new(app.cache.namespace(self.id()))),
+        );
     }
 }

@@ -1,4 +1,5 @@
-//! EPUB 2/3 native reading mode: rbook package parsing and semantic XHTML.
+//! EPUB 2/3 native reading mode: rbook package parsing and semantic XHTML;
+//! and books' covers as thumbnails.
 //!
 //! Every byte decompressed from the container passes through one bounded
 //! reader. rbook never touches the file: it parses a small in-memory package
@@ -9,6 +10,7 @@ use bibli_core::{
     inspection::{InspectRequest, Inspection, Picture, PrintedPage, Row},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
+    thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider},
 };
 use bibli_platform::{
     inspection::{self, limits},
@@ -34,6 +36,7 @@ impl Plugin for PreviewPlugin {
     }
     fn on_settings_changed(&self, app: &App, _keys: &[String]) {
         app.previews.unregister_owner(self.id());
+        app.thumbnails.unregister_owner(self.id());
         self.register(app);
     }
     fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
@@ -66,7 +69,75 @@ impl Plugin for PreviewPlugin {
         };
         app.previews
             .register(self.id(), Arc::new(Provider { engine }));
+        app.thumbnails.register(self.id(), Arc::new(Cover));
     }
+}
+/// A book's cover for the grid: the picture its package names, read through
+/// the bounded container. A fallback: a thumbnailer the desktop installed
+/// for books comes first.
+struct Cover;
+impl ThumbnailProvider for Cover {
+    fn id(&self) -> &'static str {
+        "epub-covers"
+    }
+    fn stage(&self) -> Stage {
+        Stage::Fallback
+    }
+    fn accepts(&self, req: &ThumbRequest) -> bool {
+        inspection::extension(&req.entry.path) == "epub"
+    }
+    fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
+        let mut container = Container::open(&req.entry.resolve()?, cancel)?;
+        let Some(href) = cover(&mut container, cancel)? else {
+            return Ok(None);
+        };
+        // Nothing for a cover the book encrypts.
+        let Some(bytes) = container.file(&href, cancel) else {
+            return Ok(None);
+        };
+        let cover = inspection::picture(&bytes, req.size.pixels())?;
+        Ok(Some(Image {
+            width: cover.width,
+            height: cover.height,
+            rgba: cover.rgba.into(),
+        }))
+    }
+}
+/// The member a book names as its cover picture: the EPUB 3 manifest item
+/// whose properties say `cover-image`, else the item the EPUB 2
+/// `<meta name="cover">` names (by id, or by href as some tools write it).
+/// Only a picture: a cover page is a chapter, not a thumbnail.
+fn cover(container: &mut Container, cancel: &CancelToken) -> anyhow::Result<Option<String>> {
+    let (_, opf_path, opf) = package_document(container, cancel)?;
+    let opf_dir = opf_path.rsplit_once('/').map_or("", |(dir, _)| dir);
+    let text = inspection::decode(&opf).0;
+    let doc = roxmltree::Document::parse(&text)?;
+    let items: Vec<_> = doc
+        .descendants()
+        .filter(|n| n.has_tag_name("item"))
+        .filter(|n| {
+            n.attribute("media-type")
+                .is_some_and(|m| m.starts_with("image/"))
+        })
+        .collect();
+    let property = items.iter().find(|n| {
+        n.attribute("properties")
+            .is_some_and(|p| p.split_whitespace().any(|p| p == "cover-image"))
+    });
+    let named = || {
+        let name = doc
+            .descendants()
+            .find(|n| n.has_tag_name("meta") && n.attribute("name") == Some("cover"))?
+            .attribute("content")?;
+        items
+            .iter()
+            .find(|n| n.attribute("id") == Some(name))
+            .or_else(|| items.iter().find(|n| n.attribute("href") == Some(name)))
+    };
+    Ok(property
+        .or_else(named)
+        .and_then(|n| n.attribute("href"))
+        .map(|href| resolve(opf_dir, href)))
 }
 /// Which engine reads a book (`preview-epub.backend`). Either one sizes
 /// what is read with the reader's text size, and zooms what is looked at.
@@ -534,13 +605,13 @@ fn normalize(path: &str) -> Option<String> {
     }
     (!parts.is_empty()).then(|| parts.join("/"))
 }
-/// Build the in-memory package rbook parses: container.xml, the OPF and the
-/// contents documents (EPUB 3 nav, EPUB 2 NCX) it may read, all stored after
-/// passing through the bounded reader.
-/// Also says whether the book is laid out in fixed pages
-/// (`rendition:layout` is `pre-paginated`).
-fn package(container: &mut Container, cancel: &CancelToken) -> anyhow::Result<(rbook::Epub, bool)> {
-    const CONTAINER: &str = "META-INF/container.xml";
+const CONTAINER: &str = "META-INF/container.xml";
+/// The container document, the package document's path, and the package
+/// document (the OPF) it names.
+fn package_document(
+    container: &mut Container,
+    cancel: &CancelToken,
+) -> anyhow::Result<(Vec<u8>, String, Vec<u8>)> {
     let container_xml = container.read(CONTAINER, "EPUB container", cancel)?;
     let opf_path = {
         let text = inspection::decode(&container_xml).0;
@@ -552,6 +623,15 @@ fn package(container: &mut Container, cancel: &CancelToken) -> anyhow::Result<(r
             .to_owned()
     };
     let opf = container.read(&opf_path, "EPUB package", cancel)?;
+    Ok((container_xml, opf_path, opf))
+}
+/// Build the in-memory package rbook parses: container.xml, the OPF and the
+/// contents documents (EPUB 3 nav, EPUB 2 NCX) it may read, all stored after
+/// passing through the bounded reader.
+/// Also says whether the book is laid out in fixed pages
+/// (`rendition:layout` is `pre-paginated`).
+fn package(container: &mut Container, cancel: &CancelToken) -> anyhow::Result<(rbook::Epub, bool)> {
+    let (container_xml, opf_path, opf) = package_document(container, cancel)?;
     let opf_dir = opf_path.rsplit_once('/').map_or("", |(dir, _)| dir);
     let mut contents = Vec::new();
     let fixed;
@@ -1399,5 +1479,102 @@ mod tests {
         assert_eq!(normalize("../outside.xhtml"), None);
         assert_eq!(normalize("EPUB/../../x"), None);
         assert_eq!(normalize("/"), None);
+    }
+
+    /// A book whose package lists `manifest` (with a decoy picture first)
+    /// and `metadata`, with the pictures it names, and `extra` members.
+    fn covered(path: &std::path::Path, metadata: &str, manifest: &str, extra: &[(&str, &[u8])]) {
+        const DECOY: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="30" height="10"/>"#;
+        let opf = OPF
+            .replace(
+                "<dc:language>en</dc:language>",
+                &format!("<dc:language>en</dc:language>{metadata}"),
+            )
+            .replace(
+                "<manifest>",
+                &format!(
+                    r#"<manifest><item id="decoy" href="Images/decoy.svg" media-type="image/svg+xml"/>{manifest}"#
+                ),
+            );
+        let mut entries: Vec<(&str, &[u8])> = vec![
+            ("mimetype", b"application/epub+zip"),
+            ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+            ("EPUB/book.opf", opf.as_bytes()),
+            ("EPUB/nav.xhtml", NAV.as_bytes()),
+            ("EPUB/one.xhtml", b"<html><body><p>One</p></body></html>"),
+            ("EPUB/Images/decoy.svg", DECOY),
+            ("EPUB/Images/c\u{f4}ver art.png", PNG),
+        ];
+        entries.extend_from_slice(extra);
+        write(path, &entries);
+    }
+
+    fn cover_of(path: &std::path::Path) -> Option<(u32, u32)> {
+        let req = ThumbRequest {
+            entry: EntryRef::from_path(path).unwrap(),
+            mime: None,
+            mtime: None,
+            size: bibli_core::thumbs::ThumbSize::Normal,
+        };
+        assert!(Cover.accepts(&req));
+        Cover
+            .thumbnail(&req, &CancelToken::new())
+            .unwrap()
+            .map(|image| (image.width, image.height))
+    }
+
+    #[test]
+    fn a_cover_is_the_picture_the_package_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("Synthetic \u{2019}book\u{2019}.epub");
+        let cover = r#"<item id="art" href="Images/c%C3%B4ver%20art.png" media-type="image/png""#;
+        // EPUB 3: the manifest item whose properties say so.
+        covered(
+            &path,
+            "",
+            &format!(r#"{cover} properties="cover-image"/>"#),
+            &[],
+        );
+        assert_eq!(cover_of(&path), Some((2, 3)));
+        // EPUB 2: the item `<meta name="cover">` names, by id or by href.
+        covered(
+            &path,
+            r#"<meta name="cover" content="art"/>"#,
+            &format!("{cover}/>"),
+            &[],
+        );
+        assert_eq!(cover_of(&path), Some((2, 3)));
+        covered(
+            &path,
+            r#"<meta name="cover" content="Images/c%C3%B4ver%20art.png"/>"#,
+            &format!("{cover}/>"),
+            &[],
+        );
+        assert_eq!(cover_of(&path), Some((2, 3)));
+        // Nothing named: no guess among the book's pictures.
+        covered(&path, "", &format!("{cover}/>"), &[]);
+        assert_eq!(cover_of(&path), None);
+        // A cover page is a chapter, not a picture.
+        covered(
+            &path,
+            "",
+            r#"<item id="page" href="one.xhtml" media-type="application/xhtml+xml" properties="cover-image"/>"#,
+            &[],
+        );
+        assert_eq!(cover_of(&path), None);
+    }
+
+    #[test]
+    fn an_encrypted_cover_is_not_shown() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("locked.epub");
+        let encryption = br#"<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container" xmlns:enc="http://www.w3.org/2001/04/xmlenc#"><enc:EncryptedData><enc:EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes128-cbc"/><enc:CipherData><enc:CipherReference URI="EPUB/Images/c%C3%B4ver%20art.png"/></enc:CipherData></enc:EncryptedData></encryption>"#;
+        covered(
+            &path,
+            "",
+            r#"<item id="art" href="Images/c%C3%B4ver%20art.png" media-type="image/png" properties="cover-image"/>"#,
+            &[("META-INF/encryption.xml", encryption)],
+        );
+        assert_eq!(cover_of(&path), None);
     }
 }

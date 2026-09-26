@@ -837,3 +837,46 @@ fn a_comic_is_a_document_of_pages() {
     assert_eq!(comic.render(3, 4096, &cancel).unwrap().height, 180);
     assert!(comic.search("page", &cancel).unwrap().is_empty());
 }
+
+/// A comic's cover is its first page in reading order: numbers compare as
+/// numbers, and what a Mac left beside the pages is no page.
+#[test]
+fn a_comic_cover_is_its_first_page() {
+    use bibli_core::scheduler::Priority;
+    use bibli_core::thumbs::{ThumbRequest, ThumbSize, ThumbState};
+    if !with_archive_worker() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(bibli_plugin_preview_comics::PreviewPlugin), &app);
+    let path = tmp.path().join("Synthetic issue n\u{b0} 2.cbz");
+    let (first, later) = (synthetic_png(4, 6), synthetic_png(6, 4));
+    write_zip(
+        &path,
+        &[
+            ("__MACOSX/._page 1.png", b"not a picture"),
+            ("page 10.png", later.as_slice()),
+            ("page 2.png", first.as_slice()),
+        ],
+    );
+    let req = ThumbRequest {
+        entry: EntryRef::from_path(&path).unwrap(),
+        mime: None,
+        mtime: None,
+        size: ThumbSize::Normal,
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let cover = loop {
+        match app.thumbnails.get(req.clone(), Priority::Visible) {
+            ThumbState::Ready(image) => break image,
+            ThumbState::Unavailable => panic!("no cover"),
+            ThumbState::Pending => {
+                assert!(std::time::Instant::now() < deadline, "timed out");
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+    };
+    assert_eq!((cover.width, cover.height), (4, 6), "page 2, not page 10");
+}

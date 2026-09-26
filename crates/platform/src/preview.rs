@@ -41,7 +41,7 @@ fn read_artifact(path: &Path) -> anyhow::Result<Vec<u8>> {
     Ok(std::fs::read(path)?)
 }
 
-fn decode_preview(bytes: &[u8], max_side: u32) -> anyhow::Result<Image> {
+pub(crate) fn decode_preview(bytes: &[u8], max_side: u32) -> anyhow::Result<Image> {
     let reader = || image::ImageReader::new(Cursor::new(bytes)).with_guessed_format();
     let (w, h) = reader()?.into_dimensions()?;
     let side = max_side.clamp(64, MAX_VIDEO_SIDE);
@@ -84,8 +84,12 @@ fn tool_stamp(path: &Path) -> anyhow::Result<(PathBuf, u64, u128)> {
 }
 
 fn fingerprint(request: &PreviewRequest, path: &Path) -> anyhow::Result<Vec<u8>> {
+    fingerprint_of(request.entry.id, path)
+}
+
+fn fingerprint_of(id: bibli_core::EntryId, path: &Path) -> anyhow::Result<Vec<u8>> {
     Ok(serde_json::to_vec(&(
-        request.entry.id,
+        id,
         path,
         crate::document::file_version(path)?,
     ))?)
@@ -261,37 +265,18 @@ impl PreviewProvider for MediaPreviews {
                 .min(duration.map_or(f64::MAX, |d| (d - 0.1).max(0.0)))
         };
         let tmp = tempfile::tempdir()?;
-        let output = tmp.path().join("frame.png");
-        let side = req.max_side.clamp(64, MAX_VIDEO_SIDE);
-        let mut command = Command::new(ffmpeg);
-        command.args(["-nostdin", "-v", "error", "-threads", "1"]);
-        if !self.audio {
-            command.arg("-ss").arg(format!("{seconds:.3}"));
-        }
-        command.arg("-i")
-            .arg(&path)
-            .args([
-                "-map",
-                "0:v:0",
-                "-frames:v",
-                "1",
-                "-an",
-                "-sn",
-                "-filter_threads",
-                "1",
-                "-vf",
-            ])
-            .arg(format!(
-                "scale='min(iw,{side})':'min(ih,{side})':force_original_aspect_ratio=decrease,setsar=1"
-            ))
-            .args(["-threads", "1", "-compression_level", "1"])
-            .arg(&output);
-        process::run(&mut command, cancel, RENDER_TIMEOUT)?;
+        let png = ffmpeg_picture(
+            &ffmpeg,
+            &path,
+            (!self.audio).then_some(seconds),
+            req.max_side.clamp(64, MAX_VIDEO_SIDE),
+            tmp.path(),
+            cancel,
+        )?;
         anyhow::ensure!(
             fingerprint(req, &path)? == base,
             "file changed during preview"
         );
-        let png = read_artifact(&output)?;
         finish(
             &self.cache,
             &key,
@@ -303,6 +288,9 @@ impl PreviewProvider for MediaPreviews {
     }
 }
 
+/// Told which entry an Office document was just converted for.
+pub type Converted = std::sync::Arc<dyn Fn(bibli_core::EntryId) + Send + Sync>;
+
 pub struct DocumentPreviews {
     cache: CacheSlot,
     // One active document's metadata, guarded by the same lock as rendering.
@@ -310,6 +298,7 @@ pub struct DocumentPreviews {
     gate: Mutex<Option<(Vec<u8>, u32)>>,
     backend: String,
     library: Option<PathBuf>,
+    converted: Option<Converted>,
 }
 impl DocumentPreviews {
     pub fn new(cache: CacheSlot) -> Self {
@@ -318,7 +307,15 @@ impl DocumentPreviews {
             gate: Mutex::new(None),
             backend: "auto".into(),
             library: None,
+            converted: None,
         }
+    }
+
+    /// Called when an Office document has been converted to PDF: its
+    /// thumbnail (`OfficePages`) can now be drawn from the conversion.
+    pub fn on_converted(mut self, converted: Converted) -> Self {
+        self.converted = Some(converted);
+        self
     }
 
     pub fn with_reader(mut self, backend: String, library: Option<PathBuf>) -> Self {
@@ -336,7 +333,7 @@ impl DocumentPreviews {
         cancel: &CancelToken,
     ) -> anyhow::Result<PathBuf> {
         let base = fingerprint(req, source)?;
-        let conversion_key = key(&base, ("pdf", Some(tool_stamp(office)?)))?;
+        let conversion_key = conversion_key(&base, office)?;
         let pdf = scratch.join("document.pdf");
         if let Some(bytes) = self
             .cache
@@ -360,14 +357,72 @@ impl DocumentPreviews {
             );
             if self.cache.put(&conversion_key, &bytes).is_ok() {
                 let _ = self.cache.trim_to_bytes(128 * 1024 * 1024);
+                if let Some(converted) = &self.converted {
+                    converted(req.entry.id);
+                }
             }
         }
         Ok(pdf)
     }
 }
 
+/// Where the PDF an Office document converts to is cached: by the file's
+/// version and `LibreOffice`'s, so either changing converts again.
+fn conversion_key(base: &[u8], office: &Path) -> anyhow::Result<Vec<u8>> {
+    key(base, ("pdf", Some(tool_stamp(office)?)))
+}
+
+/// The PDF the document preview converted `source` (entry `id`) to, written
+/// to `into`, if it is in `cache` for the file as it is now; `None` without
+/// `LibreOffice` or a conversion. Never converts: a thumbnail must not start
+/// an office suite for every document in view.
+pub(crate) fn converted_pdf(
+    cache: &CacheSlot,
+    id: bibli_core::EntryId,
+    source: &Path,
+    into: &Path,
+) -> anyhow::Result<Option<PathBuf>> {
+    let Ok(office) = process::required("libreoffice") else {
+        return Ok(None);
+    };
+    let key = conversion_key(&fingerprint_of(id, source)?, &office)?;
+    let Some(bytes) = cache.get(&key).filter(|b| b.starts_with(b"%PDF-")) else {
+        return Ok(None);
+    };
+    let pdf = into.join("document.pdf");
+    std::fs::write(&pdf, bytes)?;
+    Ok(Some(pdf))
+}
+
 fn is_pdf(req: &PreviewRequest) -> bool {
     req.mime.as_deref() == Some("application/pdf") || extension(&req.entry.path) == "pdf"
+}
+
+/// A document `LibreOffice` converts to PDF for its preview.
+pub(crate) fn is_office(path: &Path) -> bool {
+    matches!(
+        extension(path).as_str(),
+        "doc"
+            | "docx"
+            | "docm"
+            | "odt"
+            | "ott"
+            | "rtf"
+            | "fodt"
+            | "xls"
+            | "xlsx"
+            | "xlsm"
+            | "ods"
+            | "ots"
+            | "fods"
+            | "ppt"
+            | "pptx"
+            | "pptm"
+            | "odp"
+            | "otp"
+            | "fodp"
+            | "odg"
+    )
 }
 
 impl PreviewProvider for DocumentPreviews {
@@ -454,30 +509,7 @@ impl PreviewProvider for DocumentPreviews {
         "preview-documents"
     }
     fn accepts(&self, req: &PreviewRequest) -> bool {
-        is_pdf(req)
-            || matches!(
-                extension(&req.entry.path).as_str(),
-                "doc"
-                    | "docx"
-                    | "docm"
-                    | "odt"
-                    | "ott"
-                    | "rtf"
-                    | "fodt"
-                    | "xls"
-                    | "xlsx"
-                    | "xlsm"
-                    | "ods"
-                    | "ots"
-                    | "fods"
-                    | "ppt"
-                    | "pptx"
-                    | "pptm"
-                    | "odp"
-                    | "otp"
-                    | "fodp"
-                    | "odg"
-            )
+        is_pdf(req) || is_office(&req.entry.path)
     }
     fn render(&self, req: &PreviewRequest, cancel: &CancelToken) -> anyhow::Result<Preview> {
         let started = Instant::now();
@@ -565,6 +597,51 @@ impl PreviewProvider for DocumentPreviews {
         );
         Ok(preview)
     }
+}
+
+/// One picture of `path` made by `ffmpeg`, through `scratch`, as PNG bytes:
+/// the frame at `seconds` of a film, or with `None` the first video stream
+/// of a recording, its cover. Its longest side is at most `side`, never
+/// enlarged. Only local files are read: thumbnails are made for whatever a
+/// folder holds, and a playlist must not send `ffmpeg` to the network.
+/// Recent `ffmpeg` refuses already (a playlist is recognised only by its
+/// extension, and what it names only through `file,crypto,data`); the
+/// whitelist says so for any version.
+pub(crate) fn ffmpeg_picture(
+    ffmpeg: &Path,
+    path: &Path,
+    seconds: Option<f64>,
+    side: u32,
+    scratch: &Path,
+    cancel: &CancelToken,
+) -> anyhow::Result<Vec<u8>> {
+    let output = scratch.join("frame.png");
+    let mut command = Command::new(ffmpeg);
+    command.args(["-nostdin", "-v", "error", "-threads", "1"]);
+    if let Some(seconds) = seconds {
+        command.arg("-ss").arg(format!("{seconds:.3}"));
+    }
+    command
+        .args(["-protocol_whitelist", "file", "-i"])
+        .arg(path)
+        .args([
+            "-map",
+            "0:v:0",
+            "-frames:v",
+            "1",
+            "-an",
+            "-sn",
+            "-filter_threads",
+            "1",
+            "-vf",
+        ])
+        .arg(format!(
+            "scale='min(iw,{side})':'min(ih,{side})':force_original_aspect_ratio=decrease,setsar=1"
+        ))
+        .args(["-threads", "1", "-compression_level", "1"])
+        .arg(&output);
+    process::run(&mut command, cancel, RENDER_TIMEOUT)?;
+    read_artifact(&output)
 }
 
 /// One page of `pdf` rendered by Poppler's `pdftoppm` (`renderer`), its
@@ -808,6 +885,85 @@ mod tests {
             size: ThumbSize::Normal,
         };
         assert!(PdfPages.thumbnail(&req, &CancelToken::new()).is_err());
+    }
+
+    #[test]
+    #[ignore = "requires installed FFmpeg; run explicitly for preview changes"]
+    fn audio_covers_are_the_attached_picture_at_its_size() {
+        use crate::thumb_providers::AudioCovers;
+        use bibli_core::thumbs::{ThumbRequest, ThumbSize, ThumbnailProvider};
+        let tmp = tempfile::tempdir().unwrap();
+        let ffmpeg = |args: &[&str], out: &Path| {
+            let status = Command::new(process::required("ffmpeg").unwrap())
+                .args(["-nostdin", "-v", "error", "-y"])
+                .args(args)
+                .arg(out)
+                .status()
+                .unwrap();
+            assert!(status.success());
+        };
+        let tone = ["-f", "lavfi", "-i", "sine=frequency=440:duration=0.2"];
+        let request = |path: &Path, size| ThumbRequest {
+            entry: EntryRef::from_path(path).unwrap(),
+            mime: crate::mime::by_name(path.as_os_str()).map(|m| m.0.into()),
+            mtime: None,
+            size,
+        };
+        for (name, codec) in [
+            ("Synthetic \u{2019}track\u{2019}.flac", "flac"),
+            ("t.mp3", "libmp3lame"),
+        ] {
+            let path = tmp.path().join(name);
+            ffmpeg(
+                &[
+                    &tone[..],
+                    &["-f", "lavfi", "-i", "color=c=0x00ff00:s=300x200:d=1"],
+                    &[
+                        "-map",
+                        "0:a",
+                        "-map",
+                        "1:v",
+                        "-frames:v",
+                        "1",
+                        "-c:a",
+                        codec,
+                    ],
+                    &["-c:v", "png", "-disposition:v", "attached_pic"],
+                ]
+                .concat(),
+                &path,
+            );
+            for (size, want) in [
+                (ThumbSize::Normal, (128, 85)),
+                (ThumbSize::Large, (256, 171)),
+            ] {
+                let req = request(&path, size);
+                assert!(AudioCovers.accepts(&req), "{name}");
+                let cover = AudioCovers
+                    .thumbnail(&req, &CancelToken::new())
+                    .unwrap()
+                    .expect("a cover");
+                assert_eq!((cover.width, cover.height), want, "{name}: aspect kept");
+                // Through YUV and back: green, give or take rounding.
+                let [r, g, b, _] = cover.rgba[..4] else {
+                    unreachable!()
+                };
+                assert!(r < 8 && g > 247 && b < 8, "{name}: {:?}", &cover.rgba[..4]);
+            }
+        }
+        let bare = tmp.path().join("bare.flac");
+        ffmpeg(&tone, &bare);
+        let req = request(&bare, ThumbSize::Normal);
+        assert!(AudioCovers.thumbnail(&req, &CancelToken::new()).is_err());
+        // Playlists are `audio/` too, and never handed to ffmpeg.
+        for name in ["list.m3u", "list.m3u8", "list.pls"] {
+            let path = tmp.path().join(name);
+            std::fs::write(&path, "#EXTM3U\n").unwrap();
+            assert!(
+                !AudioCovers.accepts(&request(&path, ThumbSize::Normal)),
+                "{name}"
+            );
+        }
     }
 
     /// A valid, deterministic two-page PDF with visibly different pages.

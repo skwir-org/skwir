@@ -1,7 +1,8 @@
 //! Thumbnail providers for `bibli_core::thumbs`: the freedesktop cache
 //! (read, and write-back of what later providers make), an in-process image
-//! decoder, the desktop's installed `*.thumbnailer` programs, and PDF first
-//! pages for a desktop that has no thumbnailer for them.
+//! decoder, the desktop's installed `*.thumbnailer` programs, and fallbacks
+//! for what the desktop has no thumbnailer for: PDF first pages, Office
+//! documents the preview has converted, and audio covers.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -27,6 +28,17 @@ fn mime_of(req: &ThumbRequest) -> Option<Arc<str>> {
 
 fn is_regular_file(p: &Path) -> bool {
     std::fs::symlink_metadata(p).is_ok_and(|m| m.is_file())
+}
+
+/// Refuse what is not a file, following links: a FIFO named `x.pdf` would
+/// hold a renderer until its timeout.
+pub fn ensure_file(p: &Path) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        std::fs::metadata(p)?.is_file(),
+        "{} is not a regular file",
+        p.display()
+    );
+    Ok(())
 }
 
 /// Downscale so the longest side is at most `px`, then RGBA8.
@@ -510,12 +522,7 @@ impl ThumbnailProvider for PdfPages {
         let Ok(renderer) = crate::process::required("pdftoppm") else {
             return Ok(None);
         };
-        // A FIFO named `x.pdf` would hold the renderer until its timeout.
-        anyhow::ensure!(
-            is_regular_file(&req.entry.path),
-            "{} is not a regular file",
-            req.entry.path.display()
-        );
+        ensure_file(&req.entry.path)?;
         let scratch = tempfile::tempdir()?;
         let page = crate::preview::render_pdf_page(
             &renderer,
@@ -534,6 +541,129 @@ impl ThumbnailProvider for PdfPages {
             "pdftoppm made a page larger than asked"
         );
         Ok(Some(page))
+    }
+}
+
+// ------------------------------------------------------------- Office pages
+
+/// An Office document's first page, from the PDF the document preview
+/// converted it to (`preview::converted_pdf`), rendered like a PDF's. It
+/// never converts: `LibreOffice` takes seconds and hundreds of megabytes per
+/// document, too much for each tile in view, so a document has a thumbnail
+/// once it has been previewed (`DocumentPreviews::on_converted` asks again).
+#[derive(Debug, Clone)]
+pub struct OfficePages {
+    /// The document preview's cache, where its conversions are.
+    cache: bibli_core::cache::CacheSlot,
+}
+
+impl OfficePages {
+    pub fn new(cache: bibli_core::cache::CacheSlot) -> Self {
+        Self { cache }
+    }
+}
+
+impl ThumbnailProvider for OfficePages {
+    fn id(&self) -> &'static str {
+        "office-pages"
+    }
+
+    fn stage(&self) -> Stage {
+        Stage::Fallback
+    }
+
+    fn accepts(&self, req: &ThumbRequest) -> bool {
+        crate::preview::is_office(&req.entry.path)
+    }
+
+    fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
+        let Ok(renderer) = crate::process::required("pdftoppm") else {
+            return Ok(None);
+        };
+        let source = req.entry.resolve()?;
+        let scratch = tempfile::tempdir()?;
+        let Some(pdf) =
+            crate::preview::converted_pdf(&self.cache, req.entry.id, &source, scratch.path())?
+        else {
+            return Ok(None);
+        };
+        let page = crate::preview::render_pdf_page(
+            &renderer,
+            &pdf,
+            1,
+            req.size.pixels(),
+            scratch.path(),
+            cancel,
+        );
+        if cancel.is_cancelled() {
+            return Ok(None);
+        }
+        Ok(Some(page?))
+    }
+}
+
+// ------------------------------------------------------------- audio covers
+
+/// Audio containers that carry a cover picture.
+const COVERED_AUDIO: &[&str] = &[
+    "audio/mpeg",
+    "audio/flac",
+    "audio/x-flac",
+    "audio/mp4",
+    "audio/m4a",
+    "audio/x-m4a",
+    "audio/aac",
+    "audio/ogg",
+    "audio/x-vorbis+ogg",
+    "audio/x-opus+ogg",
+    "audio/opus",
+    "audio/x-ms-wma",
+    "audio/x-ape",
+    "audio/x-wavpack",
+    "audio/x-aiff",
+    "audio/x-matroska",
+    "audio/webm",
+];
+
+/// A recording's cover, as `ffmpeg` reads it for the audio preview. A
+/// fallback: the desktop's audio thumbnailer, when installed, comes first.
+/// Only containers that carry covers: never a playlist, whose type is
+/// `audio/` too.
+#[derive(Debug, Clone, Default)]
+pub struct AudioCovers;
+
+impl ThumbnailProvider for AudioCovers {
+    fn id(&self) -> &'static str {
+        "audio-covers"
+    }
+
+    fn stage(&self) -> Stage {
+        Stage::Fallback
+    }
+
+    fn accepts(&self, req: &ThumbRequest) -> bool {
+        mime_of(req).is_some_and(|m| COVERED_AUDIO.contains(&&*m))
+    }
+
+    fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
+        let Ok(ffmpeg) = crate::process::required("ffmpeg") else {
+            return Ok(None);
+        };
+        ensure_file(&req.entry.path)?;
+        let scratch = tempfile::tempdir()?;
+        let side = req.size.pixels();
+        let png = crate::preview::ffmpeg_picture(
+            &ffmpeg,
+            &req.entry.path,
+            None,
+            side,
+            scratch.path(),
+            cancel,
+        );
+        if cancel.is_cancelled() {
+            return Ok(None);
+        }
+        Ok(Some(crate::preview::decode_preview(&png?, side)?))
     }
 }
 

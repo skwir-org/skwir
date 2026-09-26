@@ -216,6 +216,21 @@ impl Thumbnails {
         self.wake();
     }
 
+    /// Something a provider reads now exists for `id` (the preview converted
+    /// it, say): forget that it had no thumbnail, and wake the UI to ask
+    /// again if it had none.
+    pub fn retry(&self, id: EntryId) {
+        let forgotten = {
+            let mut s = self.state.lock();
+            let before = s.unavailable.len();
+            s.unavailable.retain(|(entry, _, _)| *entry != id);
+            s.unavailable.len() != before
+        };
+        if forgotten {
+            self.wake();
+        }
+    }
+
     pub fn provider_ids(&self) -> Vec<&'static str> {
         self.providers
             .read()
@@ -618,5 +633,22 @@ mod tests {
         t.providers_changed();
         assert!(woken.load(Ordering::Relaxed) > before);
         assert!(matches!(wait_ready(&t, &req(4)), ThumbState::Ready(_)));
+    }
+
+    #[test]
+    fn retry_forgets_one_entry_only() {
+        let t = Thumbnails::new(Scheduler::new(1));
+        let maker = Fake::new("maker", Stage::Generate, false);
+        t.register("core", maker.clone());
+        for ino in [1, 2] {
+            assert!(matches!(wait_ready(&t, &req(ino)), ThumbState::Unavailable));
+        }
+        maker.produce.store(true, Ordering::Relaxed);
+        t.retry(EntryId { dev: 1, ino: 1 });
+        assert!(matches!(wait_ready(&t, &req(1)), ThumbState::Ready(_)));
+        assert!(matches!(
+            t.get(req(2), Priority::Visible),
+            ThumbState::Unavailable
+        ));
     }
 }

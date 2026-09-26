@@ -3,8 +3,9 @@
 //! its dock), and its preferences are the player's, whatever plays.
 //!
 //! It registers two providers, one for audio (cover, spectrum, loudness)
-//! and one for video (playback, or a still frame from `FFmpeg`), and declares
-//! every preference of the player. The shell reads the player's own
+//! and one for video (playback, or a still frame from `FFmpeg`), audio
+//! covers as thumbnails where the desktop has no audio thumbnailer, and
+//! declares every preference of the player. The shell reads the player's own
 //! (`KEEP_PLAYING`, `AUTOPLAY`, `CONTINUE`); with the plugin off there is no
 //! player, and nothing reads them.
 
@@ -158,6 +159,8 @@ impl Plugin for PreviewPlugin {
             ),
         );
         Self::register_video(app);
+        app.thumbnails
+            .register(ID, Arc::new(bibli_platform::thumb_providers::AudioCovers));
     }
 }
 
