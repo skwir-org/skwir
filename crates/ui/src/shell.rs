@@ -20,7 +20,7 @@ use crate::icons::IconCache;
 use crate::input::{InputEvent, TextInput};
 use crate::jump::JumpState;
 use crate::keymap::{self, KeyHint, RunCommand};
-use crate::list::ListState;
+use crate::list::{ListState, Step};
 use crate::menu::MenuState;
 use crate::palette::PaletteState;
 use crate::preview::PreviewState;
@@ -161,7 +161,12 @@ pub struct Shell {
     /// Keymap registry revision `key_hints` and GPUI's bindings were built
     /// from; `sync` installs them again when it moves.
     keymap_revision: u64,
+    /// Icon size of the grid's tiles.
     pub zoom: u32,
+    /// Icon size of the list's and the columns' rows; their height follows.
+    pub row_zoom: u32,
+    /// The sidebar put away with F9. A narrow window hides it too.
+    pub sidebar_hidden: bool,
     pub thumbs: ThumbCache,
     pub icons: IconCache,
     pub type_names: crate::typenames::TypeNames,
@@ -184,6 +189,8 @@ pub struct Shell {
     reading_width_before: Option<String>,
     /// Ctrl and the wheel over the grid: a trackpad must mean it.
     pub zoom_wheel: crate::reader_scroll::WheelTurn,
+    /// The wheel over the tab strip, counted in notches like the zoom's.
+    pub tab_wheel: crate::reader_scroll::WheelTurn,
     pub column_widths: [f32; 3],
     /// A header edge being dragged: column, pointer x and width at the start.
     pub column_drag: Option<(usize, f32, f32)>,
@@ -376,6 +383,8 @@ impl Shell {
             key_hints: keymap.hints,
             keymap_revision: keymap.revision,
             zoom: DEFAULT_ZOOM,
+            row_zoom: crate::views::list::DEFAULT_ROW_ZOOM,
+            sidebar_hidden: false,
             thumbs: ThumbCache::default(),
             icons: IconCache::default(),
             type_names: crate::typenames::TypeNames::default(),
@@ -387,6 +396,7 @@ impl Shell {
             reading_measure: crate::markdown::measure("comfortable"),
             reading_width_before: None,
             zoom_wheel: crate::reader_scroll::WheelTurn::default(),
+            tab_wheel: crate::reader_scroll::WheelTurn::default(),
             column_widths: crate::views::list::DEFAULT_WIDTHS,
             column_drag: None,
             preview: PreviewState::default(),
@@ -456,6 +466,10 @@ impl Shell {
         if session.zoom > 0 {
             self.zoom = session.zoom;
         }
+        if session.row_zoom > 0 {
+            self.row_zoom = session.row_zoom;
+        }
+        self.sidebar_hidden = session.sidebar_hidden;
         self.preview.open = session.preview;
         self.preview.details_open = session.details;
         if session.preview_width > 0. {
@@ -801,7 +815,7 @@ impl Shell {
         }
     }
 
-    /// Directory shown by the other pane, for F5/F6 and the shelf buttons.
+    /// Directory shown by the other pane, for Shift+F5/F6 and the shelf buttons.
     pub fn other_pane_dir(&self) -> Option<std::path::PathBuf> {
         let other = self.other_pane()?;
         let ws = self.app.workspace.read();
@@ -978,8 +992,8 @@ impl Shell {
         }
     }
 
-    /// Ctrl and the wheel over the grid. The view stays where it is (the grid
-    /// keeps its first visible item); only the keys follow the cursor.
+    /// Ctrl and the wheel over a view that zooms. The view stays where it is
+    /// (it keeps its first visible item); only the keys follow the cursor.
     pub fn zoom_wheel(&mut self, delta: f32, lines: bool, cx: &mut Context<Self>) {
         match self.zoom_wheel.turn(delta, lines, false) {
             0 => {}
@@ -987,14 +1001,26 @@ impl Shell {
         }
     }
 
+    /// Zoom what the pane shows: the grid's tiles, or the rows of the list
+    /// and the columns, each keeping its own size. Other views have none.
     fn zoom_to(&mut self, dir: &str, cx: &mut Context<Self>) {
-        let at = |zoom| ZOOMS.iter().position(|z| *z == zoom);
-        let pos = at(self.zoom).or_else(|| at(DEFAULT_ZOOM)).unwrap_or(0);
-        self.zoom = match dir {
-            "in" => ZOOMS[(pos + 1).min(ZOOMS.len() - 1)],
-            "out" => ZOOMS[pos.saturating_sub(1)],
-            _ => DEFAULT_ZOOM,
-        };
+        fn step(levels: &[u32], current: u32, default: u32, dir: &str) -> u32 {
+            let at = |zoom| levels.iter().position(|z| *z == zoom);
+            let pos = at(current).or_else(|| at(default)).unwrap_or(0);
+            match dir {
+                "in" => levels[(pos + 1).min(levels.len() - 1)],
+                "out" => levels[pos.saturating_sub(1)],
+                _ => default,
+            }
+        }
+        use crate::views::list::{DEFAULT_ROW_ZOOM, ROW_ZOOMS};
+        match self.ui().view_id {
+            view::GRID => self.zoom = step(&ZOOMS, self.zoom, DEFAULT_ZOOM, dir),
+            view::LIST | view::COLUMNS => {
+                self.row_zoom = step(&ROW_ZOOMS, self.row_zoom, DEFAULT_ROW_ZOOM, dir);
+            }
+            _ => return,
+        }
         self.remember_session();
         cx.notify();
     }
@@ -1279,6 +1305,9 @@ impl Shell {
             "accept" => self.confirm_accept(window, cx),
             "dismiss" => self.confirm_dismiss(window, cx),
             "toggle_hidden" => self.toggle_hidden(cx),
+            "toggle_sidebar" => self.toggle_sidebar(window, cx),
+            "context_menu" => self.open_context_menu_here(window, cx),
+            "open_in_tab" => self.open_selection_in_tabs(window, cx),
             "sort" => {
                 let key = match arg("key").as_deref() {
                     Some("size") => SortKey::Size,
@@ -1332,6 +1361,10 @@ impl Shell {
                 self.set_continue(mode, window, cx);
             }
             "player_mute" => self.player_mute(cx),
+            "player_volume" => {
+                let delta = args.get("delta").and_then(serde_json::Value::as_f64);
+                self.player_volume_by(delta.unwrap_or(0.), window, cx);
+            }
             "player" => {
                 let request = args.get("request").cloned().unwrap_or_default();
                 match serde_json::from_value(request) {
@@ -1431,22 +1464,29 @@ impl Shell {
             ),
             "peek" => self.toggle_peek(window, cx),
             "peek_close" => self.close_peek(window, cx),
-            "peek_prev" => self.cursor_move(-1, false, window, cx),
-            "peek_next" => self.cursor_move(1, false, window, cx),
-            "cursor_up" => self.navigate_by(Nav::Up, false, window, cx),
-            "cursor_down" => self.navigate_by(Nav::Down, false, window, cx),
-            "cursor_left" => self.navigate_by(Nav::Left, false, window, cx),
-            "cursor_right" => self.navigate_by(Nav::Right, false, window, cx),
-            "cursor_extend_up" => self.navigate_by(Nav::Up, true, window, cx),
-            "cursor_extend_down" => self.navigate_by(Nav::Down, true, window, cx),
-            "cursor_extend_left" => self.navigate_by(Nav::Left, true, window, cx),
-            "cursor_extend_right" => self.navigate_by(Nav::Right, true, window, cx),
-            "cursor_home" => self.navigate_by(Nav::Home, false, window, cx),
-            "cursor_end" => self.navigate_by(Nav::End, false, window, cx),
-            "cursor_extend_home" => self.navigate_by(Nav::Home, true, window, cx),
-            "cursor_extend_end" => self.navigate_by(Nav::End, true, window, cx),
-            "page_up" => self.navigate_by(Nav::PageUp, false, window, cx),
-            "page_down" => self.navigate_by(Nav::PageDown, false, window, cx),
+            "peek_prev" => self.cursor_move(-1, Step::Select, window, cx),
+            "peek_next" => self.cursor_move(1, Step::Select, window, cx),
+            "cursor_up" => self.navigate_by(Nav::Up, Step::Select, window, cx),
+            "cursor_down" => self.navigate_by(Nav::Down, Step::Select, window, cx),
+            "cursor_left" => self.navigate_by(Nav::Left, Step::Select, window, cx),
+            "cursor_right" => self.navigate_by(Nav::Right, Step::Select, window, cx),
+            "cursor_extend_up" => self.navigate_by(Nav::Up, Step::Extend, window, cx),
+            "cursor_extend_down" => self.navigate_by(Nav::Down, Step::Extend, window, cx),
+            "cursor_extend_left" => self.navigate_by(Nav::Left, Step::Extend, window, cx),
+            "cursor_extend_right" => self.navigate_by(Nav::Right, Step::Extend, window, cx),
+            "cursor_home" => self.navigate_by(Nav::Home, Step::Select, window, cx),
+            "cursor_end" => self.navigate_by(Nav::End, Step::Select, window, cx),
+            "cursor_extend_home" => self.navigate_by(Nav::Home, Step::Extend, window, cx),
+            "cursor_extend_end" => self.navigate_by(Nav::End, Step::Extend, window, cx),
+            "cursor_move_up" => self.navigate_by(Nav::Up, Step::Cursor, window, cx),
+            "cursor_move_down" => self.navigate_by(Nav::Down, Step::Cursor, window, cx),
+            "cursor_move_left" => self.navigate_by(Nav::Left, Step::Cursor, window, cx),
+            "cursor_move_right" => self.navigate_by(Nav::Right, Step::Cursor, window, cx),
+            "cursor_move_home" => self.navigate_by(Nav::Home, Step::Cursor, window, cx),
+            "cursor_move_end" => self.navigate_by(Nav::End, Step::Cursor, window, cx),
+            "cursor_toggle" => self.toggle_cursor(window, cx),
+            "page_up" => self.navigate_by(Nav::PageUp, Step::Select, window, cx),
+            "page_down" => self.navigate_by(Nav::PageDown, Step::Select, window, cx),
             "quit" => {
                 crate::remember_location(&self.app);
                 let (decoded, skipped, bytes) = self.app.thumbnails.stats();
@@ -1827,7 +1867,7 @@ impl Render for Shell {
         // Below it the panes keep the room: places stay reachable through the
         // address bar, the palette and Jump.
         let side = self
-            .sidebar_fits(f32::from(window.viewport_size().width))
+            .sidebar_shown(window)
             .then(|| sidebar::render(self, cx));
         let strip = crate::tabs::render(self, cx);
         let pane_ids: Vec<PaneId> = self.panes.iter().map(|p| p.id).collect();

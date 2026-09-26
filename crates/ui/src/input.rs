@@ -39,6 +39,10 @@ actions!(
         Copy,
         Submit,
         Cancel,
+        Undo,
+        Redo,
+        DeleteWordLeft,
+        DeleteWordRight,
     ]
 );
 
@@ -67,6 +71,12 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-v", Paste, c),
         KeyBinding::new("ctrl-c", Copy, c),
         KeyBinding::new("ctrl-x", Cut, c),
+        KeyBinding::new("ctrl-backspace", DeleteWordLeft, c),
+        KeyBinding::new("ctrl-delete", DeleteWordRight, c),
+        // The field's own undo, before the window's (the file operations').
+        KeyBinding::new("ctrl-z", Undo, c),
+        KeyBinding::new("ctrl-shift-z", Redo, c),
+        KeyBinding::new("ctrl-y", Redo, c),
         KeyBinding::new("enter", Submit, c),
         KeyBinding::new("escape", Cancel, c),
     ]
@@ -97,6 +107,69 @@ pub enum InputEvent {
     Changed,
 }
 
+/// The text and selection an edit started from.
+type Snapshot = (SharedString, Range<usize>);
+
+/// What Ctrl+Z and Ctrl+Shift+Z walk through. A run of characters typed
+/// one after the other is one step, as in any text field; anything else
+/// (a deletion, a paste, a composition, typing somewhere else) starts one.
+#[derive(Default)]
+struct History {
+    undo: Vec<Snapshot>,
+    redo: Vec<Snapshot>,
+    /// Where the last typed character ended, while typing continues there.
+    typed_end: Option<usize>,
+}
+
+impl History {
+    /// Most fields hold a line; this is more steps than anyone takes back.
+    const DEPTH: usize = 100;
+
+    /// Before an edit of `before`. `typed` is where a character typed at
+    /// the cursor goes (`typed_at`); a run of those joins one step.
+    fn record(&mut self, before: Snapshot, typed: Option<Range<usize>>) {
+        let continues = typed
+            .as_ref()
+            .is_some_and(|t| self.typed_end == Some(t.start));
+        if !continues {
+            if self.undo.len() == Self::DEPTH {
+                self.undo.remove(0);
+            }
+            self.undo.push(before);
+        }
+        self.redo.clear();
+        self.typed_end = typed.map(|t| t.end);
+    }
+
+    fn undo(&mut self, current: Snapshot) -> Option<Snapshot> {
+        let previous = self.undo.pop()?;
+        self.redo.push(current);
+        self.typed_end = None;
+        Some(previous)
+    }
+
+    fn redo(&mut self, current: Snapshot) -> Option<Snapshot> {
+        let next = self.redo.pop()?;
+        self.undo.push(current);
+        self.typed_end = None;
+        Some(next)
+    }
+
+    fn clear(&mut self) {
+        *self = History::default();
+    }
+}
+
+/// Where `text` replacing `range` lands, if it is one character typed at
+/// the cursor; a space ends a run, so words come back one at a time.
+fn typed_at(range: &Range<usize>, text: &str) -> Option<Range<usize>> {
+    let mut chars = text.chars();
+    let typed = range.is_empty()
+        && chars.next().is_some_and(|c| !c.is_whitespace())
+        && chars.next().is_none();
+    typed.then(|| range.start..range.start + text.len())
+}
+
 pub struct TextInput {
     focus_handle: FocusHandle,
     content: SharedString,
@@ -112,6 +185,8 @@ pub struct TextInput {
     /// keeps the cursor in view (`scrolled`, in prepaint).
     scroll_x: Pixels,
     is_selecting: bool,
+    /// Kept only for text that is not masked: a passphrase leaves no trail.
+    history: History,
 }
 
 impl EventEmitter<InputEvent> for TextInput {}
@@ -130,6 +205,7 @@ impl TextInput {
             last_bounds: None,
             scroll_x: px(0.),
             is_selecting: false,
+            history: History::default(),
         }
     }
 
@@ -168,6 +244,8 @@ impl TextInput {
     /// Replace the whole text and put the cursor at the end.
     pub fn set_text(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.content = text.into();
+        // Text put here is where editing starts, not a step to take back.
+        self.history.clear();
         let end = self.content.len();
         self.selected_range = end..end;
         self.selection_reversed = false;
@@ -273,6 +351,53 @@ impl TextInput {
             self.select_to(self.next_boundary(self.cursor_offset()), cx);
         }
         self.replace_text_in_range(None, "", window, cx);
+    }
+
+    fn delete_word_left(
+        &mut self,
+        _: &DeleteWordLeft,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_range.is_empty() {
+            self.select_to(self.previous_word(self.cursor_offset()), cx);
+        }
+        self.replace_text_in_range(None, "", window, cx);
+    }
+
+    fn delete_word_right(
+        &mut self,
+        _: &DeleteWordRight,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_range.is_empty() {
+            self.select_to(self.next_word(self.cursor_offset()), cx);
+        }
+        self.replace_text_in_range(None, "", window, cx);
+    }
+
+    fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
+        let current = (self.content.clone(), self.selected_range.clone());
+        if let Some(previous) = self.history.undo(current) {
+            self.restore(previous, cx);
+        }
+    }
+
+    fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
+        let current = (self.content.clone(), self.selected_range.clone());
+        if let Some(next) = self.history.redo(current) {
+            self.restore(next, cx);
+        }
+    }
+
+    fn restore(&mut self, (content, selected): Snapshot, cx: &mut Context<Self>) {
+        self.content = content;
+        self.selected_range = selected;
+        self.selection_reversed = false;
+        self.marked_range = None;
+        cx.emit(InputEvent::Changed);
+        cx.notify();
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
@@ -487,6 +612,11 @@ impl EntityInputHandler for TextInput {
             .map(|r| self.range_from_utf16(r))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
+        // A composition being committed was recorded when it began.
+        if self.marked_range.is_none() && !self.masked {
+            let before = (self.content.clone(), self.selected_range.clone());
+            self.history.record(before, typed_at(&range, new_text));
+        }
         self.content =
             (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
                 .into();
@@ -509,6 +639,11 @@ impl EntityInputHandler for TextInput {
             .map(|r| self.range_from_utf16(r))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
+        // A composition is one step, from the text before it began.
+        if self.marked_range.is_none() && !self.masked {
+            let before = (self.content.clone(), self.selected_range.clone());
+            self.history.record(before, None);
+        }
         self.content =
             (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
                 .into();
@@ -815,6 +950,10 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::submit))
             .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::undo))
+            .on_action(cx.listener(Self::redo))
+            .on_action(cx.listener(Self::delete_word_left))
+            .on_action(cx.listener(Self::delete_word_right))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -831,8 +970,48 @@ impl Focusable for TextInput {
 
 #[cfg(test)]
 mod tests {
-    use super::{scrolled, utf16_to_utf8};
+    use super::{History, scrolled, typed_at, utf16_to_utf8};
     use gpui::px;
+
+    #[test]
+    fn typing_is_one_step_and_other_edits_are_one_each() {
+        let mut history = History::default();
+        let snap = |text: &str| (text.to_owned().into(), text.len()..text.len());
+        // "ab" typed, then a space, then "c", then a deletion.
+        history.record(snap(""), typed_at(&(0..0), "a"));
+        history.record(snap("a"), typed_at(&(1..1), "b"));
+        history.record(snap("ab"), typed_at(&(2..2), " "));
+        history.record(snap("ab "), typed_at(&(3..3), "c"));
+        history.record(snap("ab c"), typed_at(&(3..4), ""));
+        let undo = |history: &mut History, now: &str| {
+            history.undo(snap(now)).map(|(text, _)| text.to_string())
+        };
+        assert_eq!(undo(&mut history, "ab ").as_deref(), Some("ab c"));
+        assert_eq!(undo(&mut history, "ab c").as_deref(), Some("ab "));
+        assert_eq!(undo(&mut history, "ab ").as_deref(), Some("ab"));
+        assert_eq!(undo(&mut history, "ab").as_deref(), Some(""));
+        assert_eq!(undo(&mut history, ""), None);
+        assert_eq!(
+            history
+                .redo(snap(""))
+                .map(|(text, _)| text.to_string())
+                .as_deref(),
+            Some("ab")
+        );
+        // A new edit forgets what could be redone.
+        history.record(snap("ab"), typed_at(&(2..2), "x"));
+        assert_eq!(history.redo(snap("abx")), None);
+    }
+
+    #[test]
+    fn typing_elsewhere_starts_a_step() {
+        let mut history = History::default();
+        let snap = |text: &str| (text.to_owned().into(), 0..0);
+        history.record(snap("xy"), typed_at(&(2..2), "a"));
+        // The cursor moved to the start before the next character.
+        history.record(snap("xya"), typed_at(&(0..0), "b"));
+        assert_eq!(history.undo.len(), 2);
+    }
 
     #[test]
     fn a_long_line_scrolls_just_enough_to_show_the_cursor() {

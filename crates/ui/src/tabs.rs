@@ -434,7 +434,32 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
             if event.click_count() == 2 {
                 this.run("tab.new", serde_json::json!({}), window, cx);
             }
-        }));
+        }))
+        // The wheel over the tabs goes through them, a notch a tab, as in
+        // KDE and GTK's notebooks.
+        .on_scroll_wheel(
+            cx.listener(|this, event: &gpui::ScrollWheelEvent, window, cx| {
+                let delta = event.delta.pixel_delta(window.line_height());
+                // A sideways swipe counts as much as a turn of the wheel.
+                let along = if delta.y.abs() >= delta.x.abs() {
+                    delta.y
+                } else {
+                    delta.x
+                };
+                let lines = matches!(event.delta, gpui::ScrollDelta::Lines(_));
+                match this.tab_wheel.turn(f32::from(along), lines, false) {
+                    0 => {}
+                    // Down (or right) is the next tab.
+                    turn => this.run(
+                        "tab.select",
+                        serde_json::json!({ "delta": turn }),
+                        window,
+                        cx,
+                    ),
+                }
+                cx.stop_propagation();
+            }),
+        );
     let count = labels.len();
     for (index, label) in labels.into_iter().enumerate() {
         strip = strip.child(tab(

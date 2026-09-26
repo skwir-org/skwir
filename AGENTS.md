@@ -191,8 +191,9 @@ current source before assuming a planned crate, command, or API exists.
   (`text_ellipsis_middle`, vendored patch 0005): the extension tells files
   apart. "Fill thumbnails"
   (`ui.grid_fill`, in Sort and display) crops pictures to the box. Ctrl+wheel
-  zooms through a capture-phase listener over the grid, which keeps the first
-  visible item in place; the keys follow the cursor instead. A wheel listener
+  zooms through a capture-phase listener over the view (`views::zoom_wheel`,
+  over the grid, the list and the columns, each with a size of its own), which
+  keeps the first visible item in place; the keys follow the cursor instead. A wheel listener
   asks `Hitbox::should_handle_scroll`, not `is_hovered`, and an absolute
   overlay states its `top`/`left`: without them it is laid out after its
   siblings, below the area it was meant to cover.
@@ -338,7 +339,14 @@ current source before assuming a planned crate, command, or API exists.
   run from a search uses `App::work_dir`, not `pane_dir`. Menu `order` groups
   by the hundreds digit (0xx open, 1xx edit, 2xx create, 3xx destructive,
   4xx misc); the UI draws separators between groups. `ui.*` commands are
-  handled by the shell; a plugin may bind to them.
+  handled by the shell; a plugin may bind to them. GPUI leaves out the
+  Shift a symbol took: bind `ctrl-?` and `ctrl-+`; `ctrl-shift-?` parses
+  and never fires. Zoom keys come from one table (`keymap::ZOOM_KEYS`) for everything
+  that zooms. F5 refreshes in every state; a key does not change meaning
+  with the layout (the split's transfers are Shift+F5 and Shift+F6). What
+  the pointer does has a key: the middle button's background tab is
+  Ctrl+Enter, the right button's menu the Menu key and Shift+F10, Ctrl+click
+  is Ctrl+arrows then Ctrl+Space.
 - **Unsafe.** The workspace sets `unsafe_code = "warn"`; `just lint` promotes
   warnings to errors. Any exception needs a narrowly scoped `#[allow]` with a
   justification, as in `crates/bibli/src/gpu.rs` (setting an environment

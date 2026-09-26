@@ -23,6 +23,10 @@ pub struct Session {
     pub view: String,
     /// Icon size of the grid view.
     pub zoom: u32,
+    /// Icon size of the list and columns views' rows.
+    pub row_zoom: u32,
+    /// The sidebar put away with F9 (it also gives way to a narrow window).
+    pub sidebar_hidden: bool,
     pub split: bool,
     /// Split panes side by side, stacked, or as the window's shape says.
     pub panes: crate::layout::Panes,
@@ -48,6 +52,8 @@ impl Shell {
         Session {
             view: self.ui().view_id.to_owned(),
             zoom: self.zoom,
+            row_zoom: self.row_zoom,
+            sidebar_hidden: self.sidebar_hidden,
             split: self.is_split(),
             panes: self.layout.panes,
             split_panes: self.layout.split,

@@ -21,6 +21,16 @@ use crate::shell::Shell;
 use crate::theme::Theme;
 use crate::view::Nav;
 
+/// What a keyboard move does to the selection: select the item reached
+/// (arrows), extend to it from the anchor (Shift), or only move the cursor
+/// (Ctrl), so Ctrl+Space can then pick items that are not side by side.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Step {
+    Select,
+    Extend,
+    Cursor,
+}
+
 pub struct ListState {
     /// Entry ids in display order, from the core's cached sort.
     pub sorted: std::sync::Arc<[EntryId]>,
@@ -253,11 +263,12 @@ impl Shell {
             .and_then(|p| p.selection.cursor)
     }
 
-    /// Move the cursor to `target` (clamped), extending from the anchor if asked.
+    /// Move the cursor to `target` (clamped): selecting it, extending from
+    /// the anchor, or leaving the selection alone, as `step` says.
     pub fn cursor_to(
         &mut self,
         target: isize,
-        extend: bool,
+        step: Step,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -267,7 +278,11 @@ impl Shell {
         }
         let target = target.clamp(0, len as isize - 1) as usize;
         let id = self.ui().list.sorted[target];
-        let mode = if extend { "range_to" } else { "replace" };
+        let mode = match step {
+            Step::Select => "replace",
+            Step::Extend => "range_to",
+            Step::Cursor => "cursor",
+        };
         self.select_ids(vec![id], mode, window, cx);
         self.with_view(|v, _| v.scroll_to(target));
         cx.notify();
@@ -276,20 +291,28 @@ impl Shell {
     pub fn cursor_move(
         &mut self,
         delta: isize,
-        extend: bool,
+        step: Step,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let cur = self.cursor_index().map_or(-1, |i| i as isize);
         let target = if cur < 0 && delta < 0 { 0 } else { cur + delta };
-        self.cursor_to(target, extend, window, cx);
+        self.cursor_to(target, step, window, cx);
+    }
+
+    /// Ctrl+Space: select or deselect the item under the cursor.
+    pub fn toggle_cursor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.cursor_id() else {
+            return;
+        };
+        self.select_ids(vec![id], "toggle", window, cx);
     }
 
     /// Keyboard navigation, interpreted by the active view.
     pub fn navigate_by(
         &mut self,
         nav: Nav,
-        extend: bool,
+        step: Step,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -303,9 +326,9 @@ impl Shell {
             return;
         }
         match (nav, delta) {
-            (Nav::Home, _) => self.cursor_to(0, extend, window, cx),
-            (Nav::End, _) => self.cursor_to(isize::MAX, extend, window, cx),
-            (_, Some(d)) => self.cursor_move(d, extend, window, cx),
+            (Nav::Home, _) => self.cursor_to(0, step, window, cx),
+            (Nav::End, _) => self.cursor_to(isize::MAX, step, window, cx),
+            (_, Some(d)) => self.cursor_move(d, step, window, cx),
             (_, None) => {}
         }
     }
@@ -340,6 +363,9 @@ impl Shell {
                 if ev.click_count >= 2 {
                     self.select_ids(vec![id], "replace", window, cx);
                     self.open_selection(window, cx);
+                } else if ev.modifiers.control && ev.modifiers.shift {
+                    // A range added to what is selected, not in its place.
+                    self.select_ids(vec![id], "add_range", window, cx);
                 } else if ev.modifiers.control {
                     self.select_ids(vec![id], "toggle", window, cx);
                 } else if ev.modifiers.shift {
@@ -362,6 +388,33 @@ impl Shell {
             _ => {}
         }
         cx.notify();
+    }
+
+    /// Ctrl+Enter: the selected folders each in a tab behind the one shown,
+    /// as the middle button opens one; with no folder selected, the
+    /// selection opens as Enter would.
+    pub fn open_selection_in_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let folders: Vec<EntryId> = {
+            let ws = self.app.workspace.read();
+            let Some(p) = ws.pane(self.pane) else {
+                return;
+            };
+            let sorted = &self.ui().list.sorted;
+            let mut ids: Vec<EntryId> = p
+                .selection
+                .iter()
+                .filter(|id| p.listing.get(*id).is_some_and(bibli_core::Entry::is_dir))
+                .collect();
+            // In the order the pane shows them, so the tabs line up the same.
+            ids.sort_by_key(|id| sorted.iter().position(|s| s == id));
+            ids
+        };
+        if folders.is_empty() {
+            return self.open_selection(window, cx);
+        }
+        for id in folders {
+            self.open_in_tab(id, window, cx);
+        }
     }
 
     /// Open entry `id` of the pane in a tab behind the one shown, if it is
@@ -433,6 +486,17 @@ impl Shell {
             {
                 l.typeahead.clear();
             }
+            // A path begins: `/` or `~` typed first opens the address bar
+            // with it, as in GNOME's file chooser and Nautilus.
+            if l.typeahead.is_empty() && matches!(ch, "/" | "~") {
+                let (address, text) = (self.ui().address.clone(), ch.to_owned());
+                address.update(cx, |input, cx| {
+                    input.set_text(text, cx);
+                    input.focus(window);
+                });
+                cx.notify();
+                return;
+            }
             l.typeahead_at = Some(now);
             l.typeahead.push_str(&ch.to_lowercase());
         }
@@ -448,7 +512,7 @@ impl Shell {
             })
         };
         if let Some(ix) = found {
-            self.cursor_to(ix as isize, false, window, cx);
+            self.cursor_to(ix as isize, Step::Select, window, cx);
         }
     }
 
@@ -533,6 +597,7 @@ impl Shell {
             .flex_col()
             .track_focus(&self.ui().focus)
             .key_context(key_context)
+            .children(self.menu_area_marker(pane))
             .on_key_down(cx.listener(Shell::on_pane_key_down))
             .on_mouse_down(
                 MouseButton::Left,

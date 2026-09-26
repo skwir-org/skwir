@@ -33,40 +33,62 @@ impl PopoverAnchor {
         chosen: &crate::elements::adaptive::Chosen,
         mut panels: Vec<AnyElement>,
     ) -> AnyElement {
-        let anchor = self.0.clone();
         let chosen = chosen.clone();
-        // Defer until the selected toolbar variant has prepainted its button.
-        // No coordinates survive this render or feed back into view state.
-        gpui::deferred(
-            canvas(
-                move |_, window, cx| {
-                    let bounds = anchor.get()?;
-                    let last = panels.len().checked_sub(1)?;
-                    let panel = panels.swap_remove(chosen.get().unwrap_or(last).min(last));
-                    let mut popup = gpui::anchored()
-                        .position(bounds.bottom_left())
-                        .offset(gpui::point(px(0.), px(6.)))
-                        .snap_to_window_with_margin(px(8.))
-                        .child(panel)
-                        .into_any_element();
-                    popup.layout_as_root(
-                        size(AvailableSpace::MaxContent, AvailableSpace::MaxContent),
-                        window,
-                        cx,
-                    );
-                    popup.prepaint_at(gpui::Point::default(), window, cx);
-                    Some(popup)
-                },
-                |_, popup, window, cx| {
-                    if let Some(mut popup) = popup {
-                        popup.paint(window, cx);
-                    }
-                },
-            )
-            .absolute()
-            .size(px(0.)),
-        )
-        .with_priority(3)
-        .into_any_element()
+        below(std::slice::from_ref(self), 3, move || {
+            let last = panels.len().checked_sub(1)?;
+            Some(panels.swap_remove(chosen.get().unwrap_or(last).min(last)))
+        })
     }
+
+    /// `panel` under the first of `anchors` drawn this frame: a menu opened
+    /// from the keyboard hangs from the row it is about, or from the pane
+    /// when no row is. Drawn at `priority` among deferred draws.
+    pub fn popup_first(
+        anchors: &[PopoverAnchor],
+        priority: usize,
+        panel: AnyElement,
+    ) -> AnyElement {
+        let mut panel = Some(panel);
+        below(anchors, priority, move || panel.take())
+    }
+}
+
+/// Defer until the anchors have prepainted in this same frame, then lay out
+/// what `panel` gives under the first that has bounds. No coordinates
+/// survive this render or feed back into view state.
+fn below(
+    anchors: &[PopoverAnchor],
+    priority: usize,
+    mut panel: impl FnMut() -> Option<AnyElement> + 'static,
+) -> AnyElement {
+    let anchors: Vec<_> = anchors.iter().map(|a| a.0.clone()).collect();
+    gpui::deferred(
+        canvas(
+            move |_, window, cx| {
+                let bounds = anchors.iter().find_map(|a| a.get())?;
+                let mut popup = gpui::anchored()
+                    .position(bounds.bottom_left())
+                    .offset(gpui::point(px(0.), px(6.)))
+                    .snap_to_window_with_margin(px(8.))
+                    .child(panel()?)
+                    .into_any_element();
+                popup.layout_as_root(
+                    size(AvailableSpace::MaxContent, AvailableSpace::MaxContent),
+                    window,
+                    cx,
+                );
+                popup.prepaint_at(gpui::Point::default(), window, cx);
+                Some(popup)
+            },
+            |_, popup, window, cx| {
+                if let Some(mut popup) = popup {
+                    popup.paint(window, cx);
+                }
+            },
+        )
+        .absolute()
+        .size(px(0.)),
+    )
+    .with_priority(priority)
+    .into_any_element()
 }

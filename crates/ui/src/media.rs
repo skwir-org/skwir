@@ -297,7 +297,7 @@ impl Shell {
         });
         self.with_pane(pane, |this| {
             if let Some(index) = this.ui().list.index_of(target) {
-                this.cursor_to(index as isize, false, window, cx);
+                this.cursor_to(index as isize, crate::list::Step::Select, window, cx);
             }
         });
     }
@@ -517,6 +517,10 @@ impl Shell {
             Some("play") => Some(Control::Play(!state.playing())),
             Some("mute") => Some(Control::Mute(!state.muted)),
             Some("volume") => value.map(Control::Volume),
+            // ↑ and ↓ over the player: a step either way, within 0..=1.
+            Some("volume_by") => {
+                value.map(|delta| Control::Volume((state.volume + delta).clamp(0., 1.)))
+            }
             // Rate changes are seeks; a non-seekable stream keeps 1x.
             Some("rate") => value.filter(|_| state.seekable).map(Control::Rate),
             Some("audio") => args

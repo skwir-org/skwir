@@ -18,8 +18,22 @@ use crate::shell::Shell;
 use crate::theme::Theme;
 use crate::view::{Nav, PaneView};
 
+/// Height of a row at the default size: the archive preview's rows too.
 pub const ROW_HEIGHT: f32 = 26.0;
-const ICON_PX: f32 = 18.0;
+/// The icon sizes the list and the columns zoom through (`ui.zoom`); a
+/// row is its icon and a margin, so Ctrl+wheel makes rows taller.
+pub const ROW_ZOOMS: [u32; 5] = [16, 18, 24, 32, 48];
+pub const DEFAULT_ROW_ZOOM: u32 = 18;
+
+/// Height of a row whose icon is `icon` px.
+pub fn row_height(icon: u32) -> f32 {
+    icon_px(icon) + ROW_HEIGHT - icon_px(DEFAULT_ROW_ZOOM)
+}
+
+/// A row zoom as the icon's side in pixels.
+pub fn icon_px(zoom: u32) -> f32 {
+    f32::from(u16::try_from(zoom).unwrap_or(u16::MAX))
+}
 /// The name never gets narrower than this; detail columns give way first.
 const NAME_MIN: f32 = 150.0;
 /// How much of a cut entry remains visible until it is pasted.
@@ -136,22 +150,33 @@ fn resize_edge(column: usize, cx: &mut Context<Shell>) -> Stateful<Div> {
         })
 }
 
-/// The row at the top of rows scrolled to `offset_y`, and how many pixels
-/// into it the view begins. Rows are `ROW_HEIGHT` tall, from the top.
-fn row_anchor(offset_y: f32) -> (usize, f32) {
+/// The row at the top of rows `height` tall scrolled to `offset_y`, and how
+/// many pixels into it the view begins.
+fn row_anchor(offset_y: f32, height: f32) -> (usize, f32) {
     let top = (-offset_y).max(0.);
-    let row = (top / ROW_HEIGHT).floor();
-    (row as usize, top - row * ROW_HEIGHT)
+    let row = (top / height).floor();
+    (row as usize, top - row * height)
 }
 
 /// The offset that shows `anchor` again (the list clamps it to its rows).
-fn row_offset((row, within): (usize, f32)) -> f32 {
-    -(row as f32 * ROW_HEIGHT + within.clamp(0., ROW_HEIGHT - 1.))
+fn row_offset((row, within): (usize, f32), height: f32) -> f32 {
+    -(row as f32 * height + within.clamp(0., height - 1.))
 }
 
-#[derive(Default)]
 pub struct ListView {
     scroll: UniformListScrollHandle,
+    /// The rows' height when last drawn, for the scroll anchor of a tab
+    /// put away and shown again.
+    height: f32,
+}
+
+impl Default for ListView {
+    fn default() -> Self {
+        ListView {
+            scroll: UniformListScrollHandle::default(),
+            height: ROW_HEIGHT,
+        }
+    }
 }
 
 /// Everything a row needs, collected under the workspace lock.
@@ -295,10 +320,12 @@ pub fn row(
     } else {
         theme.text_muted
     };
+    let height = row_height(shell.row_zoom);
+    let icon_px = icon_px(shell.row_zoom);
     let icon: AnyElement = match &r.icon {
-        Some(p) => icons::element(p, ICON_PX),
+        Some(p) => icons::element(p, icon_px),
         None => div()
-            .size(px(ICON_PX))
+            .size(px(icon_px))
             .rounded_sm()
             .bg(if r.is_dir {
                 theme.accent
@@ -310,7 +337,8 @@ pub fn row(
     };
     let el = div()
         .id(ix)
-        .h(px(ROW_HEIGHT))
+        .relative()
+        .h(px(height))
         .w_full()
         .flex()
         .flex_row()
@@ -328,6 +356,7 @@ pub fn row(
         })
         .when(!r.selected, |d| d.hover(|s| s.bg(theme.hover)))
         .when(r.cut, |d| d.opacity(CUT_OPACITY))
+        .children(shell.menu_marker(pane, r.is_cursor))
         .child(icon);
     let el = crate::list::entry_mouse(el, pane, ix, cx);
     let name = div()
@@ -357,7 +386,7 @@ pub fn row(
                 })
                 .child(t.clone())
         }));
-    let mut line = line(name, if compact { 0. } else { NAME_MIN });
+    let mut line = line(name, if compact { 0. } else { NAME_MIN }, height);
     if !compact {
         let font = shell.font.clone();
         let exact: gpui::SharedString = r.modified_exact.clone().into();
@@ -365,14 +394,14 @@ pub fn row(
         line = line
             .when(size, |d| {
                 d.child(
-                    column(shell.column_widths[0], muted)
+                    column(shell.column_widths[0], muted, height)
                         .text_right()
                         .child(r.size.clone()),
                 )
             })
             .when(modified, |d| {
                 d.child(
-                    column(shell.column_widths[1], muted)
+                    column(shell.column_widths[1], muted, height)
                         .id(("modified", ix))
                         .truncate()
                         .when(!exact.is_empty(), |d| {
@@ -385,7 +414,7 @@ pub fn row(
             })
             .when(kind, |d| {
                 d.child(
-                    column(shell.column_widths[2], muted)
+                    column(shell.column_widths[2], muted, height)
                         .truncate()
                         .child(gpui::SharedString::from(r.kind.clone())),
                 )
@@ -407,9 +436,9 @@ pub fn row(
 /// layout: nothing is measured, the header and every row agree by
 /// construction, and a pane of any width is laid out correctly in the frame
 /// it gets that width.
-fn line(name: Div, name_min: f32) -> Div {
+fn line(name: Div, name_min: f32, height: f32) -> Div {
     div()
-        .h(px(ROW_HEIGHT - 2.))
+        .h(px(height - 2.))
         .flex_1()
         .min_w_0()
         .overflow_hidden()
@@ -419,7 +448,7 @@ fn line(name: Div, name_min: f32) -> Div {
         .content_start()
         .gap_x(px(DETAIL_GAP))
         .child(
-            name.h(px(ROW_HEIGHT - 2.))
+            name.h(px(height - 2.))
                 .flex()
                 .items_center()
                 .flex_1()
@@ -428,11 +457,11 @@ fn line(name: Div, name_min: f32) -> Div {
 }
 
 /// One detail column of `line`.
-fn column(width: f32, color: gpui::Hsla) -> Div {
+fn column(width: f32, color: gpui::Hsla, height: f32) -> Div {
     div()
         .w(px(width))
         .flex_none()
-        .line_height(px(ROW_HEIGHT - 2.))
+        .line_height(px(height - 2.))
         .text_color(color)
 }
 
@@ -479,7 +508,7 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Div {
                 this.open_column_menu(ev.position, window, cx);
             }),
         )
-        .child(div().size(px(ICON_PX)).flex_none())
+        .child(div().w(px(icon_px(shell.row_zoom))).flex_none())
         .child(
             line(
                 div().child(header_cell(
@@ -491,10 +520,11 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Div {
                     cx,
                 )),
                 NAME_MIN,
+                ROW_HEIGHT,
             )
             .when(shell.columns[0], |d| {
                 d.child(
-                    column(shell.column_widths[0], theme.text_muted)
+                    column(shell.column_widths[0], theme.text_muted, ROW_HEIGHT)
                         .relative()
                         .flex()
                         .justify_end()
@@ -511,7 +541,7 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Div {
             })
             .when(shell.columns[1], |d| {
                 d.child(
-                    column(shell.column_widths[1], theme.text_muted)
+                    column(shell.column_widths[1], theme.text_muted, ROW_HEIGHT)
                         .relative()
                         .child(header_cell(
                             "h-mod",
@@ -526,7 +556,7 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Div {
             })
             .when(shell.columns[2], |d| {
                 d.child(
-                    column(shell.column_widths[2], theme.text_muted)
+                    column(shell.column_widths[2], theme.text_muted, ROW_HEIGHT)
                         .relative()
                         .child("Type")
                         .child(resize_edge(2, cx)),
@@ -544,6 +574,18 @@ impl PaneView for ListView {
         let theme = cx.global::<Theme>().clone();
         let count = shell.ui().list.sorted.len();
         let pane = shell.pane;
+        let height = row_height(shell.row_zoom);
+        let icon_px = u16::try_from(shell.row_zoom).unwrap_or(u16::MAX);
+        if (height - self.height).abs() > f32::EPSILON {
+            // Zoomed: the row at the top stays at the top, as far into it.
+            let before = self.height;
+            let (row, within) = row_anchor(
+                f32::from(self.scroll.0.borrow().base_handle.offset().y),
+                before,
+            );
+            self.height = height;
+            self.restore_anchor((row, within * height / before));
+        }
         let list = uniform_list(
             "rows",
             count,
@@ -553,7 +595,7 @@ impl PaneView for ListView {
                     let list = &mut this.ui_mut().list;
                     list.visible_rows = range.len().max(1);
                     list.visible_items = range.len();
-                    let rows = this.rows(range, ICON_PX as u16, false);
+                    let rows = this.rows(range, icon_px, false);
                     let need: Vec<EntryId> =
                         rows.iter().filter(|r| !r.hydrated).map(|r| r.id).collect();
                     this.request_hydrate(need);
@@ -568,7 +610,7 @@ impl PaneView for ListView {
         let marquee = crate::elements::marquee::Marquee {
             pane,
             shell: cx.weak_entity(),
-            source: crate::elements::marquee::Source::Rows { height: ROW_HEIGHT },
+            source: crate::elements::marquee::Source::Rows { height },
             count,
             scroll: self.scroll.0.borrow().base_handle.clone(),
             drag: shell.marquee.clone(),
@@ -586,6 +628,7 @@ impl PaneView for ListView {
                     .w_full()
                     .child(list)
                     .child(marquee)
+                    .child(crate::views::zoom_wheel(cx))
                     .child(crate::elements::scrollbar::vertical(
                         ("list-scrollbar", pane.0 as usize),
                         crate::elements::scrollbar::Scrolls::Offset(
@@ -601,9 +644,10 @@ impl PaneView for ListView {
     }
 
     fn scroll_anchor(&self) -> Option<(usize, f32)> {
-        Some(row_anchor(f32::from(
-            self.scroll.0.borrow().base_handle.offset().y,
-        )))
+        Some(row_anchor(
+            f32::from(self.scroll.0.borrow().base_handle.offset().y),
+            self.height,
+        ))
     }
 
     fn restore_anchor(&mut self, anchor: (usize, f32)) {
@@ -613,7 +657,7 @@ impl PaneView for ListView {
         let offset = state.base_handle.offset();
         state
             .base_handle
-            .set_offset(gpui::point(offset.x, px(row_offset(anchor))));
+            .set_offset(gpui::point(offset.x, px(row_offset(anchor, self.height))));
     }
 
     fn nav_delta(&self, nav: Nav, shell: &Shell) -> Option<isize> {
@@ -634,21 +678,30 @@ impl PaneView for ListView {
 
 #[cfg(test)]
 mod tests {
-    use super::{ROW_HEIGHT, row_anchor, row_offset};
+    use super::{DEFAULT_ROW_ZOOM, ROW_HEIGHT, ROW_ZOOMS, row_anchor, row_height, row_offset};
 
     #[test]
     fn a_scroll_position_comes_back_to_the_pixel() {
-        for offset in [0., -1., -13., -ROW_HEIGHT, -(40. * ROW_HEIGHT + 11.5)] {
-            let anchor = row_anchor(offset);
-            assert!((row_offset(anchor) - offset).abs() < 1e-3, "{offset}");
+        for h in ROW_ZOOMS.map(row_height) {
+            for offset in [0., -1., -13., -h, -(40. * h + 11.5)] {
+                let anchor = row_anchor(offset, h);
+                assert!((row_offset(anchor, h) - offset).abs() < 1e-3, "{offset}");
+            }
         }
+        let h = ROW_HEIGHT;
         // Half a row down: the row at the top and half of it scrolled.
-        let (row, within) = row_anchor(-(3.5 * ROW_HEIGHT));
+        let (row, within) = row_anchor(-(3.5 * h), h);
         assert_eq!(row, 3);
-        assert!((within - ROW_HEIGHT / 2.).abs() < 1e-3);
+        assert!((within - h / 2.).abs() < 1e-3);
         // An entry that moved keeps how far into its row the view began.
-        assert!((row_offset((5, 7.)) - -(5. * ROW_HEIGHT + 7.)).abs() < 1e-3);
+        assert!((row_offset((5, 7.), h) - -(5. * h + 7.)).abs() < 1e-3);
         // What no row can hold is clamped into the row.
-        assert!((row_offset((2, 99.)) - -(3. * ROW_HEIGHT - 1.)).abs() < 1e-3);
+        assert!((row_offset((2, 99.), h) - -(3. * h - 1.)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn the_default_size_is_the_row_the_list_always_had() {
+        assert!((row_height(DEFAULT_ROW_ZOOM) - ROW_HEIGHT).abs() < f32::EPSILON);
+        assert!(ROW_ZOOMS.contains(&DEFAULT_ROW_ZOOM));
     }
 }

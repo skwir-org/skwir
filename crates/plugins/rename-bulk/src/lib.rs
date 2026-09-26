@@ -466,6 +466,17 @@ impl Plugin for RenameBulkPlugin {
                 when: Some("pane selection".into()),
             },
         );
+        // F2 on several items renames them together, as in Nautilus. On one
+        // item the shell's own F2 (`pane single`, bound after the plugins'
+        // keys, so it wins where both hold) renames it in place.
+        app.registry.keymap.add(
+            ID,
+            KeyBinding {
+                keys: "f2".into(),
+                command: Invocation::new("ui.rename_bulk_prompt"),
+                when: Some("pane selection".into()),
+            },
+        );
         app.registry.menus.add(
             ID,
             MenuItem {

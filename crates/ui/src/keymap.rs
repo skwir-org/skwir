@@ -48,11 +48,15 @@ pub struct KeyHint {
 const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("f2", "ui.rename_prompt", Some("pane single")),
     ("shift-delete", "ui.confirm_delete", Some("pane selection")),
-    ("ctrl-shift-n", "ui.mkdir_prompt", None),
+    // Into the folder shown, like Ctrl+V: a search or the shelf has none.
+    ("ctrl-shift-n", "ui.mkdir_prompt", Some("pane folder")),
     ("ctrl-l", "ui.focus_address", None),
     ("ctrl-shift-p", "ui.palette", None),
     ("ctrl-q", "ui.quit", None),
     ("ctrl-h", "ui.toggle_hidden", None),
+    // Dolphin's key for it, beside GNOME's.
+    ("alt-.", "ui.toggle_hidden", None),
+    ("f9", "ui.toggle_sidebar", None),
     ("tab", "ui.toolbar_next", None),
     ("shift-tab", "ui.toolbar_prev", None),
     ("enter", "ui.toolbar_activate", Some("ToolbarButton")),
@@ -61,6 +65,9 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("escape", "ui.reader_find_close", Some("DocumentFind")),
     ("ctrl-,", "ui.settings", None),
     ("f1", "ui.shortcuts", None),
+    // GNOME's key for the shortcuts window. GPUI leaves out the Shift a
+    // symbol took, so Ctrl+Shift+/ (or wherever `?` is) arrives as `ctrl-?`.
+    ("ctrl-?", "ui.shortcuts", None),
     ("escape", "ui.shortcuts", Some("Shortcuts")),
     ("escape", "ui.menu_close", Some("ContextMenu")),
     ("up", "ui.menu_up", Some("ContextMenu")),
@@ -88,6 +95,19 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("end", "ui.cursor_end", Some("pane")),
     ("shift-home", "ui.cursor_extend_home", Some("pane")),
     ("shift-end", "ui.cursor_extend_end", Some("pane")),
+    // Ctrl moves the cursor and leaves the selection; Ctrl+Space picks.
+    ("ctrl-up", "ui.cursor_move_up", Some("pane")),
+    ("ctrl-down", "ui.cursor_move_down", Some("pane")),
+    ("ctrl-left", "ui.cursor_move_left", Some("pane")),
+    ("ctrl-right", "ui.cursor_move_right", Some("pane")),
+    ("ctrl-home", "ui.cursor_move_home", Some("pane")),
+    ("ctrl-end", "ui.cursor_move_end", Some("pane")),
+    ("ctrl-space", "ui.cursor_toggle", Some("pane")),
+    // The keyboard's way to what a right-click opens.
+    ("shift-f10", "ui.context_menu", Some("pane")),
+    ("menu", "ui.context_menu", Some("pane")),
+    // What the middle button does to a folder: a tab behind this one.
+    ("ctrl-enter", "ui.open_in_tab", Some("pane selection")),
     ("pageup", "ui.page_up", Some("pane")),
     ("pagedown", "ui.page_down", Some("pane")),
     ("up", "ui.palette_up", Some("palette")),
@@ -106,6 +126,7 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     // document F3 stays "next match", the deeper context wins.
     ("f11", "ui.toggle_preview", None),
     ("ctrl-i", "ui.preview_details", None),
+    ("alt-enter", "ui.preview_details", None),
     ("f3", "ui.split", None),
     ("space", "ui.peek_close", Some("peek")),
     ("escape", "ui.peek_close", Some("peek")),
@@ -115,8 +136,11 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("down", "ui.peek_next", Some("peek")),
     ("ctrl-shift-d", "ui.split", None),
     ("tab", "ui.focus_other_pane", Some("pane split")),
-    ("f5", "ui.copy_other", Some("pane split")),
-    ("f6", "ui.move_other", Some("pane split")),
+    ("shift-tab", "ui.focus_other_pane", Some("pane split")),
+    // F5 refreshes whatever the window shows; with Shift it sends the
+    // selection across a split, as F6 moves it.
+    ("shift-f5", "ui.copy_other", Some("pane split selection")),
+    ("shift-f6", "ui.move_other", Some("pane split selection")),
     ("enter", "ui.review_apply", Some("review")),
     ("escape", "ui.review_cancel", Some("review")),
     ("up", "ui.jump_up", Some("jump")),
@@ -182,6 +206,18 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         Some("MediaPlayer"),
     ),
     ("f", "ui.media_fullscreen", "{}", Some("MediaPlayer")),
+    (
+        "up",
+        "ui.media_control",
+        r#"{"action":"volume_by","value":0.05}"#,
+        Some("MediaPlayer"),
+    ),
+    (
+        "down",
+        "ui.media_control",
+        r#"{"action":"volume_by","value":-0.05}"#,
+        Some("MediaPlayer"),
+    ),
     // The dock steers the pinned player through the same requests the
     // desktop's media keys send.
     (
@@ -215,6 +251,18 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         Some("Player"),
     ),
     ("m", "ui.player_mute", "{}", Some("Player")),
+    (
+        "up",
+        "ui.player_volume",
+        r#"{"delta":0.05}"#,
+        Some("Player"),
+    ),
+    (
+        "down",
+        "ui.player_volume",
+        r#"{"delta":-0.05}"#,
+        Some("Player"),
+    ),
     ("c", "ui.media_controls", "{}", Some("MediaPlayer")),
     ("escape", "ui.media_escape", "{}", Some("MediaPlayer")),
     (
@@ -238,78 +286,6 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     ),
     // The same keys in every preview: zoom what is looked at, size what is
     // read, step through sections or pages.
-    (
-        "ctrl-=",
-        "ui.preview_zoom",
-        r#"{"dir":"in"}"#,
-        Some("reader"),
-    ),
-    (
-        "ctrl-+",
-        "ui.preview_zoom",
-        r#"{"dir":"in"}"#,
-        Some("reader"),
-    ),
-    (
-        "ctrl--",
-        "ui.preview_zoom",
-        r#"{"dir":"out"}"#,
-        Some("reader"),
-    ),
-    (
-        "ctrl-0",
-        "ui.preview_zoom",
-        r#"{"dir":"reset"}"#,
-        Some("reader"),
-    ),
-    (
-        "ctrl-=",
-        "ui.preview_zoom",
-        r#"{"dir":"in"}"#,
-        Some("ImagePreview"),
-    ),
-    (
-        "ctrl-+",
-        "ui.preview_zoom",
-        r#"{"dir":"in"}"#,
-        Some("ImagePreview"),
-    ),
-    (
-        "ctrl--",
-        "ui.preview_zoom",
-        r#"{"dir":"out"}"#,
-        Some("ImagePreview"),
-    ),
-    (
-        "ctrl-0",
-        "ui.preview_zoom",
-        r#"{"dir":"reset"}"#,
-        Some("ImagePreview"),
-    ),
-    (
-        "ctrl-=",
-        "ui.inspect",
-        r#"{"action":"larger"}"#,
-        Some("Inspector"),
-    ),
-    (
-        "ctrl-+",
-        "ui.inspect",
-        r#"{"action":"larger"}"#,
-        Some("Inspector"),
-    ),
-    (
-        "ctrl--",
-        "ui.inspect",
-        r#"{"action":"smaller"}"#,
-        Some("Inspector"),
-    ),
-    (
-        "ctrl-0",
-        "ui.inspect",
-        r#"{"action":"reset"}"#,
-        Some("Inspector"),
-    ),
     (
         "f3",
         "ui.inspect",
@@ -379,11 +355,46 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     ("ctrl-1", "ui.view", r#"{"id":"list"}"#, None),
     ("ctrl-2", "ui.view", r#"{"id":"grid"}"#, None),
     ("ctrl-3", "ui.view", r#"{"id":"columns"}"#, None),
-    ("ctrl-=", "ui.zoom", r#"{"dir":"in"}"#, None),
-    ("ctrl-shift-=", "ui.zoom", r#"{"dir":"in"}"#, None),
-    ("ctrl--", "ui.zoom", r#"{"dir":"out"}"#, None),
-    ("ctrl-0", "ui.zoom", r#"{"dir":"reset"}"#, None),
 ];
+
+/// The keys of zooming, the same wherever something zooms: `=` and `+`
+/// (GPUI leaves out the Shift a symbol took, so Ctrl+Shift+= arrives as
+/// `ctrl-+` on layouts where `+` is shifted), and the keypad's.
+const ZOOM_KEYS: [(&str, &str); 6] = [
+    ("ctrl-=", "in"),
+    ("ctrl-+", "in"),
+    ("ctrl-add", "in"),
+    ("ctrl--", "out"),
+    ("ctrl-subtract", "out"),
+    ("ctrl-0", "reset"),
+];
+
+/// What zooms, where: the pane's view anywhere, what a preview shows where
+/// it has the keyboard. The inspector's text is sized in steps of its own.
+const ZOOMS: [(&str, &str, Option<&str>); 4] = [
+    ("ui.zoom", "dir", None),
+    ("ui.preview_zoom", "dir", Some("reader")),
+    ("ui.preview_zoom", "dir", Some("ImagePreview")),
+    ("ui.inspect", "action", Some("Inspector")),
+];
+
+fn zoom_specs() -> impl Iterator<Item = (String, String, serde_json::Value, String)> {
+    ZOOMS.into_iter().flat_map(|(command, arg, when)| {
+        ZOOM_KEYS.into_iter().map(move |(keys, dir)| {
+            let value = match (command, dir) {
+                ("ui.inspect", "in") => "larger",
+                ("ui.inspect", "out") => "smaller",
+                _ => dir,
+            };
+            (
+                keys.to_owned(),
+                command.to_owned(),
+                serde_json::json!({ arg: value }),
+                context_of(when),
+            )
+        })
+    })
+}
 
 /// Map a registry `when` string to a GPUI context predicate.
 /// Tokens: `pane`, `address`, `palette`, `confirm` name a context; anything
@@ -636,6 +647,7 @@ fn specs(app: &App) -> Vec<(String, String, serde_json::Value, String)> {
             context_of(*when),
         ));
     }
+    specs.extend(zoom_specs());
     let mut seen = std::collections::HashSet::new();
     specs.retain(|spec| seen.insert(spec.clone()));
     specs
@@ -675,7 +687,38 @@ pub fn install(app: &App, cx: &mut gpui::App) -> Keymap {
 
 #[cfg(test)]
 mod tests {
-    use super::{context_label, context_of, display_keys, key_caps};
+    use super::{
+        BUILTIN, BUILTIN_ARGS, context_label, context_of, display_keys, key_caps, valid_keys,
+        zoom_specs,
+    };
+
+    /// A key GPUI cannot parse is skipped with a warning at startup: the
+    /// shell's own must all parse, including the unusual names (the Menu
+    /// key, the keypad's plus).
+    #[test]
+    fn every_builtin_key_parses() {
+        let keys = BUILTIN
+            .iter()
+            .map(|(keys, ..)| (*keys).to_owned())
+            .chain(BUILTIN_ARGS.iter().map(|(keys, ..)| (*keys).to_owned()))
+            .chain(zoom_specs().map(|(keys, ..)| keys));
+        for keys in keys {
+            assert!(valid_keys(&keys), "{keys}");
+        }
+    }
+
+    #[test]
+    fn every_zoom_key_zooms_everything_that_zooms() {
+        let zooms: Vec<_> = zoom_specs().collect();
+        for context in [context_of(None), context_of(Some("reader"))] {
+            for keys in ["ctrl-=", "ctrl-+", "ctrl-add", "ctrl--", "ctrl-0"] {
+                assert!(
+                    zooms.iter().any(|(k, _, _, c)| k == keys && *c == context),
+                    "{keys} in {context}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn contexts_read_as_places_and_conditions() {

@@ -22,11 +22,10 @@ use crate::icons;
 use crate::shell::Shell;
 use crate::theme::Theme;
 use crate::view::{Nav, PaneView};
-use crate::views::list::{ROW_HEIGHT, row};
+use crate::views::list::{row, row_height};
 
 const MAX_ANCESTORS: usize = 3;
 const COLUMN_W: f32 = 240.0;
-const ICON_PX: u16 = 18;
 
 struct Ancestor {
     path: PathBuf,
@@ -117,6 +116,8 @@ fn ancestor_column(
         ids.len(),
         cx.processor(move |this: &mut Shell, range: Range<usize>, _window, cx| {
             let theme = cx.global::<Theme>().clone();
+            let icon_px = u16::try_from(this.row_zoom).unwrap_or(u16::MAX);
+            let height = row_height(this.row_zoom);
             // Only the rows drawn are read from the kept listing.
             let rows: Vec<(std::ffi::OsString, bool)> = {
                 let ws = this.app.workspace.read();
@@ -137,14 +138,14 @@ fn ancestor_column(
                 let target = path.join(&row.name);
                 let is_on_path = row.name == child;
                 let icon = if row.is_dir {
-                    this.icons.folder(ICON_PX)
+                    this.icons.folder(icon_px)
                 } else {
-                    this.icons.for_name(&row.name, ICON_PX)
+                    this.icons.for_name(&row.name, icon_px)
                 };
                 let icon: AnyElement = match icon {
-                    Some(p) => icons::element(&p, f32::from(ICON_PX)),
+                    Some(p) => icons::element(&p, f32::from(icon_px)),
                     None => div()
-                        .size(px(f32::from(ICON_PX)))
+                        .size(px(f32::from(icon_px)))
                         .rounded_sm()
                         .bg(theme.text_muted)
                         .into_any_element(),
@@ -152,7 +153,7 @@ fn ancestor_column(
                 let dir_target = row.is_dir.then(|| target.clone());
                 let mut el = div()
                     .id(ix)
-                    .h(px(ROW_HEIGHT))
+                    .h(px(height))
                     .w_full()
                     .flex()
                     .items_center()
@@ -271,7 +272,12 @@ impl PaneView for ColumnsView {
                 .collect()
         };
 
-        let mut columns = div().size_full().flex().flex_row().overflow_hidden();
+        let mut columns = div()
+            .relative()
+            .size_full()
+            .flex()
+            .flex_row()
+            .overflow_hidden();
         for (k, ids) in orders.into_iter().enumerate() {
             columns = columns.child(ancestor_column(self, k, ids, shell.pane, &theme, cx));
         }
@@ -284,7 +290,8 @@ impl PaneView for ColumnsView {
                 this.with_pane(pane, |this| {
                     let theme = cx.global::<Theme>().clone();
                     this.ui_mut().list.visible_rows = range.len().max(1);
-                    let rows = this.rows(range, ICON_PX, true);
+                    let icon_px = u16::try_from(this.row_zoom).unwrap_or(u16::MAX);
+                    let rows = this.rows(range, icon_px, true);
                     let need: Vec<EntryId> =
                         rows.iter().filter(|r| !r.hydrated).map(|r| r.id).collect();
                     this.request_hydrate(need);
@@ -315,7 +322,10 @@ impl PaneView for ColumnsView {
             last_col = dnd::droppable_dir(last_col, b.clone(), cx);
         }
         columns = columns.child(last_col);
-        columns.into_any_element()
+        // Ctrl and the wheel size the rows, over any column.
+        columns
+            .child(crate::views::zoom_wheel(cx))
+            .into_any_element()
     }
 
     fn scroll_to(&mut self, ix: usize) {

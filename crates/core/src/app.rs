@@ -545,6 +545,12 @@ pub enum SelectMode {
     /// Replace the selection with the range from the anchor to the given id,
     /// in the pane's current sort order (shift-click).
     RangeTo,
+    /// Add the range from the anchor to the given id to the selection
+    /// (ctrl+shift-click).
+    AddRange,
+    /// Move the cursor to the given id and leave the selection as it is
+    /// (ctrl+arrows), so the keyboard can pick items that are not adjacent.
+    Cursor,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -750,9 +756,9 @@ mod builtin {
                     SelectMode::Replace => p.selection.set(ids),
                     SelectMode::Add => ids.into_iter().for_each(|id| p.selection.add(id)),
                     SelectMode::Toggle => ids.into_iter().for_each(|id| p.selection.toggle(id)),
-                    SelectMode::RangeTo => {
+                    mode @ (SelectMode::RangeTo | SelectMode::AddRange) => {
                         let Some(&target) = ids.last() else {
-                            anyhow::bail!("range_to needs a target id")
+                            anyhow::bail!("a range needs a target id")
                         };
                         let order = p.listing.sorted(p.sort);
                         let anchor = p.selection.anchor.or(p.selection.cursor).unwrap_or(target);
@@ -760,11 +766,21 @@ mod builtin {
                         match (pos(anchor), pos(target)) {
                             (Some(a), Some(b)) => {
                                 let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
-                                p.selection.set(order[lo..=hi].iter().copied());
+                                let range = order[lo..=hi].iter().copied();
+                                if matches!(mode, SelectMode::AddRange) {
+                                    range.for_each(|id| p.selection.add(id));
+                                } else {
+                                    p.selection.set(range);
+                                }
                                 p.selection.anchor = Some(anchor);
                                 p.selection.cursor = Some(target);
                             }
-                            _ => p.selection.set([target]),
+                            _ => p.selection.add(target),
+                        }
+                    }
+                    SelectMode::Cursor => {
+                        if let Some(&target) = ids.last() {
+                            p.selection.cursor = Some(target);
                         }
                     }
                 }
@@ -826,8 +842,36 @@ mod builtin {
                 let p = ws
                     .pane_mut(pane)
                     .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-                let ids: Vec<EntryId> = p.listing.ids().collect();
-                p.selection.set(ids);
+                // What the pane shows: hidden files it does not show are
+                // not selected, or a Delete would take them unseen.
+                let ids = p.listing.sorted(p.sort);
+                let cursor = p.selection.cursor;
+                p.selection.set(ids.iter().copied());
+                p.selection.cursor = cursor.or(p.selection.cursor);
+                Ok(Outcome::Done)
+            },
+        );
+
+        c.register::<PaneArg, _>(
+            "core",
+            "select_invert",
+            "Invert selection",
+            "Select what is shown and not selected, and deselect the rest",
+            |a, app| {
+                let pane = app.pane_or_active(a.pane);
+                let mut ws = app.workspace.write();
+                let p = ws
+                    .pane_mut(pane)
+                    .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                let order = p.listing.sorted(p.sort);
+                let inverted: Vec<EntryId> = order
+                    .iter()
+                    .copied()
+                    .filter(|id| !p.selection.contains(*id))
+                    .collect();
+                let cursor = p.selection.cursor;
+                p.selection.set(inverted);
+                p.selection.cursor = cursor.or(p.selection.cursor);
                 Ok(Outcome::Done)
             },
         );

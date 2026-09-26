@@ -144,12 +144,15 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
     ("ctrl-v", "clipboard_paste", Some("pane folder")),
     ("ctrl-z", "undo", None),
     ("ctrl-shift-z", "redo", None),
+    ("ctrl-y", "redo", None),
     ("ctrl-a", "select_all", Some("pane")),
+    ("ctrl-shift-i", "select_invert", Some("pane")),
     ("escape", "select_none", Some("pane")),
     // With nothing selected Escape has one thing left to cancel: a pending
     // cut or copy. Later bindings win, and `empty` holds only then.
     ("escape", "clipboard_clear", Some("pane empty")),
     ("f5", "refresh", None),
+    ("ctrl-r", "refresh", None),
     // The folder or search being looked at, as in Nautilus and browsers.
     ("ctrl-d", "keep", None),
     // Dolphin's key for it: Ctrl+T opens a tab, as everywhere.
@@ -159,7 +162,8 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
     ("ctrl-shift-t", "tab.reopen", None),
 ];
 
-// Keys for core commands that take arguments: moving between tabs.
+// Keys for core commands that take arguments: moving between tabs, and
+// home.
 const BINDINGS_ARGS: &[(&str, &str, &str)] = &[
     ("ctrl-tab", "tab.select", r#"{"delta":1}"#),
     ("ctrl-shift-tab", "tab.select", r#"{"delta":-1}"#),
@@ -177,6 +181,7 @@ const BINDINGS_ARGS: &[(&str, &str, &str)] = &[
     ("alt-8", "tab.select", r#"{"index":7}"#),
     // The last tab, however many there are, as in browsers.
     ("alt-9", "tab.select", r#"{"index":-1}"#),
+    ("alt-home", "navigate", r#"{"location":"~"}"#),
 ];
 
 // Context menu items: (title, command, when, order). Order follows the

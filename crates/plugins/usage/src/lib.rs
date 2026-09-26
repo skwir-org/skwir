@@ -298,7 +298,9 @@ impl Plugin for UsagePlugin {
         app.registry.keymap.add(
             ID,
             bibli_core::registry::KeyBinding {
-                keys: "ctrl-shift-u".into(),
+                // Beside the built-in views' Ctrl+1, 2 and 3. Not Ctrl+Shift+U:
+                // GTK and IBus take it for typing a character by its code.
+                keys: "ctrl-4".into(),
                 command: Invocation::with_args("ui.view", &serde_json::json!({"id": ID})),
                 when: None,
             },
@@ -307,6 +309,16 @@ impl Plugin for UsagePlugin {
             ID,
             bibli_core::registry::KeyBinding {
                 keys: "ctrl-r".into(),
+                command: Invocation::new("ui.usage_refresh"),
+                when: Some("pane usage".into()),
+            },
+        );
+        // Refresh's other key, as everywhere else; the pane's binding is
+        // deeper than the window's, so this one wins in the Usage view.
+        app.registry.keymap.add(
+            ID,
+            bibli_core::registry::KeyBinding {
+                keys: "f5".into(),
                 command: Invocation::new("ui.usage_refresh"),
                 when: Some("pane usage".into()),
             },

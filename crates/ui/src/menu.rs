@@ -7,6 +7,7 @@ use gpui::{
     prelude::*, px,
 };
 
+use crate::elements::popover::PopoverAnchor;
 use crate::modal::FocusReturn;
 use crate::shell::Shell;
 use crate::theme::Theme;
@@ -82,6 +83,18 @@ pub struct MenuState {
     /// What had the keyboard before: a preview's menu gives it back to the
     /// preview, not to the pane.
     back: FocusReturn,
+    /// Opened from the keyboard: no pointer says where, so the menu hangs
+    /// from the cursor's row of this pane, or from the pane.
+    pub keyboard: Option<KeyboardAnchor>,
+}
+
+/// Where a menu opened with the Menu key or Shift+F10 is drawn: under the
+/// pane's cursor row when it is on screen, else at the top of the pane.
+/// Both are measured in the frame's prepaint (`elements::popover`).
+pub struct KeyboardAnchor {
+    pub pane: bibli_core::workspace::PaneId,
+    pub row: PopoverAnchor,
+    pub area: PopoverAnchor,
 }
 
 impl MenuState {
@@ -106,6 +119,7 @@ impl MenuState {
             highlighted: None,
             expanded: None,
             back,
+            keyboard: None,
         }
     }
 }
@@ -192,6 +206,42 @@ impl Shell {
         }
         self.menu = Some(MenuState::open(position, items, window, cx));
         cx.notify();
+    }
+
+    /// `ui.context_menu` (Menu key, Shift+F10): the menu a right-click on
+    /// the selection opens, or on the background with nothing selected,
+    /// from the keyboard, its first item ready for Enter.
+    pub fn open_context_menu_here(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(ix) = self.cursor_index() {
+            self.with_view(|v, _| v.scroll_to(ix));
+        }
+        self.menu = None;
+        self.open_context_menu(Point::default(), window, cx);
+        let pane = self.pane;
+        if let Some(menu) = &mut self.menu {
+            menu.highlighted = Some(0);
+            menu.keyboard = Some(KeyboardAnchor {
+                pane,
+                row: PopoverAnchor::default(),
+                area: PopoverAnchor::default(),
+            });
+        }
+    }
+
+    /// Where the keyboard's menu hangs from in `pane`: its cursor row
+    /// (`cursor`) or the pane itself.
+    pub fn menu_marker(
+        &self,
+        pane: bibli_core::workspace::PaneId,
+        cursor: bool,
+    ) -> Option<AnyElement> {
+        let anchor = self.menu.as_ref()?.keyboard.as_ref()?;
+        (anchor.pane == pane && cursor).then(|| anchor.row.marker())
+    }
+
+    pub fn menu_area_marker(&self, pane: bibli_core::workspace::PaneId) -> Option<AnyElement> {
+        let anchor = self.menu.as_ref()?.keyboard.as_ref()?;
+        (anchor.pane == pane).then(|| anchor.area.marker())
     }
 
     /// A sidebar place's menu: Open, what its owner lists for it (rename
@@ -559,6 +609,14 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                     )
                 }),
         );
+    }
+    if let Some(anchor) = &menu.keyboard {
+        let anchors = [anchor.row.clone(), anchor.area.clone()];
+        return Some(PopoverAnchor::popup_first(
+            &anchors,
+            2,
+            panel.into_any_element(),
+        ));
     }
     Some(
         deferred(

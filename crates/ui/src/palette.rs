@@ -52,6 +52,8 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.mkdir_prompt", "{}", "New folder…"),
     ("ui.confirm_delete", "{}", "Delete permanently…"),
     ("ui.toggle_hidden", "{}", "Toggle hidden files"),
+    ("ui.toggle_sidebar", "{}", "Toggle sidebar"),
+    ("ui.open_in_tab", "{}", "Open in new tab"),
     ("ui.sort", r#"{"key":"name"}"#, "Sort by name"),
     ("ui.sort", r#"{"key":"size"}"#, "Sort by size"),
     ("ui.sort", r#"{"key":"modified"}"#, "Sort by date modified"),

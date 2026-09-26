@@ -25,7 +25,7 @@ use std::rc::Rc;
 
 use bibli_core::EntryId;
 use bibli_core::thumbs::ThumbSize;
-use gpui::{AnyElement, Context, ScrollWheelEvent, Window, div, img, prelude::*, px, size};
+use gpui::{AnyElement, Context, Window, div, img, prelude::*, px, size};
 
 use crate::dnd;
 use crate::elements::uniform_grid::{TileHeights, UniformGridScrollHandle, uniform_grid};
@@ -249,6 +249,7 @@ fn cell(
     };
     let mut el = div()
         .id(ix)
+        .relative()
         .size_full()
         .flex()
         .flex_col()
@@ -270,6 +271,7 @@ fn cell(
             shell.pending.cut && shell.pending.entries.contains(&id),
             |d| d.opacity(crate::views::list::CUT_OPACITY),
         )
+        .children(shell.menu_marker(pane, is_cursor))
         .child(
             div()
                 .size(px(zoom as f32))
@@ -380,34 +382,8 @@ impl PaneView for GridView {
             scroll: self.scroll.0.borrow().base_handle.clone(),
             drag: shell.marquee.clone(),
         };
-        // Ctrl and the wheel resize the tiles. Taken in the capture phase, so
-        // the grid under it does not also scroll.
-        let shell_handle = cx.weak_entity();
-        let wheel = gpui::canvas(
-            |bounds, window, _| window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal),
-            move |_, hitbox, window, _| {
-                window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-                    if !phase.capture()
-                        || !event.modifiers.control
-                        || !hitbox.should_handle_scroll(window)
-                    {
-                        return;
-                    }
-                    let delta = event.delta.pixel_delta(window.line_height()).y;
-                    let lines = matches!(event.delta, gpui::ScrollDelta::Lines(_));
-                    shell_handle
-                        .update(cx, |shell, cx| {
-                            shell.zoom_wheel(f32::from(delta), lines, cx);
-                        })
-                        .ok();
-                    cx.stop_propagation();
-                });
-            },
-        )
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full();
+        // Ctrl and the wheel resize the tiles.
+        let wheel = crate::views::zoom_wheel(cx);
         div()
             .relative()
             .size_full()

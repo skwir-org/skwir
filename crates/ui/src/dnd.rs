@@ -1,5 +1,10 @@
 //! Drag and drop: internal moves/copies between rows, cells, columns, and
 //! sidebar places, and external paths dropped from other applications.
+//!
+//! What a drop does is `drop_op`: Ctrl copies, Shift moves, and otherwise
+//! our own files move within a filesystem and are copied to another, so a
+//! drop onto a USB stick leaves the folder it came from as it was. Paths
+//! from another application are copied unless Shift says move.
 
 use std::path::{Path, PathBuf};
 
@@ -14,30 +19,61 @@ use gpui::{
 use crate::shell::Shell;
 use crate::theme::Theme;
 
-/// The copy plan for foreign paths dropped into `dest`. Entries are
-/// identified by device and inode and the plan is checked before anything
-/// applies, both of which stat every path: call this on a worker.
-fn dropped_copy_plan(
+/// What a drop does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DropOp {
+    Copy,
+    Move,
+}
+
+impl DropOp {
+    fn command(self) -> &'static str {
+        match self {
+            DropOp::Copy => "copy",
+            DropOp::Move => "move",
+        }
+    }
+}
+
+/// The keys held decide; without them, `same_device` does (whether what is
+/// dropped is on the destination's filesystem; `None` when not known,
+/// which copies: nothing is taken from where it was by a guess).
+pub fn drop_op(modifiers: gpui::Modifiers, same_device: Option<bool>) -> DropOp {
+    if modifiers.control {
+        DropOp::Copy
+    } else if modifiers.shift || same_device == Some(true) {
+        DropOp::Move
+    } else {
+        DropOp::Copy
+    }
+}
+
+/// The plan for foreign paths dropped into `dest`. Entries are identified
+/// by device and inode and the plan is checked before anything applies,
+/// both of which stat every path: call this on a worker.
+fn dropped_plan(
     paths: &[PathBuf],
     dest: &Path,
+    how: DropOp,
     settings: &Settings,
 ) -> Result<Plan, &'static str> {
     let steps: Vec<Box<dyn op::Operation>> = paths
         .iter()
         .filter_map(|p| {
-            let id = fs::stat::id_of(p)?;
-            Some(Box::new(op::Copy::from_settings(
-                EntryRef::new(id, p.clone()),
-                dest.to_path_buf(),
-                settings,
-            )) as Box<dyn op::Operation>)
+            let entry = EntryRef::new(fs::stat::id_of(p)?, p.clone());
+            let dest_dir = dest.to_path_buf();
+            Some(match how {
+                DropOp::Copy => Box::new(op::Copy::from_settings(entry, dest_dir, settings))
+                    as Box<dyn op::Operation>,
+                DropOp::Move => Box::new(op::Move { entry, dest_dir }),
+            })
         })
         .collect();
     if steps.is_empty() {
         return Err("dropped items no longer exist");
     }
     let n = steps.len();
-    let plan = Plan::with_steps(format!("copy {n} dropped items"), steps);
+    let plan = Plan::with_steps(format!("{} {n} dropped items", how.command()), steps);
     if plan.is_applicable() {
         Ok(plan)
     } else {
@@ -76,7 +112,7 @@ impl DragPreview {
 }
 
 impl Render for DragPreview {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.hidden {
             return div();
         }
@@ -85,6 +121,16 @@ impl Render for DragPreview {
             self.label.clone()
         } else {
             format!("{} items", self.count)
+        };
+        // A key held says what the drop will do wherever it lands; without
+        // one it depends on where, and the label does not guess.
+        let modifiers = window.modifiers();
+        let text = if modifiers.control {
+            format!("Copy {text}")
+        } else if modifiers.shift {
+            format!("Move {text}")
+        } else {
+            text
         };
         div()
             .pl(self.position.x + px(12.))
@@ -143,8 +189,8 @@ impl Shell {
     }
 
     /// Paths dropped onto `dest`, from another application or from our own
-    /// compositor-level drag: our own selection moves (copies with ctrl),
-    /// foreign paths are copied.
+    /// compositor-level drag: our own selection as `drop_into` says, foreign
+    /// paths copied (moved with Shift).
     ///
     /// Only the own-drag check (a path comparison) runs here. Identifying the
     /// dropped entries and checking the plan stat every path, possibly on a
@@ -170,13 +216,14 @@ impl Shell {
         }
         let app = self.app.clone();
         let dest = dest.to_path_buf();
+        let how = drop_op(window.modifiers(), None);
         // The drop belongs to the pane it landed on, whatever is active later.
         let pane = self.pane;
         self.app.scheduler.spawn(
             Priority::Visible,
-            "drop-copy-plan",
+            "drop-plan",
             self.app.lifetime().child(),
-            move || match dropped_copy_plan(&paths, &dest, &app.settings) {
+            move || match dropped_plan(&paths, &dest, how, &app.settings) {
                 Ok(plan) => {
                     tracing::debug!(?pane, steps = plan.steps.len(), "apply dropped paths");
                     app.apply(plan);
@@ -186,9 +233,11 @@ impl Shell {
         );
     }
 
-    /// Drop `from`'s selection into `dest`: a `move` plan, or `copy` with
-    /// ctrl held. The pane the drag started in says what moves, whichever
-    /// pane is active when it lands.
+    /// Drop `from`'s selection into `dest`, as `drop_op` says. The pane the
+    /// drag started in says what goes, whichever pane is active when it
+    /// lands. Without Ctrl or Shift the destination's filesystem decides:
+    /// asking it can block on a sleeping disk, so a worker does, and the
+    /// keys are read now, when the drop happens.
     pub fn drop_into(
         &mut self,
         from: PaneId,
@@ -196,14 +245,27 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let cmd = if window.modifiers().control {
-            "copy"
-        } else {
-            "move"
+        let modifiers = window.modifiers();
+        let args = serde_json::json!({ "dest": PathArg::from(dest), "pane": from });
+        if modifiers.control || modifiers.shift {
+            let how = drop_op(modifiers, None);
+            return self.run(how.command(), args, window, cx);
+        }
+        let devices: std::collections::HashSet<u64> = {
+            let ws = self.app.workspace.read();
+            ws.pane(from)
+                .map(|p| p.selection.iter().map(|id| id.dev).collect())
+                .unwrap_or_default()
         };
-        self.run(
-            cmd,
-            serde_json::json!({ "dest": PathArg::from(dest), "pane": from }),
+        let dest = dest.to_path_buf();
+        self.off_thread(
+            "drop-device",
+            move || fs::stat::id_of(&dest).map(|id| id.dev),
+            move |shell, dev, window, cx| {
+                let same = dev.map(|dev| devices.len() == 1 && devices.contains(&dev));
+                let how = drop_op(modifiers, same);
+                shell.run(how.command(), args, window, cx);
+            },
             window,
             cx,
         );
@@ -291,6 +353,26 @@ pub fn droppable_dir<E: InteractiveElement>(el: E, dir: PathBuf, cx: &mut Contex
 mod tests {
     use super::*;
 
+    #[test]
+    fn keys_decide_a_drop_and_the_filesystem_decides_without_them() {
+        let none = gpui::Modifiers::default();
+        let ctrl = gpui::Modifiers {
+            control: true,
+            ..Default::default()
+        };
+        let shift = gpui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        assert_eq!(drop_op(none, Some(true)), DropOp::Move);
+        assert_eq!(drop_op(none, Some(false)), DropOp::Copy);
+        // Not known: nothing is taken from where it was by a guess.
+        assert_eq!(drop_op(none, None), DropOp::Copy);
+        assert_eq!(drop_op(ctrl, Some(true)), DropOp::Copy);
+        assert_eq!(drop_op(shift, Some(false)), DropOp::Move);
+        assert_eq!(drop_op(shift, None), DropOp::Move);
+    }
+
     /// A scratch tree under the user's cache, never `/tmp` (see AGENTS.md).
     fn scratch(name: &str) -> PathBuf {
         let base = PathBuf::from(std::env::var_os("HOME").expect("home"))
@@ -313,19 +395,24 @@ mod tests {
         std::fs::write(&file, b"hello").unwrap();
         let settings = Settings::in_memory();
 
-        let plan = dropped_copy_plan(std::slice::from_ref(&file), &dest, &settings).expect("plan");
+        let copy = DropOp::Copy;
+        let plan = dropped_plan(std::slice::from_ref(&file), &dest, copy, &settings).expect("plan");
         assert_eq!(plan.steps.len(), 1);
+        assert!(plan.title.starts_with("copy"));
+        let plan = dropped_plan(std::slice::from_ref(&file), &dest, DropOp::Move, &settings)
+            .expect("plan");
+        assert!(plan.title.starts_with("move"));
 
         // A vanished source contributes no step; nothing is left to apply.
         assert_eq!(
-            dropped_copy_plan(&[base.join("missing")], &dest, &settings).err(),
+            dropped_plan(&[base.join("missing")], &dest, copy, &settings).err(),
             Some("dropped items no longer exist")
         );
 
         // A different file under the same name conflicts instead of applying.
         std::fs::write(dest.join("it's a file.txt"), b"other contents").unwrap();
         assert_eq!(
-            dropped_copy_plan(&[file], &dest, &settings).err(),
+            dropped_plan(&[file], &dest, copy, &settings).err(),
             Some("dropped items conflict with existing ones")
         );
         let _ = std::fs::remove_dir_all(&base);

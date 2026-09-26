@@ -210,6 +210,16 @@ fn sort_groups(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
     )];
     show.push(menu_item(
         Button::new(
+            "menu-sidebar",
+            "sidebar",
+            "Show the sidebar",
+            "ui.toggle_sidebar",
+        )
+        .active(!shell.sidebar_hidden),
+        "Sidebar",
+    ));
+    show.push(menu_item(
+        Button::new(
             "menu-grid-fill",
             "crop",
             "Crop thumbnails in the grid to fill their box",

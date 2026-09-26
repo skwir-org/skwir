@@ -429,6 +429,24 @@ fn gap(
 }
 
 impl Shell {
+    /// Whether the sidebar is drawn: not put away, and the window has room
+    /// for it beside the panes (its width is known before layout).
+    pub fn sidebar_shown(&self, window: &gpui::Window) -> bool {
+        !self.sidebar_hidden && self.sidebar_fits(f32::from(window.viewport_size().width))
+    }
+
+    /// `ui.toggle_sidebar` (F9): put the sidebar away, or bring it back. A
+    /// window too narrow for it says so rather than seeming to ignore the key.
+    pub fn toggle_sidebar(&mut self, window: &gpui::Window, cx: &mut Context<Self>) {
+        let shown = self.sidebar_shown(window);
+        self.sidebar_hidden = shown;
+        if !shown && !self.sidebar_shown(window) {
+            self.set_status("The window is too narrow for the sidebar", false, cx);
+        }
+        self.remember_session();
+        cx.notify();
+    }
+
     /// Bookmark a folder dropped beside the rows. The command checks that
     /// it is one, on a worker: asking could block on a sleeping disk.
     fn bookmark(

@@ -481,7 +481,7 @@ impl Shell {
         };
         self.with_pane(pane, |this| {
             if let Some(index) = this.ui().list.index_of(id) {
-                this.cursor_to(index as isize, false, window, cx);
+                this.cursor_to(index as isize, crate::list::Step::Select, window, cx);
             }
         });
     }
@@ -834,6 +834,16 @@ impl Shell {
             let _ = pinned.session.control(Control::Mute(!pinned.state.muted));
             cx.notify();
         }
+    }
+
+    /// ↑ and ↓ over the player: the volume, a step at a time, of whatever
+    /// the transport keys steer (the pinned track, else the panel's audio).
+    pub fn player_volume_by(&mut self, delta: f64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((_, state)) = self.playing() else {
+            return;
+        };
+        let volume = (state.volume + delta).clamp(0., 1.);
+        self.player_request(PlayerRequest::Volume(volume), window, cx);
     }
 
     /// The dock's seek bar being dragged: the knob follows the pointer and

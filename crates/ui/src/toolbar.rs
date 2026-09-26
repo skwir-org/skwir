@@ -22,6 +22,7 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "columns",
         "preview",
         "preview-bottom",
+        "sidebar",
         "split",
         "split-rows",
         "usage",
