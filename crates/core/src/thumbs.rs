@@ -2,10 +2,15 @@
 //!
 //! Providers (registered by the platform crate and plugins) produce decoded
 //! RGBA images for an entry: a cache reader, an image decoder, external
-//! thumbnailers, and so on. The service tries them in order on a worker,
-//! most-recently-requested first, drops requests the viewport scrolled away
-//! from, keeps a byte-budgeted LRU of results, and wakes the UI when one
-//! lands. Toolkit-specific GPU upload is the UI's job.
+//! thumbnailers, and so on. The service tries them in the order of their
+//! [`Stage`] on a worker, most-recently-requested first, drops requests the
+//! viewport scrolled away from, keeps a byte-budgeted LRU of results, and
+//! wakes the UI when one lands. Toolkit-specific GPU upload is the UI's job.
+//!
+//! A result is about one version of a file: it is keyed by the entry, the
+//! size and the modification time the request carries, so an edited file,
+//! or one that was still being written when it was first asked for, is a
+//! new request rather than the old picture or the old failure.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -65,9 +70,28 @@ pub struct ThumbRequest {
     pub size: ThumbSize,
 }
 
-/// A thumbnail source. Tried in registration order.
+/// Where a provider stands in the order they are tried. Providers of one
+/// stage keep their registration order; stages do not depend on which plugin
+/// registered first, or re-registered after a settings change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Stage {
+    /// Reads what exists (the desktop's cache) and stores what later
+    /// providers make (`ThumbnailProvider::store`).
+    Cache,
+    /// Makes a thumbnail: in-process decoders, the desktop's thumbnailers.
+    Generate,
+    /// Makes one only for what nothing the desktop installed could: our own
+    /// renderers, so an installed thumbnailer keeps the look other
+    /// applications share.
+    Fallback,
+}
+
+/// A thumbnail source. Tried by [`Stage`], then in registration order.
 pub trait ThumbnailProvider: Send + Sync {
     fn id(&self) -> &'static str;
+    fn stage(&self) -> Stage {
+        Stage::Generate
+    }
     /// Cheap pre-check so the queue is not filled with hopeless work.
     fn accepts(&self, req: &ThumbRequest) -> bool;
     /// Find or make the thumbnail. `Ok(None)` means "not from me, try the next".
@@ -86,7 +110,8 @@ pub enum ThumbState {
     Unavailable,
 }
 
-type Key = (EntryId, ThumbSize);
+/// An entry's picture at one size, as of one modification time.
+type Key = (EntryId, ThumbSize, Option<SystemTime>);
 
 struct Queued {
     key: Key,
@@ -106,6 +131,9 @@ struct State {
     /// Running requests: the frame they were last asked for, and the token
     /// that stops their provider once nobody asks any more.
     in_flight: HashMap<Key, (u64, CancelToken)>,
+    /// Bumped when the providers change: a request that ran against an
+    /// older set does not record the file as unavailable.
+    providers: u64,
     frame: u64,
     seq: u64,
     decoded: u64,
@@ -117,7 +145,8 @@ const STALE_FRAMES: u64 = 3;
 
 /// The service. One per app, shared with workers.
 pub struct Thumbnails {
-    providers: RwLock<Vec<(Arc<str>, Arc<dyn ThumbnailProvider>)>>,
+    /// Owner, stage and provider, sorted by stage.
+    providers: RwLock<Vec<(Arc<str>, Stage, Arc<dyn ThumbnailProvider>)>>,
     state: Mutex<State>,
     scheduler: Scheduler,
     waker: Mutex<Option<Waker>>,
@@ -140,6 +169,7 @@ impl Thumbnails {
                 unavailable: HashSet::new(),
                 queue: Vec::new(),
                 in_flight: HashMap::new(),
+                providers: 0,
                 frame: 0,
                 seq: 0,
                 decoded: 0,
@@ -162,16 +192,36 @@ impl Thumbnails {
     }
 
     pub fn register(&self, owner: &str, provider: Arc<dyn ThumbnailProvider>) {
-        self.providers.write().push((owner.into(), provider));
-        self.state.lock().unavailable.clear();
+        let stage = provider.stage();
+        {
+            let mut providers = self.providers.write();
+            let at = providers.partition_point(|(_, s, _)| *s <= stage);
+            providers.insert(at, (owner.into(), stage, provider));
+        }
+        self.providers_changed();
     }
 
     pub fn unregister_owner(&self, owner: &str) {
-        self.providers.write().retain(|(o, _)| &**o != owner);
+        self.providers.write().retain(|(o, _, _)| &**o != owner);
+    }
+
+    /// A provider can now make what it could not (it found its tools, say):
+    /// forget which files had no thumbnail, and wake the UI to ask again.
+    pub fn providers_changed(&self) {
+        {
+            let mut s = self.state.lock();
+            s.unavailable.clear();
+            s.providers += 1;
+        }
+        self.wake();
     }
 
     pub fn provider_ids(&self) -> Vec<&'static str> {
-        self.providers.read().iter().map(|(_, p)| p.id()).collect()
+        self.providers
+            .read()
+            .iter()
+            .map(|(_, _, p)| p.id())
+            .collect()
     }
 
     /// Call once per rendered frame: requests not asked for in the last few
@@ -190,7 +240,7 @@ impl Thumbnails {
 
     /// Ask for a thumbnail. Returns immediately.
     pub fn get(self: &Arc<Self>, req: ThumbRequest, priority: Priority) -> ThumbState {
-        let key = (req.entry.id, req.size);
+        let key = (req.entry.id, req.size, req.mtime);
         {
             let mut s = self.state.lock();
             if let Some(img) = s.lru.get(&key) {
@@ -212,7 +262,7 @@ impl Thumbnails {
         // Plugin code runs outside the state lock.
         let accepted = {
             let providers = self.providers.read();
-            providers.iter().any(|(_, p)| p.accepts(&req))
+            providers.iter().any(|(_, _, p)| p.accepts(&req))
         };
         let mut s = self.state.lock();
         if !accepted {
@@ -239,15 +289,6 @@ impl Thumbnails {
         ThumbState::Pending
     }
 
-    /// Forget everything about an entry (it changed or was removed).
-    pub fn invalidate(&self, id: EntryId) {
-        let mut s = self.state.lock();
-        for size in [ThumbSize::Normal, ThumbSize::Large] {
-            s.lru.remove(&(id, size));
-            s.unavailable.remove(&(id, size));
-        }
-    }
-
     /// (decoded, skipped as stale, cached bytes)
     pub fn stats(&self) -> (u64, u64, usize) {
         let s = self.state.lock();
@@ -265,7 +306,7 @@ impl Thumbnails {
     /// Take the best live request (visible first, most recent first) and run
     /// the providers on it.
     fn work_one(self: &Arc<Self>) {
-        let (key, req, cancel) = {
+        let (key, req, cancel, generation) = {
             let mut s = self.state.lock();
             loop {
                 let best = s
@@ -284,7 +325,7 @@ impl Thumbnails {
                         if s.frame.saturating_sub(q.frame) <= STALE_FRAMES
                             && !cancel.is_cancelled() =>
                     {
-                        break (q.key, q.req, cancel);
+                        break (q.key, q.req, cancel, s.providers);
                     }
                     _ => {
                         s.in_flight.remove(&q.key);
@@ -297,7 +338,7 @@ impl Thumbnails {
             .providers
             .read()
             .iter()
-            .map(|(_, p)| Arc::clone(p))
+            .map(|(_, _, p)| Arc::clone(p))
             .collect();
         let mut produced: Option<(usize, Image)> = None;
         for (i, p) in providers.iter().enumerate() {
@@ -341,6 +382,9 @@ impl Thumbnails {
                     s.skipped += 1;
                     Vec::new()
                 }
+                // Providers changed while it ran: the next ask tries the
+                // new set.
+                None if s.providers != generation => Vec::new(),
                 None => {
                     s.unavailable.insert(key);
                     Vec::new()
@@ -348,6 +392,10 @@ impl Thumbnails {
             }
         };
         drop(evicted);
+        self.wake();
+    }
+
+    fn wake(&self) {
         if let Some(w) = self.waker.lock().as_ref() {
             w();
         }
@@ -357,25 +405,49 @@ impl Thumbnails {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::time::Duration;
 
     struct Fake {
         id: &'static str,
+        stage: Stage,
         calls: AtomicUsize,
-        produce: bool,
+        produce: AtomicBool,
         stored: AtomicUsize,
+        /// Called while it runs, before it answers.
+        during: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    }
+
+    impl Fake {
+        fn new(id: &'static str, stage: Stage, produce: bool) -> Arc<Self> {
+            Arc::new(Fake {
+                id,
+                stage,
+                calls: AtomicUsize::new(0),
+                produce: AtomicBool::new(produce),
+                stored: AtomicUsize::new(0),
+                during: Mutex::new(None),
+            })
+        }
     }
 
     impl ThumbnailProvider for Fake {
         fn id(&self) -> &'static str {
             self.id
         }
+        fn stage(&self) -> Stage {
+            self.stage
+        }
         fn accepts(&self, _: &ThumbRequest) -> bool {
             true
         }
         fn thumbnail(&self, _: &ThumbRequest, _: &CancelToken) -> anyhow::Result<Option<Image>> {
             self.calls.fetch_add(1, Ordering::Relaxed);
-            Ok(self.produce.then(|| Image {
+            let produce = self.produce.load(Ordering::Relaxed);
+            if let Some(during) = self.during.lock().take() {
+                during();
+            }
+            Ok(produce.then(|| Image {
                 width: 2,
                 height: 2,
                 rgba: Arc::from(vec![0u8; 16]),
@@ -408,18 +480,8 @@ mod tests {
     #[test]
     fn providers_run_in_order_and_earlier_ones_store_the_result() {
         let t = Thumbnails::new(Scheduler::new(2));
-        let cache = Arc::new(Fake {
-            id: "cache",
-            calls: AtomicUsize::new(0),
-            produce: false,
-            stored: AtomicUsize::new(0),
-        });
-        let decoder = Arc::new(Fake {
-            id: "decoder",
-            calls: AtomicUsize::new(0),
-            produce: true,
-            stored: AtomicUsize::new(0),
-        });
+        let cache = Fake::new("cache", Stage::Generate, false);
+        let decoder = Fake::new("decoder", Stage::Generate, true);
         t.register("core", cache.clone());
         t.register("core", decoder.clone());
         assert!(matches!(
@@ -446,12 +508,7 @@ mod tests {
     #[test]
     fn unavailable_is_remembered_and_lru_respects_its_budget() {
         let t = Thumbnails::new(Scheduler::new(2));
-        let none = Arc::new(Fake {
-            id: "none",
-            calls: AtomicUsize::new(0),
-            produce: false,
-            stored: AtomicUsize::new(0),
-        });
+        let none = Fake::new("none", Stage::Generate, false);
         t.register("core", none.clone());
         assert!(matches!(wait_ready(&t, &req(7)), ThumbState::Unavailable));
         assert!(matches!(
@@ -462,15 +519,7 @@ mod tests {
 
         let t = Thumbnails::new(Scheduler::new(2));
         t.set_budget(40); // two 16-byte images fit, three do not
-        t.register(
-            "core",
-            Arc::new(Fake {
-                id: "d",
-                calls: AtomicUsize::new(0),
-                produce: true,
-                stored: AtomicUsize::new(0),
-            }),
-        );
+        t.register("core", Fake::new("d", Stage::Generate, true));
         for i in 1..=3 {
             wait_ready(&t, &req(i));
         }
@@ -480,5 +529,94 @@ mod tests {
             matches!(t.get(req(1), Priority::Visible), ThumbState::Pending),
             "oldest entry was evicted"
         );
+    }
+
+    #[test]
+    fn stages_order_providers_whoever_registers_first() {
+        let t = Thumbnails::new(Scheduler::new(1));
+        t.register("renderer", Fake::new("fallback", Stage::Fallback, true));
+        t.register("desktop", Fake::new("thumbnailer", Stage::Generate, false));
+        t.register("desktop", Fake::new("cache", Stage::Cache, false));
+        t.register("other", Fake::new("decoder", Stage::Generate, false));
+        assert_eq!(
+            t.provider_ids(),
+            ["cache", "thumbnailer", "decoder", "fallback"]
+        );
+        // Registered again (a settings change), the cache still comes first.
+        t.unregister_owner("desktop");
+        let cache = Fake::new("cache", Stage::Cache, false);
+        t.register("desktop", cache.clone());
+        assert_eq!(t.provider_ids()[0], "cache");
+        assert!(matches!(wait_ready(&t, &req(3)), ThumbState::Ready(_)));
+        assert_eq!(
+            cache.stored.load(Ordering::Relaxed),
+            1,
+            "the cache stores what the fallback made"
+        );
+    }
+
+    #[test]
+    fn a_new_modification_time_is_a_new_request() {
+        let t = Thumbnails::new(Scheduler::new(1));
+        let maker = Fake::new("maker", Stage::Generate, false);
+        t.register("core", maker.clone());
+        let at = |secs| ThumbRequest {
+            mtime: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(secs)),
+            ..req(5)
+        };
+        // Asked while it was still being written: nothing to show.
+        assert!(matches!(wait_ready(&t, &at(10)), ThumbState::Unavailable));
+        // Written: the failure is not remembered for the finished file.
+        maker.produce.store(true, Ordering::Relaxed);
+        let ThumbState::Ready(first) = wait_ready(&t, &at(20)) else {
+            panic!("the finished file has a thumbnail");
+        };
+        // Edited: a new picture, not the one of the earlier version.
+        let ThumbState::Ready(second) = wait_ready(&t, &at(30)) else {
+            panic!("the edited file has a thumbnail");
+        };
+        assert!(!Arc::ptr_eq(&first, &second));
+        assert_eq!(maker.calls.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn providers_that_change_during_a_request_are_asked_again() {
+        let t = Thumbnails::new(Scheduler::new(1));
+        let finder = Fake::new("finder", Stage::Generate, false);
+        t.register("core", finder.clone());
+        let woken = Arc::new(AtomicUsize::new(0));
+        let count = Arc::clone(&woken);
+        t.set_waker(Some(Arc::new(move || {
+            count.fetch_add(1, Ordering::Relaxed);
+        })));
+        // It finds its tools while the first request runs without them.
+        let service = Arc::clone(&t);
+        let found = Arc::clone(&finder);
+        *finder.during.lock() = Some(Box::new(move || {
+            found.produce.store(true, Ordering::Relaxed);
+            service.providers_changed();
+        }));
+        assert!(
+            matches!(wait_ready(&t, &req(9)), ThumbState::Ready(_)),
+            "a miss against the old providers is not remembered"
+        );
+        assert_eq!(finder.calls.load(Ordering::Relaxed), 2);
+
+        // Found after the miss was remembered: forgotten, and the UI woken.
+        let late = Fake::new("late", Stage::Generate, false);
+        let t = Thumbnails::new(Scheduler::new(1));
+        t.register("core", late.clone());
+        assert!(matches!(wait_ready(&t, &req(4)), ThumbState::Unavailable));
+        late.produce.store(true, Ordering::Relaxed);
+        let before = woken.load(Ordering::Relaxed);
+        t.set_waker(Some(Arc::new({
+            let woken = Arc::clone(&woken);
+            move || {
+                woken.fetch_add(1, Ordering::Relaxed);
+            }
+        })));
+        t.providers_changed();
+        assert!(woken.load(Ordering::Relaxed) > before);
+        assert!(matches!(wait_ready(&t, &req(4)), ThumbState::Ready(_)));
     }
 }

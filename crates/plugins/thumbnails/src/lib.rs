@@ -28,8 +28,9 @@ pub struct ThumbnailsPlugin {
 
 /// The desktop's thumbnailers. Finding them reads every `.thumbnailer`
 /// file, which registration must not do: a worker fills this once, and
-/// until then the provider accepts nothing. Kept across settings changes
-/// and re-enabling.
+/// until then the provider accepts nothing; files asked for meanwhile are
+/// asked again once it is filled (`Thumbnails::providers_changed`). Kept
+/// across settings changes and re-enabling.
 #[derive(Default)]
 struct Discovered {
     started: AtomicBool,
@@ -129,12 +130,18 @@ impl Plugin for ThumbnailsPlugin {
         self.providers(app);
         if !self.thumbnailers.started.swap(true, Ordering::AcqRel) {
             let discovered = Arc::clone(&self.thumbnailers);
+            let service = Arc::clone(&app.thumbnails);
             app.scheduler.spawn(
                 Priority::Background,
                 "thumbnailers.discover",
                 app.lifetime().child(),
                 move || {
-                    let _ = discovered.found.set(Thumbnailers::from_system());
+                    let found = Thumbnailers::from_system();
+                    let any = !found.is_empty();
+                    let _ = discovered.found.set(found);
+                    if any {
+                        service.providers_changed();
+                    }
                 },
             );
         }

@@ -539,33 +539,13 @@ impl PreviewProvider for DocumentPreviews {
             }
         };
         let page = req.page.clamp(1, pages);
-        let prefix = tmp.path().join("page");
         let rendering = Instant::now();
-        process::run(
-            Command::new(renderer)
-                .args([
-                    "-f",
-                    &page.to_string(),
-                    "-l",
-                    &page.to_string(),
-                    "-singlefile",
-                    "-scale-to",
-                    &req.max_side.clamp(64, MAX_SIDE).to_string(),
-                ])
-                .arg(&pdf)
-                .arg(&prefix),
-            cancel,
-            RENDER_TIMEOUT,
-        )?;
+        let image = render_pdf_page(&renderer, &pdf, page, req.max_side, tmp.path(), cancel)?;
         let render_ms = rendering.elapsed().as_millis();
         anyhow::ensure!(
             fingerprint(req, &path)? == base,
             "file changed during preview"
         );
-        check(cancel)?;
-        // PPM avoids Poppler's expensive PNG compression. Decode once, then
-        // encode losslessly with the fast cache encoder (also used on revisits).
-        let image = decode_preview(&read_artifact(&prefix.with_extension("ppm"))?, req.max_side)?;
         check(cancel)?;
         let png = encode_preview(&image)?;
         let preview = finish(
@@ -585,6 +565,40 @@ impl PreviewProvider for DocumentPreviews {
         );
         Ok(preview)
     }
+}
+
+/// One page of `pdf` rendered by Poppler's `pdftoppm` (`renderer`), its
+/// longest side `side` pixels, through `scratch`: the document preview's
+/// pages and the grid's thumbnails alike. PPM avoids Poppler's expensive PNG
+/// compression; the preview encodes it again with the fast cache encoder.
+pub(crate) fn render_pdf_page(
+    renderer: &Path,
+    pdf: &Path,
+    page: u32,
+    side: u32,
+    scratch: &Path,
+    cancel: &CancelToken,
+) -> anyhow::Result<Image> {
+    let side = side.clamp(64, MAX_SIDE);
+    let prefix = scratch.join("page");
+    process::run(
+        Command::new(renderer)
+            .args([
+                "-f",
+                &page.to_string(),
+                "-l",
+                &page.to_string(),
+                "-singlefile",
+                "-scale-to",
+                &side.to_string(),
+            ])
+            .arg(pdf)
+            .arg(&prefix),
+        cancel,
+        RENDER_TIMEOUT,
+    )?;
+    check(cancel)?;
+    decode_preview(&read_artifact(&prefix.with_extension("ppm"))?, side)
 }
 
 /// Conversion is isolated from the user's `LibreOffice` session and files. Linux
@@ -731,6 +745,69 @@ mod tests {
         assert!(video.accepts(&req));
         req.mime = Some("application/octet-stream".into());
         assert!(!video.accepts(&req));
+    }
+
+    #[test]
+    fn pdf_pages_is_a_fallback_for_pdfs_only() {
+        use crate::thumb_providers::PdfPages;
+        use bibli_core::thumbs::{Stage, ThumbRequest, ThumbSize, ThumbnailProvider};
+        let tmp = tempfile::tempdir().unwrap();
+        let req = |name: &str, mime: Option<&str>| {
+            let path = tmp.path().join(name);
+            std::fs::write(&path, b"").unwrap();
+            ThumbRequest {
+                entry: EntryRef::from_path(&path).unwrap(),
+                mime: mime.map(Into::into),
+                mtime: None,
+                size: ThumbSize::Normal,
+            }
+        };
+        assert_eq!(PdfPages.stage(), Stage::Fallback);
+        assert!(PdfPages.accepts(&req("Report \u{2019}24.PDF", None)));
+        assert!(PdfPages.accepts(&req("scan", Some("application/pdf"))));
+        assert!(!PdfPages.accepts(&req("notes.txt", None)));
+        assert!(!PdfPages.accepts(&req("book.epub", None)));
+    }
+
+    #[test]
+    #[ignore = "requires installed Poppler tools; run explicitly for preview changes"]
+    fn pdf_thumbnails_are_the_first_page_at_the_size_asked() {
+        use crate::thumb_providers::PdfPages;
+        use bibli_core::thumbs::{ThumbRequest, ThumbSize, ThumbnailProvider};
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp
+            .path()
+            .join("Synthetic \u{201c}report\u{201d} n\u{b0} 2.pdf");
+        pdf(&path);
+        for size in [ThumbSize::Normal, ThumbSize::Large] {
+            let req = ThumbRequest {
+                entry: EntryRef::from_path(&path).unwrap(),
+                mime: None,
+                mtime: None,
+                size,
+            };
+            let img = PdfPages
+                .thumbnail(&req, &CancelToken::new())
+                .unwrap()
+                .expect("a thumbnail");
+            assert_eq!(img.width, size.pixels(), "the page is wider than tall");
+            assert!(img.height < img.width);
+            let middle = ((img.height / 2 * img.width + img.width / 2) * 4) as usize;
+            assert_eq!(
+                &img.rgba[middle..middle + 4],
+                &[255, 0, 0, 255],
+                "page 1 is red"
+            );
+        }
+        let broken = tmp.path().join("broken.pdf");
+        std::fs::write(&broken, b"%PDF-1.4 truncated").unwrap();
+        let req = ThumbRequest {
+            entry: EntryRef::from_path(&broken).unwrap(),
+            mime: None,
+            mtime: None,
+            size: ThumbSize::Normal,
+        };
+        assert!(PdfPages.thumbnail(&req, &CancelToken::new()).is_err());
     }
 
     /// A valid, deterministic two-page PDF with visibly different pages.

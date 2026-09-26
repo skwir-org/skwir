@@ -1,7 +1,9 @@
-//! Optional documents previews, registered independently of the UI toolkit.
+//! Optional documents previews, registered independently of the UI toolkit,
+//! and PDF thumbnails for a desktop that has no thumbnailer for them.
 
 use bibli_core::{App, plugin::Plugin};
 use bibli_platform::preview::DocumentPreviews;
+use bibli_platform::thumb_providers::PdfPages;
 use std::sync::Arc;
 
 pub struct PreviewPlugin;
@@ -21,6 +23,7 @@ impl Plugin for PreviewPlugin {
     }
     fn on_settings_changed(&self, app: &App, _keys: &[String]) {
         app.previews.unregister_owner(self.id());
+        app.thumbnails.unregister_owner(self.id());
         self.register(app);
     }
 
@@ -75,5 +78,8 @@ impl Plugin for PreviewPlugin {
                 DocumentPreviews::new(app.cache.namespace(self.id())).with_reader(backend, library),
             ),
         );
+        // A fallback stage: the desktop's cache and thumbnailers come first
+        // whichever plugin registers first.
+        app.thumbnails.register(self.id(), Arc::new(PdfPages));
     }
 }

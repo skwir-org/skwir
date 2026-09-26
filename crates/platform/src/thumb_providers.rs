@@ -1,6 +1,7 @@
 //! Thumbnail providers for `bibli_core::thumbs`: the freedesktop cache
 //! (read, and write-back of what later providers make), an in-process image
-//! decoder, and the desktop's installed `*.thumbnailer` programs.
+//! decoder, the desktop's installed `*.thumbnailer` programs, and PDF first
+//! pages for a desktop that has no thumbnailer for them.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -11,7 +12,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bibli_core::cancel::CancelToken;
-use bibli_core::thumbs::{Image, ThumbRequest, ThumbnailProvider};
+use bibli_core::thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider};
 use image::{DynamicImage, ImageDecoder as _};
 
 use crate::thumbnails::{ThumbCache, ThumbSize};
@@ -45,9 +46,9 @@ fn fit(img: DynamicImage, px: u32) -> Image {
 
 // ------------------------------------------------------------- freedesktop cache
 
-/// The freedesktop thumbnail cache. Register first: it answers instantly for
-/// anything the desktop has already thumbnailed and stores what the other
-/// providers produce so every other application benefits too.
+/// The freedesktop thumbnail cache. Its stage puts it first: it answers
+/// instantly for anything the desktop has already thumbnailed and stores what
+/// the other providers produce so every other application benefits too.
 #[derive(Debug, Clone)]
 pub struct FreedesktopCache {
     /// `None` when there is no cache directory at all.
@@ -77,6 +78,10 @@ impl FreedesktopCache {
 impl ThumbnailProvider for FreedesktopCache {
     fn id(&self) -> &'static str {
         "freedesktop-cache"
+    }
+
+    fn stage(&self) -> Stage {
+        Stage::Cache
     }
 
     fn accepts(&self, req: &ThumbRequest) -> bool {
@@ -476,6 +481,59 @@ impl ThumbnailProvider for Thumbnailers {
             return Ok(None);
         };
         self.run(&self.entries[i], req, cancel)
+    }
+}
+
+// ------------------------------------------------------------- PDF pages
+
+/// A PDF's first page, rendered by Poppler's `pdftoppm` the way the document
+/// preview renders its pages. A fallback: a thumbnailer the desktop installed
+/// for PDFs runs first, so bibli draws what other applications draw, and the
+/// cache stores what this makes for them.
+#[derive(Debug, Clone, Default)]
+pub struct PdfPages;
+
+impl ThumbnailProvider for PdfPages {
+    fn id(&self) -> &'static str {
+        "pdf-pages"
+    }
+
+    fn stage(&self) -> Stage {
+        Stage::Fallback
+    }
+
+    fn accepts(&self, req: &ThumbRequest) -> bool {
+        mime_of(req).is_some_and(|m| &*m == "application/pdf")
+    }
+
+    fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
+        let Ok(renderer) = crate::process::required("pdftoppm") else {
+            return Ok(None);
+        };
+        // A FIFO named `x.pdf` would hold the renderer until its timeout.
+        anyhow::ensure!(
+            is_regular_file(&req.entry.path),
+            "{} is not a regular file",
+            req.entry.path.display()
+        );
+        let scratch = tempfile::tempdir()?;
+        let page = crate::preview::render_pdf_page(
+            &renderer,
+            &req.entry.path,
+            1,
+            req.size.pixels(),
+            scratch.path(),
+            cancel,
+        );
+        if cancel.is_cancelled() {
+            return Ok(None);
+        }
+        let page = page?;
+        anyhow::ensure!(
+            page.width.max(page.height) <= req.size.pixels(),
+            "pdftoppm made a page larger than asked"
+        );
+        Ok(Some(page))
     }
 }
 
