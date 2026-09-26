@@ -722,6 +722,29 @@ impl Shell {
         cx.notify();
     }
 
+    /// The mouse's Back or Forward button: `command` in the pane under the
+    /// pointer, which becomes the active one, or in the active pane when the
+    /// pointer is elsewhere in the window (the sidebar, the preview).
+    fn navigate_history(
+        &mut self,
+        pane: Option<PaneId>,
+        command: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+        // A dialog or a menu is answered first: nothing moves behind it.
+        if self.modal_open() || !self.reviews.is_empty() {
+            return;
+        }
+        let pane = pane.unwrap_or_else(|| self.app.workspace.read().active_id());
+        if self.app.workspace.read().pane(pane).is_none() {
+            return;
+        }
+        self.activate_pane(pane, cx);
+        self.run(command, serde_json::json!({ "pane": pane }), window, cx);
+    }
+
     /// Split the tab shown, or close its split, arranged as `layout` says.
     /// The workspace changes; `sync_tabs` makes and releases the panes' UI.
     pub(crate) fn toggle_split(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1721,6 +1744,18 @@ impl Shell {
             .min_h_0()
             .flex()
             .flex_col()
+            .on_mouse_down(
+                gpui::MouseButton::Navigate(gpui::NavigationDirection::Back),
+                cx.listener(move |this, _, window, cx| {
+                    this.navigate_history(Some(id), "back", window, cx);
+                }),
+            )
+            .on_mouse_down(
+                gpui::MouseButton::Navigate(gpui::NavigationDirection::Forward),
+                cx.listener(move |this, _, window, cx| {
+                    this.navigate_history(Some(id), "forward", window, cx);
+                }),
+            )
             .when(self.is_split(), |d| {
                 d.when(stacked, gpui::Styled::border_t_1)
                     .when(!stacked, gpui::Styled::border_l_1)
@@ -1814,6 +1849,20 @@ impl Render for Shell {
         let root = div()
             .key_context(keymap::ROOT)
             .on_action(cx.listener(Self::on_run_command))
+            // The mouse's side buttons, where no pane under the pointer
+            // took them first.
+            .on_mouse_down(
+                gpui::MouseButton::Navigate(gpui::NavigationDirection::Back),
+                cx.listener(|this, _, window, cx| {
+                    this.navigate_history(None, "back", window, cx);
+                }),
+            )
+            .on_mouse_down(
+                gpui::MouseButton::Navigate(gpui::NavigationDirection::Forward),
+                cx.listener(|this, _, window, cx| {
+                    this.navigate_history(None, "forward", window, cx);
+                }),
+            )
             .relative()
             .size_full()
             .flex()

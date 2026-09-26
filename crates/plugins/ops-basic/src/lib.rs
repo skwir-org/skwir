@@ -133,6 +133,10 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
     ("alt-up", "up", None),
     ("alt-left", "back", None),
     ("alt-right", "forward", None),
+    // The keyboard's own Back and Forward keys (XF86Back, XF86Forward). The
+    // mouse's side buttons act on the pane under the pointer (`Shell`).
+    ("back", "back", None),
+    ("forward", "forward", None),
     ("delete", "trash", Some("pane selection")),
     ("ctrl-c", "clipboard_copy", Some("pane selection")),
     ("ctrl-x", "clipboard_cut", Some("pane selection")),
