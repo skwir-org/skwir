@@ -101,8 +101,12 @@ current source before assuming a planned crate, command, or API exists.
   about the window: views, the View menu, New folder, Search, the
   Split and Preview toggles (in the order of what they open: the middle of
   the window, then its edge), and More (everything else, so the
-  narrowest variant loses nothing). View is only how the active
-  pane shows its folder (sort, direction, hidden files, zoom, and in the
+  narrowest variant loses nothing). The view buttons are the views that
+  show the listing (`ViewRole::Listing`: list, grid, columns); a lens, a
+  view that gathers data of its own (`ViewRole::Lens`: Usage), has a
+  button only while it is shown, and the plugin states the role, never the
+  shell. View is only how the active
+  pane shows its folder (every view, sort, direction, hidden files, zoom, and in the
   grid Fill thumbnails); how the window is arranged is More's Layout
   groups (the sidebar, the timeline, the terminal, where the split and
   the preview go). Split panes sit side by side or stacked,

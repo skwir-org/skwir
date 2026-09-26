@@ -7,6 +7,7 @@ use crate::{
     toolbar::{self, Button},
 };
 use bibli_core::os_path::PathArg;
+use bibli_core::registry::{ViewRole, ViewSpec};
 use gpui::{AnyElement, Context, Window, div, prelude::*, px};
 use std::path::PathBuf;
 
@@ -47,7 +48,7 @@ fn labelled(button: Button, label: &'static str, mode: usize) -> Button {
     }
 }
 
-fn view_button(shell: &Shell, spec: &bibli_core::registry::ViewSpec, prefix: &str) -> Button {
+fn view_button(shell: &Shell, spec: &ViewSpec, prefix: &str) -> Button {
     let icon = if toolbar::asset(&format!("toolbar/{}.svg", spec.icon)).is_some() {
         spec.icon.clone()
     } else {
@@ -61,6 +62,16 @@ fn view_button(shell: &Shell, spec: &bibli_core::registry::ViewSpec, prefix: &st
     )
     .args(serde_json::json!({"id": spec.id}))
     .active(shell.ui().view_id == &*spec.id)
+}
+
+/// The toolbar's view buttons: the views that show the listing, and a lens
+/// only while it is shown; the View menu offers them all. The narrowest
+/// variant keeps the current view alone.
+fn toolbar_views(views: Vec<ViewSpec>, current: &str, narrowest: bool) -> Vec<ViewSpec> {
+    views
+        .into_iter()
+        .filter(|s| &*s.id == current || (!narrowest && s.role == ViewRole::Listing))
+        .collect()
 }
 
 /// The application row. Left: how the folder is shown (views, their options) and
@@ -90,11 +101,7 @@ fn app_row(
         .border_1()
         .border_color(theme.border)
         .bg(theme.bg);
-    for spec in shell
-        .available_views()
-        .into_iter()
-        .filter(|s| mode != 2 || &*s.id == shell.ui().view_id)
-    {
+    for spec in toolbar_views(shell.available_views(), shell.ui().view_id, mode == 2) {
         views = views.child(view_button(shell, &spec, "view").render(shell, cx));
     }
     bar = bar.child(views);
@@ -106,7 +113,7 @@ fn app_row(
                     Button::new(
                         "view-options",
                         "sliders",
-                        "Sort, hidden files and zoom",
+                        "Views, sort, hidden files and zoom",
                         "ui.toolbar_menu",
                     )
                     .args(serde_json::json!({"kind": VIEW_OPTIONS}))
@@ -175,10 +182,20 @@ fn menu_item(button: Button, label: impl Into<gpui::SharedString>) -> Button {
 
 /// The View menu, in its titled groups: how the active pane shows
 /// its folder, never how the window is arranged (that is in More, under
-/// Layout). The narrowest toolbar, which has no View button, puts
+/// Layout). It starts with every view, the lenses the toolbar leaves out
+/// included. The narrowest toolbar, which has no View button, puts
 /// all of it in More.
 fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
     use bibli_core::SortKey;
+    let views = shell
+        .available_views()
+        .into_iter()
+        .map(|spec| {
+            view_button(shell, &spec, "menu-view")
+                .label(spec.title.clone())
+                .menu()
+        })
+        .collect();
     let spec = shell.sort_spec();
     let order: Vec<Button> = [
         ("name", "Name", SortKey::Name),
@@ -270,6 +287,7 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
         ));
     }
     vec![
+        ("Views", views),
         ("Sort by", order),
         ("Order", direction),
         ("Show", show),
@@ -402,8 +420,8 @@ fn group_title(title: &'static str, theme: &Theme) -> gpui::Div {
 
 /// The More menu. It holds what has no button in the chosen toolbar variant:
 /// always the window's layout, New tab, the palette and Settings; in the
-/// narrowest variant also the views, the View menu and the folder tools that
-/// variant dropped.
+/// narrowest variant also the View menu, views first, and the folder tools
+/// that variant dropped.
 fn more_panel(
     shell: &Shell,
     popup: &toolbar::Popup,
@@ -414,16 +432,9 @@ fn more_panel(
     let mut panel = toolbar::popup_panel(popup, "ui.toolbar_menu", theme, cx);
     let mut groups = Vec::new();
     if everything {
-        let views = shell
-            .available_views()
-            .into_iter()
-            .map(|spec| {
-                view_button(shell, &spec, "menu-view")
-                    .label(spec.title.clone())
-                    .menu()
-            })
-            .collect();
-        groups.push(("View", views));
+        // Without the View button, its whole menu is here: the views first.
+        let mut options = view_options(shell).into_iter();
+        groups.extend(options.next());
         groups.push((
             "Folder",
             vec![menu_item(
@@ -436,8 +447,7 @@ fn more_panel(
                 "New folder…",
             )],
         ));
-        // Without the View button, its whole menu is here.
-        groups.extend(view_options(shell));
+        groups.extend(options);
     }
     groups.extend(layout_groups(shell, everything));
     groups.push((
@@ -776,8 +786,29 @@ fn breadcrumbs(
 
 #[cfg(test)]
 mod tests {
-    use super::crumbs;
+    use super::{ViewSpec, crumbs, toolbar_views};
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+
+    fn shown(current: &str, narrowest: bool) -> Vec<String> {
+        let views = vec![
+            ViewSpec::named("list", "List", "list", Arc::default()),
+            ViewSpec::named("grid", "Grid", "grid", Arc::default()),
+            ViewSpec::named("usage", "Usage", "usage", Arc::default()).lens(),
+        ];
+        toolbar_views(views, current, narrowest)
+            .into_iter()
+            .map(|spec| spec.id.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn a_lens_has_a_button_only_while_it_is_shown() {
+        assert_eq!(shown("grid", false), ["list", "grid"]);
+        assert_eq!(shown("usage", false), ["list", "grid", "usage"]);
+        assert_eq!(shown("grid", true), ["grid"]);
+        assert_eq!(shown("usage", true), ["usage"]);
+    }
 
     fn labels(path: &str, home: Option<&str>) -> Vec<String> {
         crumbs(Path::new(path), home.map(Path::new))

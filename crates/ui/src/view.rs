@@ -97,6 +97,7 @@ pub fn spec(
         order,
         revision: Arc::default(),
         factory,
+        role: bibli_core::registry::ViewRole::Listing,
     }
 }
 

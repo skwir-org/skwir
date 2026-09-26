@@ -221,7 +221,7 @@ impl Plugin for UsagePlugin {
     fn register(&self, app: &App) {
         app.registry.views.add(
             ID,
-            ViewSpec::named(ID, "Usage", "usage", Arc::clone(&self.revision)),
+            ViewSpec::named(ID, "Usage", "usage", Arc::clone(&self.revision)).lens(),
         );
         let this = Arc::new(Self {
             runtime: Arc::clone(&self.runtime),

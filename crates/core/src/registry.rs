@@ -142,6 +142,22 @@ pub struct ViewSpec {
     pub factory: Factory,
     /// Producers increment this before waking the app, avoiding per-frame data queries.
     pub revision: Arc<AtomicU64>,
+    pub role: ViewRole,
+}
+
+/// What a view is for, which decides where it is offered. Every view is in
+/// the View menu, the palette and the keymap; the toolbar's view buttons
+/// hold the [`ViewRole::Listing`] views, and a [`ViewRole::Lens`] only while
+/// it is shown, so the pane says what it is in and one click leads back.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ViewRole {
+    /// The folder's entries in a shape of their own (list, grid, columns):
+    /// switched between all the time.
+    #[default]
+    Listing,
+    /// A question about the folder answered with data the view gathers
+    /// itself (Usage's sizes): chosen now and then.
+    Lens,
 }
 
 /// A renderer supplied by the UI, selected without a toolkit dependency in the plugin.
@@ -157,7 +173,15 @@ impl ViewSpec {
             order: 100,
             factory: Arc::new(ViewRenderer(id)),
             revision,
+            role: ViewRole::Listing,
         }
+    }
+
+    /// A view offered as a [`ViewRole::Lens`].
+    #[must_use]
+    pub fn lens(mut self) -> Self {
+        self.role = ViewRole::Lens;
+        self
     }
 }
 

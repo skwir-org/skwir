@@ -105,3 +105,10 @@ incomplete-total warning.
 
 Adding a bundled Map or Gallery view requires a plugin descriptor and a UI
 renderer, without changing the shell's view selector or command palette.
+
+Amended 2026-09-27: a descriptor states its `ViewRole`. A `Listing` view
+(list, grid, columns, a future gallery) shows the folder's entries in a
+shape of its own and has a toolbar button. A `Lens` (Usage, a future map)
+answers a question with data it gathers itself; it is chosen from the View
+menu, the palette or its key, and has a toolbar button only while shown.
+The toolbar stays the same width as lenses are added.
