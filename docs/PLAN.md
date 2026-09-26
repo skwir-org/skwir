@@ -515,6 +515,69 @@ the trait surface has not changed for the last three plugins written.
 
 ---
 
+## Maps (planned, ADR-020)
+
+Goal: GPS tracks and routes preview on a map, and a Map pane view shows the files
+that carry a position (photos first) where they were taken. Two plugins: `geo`
+(formats, preview, thumbnails, the Map view) and `map-tiles` (backgrounds, the
+only network code). Each step below ships on its own.
+
+- **A. Track previews, offline.** Core `geo` types (`LatLon`, `Bounds` aware of
+  the ±180° meridian, `GeoDoc`: tracks, routes, waypoints, polygons, bounded;
+  a waypoint has a kind (fix, airport, takeoff, home, rally) and an altitude
+  with its reference (above sea level, above ground, above takeoff), so the
+  plan formats of step D fit without changing a core type) and
+  `InspectionKind::Map` with `Inspection::geo`. `bibli-ui`: `elements/map.rs`
+  (Web Mercator, pan and zoom, placement in prepaint, lines through
+  `PathBuilder`) and a map preview kind in the shared frame with its slots (Fit,
+  Zoom, Tracks, Open in Maps through a `geo:` URI). `geo` parses GPX (tracks,
+  routes, waypoints), KML/KMZ (placemarks, `LineString`, `gx:Track`) and
+  GeoJSON on a worker, thinned per zoom level, and fills Details: distance,
+  moving and total time, climb and descent, highest and lowest points, time span
+  in the user's calendar. The background is a themed graticule.
+- **B. Backgrounds.** Core `tiles` contract; `map-tiles` with the outline
+  (Natural Earth, the default), OpenStreetMap once chosen, and a custom URL; the
+  tile cache, attribution, and the link to the setting on a map drawn on the
+  outline.
+- **C. The Map view.** A `ViewRole::Lens` in the View menu. `geo` scans the
+  location shown (a folder, or with "Include subfolders" its subtree; a search or
+  a timeline bucket as it is) for EXIF positions and track files, visible
+  entries first, cached by identity. Markers carry thumbnails and merge into
+  clusters when they are close; selection, Enter, the preview and the rubber
+  band work as in other views. The status bar counts what has a position and
+  what has not; an empty result is a placeholder offering subfolders. Commands:
+  `geo.points`, `geo.status`, `geo.track`, `geo.open_external`,
+  `geo.copy_coordinates`.
+- **D. More formats and polish.** TCX, FIT, IGC and NMEA; track thumbnails in the
+  grid; an elevation profile under the preview (a plan's planned altitudes);
+  positions of videos (the MP4 location atom); a "Show on map" link on the
+  Details position row.
+- **D′. Flight and drone plans.** Flight plans: Garmin `.fpl`, MSFS/FSX `.pln`,
+  X-Plane `.fms`, Little Navmap `.lnmpln`. Drone missions: QGroundControl `.plan`
+  (waypoints, survey polygons, geofence, rally points), MAVLink `.waypoints`
+  (`QGC WPL 110`), Litchi CSV, DJI WPML `.kmz`. None is in the MIME database and
+  several extensions are generic (`.plan`, `.fms`), so each is claimed by its
+  extension and confirmed by its content. Details: departure and destination,
+  legs, distance (nautical miles beside kilometres for a flight), cruising or
+  highest altitude with its reference, waypoint count.
+- **Later, each with its own decision:** a query facet over positions (a field
+  filled on demand, a core ADR); geotagging photos from a track and removing
+  locations (plans with inverses, proposed for review); offline place names;
+  local PMTiles/MBTiles backgrounds.
+
+Tests and fixtures use invented coordinates only. `bibli-bench gen` gains
+geotagged pictures and a 100 000-point GPX; `budgets.toml` gains the GPX parse
+and the EXIF position scan per 1 000 files.
+
+**Done when:** a GPX, a KML and a GeoJSON file, a flight plan and a drone mission
+preview with their facts; a folder
+of geotagged pictures shows on the Map view with shared selection; both plugins
+disable with no trace (`plugins_toggle.rs`), cancelling tile requests in flight;
+no request leaves bibli until a network source is chosen; idle CPU returns to
+0% after panning on `images10k`.
+
+---
+
 ## Phase 5 — Cross-platform (~6 weeks)
 
 Goal: macOS and Windows builds that feel native in the ways that matter.
