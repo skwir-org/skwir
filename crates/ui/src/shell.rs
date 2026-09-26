@@ -64,8 +64,13 @@ pub struct PaneUi {
     pub chips: crate::search_bar::Chips,
     /// The placeholder's button, kept so Tab can reach it.
     placeholder_focus: FocusHandle,
-    /// Its pane waits to give back the selection it had while dormant.
-    restoring: bool,
+    /// Its pane came back (or is new) and has not been put in place yet
+    /// (`Shell::place_pane`).
+    pub(crate) returning: bool,
+    /// The first entry it showed when its tab was left.
+    pub(crate) anchor: Option<bibli_core::EntryId>,
+    /// What it will show first, still waiting for metadata.
+    pub(crate) warm: Vec<bibli_core::EntryId>,
     _sub: Subscription,
 }
 
@@ -74,7 +79,13 @@ impl PaneUi {
     /// kept. The views start over when the listing comes back, as after a
     /// navigation.
     pub(crate) fn let_go(&mut self) {
+        self.anchor = self.list.sorted.get(self.list.first_visible).copied();
+        let (rows, items) = (self.list.visible_rows, self.list.visible_items);
         self.list = ListState::default();
+        self.list.visible_rows = rows;
+        self.list.visible_items = items;
+        self.returning = true;
+        self.warm.clear();
         for view in self.views.values_mut() {
             view.reset();
         }
@@ -131,6 +142,14 @@ pub struct Shell {
     /// The own arrangement of the splits of tabs not shown.
     pub(crate) tab_splits: HashMap<bibli_core::workspace::TabId, crate::layout::Panes>,
     pub(crate) tab_labels: crate::tabs::Labels,
+    /// The panes of the tab left, still drawn while the tab shown gets
+    /// ready (`Shell::present`), and which tab they are.
+    pub(crate) presented: Option<Vec<PaneUi>>,
+    pub(crate) presented_tab: Option<bibli_core::workspace::TabId>,
+    /// When the tab shown started waiting to be drawn, and the wake at its
+    /// deadline.
+    pub(crate) held_since: Option<Instant>,
+    pub(crate) hold_timer: Option<gpui::Task<()>>,
     pub font: SharedString,
     pub mono_font: SharedString,
     pub key_hints: Vec<KeyHint>,
@@ -327,6 +346,10 @@ impl Shell {
             shown_tab: None,
             tab_splits: HashMap::new(),
             tab_labels: crate::tabs::Labels::default(),
+            presented: None,
+            presented_tab: None,
+            held_since: None,
+            hold_timer: None,
             font,
             mono_font,
             key_hints: keymap.hints,
@@ -381,6 +404,8 @@ impl Shell {
             first_frame_logged: false,
             _subscriptions: subs,
         };
+        // The tab left stays drawn until the tab shown is ready (`tabs.rs`).
+        shell.app.hold_tabs(true);
         shell.sync_tabs(window, cx);
         // Without a location to show, the last window's tabs came back
         // (`App::restore_tabs`), their splits with them.
@@ -500,7 +525,9 @@ impl Shell {
             last_search: String::new(),
             chips: crate::search_bar::Chips::default(),
             placeholder_focus: cx.focus_handle(),
-            restoring: false,
+            returning: true,
+            anchor: None,
+            warm: Vec::new(),
             _sub: sub,
         }
     }
@@ -509,9 +536,12 @@ impl Shell {
 
     // ------------------------------------------------------------ panes
 
+    /// The UI of the pane commands act on: one of the tab shown, or of the
+    /// tab left while it is still drawn (its views lay out after `render`).
     pub fn ui(&self) -> &PaneUi {
         self.panes
             .iter()
+            .chain(self.presented.iter().flatten())
             .find(|p| p.id == self.pane)
             .or_else(|| self.panes.first())
             .expect("at least one pane")
@@ -519,6 +549,11 @@ impl Shell {
 
     pub fn ui_mut(&mut self) -> &mut PaneUi {
         let pane = self.pane;
+        if !self.panes.iter().any(|p| p.id == pane)
+            && let Some(ui) = self.presented.iter_mut().flatten().find(|p| p.id == pane)
+        {
+            return ui;
+        }
         let ix = self.panes.iter().position(|p| p.id == pane).unwrap_or(0);
         &mut self.panes[ix]
     }
@@ -954,6 +989,12 @@ impl Shell {
         // Settings may contain private paths; never trace their values.
         if !name.starts_with("ui.settings") && !name.starts_with("settings.") {
             tracing::debug!(name, %args, "run");
+        }
+        // What the user does acts on the tab shown: draw it first. Moving
+        // between tabs keeps holding, so cycling through them draws only the
+        // one it stops on.
+        if self.presented.is_some() && !name.starts_with("tab.") {
+            self.present(false, window, cx);
         }
         if let Some(ui) = name.strip_prefix("ui.") {
             self.run_ui(ui, &args, window, cx);
@@ -1431,7 +1472,7 @@ impl Shell {
     /// wakes the shell (whether or not the window can draw) and first in
     /// `render`, for what the user did since; a second call finds nothing
     /// new to apply.
-    fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let t0 = Instant::now();
         let report = self.app.pump_report();
         self.backlog = report.backlog;
@@ -1519,6 +1560,7 @@ impl Shell {
         let saved = self.pane;
         let ids: Vec<PaneId> = self.panes.iter().map(|p| p.id).collect();
         let mut resorted_any = false;
+        let mut ready = true;
         for id in ids {
             self.pane = id;
             let app = Arc::clone(&self.app);
@@ -1542,19 +1584,14 @@ impl Shell {
             if let Some(wanted) = wanted {
                 app.keep_locations(id, &wanted);
             }
-            let (location, resorted, replaced, restoring) = {
+            let (location, resorted, replaced) = {
                 let ws = app.workspace.read();
                 let Some(pane) = ws.pane(id) else { continue };
                 let location = pane.location().map(ToString::to_string).unwrap_or_default();
                 let list = &mut self.ui_mut().list;
                 let before = list.listing();
                 let resorted = list.sync(&pane.listing, pane.sort);
-                (
-                    location,
-                    resorted,
-                    list.listing() != before,
-                    pane.restoring(),
-                )
+                (location, resorted, list.listing() != before)
             };
             resorted_any |= resorted;
             if replaced {
@@ -1562,13 +1599,7 @@ impl Shell {
                     v.reset();
                 }
             }
-            // A tab shown again got its selection back: show its cursor.
-            if std::mem::replace(&mut self.ui_mut().restoring, restoring)
-                && !restoring
-                && let Some(ix) = self.cursor_index()
-            {
-                self.with_view(|view, _| view.scroll_to(ix));
-            }
+            ready &= self.place_pane();
             if location != self.ui().address_shown {
                 self.ui_mut().address_shown.clone_from(&location);
                 let address = self.ui().address.clone();
@@ -1576,6 +1607,14 @@ impl Shell {
             }
         }
         self.pane = saved;
+        if self.presented.is_some()
+            && (ready
+                || self
+                    .held_since
+                    .is_none_or(|since| since.elapsed() >= crate::tabs::HOLD))
+        {
+            self.present(ready, window, cx);
+        }
         self.take_reveal(cx);
         self.sync_loading(cx);
         if report.applied > 0 || resorted_any {
@@ -1588,14 +1627,18 @@ impl Shell {
             );
         }
         crate::settings::flush_remembered(self, cx);
-        self.sync_preview(window, cx);
-        self.sync_busy(cx);
-        self.sync_reader(cx);
-        self.sync_document_scroll(window, cx);
-        self.sync_pictures(window, cx);
-        self.sync_notes(window, cx);
-        self.sync_media(window, cx);
-        self.sync_player(window, cx);
+        // The preview follows what is drawn: the tab left, while it is.
+        let drawn = self.drawn_pane();
+        self.with_pane(drawn, |this| {
+            this.sync_preview(window, cx);
+            this.sync_busy(cx);
+            this.sync_reader(cx);
+            this.sync_document_scroll(window, cx);
+            this.sync_pictures(window, cx);
+            this.sync_notes(window, cx);
+            this.sync_media(window, cx);
+            this.sync_player(window, cx);
+        });
         for id in self.panes.iter().map(|p| p.id).collect::<Vec<_>>() {
             self.with_pane(id, |shell| shell.sync_usage(cx));
         }
@@ -1632,7 +1675,8 @@ impl Shell {
         let saved = self.pane;
         self.pane = id;
         let theme = cx.global::<Theme>().clone();
-        let active = self.app.workspace.read().active_id() == id;
+        // The pane commands act on among those drawn.
+        let active = saved == id;
         let address_bar = address::render_address(self, window, cx);
         let search_bar = crate::search_bar::render(self, window, cx);
         // The Usage view draws its own scanning and empty states.
@@ -1707,6 +1751,14 @@ impl Render for Shell {
             );
         }
         self.sync(window, cx);
+        // While the tab shown gets ready, the whole window draws the tab left
+        // as it was: its panes, toolbars, status and preview.
+        let held = self.presented.take().map(|mut panes| {
+            let drawn = self.drawn_active(&panes);
+            // `panes` becomes the tab shown's, put back after the frame.
+            std::mem::swap(&mut self.panes, &mut panes);
+            (panes, std::mem::replace(&mut self.pane, drawn))
+        });
         // Like the sidebar below, the arrangement follows the window's own
         // size, known before layout; decide it before anything is built.
         let viewport = window.viewport_size();
@@ -1816,6 +1868,10 @@ impl Render for Shell {
         // the views ask for theirs as their rows are built.
         let app = Arc::clone(&self.app);
         self.icons.request(&app);
+        if let Some((current, pane)) = held {
+            self.presented = Some(std::mem::replace(&mut self.panes, current));
+            self.pane = pane;
+        }
         self.resize_hook(root, cx)
     }
 }

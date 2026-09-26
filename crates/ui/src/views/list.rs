@@ -537,7 +537,10 @@ impl PaneView for ListView {
             cx.processor(move |this: &mut Shell, range: Range<usize>, _window, cx| {
                 this.with_pane(pane, |this| {
                     let theme = cx.global::<Theme>().clone();
-                    this.ui_mut().list.visible_rows = range.len().max(1);
+                    let list = &mut this.ui_mut().list;
+                    list.visible_rows = range.len().max(1);
+                    list.first_visible = range.start;
+                    list.visible_items = range.len();
                     let rows = this.rows(range, ICON_PX as u16, false);
                     let need: Vec<EntryId> =
                         rows.iter().filter(|r| !r.hydrated).map(|r| r.id).collect();
@@ -583,6 +586,10 @@ impl PaneView for ListView {
 
     fn scroll_to(&mut self, ix: usize) {
         self.scroll.scroll_to_item(ix, ScrollStrategy::Top);
+    }
+
+    fn scroll_to_top(&mut self, ix: usize) {
+        self.scroll.scroll_to_item_strict(ix, ScrollStrategy::Top);
     }
 
     fn nav_delta(&self, nav: Nav, shell: &Shell) -> Option<isize> {

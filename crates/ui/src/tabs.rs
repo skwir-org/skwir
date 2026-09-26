@@ -10,6 +10,10 @@
 //! released. Whoever changed the tabs (a key, a click, an agent), this is
 //! the one place the UI follows it.
 //!
+//! Showing another tab keeps the tab left drawn until the tab shown is
+//! finished, for at most `HOLD` (`Shell::present`): the window goes from
+//! one finished frame to the next, with no blank or half-listed one.
+//!
 //! The strip shows only with two tabs or more. A tab is named like the place
 //! it shows, is a drop target like a sidebar row, is dragged to reorder,
 //! and closes with its ×, a middle click or Ctrl+W.
@@ -25,6 +29,12 @@ use gpui::{
 
 use crate::shell::Shell;
 use crate::theme::Theme;
+
+/// How long the tab left stays drawn while the tab shown gets ready. Up to
+/// 100 000 entries and a search of 10 000 results are ready within it
+/// (ADR-018 addendum); past it the tab shown streams in as a navigation
+/// does.
+pub const HOLD: std::time::Duration = std::time::Duration::from_millis(150);
 
 /// A tab being dragged along the strip, to put it elsewhere.
 #[derive(Clone, Copy, Debug)]
@@ -59,6 +69,12 @@ pub struct Labels {
 impl Shell {
     /// Follow the workspace's tabs: see the module comment. Cheap when
     /// nothing moved: one number compared.
+    ///
+    /// When another tab is shown, the one left stays drawn (`presented`)
+    /// until the tab shown is ready or `HOLD` has passed (`present`): its
+    /// panes list, get their selection back, scroll where they were and
+    /// have the metadata of what they show first, out of sight, so the
+    /// window goes from one finished frame to the next.
     pub(crate) fn sync_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (revision, shown, wanted, active, all) = {
             let ws = self.app.workspace.read();
@@ -80,12 +96,12 @@ impl Shell {
             )
         };
         self.tabs_revision = revision;
-        let before: Vec<PaneId> = self.panes.iter().map(|p| p.id).collect();
-        let had_focus = self
-            .panes
-            .iter()
-            .any(|p| p.focus.contains_focused(window, cx))
-            || window.focused(cx).is_none();
+        let current: Vec<PaneId> = self.panes.iter().map(|p| p.id).collect();
+        // What is on screen: the tab left while it is held, else the panes.
+        let on_screen: Vec<PaneId> = match &self.presented {
+            Some(left) => left.iter().map(|p| p.id).collect(),
+            None => current.clone(),
+        };
         // A new pane opens in the view the active one shows.
         let view = if self.panes.is_empty() {
             crate::view::LIST
@@ -95,6 +111,7 @@ impl Shell {
         let mut pool: HashMap<PaneId, crate::shell::PaneUi> = self
             .panes
             .drain(..)
+            .chain(self.presented.take().into_iter().flatten())
             .chain(self.hidden.drain().map(|(_, ui)| ui))
             .map(|ui| (ui.id, ui))
             .collect();
@@ -110,9 +127,30 @@ impl Shell {
             panes.push(ui);
         }
         self.panes = panes;
+        // Hold the tab left on screen when there is one to hold: it still
+        // exists, and it is not the tab shown (shown again before it went).
+        let hold = self.presented_tab.is_some()
+            && self.presented_tab != Some(shown)
+            && !on_screen.is_empty()
+            && on_screen
+                .iter()
+                .all(|id| all.contains(id) && pool.contains_key(id));
+        if hold {
+            self.presented = Some(on_screen.iter().filter_map(|id| pool.remove(id)).collect());
+            // The wait counts from the last tab asked for, and ends by the
+            // deadline whatever happens.
+            self.held_since = Some(std::time::Instant::now());
+            self.hold_timer = Some(cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor().timer(HOLD).await;
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.sync(window, cx);
+                    cx.notify();
+                });
+            }));
+        }
         for (id, mut ui) in pool {
             if all.contains(&id) {
-                if before.contains(&id) {
+                if current.contains(&id) || on_screen.contains(&id) {
                     ui.let_go();
                     self.release_usage(id);
                 }
@@ -124,28 +162,162 @@ impl Shell {
         }
         self.pane = active;
         if self.shown_tab != Some(shown) {
-            // A split's own arrangement belongs to its tab.
-            if let Some(left) = self.shown_tab {
-                match self.layout.split.take() {
-                    Some(split) => self.tab_splits.insert(left, split),
-                    None => self.tab_splits.remove(&left),
-                };
-            }
-            self.layout.split = self.tab_splits.remove(&shown);
             let first = self.shown_tab.is_none();
             self.shown_tab = Some(shown);
             // Whether the window is split is the shown tab's.
             if !first {
                 self.remember_session();
             }
-            if had_focus {
-                window.focus(&self.ui().focus);
-            }
+        }
+        if !hold {
+            self.present(true, window, cx);
         }
         {
             let ws = self.app.workspace.read();
             self.tab_splits.retain(|tab, _| ws.tab(*tab).is_some());
         }
+    }
+
+    /// Draw the tab shown: the tab left, if it was still drawn, lets go of
+    /// what it drew from and its panes are suspended; the tab's own split
+    /// arrangement and the keyboard follow. `ready` says whether the tab
+    /// got ready or the wait ended (deadline, or the user acting).
+    pub(crate) fn present(&mut self, ready: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let left = self.presented.take();
+        if let Some(since) = self.held_since.take() {
+            tracing::debug!(
+                ms = since.elapsed().as_secs_f64() * 1000.,
+                ready,
+                "tab drawn"
+            );
+        }
+        self.hold_timer = None;
+        let had_focus = left
+            .iter()
+            .flatten()
+            .chain(self.panes.iter())
+            .any(|p| p.focus.contains_focused(window, cx))
+            || window.focused(cx).is_none();
+        if let Some(left) = left {
+            let all: std::collections::HashSet<PaneId> = self
+                .app
+                .workspace
+                .read()
+                .panes()
+                .iter()
+                .map(|p| p.id)
+                .collect();
+            for mut ui in left {
+                ui.let_go();
+                self.release_usage(ui.id);
+                if all.contains(&ui.id) {
+                    self.hidden.insert(ui.id, ui);
+                }
+            }
+        }
+        self.app.settle_tabs();
+        if self.presented_tab != self.shown_tab {
+            // A split's own arrangement belongs to its tab.
+            if let Some(left) = self.presented_tab {
+                match self.layout.split.take() {
+                    Some(split) => self.tab_splits.insert(left, split),
+                    None => self.tab_splits.remove(&left),
+                };
+            }
+            if let Some(shown) = self.shown_tab {
+                self.layout.split = self.tab_splits.remove(&shown);
+            }
+            self.presented_tab = self.shown_tab;
+            if had_focus {
+                window.focus(&self.ui().focus);
+            }
+        }
+        cx.notify();
+    }
+
+    /// The pane drawn as active: the tab left's while it is held.
+    pub(crate) fn drawn_pane(&self) -> PaneId {
+        match &self.presented {
+            Some(left) => self.drawn_active(left),
+            None => self.pane,
+        }
+    }
+
+    /// The active pane of `left`, the tab left, as it was.
+    pub(crate) fn drawn_active(&self, left: &[crate::shell::PaneUi]) -> PaneId {
+        let active = self
+            .presented_tab
+            .and_then(|tab| self.app.workspace.read().tab(tab).map(|t| t.active));
+        active
+            .filter(|id| left.iter().any(|p| p.id == *id))
+            .or_else(|| left.first().map(|p| p.id))
+            .unwrap_or(self.pane)
+    }
+
+    /// Put the pane `self.pane` where it was once its listing is complete
+    /// and its selection is back (the first entry it showed at the top, or
+    /// its cursor in view), and ask for the metadata of what it will show
+    /// first. True once that has arrived: the pane can be drawn finished.
+    pub(crate) fn place_pane(&mut self) -> bool {
+        let app = std::sync::Arc::clone(&self.app);
+        let settled = {
+            let ws = app.workspace.read();
+            let Some(p) = ws.pane(self.pane) else {
+                return true;
+            };
+            // A pane that opened nothing has nothing to wait for.
+            p.open.is_none()
+                || ((p.listing.is_complete() || p.listing.error().is_some()) && !p.restoring())
+        };
+        if !settled {
+            return false;
+        }
+        if std::mem::replace(&mut self.ui_mut().returning, false) {
+            let ui = self.ui();
+            let anchor = ui.anchor.and_then(|id| ui.list.index_of(id));
+            let items = ui.list.visible_items.max(ui.list.visible_rows).max(1);
+            let (lo, hi) = match (anchor, self.cursor_index()) {
+                (Some(ix), _) => {
+                    self.with_view(|view, _| view.scroll_to_top(ix));
+                    (ix, ix + items)
+                }
+                (None, Some(ix)) => {
+                    self.with_view(|view, _| view.scroll_to(ix));
+                    (ix.saturating_sub(items), ix + items)
+                }
+                (None, None) => (0, items),
+            };
+            let sorted = std::sync::Arc::clone(&self.ui().list.sorted);
+            let first = &sorted[lo.min(sorted.len())..hi.min(sorted.len())];
+            let warm: Vec<bibli_core::EntryId> = {
+                let ws = app.workspace.read();
+                ws.pane(self.pane).map_or_else(Vec::new, |p| {
+                    first
+                        .iter()
+                        .copied()
+                        .filter(|id| {
+                            p.listing
+                                .get(*id)
+                                .is_some_and(|e| !e.metadata.is_hydrated())
+                        })
+                        .collect()
+                })
+            };
+            self.request_hydrate(warm.iter().copied());
+            self.ui_mut().warm = warm;
+        }
+        if self.ui().warm.is_empty() {
+            return true;
+        }
+        let ws = app.workspace.read();
+        let Some(p) = ws.pane(self.pane) else {
+            return true;
+        };
+        let listing = &p.listing;
+        self.ui_mut()
+            .warm
+            .retain(|id| listing.get(*id).is_some_and(|e| !e.metadata.is_hydrated()));
+        self.ui().warm.is_empty()
     }
 
     fn release_usage(&self, pane: PaneId) {

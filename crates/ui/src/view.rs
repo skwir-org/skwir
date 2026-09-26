@@ -44,6 +44,10 @@ pub trait PaneView {
     ) -> AnyElement;
     /// Bring index `ix` of the sorted order into view.
     fn scroll_to(&mut self, ix: usize);
+    /// Put index `ix` at the top: where a tab shown again was scrolled to.
+    fn scroll_to_top(&mut self, ix: usize) {
+        self.scroll_to(ix);
+    }
     /// Index delta for a navigation key (`None`: the view handles it in `nav`
     /// or ignores it).
     fn nav_delta(&self, nav: Nav, shell: &Shell) -> Option<isize>;

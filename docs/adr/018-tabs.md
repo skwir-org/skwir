@@ -94,8 +94,8 @@ ten for folders nobody is looking at.
   navigating there costs (usually a warm dentry cache); for a search it
   runs the query again. Keeping the last one or two tabs warm is possible
   later and would be a budgeted change to this ADR, not a default.
-- Scroll positions are not kept across dormancy; the view scrolls to the
-  restored cursor.
+- The scroll position comes back by the first entry shown (one id kept
+  per pane), or the view scrolls to the restored cursor.
 - A drag does not switch tabs when it hovers one (spring-loading): the
   source pane of a drag must stay listed until the drop reads its
   selection. Dropping on a tab is the way to reach a tab's folder.
@@ -131,3 +131,37 @@ Budget: with the default plugins, ten dormant tabs stay within 2 MB PSS
 of one tab showing the same folder, and showing every tab once stays
 within 2 MB of visiting the same folders in one tab. A change that keeps
 tabs warm is measured against this and needs an addendum here.
+
+## Addendum: the tab left stays drawn until the tab shown is ready (2026-09-26)
+
+Showing a dormant tab drew a blank pane, then rows arriving out of order,
+then columns filling in, then a jump to the restored selection, and
+"Loading location…" past 200 ms. A tab is expected to be there already.
+
+Decision: the window keeps drawing the tab left, whole (panes, toolbars,
+status, preview), while the tab shown gets ready out of sight, for at most
+150 ms (`tabs::HOLD`); the strip marks the tab shown at once. Ready means:
+its listing is complete, its selection is back, it is scrolled where it
+was, and the metadata of the entries it will show first has arrived
+(`Shell::place_pane`). Then it is drawn and the tab left is suspended
+(`App::settle_tabs`). The core keeps a tab left open only while a UI holds
+tabs (`App::hold_tabs`); without one it is suspended at once, as before.
+Anything the user does other than moving between tabs draws the tab shown
+first, so a command never acts on a tab not drawn; cycling through tabs
+keeps holding and draws only the one it stops on, the deadline counting
+from the last. Closing the tab shown cannot hold (its panes are gone) and
+draws the next tab as it streams in.
+
+No memory is kept for this: two tabs are open together only while one is
+held. A budget of warm listings (keeping recent tabs listed) was
+considered for folders beyond the deadline and for searches, and is not
+needed for what was measured.
+
+Measured (release, Xvfb with lavapipe, time from the key to the tab drawn,
+two rounds): 300 entries 1 ms; 5 000 entries 10 to 34 ms; 20 000 entries
+32 ms; 10 000 images 20 to 25 ms; a search of 10 000 results 23 to 37 ms;
+100 000 entries 79 to 89 ms. Every switch was ready before the deadline. A
+screenshot burst across the switch shows the tab left, then the tab shown
+finished, with no frame between. The type icons of entries never shown
+before in the session still arrive a frame later: they are looked up on a
+worker, as on any navigation.

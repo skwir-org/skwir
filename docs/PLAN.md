@@ -173,6 +173,10 @@ workspace's revision, which also gave closing a split one release path.
 Two keys moved (the user's choice): Open Terminal Here from Ctrl+T to
 Shift+F4, Tags… from Ctrl+Shift+T to Ctrl+Shift+G. Measured: ten dormant
 tabs cost no PSS beyond noise over one (ADR-018 addendum, now a budget).
+Switching tabs no longer draws a blank or half-listed pane (ADR-018
+addendum): the tab left stays drawn until the tab shown is listed, has its
+selection, scroll and first rows' metadata back, for at most 150 ms; every
+measured switch (up to 100 000 entries, 89 ms) was ready within it.
 Open: `listing::pending_opens_report_errors_asynchronously_and_can_be_replaced`
 is flaky ("cancelled open must not publish late events"): it failed eight
 runs in a row at the parent commit and on this work, then passed in later

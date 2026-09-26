@@ -478,6 +478,12 @@ pub struct Workspace {
     /// shown tab then: tabs opened one after another from the same tab
     /// line up after it in the order they were opened.
     opened_beside: Option<(TabId, TabId)>,
+    /// Whether a UI keeps drawing the tab left until the tab shown is ready
+    /// (`App::hold_tabs`): the panes left then stay open in `leaving` until
+    /// `App::settle_tabs`.
+    pub(crate) holding: bool,
+    /// Panes of tabs no longer shown that are not suspended yet.
+    pub(crate) leaving: Vec<PaneId>,
     /// Bumped whenever panes or tabs come, go, move or change which is
     /// active, so the UI compares one number to follow them.
     revision: u64,
@@ -492,6 +498,8 @@ impl Default for Workspace {
             next_id: 0,
             next_tab: 0,
             opened_beside: None,
+            holding: false,
+            leaving: Vec::new(),
             revision: 0,
         };
         w.add_tab(0);

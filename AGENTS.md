@@ -226,7 +226,12 @@ current source before assuming a planned crate, command, or API exists.
   them. A tab not shown is dormant: its panes keep history, sort and
   selection and let go of listing, watchers and kept columns
   (`Pane::suspend`); showing it opens them again through `App::show`, and
-  the selection returns once the listing is complete. The shell never
+  the selection returns once the listing is complete. While the tab shown
+  gets ready (listed, selection and scroll back, first rows hydrated:
+  `Shell::place_pane`), the window keeps drawing the tab left, for at most
+  `tabs::HOLD`; the core keeps it open until `App::settle_tabs`. A user
+  command draws the tab shown first (`Shell::present`), so nothing acts on
+  a tab not drawn. The shell never
   creates or drops a `PaneUi` itself: it changes the workspace and
   `Shell::sync_tabs` follows its revision, so `Shell::panes` is always the
   panes on screen (`is_split`, `other_pane` rely on it), hidden panes wait

@@ -349,3 +349,37 @@ fn a_split_tab_keeps_its_panes_and_its_active_one() {
     assert!(app.pump_until_complete(left, WAIT));
     assert!(app.pump_until_complete(right, WAIT));
 }
+
+#[test]
+fn a_held_tab_stays_open_until_settled() {
+    let dir = home_tempdir();
+    tree(dir.path());
+    let app = app(dir.path());
+    navigate(&app, dir.path());
+    let first = active(&app);
+    select(&app, &["a file.txt"]);
+    app.hold_tabs(true);
+
+    run(&app, "tab.new", serde_json::json!({}));
+    let second = active(&app);
+    // Still open and listed while a UI draws it.
+    assert!(!is_dormant(&app, first));
+    assert_eq!(selected_names(&app, first), ["a file.txt"]);
+
+    // Shown again before settling: it was never let go.
+    run(&app, "tab.select", serde_json::json!({ "index": 0 }));
+    app.settle_tabs();
+    assert!(!is_dormant(&app, first), "the tab shown is not suspended");
+    assert_eq!(selected_names(&app, first), ["a file.txt"]);
+    assert!(is_dormant(&app, second));
+
+    run(&app, "tab.select", serde_json::json!({ "index": 1 }));
+    assert!(!is_dormant(&app, first));
+    app.settle_tabs();
+    assert!(is_dormant(&app, first));
+
+    // Without a UI holding them, tabs left are suspended at once.
+    app.hold_tabs(false);
+    run(&app, "tab.select", serde_json::json!({ "index": 0 }));
+    assert!(is_dormant(&app, second));
+}

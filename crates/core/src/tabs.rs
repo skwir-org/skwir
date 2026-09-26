@@ -113,7 +113,9 @@ impl App {
     }
 
     /// Show tab `tab`: the panes of the tab left let go of their listings,
-    /// those of `tab` open their locations again.
+    /// those of `tab` open their locations again. While a UI holds tabs
+    /// (`hold_tabs`), the panes left stay open until `settle_tabs`, so it
+    /// can keep drawing them until the tab shown is ready.
     pub fn select_tab(&self, tab: TabId) -> anyhow::Result<()> {
         let released: Vec<_> = {
             let mut ws = self.workspace.write();
@@ -122,14 +124,45 @@ impl App {
             } else {
                 let left = ws.active_tab().panes.clone();
                 anyhow::ensure!(ws.set_active_tab(tab), "no such tab");
-                left.into_iter()
-                    .filter_map(|id| ws.pane_mut(id)?.suspend())
-                    .collect()
+                if ws.holding {
+                    ws.leaving.extend(left);
+                    Vec::new()
+                } else {
+                    left.into_iter()
+                        .filter_map(|id| ws.pane_mut(id)?.suspend())
+                        .collect()
+                }
             }
         };
         // Closed outside the lock: closing runs the location's own code.
         drop(released);
         self.resume_shown()
+    }
+
+    /// Whether the tab left stays open until `settle_tabs`: set by a UI
+    /// that keeps drawing it while the tab shown lists (ADR-018 addendum).
+    /// Without one, a tab left is suspended at once.
+    pub fn hold_tabs(&self, on: bool) {
+        self.workspace.write().holding = on;
+        if !on {
+            self.settle_tabs();
+        }
+    }
+
+    /// The tabs left are no longer drawn: suspend their panes, those of the
+    /// tab shown excepted (it may be the one left, shown again).
+    pub fn settle_tabs(&self) {
+        let released: Vec<_> = {
+            let mut ws = self.workspace.write();
+            let shown = ws.active_tab().panes.clone();
+            let leaving = std::mem::take(&mut ws.leaving);
+            leaving
+                .into_iter()
+                .filter(|id| !shown.contains(id))
+                .filter_map(|id| ws.pane_mut(id)?.suspend())
+                .collect()
+        };
+        drop(released);
     }
 
     /// Open the locations of the shown tab's dormant panes: at startup, when

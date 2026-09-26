@@ -318,7 +318,10 @@ impl PaneView for GridView {
             move |this: &mut Shell, (range, cols): (Range<usize>, usize), window, cx| {
                 this.with_pane(pane, |this| {
                     let theme = cx.global::<Theme>().clone();
-                    this.ui_mut().list.visible_rows = range.len().div_ceil(cols.max(1)).max(1);
+                    let list = &mut this.ui_mut().list;
+                    list.visible_rows = range.len().div_ceil(cols.max(1)).max(1);
+                    list.first_visible = range.start;
+                    list.visible_items = range.len();
                     let ids: Vec<(usize, EntryId)> = range
                         .filter_map(|ix| this.ui().list.sorted.get(ix).map(|id| (ix, *id)))
                         .collect();
@@ -423,6 +426,10 @@ impl PaneView for GridView {
 
     fn scroll_to(&mut self, ix: usize) {
         self.scroll.scroll_to_item(ix);
+    }
+
+    fn scroll_to_top(&mut self, ix: usize) {
+        self.scroll.scroll_to_item_strict(ix);
     }
 
     fn nav_delta(&self, nav: Nav, _: &Shell) -> Option<isize> {
