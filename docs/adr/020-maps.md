@@ -61,8 +61,8 @@ and no offline downloads. Access can be blocked without notice.
   kept-alive connection per host and a deadline per request. HTTP/2, which
   the policy recommends, is not available in ureq. The client is private
   to `map-tiles`. There is no network layer in the core: remote file
-  systems are meant to come from installed tools (mounts, rclone), not
-  from protocols implemented in bibli. If a second plugin needs HTTP (a
+  systems come from installed tools (mounts, rclone; ADR-021), not from
+  protocols implemented in bibli. If a second plugin needs HTTP (a
   model provider), the client moves to `bibli-platform`, a utility beside
   the others, not a contract.
 - **Caches**: downloaded tiles live in a namespace of the one deletable
@@ -74,9 +74,9 @@ and no offline downloads. Access can be blocked without notice.
   placement happens in prepaint. Lines crossing the ±180° meridian are
   split, never drawn across the world.
 - **Plugins**: `geo` owns the formats (GPX, KML/KMZ, GeoJSON, then TCX,
-  FIT, IGC, NMEA, flight plans and drone missions), the preview provider, track thumbnails, the Map pane
-  view (a `ViewRole::Lens`, ADR-007) and the positions scanner. `map-tiles`
-  owns the backgrounds. Neither depends on the other. Core gains only what
+  FIT, IGC, NMEA, flight plans and drone missions), the preview provider,
+  track thumbnails, the Map pane view (a `ViewRole::Lens`, ADR-007) and
+  the positions scanner. `map-tiles` owns the backgrounds. Neither depends on the other. Core gains only what
   the two plugins and the UI share: the `geo` geometry types, the preview
   inspection's `geo` field (ADR-009), and `tiles`.
 - **Positions are not a hydration field.** Reading EXIF for every picture
