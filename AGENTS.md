@@ -209,8 +209,8 @@ current source before assuming a planned crate, command, or API exists.
   scrolling element to overlay a bar must preserve its flex context — a body
   that grew in a column needs a column — or it silently stops scrolling.
 - **What the window remembers.** The shape of the last window (view, split
-  and its arrangement, preview with its place, width and height, timeline,
-  zoom) is application data, not preference:
+  and its arrangement and share, sidebar width, preview with its place, width
+  and height, timeline, zoom) is application data, not preference:
   `session.rs` keeps it under one key, restores it at startup and writes it
   only when it changes, never per frame. A new pane opens in the view the
   current one shows. The preview panel is as wide as the user drags it, up to
@@ -221,7 +221,13 @@ current source before assuming a planned crate, command, or API exists.
   (`preview::max_height`); the pinned player's dock stays at the panel's
   foot, bounded by the panel's height (`Shell::dock_height_limit`), and
   until the edge is dragged the default height adds the dock's, so a pin
-  does not take its room from the preview.
+  does not take its room from the preview. The sidebar's right edge is dragged the
+  same way (`sidebar::max_width`: the panes keep theirs and the panel its
+  minimum; the panel counts the sidebar as drawn, so it gives way first).
+  The edge between split panes stores a share, not pixels: the panes' flex
+  grow is the share, and the drag reads the bounds GPUI hands its
+  `DragMoveEvent` (the panes' container), so nothing is measured; each pane
+  keeps `PANE_KEEP` across, `PANE_KEEP_HEIGHT` stacked.
 - **Tabs** (ADR-018) are core data: the workspace groups its panes in tabs
   (one pane, or two when that tab is split) and the `tab.*` commands change
   them. A tab not shown is dormant: its panes keep history, sort and

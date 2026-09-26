@@ -167,6 +167,10 @@ pub struct Shell {
     pub row_zoom: u32,
     /// The sidebar put away with F9. A narrow window hides it too.
     pub sidebar_hidden: bool,
+    /// How wide the sidebar was dragged (`Shell::sidebar_drawn_width`).
+    pub sidebar_width: f32,
+    /// The first pane's share of a split, the second has the rest.
+    pub split_share: f32,
     pub thumbs: ThumbCache,
     pub icons: IconCache,
     pub type_names: crate::typenames::TypeNames,
@@ -385,6 +389,8 @@ impl Shell {
             zoom: DEFAULT_ZOOM,
             row_zoom: crate::views::list::DEFAULT_ROW_ZOOM,
             sidebar_hidden: false,
+            sidebar_width: sidebar::DEFAULT_WIDTH,
+            split_share: SPLIT_SHARE,
             thumbs: ThumbCache::default(),
             icons: IconCache::default(),
             type_names: crate::typenames::TypeNames::default(),
@@ -470,6 +476,12 @@ impl Shell {
             self.row_zoom = session.row_zoom;
         }
         self.sidebar_hidden = session.sidebar_hidden;
+        if session.sidebar_width > 0. {
+            self.sidebar_width = session.sidebar_width;
+        }
+        if session.split_share > 0. && session.split_share < 1. {
+            self.split_share = session.split_share;
+        }
         self.preview.open = session.preview;
         self.preview.details_open = session.details;
         if session.preview_width > 0. {
@@ -1750,9 +1762,13 @@ impl Shell {
     }
 
     /// One pane column: its address bar and its view (or the usage panel).
+    /// Pane `id`: all the room it is given, or `share` of a split's. The
+    /// second pane of a split (`divider`) carries the edge between them.
     fn render_pane(
         &mut self,
         id: PaneId,
+        share: Option<f32>,
+        divider: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
@@ -1794,8 +1810,16 @@ impl Shell {
         // Split panes are told apart by the edge they share: the left one
         // side by side, the top one stacked. The active pane's is the accent.
         let stacked = self.layout.stacked();
+        let edge = divider.then(|| split_edge(stacked, theme.handle, cx));
         div()
+            .relative()
             .flex_1()
+            // Shares of the room left once each pane is laid out from
+            // nothing (`flex_1`'s basis is 0): exactly the dragged split.
+            .when_some(share, |mut d, share| {
+                d.style().flex_grow = Some(share);
+                d
+            })
             .min_w_0()
             .min_h_0()
             .flex()
@@ -1833,8 +1857,84 @@ impl Shell {
             })
             .child(file_area)
             .children(strip)
+            .children(edge)
             .into_any_element()
     }
+
+    /// The edge between split panes follows the pointer across the room
+    /// they share: GPUI hands the drag the bounds of the element listening
+    /// (the panes' container), so nothing is measured here. Each pane keeps
+    /// what a pane needs, as against the preview and the sidebar.
+    fn on_split_drag(
+        &mut self,
+        ev: &gpui::DragMoveEvent<SplitResize>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let stacked = self.layout.stacked();
+        let (along, size) = if stacked {
+            (ev.event.position.y - ev.bounds.top(), ev.bounds.size.height)
+        } else {
+            (ev.event.position.x - ev.bounds.left(), ev.bounds.size.width)
+        };
+        let keep = if stacked {
+            crate::preview::PANE_KEEP_HEIGHT
+        } else {
+            crate::preview::PANE_KEEP
+        };
+        self.split_share = split_share(f32::from(along), f32::from(size), keep);
+        cx.notify();
+    }
+}
+
+/// A split's panes share the room evenly until their edge is dragged, and
+/// again after a double click on it.
+const SPLIT_SHARE: f32 = 0.5;
+
+/// Marker type for dragging the edge between split panes.
+#[derive(Clone)]
+pub struct SplitResize;
+
+/// The first pane's share when the edge between the panes is `along` px
+/// into `size` px of room, each pane keeping at least `keep` px. A room too
+/// small for two panes that size is shared evenly.
+fn split_share(along: f32, size: f32, keep: f32) -> f32 {
+    if size.is_nan() || size <= 2. * keep || !along.is_finite() {
+        return SPLIT_SHARE;
+    }
+    (along.clamp(keep, size - keep)) / size
+}
+
+/// The draggable edge a split's second pane has at its start: its left edge
+/// side by side, its top edge stacked, over the border that tells the panes
+/// apart.
+fn split_edge(stacked: bool, hover: gpui::Hsla, cx: &mut Context<Shell>) -> gpui::AnyElement {
+    let edge = div()
+        .id("split-resize")
+        .absolute()
+        .top_0()
+        .left_0()
+        .hover(move |style| style.bg(hover))
+        .on_click(cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
+            if event.click_count() == 2 {
+                this.split_share = SPLIT_SHARE;
+                this.remember_session();
+                cx.notify();
+            }
+        }))
+        .on_drag(SplitResize, |_, _, _, cx| {
+            cx.new(|_| crate::preview::NoDragView)
+        });
+    if stacked {
+        edge.w_full()
+            .h(px(6.))
+            .cursor(gpui::CursorStyle::ResizeUpDown)
+    } else {
+        edge.h_full()
+            .w(px(6.))
+            .cursor(gpui::CursorStyle::ResizeLeftRight)
+    }
+    .into_any_element()
 }
 
 impl Render for Shell {
@@ -1866,14 +1966,21 @@ impl Render for Shell {
         // The window's own width is known before layout, unlike an element's.
         // Below it the panes keep the room: places stay reachable through the
         // address bar, the palette and Jump.
-        let side = self
-            .sidebar_shown(window)
-            .then(|| sidebar::render(self, cx));
+        let sidebar_width = self.sidebar_drawn_width(window);
+        let side = (sidebar_width > 0.).then(|| sidebar::render(self, sidebar_width, cx));
         let strip = crate::tabs::render(self, cx);
         let pane_ids: Vec<PaneId> = self.panes.iter().map(|p| p.id).collect();
+        let split = pane_ids.len() == 2;
         let mut columns = Vec::new();
-        for id in pane_ids {
-            columns.push(self.render_pane(id, window, cx));
+        for (index, id) in pane_ids.into_iter().enumerate() {
+            // Split, the panes share the room as the edge between them was
+            // dragged; the second draws that edge.
+            let share = match (split, index) {
+                (false, _) => None,
+                (true, 0) => Some(self.split_share),
+                (true, _) => Some(1. - self.split_share),
+            };
+            columns.push(self.render_pane(id, share, index > 0, window, cx));
         }
         let limit = if bottom {
             self.preview_height_limit(window)
@@ -1962,6 +2069,9 @@ impl Render for Shell {
                                             .min_w_0()
                                             .min_h_0()
                                             .when(stacked, gpui::Styled::flex_col)
+                                            // The edge between split panes is
+                                            // dragged within these bounds.
+                                            .on_drag_move(cx.listener(Self::on_split_drag))
                                             .children(columns),
                                     ),
                             )
@@ -1983,5 +2093,21 @@ impl Render for Shell {
             self.pane = pane;
         }
         self.resize_hook(root, cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SPLIT_SHARE, split_share};
+
+    #[test]
+    fn the_split_follows_the_pointer_and_each_pane_keeps_its_room() {
+        // A quarter of 1000 px of room.
+        assert!((split_share(250., 1000., 240.) - 0.25).abs() < 1e-6);
+        // Past what the other pane keeps, or before what this one keeps.
+        assert!((split_share(900., 1000., 240.) - 0.76).abs() < 1e-6);
+        assert!((split_share(-50., 1000., 240.) - 0.24).abs() < 1e-6);
+        // Room for less than two panes: shared evenly.
+        assert!((split_share(100., 400., 240.) - SPLIT_SHARE).abs() < f32::EPSILON);
     }
 }

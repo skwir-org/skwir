@@ -27,6 +27,11 @@ pub struct Session {
     pub row_zoom: u32,
     /// The sidebar put away with F9 (it also gives way to a narrow window).
     pub sidebar_hidden: bool,
+    /// How wide the sidebar was dragged; 0 until then.
+    pub sidebar_width: f32,
+    /// The first split pane's share of the room, as its edge was dragged;
+    /// 0 until then.
+    pub split_share: f32,
     pub split: bool,
     /// Split panes side by side, stacked, or as the window's shape says.
     pub panes: crate::layout::Panes,
@@ -54,6 +59,8 @@ impl Shell {
             zoom: self.zoom,
             row_zoom: self.row_zoom,
             sidebar_hidden: self.sidebar_hidden,
+            sidebar_width: self.sidebar_width,
+            split_share: self.split_share,
             split: self.is_split(),
             panes: self.layout.panes,
             split_panes: self.layout.split,

@@ -1887,8 +1887,9 @@ impl Shell {
     /// The widest the panel may be in this window: everything the panes and
     /// the sidebar do not need. The window's width is known before layout.
     pub fn preview_width_limit(&self, window: &Window) -> f32 {
+        let sidebar = self.sidebar_drawn_width(window);
         let window = f32::from(window.viewport_size().width);
-        max_width(window, self.panes_across(), self.sidebar_fits(window))
+        max_width(window, self.panes_across(), sidebar)
     }
 
     /// The tallest the panel may be at the bottom: everything the stacked
@@ -1965,6 +1966,7 @@ impl Shell {
     pub fn resize_hook<E: InteractiveElement>(&self, el: E, cx: &mut Context<Self>) -> E {
         el.on_drag_move(cx.listener(Self::on_resize_drag))
             .on_drag_move(cx.listener(Self::on_resize_height_drag))
+            .on_drag_move(cx.listener(Self::on_sidebar_drag))
             .on_drag_move(cx.listener(Self::on_dock_drag))
             .on_drag_move(cx.listener(Self::on_column_drag))
             .on_mouse_up(
@@ -2461,17 +2463,17 @@ fn type_label(shell: &Shell, info: &Info) -> Option<String> {
 }
 
 /// The narrowest the panel gets, and the width a double click returns it to.
-const MIN_WIDTH: f32 = 200.;
+pub(crate) const MIN_WIDTH: f32 = 200.;
 const DEFAULT_WIDTH: f32 = 320.;
 /// The same at the bottom: the lowest it gets, and its height by default.
 const MIN_HEIGHT: f32 = 140.;
 const DEFAULT_HEIGHT: f32 = 280.;
-/// What each pane keeps when the panel is dragged wide, and the sidebar.
-const PANE_KEEP: f32 = 240.;
-const SIDEBAR_WIDTH: f32 = 200.;
+/// What each pane keeps when the panel or the sidebar is dragged wide, or
+/// its neighbour in a split is.
+pub(crate) const PANE_KEEP: f32 = 240.;
 /// What each stacked pane keeps when the panel is dragged tall: its own
 /// row and a few of its entries.
-const PANE_KEEP_HEIGHT: f32 = 160.;
+pub(crate) const PANE_KEEP_HEIGHT: f32 = 160.;
 /// The application toolbar above everything (`address::render_toolbar`).
 const TOOLBAR_HEIGHT: f32 = 42.;
 
@@ -2647,10 +2649,11 @@ pub(crate) fn sharper(covered: f32, raster: u32, asked: u32, most: u32) -> Optio
     (side > raster && side > asked).then_some(side)
 }
 
-/// The widest the panel may be: the window less what the panes and the
-/// sidebar keep. Never a fixed number: a wide window has room for a wide page.
-pub fn max_width(window: f32, panes: usize, sidebar: bool) -> f32 {
-    let kept = PANE_KEEP * panes.max(1) as f32 + if sidebar { SIDEBAR_WIDTH } else { 0. };
+/// The widest the panel may be: the window less what the panes keep and
+/// the sidebar is drawn at (`sidebar`, 0 when it is not). Never a fixed
+/// number: a wide window has room for a wide page.
+pub fn max_width(window: f32, panes: usize, sidebar: f32) -> f32 {
+    let kept = PANE_KEEP * panes.max(1) as f32 + sidebar;
     (window - kept).max(MIN_WIDTH)
 }
 
@@ -2839,12 +2842,14 @@ mod tests {
 
     #[test]
     fn the_panel_may_take_what_the_panes_do_not_need() {
-        // One pane and the sidebar keep 440 px of a wide window.
-        assert!((max_width(2560., 1, true) - 2120.).abs() < 1e-3);
+        // One pane and a 200 px sidebar keep 440 px of a wide window.
+        assert!((max_width(2560., 1, 200.) - 2120.).abs() < 1e-3);
         // Two panes keep twice a pane; without the sidebar, only the panes.
-        assert!((max_width(1600., 2, true) - 920.).abs() < 1e-3);
-        assert!((max_width(1600., 2, false) - 1120.).abs() < 1e-3);
+        assert!((max_width(1600., 2, 200.) - 920.).abs() < 1e-3);
+        assert!((max_width(1600., 2, 0.) - 1120.).abs() < 1e-3);
+        // A sidebar dragged wider takes its width from the panel.
+        assert!((max_width(1600., 2, 360.) - 760.).abs() < 1e-3);
         // A small window still leaves the panel its minimum.
-        assert!((max_width(500., 2, false) - 200.).abs() < 1e-3);
+        assert!((max_width(500., 2, 0.) - 200.).abs() < 1e-3);
     }
 }

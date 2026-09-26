@@ -25,6 +25,28 @@ use crate::theme::Theme;
 
 const GROUP_ORDER: [&str; 4] = ["places", "bookmarks", "searches", "devices"];
 const ICON_PX: f32 = 16.;
+/// The sidebar's width until its edge is dragged, and after a double click
+/// on it; the narrowest it gets.
+pub const DEFAULT_WIDTH: f32 = 200.;
+const MIN_WIDTH: f32 = 140.;
+
+/// Marker type for dragging the sidebar's right edge.
+#[derive(Clone)]
+pub struct SidebarResize;
+
+/// The widest the sidebar may be: the window less what the panes keep and,
+/// with the preview open at the right (`preview`), the panel's minimum. The
+/// panel gives way to it down to that minimum (`preview::max_width` counts
+/// the sidebar as drawn), never the panes.
+pub fn max_width(window: f32, panes: usize, preview: bool) -> f32 {
+    let kept = crate::preview::PANE_KEEP * panes.max(1) as f32
+        + if preview {
+            crate::preview::MIN_WIDTH
+        } else {
+            0.
+        };
+    (window - kept).max(MIN_WIDTH)
+}
 
 fn group_rank(g: &str) -> usize {
     GROUP_ORDER
@@ -115,7 +137,8 @@ pub fn used_fraction(free: u64, total: u64) -> f32 {
     (1. - free as f64 / total as f64).clamp(0., 1.) as f32
 }
 
-pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
+/// The sidebar, `width` px wide (`Shell::sidebar_drawn_width`).
+pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let current = shell.ui().address_shown.clone();
     let mut places = shell.app.registry.places.all();
@@ -356,9 +379,30 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
     }
     // The bar is a sibling of the scrolling column, not a child: a child
     // would scroll away with the places.
+    // Its right edge is dragged like the preview's left one; a double click
+    // gives the sidebar its default width back.
+    let edge = div()
+        .id("sidebar-resize")
+        .absolute()
+        .top_0()
+        .right_0()
+        .h_full()
+        .w(px(6.))
+        .cursor(gpui::CursorStyle::ResizeLeftRight)
+        .hover(|style| style.bg(theme.handle))
+        .on_click(cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
+            if event.click_count() == 2 {
+                this.sidebar_width = DEFAULT_WIDTH;
+                this.remember_session();
+                cx.notify();
+            }
+        }))
+        .on_drag(SidebarResize, |_, _, _, cx| {
+            cx.new(|_| crate::preview::NoDragView)
+        });
     div()
         .relative()
-        .w(px(200.))
+        .w(px(width))
         .h_full()
         .flex_none()
         .child(column)
@@ -366,6 +410,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
             "sidebar-scrollbar",
             crate::elements::scrollbar::Scrolls::Offset(shell.sidebar_scroll.clone()),
         ))
+        .child(edge)
         .into_any_element()
 }
 
@@ -435,6 +480,38 @@ impl Shell {
         !self.sidebar_hidden && self.sidebar_fits(f32::from(window.viewport_size().width))
     }
 
+    /// How wide the sidebar is drawn: as dragged, narrower while the window
+    /// is too small for that (the remembered width stays as the user left
+    /// it), and 0 when it is not drawn.
+    pub fn sidebar_drawn_width(&self, window: &gpui::Window) -> f32 {
+        if !self.sidebar_shown(window) {
+            return 0.;
+        }
+        self.sidebar_width.min(self.sidebar_width_limit(window))
+    }
+
+    fn sidebar_width_limit(&self, window: &gpui::Window) -> f32 {
+        let preview = self.preview.open && !self.layout.bottom();
+        max_width(
+            f32::from(window.viewport_size().width),
+            self.panes_across(),
+            preview,
+        )
+    }
+
+    /// The sidebar's edge follows the pointer: the sidebar starts at the
+    /// window's left edge, so the pointer's x is its width.
+    pub fn on_sidebar_drag(
+        &mut self,
+        ev: &gpui::DragMoveEvent<SidebarResize>,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let x = f32::from(ev.event.position.x);
+        self.sidebar_width = x.clamp(MIN_WIDTH, self.sidebar_width_limit(window));
+        cx.notify();
+    }
+
     /// `ui.toggle_sidebar` (F9): put the sidebar away, or bring it back. A
     /// window too narrow for it says so rather than seeming to ignore the key.
     pub fn toggle_sidebar(&mut self, window: &gpui::Window, cx: &mut Context<Self>) {
@@ -469,6 +546,16 @@ mod tests {
     use super::{drop_target, group_title, same_place, used_fraction};
     use bibli_core::Location;
     use std::path::PathBuf;
+
+    #[test]
+    fn the_sidebar_may_take_what_the_panes_and_the_preview_do_not_need() {
+        // One pane keeps 240 px; the rest of a 1280 px window may go.
+        assert!((super::max_width(1280., 1, false) - 1040.).abs() < 1e-3);
+        // The preview at the right keeps its own minimum beside it.
+        assert!((super::max_width(1280., 2, true) - 600.).abs() < 1e-3);
+        // A window too small still draws the sidebar at its narrowest.
+        assert!((super::max_width(400., 2, true) - super::MIN_WIDTH).abs() < 1e-3);
+    }
 
     #[test]
     fn a_dropped_place_lands_in_the_gap_the_line_marks() {
