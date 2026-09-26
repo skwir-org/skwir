@@ -282,6 +282,22 @@ impl Shell {
             cx.set_global(Theme::resolve(&this.app, window.appearance()));
             cx.notify();
         }));
+        // The keyboard is never left with nothing to act on. When what had
+        // focus leaves the window (a tab or pane closed, a placeholder or a
+        // toolbar variant replaced, a dialog giving focus back to something
+        // gone), GPUI routes keys from above the shell's root, where no
+        // binding and no action handler is: every key, Ctrl+W included,
+        // would do nothing until a click. The pane drawn as active takes
+        // it. Deferred: GPUI reports the loss while drawing, when moving
+        // focus cannot ask for the frame that shows it.
+        subs.push(cx.on_focus_lost(window, |_, window, cx| {
+            cx.defer_in(window, |this, window, cx| {
+                if let Some(focus) = this.drawn_focus() {
+                    window.focus(&focus);
+                    cx.notify();
+                }
+            });
+        }));
 
         // Wake-up, not polling: the core signals, the shell applies what it
         // sent, GPUI re-renders. Applying is done here, not left to the draw

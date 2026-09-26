@@ -235,6 +235,18 @@ impl Shell {
         cx.notify();
     }
 
+    /// The focus of the pane drawn as active: the one element sure to be
+    /// in the window, whatever tab is held.
+    pub(crate) fn drawn_focus(&self) -> Option<gpui::FocusHandle> {
+        let id = self.drawn_pane();
+        self.presented
+            .iter()
+            .flatten()
+            .chain(&self.panes)
+            .find(|p| p.id == id)
+            .map(|p| p.focus.clone())
+    }
+
     /// The pane drawn as active: the tab left's while it is held.
     pub(crate) fn drawn_pane(&self) -> PaneId {
         match &self.presented {

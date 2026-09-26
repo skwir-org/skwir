@@ -278,7 +278,11 @@ current source before assuming a planned crate, command, or API exists.
   reaches the same through the chip's menu.
 - **Popups own the keyboard.** A menu or popover takes focus when it opens
   and returns it when it closes, with its own key context (see `menu.rs`):
-  otherwise keys act on a selection hidden behind it.
+  otherwise keys act on a selection hidden behind it. Focus never
+  dangles: when the focused element leaves the window, GPUI routes keys
+  from above the shell's root, where nothing is bound, so the shell's
+  focus-lost listener gives the keyboard to the pane drawn as active
+  (`Shell::drawn_focus`). Do not refocus by hand after closing something.
 - **List columns** give way by layout alone: the name and the detail columns
   sit in one wrapping flex line one row tall (`views/list.rs::line`), so the
   columns drop whole, last first, and the name — the only child that grows —
