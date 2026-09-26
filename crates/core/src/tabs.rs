@@ -22,6 +22,10 @@ use crate::workspace::{PaneId, Selection, TabId};
 /// Application data: the tabs the window showed when it closed.
 pub const LAST_TABS: &str = "core.last_tabs";
 
+/// Whether tabs not shown let go of their listings (the default), or all
+/// stay listed and current.
+pub const SLEEP_KEY: &str = "core.sleep_hidden_tabs";
+
 /// How many closed tabs can be reopened.
 const CLOSED_KEPT: usize = 16;
 
@@ -117,6 +121,7 @@ impl App {
     /// (`hold_tabs`), the panes left stay open until `settle_tabs`, so it
     /// can keep drawing them until the tab shown is ready.
     pub fn select_tab(&self, tab: TabId) -> anyhow::Result<()> {
+        let sleep = self.tabs_sleep();
         let released: Vec<_> = {
             let mut ws = self.workspace.write();
             if ws.active_tab().id == tab {
@@ -124,7 +129,10 @@ impl App {
             } else {
                 let left = ws.active_tab().panes.clone();
                 anyhow::ensure!(ws.set_active_tab(tab), "no such tab");
-                if ws.holding {
+                if !sleep {
+                    // Every tab stays listed: nothing to let go of.
+                    Vec::new()
+                } else if ws.holding {
                     ws.leaving.extend(left);
                     Vec::new()
                 } else {
@@ -152,17 +160,79 @@ impl App {
     /// The tabs left are no longer drawn: suspend their panes, those of the
     /// tab shown excepted (it may be the one left, shown again).
     pub fn settle_tabs(&self) {
+        let sleep = self.tabs_sleep();
         let released: Vec<_> = {
             let mut ws = self.workspace.write();
             let shown = ws.active_tab().panes.clone();
             let leaving = std::mem::take(&mut ws.leaving);
             leaving
                 .into_iter()
-                .filter(|id| !shown.contains(id))
+                .filter(|id| sleep && !shown.contains(id))
                 .filter_map(|id| ws.pane_mut(id)?.suspend())
                 .collect()
         };
         drop(released);
+    }
+
+    /// Whether tabs not shown let go of their listings (`SLEEP_KEY`, on
+    /// by default): read when a tab is left, so a change applies at once.
+    pub fn tabs_sleep(&self) -> bool {
+        self.settings.get::<bool>(SLEEP_KEY).unwrap_or(true)
+    }
+
+    /// Open the tabs at startup: the shown one first, and, when tabs do not
+    /// sleep, every other one after it.
+    pub fn resume_tabs(&self) -> anyhow::Result<()> {
+        let shown = self.resume_shown();
+        if !self.tabs_sleep() {
+            self.apply_tabs_sleep();
+        }
+        shown
+    }
+
+    /// Bring the tabs in line with `SLEEP_KEY` after it changed: every tab
+    /// listed again when they no longer sleep, or those not shown (nor still
+    /// drawn, while a UI holds one) suspended when they do.
+    pub fn apply_tabs_sleep(&self) {
+        let sleep = self.tabs_sleep();
+        if sleep {
+            let released: Vec<_> = {
+                let mut ws = self.workspace.write();
+                let keep: Vec<PaneId> = ws
+                    .active_tab()
+                    .panes
+                    .iter()
+                    .chain(ws.leaving.iter())
+                    .copied()
+                    .collect();
+                let asleep: Vec<PaneId> = ws
+                    .panes()
+                    .iter()
+                    .map(|p| p.id)
+                    .filter(|id| !keep.contains(id))
+                    .collect();
+                asleep
+                    .into_iter()
+                    .filter_map(|id| ws.pane_mut(id)?.suspend())
+                    .collect()
+            };
+            drop(released);
+        } else {
+            let dormant: Vec<PaneId> = self
+                .workspace
+                .read()
+                .panes()
+                .iter()
+                .filter(|p| p.is_dormant())
+                .map(|p| p.id)
+                .collect();
+            for pane in dormant {
+                if let Err(error) = self.resume(pane) {
+                    tracing::warn!("cannot list a tab again: {error:#}");
+                }
+            }
+        }
+        self.wake();
     }
 
     /// Open the locations of the shown tab's dormant panes: at startup, when
@@ -236,7 +306,10 @@ impl App {
         };
         if show {
             self.select_tab(tab)?;
+        } else if self.tabs_sleep() {
+            self.wake();
         } else {
+            self.resume(pane)?;
             self.wake();
         }
         Ok((tab, pane))
@@ -577,6 +650,16 @@ pub(crate) fn register(app: &App) {
         "The tabs shown when the window was last closed",
         toml::Value::Table(toml::map::Map::new()),
     ));
+
+    app.settings.declare(
+        SettingSpec::toggle(
+            SLEEP_KEY,
+            "Free the memory of hidden tabs",
+            "A tab you are not looking at lets go of its list of files and lists it again when shown. Turn this off to keep every tab listed and up to date, which uses more memory and background work.",
+            true,
+        )
+        .section("Tabs"),
+    );
 
     c.register::<NewTabArgs, _>(
         "core",

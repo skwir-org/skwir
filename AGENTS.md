@@ -231,7 +231,9 @@ current source before assuming a planned crate, command, or API exists.
   `Shell::place_pane`), the window keeps drawing the tab left, for at most
   `tabs::HOLD`; the core keeps it open until `App::settle_tabs`. A user
   command draws the tab shown first (`Shell::present`), so nothing acts on
-  a tab not drawn. The shell never
+  a tab not drawn. `core.sleep_hidden_tabs` (on by default) turns
+  dormancy off: every tab stays listed (`App::apply_tabs_sleep`). The
+  shell never
   creates or drops a `PaneUi` itself: it changes the workspace and
   `Shell::sync_tabs` follows its revision, so `Shell::panes` is always the
   panes on screen (`is_split`, `other_pane` rely on it), hidden panes wait

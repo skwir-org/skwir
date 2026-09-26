@@ -422,7 +422,7 @@ impl Shell {
         }
         // Tabs restored from the last window open the one shown, now that
         // the listing has a UI to wake.
-        if let Err(e) = shell.app.resume_shown() {
+        if let Err(e) = shell.app.resume_tabs() {
             shell.set_status(format!("{e:#}"), true, cx);
         }
         shell.restore_session(initial_given, window, cx);

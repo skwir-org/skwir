@@ -175,3 +175,17 @@ worker, as on any navigation.
 Checked in the real app: a list and a grid scrolled to half a row, shown
 again after another tab, give screenshots identical to the pixel (0
 differing pixels for each).
+
+## Addendum: dormancy can be turned off (2026-09-26)
+
+"Free the memory of hidden tabs" (`core.sleep_hidden_tabs`, General,
+on by default) turns dormancy off for people who prefer instant switches
+to memory: every tab then stays listed and kept current by its watcher,
+tabs opened behind are listed at once, and restored tabs are all listed
+at startup, the shown one first. The change applies at once
+(`App::apply_tabs_sleep`, run by `settings.apply`): turned off, every
+dormant tab lists again with its selection; turned on, every tab not shown
+lets go. The budget above holds for the default only; with the setting
+off, memory grows with what the tabs list, as ten windows would. Measured
+with it off: a switch between two listed tabs of 2 000 entries is drawn
+0.02 to 0.04 ms after it is asked for.

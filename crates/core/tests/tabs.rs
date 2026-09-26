@@ -383,3 +383,67 @@ fn a_held_tab_stays_open_until_settled() {
     run(&app, "tab.select", serde_json::json!({ "index": 0 }));
     assert!(is_dormant(&app, second));
 }
+
+#[test]
+fn with_sleep_off_every_tab_stays_listed() {
+    let dir = home_tempdir();
+    tree(dir.path());
+    let app = app(dir.path());
+    let set = |on: bool| {
+        app.settings
+            .set(bibli_core::tabs::SLEEP_KEY, toml::Value::Boolean(on));
+        app.apply_tabs_sleep();
+    };
+    set(false);
+    navigate(&app, dir.path());
+    let first = active(&app);
+    select(&app, &["a file.txt"]);
+    run(&app, "tab.new", serde_json::json!({}));
+    let second = active(&app);
+    assert!(!is_dormant(&app, first), "the tab left stays listed");
+    run(
+        &app,
+        "tab.new",
+        serde_json::json!({ "location": dir.path().join("second folder"), "show": false }),
+    );
+    let behind = app.tab_list()[2].panes[0].id;
+    assert!(
+        !is_dormant(&app, behind),
+        "a tab opened behind is listed at once"
+    );
+    assert!(app.pump_until_complete(behind, WAIT));
+
+    // Turned on: the tabs not shown let go, the one shown stays.
+    set(true);
+    assert!(is_dormant(&app, first) && is_dormant(&app, behind));
+    assert!(!is_dormant(&app, second));
+
+    // Turned off again: every tab is listed again, its selection back.
+    set(false);
+    assert!(!is_dormant(&app, first) && !is_dormant(&app, behind));
+    assert!(app.pump_until_complete(first, WAIT));
+    assert_eq!(selected_names(&app, first), ["a file.txt"]);
+}
+
+#[test]
+fn the_settings_dialog_path_applies_the_change() {
+    let dir = home_tempdir();
+    tree(dir.path());
+    let app = app(dir.path());
+    navigate(&app, dir.path());
+    let first = active(&app);
+    run(&app, "tab.new", serde_json::json!({}));
+    assert!(is_dormant(&app, first));
+    run(
+        &app,
+        "settings.apply",
+        serde_json::json!({ "changes": { bibli_core::tabs::SLEEP_KEY: "false" } }),
+    );
+    // The save runs on a worker; the tab left is listed again after it.
+    let deadline = std::time::Instant::now() + WAIT;
+    while is_dormant(&app, first) {
+        assert!(std::time::Instant::now() < deadline, "applied");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(app.pump_until_complete(first, WAIT));
+}

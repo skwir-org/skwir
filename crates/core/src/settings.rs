@@ -345,6 +345,9 @@ pub(crate) fn register(app: &crate::App) {
                     let result = app.settings.apply(&args.changes);
                     guard.state = Some(match result {
                         Ok(keys) => {
+                            if keys.iter().any(|key| key == crate::tabs::SLEEP_KEY) {
+                                app.apply_tabs_sleep();
+                            }
                             app.plugins.settings_changed(&keys, &app);
                             SaveState::Saved
                         }

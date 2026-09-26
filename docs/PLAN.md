@@ -177,6 +177,9 @@ Switching tabs no longer draws a blank or half-listed pane (ADR-018
 addendum): the tab left stays drawn until the tab shown is listed, has its
 selection, scroll and first rows' metadata back, for at most 150 ms; every
 measured switch (up to 100 000 entries, 89 ms) was ready within it.
+A tab shown again is scrolled to the pixel it was. "Free the memory of
+hidden tabs" (`core.sleep_hidden_tabs`, on by default) can keep every tab
+listed instead, for instant switches at the cost of memory.
 Open: `listing::pending_opens_report_errors_asynchronously_and_can_be_replaced`
 is flaky ("cancelled open must not publish late events"): it failed eight
 runs in a row at the parent commit and on this work, then passed in later
