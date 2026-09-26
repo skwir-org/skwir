@@ -179,9 +179,15 @@ impl Shell {
 
     /// Sort this pane by `key` through the core command (same key again flips the direction).
     pub fn sort_by(&mut self, key: SortKey, cx: &mut Context<Self>) {
+        self.sort(Some(key), None, cx);
+    }
+
+    /// The core `sort` command for this pane: a key, a direction, or both.
+    /// A key without a direction flips it when it is the current key.
+    pub fn sort(&mut self, key: Option<SortKey>, ascending: Option<bool>, cx: &mut Context<Self>) {
         self.dispatch_core(
             "sort",
-            serde_json::json!({ "key": key, "pane": self.pane }),
+            serde_json::json!({ "key": key, "ascending": ascending, "pane": self.pane }),
             cx,
         );
     }

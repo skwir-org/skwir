@@ -55,7 +55,9 @@ impl PopoverAnchor {
 
 /// Defer until the anchors have prepainted in this same frame, then lay out
 /// what `panel` gives under the first that has bounds. No coordinates
-/// survive this render or feed back into view state.
+/// survive this render or feed back into view state. The panel gets the
+/// height left under the anchor: one that scrolls (`toolbar::popup_panel`)
+/// shrinks to it instead of running past the window's foot.
 fn below(
     anchors: &[PopoverAnchor],
     priority: usize,
@@ -66,11 +68,19 @@ fn below(
         canvas(
             move |_, window, cx| {
                 let bounds = anchors.iter().find_map(|a| a.get())?;
+                let (gap, margin) = (px(6.), px(8.));
+                let room = window.viewport_size().height - bounds.bottom() - gap - margin;
                 let mut popup = gpui::anchored()
                     .position(bounds.bottom_left())
-                    .offset(gpui::point(px(0.), px(6.)))
-                    .snap_to_window_with_margin(px(8.))
-                    .child(panel()?)
+                    .offset(gpui::point(px(0.), gap))
+                    .snap_to_window_with_margin(margin)
+                    .child(
+                        gpui::div()
+                            .flex()
+                            .flex_col()
+                            .max_h(room.max(px(120.)))
+                            .child(panel()?),
+                    )
                     .into_any_element();
                 popup.layout_as_root(
                     size(AvailableSpace::MaxContent, AvailableSpace::MaxContent),

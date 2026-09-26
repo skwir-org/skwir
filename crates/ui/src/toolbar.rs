@@ -81,7 +81,8 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "bookmark",
         "bookmark-filled",
         "folder",
-        "tab-new"
+        "tab-new",
+        "terminal",
     )
 }
 
@@ -346,6 +347,8 @@ pub fn popup_panel(
         .tab_group()
         .tab_index(1)
         .w(px(264.))
+        .min_h_0()
+        .overflow_y_scroll()
         .p_2()
         .flex()
         .flex_col()
@@ -370,4 +373,24 @@ pub fn popup_panel(
         .on_mouse_down_out(cx.listener(move |this, _, window, cx| {
             this.run(close, serde_json::json!({"close":true}), window, cx);
         }))
+}
+
+#[cfg(test)]
+mod tests {
+    /// An icon added to the assets but not to `asset`'s list draws nothing,
+    /// silently: every bundled file must resolve.
+    #[test]
+    fn every_bundled_icon_resolves() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/toolbar");
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|e| e == "svg") {
+                let name = path.file_name().unwrap().to_str().unwrap();
+                assert!(
+                    super::asset(&format!("toolbar/{name}")).is_some(),
+                    "{name} is not in toolbar::asset"
+                );
+            }
+        }
+    }
 }

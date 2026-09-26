@@ -1339,12 +1339,14 @@ impl Shell {
             "context_menu" => self.open_context_menu_here(window, cx),
             "open_in_tab" => self.open_selection_in_tabs(window, cx),
             "sort" => {
+                let ascending = args.get("ascending").and_then(serde_json::Value::as_bool);
                 let key = match arg("key").as_deref() {
-                    Some("size") => SortKey::Size,
-                    Some("modified") => SortKey::Modified,
-                    _ => SortKey::Name,
+                    None if ascending.is_some() => None,
+                    Some("size") => Some(SortKey::Size),
+                    Some("modified") => Some(SortKey::Modified),
+                    _ => Some(SortKey::Name),
                 };
-                self.sort_by(key, cx);
+                self.sort(key, ascending, cx);
             }
             "view" => {
                 let id = arg("id").unwrap_or_else(|| view::LIST.into());

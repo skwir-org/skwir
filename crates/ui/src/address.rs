@@ -19,7 +19,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let kind = match args.get("kind").and_then(serde_json::Value::as_str) {
-            Some("sort") => SORT,
+            Some("view_options") => VIEW_OPTIONS,
             _ => MORE,
         };
         let close = args.get("close").and_then(serde_json::Value::as_bool) == Some(true);
@@ -35,7 +35,7 @@ impl Shell {
     }
 }
 
-const SORT: &str = "sort";
+const VIEW_OPTIONS: &str = "view_options";
 const MORE: &str = "more";
 
 /// A labelled button in wide toolbars, an icon in narrower ones.
@@ -63,7 +63,7 @@ fn view_button(shell: &Shell, spec: &bibli_core::registry::ViewSpec, prefix: &st
     .active(shell.ui().view_id == &*spec.id)
 }
 
-/// The application row. Left: how the folder is shown (views, sorting) and
+/// The application row. Left: how the folder is shown (views, their options) and
 /// what can be added to it. Right: finding things, the two panels, and the
 /// rest behind More. Navigation belongs to each pane's own row.
 ///
@@ -103,11 +103,16 @@ fn app_row(
             .child(toolbar::separator(&theme))
             .child(
                 labelled(
-                    Button::new("sort-menu", "sort", "Sort and display", "ui.toolbar_menu")
-                        .args(serde_json::json!({"kind": SORT}))
-                        .anchor_if(&anchors[0], true)
-                        .active(open == Some(SORT)),
-                    "Sort",
+                    Button::new(
+                        "view-options",
+                        "sliders",
+                        "Sort, hidden files and zoom",
+                        "ui.toolbar_menu",
+                    )
+                    .args(serde_json::json!({"kind": VIEW_OPTIONS}))
+                    .anchor_if(&anchors[0], true)
+                    .active(open == Some(VIEW_OPTIONS)),
+                    "View",
                     mode,
                 )
                 .render(shell, cx),
@@ -168,36 +173,67 @@ fn menu_item(button: Button, label: impl Into<gpui::SharedString>) -> Button {
     button.label(label).menu()
 }
 
-/// The Sort and display menu, in its titled groups. The narrowest toolbar,
-/// which has no Sort button, puts all of it in More.
-fn sort_groups(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
+/// The View menu, in its titled groups: how the active pane shows
+/// its folder, never how the window is arranged (that is in More, under
+/// Layout). The narrowest toolbar, which has no View button, puts
+/// all of it in More.
+fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
+    use bibli_core::SortKey;
     let spec = shell.sort_spec();
     let order: Vec<Button> = [
-        ("name", "Name", bibli_core::SortKey::Name),
-        ("size", "Size", bibli_core::SortKey::Size),
-        ("modified", "Date modified", bibli_core::SortKey::Modified),
+        ("name", "Name", SortKey::Name),
+        ("size", "Size", SortKey::Size),
+        ("modified", "Date modified", SortKey::Modified),
     ]
     .into_iter()
     .map(|(key, label, sort_key)| {
         let current = spec.key == sort_key;
-        let arrow = match (current, spec.ascending) {
-            (false, _) => "",
-            (true, true) => "  ↑",
-            (true, false) => "  ↓",
+        // The current key again keeps its direction: the next group says it.
+        let args = if current {
+            serde_json::json!({"key": key, "ascending": spec.ascending})
+        } else {
+            serde_json::json!({"key": key})
         };
         menu_item(
             Button::new(
                 format!("sort-{key}"),
                 if current { "check" } else { "" },
-                "Choose again to reverse the order",
+                format!("Sort by {}", label.to_lowercase()),
                 "ui.sort",
             )
-            .args(serde_json::json!({"key": key}))
+            .args(args)
             .active(current),
-            format!("{label}{arrow}"),
+            label,
         )
     })
     .collect();
+    // Each key names its directions in its own words.
+    let (up, down) = match spec.key {
+        SortKey::Name => ("A to Z", "Z to A"),
+        SortKey::Size => ("Smallest first", "Largest first"),
+        SortKey::Modified => ("Oldest first", "Newest first"),
+    };
+    let direction: Vec<Button> = [(true, up), (false, down)]
+        .into_iter()
+        .map(|(ascending, label)| {
+            let current = spec.ascending == ascending;
+            menu_item(
+                Button::new(
+                    if ascending {
+                        "sort-ascending"
+                    } else {
+                        "sort-descending"
+                    },
+                    if current { "check" } else { "" },
+                    label,
+                    "ui.sort",
+                )
+                .args(serde_json::json!({"ascending": ascending}))
+                .active(current),
+                label,
+            )
+        })
+        .collect();
     let mut show = vec![menu_item(
         Button::new(
             "menu-hidden",
@@ -208,26 +244,19 @@ fn sort_groups(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
         .active(spec.show_hidden),
         "Hidden files",
     )];
-    show.push(menu_item(
-        Button::new(
-            "menu-sidebar",
-            "sidebar",
-            "Show the sidebar",
-            "ui.toggle_sidebar",
-        )
-        .active(!shell.sidebar_hidden),
-        "Sidebar",
-    ));
-    show.push(menu_item(
-        Button::new(
-            "menu-grid-fill",
-            "crop",
-            "Crop thumbnails in the grid to fill their box",
-            "ui.grid_fill",
-        )
-        .active(shell.prefs.grid_fill),
-        "Fill thumbnails",
-    ));
+    // Only the grid draws thumbnails in a box.
+    if shell.ui().view_id == crate::view::GRID {
+        show.push(menu_item(
+            Button::new(
+                "menu-grid-fill",
+                "crop",
+                "Crop thumbnails in the grid to fill their box",
+                "ui.grid_fill",
+            )
+            .active(shell.prefs.grid_fill),
+            "Fill thumbnails",
+        ));
+    }
     let mut size = Vec::new();
     for (dir, icon, label, tip) in [
         ("in", "plus", "Larger", "Larger (or Ctrl and the wheel)"),
@@ -242,10 +271,60 @@ fn sort_groups(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
     }
     vec![
         ("Sort by", order),
+        ("Order", direction),
         ("Show", show),
-        ("Icon size", size),
-        ("Split panes", layout_items(shell, "panes")),
-        ("Preview", layout_items(shell, "preview")),
+        ("Zoom", size),
+    ]
+}
+
+/// More's Layout groups: the window's panels, then where the split's panes
+/// and the preview go. Split and Preview are toggled from the toolbar
+/// unless `everything` (the narrowest variant, which dropped them).
+fn layout_groups(shell: &Shell, everything: bool) -> Vec<(&'static str, Vec<Button>)> {
+    let (split_icon, split_tip) = shell.layout.split_button();
+    let mut panels = vec![menu_item(
+        Button::new(
+            "menu-sidebar",
+            "sidebar",
+            "Show the sidebar",
+            "ui.toggle_sidebar",
+        )
+        .active(!shell.sidebar_hidden),
+        "Sidebar",
+    )];
+    if everything {
+        panels.push(menu_item(
+            Button::new("menu-split", split_icon, split_tip, "ui.split").active(shell.is_split()),
+            "Split panes",
+        ));
+        panels.push(menu_item(
+            Button::new(
+                "menu-preview",
+                shell.layout.preview_icon(),
+                "Preview panel",
+                "ui.toggle_preview",
+            )
+            .active(shell.preview.open),
+            "Preview panel",
+        ));
+    }
+    panels.push(menu_item(
+        Button::new("menu-timeline", "calendar", "Timeline", "ui.timeline")
+            .active(shell.timeline.open),
+        "Timeline",
+    ));
+    // The terminal is a plugin's: without it, nothing says it exists.
+    if shell.app.terminals.provider().is_some() {
+        panels.push(menu_item(
+            Button::new("menu-terminal", "terminal", "Terminal", "ui.terminal")
+                .active(shell.terminal.open),
+            "Terminal",
+        ));
+    }
+    vec![
+        ("Layout", panels),
+        ("Split direction", layout_items(shell, "panes")),
+        ("Preview position", layout_items(shell, "preview")),
     ]
 }
 
@@ -322,8 +401,9 @@ fn group_title(title: &'static str, theme: &Theme) -> gpui::Div {
 }
 
 /// The More menu. It holds what has no button in the chosen toolbar variant:
-/// always New tab, Timeline, the palette and Settings; in the narrowest variant also
-/// the views, panels and folder tools that variant dropped.
+/// always the window's layout, New tab, the palette and Settings; in the
+/// narrowest variant also the views, the View menu and the folder tools that
+/// variant dropped.
 fn more_panel(
     shell: &Shell,
     popup: &toolbar::Popup,
@@ -332,42 +412,21 @@ fn more_panel(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let mut panel = toolbar::popup_panel(popup, "ui.toolbar_menu", theme, cx);
-    let group = |panel: gpui::Stateful<gpui::Div>, title: &'static str| {
-        panel.child(group_title(title, theme))
-    };
-    let (split_icon, split_tip) = shell.layout.split_button();
+    let mut groups = Vec::new();
     if everything {
-        panel = group(panel, "View");
-        for spec in shell.available_views() {
-            panel = panel.child(
+        let views = shell
+            .available_views()
+            .into_iter()
+            .map(|spec| {
                 view_button(shell, &spec, "menu-view")
                     .label(spec.title.clone())
                     .menu()
-                    .render(shell, cx),
-            );
-        }
-        for (button, label) in [
-            (
-                Button::new("menu-split", split_icon, split_tip, "ui.split")
-                    .active(shell.is_split()),
-                "Split panes",
-            ),
-            (
-                Button::new(
-                    "menu-preview",
-                    shell.layout.preview_icon(),
-                    "Preview panel",
-                    "ui.toggle_preview",
-                )
-                .active(shell.preview.open),
-                "Preview panel",
-            ),
-        ] {
-            panel = panel.child(menu_item(button, label).render(shell, cx));
-        }
-        panel = group(panel, "Folder");
-        panel = panel.child(
-            menu_item(
+            })
+            .collect();
+        groups.push(("View", views));
+        groups.push((
+            "Folder",
+            vec![menu_item(
                 Button::new(
                     "menu-new-folder",
                     "folder-plus",
@@ -375,56 +434,46 @@ fn more_panel(
                     "ui.mkdir_prompt",
                 ),
                 "New folder…",
-            )
-            .render(shell, cx),
-        );
-        // Without the Sort button, its whole menu is here.
-        for (title, items) in sort_groups(shell) {
-            panel = group(panel, title);
-            for item in items {
-                panel = panel.child(item.render(shell, cx));
-            }
-        }
-        panel = group(panel, "bibli");
+            )],
+        ));
+        // Without the View button, its whole menu is here.
+        groups.extend(view_options(shell));
     }
-    for (button, label) in [
-        (
-            Button::new("menu-new-tab", "tab-new", "New tab", "tab.new"),
-            "New tab",
-        ),
-        (
-            Button::new("menu-timeline", "calendar", "Timeline", "ui.timeline")
-                .active(shell.timeline.open),
-            "Timeline",
-        ),
-        (
-            Button::new("menu-terminal", "terminal", "Terminal", "ui.terminal")
-                .active(shell.terminal.open),
-            "Terminal",
-        ),
-        (
-            Button::new("menu-palette", "command", "Command palette", "ui.palette"),
-            "Command palette…",
-        ),
-        (
-            Button::new(
-                "menu-shortcuts",
-                "keyboard",
-                "Shortcuts here",
-                "ui.shortcuts",
+    groups.extend(layout_groups(shell, everything));
+    groups.push((
+        "bibli",
+        [
+            (
+                Button::new("menu-new-tab", "tab-new", "New tab", "tab.new"),
+                "New tab",
             ),
-            "Shortcuts…",
-        ),
-        (
-            Button::new("menu-settings", "settings", "Settings", "ui.settings"),
-            "Settings…",
-        ),
-    ] {
-        // The terminal is a plugin's: without it, nothing says it exists.
-        if label == "Terminal" && shell.app.terminals.provider().is_none() {
-            continue;
+            (
+                Button::new("menu-palette", "command", "Command palette", "ui.palette"),
+                "Command palette…",
+            ),
+            (
+                Button::new(
+                    "menu-shortcuts",
+                    "keyboard",
+                    "Shortcuts here",
+                    "ui.shortcuts",
+                ),
+                "Shortcuts…",
+            ),
+            (
+                Button::new("menu-settings", "settings", "Settings", "ui.settings"),
+                "Settings…",
+            ),
+        ]
+        .into_iter()
+        .map(|(button, label)| menu_item(button, label))
+        .collect(),
+    ));
+    for (title, items) in groups {
+        panel = panel.child(group_title(title, theme));
+        for item in items {
+            panel = panel.child(item.render(shell, cx));
         }
-        panel = panel.child(menu_item(button, label).render(shell, cx));
     }
     panel.into_any_element()
 }
@@ -446,9 +495,9 @@ pub fn render_toolbar(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
     let Some(popup) = &shell.toolbar_menu else {
         return root.into_any_element();
     };
-    if popup.kind == SORT {
+    if popup.kind == VIEW_OPTIONS {
         let mut panel = toolbar::popup_panel(popup, "ui.toolbar_menu", &theme, cx);
-        for (title, items) in sort_groups(shell) {
+        for (title, items) in view_options(shell) {
             panel = panel.child(group_title(title, &theme));
             for item in items {
                 panel = panel.child(item.render(shell, cx));

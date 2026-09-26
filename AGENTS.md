@@ -98,12 +98,16 @@ current source before assuming a planned crate, command, or API exists.
   animation allowed is a bounded entrance (under 200 ms) that ends by itself;
   the player's play/pause flash (`media::FLASH_MS`) is the one longer one.
 - **Application row and pane row.** The application toolbar holds what is
-  about the window: views, the Sort and display menu, New folder, Search, the
+  about the window: views, the View menu, New folder, Search, the
   Split and Preview toggles (in the order of what they open: the middle of
   the window, then its edge), and More (everything else, so the
-  narrowest variant loses nothing). Split panes sit side by side or stacked,
+  narrowest variant loses nothing). View is only how the active
+  pane shows its folder (sort, direction, hidden files, zoom, and in the
+  grid Fill thumbnails); how the window is arranged is More's Layout
+  groups (the sidebar, the timeline, the terminal, where the split and
+  the preview go). Split panes sit side by side or stacked,
   and the preview is at the right or the bottom (`layout.rs`): each a choice
-  in Sort and display (`ui.layout`) whose default, Automatic, follows the
+  in More's Layout (`ui.layout`) whose default, Automatic, follows the
   window's shape, decided in `Shell::render` from the window's size like the
   sidebar. The toggles' icons show the arrangement they open; Shift+F3
   splits the other way for that split only. Navigation is per pane: Back, Forward, Up and the
@@ -190,7 +194,7 @@ current source before assuming a planned crate, command, or API exists.
   an ellipsis, not an overlap. A name too long keeps both ends
   (`text_ellipsis_middle`, vendored patch 0005): the extension tells files
   apart. "Fill thumbnails"
-  (`ui.grid_fill`, in Sort and display) crops pictures to the box. Ctrl+wheel
+  (`ui.grid_fill`, in the View menu) crops pictures to the box. Ctrl+wheel
   zooms through a capture-phase listener over the view (`views::zoom_wheel`,
   over the grid, the list and the columns, each with a size of its own), which
   keeps the first visible item in place; the keys follow the cursor instead. A wheel listener

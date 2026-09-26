@@ -57,6 +57,8 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.sort", r#"{"key":"name"}"#, "Sort by name"),
     ("ui.sort", r#"{"key":"size"}"#, "Sort by size"),
     ("ui.sort", r#"{"key":"modified"}"#, "Sort by date modified"),
+    ("ui.sort", r#"{"ascending":true}"#, "Sort ascending"),
+    ("ui.sort", r#"{"ascending":false}"#, "Sort descending"),
     ("ui.grid_fill", "{}", "Toggle filled thumbnails"),
     ("ui.full_width", "{}", "Toggle full-width reading"),
     ("ui.zoom", r#"{"dir":"in"}"#, "Zoom in"),
