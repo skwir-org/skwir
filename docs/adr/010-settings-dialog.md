@@ -102,7 +102,10 @@ dialog must not learn a key's meaning to draw it.
   action (`record_action`, a command run with the record's id, such as a
   tile server's Test), Edit and Remove; one record edited at a time, in
   place, its draft kept apart from the rows the dialog rebuilds; Enter
-  saves, Escape cancels. A list is data the user built: it has no Revert,
+  saves, Escape cancels. The order is the user's: a record is dragged by
+  its handle into the gap between two others (a line marks it, as in the
+  sidebar), or moved with Alt+Up and Alt+Down while one of its buttons
+  has the keyboard; either saves the list in its new order. A list is data the user built: it has no Revert,
   and Reset all leaves it alone.
 - **An owner's check** (`SettingSpec::validate_with`) runs after the
   kind's wherever a value is validated, in the dialog and in the save: what

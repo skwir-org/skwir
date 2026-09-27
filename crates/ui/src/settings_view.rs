@@ -1024,6 +1024,7 @@ impl Render for SettingsView {
         let theme = cx.global::<Theme>().clone();
         self.stops.clear();
         self.row_items.clear();
+        self.record_stops.clear();
         let search_focus = self.search.focus_handle(cx);
         self.stop(&search_focus, None, None);
         let nav = self.nav.clone();

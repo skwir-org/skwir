@@ -364,6 +364,20 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         r#"{"delta":1}"#,
         Some("SettingsNav"),
     ),
+    // A record of a list moves with its buttons' focus, as lines move in
+    // an editor.
+    (
+        "alt-up",
+        "ui.settings_move",
+        r#"{"delta":-1}"#,
+        Some("SettingRecord"),
+    ),
+    (
+        "alt-down",
+        "ui.settings_move",
+        r#"{"delta":1}"#,
+        Some("SettingRecord"),
+    ),
     (
         "left",
         "ui.settings_adjust",
@@ -535,7 +549,9 @@ pub fn context_label(context: &str) -> String {
             "ToolbarButton" | "ToolbarPopup" => place = "Toolbars",
             "ContextMenu" => place = "Context menu",
             "Shortcuts" => place = "Shortcut overview",
-            "Settings" | "SettingsNav" | "SettingControl" | "SettingNumber" => place = "Settings",
+            "Settings" | "SettingsNav" | "SettingControl" | "SettingNumber" | "SettingRecord" => {
+                place = "Settings";
+            }
             other => conditions.push(condition(other)),
         }
     }

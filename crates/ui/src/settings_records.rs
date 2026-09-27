@@ -67,6 +67,26 @@ pub(crate) struct KeyringDone {
     result: Result<String, String>,
 }
 
+/// A record being dragged to another place in its list.
+#[derive(Clone)]
+pub(crate) struct RecordDrag {
+    key: String,
+    /// Its place in the list when the drag started.
+    index: usize,
+}
+
+/// `list` with the item at `from` moved into the gap before the item at
+/// `gap` (`list.len()` for the end); `None` when that is where it is.
+pub(crate) fn moved<T: Clone>(list: &[T], from: usize, gap: usize) -> Option<Vec<T>> {
+    if from >= list.len() || gap > list.len() || gap == from || gap == from + 1 {
+        return None;
+    }
+    let mut out = list.to_vec();
+    let item = out.remove(from);
+    out.insert(if gap > from { gap - 1 } else { gap }, item);
+    Some(out)
+}
+
 /// A fresh record id: unique among a list's, and saying nothing.
 fn new_id() -> String {
     use std::hash::{BuildHasher, Hasher};
@@ -457,6 +477,55 @@ impl SettingsView {
         }
     }
 
+    /// Move record `from` of `key` into the gap before record `gap`.
+    pub(crate) fn move_record(
+        &mut self,
+        key: &str,
+        from: usize,
+        gap: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(row) = self.row(key) else {
+            return;
+        };
+        if let Some(list) = moved(&records(&row.value), from, gap) {
+            self.change(key, serde_json::to_string(&list).unwrap_or_default(), cx);
+        }
+    }
+
+    /// `ui.settings_move { delta }`: the record whose button has the
+    /// keyboard, one place up (-1) or down (1).
+    pub(crate) fn move_focused_record(
+        &mut self,
+        delta: i64,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((key, id)) = self
+            .record_stops
+            .iter()
+            .find(|(focus, _, _)| focus.contains_focused(window, cx))
+            .map(|(_, key, id)| (key.clone(), id.clone()))
+        else {
+            return;
+        };
+        let Some(index) = self.row(&key).and_then(|row| {
+            records(&row.value)
+                .iter()
+                .position(|r| r.get("id").and_then(|v| v.as_str()) == Some(id.as_str()))
+        }) else {
+            return;
+        };
+        let gap = if delta < 0 {
+            index.checked_sub(1)
+        } else {
+            Some(index + 2)
+        };
+        if let Some(gap) = gap {
+            self.move_record(&key, index, gap, cx);
+        }
+    }
+
     /// Take what keyring jobs came back with: save the list, or say why not.
     pub(crate) fn drain_keyring(&mut self, cx: &mut Context<Self>) -> bool {
         let done: Vec<KeyringDone> = self
@@ -521,7 +590,7 @@ impl SettingsView {
             let element = if edited {
                 self.record_form(key, edge, item, theme, window, cx)
             } else if let (Some(record), Some(id)) = (record, id) {
-                self.record_row(key, &spec, &record, &id, edge, item, theme, cx)
+                self.record_row(key, &spec, &record, (&id, index), edge, item, theme, cx)
             } else {
                 continue;
             };
@@ -535,7 +604,7 @@ impl SettingsView {
         key: &str,
         spec: &bibli_core::settings::SettingSpec,
         record: &Record,
-        id: &str,
+        (id, index): (&str, usize),
         edge: crate::settings_view::Edge,
         item: usize,
         theme: &Theme,
@@ -559,6 +628,8 @@ impl SettingsView {
         if let Some(action) = spec.constraints.record_action.clone() {
             let focus = self.handle(&format!("action:{key}:{id}"), cx);
             self.stop(&focus, Some(item), None);
+            self.record_stops
+                .push((focus.clone(), key.to_owned(), id.to_owned()));
             let args = serde_json::json!({ "id": id });
             actions = actions.child(
                 controls::button(
@@ -586,6 +657,10 @@ impl SettingsView {
         );
         self.stop(&edit_focus, Some(item), None);
         self.stop(&remove_focus, Some(item), None);
+        for focus in [&edit_focus, &remove_focus] {
+            self.record_stops
+                .push((focus.clone(), key.to_owned(), id.to_owned()));
+        }
         let (edit_key, edit_id, remove_key, remove_id) =
             (key.to_owned(), id.to_owned(), key.to_owned(), id.to_owned());
         actions = actions
@@ -618,7 +693,24 @@ impl SettingsView {
                     this.remove_record(&remove_key, &remove_id, cx);
                 })),
             );
+        let count = records(&self.row(key).map(|r| r.value.clone()).unwrap_or_default()).len();
+        let drag = RecordDrag {
+            key: key.to_owned(),
+            index,
+        };
+        let label = title.clone();
+        let handle = div()
+            .id(gpui::SharedString::from(format!("record-grip-{key}-{id}")))
+            .flex_none()
+            .cursor_grab()
+            .child(controls::glyph("grip", theme.text_muted, 16.))
+            .on_drag(drag, move |_, position, _, cx| {
+                cx.new(|_| crate::dnd::DragPreview::named(label.clone(), position))
+            });
         crate::settings_view::card_row(theme, edge)
+            .relative()
+            .key_context("SettingRecord")
+            .child(handle)
             .child(
                 div()
                     .flex_1()
@@ -636,7 +728,42 @@ impl SettingsView {
                     ),
             )
             .child(actions)
+            // The gaps above and below, where a dragged record lands.
+            .child(self.record_gap(key, index, count, true, theme, cx))
+            .child(self.record_gap(key, index + 1, count, false, theme, cx))
             .into_any_element()
+    }
+
+    /// Half of a record's row: the drop zone of the gap before record
+    /// `gap`, drawn as a line on the row's top or bottom edge while a record
+    /// of the same list would move there. It does not block the row's
+    /// clicks.
+    fn record_gap(
+        &self,
+        key: &str,
+        gap: usize,
+        count: usize,
+        top: bool,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let edge = theme.accent;
+        let (shown, dropped) = (key.to_owned(), key.to_owned());
+        let zone = div().absolute().left_0().right_0().h(gpui::relative(0.5));
+        let zone = if top { zone.top_0() } else { zone.bottom_0() };
+        zone.drag_over::<RecordDrag>(move |s, drag, _, _| {
+            let moves = drag.key == shown && moved(&vec![(); count], drag.index, gap).is_some();
+            match (moves, top) {
+                (false, _) => s,
+                (true, true) => s.border_t_2().border_color(edge),
+                (true, false) => s.border_b_2().border_color(edge),
+            }
+        })
+        .on_drop(cx.listener(move |this, drag: &RecordDrag, _, cx| {
+            if drag.key == dropped {
+                this.move_record(&dropped, drag.index, gap, cx);
+            }
+        }))
     }
 
     fn record_form(
@@ -834,5 +961,27 @@ impl SettingsView {
             .items_start()
             .child(form.child(footer))
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::moved;
+
+    #[test]
+    fn a_record_moves_into_the_gap_it_is_dropped_in() {
+        let list = ["a", "b", "c", "d"];
+        // Down: into the gap before "d".
+        assert_eq!(moved(&list, 0, 3).unwrap(), ["b", "c", "a", "d"]);
+        // To the end.
+        assert_eq!(moved(&list, 1, 4).unwrap(), ["a", "c", "d", "b"]);
+        // Up: into the gap before "a".
+        assert_eq!(moved(&list, 2, 0).unwrap(), ["c", "a", "b", "d"]);
+        // The gaps on either side of it leave it where it is.
+        assert!(moved(&list, 2, 2).is_none());
+        assert!(moved(&list, 2, 3).is_none());
+        // Nothing beyond the list.
+        assert!(moved(&list, 4, 0).is_none());
+        assert!(moved(&list, 0, 5).is_none());
     }
 }

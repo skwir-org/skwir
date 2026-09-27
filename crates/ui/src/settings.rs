@@ -347,6 +347,9 @@ pub struct SettingsView {
     scroll_to: Option<String>,
     /// The record edited, per records setting (`settings_records`).
     pub(crate) drafts: BTreeMap<String, crate::settings_records::Draft>,
+    /// The focus handles of each record's buttons this frame, with the
+    /// setting and the record's id: what Alt+Up and Alt+Down move.
+    pub(crate) record_stops: Vec<(FocusHandle, String, String)>,
     /// What keyring jobs came back with, for `sync`.
     pub(crate) keyring: Arc<Mutex<Vec<crate::settings_records::KeyringDone>>>,
     _subscriptions: Vec<Subscription>,
@@ -396,6 +399,7 @@ impl SettingsView {
             requirements: None,
             probe: Arc::new(Mutex::new(None)),
             drafts: BTreeMap::new(),
+            record_stops: Vec::new(),
             keyring: Arc::default(),
             root: cx.focus_handle(),
             nav: cx.focus_handle(),
@@ -1031,6 +1035,7 @@ impl SettingsView {
                 self.step_focus(1, window, cx);
             }
             "settings_adjust" => self.adjust(delta, window, cx),
+            "settings_move" => self.move_focused_record(delta, window, cx),
             _ => {}
         }
     }
