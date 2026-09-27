@@ -452,7 +452,9 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   until it is empty while its producer runs.
 - Send listing events through `OpenContext::channel` / `EventSink`, which wake
   the UI after enqueueing. Other background results must call `App::wake` or a
-  captured `waker_handle` after publishing. `Complete` ends the initial listing;
+  captured `waker_handle` after publishing (a handle calls the hook installed
+  when it is called, so one taken at registration works). `Complete` ends the
+  initial listing;
   updates and removals may still arrive afterward.
 - A wake applies what the core sent (`Shell::sync`) and then asks for a
   draw; it never leaves the applying to the draw. A window the compositor is

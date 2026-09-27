@@ -516,6 +516,13 @@ impl Listing {
         self.names_version
     }
 
+    /// Changes to modification times so far, hydration's first ones
+    /// included: work that depends on files' contents (where a picture was
+    /// taken) looks again when it moves.
+    pub fn modified_version(&self) -> u64 {
+        self.modified_version
+    }
+
     /// The ids in `spec` order, directories first. Cached until something
     /// the order depends on changes: a metadata batch re-sorts only a sort
     /// by size or date, so calling this every frame is cheap. Entries that

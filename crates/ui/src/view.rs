@@ -70,6 +70,11 @@ pub trait PaneView {
     }
     /// The pane's location changed.
     fn reset(&mut self) {}
+    /// The zoom keys (`ui.zoom`, `in`, `out` or `reset`), for a view that
+    /// zooms its own way (the map). False leaves them to the item sizes.
+    fn zoom(&mut self, _dir: &str) -> bool {
+        false
+    }
     /// Locations the pane should keep open beside `shown`, listed and
     /// current, because this view shows them too (the columns view's
     /// ancestors). Asked on every sync; the pane lets go of the rest,

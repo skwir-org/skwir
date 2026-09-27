@@ -18,13 +18,16 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use bibli_core::geo::{GeoDoc, LatLon, LineKind, WaypointKind};
+use std::collections::{HashMap, HashSet};
+
+use bibli_core::EntryId;
+use bibli_core::geo::{BoundsBuilder, GeoDoc, LatLon, LineKind, WaypointKind};
 use gpui::{
     App, BorderStyle, Bounds, ContentMask, CursorStyle, DispatchPhase, Element, ElementId,
     FillOptions, FillRule, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId,
-    IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder,
-    PathStyle, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Style, TextRun,
-    Window, point, px, quad, relative, size,
+    IntoElement, LayoutId, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    PathBuilder, PathStyle, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Style,
+    TextRun, Window, point, px, quad, relative, size,
 };
 
 pub use math::View;
@@ -283,6 +286,10 @@ pub enum MarkerKind {
     Stop,
     Start,
     End,
+    /// A picture of the location shown (the Map view).
+    Picture,
+    /// Where a track of the location shown starts (the Map view).
+    Track,
 }
 
 #[derive(Debug)]
@@ -290,6 +297,16 @@ pub struct Marker {
     pub at: (f64, f64),
     pub label: SharedString,
     pub kind: MarkerKind,
+    /// The file it stands for, in the Map view: what a click selects.
+    pub entry: Option<EntryId>,
+}
+
+/// A file the Map view places: where, its name, and a track's line.
+pub struct Place {
+    pub entry: EntryId,
+    pub at: LatLon,
+    pub name: SharedString,
+    pub line: Vec<Vec<LatLon>>,
 }
 
 /// `x` moved by whole worlds to within half a world of `near`.
@@ -367,6 +384,7 @@ impl Shapes {
                     } else {
                         MarkerKind::Place
                     },
+                    entry: None,
                 }
             })
             .collect();
@@ -377,6 +395,7 @@ impl Shapes {
                 at: start,
                 label: SharedString::default(),
                 kind: MarkerKind::Start,
+                entry: None,
             });
         }
         if let Some(&end) = tracks()
@@ -388,6 +407,7 @@ impl Shapes {
                 at: end,
                 label: SharedString::default(),
                 kind: MarkerKind::End,
+                entry: None,
             });
         }
         Shapes {
@@ -397,7 +417,110 @@ impl Shapes {
             bounds: rect,
         }
     }
+
+    /// The files the Map view places: a marker each, at a picture's
+    /// position or where a track starts, and the tracks' lines.
+    pub fn places(places: &[Place]) -> Shapes {
+        let mut bounds = BoundsBuilder::default();
+        for place in places {
+            bounds.add(place.at);
+        }
+        let Some(center) = bounds.finish().map(|b| math::project(b.center()).0) else {
+            return Shapes::default();
+        };
+        let mut rect: Option<math::Rect> = None;
+        let mut grow = |(x, y): (f64, f64)| {
+            let r = rect.get_or_insert(math::Rect {
+                x0: x,
+                y0: y,
+                x1: x,
+                y1: y,
+            });
+            r.x0 = r.x0.min(x);
+            r.x1 = r.x1.max(x);
+            r.y0 = r.y0.min(y);
+            r.y1 = r.y1.max(y);
+        };
+        let mut lines = Vec::new();
+        let mut markers = Vec::with_capacity(places.len());
+        for place in places {
+            let (x, y) = math::project(place.at);
+            let at = (beside(x, center), y);
+            grow(at);
+            let track = !place.line.is_empty();
+            markers.push(Marker {
+                at,
+                label: place.name.clone(),
+                kind: if track {
+                    MarkerKind::Track
+                } else {
+                    MarkerKind::Picture
+                },
+                entry: Some(place.entry),
+            });
+            if track {
+                let segments = place
+                    .line
+                    .iter()
+                    .map(|segment| {
+                        let mut last = at.0;
+                        segment
+                            .iter()
+                            .map(|p| {
+                                let (x, y) = math::project(*p);
+                                let x = beside(x, last);
+                                last = x;
+                                (x, y)
+                            })
+                            .collect()
+                    })
+                    .collect();
+                lines.push(ShapeLine {
+                    kind: LineKind::Track,
+                    segments,
+                });
+            }
+        }
+        Shapes {
+            lines,
+            areas: Vec::new(),
+            markers,
+            bounds: rect,
+        }
+    }
 }
+
+/// What a click on the map picked (the Map view).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Pick {
+    Entry(EntryId),
+    /// Markers merged into one: its files, and what they cover.
+    Cluster(Vec<EntryId>, math::Rect),
+    /// The files a Shift+drag rectangle held.
+    Band(Vec<EntryId>),
+    Nothing,
+}
+
+type PickFn = Rc<dyn Fn(Pick, Modifiers, usize, &mut Window, &mut App)>;
+type ThumbFn = Rc<dyn Fn(EntryId, &mut Window, &mut App) -> Option<Arc<gpui::RenderImage>>>;
+
+/// How the Map view's markers answer: what is selected, what a click or a
+/// rectangle picks (with its modifiers and click count), and the pictures
+/// markers standing alone show.
+pub struct Picking {
+    pub selected: Arc<HashSet<EntryId>>,
+    pub on_pick: PickFn,
+    pub thumb: ThumbFn,
+}
+
+/// Markers closer than this on screen merge into one: more than a
+/// picture marker's side, so pictures standing alone never overlap.
+const CLUSTER: f32 = 48.;
+/// Markers standing alone show their picture while at most this many do.
+const THUMBS: usize = 60;
+const THUMB: f32 = 40.;
+/// A press that moved less than this is a click, not a drag.
+const CLICK_SLOP: f32 = 4.;
 
 /// The colours a map is drawn in, from the theme's tokens.
 #[derive(Clone, Copy)]
@@ -420,6 +543,11 @@ pub struct Handles {
     pub shown: Rc<Cell<Option<View>>>,
     /// Where a drag was last seen.
     drag: Rc<Cell<Option<gpui::Point<Pixels>>>>,
+    /// Where the press was and how many clicks it counted: a release near
+    /// it is a click.
+    press: Rc<Cell<Option<(gpui::Point<Pixels>, usize)>>>,
+    /// A Shift+drag rectangle: where it started, where it is.
+    band: Rc<Cell<Option<(gpui::Point<Pixels>, gpui::Point<Pixels>)>>>,
 }
 
 pub struct Map {
@@ -428,6 +556,16 @@ pub struct Map {
     handles: Handles,
     colors: Colors,
     tiles: Option<TileLayer>,
+    picking: Option<Picking>,
+}
+
+impl Map {
+    /// Markers stand for files that a click selects (the Map view).
+    #[must_use]
+    pub fn picking(mut self, picking: Picking) -> Self {
+        self.picking = Some(picking);
+        self
+    }
 }
 
 /// What a map is drawn on: the tiles of the registered source.
@@ -451,6 +589,7 @@ pub fn map(
         handles,
         colors,
         tiles,
+        picking: None,
     }
 }
 
@@ -505,6 +644,24 @@ struct Label {
 struct Dot {
     at: gpui::Point<Pixels>,
     kind: MarkerKind,
+    selected: bool,
+    /// A marker standing alone for a picture, drawn as the picture.
+    picture: Option<Arc<gpui::RenderImage>>,
+}
+
+/// Markers merged into one bubble.
+struct Cluster {
+    at: gpui::Point<Pixels>,
+    radius: f32,
+    count: ShapedLine,
+    selected: bool,
+}
+
+/// What a point on screen picks, topmost last.
+struct Hit {
+    at: gpui::Point<Pixels>,
+    radius: f32,
+    pick: Pick,
 }
 
 pub struct Prepaint {
@@ -521,6 +678,10 @@ pub struct Prepaint {
     routes: Vec<Vec<gpui::Point<Pixels>>>,
     tracks: Vec<Vec<gpui::Point<Pixels>>>,
     dots: Vec<Dot>,
+    clusters: Vec<Cluster>,
+    hits: Vec<Hit>,
+    /// Where each file's marker is, for a rectangle to hold.
+    placed: Vec<(EntryId, gpui::Point<Pixels>)>,
     scale: (f64, Option<ShapedLine>),
 }
 
@@ -632,7 +793,7 @@ impl Element for Map {
         bounds: Bounds<Pixels>,
         (): &mut (),
         window: &mut Window,
-        _: &mut App,
+        cx: &mut App,
     ) -> Prepaint {
         let size = (
             f64::from(f32::from(bounds.size.width)),
@@ -827,17 +988,140 @@ impl Element for Map {
         let inside = |p: gpui::Point<Pixels>| bounds.contains(&p);
         let mut dots = Vec::new();
         let mut named = Vec::new();
+        // Files' markers close together merge (the Map view), as map
+        // libraries do: each joins the group whose first marker is within
+        // `CLUSTER` pixels, looked for in its cell and the eight around it,
+        // or starts one. Recomputed as the view moves.
+        let mut groups: Vec<Vec<(EntryId, gpui::Point<Pixels>, MarkerKind, SharedString)>> =
+            Vec::new();
+        let mut seeds: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
         for marker in &self.shapes.markers {
             let p = at((marker.at.0 + offset, marker.at.1));
             if !inside(p) {
                 continue;
             }
+            if let (Some(entry), Some(_)) = (marker.entry, &self.picking) {
+                let local = p - origin;
+                let cell = (
+                    (f32::from(local.x) / CLUSTER).floor() as i32,
+                    (f32::from(local.y) / CLUSTER).floor() as i32,
+                );
+                let near = (-1..=1)
+                    .flat_map(|dx| (-1..=1).map(move |dy| (cell.0 + dx, cell.1 + dy)))
+                    .filter_map(|c| seeds.get(&c))
+                    .flatten()
+                    .copied()
+                    .find(|&g| {
+                        let d = groups[g][0].1 - p;
+                        f32::from(d.x).hypot(f32::from(d.y)) < CLUSTER
+                    });
+                let member = (entry, p, marker.kind, marker.label.clone());
+                if let Some(g) = near {
+                    groups[g].push(member);
+                } else {
+                    seeds.entry(cell).or_default().push(groups.len());
+                    groups.push(vec![member]);
+                }
+                continue;
+            }
             dots.push(Dot {
                 at: p,
                 kind: marker.kind,
+                selected: false,
+                picture: None,
             });
             if !marker.label.is_empty() {
                 named.push((p, marker.label.clone()));
+            }
+        }
+        let mut clusters = Vec::new();
+        let mut hits = Vec::new();
+        let mut placed = Vec::new();
+        if let Some(picking) = &self.picking {
+            let alone = groups.iter().filter(|members| members.len() == 1).count();
+            let mut cells = groups;
+            // Drawn top to bottom, so a lower marker overlaps a higher one.
+            cells.sort_by(|a, b| {
+                (f32::from(a[0].1.y), f32::from(a[0].1.x))
+                    .partial_cmp(&(f32::from(b[0].1.y), f32::from(b[0].1.x)))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            for members in cells {
+                placed.extend(members.iter().map(|(entry, p, _, _)| (*entry, *p)));
+                let selected = members
+                    .iter()
+                    .any(|(entry, ..)| picking.selected.contains(entry));
+                if let [(entry, p, kind, label)] = members.as_slice() {
+                    let picture = (*kind == MarkerKind::Picture && alone <= THUMBS)
+                        .then(|| (picking.thumb)(*entry, window, cx))
+                        .flatten();
+                    let radius = if picture.is_some() { THUMB / 2. } else { 7. };
+                    dots.push(Dot {
+                        at: *p,
+                        kind: *kind,
+                        selected,
+                        picture,
+                    });
+                    hits.push(Hit {
+                        at: *p,
+                        radius,
+                        pick: Pick::Entry(*entry),
+                    });
+                    if selected && !label.is_empty() {
+                        named.push((*p + point(px(radius - 6.), px(0.)), label.clone()));
+                    }
+                    continue;
+                }
+                let n = members.len() as f32;
+                let (sx, sy) = members.iter().fold((0f32, 0f32), |(x, y), (_, p, _, _)| {
+                    (x + f32::from(p.x), y + f32::from(p.y))
+                });
+                let centre = point(px(sx / n), px(sy / n));
+                let text: SharedString = if members.len() > 999 {
+                    format!("{}k", members.len() / 1000).into()
+                } else {
+                    members.len().to_string().into()
+                };
+                let radius = 11. + 2. * (text.len() as f32);
+                let mut rect: Option<math::Rect> = None;
+                for (_, p, _, _) in &members {
+                    let (x, y) = view.to_world(
+                        (
+                            f64::from(f32::from(p.x - origin.x)),
+                            f64::from(f32::from(p.y - origin.y)),
+                        ),
+                        size,
+                    );
+                    let r = rect.get_or_insert(math::Rect {
+                        x0: x,
+                        y0: y,
+                        x1: x,
+                        y1: y,
+                    });
+                    r.x0 = r.x0.min(x);
+                    r.x1 = r.x1.max(x);
+                    r.y0 = r.y0.min(y);
+                    r.y1 = r.y1.max(y);
+                }
+                hits.push(Hit {
+                    at: centre,
+                    radius,
+                    pick: Pick::Cluster(
+                        members.iter().map(|(entry, ..)| *entry).collect(),
+                        rect.unwrap_or(math::Rect {
+                            x0: 0.,
+                            y0: 0.,
+                            x1: 0.,
+                            y1: 0.,
+                        }),
+                    ),
+                });
+                clusters.push(Cluster {
+                    at: centre,
+                    radius,
+                    count: shape(text, self.colors.paper, window),
+                    selected,
+                });
             }
         }
         if named.len() <= LABELS {
@@ -875,6 +1159,9 @@ impl Element for Map {
             routes,
             tracks,
             dots,
+            clusters,
+            hits,
+            placed,
             scale,
         }
     }
@@ -944,12 +1231,83 @@ impl Element for Map {
                     stroke(window, run, false, 3., color);
                 }
             }
+            for cluster in &prepaint.clusters {
+                let r = cluster.radius;
+                window.paint_quad(quad(
+                    Bounds::new(
+                        cluster.at - point(px(r), px(r)),
+                        size(px(2. * r), px(2. * r)),
+                    ),
+                    px(r),
+                    colors.track,
+                    px(if cluster.selected { 3. } else { 2. }),
+                    if cluster.selected {
+                        colors.text
+                    } else {
+                        colors.paper
+                    },
+                    BorderStyle::Solid,
+                ));
+                let text = cluster.at - point(cluster.count.width / 2., px(LINE_HEIGHT / 2.));
+                let _ = cluster.count.paint(text, px(LINE_HEIGHT), window, cx);
+            }
             for dot in &prepaint.dots {
+                if let Some(picture) = &dot.picture {
+                    let half = THUMB / 2.;
+                    let frame = Bounds::new(
+                        dot.at - point(px(half), px(half)),
+                        size(px(THUMB), px(THUMB)),
+                    );
+                    window.paint_quad(quad(
+                        frame,
+                        px(6.),
+                        colors.paper,
+                        px(if dot.selected { 3. } else { 2. }),
+                        if dot.selected {
+                            colors.track
+                        } else {
+                            colors.paper
+                        },
+                        BorderStyle::Solid,
+                    ));
+                    let side = THUMB - 6.;
+                    let inner = Bounds::new(
+                        frame.origin + point(px(3.), px(3.)),
+                        size(px(side), px(side)),
+                    );
+                    // Cropped to fill the square, at its own proportions.
+                    let natural = picture.size(0);
+                    let aspect = natural.width.0.max(1) as f32 / natural.height.0.max(1) as f32;
+                    let (w, h) = if aspect >= 1. {
+                        (side * aspect, side)
+                    } else {
+                        (side, side / aspect)
+                    };
+                    let cover = Bounds::new(
+                        inner.origin - point(px((w - side) / 2.), px((h - side) / 2.)),
+                        size(px(w), px(h)),
+                    );
+                    window.with_content_mask(Some(ContentMask { bounds: inner }), |window| {
+                        let _ = window.paint_image(
+                            cover,
+                            gpui::Corners::default(),
+                            Arc::clone(picture),
+                            0,
+                            false,
+                        );
+                    });
+                    continue;
+                }
                 let (radius, fill, ring) = match dot.kind {
                     MarkerKind::Place => (6., colors.route, colors.paper),
                     MarkerKind::Stop => (4., colors.paper, colors.route),
                     MarkerKind::Start => (5., colors.track, colors.paper),
                     MarkerKind::End => (5., colors.paper, colors.track),
+                    MarkerKind::Picture | MarkerKind::Track if dot.selected => {
+                        (8., colors.track, colors.text)
+                    }
+                    MarkerKind::Picture => (6., colors.track, colors.paper),
+                    MarkerKind::Track => (6., colors.paper, colors.track),
                 };
                 window.paint_quad(quad(
                     Bounds::new(
@@ -1055,7 +1413,32 @@ impl Element for Map {
                 }
             });
         }
+        // A band being drawn, over everything.
+        if let Some((from, to)) = self.handles.band.get() {
+            let band = Bounds::from_corners(
+                point(from.x.min(to.x), from.y.min(to.y)),
+                point(from.x.max(to.x), from.y.max(to.y)),
+            );
+            window.paint_quad(quad(
+                band,
+                px(2.),
+                self.colors.track.opacity(0.12),
+                px(1.),
+                self.colors.track,
+                BorderStyle::Solid,
+            ));
+        }
+        let hits: Rc<Vec<(gpui::Point<Pixels>, f32, Pick)>> = Rc::new(
+            prepaint
+                .hits
+                .iter()
+                .map(|h| (h.at, h.radius, h.pick.clone()))
+                .collect(),
+        );
+        let placed: Rc<Vec<(EntryId, gpui::Point<Pixels>)>> = Rc::new(prepaint.placed.clone());
+        let on_pick = self.picking.as_ref().map(|p| Rc::clone(&p.on_pick));
         let (handles, hit) = (self.handles.clone(), hitbox.clone());
+        let banding = on_pick.is_some();
         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, _| {
             if phase != DispatchPhase::Bubble
                 || event.button != MouseButton::Left
@@ -1063,13 +1446,9 @@ impl Element for Map {
             {
                 return;
             }
-            if event.click_count == 2 {
-                // A double click zooms in where it is.
-                let view = handles.view.get().unwrap_or(shown);
-                handles
-                    .view
-                    .set(Some(view.zoom_at(1., local(event.position), size)));
-                handles.drag.set(None);
+            handles.press.set(Some((event.position, event.click_count)));
+            if banding && event.modifiers.shift {
+                handles.band.set(Some((event.position, event.position)));
             } else {
                 handles.drag.set(Some(event.position));
             }
@@ -1080,15 +1459,21 @@ impl Element for Map {
             if phase != DispatchPhase::Bubble {
                 return;
             }
-            let Some(last) = handles.drag.get() else {
-                return;
-            };
             // A release outside the window is never delivered here.
             if event.pressed_button != Some(MouseButton::Left) {
-                handles.drag.set(None);
+                if handles.drag.take().is_some() || handles.band.take().is_some() {
+                    window.refresh();
+                }
+                return;
+            }
+            if let Some((from, _)) = handles.band.get() {
+                handles.band.set(Some((from, event.position)));
                 window.refresh();
                 return;
             }
+            let Some(last) = handles.drag.get() else {
+                return;
+            };
             let view = handles.view.get().unwrap_or(shown);
             let moved = event.position - last;
             handles.view.set(Some(
@@ -1098,12 +1483,71 @@ impl Element for Map {
             window.refresh();
         });
         let handles = self.handles.clone();
-        window.on_mouse_event(move |event: &MouseUpEvent, phase, window, _| {
-            if phase == DispatchPhase::Bubble
-                && event.button == MouseButton::Left
-                && handles.drag.take().is_some()
-            {
+        window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
+            if phase != DispatchPhase::Bubble || event.button != MouseButton::Left {
+                return;
+            }
+            let press = handles.press.take();
+            if let Some((from, to)) = handles.band.take() {
+                let band = Bounds::from_corners(
+                    point(from.x.min(to.x), from.y.min(to.y)),
+                    point(from.x.max(to.x), from.y.max(to.y)),
+                );
+                let held: Vec<EntryId> = placed
+                    .iter()
+                    .filter(|(_, p)| band.contains(p))
+                    .map(|(entry, _)| *entry)
+                    .collect();
+                if let Some(on_pick) = &on_pick {
+                    on_pick(Pick::Band(held), event.modifiers, 1, window, cx);
+                }
                 window.refresh();
+                return;
+            }
+            if handles.drag.take().is_none() {
+                return;
+            }
+            window.refresh();
+            let Some((at, clicks)) = press else {
+                return;
+            };
+            let moved = event.position - at;
+            if f32::from(moved.x).hypot(f32::from(moved.y)) > CLICK_SLOP {
+                return;
+            }
+            // A click: the topmost marker under it, if any.
+            let picked = hits
+                .iter()
+                .rev()
+                .find(|(p, radius, _)| {
+                    let d = event.position - *p;
+                    f32::from(d.x).hypot(f32::from(d.y)) <= radius + 2.
+                })
+                .map_or(Pick::Nothing, |(_, _, pick)| pick.clone());
+            // A cluster opens where it is: zoomed to its files, as long as
+            // zooming can pull them apart.
+            if let Pick::Cluster(_, rect) = &picked {
+                let view = handles.view.get().unwrap_or(shown);
+                let wide = rect.x1 - rect.x0 > 1e-12 || rect.y1 - rect.y0 > 1e-12;
+                if wide && view.zoom < MAX_ZOOM - 0.5 {
+                    let fitted = math::fit(*rect, size);
+                    handles.view.set(Some(View {
+                        zoom: fitted.zoom.max(view.zoom + 1.),
+                        ..fitted
+                    }));
+                    return;
+                }
+            }
+            if picked == Pick::Nothing && clicks == 2 {
+                // A double click on the map itself zooms in there.
+                let view = handles.view.get().unwrap_or(shown);
+                handles
+                    .view
+                    .set(Some(view.zoom_at(1., local(event.position), size)));
+                return;
+            }
+            if let Some(on_pick) = &on_pick {
+                on_pick(picked, event.modifiers, clicks, window, cx);
             }
         });
         let handles = self.handles.clone();

@@ -1,0 +1,420 @@
+//! The Map view (a lens, ADR-007 and ADR-020): the files of the location a
+//! pane shows, placed where they say they are. The `geo` plugin finds the
+//! places on workers (`geo.scan`) and hands them over a batch at a time
+//! (`geo.points`, each point once); this view draws them with
+//! `elements::map`, over the same backgrounds as the map preview.
+//!
+//! It is a view like the others: a click selects (Ctrl adds or takes away,
+//! a double click opens), Shift and a drag draws a rectangle that selects
+//! what it holds, the preview follows the selection, Enter opens it. Close
+//! markers merge into a bubble with their count, which a click opens; a
+//! marker standing alone for a picture shows the picture. The arrows move
+//! the map and the zoom keys zoom it; Home fits it to its files again.
+use std::collections::HashSet;
+use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use bibli_core::EntryId;
+use bibli_core::geo::LatLon;
+use bibli_core::thumbs::ThumbSize;
+use gpui::{AnyElement, Context, SharedString, Window, div, prelude::*};
+use serde::Deserialize;
+
+use crate::elements::map::{self, Handles, Pick, Picking, Place, Shapes, View};
+use crate::shell::Shell;
+use crate::theme::Theme;
+use crate::thumbs::ThumbView;
+use crate::toolbar::{self, Button};
+use crate::view::{Nav, PaneView};
+
+pub const ID: &str = "map";
+/// A key moves the map by this many pixels.
+const PAN_STEP: f64 = 120.;
+
+#[derive(Deserialize)]
+struct Placed {
+    id: EntryId,
+    lat: f64,
+    lon: f64,
+    #[serde(default)]
+    line: Vec<Vec<[f64; 2]>>,
+}
+
+#[derive(Deserialize)]
+struct Batch {
+    generation: u64,
+    points: Vec<Placed>,
+    placed: usize,
+    looked: usize,
+    candidates: usize,
+    complete: bool,
+}
+
+#[derive(Default)]
+pub struct MapView {
+    handles: Handles,
+    /// What the scan was asked for: the location, its listing, its names
+    /// and its modification times (a picture changed is looked at again;
+    /// the plugin keeps what it showed until something moved), and whether
+    /// the listing was complete (only then is the scan).
+    requested: Option<(String, u64, u64, u64, bool)>,
+    /// The plugin's descriptor revision, and the one read last.
+    source: Option<Arc<AtomicU64>>,
+    seen: Option<u64>,
+    generation: u64,
+    places: Vec<Place>,
+    shapes: Arc<Shapes>,
+    counts: (usize, usize, usize, bool),
+    selection: (u64, Arc<HashSet<EntryId>>),
+}
+
+impl MapView {
+    /// Take what the scan found since the last batch.
+    fn receive(&mut self, shell: &mut Shell, cx: &mut Context<Shell>) {
+        let pane = shell.pane;
+        let source = self.source.get_or_insert_with(|| {
+            shell
+                .app
+                .registry
+                .views
+                .find(|s| &*s.id == ID)
+                .map_or_else(Arc::default, |s| Arc::clone(&s.revision))
+        });
+        let revision = source.load(Ordering::Acquire);
+        if self.seen == Some(revision) {
+            return;
+        }
+        self.seen = Some(revision);
+        let ask = |shell: &mut Shell, since: usize, cx: &mut Context<Shell>| {
+            shell
+                .query_value(
+                    "geo.points",
+                    serde_json::json!({ "pane": pane, "since": since }),
+                    cx,
+                )
+                .and_then(|value| serde_json::from_value::<Batch>(value).ok())
+        };
+        let Some(mut points) = ask(shell, self.places.len(), cx) else {
+            return;
+        };
+        if points.generation != self.generation {
+            // Another scan: everything again.
+            self.generation = points.generation;
+            self.places.clear();
+            if let Some(all) = ask(shell, 0, cx) {
+                points = all;
+            }
+        }
+        let names: Vec<SharedString> = {
+            let ws = shell.app.workspace.read();
+            let listing = ws.pane(pane).map(|p| &p.listing);
+            points
+                .points
+                .iter()
+                .map(|p| {
+                    listing
+                        .and_then(|l| l.get(p.id))
+                        .map(|e| SharedString::from(e.name_str().into_owned()))
+                        .unwrap_or_default()
+                })
+                .collect()
+        };
+        for (placed, name) in points.points.into_iter().zip(names) {
+            let Some(at) = LatLon::new(placed.lat, placed.lon) else {
+                continue;
+            };
+            let line = placed
+                .line
+                .into_iter()
+                .map(|segment| {
+                    segment
+                        .into_iter()
+                        .filter_map(|[lat, lon]| LatLon::new(lat, lon))
+                        .collect()
+                })
+                .collect();
+            self.places.push(Place {
+                entry: placed.id,
+                at,
+                name,
+                line,
+            });
+        }
+        self.counts = (
+            points.placed,
+            points.looked,
+            points.candidates,
+            points.complete,
+        );
+        self.shapes = Arc::new(Shapes::places(&self.places));
+    }
+
+    /// What the header says about the scan.
+    fn status(&self) -> String {
+        let (placed, looked, candidates, complete) = self.counts;
+        let files = |n: usize| if n == 1 { "file" } else { "files" };
+        if !complete {
+            format!(
+                "Placing… {placed} of {candidates} pictures and tracks looked at so far: {looked}"
+            )
+        } else if looked > placed {
+            format!(
+                "{placed} {} placed · {} without a position",
+                files(placed),
+                looked - placed
+            )
+        } else {
+            format!("{placed} {} placed", files(placed))
+        }
+    }
+}
+
+impl PaneView for MapView {
+    fn id(&self) -> &'static str {
+        ID
+    }
+
+    fn scroll_to(&mut self, _: usize) {}
+
+    fn nav_delta(&self, _: Nav, _: &Shell) -> Option<isize> {
+        None
+    }
+
+    /// The arrows move the map; Home fits it to its files again.
+    fn nav(&mut self, nav: Nav, _: &mut Shell, _: &mut Window, cx: &mut Context<Shell>) -> bool {
+        let (dx, dy) = match nav {
+            Nav::Left => (-1., 0.),
+            Nav::Right => (1., 0.),
+            Nav::Up => (0., -1.),
+            Nav::Down => (0., 1.),
+            Nav::Home => {
+                self.handles.view.set(None);
+                cx.notify();
+                return true;
+            }
+            _ => return false,
+        };
+        if let Some(view) = self.handles.view.get().or_else(|| self.handles.shown.get()) {
+            self.handles
+                .view
+                .set(Some(view.pan(-dx * PAN_STEP, -dy * PAN_STEP)));
+            cx.notify();
+        }
+        true
+    }
+
+    fn zoom(&mut self, dir: &str) -> bool {
+        let Some(view) = self.handles.view.get().or_else(|| self.handles.shown.get()) else {
+            return true;
+        };
+        let levels = match dir {
+            "in" => 1.,
+            "out" => -1.,
+            _ => {
+                self.handles.view.set(None);
+                return true;
+            }
+        };
+        self.handles.view.set(Some(View {
+            zoom: (view.zoom + levels).clamp(0., map::MAX_ZOOM),
+            ..view
+        }));
+        true
+    }
+
+    fn reset(&mut self) {
+        // Another location: fitted to its own files.
+        self.handles.view.set(None);
+    }
+
+    fn render(&mut self, shell: &mut Shell, _: &mut Window, cx: &mut Context<Shell>) -> AnyElement {
+        let pane = shell.pane;
+        let (source, selection, folder) = {
+            let ws = shell.app.workspace.read();
+            let Some(p) = ws.pane(pane) else {
+                return div().into_any_element();
+            };
+            let source = (
+                p.location().map(ToString::to_string).unwrap_or_default(),
+                p.listing.id(),
+                p.listing.names_version(),
+                p.listing.modified_version(),
+                p.listing.is_complete(),
+            );
+            let selection = (self.selection.0 != p.selection.revision())
+                .then(|| (p.selection.revision(), p.selection.iter().collect()));
+            let folder = p.location().and_then(bibli_core::Location::path).is_some();
+            (source, selection, folder)
+        };
+        if let Some((revision, ids)) = selection {
+            self.selection = (revision, Arc::new(ids));
+        }
+        shell.map_views.insert(pane);
+        if self.requested.as_ref() != Some(&source) {
+            self.requested = Some(source);
+            if let Err(error) = shell
+                .app
+                .dispatch(&bibli_core::command::Invocation::with_args(
+                    "geo.scan",
+                    &serde_json::json!({ "pane": pane }),
+                ))
+            {
+                shell.set_status(format!("{error:#}"), true, cx);
+            }
+        }
+        self.receive(shell, cx);
+
+        let theme = cx.global::<Theme>().clone();
+        let (placed, _, _, complete) = self.counts;
+        // Nothing here says where it is: say so, and offer the subfolders.
+        if complete && placed == 0 {
+            let placeholder = crate::placeholder::Placeholder {
+                icon: "map",
+                title: "Nothing here says where it is".into(),
+                detail: "No picture or track of this location has a position. Pictures keep one when the camera knew where it was.".into(),
+                action: folder.then_some(("Search the subfolders", "geo.search_subfolders")),
+                problem: false,
+            };
+            let focus = shell.ui().placeholder_focus.clone();
+            return crate::placeholder::render(placeholder, &focus, cx);
+        }
+
+        let mut header = toolbar::row(&theme)
+            .id(("map-view-tools", pane.0 as usize))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .truncate()
+                    .child(self.status()),
+            );
+        if folder {
+            header = header.child(
+                Button::new(
+                    format!("map-view-subfolders-{}", pane.0),
+                    "search",
+                    "Show the pictures and tracks of the subfolders too",
+                    "geo.search_subfolders",
+                )
+                .label("Subfolders")
+                .render(shell, cx),
+            );
+        }
+        header = header.child(
+            Button::new(
+                format!("map-view-fit-{}", pane.0),
+                "fit",
+                "Fit the map to its files · Home",
+                "ui.map_view_fit",
+            )
+            .active(self.handles.view.get().is_none())
+            .render(shell, cx),
+        );
+
+        let weak = cx.entity().downgrade();
+        let picked = weak.clone();
+        let picking = Picking {
+            selected: Arc::clone(&self.selection.1),
+            on_pick: Rc::new(move |pick, modifiers, clicks, window, cx| {
+                let _ = picked.update(cx, |shell, cx| {
+                    shell.with_pane(pane, |shell| {
+                        let (ids, mode) = match pick {
+                            Pick::Entry(id) => (
+                                vec![id],
+                                if modifiers.secondary() {
+                                    "toggle"
+                                } else {
+                                    "replace"
+                                },
+                            ),
+                            Pick::Cluster(ids, _) | Pick::Band(ids) => (
+                                ids,
+                                if modifiers.secondary() {
+                                    "add"
+                                } else {
+                                    "replace"
+                                },
+                            ),
+                            Pick::Nothing if modifiers.secondary() => return,
+                            Pick::Nothing => (Vec::new(), "replace"),
+                        };
+                        shell.select_ids(ids, mode, window, cx);
+                        if clicks == 2 {
+                            shell.open_selection(window, cx);
+                        }
+                    });
+                });
+            }),
+            thumb: Rc::new(move |id, window, cx| {
+                weak.update(cx, |shell, cx| {
+                    shell.with_pane(pane, |shell| {
+                        match shell.thumb(id, ThumbSize::Normal, window, cx) {
+                            ThumbView::Ready(image) => Some(image),
+                            ThumbView::Pending => {
+                                shell.request_hydrate([id]);
+                                None
+                            }
+                            ThumbView::Unavailable => None,
+                        }
+                    })
+                })
+                .ok()
+                .flatten()
+            }),
+        };
+        let element = crate::map_preview::element(
+            shell,
+            ("map-view", pane.0 as usize),
+            Arc::clone(&self.shapes),
+            self.handles.clone(),
+            &theme,
+        )
+        .picking(picking);
+        div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .child(header)
+            .child(div().flex_1().min_h_0().child(element))
+            .into_any_element()
+    }
+}
+
+impl Shell {
+    /// `ui.map_view_fit`: the active pane's map, fitted to its files again.
+    pub(crate) fn map_view_fit(&mut self, cx: &mut Context<Self>) {
+        if self.ui().view_id == ID {
+            self.with_view(|view, _| view.zoom("reset"));
+            cx.notify();
+        }
+    }
+
+    /// Panes that stopped showing their map let their scan go.
+    pub(crate) fn sync_map_views(&mut self) {
+        let shown: HashSet<_> = self
+            .panes
+            .iter()
+            .filter(|p| p.view_id == ID)
+            .map(|p| p.id)
+            .collect();
+        let gone: Vec<_> = self
+            .map_views
+            .iter()
+            .copied()
+            .filter(|pane| !shown.contains(pane))
+            .collect();
+        for pane in gone {
+            self.map_views.remove(&pane);
+            let _ = self
+                .app
+                .dispatch(&bibli_core::command::Invocation::with_args(
+                    "geo.release",
+                    &serde_json::json!({ "pane": pane }),
+                ));
+        }
+    }
+}

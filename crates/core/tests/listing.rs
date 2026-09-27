@@ -198,6 +198,9 @@ fn pending_opens_report_errors_asynchronously_and_can_be_replaced() {
     ))
     .unwrap();
     assert!(lifetime.is_cancelled());
+    // The open left waits for the view to keep it or let it go; the UI's
+    // next sync tells it, and a view that keeps nothing lets it go.
+    app.keep_locations(pane, &[]);
     release.send(()).unwrap();
     assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
     assert!(

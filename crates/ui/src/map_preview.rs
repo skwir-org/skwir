@@ -50,8 +50,15 @@ fn colors(theme: &Theme) -> Colors {
     }
 }
 
-pub fn content(shell: &Shell, display: &Display, theme: &Theme) -> AnyElement {
-    let shapes = display.map.clone().unwrap_or_default();
+/// A map of `shapes` over the registered background: the preview's and the
+/// Map view's, which differ only in what they place and how it answers.
+pub fn element(
+    shell: &Shell,
+    id: impl Into<gpui::ElementId>,
+    shapes: Arc<Shapes>,
+    handles: Handles,
+    theme: &Theme,
+) -> map::Map {
     let app = Arc::clone(&shell.app);
     let tiles = map::TileLayer {
         store: Rc::clone(&shell.map_tiles),
@@ -70,6 +77,11 @@ pub fn content(shell: &Shell, display: &Display, theme: &Theme) -> AnyElement {
             );
         }),
     };
+    map::map(id, shapes, handles, colors(theme), Some(tiles))
+}
+
+pub fn content(shell: &Shell, display: &Display, theme: &Theme) -> AnyElement {
+    let shapes = display.map.clone().unwrap_or_default();
     let focus = shell.preview.inspection.focus.clone();
     div()
         .flex_1()
@@ -84,12 +96,12 @@ pub fn content(shell: &Shell, display: &Display, theme: &Theme) -> AnyElement {
                     window.focus(&clicked);
                 })
         })
-        .child(map::map(
+        .child(element(
+            shell,
             "preview-map",
             shapes,
             shell.preview.map.clone(),
-            colors(theme),
-            Some(tiles),
+            theme,
         ))
         .into_any_element()
 }
@@ -185,7 +197,8 @@ impl Shell {
     /// once what is worth saying: a background that failed, or one without
     /// streets zoomed in to them. No map shown, no tiles kept.
     pub(crate) fn sync_map_tiles(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let shown = self.map_shown().is_some();
+        self.sync_map_views();
+        let shown = self.any_map();
         let (arrived, evicted, failure, info) = {
             let mut store = self.map_tiles.borrow_mut();
             if !shown && !store.is_empty() {
@@ -225,6 +238,11 @@ impl Shell {
                 cx,
             );
         }
+    }
+
+    /// Whether a map is drawn anywhere: the preview's or a pane's.
+    fn any_map(&self) -> bool {
+        self.map_shown().is_some() || !self.map_views.is_empty()
     }
 
     /// The map shown in the preview, if one is.

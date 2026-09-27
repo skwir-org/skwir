@@ -63,7 +63,7 @@ pub struct PaneUi {
     /// The chips of the search it shows (`search_bar`).
     pub chips: crate::search_bar::Chips,
     /// The placeholder's button, kept so Tab can reach it.
-    placeholder_focus: FocusHandle,
+    pub(crate) placeholder_focus: FocusHandle,
     /// Its pane came back (or is new) and has not been put in place yet
     /// (`Shell::place_pane`).
     pub(crate) returning: bool,
@@ -224,6 +224,8 @@ pub struct Shell {
     /// The tiles maps are drawn on, while a map is shown (`map_tiles`).
     pub(crate) map_tiles: std::rc::Rc<std::cell::RefCell<crate::map_tiles::TileStore>>,
     pub(crate) map_notes: crate::map_preview::Notes,
+    /// Panes that showed a Map view: their scan is let go when they stop.
+    pub(crate) map_views: std::collections::HashSet<PaneId>,
     /// The terminal under the panes (F4).
     pub terminal: crate::terminal::TerminalState,
     /// Panes side by side or stacked, the preview at the right or the bottom.
@@ -435,6 +437,7 @@ impl Shell {
             timeline: TimelineState::default(),
             map_tiles,
             map_notes: crate::map_preview::Notes::default(),
+            map_views: std::collections::HashSet::new(),
             terminal: crate::terminal::TerminalState::new(cx.focus_handle()),
             layout: crate::layout::Layout::default(),
             toasts: crate::toast::ToastState::default(),
@@ -1060,6 +1063,10 @@ impl Shell {
     }
 
     fn zoom_step(&mut self, dir: &str, cx: &mut Context<Self>) {
+        if self.with_view(|v, _| v.zoom(dir)).unwrap_or(false) {
+            cx.notify();
+            return;
+        }
         self.zoom_to(dir, cx);
         let ix = self.cursor_index();
         self.with_view(|v, _| {
@@ -1457,6 +1464,7 @@ impl Shell {
                 self.map_pan(step("dx"), step("dy"), cx);
             }
             "map_open" => self.map_open_external(cx),
+            "map_view_fit" => self.map_view_fit(cx),
             "toggle_preview" => self.toggle_preview(window, cx),
             "preview_close" => self.preview_close(window, cx),
             "reader_continuous" => self.reader_continuous(window, cx),

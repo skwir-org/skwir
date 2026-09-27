@@ -11,6 +11,10 @@ bibli-platform.workspace = true
 anyhow.workspace = true
 jiff.workspace = true
 serde_json.workspace = true
+serde.workspace = true
+schemars.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
 # Streaming XML: a day of GPS logging is tens of megabytes; the version
 # already in the tree.
 quick-xml = "0.42"

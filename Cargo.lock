@@ -786,9 +786,13 @@ dependencies = [
  "bibli-core",
  "bibli-platform",
  "jiff",
+ "parking_lot",
  "quick-xml 0.42.0",
+ "schemars",
+ "serde",
  "serde_json",
  "tempfile",
+ "tracing",
  "zip",
 ]
 

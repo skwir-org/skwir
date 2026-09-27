@@ -1,7 +1,7 @@
 # ADR-020: Maps, their backgrounds, and bibli's first network requests
 
-Status: accepted, 2026-09-27. Previews on a map and their backgrounds are
-built (steps A and B of `docs/PLAN.md`, "Maps"); the Map view is not yet.
+Status: accepted, 2026-09-27. Previews on a map, their backgrounds and the
+Map view are built (steps A, B and C of `docs/PLAN.md`, "Maps").
 
 ## Context
 
@@ -84,9 +84,9 @@ and no offline downloads. Access can be blocked without notice.
   inspection's `geo` field (ADR-009), and `tiles`.
 - **Positions are not a hydration field.** Reading EXIF for every picture
   of every listing would slow every folder for users who never open a map.
-  The Map view asks `geo` for positions of what it shows, on a worker,
-  visible entries first, cached by file identity, size and mtime in the
-  deletable cache. A query facet over positions (`near:`) needs a field
+  The Map view asks `geo` for positions of what it shows, on workers,
+  cached by file identity, size and mtime in the deletable cache (the
+  addendum on the Map view below). A query facet over positions (`near:`) needs a field
   filled on demand, a core decision left to its own ADR.
 
 ## Consequences
@@ -179,3 +179,41 @@ tile), twelve tiles took about two round trips on one connection. Zooming
 out now asks for 24 tiles where it asked 18: with more in flight, the
 tiles of the zooms passed through are fetched while shown. Not measured:
 a real network, and OpenStreetMap's own server.
+
+## Addendum (2026-09-27): the Map view
+
+- **A scan, then batches.** `geo.scan { pane }` snapshots what the pane
+  lists (a folder, a search, a timeline's bucket alike) and returns; which
+  files can say where they are (pictures by the MIME database's kind,
+  tracks by extension) and what they say are found on four workers.
+  `geo.points { pane, since }` hands over the points found after the
+  first `since`, so each travels once; the plugin advances its view
+  descriptor's revision and wakes the UI at most every 200 ms. A track is
+  its line thinned to 400 points. Positions are kept by identity (device,
+  inode, size, modification time to the nanosecond) in memory and in the
+  cache's `geo` namespace, so a folder seen before is placed at once.
+- **What was shown stays until something moved** (the rule Usage follows,
+  ADR-007). A scan ends complete only if its listing was: one started
+  while the folder streams goes on, in the next scan, from what it looked
+  at, so markers are not taken back at each batch. Once complete, a change
+  of the listing's names or modification times (a picture geotagged by
+  another program) has the files looked at again beside what is shown,
+  and the result replaces it, under a new generation, only if a point
+  differs. Hydration moving the times therefore costs a stat per candidate
+  on a worker and nothing on screen.
+- **Not in view order.** The plan said visible entries first; a map has
+  no rows, and before the positions are known nothing says which files
+  are in view. The scan goes in listing order; its cache makes a second
+  look immediate.
+- **Subfolders are a search**, not a walker of the plugin's own: the
+  placeholder's action and the header's Subfolders button dispatch
+  `query.search` with `(kind:image OR ext:gpx,kml,kmz,geojson)`, and the
+  view scans that search's listing like any other.
+- **Drawn by `elements/map.rs`**, over the same backgrounds as the preview.
+  Markers closer than 48 px merge greedily into a bubble with their count,
+  which a click opens (the map zooms to fit its members, or selects them
+  when they cannot be told apart). While at most 60 markers stand alone in
+  view, a picture's marker is its thumbnail, cropped to a 40 px square.
+  A click selects (Ctrl toggles), Shift and a drag selects what a
+  rectangle holds, a double click opens; the arrows move the map, the zoom
+  keys zoom it and Home fits it to its files.

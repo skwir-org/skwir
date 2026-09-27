@@ -6,10 +6,14 @@
 //! The formats stream: a GPX of a whole day is read without holding its
 //! tree, and a track longer than the map can use is thinned evenly
 //! (`collect::MAX_POINTS`) while its facts count every point.
+//!
+//! It also gives the Map view its places (`view`): the pictures and tracks
+//! of the location a pane shows, found on workers.
 mod collect;
 mod geojson;
 mod gpx;
 mod kml;
+mod view;
 mod xml;
 
 use std::io::{BufReader, Read};
@@ -17,6 +21,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
+use bibli_core::command::Outcome;
+use bibli_core::registry::{KeyBinding, ViewSpec};
+use bibli_core::workspace::PaneId;
 use bibli_core::{
     App, CancelToken,
     geo::GeoDoc,
@@ -31,7 +38,32 @@ const ID: &str = "geo";
 /// What is read of a file, streamed: more than a year of GPS logging.
 const MAX_INPUT: u64 = 256 * 1024 * 1024;
 
-pub struct GeoPlugin;
+/// The Map view's id: its descriptor, and the renderer the UI draws it with.
+pub const VIEW: &str = "map";
+
+#[derive(Default)]
+pub struct GeoPlugin {
+    revision: Arc<std::sync::atomic::AtomicU64>,
+    scanner: parking_lot::Mutex<Option<Arc<view::Scanner>>>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct PaneArgs {
+    /// The pane; the active one when left out.
+    pane: Option<PaneId>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct PointsArgs {
+    pane: Option<PaneId>,
+    /// Points already had: only those after them are returned.
+    #[serde(default)]
+    since: usize,
+}
+
+/// What `geo.search_subfolders` looks for: pictures and tracks.
+const PLACEABLE: &str = "(kind:image OR ext:gpx,kml,kmz,geojson)";
+
 impl Plugin for GeoPlugin {
     fn id(&self) -> &'static str {
         ID
@@ -47,12 +79,85 @@ impl Plugin for GeoPlugin {
     }
     fn register(&self, app: &App) {
         app.previews.register(ID, Arc::new(Provider));
+        let mut spec = ViewSpec::named(VIEW, "Map", "map", Arc::clone(&self.revision)).lens();
+        // After Usage, the other lens.
+        spec.order = 110;
+        app.registry.views.add(ID, spec);
+        app.registry.keymap.add(
+            ID,
+            KeyBinding {
+                // After Usage's Ctrl+4.
+                keys: "ctrl-5".into(),
+                command: bibli_core::command::Invocation::with_args(
+                    "ui.view",
+                    &serde_json::json!({ "id": VIEW }),
+                ),
+                when: None,
+            },
+        );
+        let scanner = Arc::new(view::Scanner::new(app, Arc::clone(&self.revision)));
+        if let Some(old) = self.scanner.lock().replace(Arc::clone(&scanner)) {
+            old.stop();
+        }
+        let scan = Arc::clone(&scanner);
+        app.commands.register::<PaneArgs, _>(
+            ID,
+            "geo.scan",
+            "Find where the files are",
+            "Find the pictures and tracks of what a pane lists that say where they are, for the Map view",
+            move |args, app| {
+                scan.scan(app, app.pane_or_active(args.pane))?;
+                Ok(Outcome::Done)
+            },
+        );
+        let points = Arc::clone(&scanner);
+        app.commands.register::<PointsArgs, _>(
+            ID,
+            "geo.points",
+            "Where the files are",
+            "The pictures and tracks of what a pane lists that were placed on the map, after the first `since`",
+            move |args, app| {
+                let found = points.points(app.pane_or_active(args.pane), args.since);
+                Ok(Outcome::Value(serde_json::to_value(found)?))
+            },
+        );
+        let release = Arc::clone(&scanner);
+        app.commands.register::<PaneArgs, _>(
+            ID,
+            "geo.release",
+            "Forget where the files are",
+            "Stop finding where a pane's files are: its Map view closed",
+            move |args, app| {
+                release.release(app.pane_or_active(args.pane));
+                Ok(Outcome::Done)
+            },
+        );
+        app.commands.register::<PaneArgs, _>(
+            ID,
+            "geo.search_subfolders",
+            "Search subfolders for places",
+            "Show the pictures and tracks of the folder and all its subfolders",
+            |args, app| {
+                app.dispatch(&bibli_core::command::Invocation::with_args(
+                    "query.search",
+                    &serde_json::json!({
+                        "expr": PLACEABLE,
+                        "pane": app.pane_or_active(args.pane),
+                    }),
+                ))
+            },
+        );
+    }
+    fn on_disable(&self, _app: &App) {
+        if let Some(scanner) = self.scanner.lock().take() {
+            scanner.stop();
+        }
     }
 }
 
 /// A format this plugin reads, told by the file's extension.
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum Format {
+pub(crate) enum Format {
     Gpx,
     Kml,
     Kmz,
@@ -60,7 +165,7 @@ enum Format {
 }
 
 impl Format {
-    fn of(path: &Path) -> Option<Self> {
+    pub(crate) fn of(path: &Path) -> Option<Self> {
         Some(match inspection::extension(path).as_str() {
             "gpx" => Format::Gpx,
             "kml" => Format::Kml,
@@ -273,7 +378,7 @@ fn summary(doc: &GeoDoc, c: &Collector) -> String {
 }
 
 /// Read a file into what the map shows and what Details says.
-fn inspect_file(path: &Path, cancel: &CancelToken) -> anyhow::Result<Inspection> {
+pub(crate) fn inspect_file(path: &Path, cancel: &CancelToken) -> anyhow::Result<Inspection> {
     let format = Format::of(path).ok_or_else(|| anyhow::anyhow!("Not a map file"))?;
     let mut collector = Collector::new();
     let mut notes = read(path, format, &mut collector, cancel)?;

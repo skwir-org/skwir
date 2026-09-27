@@ -594,6 +594,32 @@ only network code). Each step below ships on its own.
   what has not; an empty result is a placeholder offering subfolders. Commands:
   `geo.points`, `geo.status`, `geo.track`, `geo.open_external`,
   `geo.copy_coordinates`.
+  *Built 2026-09-27* (ADR-020 addendum). Commands: `geo.scan`, `geo.points`
+  (with the counts `geo.status` was to give), `geo.release`,
+  `geo.search_subfolders`; Ctrl+5 shows the view. Deviations: the counts
+  are in a row at the top of the view, with the Subfolders and Fit buttons,
+  not in the status bar; "Include subfolders" is a search
+  (`query.search`), not a walk of the plugin's own; the scan goes in
+  listing order, not visible entries first (before the positions are
+  known, nothing says what is in view); `geo.track`, `geo.open_external`
+  and `geo.copy_coordinates` are not built (the preview of a selected track
+  or picture has Open in Maps). A scan ends complete only when its listing
+  was, and a finished one stays shown while the files are looked at again
+  after a change, replaced only if a point moved: found in the real window,
+  where a picture geotagged in place was not placed again, and the first
+  scan, made before the folder arrived, ended empty and "complete".
+  Fixed with it in core: `App::waker_handle` now calls the hook installed
+  when it is called (a plugin's handle, taken at registration before the
+  UI installs one, woke nothing), and so does a location's `OpenContext`.
+  Verified in the real app on Xvfb with synthetic geotagged JPEGs and a
+  GPX (invented coordinates): 21 placed and 3 without a position; the
+  clusters; a cluster's click zooming in to thumbnails; a click, Shift and
+  a drag selecting, the preview following; the Subfolders search (23
+  placed); the arrows, the zoom keys and Home; a picture geotagged in
+  place while shown (22 placed, without input). Headless: the command
+  path in `crates/plugins/geo/tests/map_view.rs`. Not verified: the double
+  click that opens (it starts the desktop's viewer); a folder of thousands
+  of pictures (no geotagged bench data yet); the dark theme.
 - **D. More formats and polish.** TCX, FIT, IGC and NMEA; track thumbnails in the
   grid; an elevation profile under the preview (a plan's planned altitudes);
   positions of videos (the MP4 location atom); a "Show on map" link on the

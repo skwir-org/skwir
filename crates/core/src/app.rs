@@ -123,7 +123,9 @@ pub struct App {
     /// Self reference so background work can keep a `Weak<App>`.
     weak: std::sync::Weak<App>,
     providers: RwLock<HashMap<Arc<str>, (Arc<str>, Arc<dyn LocationProvider>)>>,
-    waker: RwLock<Option<Waker>>,
+    /// Shared with every `waker_handle`, so a handle taken before the UI
+    /// installs its hook still reaches it.
+    waker: Arc<RwLock<Option<Waker>>>,
     batch_size: usize,
     /// Cancelled on drop: stops every background task started by this app.
     lifetime: CancelToken,
@@ -163,7 +165,7 @@ impl App {
             tallies: crate::tally::Tallies::default(),
             terminals: crate::terminal::Terminals::default(),
             providers: RwLock::new(HashMap::new()),
-            waker: RwLock::new(None),
+            waker: Arc::default(),
             batch_size: config.batch_size,
             lifetime,
         });
@@ -191,9 +193,17 @@ impl App {
     }
 
     /// A callable wake hook for background work that outlives the borrow of
-    /// `App` (a no-op when no UI has installed one).
+    /// `App`. It calls the hook installed when it is called, not when it was
+    /// taken: plugins take theirs at registration, before the UI installs
+    /// one (a no-op while none is).
     pub fn waker_handle(&self) -> Waker {
-        self.waker.read().clone().unwrap_or_else(|| Arc::new(|| {}))
+        let waker = Arc::clone(&self.waker);
+        Arc::new(move || {
+            let hook = waker.read().clone();
+            if let Some(hook) = hook {
+                hook();
+            }
+        })
     }
 
     /// Invoke the wake hook, if any.
@@ -253,7 +263,7 @@ impl App {
                 scheduler: self.scheduler.clone(),
                 cancel: self.lifetime.child(),
                 batch_size: self.batch_size,
-                waker: self.waker.read().clone(),
+                waker: Some(self.waker_handle()),
                 metadata: Arc::clone(&self.metadata),
             },
         )
@@ -1094,5 +1104,27 @@ mod tests {
             Some(PathBuf::from("/data"))
         );
         assert_eq!(parent(&["/x/1", "/y/2"]), Some(PathBuf::from("/")));
+    }
+
+    /// A plugin takes its handle when it registers, before the UI installs
+    /// its hook: the handle still wakes the UI.
+    #[test]
+    fn a_wake_handle_taken_early_reaches_the_hook_installed_later() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let tmp = tempfile::tempdir().unwrap();
+        let app = super::App::new(super::AppConfig::ephemeral(tmp.path())).unwrap();
+        let early = app.waker_handle();
+        early();
+        let woken = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&woken);
+        app.set_waker(Some(Arc::new(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+        })));
+        early();
+        assert_eq!(woken.load(Ordering::SeqCst), 1);
+        app.set_waker(None);
+        early();
+        assert_eq!(woken.load(Ordering::SeqCst), 1);
     }
 }
