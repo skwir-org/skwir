@@ -44,6 +44,17 @@ enum Entry {
 
 type Arrival = (Key, Result<Arc<RenderImage>, String>);
 
+/// How long a view waited for its tiles: from the first frame that lacked
+/// one to the first that had them all. Traced at debug level
+/// (`RUST_LOG=bibli_ui::map_tiles=debug`), the measure of this module.
+struct Waiting {
+    since: std::time::Instant,
+    asked: usize,
+    frames: usize,
+    /// When the tile at the middle of the view was drawn.
+    middle_ms: Option<u64>,
+}
+
 /// The backgrounds to choose from, as the setting that chooses them lists
 /// them, and the one chosen.
 #[derive(Clone, Debug)]
@@ -79,6 +90,13 @@ pub struct TileStore {
     app: Arc<bibli_core::App>,
     /// Why the last tile of this revision failed, until someone says so.
     pub failure: Option<(u64, String)>,
+    /// A view waiting for tiles, measured until it has them all.
+    waiting: Option<Waiting>,
+    /// Tiles the frame being drawn lacks, and those it asked for.
+    lacking: usize,
+    asked: usize,
+    /// The tile at the middle of the view drawn this frame, for the measure.
+    middle: Option<Key>,
 }
 
 impl TileStore {
@@ -96,6 +114,10 @@ impl TileStore {
             evicted: Vec::new(),
             info: None,
             failure: None,
+            waiting: None,
+            lacking: 0,
+            asked: 0,
+            middle: None,
             app: Arc::clone(app),
         }
     }
@@ -150,6 +172,17 @@ impl TileStore {
 
     pub fn begin_frame(&mut self) {
         self.frame += 1;
+        self.lacking = 0;
+        self.asked = 0;
+        self.middle = None;
+    }
+
+    /// The tile at the middle of the view, for the measure only.
+    pub fn middle(&mut self, request: TileRequest) {
+        self.middle = Some(Key {
+            revision: self.revision(),
+            request,
+        });
     }
 
     /// The tile, if it is here; asked for if it is not.
@@ -167,6 +200,7 @@ impl TileStore {
             Some(Entry::Loading(_)) => {
                 // Still wanted: `end_frame` keeps it.
                 self.wanted.push(key);
+                self.lacking += 1;
                 return None;
             }
             Some(Entry::Failed(when)) if when.elapsed() < RETRY => return None,
@@ -177,6 +211,8 @@ impl TileStore {
         let (tx, wake) = (self.tx.clone(), Arc::clone(&self.wake));
         self.entries.insert(key, Entry::Loading(cancel.clone()));
         self.wanted.push(key);
+        self.lacking += 1;
+        self.asked += 1;
         source.request(
             request,
             cancel,
@@ -213,6 +249,38 @@ impl TileStore {
     /// shows, forget other revisions, and keep the kept tiles in budget,
     /// the least recently drawn going first.
     pub fn end_frame(&mut self) {
+        let middle_drawn = self
+            .middle
+            .is_some_and(|key| matches!(self.entries.get(&key), Some(Entry::Ready { .. })));
+        match (&mut self.waiting, self.lacking) {
+            (None, 0) => {}
+            (None, _) => {
+                self.waiting = Some(Waiting {
+                    since: std::time::Instant::now(),
+                    asked: self.asked,
+                    frames: 1,
+                    middle_ms: None,
+                });
+            }
+            (Some(waiting), 0) => {
+                let ms = waiting.since.elapsed().as_millis() as u64;
+                tracing::debug!(
+                    ms,
+                    middle_ms = waiting.middle_ms.unwrap_or(ms),
+                    asked = waiting.asked,
+                    frames = waiting.frames + 1,
+                    "map tiles: the view has them all"
+                );
+                self.waiting = None;
+            }
+            (Some(waiting), _) => {
+                waiting.asked += self.asked;
+                waiting.frames += 1;
+                if middle_drawn && waiting.middle_ms.is_none() {
+                    waiting.middle_ms = Some(waiting.since.elapsed().as_millis() as u64);
+                }
+            }
+        }
         let revision = self.revision();
         let wanted: std::collections::HashSet<Key> = self.wanted.drain(..).collect();
         let mut gone = Vec::new();

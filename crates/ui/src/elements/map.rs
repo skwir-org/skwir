@@ -680,7 +680,19 @@ impl Element for Map {
                     palette: layer.palette,
                 };
                 let corners = (view.to_world((0., 0.), size), view.to_world(size, size));
-                for (x, y, dx, dy) in bibli_core::tiles::cover(z, corners.0, corners.1) {
+                let mut cover = bibli_core::tiles::cover(z, corners.0, corners.1);
+                // The farthest from the middle asked first: a source serves
+                // its newest request first, so the middle arrives first.
+                let n = f64::from(1u32 << z);
+                let away = |&(_, _, dx, dy): &(u32, u32, i64, i64)| {
+                    let (cx, cy) = ((dx as f64 + 0.5) / n, (dy as f64 + 0.5) / n);
+                    (cx - view.x).hypot(cy - view.y)
+                };
+                cover.sort_by(|a, b| away(b).total_cmp(&away(a)));
+                if let Some(&(x, y, _, _)) = cover.last() {
+                    store.middle(request(z, x, y));
+                }
+                for (x, y, dx, dy) in cover {
                     let bounds = tile_bounds(&view, z, (dx, dy), size, origin);
                     if let Some(image) = store.get(request(z, x, y)) {
                         tiles.push(TileDraw {
@@ -689,6 +701,22 @@ impl Element for Map {
                             clip: bounds,
                         });
                         continue;
+                    }
+                    // Zooming out: the four finer tiles already here stand
+                    // in, over any coarser one found below.
+                    if z < info.max_zoom {
+                        for (i, j) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                            let child = request(z + 1, 2 * x + i, 2 * y + j);
+                            if let Some(image) = store.cached(child) {
+                                let at = (2 * dx + i64::from(i), 2 * dy + i64::from(j));
+                                let bounds = tile_bounds(&view, z + 1, at, size, origin);
+                                tiles.push(TileDraw {
+                                    image,
+                                    bounds,
+                                    clip: bounds,
+                                });
+                            }
+                        }
                     }
                     for up in 1..=STAND_IN.min(z) {
                         let (pz, step) = (z - up, 1i64 << up);
@@ -709,7 +737,8 @@ impl Element for Map {
                     }
                 }
                 store.end_frame();
-                // Stand-ins are drawn first, under the tiles they wait for.
+                // Coarser stand-ins are drawn first, under the tiles they
+                // wait for, and finer ones last, over them.
                 tiles.sort_by_key(|t| std::cmp::Reverse(t.bounds.size.width));
                 if !info.attribution.is_empty() {
                     let line = shape(info.attribution.into(), self.colors.text, window);

@@ -19,12 +19,27 @@ toml.workspace = true
 tracing.workspace = true
 # Rasterizes the offline outline; the version resvg already brings.
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
-# The one HTTP client (ADR-020): blocking, on this plugin's own threads, with
-# the system's certificates.
-ureq = { version = "3", default-features = false, features = ["rustls", "platform-verifier"] }
+# The HTTP client (ADR-020): HTTP/2 where the server speaks it, on a runtime
+# of the download thread's own, with the system's certificates. The crates
+# and versions gpui already brings; rustls with ring, as the tree has it.
+tokio = { version = "1", features = ["rt", "time", "sync", "net"] }
+hyper = { version = "1", features = ["client", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "http2", "tokio"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "ring", "tls12"] }
+http-body-util = "0.1"
+bytes = "1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-platform-verifier = "0.7"
 
 [dev-dependencies]
 tempfile.workspace = true
+# A local HTTPS server speaking HTTP/2, for the client's tests.
+tokio = { version = "1", features = ["rt", "time", "sync", "net", "macros"] }
+hyper = { version = "1", features = ["server"] }
+hyper-util = { version = "0.1", features = ["server-auto"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+rustls-pemfile = "2"
+
 
 [lints]
 workspace = true

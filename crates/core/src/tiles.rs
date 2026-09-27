@@ -59,7 +59,9 @@ pub type TileDone = Box<dyn FnOnce(TileResult) + Send>;
 pub trait TileSource: Send + Sync {
     fn info(&self) -> SourceInfo;
     /// Start getting a tile; answer through `done`. Must return at once:
-    /// it is called on the UI thread.
+    /// it is called on the UI thread. Of the requests waiting, the newest
+    /// is served first, as the scheduler serves its jobs: a map asks for
+    /// the tiles farthest from its middle first, so the middle comes first.
     fn request(&self, request: TileRequest, cancel: CancelToken, done: TileDone);
 }
 

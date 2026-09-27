@@ -579,6 +579,12 @@ only network code). Each step below ships on its own.
   and in the keyring (the item written, then deleted). Not verified live:
   the `{s}`, `{-y}`, `{q}` and `{r}` forms (tested as pure functions), and
   a keyring that asks to be unlocked.
+- **B″. Loading as map libraries do.** *Built 2026-09-27* (ADR-020 addendum):
+  the middle of the view first, every downloaded tile kept, finer tiles
+  standing in when zooming out, and HTTP/2 through hyper in place of `ureq`.
+  At 150 ms a tile, opening a map now shows its middle in 175 ms (it came
+  last) and the whole view in 431 ms (was 626), and zooming out two levels
+  completes in about 1 s (was 1.9).
 - **C. The Map view.** A `ViewRole::Lens` in the View menu. `geo` scans the
   location shown (a folder, or with "Include subfolders" its subtree; a search or
   a timeline bucket as it is) for EXIF positions and track files, visible

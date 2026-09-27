@@ -6,9 +6,10 @@
 //! tile kept too long, and no offline download.
 //!
 //! A cached tile is read on a scheduler worker; a download happens on this
-//! module's two threads, newest request first, so waiting for a server
-//! never holds a worker, and a tile that left the view before its turn is
-//! never asked for.
+//! module's thread (`http`: HTTP/2 where the server speaks it), newest
+//! request first and `IN_FLIGHT` at a time, so waiting for a server never
+//! holds a worker, and a tile that left the view before its turn is never
+//! asked for. A tile downloaded is kept, whatever became of its view.
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -17,17 +18,17 @@ use bibli_core::CancelToken;
 use bibli_core::cache::CacheSlot;
 use bibli_core::tiles::{TileDone, TileRequest};
 use bibli_platform::secrets::{SecretRef, SecretText};
-use parking_lot::{Condvar, Mutex};
+use parking_lot::Mutex;
 
+use crate::http;
 use crate::server::{Server, redact};
 
-/// Connections to one server at a time.
-const THREADS: usize = 2;
+/// Requests in flight at once: on HTTP/2, streams of one connection; on
+/// HTTP/1.1, as many kept-alive connections, as a browser opens.
+const IN_FLIGHT: usize = 6;
 /// How long a tile is kept when its server says nothing (the policy's
 /// minimum).
 const KEEP: Duration = Duration::from_secs(7 * 24 * 3600);
-/// A tile larger than this is not a tile.
-const MAX_BODY: u64 = 4 * 1024 * 1024;
 /// The downloaded tiles kept, across sources.
 pub const CACHE_BUDGET: u64 = 128 * 1024 * 1024;
 /// Stores between two trims of the cache: a trim walks the directory.
@@ -113,6 +114,9 @@ fn httpdate(text: &str) -> Option<u64> {
 }
 
 struct Job {
+    /// When the map asked for it (`Downloads::ticket`): the newest is
+    /// served first, whatever order the jobs reached the queue in.
+    ticket: u64,
     server: Arc<Server>,
     tile: TileRequest,
     /// Where the tile is kept in the cache (`Server::cache_key`).
@@ -129,19 +133,39 @@ type Keys = Mutex<HashMap<String, Option<Arc<SecretText>>>>;
 #[derive(Default)]
 struct Queue {
     jobs: Mutex<VecDeque<Job>>,
-    ready: Condvar,
-    /// Threads started so far.
-    started: Mutex<usize>,
+    ready: tokio::sync::Notify,
+    started: Mutex<bool>,
+}
+
+impl Queue {
+    /// The newest request still wanted.
+    fn take(&self) -> Option<Job> {
+        let mut jobs = self.jobs.lock();
+        jobs.retain(|job| !job.cancel.is_cancelled());
+        // The view the user is looking at now, and in it the middle (the
+        // map asks for it last).
+        let newest = (0..jobs.len()).max_by_key(|&i| jobs[i].ticket)?;
+        jobs.remove(newest)
+    }
+}
+
+/// What the download thread shares with its requests.
+struct Shared {
+    queue: Arc<Queue>,
+    http: http::Http,
+    cache: CacheSlot,
+    stores: Mutex<u32>,
+    keys: Arc<Keys>,
 }
 
 pub struct Downloads {
     queue: Arc<Queue>,
     cache: CacheSlot,
-    stores: Arc<Mutex<u32>>,
-    /// Ends the threads when the plugin is disabled.
+    /// Ends the thread when the plugin is disabled.
     lifetime: CancelToken,
     user_agent: String,
     keys: Arc<Keys>,
+    tickets: std::sync::atomic::AtomicU64,
 }
 
 impl Downloads {
@@ -149,9 +173,9 @@ impl Downloads {
         Downloads {
             queue: Arc::default(),
             cache,
-            stores: Arc::default(),
             lifetime,
             keys: Arc::default(),
+            tickets: std::sync::atomic::AtomicU64::new(0),
             user_agent: format!(
                 "bibli/{} (+{})",
                 env!("CARGO_PKG_VERSION"),
@@ -160,9 +184,24 @@ impl Downloads {
         }
     }
 
+    /// A ticket for a request, taken when the map makes it: the scheduler
+    /// runs its jobs newest first too, so the order jobs reach the queue in
+    /// is not the order the map asked in.
+    pub fn ticket(&self) -> u64 {
+        self.tickets
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Get `tile` of `server`: from the cache while it is fresh, else from
     /// the server. Runs on a scheduler worker.
-    pub fn get(&self, server: Arc<Server>, tile: TileRequest, cancel: CancelToken, done: TileDone) {
+    pub fn get(
+        &self,
+        ticket: u64,
+        server: Arc<Server>,
+        tile: TileRequest,
+        cancel: CancelToken,
+        done: TileDone,
+    ) {
         let key = server.cache_key(&tile);
         let cached = self
             .cache
@@ -175,6 +214,7 @@ impl Downloads {
             return;
         }
         self.enqueue(Job {
+            ticket,
             server,
             tile,
             key,
@@ -189,6 +229,7 @@ impl Downloads {
     pub fn ask(&self, server: Arc<Server>, tile: TileRequest, cancel: CancelToken, done: TileDone) {
         let key = server.cache_key(&tile);
         self.enqueue(Job {
+            ticket: self.ticket(),
             server,
             tile,
             key,
@@ -199,7 +240,10 @@ impl Downloads {
     }
 
     fn enqueue(&self, job: Job) {
-        self.start_threads();
+        if let Err(error) = self.start() {
+            (job.done)(Err(error));
+            return;
+        }
         self.queue.jobs.lock().push_back(job);
         self.queue.ready.notify_one();
     }
@@ -209,43 +253,33 @@ impl Downloads {
         self.keys.lock().clear();
     }
 
-    fn start_threads(&self) {
+    /// The download thread, started with the first download.
+    fn start(&self) -> anyhow::Result<()> {
         let mut started = self.queue.started.lock();
-        while *started < THREADS {
-            *started += 1;
-            let queue = Arc::clone(&self.queue);
-            let cache = self.cache.clone();
-            let stores = Arc::clone(&self.stores);
-            let lifetime = self.lifetime.clone();
-            let keys = Arc::clone(&self.keys);
-            let agent: ureq::Agent = ureq::Agent::config_builder()
-                .user_agent(self.user_agent.as_str())
-                .timeout_global(Some(Duration::from_secs(15)))
-                .http_status_as_error(false)
-                .tls_config(
-                    ureq::tls::TlsConfig::builder()
-                        .root_certs(ureq::tls::RootCerts::PlatformVerifier)
-                        .build(),
-                )
-                .build()
-                .into();
-            let spawned = std::thread::Builder::new()
-                .name("map-tiles".into())
-                .spawn(move || work(&queue, &agent, &cache, &stores, &keys, &lifetime));
-            if let Err(error) = spawned {
-                tracing::warn!(%error, "map tiles: no download thread");
-                *started -= 1;
-                break;
-            }
+        if *started {
+            return Ok(());
         }
+        let shared = Arc::new(Shared {
+            queue: Arc::clone(&self.queue),
+            http: http::Http::system(&self.user_agent)?,
+            cache: self.cache.clone(),
+            stores: Mutex::new(0),
+            keys: Arc::clone(&self.keys),
+        });
+        let lifetime = self.lifetime.clone();
+        std::thread::Builder::new()
+            .name("map-tiles".into())
+            .spawn(move || run(&shared, &lifetime))?;
+        *started = true;
+        Ok(())
     }
 
-    /// Wake the threads so they see the plugin is gone, and drop what
-    /// waits: its requests are cancelled with it.
+    /// Wake the thread so it sees the plugin is gone, and drop what waits:
+    /// its requests are cancelled with it.
     pub fn stop(&self) {
         self.lifetime.cancel();
         self.queue.jobs.lock().clear();
-        self.queue.ready.notify_all();
+        self.queue.ready.notify_one();
     }
 }
 
@@ -267,95 +301,134 @@ fn key_of(server: &Server, keys: &Keys) -> anyhow::Result<Option<Arc<SecretText>
     Ok(key)
 }
 
-fn work(
-    queue: &Queue,
-    agent: &ureq::Agent,
-    cache: &CacheSlot,
-    stores: &Mutex<u32>,
-    keys: &Keys,
-    lifetime: &CancelToken,
-) {
-    loop {
-        let job = {
-            let mut jobs = queue.jobs.lock();
-            loop {
+/// The download thread: a runtime of its own, serving the newest request
+/// first, `IN_FLIGHT` at a time, until the plugin is disabled.
+fn run(shared: &Arc<Shared>, lifetime: &CancelToken) {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            tracing::warn!(%error, "map tiles: no runtime for downloads");
+            return;
+        }
+    };
+    runtime.block_on(async {
+        let slots = Arc::new(tokio::sync::Semaphore::new(IN_FLIGHT));
+        loop {
+            let Ok(slot) = Arc::clone(&slots).acquire_owned().await else {
+                return;
+            };
+            let job = loop {
                 if lifetime.is_cancelled() {
                     return;
                 }
-                // The newest first: the view the user is looking at now.
-                if let Some(job) = jobs.pop_back() {
-                    if job.cancel.is_cancelled() {
-                        continue;
-                    }
+                if let Some(job) = shared.queue.take() {
                     break job;
                 }
-                queue.ready.wait_for(&mut jobs, Duration::from_secs(30));
-            }
-        };
-        let key = key_of(&job.server, keys);
-        let secret = key
-            .as_ref()
-            .ok()
-            .and_then(Option::as_ref)
-            .map(|k| k.expose());
-        let result = key
-            .as_ref()
-            .map_err(|error| anyhow::anyhow!("{error:#}"))
-            .and_then(|_| fetch(agent, &job, secret))
-            // Whatever the server or the network said, never the key.
-            .map_err(|error| anyhow::anyhow!(redact(&format!("{error:#}"), secret)));
-        if job.cancel.is_cancelled() {
-            continue;
+                // Woken by a new request or by `stop`; the timeout only
+                // bounds how long a missed wake could go unnoticed.
+                let _ =
+                    tokio::time::timeout(Duration::from_secs(30), shared.queue.ready.notified())
+                        .await;
+            };
+            let shared = Arc::clone(shared);
+            tokio::spawn(async move {
+                serve(&shared, job).await;
+                drop(slot);
+            });
         }
+    });
+}
+
+/// Download one tile, keep it, and answer it.
+async fn serve(shared: &Arc<Shared>, job: Job) {
+    // Apart: the answer (`done`) is sent across threads, never shared, so
+    // nothing awaited may hold the job.
+    let Job {
+        server,
+        tile,
+        key: place,
+        stale,
+        cancel,
+        done,
+        ..
+    } = job;
+    // The keyring may ask to be unlocked: not on the runtime's thread.
+    let (server_for_key, keys) = (Arc::clone(&server), Arc::clone(&shared.keys));
+    let key = tokio::task::spawn_blocking(move || key_of(&server_for_key, &keys))
+        .await
+        .map_err(|error| anyhow::anyhow!("{error}"))
+        .and_then(|key| key);
+    let secret = key
+        .as_ref()
+        .ok()
+        .and_then(Option::as_ref)
+        .map(|k| k.expose().to_owned());
+    let result = match &key {
+        Ok(_) => {
+            fetch(
+                &shared.http,
+                &server,
+                &tile,
+                stale.as_ref(),
+                secret.as_deref(),
+            )
+            .await
+        }
+        Err(error) => Err(anyhow::anyhow!("{error:#}")),
+    }
+    // Whatever the server or the network said, never the key.
+    .map_err(|error| anyhow::anyhow!(redact(&format!("{error:#}"), secret.as_deref())));
+    // Decoding and keeping are for a worker, not the runtime's thread.
+    let shared = Arc::clone(shared);
+    let _ = tokio::task::spawn_blocking(move || {
+        // A tile downloaded is kept, even when its view has moved on: the
+        // request was made, and the view may come back.
         let answer = result.and_then(|fresh| {
             let image = decode(&fresh.body);
-            if image.is_ok() && cache.put(job.key.as_bytes(), &fresh.encode()).is_ok() {
-                let mut count = stores.lock();
+            if image.is_ok() && shared.cache.put(place.as_bytes(), &fresh.encode()).is_ok() {
+                let mut count = shared.stores.lock();
                 *count += 1;
                 if (*count).is_multiple_of(TRIM_EVERY)
-                    && let Err(error) = cache.trim_to_bytes(CACHE_BUDGET)
+                    && let Err(error) = shared.cache.trim_to_bytes(CACHE_BUDGET)
                 {
                     tracing::debug!(%error, "map tiles: trimming the cache");
                 }
             }
             image
         });
-        (job.done)(answer);
-    }
-}
-
-/// Ask the server, once more when the connection failed: a kept-alive
-/// connection the server closed while idle fails the first request sent
-/// on it.
-fn fetch(agent: &ureq::Agent, job: &Job, key: Option<&str>) -> anyhow::Result<Cached> {
-    match fetch_once(agent, job, key) {
-        Err(error) if error.is::<ureq::Error>() && !job.cancel.is_cancelled() => {
-            tracing::debug!(error = %redact(&error.to_string(), key), "map tiles: asking again");
-            fetch_once(agent, job, key)
+        if !cancel.is_cancelled() {
+            done(answer);
         }
-        result => result,
-    }
+    })
+    .await;
 }
 
 /// Ask the server, conditionally when a stale copy is kept.
-fn fetch_once(agent: &ureq::Agent, job: &Job, key: Option<&str>) -> anyhow::Result<Cached> {
-    let url = job.server.address(&job.tile, key)?;
-    let mut request = agent.get(&url);
-    for (name, value) in job.server.request_headers(key)? {
-        request = request.header(name.as_str(), value.as_str());
-    }
-    if let Some(stale) = &job.stale {
+async fn fetch(
+    http: &http::Http,
+    server: &Server,
+    tile: &TileRequest,
+    stale: Option<&Cached>,
+    key: Option<&str>,
+) -> anyhow::Result<Cached> {
+    let url = server.address(tile, key)?;
+    let mut headers = server.request_headers(key)?;
+    if let Some(stale) = stale {
         if let Some(etag) = &stale.etag {
-            request = request.header("If-None-Match", etag);
+            headers.push(("If-None-Match".into(), etag.clone()));
         }
         if let Some(modified) = &stale.modified {
-            request = request.header("If-Modified-Since", modified);
+            headers.push(("If-Modified-Since".into(), modified.clone()));
         }
     }
-    let mut response = request.call()?;
+    let answer = http.get(&url, &headers).await?;
+    tracing::trace!(version = ?answer.version, status = answer.status, "map tiles: answered");
     let header = |name: &str| {
-        response
-            .headers()
+        answer
+            .headers
             .get(name)
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned)
@@ -366,9 +439,9 @@ fn fetch_once(agent: &ureq::Agent, job: &Job, key: Option<&str>) -> anyhow::Resu
         now(),
     );
     let (etag, modified) = (header("etag"), header("last-modified"));
-    match response.status().as_u16() {
+    match answer.status {
         304 => {
-            let stale = job.stale.as_ref().ok_or_else(|| {
+            let stale = stale.ok_or_else(|| {
                 anyhow::anyhow!("the server said nothing changed in a tile never had")
             })?;
             Ok(Cached {
@@ -382,11 +455,7 @@ fn fetch_once(agent: &ureq::Agent, job: &Job, key: Option<&str>) -> anyhow::Resu
             expires,
             etag,
             modified,
-            body: response
-                .body_mut()
-                .with_config()
-                .limit(MAX_BODY)
-                .read_to_vec()?,
+            body: answer.body,
         }),
         status => anyhow::bail!("the tile server answered {status}"),
     }

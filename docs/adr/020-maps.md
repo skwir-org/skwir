@@ -58,13 +58,10 @@ and no offline downloads. Access can be blocked without notice.
 - **Choosing a network source is the user's act.** A map shown on the
   outline says, once, that street detail needs a map source, with a link
   to the setting (`set_status_about`).
-- **HTTP**: `ureq` with rustls and the system's certificates
-  (`rustls-platform-verifier`), blocking, on two threads of the plugin's
-  own, one kept-alive connection each, newest request first, a deadline
-  per request, and one retry when a connection fails (a server closes
-  idle ones). A cached tile is read on a scheduler worker and never waits
-  behind a download. HTTP/2, which the policy recommends, is not available
-  in ureq. The client is private
+- **HTTP** (changed by the addendum on loading below): hyper with rustls
+  and the system's certificates (`rustls-platform-verifier`), HTTP/2 where
+  the server speaks it, on a runtime of the plugin's own; first `ureq` on
+  two threads. The client is private
   to `map-tiles`. There is no network layer in the core: remote file
   systems come from installed tools (mounts, rclone; ADR-021), not from
   protocols implemented in bibli. If a second plugin needs HTTP (a
@@ -143,3 +140,42 @@ need headers (a Referer the key is bound to, an Authorization).
   preview's toolbar lists the same choices and applies them through
   `settings.apply`, with a way to the servers in Settings. Each server has
   a Test, which asks it for one tile now and says what it answered.
+
+## Addendum (2026-09-27): loading tiles as a map library does
+
+Measured against a local server answering each tile after 150 ms (the
+debug trace `map tiles: the view has them all`, `map_tiles.rs`), a map
+waited 626 ms for the six tiles it opened on, 1 s after a fast pan and
+1.9 s after zooming out two levels, and its middle arrived last. The
+causes, and what MapLibre does instead:
+
+- **The middle first.** A map asks for the tiles farthest from its middle
+  first, since a source serves its newest request first (the `tiles`
+  contract says so). Downloads are served by a ticket taken when the map
+  asks, not by when the job reached the queue: the scheduler runs its jobs
+  newest first too, and two such queues in a row gave the reverse order.
+- **A tile downloaded is kept**, even when its view moved on before it
+  arrived: the request was made, and the view may come back.
+- **Finer tiles stand in** when zooming out, as coarser ones already did
+  when zooming in.
+- **HTTP/2.** `ureq` (HTTP/1.1, two connections) is replaced by hyper,
+  hyper-rustls and h2, the versions gpui already links, on one thread
+  running a tokio runtime of its own: six requests in flight, which on
+  HTTP/2 are streams of one connection and on HTTP/1.1 as many kept-alive
+  connections as a browser opens. Whether a server speaks HTTP/2 is learnt
+  only once a connection is open, so the first request to a server not
+  connected to for 50 s goes alone and the others wait for its
+  connection: without that, a view's burst opened one connection per
+  tile. The TLS configuration is the client's parameter: the application
+  passes the system's, and only its tests pass another (a throwaway
+  authority in `src/testdata`). Arrivals needed no batching: the window
+  already draws them once per frame.
+
+Measured again the same way, over HTTP/1.1: the middle of the view in
+175 ms and the whole view in 431 ms on opening; the middle 45 ms after a
+pan began; the whole view in about 1 s after zooming out, the middle in
+about 230 ms. Over HTTP/2 (the client's test, a local TLS server, 150 ms a
+tile), twelve tiles took about two round trips on one connection. Zooming
+out now asks for 24 tiles where it asked 18: with more in flight, the
+tiles of the zooms passed through are fetched while shown. Not measured:
+a real network, and OpenStreetMap's own server.

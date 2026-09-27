@@ -158,7 +158,9 @@ still to come are in `docs/preview-frame.md`.
   belongs to the file: kept when the file is read again, fitted for another.
   Its colours are the `map_*` tokens, on paper. A map has no Find. It is
   drawn on the registered tile source's tiles (`map_tiles.rs`), asked for
-  in prepaint and cancelled when they leave the view, with the source's
+  in prepaint, farthest from the middle first (a source serves the newest
+  request first), cancelled when they leave the view, a coarser or finer
+  tile already here standing in while one comes, with the source's
   attribution at the bottom right whenever its tiles are drawn. Its
   Background button chooses among the backgrounds the source's setting
   lists (`map_tiles::Backgrounds`, read once per source revision) and

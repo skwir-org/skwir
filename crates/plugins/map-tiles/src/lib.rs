@@ -4,6 +4,7 @@
 //! code in bibli that uses the network, and only after that choice;
 //! disabling it withdraws every source and cancels the downloads in flight.
 mod download;
+mod http;
 mod outline;
 mod server;
 
@@ -351,9 +352,10 @@ impl TileSource for Source {
             }
             Choice::Server(server) => {
                 let downloads = Arc::clone(&self.downloads);
+                let ticket = downloads.ticket();
                 self.scheduler
                     .spawn(Priority::Visible, "map-tile", cancel.clone(), move || {
-                        downloads.get(server, request, cancel, done);
+                        downloads.get(ticket, server, request, cancel, done);
                     });
             }
         }
