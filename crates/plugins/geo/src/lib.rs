@@ -10,10 +10,26 @@
 //! It also gives the Map view its places (`view`): the pictures and tracks
 //! of the location a pane shows, found on workers.
 mod collect;
+mod fit;
+mod flight;
+mod fms;
+mod fpl;
 mod geojson;
 mod gpx;
+mod igc;
 mod kml;
+mod litchi;
+mod lnmpln;
+mod mavlink;
+mod mission;
+mod nmea;
+mod pln;
+mod qgc;
+mod tcx;
+mod text;
+mod thumb;
 mod view;
+mod wpml;
 mod xml;
 
 use std::io::{BufReader, Read};
@@ -22,6 +38,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use bibli_core::command::Outcome;
+use bibli_core::geo::{Datum, LineKind};
 use bibli_core::registry::{KeyBinding, ViewSpec};
 use bibli_core::workspace::PaneId;
 use bibli_core::{
@@ -32,7 +49,7 @@ use bibli_core::{
     preview::{PreviewProvider, PreviewRequest},
 };
 use bibli_platform::inspection::{self, limits};
-use collect::{Collector, Totals};
+use collect::{Collector, Plan, PlanKind, Totals};
 
 const ID: &str = "geo";
 /// What is read of a file, streamed: more than a year of GPS logging.
@@ -61,8 +78,16 @@ struct PointsArgs {
     since: usize,
 }
 
-/// What `geo.search_subfolders` looks for: pictures and tracks.
-const PLACEABLE: &str = "(kind:image OR ext:gpx,kml,kmz,geojson)";
+/// What `geo.search_subfolders` looks for: pictures, videos, and the
+/// files of the formats read but those too common to look inside.
+fn placeable_query() -> String {
+    let extensions: Vec<&str> = EXTENSIONS
+        .iter()
+        .map(|(extension, _)| *extension)
+        .filter(|extension| !NOT_PLACED.contains(extension))
+        .collect();
+    format!("(kind:image OR kind:video OR ext:{})", extensions.join(","))
+}
 
 impl Plugin for GeoPlugin {
     fn id(&self) -> &'static str {
@@ -72,13 +97,14 @@ impl Plugin for GeoPlugin {
         "Maps"
     }
     fn description(&self) -> &'static str {
-        "Show GPS tracks, routes and waypoints (GPX, KML, KMZ, GeoJSON) on a map, with their distance, time and climb. Nothing a file links to is fetched"
+        "Show GPS tracks and routes (GPX, KML, KMZ, GeoJSON, TCX, FIT, IGC, NMEA), flight plans (Garmin, Flight Simulator, X-Plane, Little Navmap) and drone missions (QGroundControl, MAVLink, Litchi, DJI) on a map, with their distance, time and climb, and the pictures and videos of a folder in the Map view. Nothing a file links to is fetched"
     }
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Previews
     }
     fn register(&self, app: &App) {
         app.previews.register(ID, Arc::new(Provider));
+        app.thumbnails.register(ID, Arc::new(thumb::Lines));
         let mut spec = ViewSpec::named(VIEW, "Map", "map", Arc::clone(&self.revision)).lens();
         // After Usage, the other lens.
         spec.order = 110;
@@ -141,7 +167,7 @@ impl Plugin for GeoPlugin {
                 app.dispatch(&bibli_core::command::Invocation::with_args(
                     "query.search",
                     &serde_json::json!({
-                        "expr": PLACEABLE,
+                        "expr": placeable_query(),
                         "pane": app.pane_or_active(args.pane),
                     }),
                 ))
@@ -162,17 +188,110 @@ pub(crate) enum Format {
     Kml,
     Kmz,
     GeoJson,
+    Tcx,
+    Fit,
+    Igc,
+    Nmea,
+    /// Garmin's `.fpl`.
+    GarminPlan,
+    /// Microsoft Flight Simulator's `.pln`.
+    SimPlan,
+    /// X-Plane's `.fms`.
+    XPlanePlan,
+    LittleNavmap,
+    /// `QGroundControl`'s JSON `.plan`.
+    QgcPlan,
+    /// `MAVLink`'s `QGC WPL` text.
+    Mavlink,
+    Litchi,
 }
 
+/// The extensions read, and what they name. Those the content must confirm
+/// are `Format::shared`.
+const EXTENSIONS: &[(&str, Format)] = &[
+    ("gpx", Format::Gpx),
+    ("kml", Format::Kml),
+    ("kmz", Format::Kmz),
+    ("geojson", Format::GeoJson),
+    ("tcx", Format::Tcx),
+    ("fit", Format::Fit),
+    ("igc", Format::Igc),
+    ("nmea", Format::Nmea),
+    ("fpl", Format::GarminPlan),
+    ("pln", Format::SimPlan),
+    ("fms", Format::XPlanePlan),
+    ("lnmpln", Format::LittleNavmap),
+    ("plan", Format::QgcPlan),
+    ("waypoints", Format::Mavlink),
+    ("mission", Format::Mavlink),
+    ("txt", Format::Mavlink),
+    ("csv", Format::Litchi),
+];
+
+/// Extensions of files too common to look inside for the Map view: a
+/// folder's text files and spreadsheets are not places.
+const NOT_PLACED: &[&str] = &["txt", "csv"];
+/// What of a file's start `Format::detect` looks at.
+const HEAD: usize = 4096;
+
 impl Format {
+    /// The format a file's extension names: for an extension other
+    /// programs share, only a candidate (`detect` confirms it).
     pub(crate) fn of(path: &Path) -> Option<Self> {
-        Some(match inspection::extension(path).as_str() {
-            "gpx" => Format::Gpx,
-            "kml" => Format::Kml,
-            "kmz" => Format::Kmz,
-            "geojson" => Format::GeoJson,
-            _ => return None,
-        })
+        let extension = inspection::extension(path);
+        EXTENSIONS
+            .iter()
+            .find(|(e, _)| *e == extension)
+            .map(|(_, format)| *format)
+    }
+
+    /// The format of the file at `path`, as its extension names it and
+    /// its first bytes confirm: other programs use `.plan`, `.csv` or
+    /// `.txt` for other things, and a file is read as a format only when
+    /// it is one. Reads at most `HEAD` bytes: on a worker.
+    pub(crate) fn detect(path: &Path) -> Option<Self> {
+        let format = Self::of(path)?;
+        if !format.confirmed_by_content() {
+            return Some(format);
+        }
+        let mut head = Vec::with_capacity(HEAD);
+        inspection::open(path)
+            .ok()?
+            .take(HEAD as u64)
+            .read_to_end(&mut head)
+            .ok()?;
+        format.sniff(&head).then_some(format)
+    }
+
+    /// Whether the Map view looks inside files of this name.
+    pub(crate) fn placeable(name: &Path) -> bool {
+        Self::of(name).is_some() && !NOT_PLACED.contains(&inspection::extension(name).as_str())
+    }
+
+    /// Whether the first bytes are asked: the formats of step A are
+    /// taken by their extensions, as they were.
+    fn confirmed_by_content(self) -> bool {
+        !matches!(
+            self,
+            Format::Gpx | Format::Kml | Format::Kmz | Format::GeoJson
+        )
+    }
+
+    fn sniff(self, head: &[u8]) -> bool {
+        match self {
+            Format::Tcx => tcx::sniff(head),
+            Format::Fit => fit::sniff(head),
+            Format::Igc => igc::sniff(head),
+            Format::Nmea => nmea::sniff(head),
+            Format::GarminPlan => fpl::sniff(head),
+            Format::SimPlan => pln::sniff(head),
+            Format::XPlanePlan => fms::sniff(head),
+            Format::LittleNavmap => lnmpln::sniff(head),
+            Format::QgcPlan => qgc::sniff(head),
+            Format::Mavlink => mavlink::sniff(head),
+            Format::Litchi => litchi::sniff(head),
+            Format::Gpx | Format::Kml | Format::Kmz | Format::GeoJson => true,
+        }
     }
 
     fn name(self) -> &'static str {
@@ -181,7 +300,23 @@ impl Format {
             Format::Kml => "KML",
             Format::Kmz => "KMZ",
             Format::GeoJson => "GeoJSON",
+            Format::Tcx => "TCX",
+            Format::Fit => "FIT",
+            Format::Igc => "IGC",
+            Format::Nmea => "NMEA",
+            Format::GarminPlan => "Garmin flight plan",
+            Format::SimPlan => "Flight Simulator plan",
+            Format::XPlanePlan => "X-Plane plan",
+            Format::LittleNavmap => "Little Navmap plan",
+            Format::QgcPlan => "QGroundControl plan",
+            Format::Mavlink => "MAVLink mission",
+            Format::Litchi => "Litchi mission",
         }
+    }
+
+    /// Whether the file is text to be read as source.
+    fn has_source(self) -> bool {
+        !matches!(self, Format::Kmz | Format::Fit)
     }
 }
 
@@ -203,12 +338,39 @@ fn read(
     let damaged = match format {
         Format::Gpx => gpx::read(BufReader::new(file.take(MAX_INPUT)), into, cancel)?,
         Format::Kml => kml::read(BufReader::new(file.take(MAX_INPUT)), into, cancel)?,
+        Format::Tcx => tcx::read(BufReader::new(file.take(MAX_INPUT)), into, cancel)?,
+        Format::Fit => fit::read(BufReader::new(file.take(MAX_INPUT)), into, cancel)?,
+        Format::Igc => igc::read(BufReader::new(file.take(MAX_INPUT)), into, cancel)?,
+        Format::Nmea => nmea::read(BufReader::new(file.take(MAX_INPUT)), into, cancel)?,
+        Format::GarminPlan => fpl::read(BufReader::new(file.take(MAX_INPUT)), into, cancel)?,
+        Format::SimPlan => pln::read(BufReader::new(file.take(MAX_INPUT)), into, cancel)?,
+        Format::XPlanePlan => fms::read(BufReader::new(file.take(MAX_INPUT)), into, cancel)?,
+        Format::LittleNavmap => lnmpln::read(BufReader::new(file.take(MAX_INPUT)), into, cancel)?,
+        Format::Mavlink => mavlink::read(BufReader::new(file.take(MAX_INPUT)), into, cancel)?,
+        Format::Litchi => litchi::read(BufReader::new(file.take(MAX_INPUT)), into, cancel)?,
         Format::Kmz => {
             let mut archive = zip::ZipArchive::new(file)?;
-            let index = kmz_document(&archive)
-                .ok_or_else(|| anyhow::anyhow!("This KMZ holds no KML document"))?;
-            let member = archive.by_index(index)?;
-            kml::read(BufReader::new(member.take(MAX_INPUT)), into, cancel)?
+            // A DJI mission (WPML) is a KMZ of its own kind.
+            if let Some(index) = wpml::MEMBERS
+                .iter()
+                .find_map(|name| archive.index_for_name(name))
+            {
+                let member = archive.by_index(index)?;
+                wpml::read(BufReader::new(member.take(MAX_INPUT)), into, cancel)?
+            } else {
+                let index = kmz_document(&archive)
+                    .ok_or_else(|| anyhow::anyhow!("This KMZ holds no KML document"))?;
+                let member = archive.by_index(index)?;
+                kml::read(BufReader::new(member.take(MAX_INPUT)), into, cancel)?
+            }
+        }
+        Format::QgcPlan => {
+            let bytes = inspection::read_bounded(path, limits::BINARY_INPUT, "This plan", cancel)?;
+            let document: serde_json::Value = serde_json::from_slice(&bytes)
+                .map_err(|error| anyhow::anyhow!("Not a valid QGroundControl plan: {error}"))?;
+            inspection::check(cancel)?;
+            qgc::read(&document, into);
+            None
         }
         Format::GeoJson => {
             let bytes =
@@ -323,7 +485,104 @@ fn line_facts(totals: &Totals, zone: &jiff::tz::TimeZone) -> Vec<(&'static str, 
     ]
 }
 
+/// Metres in a foot: flight plans state altitudes in feet.
+const FOOT: f32 = 0.3048;
+/// Metres in a nautical mile, the distance of a flight.
+const NAUTICAL_MILE: f64 = 1852.;
+
+/// An altitude as a plan's reader thinks of it: feet for a flight
+/// (`35 000 ft · 10 668 m`), metres from its datum for a mission.
+fn plan_altitude(kind: PlanKind, metres: f32, datum: Datum) -> String {
+    let from = match datum {
+        Datum::Sea => "",
+        Datum::Ground => " above ground",
+        Datum::Takeoff => " above takeoff",
+    };
+    match kind {
+        PlanKind::Flight => {
+            let feet = (metres / FOOT / 100.).round() * 100.;
+            format!("{} ft · {metres:.0} m{from}", group_thousands(feet))
+        }
+        PlanKind::Mission => format!("{metres:.0} m{from}"),
+    }
+}
+
+/// `35000` as `35 000`, as altitudes are read.
+fn group_thousands(value: f32) -> String {
+    let digits = format!("{value:.0}");
+    let (sign, digits) = digits
+        .strip_prefix('-')
+        .map_or(("", digits.as_str()), |d| ("-", d));
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push('\u{202f}');
+        }
+        out.push(c);
+    }
+    format!("{sign}{out}")
+}
+
+/// What a flight plan or a mission says: where from and to, its legs and
+/// its distance, how high.
+fn plan_facts(plan: &Plan, doc: &GeoDoc, c: &Collector) -> Vec<(&'static str, Option<String>)> {
+    let legs = c.routes.points.saturating_sub(c.routes.lines);
+    let datum = doc
+        .lines
+        .iter()
+        .find(|l| l.kind == LineKind::Route)
+        .map_or(Datum::Sea, |l| l.datum);
+    let flight = plan.kind == PlanKind::Flight;
+    let distance = (c.routes.distance > 0.).then(|| {
+        if flight {
+            format!(
+                "{} · {:.0} NM",
+                distance(c.routes.distance),
+                c.routes.distance / NAUTICAL_MILE
+            )
+        } else {
+            distance(c.routes.distance)
+        }
+    });
+    let highest = c
+        .routes
+        .highest
+        .map(|metres| plan_altitude(plan.kind, metres, datum));
+    vec![
+        ("Departure", plan.departure.clone()),
+        ("Destination", plan.destination.clone()),
+        (
+            if flight { "Legs" } else { "Waypoints" },
+            inspection::count(if flight { legs } else { doc.waypoints.len() }),
+        ),
+        ("Distance", distance),
+        (
+            if flight { "Cruise" } else { "Flight height" },
+            plan.cruise
+                .map(|(metres, datum)| plan_altitude(plan.kind, metres, datum)),
+        ),
+        (
+            if flight {
+                "Highest waypoint"
+            } else {
+                "Highest point"
+            },
+            highest.filter(|_| plan.cruise.is_none()),
+        ),
+    ]
+}
+
 fn facts(doc: &GeoDoc, c: &Collector) -> Vec<Detail> {
+    if let Some(plan) = &c.plan {
+        let mut facts = plan_facts(plan, doc, c);
+        facts.extend([
+            ("Areas", inspection::count(doc.areas.len())),
+            ("Name", c.name.clone()),
+            ("Description", c.description.clone()),
+            ("Created by", c.creator.clone()),
+        ]);
+        return inspection::details(facts);
+    }
     let zone = bibli_platform::calendar::Calendar::system()
         .time_zone()
         .clone();
@@ -365,6 +624,25 @@ fn facts(doc: &GeoDoc, c: &Collector) -> Vec<Detail> {
 
 /// What the file holds, in a few words: `1 track, 12 waypoints`.
 fn summary(doc: &GeoDoc, c: &Collector) -> String {
+    match &c.plan {
+        Some(plan) if plan.kind == PlanKind::Flight => {
+            return match (&plan.departure, &plan.destination) {
+                (Some(from), Some(to)) => format!("Flight plan · {from} → {to}"),
+                _ => "Flight plan".into(),
+            };
+        }
+        Some(_) => {
+            return [
+                Some("Drone mission".to_owned()),
+                plural(doc.waypoints.len(), "waypoint", "waypoints"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ");
+        }
+        None => {}
+    }
     [
         plural(c.tracks.lines, "track", "tracks"),
         plural(c.routes.lines, "route", "routes"),
@@ -379,7 +657,16 @@ fn summary(doc: &GeoDoc, c: &Collector) -> String {
 
 /// Read a file into what the map shows and what Details says.
 pub(crate) fn inspect_file(path: &Path, cancel: &CancelToken) -> anyhow::Result<Inspection> {
-    let format = Format::of(path).ok_or_else(|| anyhow::anyhow!("Not a map file"))?;
+    let format = Format::detect(path).ok_or_else(|| anyhow::anyhow!("Not a map file"))?;
+    inspect_as(path, format, cancel)
+}
+
+/// Read a file of a format already known.
+pub(crate) fn inspect_as(
+    path: &Path,
+    format: Format,
+    cancel: &CancelToken,
+) -> anyhow::Result<Inspection> {
     let mut collector = Collector::new();
     let mut notes = read(path, format, &mut collector, cancel)?;
     let (doc, c) = collector.finish();
@@ -404,13 +691,16 @@ pub(crate) fn inspect_file(path: &Path, cancel: &CancelToken) -> anyhow::Result<
         kind: InspectionKind::Map,
         title: if summary.is_empty() {
             format.name().to_owned()
+        } else if c.plan.is_some() {
+            // "Flight plan · XAAA → XBBB": the format says less than that.
+            summary
         } else {
             format!("{} · {summary}", format.name())
         },
         details: facts(&doc, &c),
         notice: notes.join(" · "),
-        // A KMZ is compressed: it has no source to read.
-        source_available: format != Format::Kmz,
+        // A KMZ is compressed and a FIT file binary: no source to read.
+        source_available: format.has_source(),
         geo: Some(Arc::new(doc)),
         ..Inspection::default()
     })
@@ -421,8 +711,19 @@ impl PreviewProvider for Provider {
     fn id(&self) -> &'static str {
         ID
     }
+    /// Before the readers of tables and text: a `.csv` or a `.txt` this
+    /// provider accepts is a mission its first bytes confirmed, which a
+    /// table of numbers would show less well.
+    fn priority(&self) -> i32 {
+        10
+    }
+    /// On a worker: a file of a shared extension is asked what it is.
     fn accepts(&self, req: &PreviewRequest) -> bool {
         Format::of(&req.entry.path).is_some()
+            && req
+                .entry
+                .resolve()
+                .is_ok_and(|path| Format::detect(&path).is_some())
     }
     fn inspect(
         &self,

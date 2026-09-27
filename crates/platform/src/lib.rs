@@ -24,6 +24,7 @@ pub mod icons;
 mod line_channel;
 pub mod media;
 pub mod mime;
+pub mod mp4;
 pub mod open;
 pub mod places;
 pub mod preview;

@@ -30,6 +30,8 @@ pub struct Display {
     )>,
     /// A map's places, projected here on the worker (`map_preview`).
     pub map: Option<Arc<crate::elements::map::Shapes>>,
+    /// Its lines' altitudes over distance, when they have some.
+    pub profile: Option<Arc<crate::elements::profile::Profile>>,
 }
 impl Display {
     pub fn new(mut data: Inspection, dark: bool) -> Self {
@@ -117,8 +119,14 @@ impl Display {
                     .unwrap_or_default(),
             )
         });
+        let profile = data
+            .geo
+            .as_deref()
+            .and_then(crate::elements::profile::Profile::of)
+            .map(Arc::new);
         Self {
             map,
+            profile,
             table,
             data: Arc::new(data),
             images,

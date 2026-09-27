@@ -158,6 +158,13 @@ fn read(exif: &Exif) -> Vec<Detail> {
     ]
     .into_iter()
     .filter_map(|(label, value)| detail(label, value?))
+    .map(|row| {
+        if row.label == "Position" {
+            crate::inspection::on_map(row)
+        } else {
+            row
+        }
+    })
     .collect()
 }
 

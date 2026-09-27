@@ -26,9 +26,32 @@ pub const MOVING_SPEED: f64 = 1. / 3.6;
 /// device slept or lost its signal.
 pub const LONGEST_STEP: Duration = Duration::from_secs(5 * 60);
 
+/// What a flight plan or a drone mission says about itself beside its
+/// route (step D′). Altitudes are in metres, whatever unit the file uses.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Plan {
+    pub kind: PlanKind,
+    /// Where it leaves from and where it goes, as the plan names them: an
+    /// airport's ICAO code for a flight, a place's name for a mission.
+    pub departure: Option<String>,
+    pub destination: Option<String>,
+    /// The cruising altitude the plan states, and what it is measured from.
+    pub cruise: Option<(f32, Datum)>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PlanKind {
+    /// An aircraft's flight plan: airports, fixes, a cruising altitude.
+    #[default]
+    Flight,
+    /// A drone's mission: takeoff, waypoints, home, rally points, a fence.
+    Mission,
+}
+
 /// What the lines of one kind add up to.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Totals {
+    /// Lines holding points, counted by `Collector::finish`.
     pub lines: usize,
     pub points: usize,
     /// Metres along the lines, segment by segment.
@@ -70,6 +93,8 @@ pub struct Collector {
     pub dropped_waypoints: usize,
     pub dropped_areas: usize,
     pub invalid: usize,
+    /// A flight plan's or a mission's own facts; `None` for a track file.
+    pub plan: Option<Plan>,
     /// What the file says about itself.
     pub name: Option<String>,
     pub creator: Option<String>,
@@ -93,7 +118,6 @@ impl Collector {
             datum,
             segments: Vec::new(),
         });
-        self.totals(kind).lines += 1;
         self.doc.lines.len() - 1
     }
 
@@ -282,6 +306,18 @@ impl Collector {
             line.segments.retain(|segment| !segment.is_empty());
         }
         doc.lines.retain(|line| !line.segments.is_empty());
+        // Lines are counted once they are known to hold points: a format
+        // may start one that ends up empty.
+        self.tracks.lines = doc
+            .lines
+            .iter()
+            .filter(|l| l.kind == LineKind::Track)
+            .count();
+        self.routes.lines = doc
+            .lines
+            .iter()
+            .filter(|l| l.kind == LineKind::Route)
+            .count();
         doc.bounds = self.bounds.finish();
         (doc, self)
     }

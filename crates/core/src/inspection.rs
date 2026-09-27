@@ -77,13 +77,29 @@ pub struct PrintedPage {
 pub struct Detail {
     pub label: String,
     pub value: String,
+    /// What the value leads to, drawn as a link after it: a picture's
+    /// position shows it on the map. A command like any other, so it
+    /// fails as one when its owner is disabled.
+    pub action: Option<(String, crate::command::Invocation)>,
 }
 impl Detail {
     pub fn new(label: impl Into<String>, value: impl Into<String>) -> Self {
         Detail {
             label: label.into(),
             value: value.into(),
+            action: None,
         }
+    }
+
+    /// The same fact with a link, `words` running `action`.
+    #[must_use]
+    pub fn with_action(
+        mut self,
+        words: impl Into<String>,
+        action: crate::command::Invocation,
+    ) -> Self {
+        self.action = Some((words.into(), action));
+        self
     }
 }
 /// What a block draws. A block is text, a thematic break or one row of a

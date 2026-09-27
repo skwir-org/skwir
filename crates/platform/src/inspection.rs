@@ -529,6 +529,24 @@ pub fn details<'a, V: Into<Option<String>>>(
         .filter_map(|(label, value)| detail(label, value.into()?))
         .collect()
 }
+/// The Map view's id (the `geo` plugin's lens): a position shown in
+/// Details leads to it, and the view opens on the selected file.
+pub const MAP_VIEW: &str = "map";
+
+/// A position row that shows the file on the map, through the shell's
+/// `ui.view`: when the Maps plugin is off, the link fails as any command
+/// of a disabled plugin does.
+#[must_use]
+pub fn on_map(detail: bibli_core::inspection::Detail) -> bibli_core::inspection::Detail {
+    detail.with_action(
+        "Show on map",
+        bibli_core::command::Invocation::with_args(
+            "ui.view",
+            &serde_json::json!({ "id": MAP_VIEW }),
+        ),
+    )
+}
+
 /// A count worth stating: nothing for zero, where a Details row would only
 /// say that something is absent.
 pub fn count(n: usize) -> Option<String> {

@@ -25,6 +25,8 @@ pub struct Row {
     pub value: SharedString,
     /// Who says so, when it is not the filesystem: the user, a plugin, a model.
     pub source: Option<SharedString>,
+    /// A link after the value: its words and the command it runs.
+    pub action: Option<(SharedString, bibli_core::command::Invocation)>,
 }
 
 impl Row {
@@ -33,6 +35,18 @@ impl Row {
             label: label.into(),
             value: value.into(),
             source: None,
+            action: None,
+        }
+    }
+
+    /// A provider's fact, with its link.
+    fn of(detail: &bibli_core::inspection::Detail) -> Self {
+        Row {
+            action: detail
+                .action
+                .as_ref()
+                .map(|(words, action)| (words.clone().into(), action.clone())),
+            ..Row::new(detail.label.clone(), detail.value.clone())
         }
     }
 }
@@ -179,6 +193,7 @@ pub fn entry_groups(entry: &Entry, path: &std::path::Path) -> Vec<Group> {
             label: label_of(key).into(),
             value: text_of(&field.value).into(),
             source: source_of(&field.provenance),
+            action: None,
         })
         .filter(|row| !row.value.is_empty())
         .collect();
@@ -208,11 +223,7 @@ fn preview_group(shell: &Shell) -> Option<Group> {
             ..
         }) if document.is_none() && preview.media.session.is_none() => {
             rows.push(Row::new("Dimensions", format!("{width} × {height} px")));
-            rows.extend(
-                facts
-                    .iter()
-                    .map(|fact| Row::new(fact.label.clone(), fact.value.clone())),
-            );
+            rows.extend(facts.iter().map(Row::of));
         }
         Some(PreviewContent::Dir { items, folders }) => {
             rows.push(Row::new("Contains", format::count(*items, "item")));
@@ -227,13 +238,9 @@ fn preview_group(shell: &Shell) -> Option<Group> {
                 ));
             }
         }
-        Some(PreviewContent::Inspection(display)) => rows.extend(
-            display
-                .data
-                .details
-                .iter()
-                .map(|detail| Row::new(detail.label.clone(), detail.value.clone())),
-        ),
+        Some(PreviewContent::Inspection(display)) => {
+            rows.extend(display.data.details.iter().map(Row::of));
+        }
         _ => {}
     }
     if let Some(pages) = crate::reader::pages(shell) {
@@ -261,6 +268,11 @@ fn preview_group(shell: &Shell) -> Option<Group> {
         );
         if state.audio_tracks.len() > 1 {
             rows.push(Row::new("Audio tracks", state.audio_tracks.join(", ")));
+        }
+        // What the file says of itself, read with its poster: where a
+        // video was recorded.
+        if let Some(PreviewContent::Image { facts, .. }) = &preview.content {
+            rows.extend(facts.iter().map(Row::of));
         }
         if !state.subtitle_tracks.is_empty() {
             rows.push(Row::new("Subtitles", state.subtitle_tracks.join(", ")));
@@ -362,6 +374,19 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
                             .child(row.value)
                             .when_some(row.source, |d, source| {
                                 d.child(div().text_color(theme.text_muted).child(source))
+                            })
+                            .when_some(row.action, |d, (words, action)| {
+                                d.child(
+                                    div()
+                                        .id(("detail-action", g * 1000 + r))
+                                        .text_color(theme.accent)
+                                        .hover(gpui::Styled::underline)
+                                        .child(words)
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            cx.stop_propagation();
+                                            this.run(&action.name, action.args.clone(), window, cx);
+                                        })),
+                                )
                             }),
                     ),
             );

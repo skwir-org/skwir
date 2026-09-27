@@ -232,3 +232,34 @@ a real network, and OpenStreetMap's own server.
   Markers up to 400 px outside the map are laid out too, so a spiral
   reaching into view is whole; past 3 000 in that reach, Spread gives
   way to bubbles.
+
+## Addendum (2026-09-27): more formats, plans and missions
+
+- **Twelve more formats, each confirmed by its content.** Tracks: TCX,
+  FIT (a bounded decoder of bibli's own: every length checked, a damaged
+  or cut file keeps what came before), IGC, NMEA. Flight plans: Garmin
+  `.fpl`, Flight Simulator `.pln`, X-Plane `.fms`, Little Navmap
+  `.lnmpln`. Drone missions: QGroundControl `.plan`, `MAVLink` `QGC WPL`
+  text (`.waypoints`, `.mission`, `.txt`), Litchi `.csv`, DJI WPML (a KMZ
+  holding `wpmz/`). Their extensions are shared with other programs, and
+  the MIME database names several of them otherwise, so a file is read as
+  one only when its first 4 KiB say so (`Format::detect`, on a worker);
+  the geo provider then comes before the readers of tables and text
+  (priority 10). The Map view does not look inside `.txt` and `.csv`.
+- **A plan is a route, with its own facts.** A plan is one route line,
+  its stops waypoints of it (airports and fixes, takeoff, landing, home,
+  rally), fences and surveys areas; `collect::Plan` says where it leaves
+  from and goes and its cruising altitude. Altitudes are metres from the
+  datum the file states (a mission's are above its takeoff, and are not
+  converted); a flight's are shown in feet beside them, its distance in
+  nautical miles beside kilometres.
+- **Profiles and thumbnails come from the same document.** The preview's
+  elevation profile (tracks as recorded, else routes as planned) is built
+  on the worker with the map's shapes; a track's thumbnail is its lines
+  drawn to scale on nothing, a fallback after the desktop's thumbnailers.
+- **A position leads to the map.** Pictures (EXIF) and videos (MP4 and
+  QuickTime location boxes, `bibli_platform::mp4`, read without the media
+  data) show their position in Details with "Show on map": a Details row
+  may carry a command (`inspection::Detail::action`), here `ui.view` to
+  the Map view, which opens on the one file selected.
+

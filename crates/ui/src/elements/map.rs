@@ -429,7 +429,8 @@ pub enum MarkerKind {
     Stop,
     Start,
     End,
-    /// A picture of the location shown (the Map view).
+    /// A picture or a video of the location shown (the Map view), drawn
+    /// as its thumbnail.
     Picture,
     /// Where a track of the location shown starts (the Map view).
     Track,
@@ -718,6 +719,10 @@ pub struct Handles {
     /// The files of a bubble opened in place: markers zooming could not
     /// pull apart, spread around where they are until a click beside them.
     opened: Rc<RefCell<HashSet<EntryId>>>,
+    /// A place to mark: what the pointer is on in the elevation profile.
+    pub mark: Rc<Cell<Option<LatLon>>>,
+    /// The profile's point under the pointer.
+    pub profile_hover: Rc<Cell<Option<usize>>>,
 }
 
 impl Handles {
@@ -888,13 +893,15 @@ pub struct Prepaint {
     hits: Vec<Hit>,
     /// Where each file's marker is, for a rectangle to hold.
     placed: Vec<(EntryId, gpui::Point<Pixels>)>,
+    /// `Handles::mark`, on screen.
+    mark: Option<gpui::Point<Pixels>>,
     scale: (f64, Option<ShapedLine>),
 }
 
 const LABEL_SIZE: f32 = 11.;
 const LINE_HEIGHT: f32 = 14.;
 
-fn shape(text: SharedString, color: Hsla, window: &mut Window) -> ShapedLine {
+pub(crate) fn shape(text: SharedString, color: Hsla, window: &mut Window) -> ShapedLine {
     let run = TextRun {
         len: text.len(),
         font: window.text_style().font(),
@@ -1418,6 +1425,10 @@ impl Element for Map {
             }
         }
 
+        let mark = self.handles.mark.get().map(|place| {
+            let (x, y) = math::project(place);
+            at((beside(x, view.x), y))
+        });
         let (lat, _) = math::unproject(view.x, view.y);
         let (length, words) = math::scale_bar(lat, view.zoom, 100.);
         let scale = (length, Some(shape(words.into(), self.colors.text, window)));
@@ -1448,6 +1459,7 @@ impl Element for Map {
             clusters,
             hits,
             placed,
+            mark,
             scale,
         }
     }
@@ -1626,6 +1638,17 @@ impl Element for Map {
                     fill,
                     px(2.),
                     ring,
+                    BorderStyle::Solid,
+                ));
+            }
+            // What the pointer is on in the profile, over the lines.
+            if let Some(mark) = prepaint.mark {
+                window.paint_quad(quad(
+                    Bounds::new(mark - point(px(7.), px(7.)), size(px(14.), px(14.))),
+                    px(7.),
+                    colors.paper,
+                    px(3.),
+                    colors.track,
                     BorderStyle::Solid,
                 ));
             }

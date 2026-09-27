@@ -10,5 +10,6 @@ pub mod halo;
 pub mod map;
 pub mod marquee;
 pub mod popover;
+pub mod profile;
 pub mod scrollbar;
 pub mod terminal;

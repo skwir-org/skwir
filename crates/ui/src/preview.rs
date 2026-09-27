@@ -1268,7 +1268,9 @@ impl Shell {
                                 height: preview.image.height,
                                 detail: Some(preview.info),
                                 document: None,
-                                facts: Vec::new(),
+                                // Where it was recorded, which Details
+                                // shows beside what the player says.
+                                facts: bibli_platform::mp4::details(&path),
                             };
                             send(content, true, None, None);
                         }

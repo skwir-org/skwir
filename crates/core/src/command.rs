@@ -15,7 +15,7 @@ use crate::op::Plan;
 
 /// A command invocation as it travels: over a keybinding, a palette entry, a
 /// socket, or an agent's tool call.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Invocation {
     pub name: Arc<str>,
     #[serde(default = "empty_args")]

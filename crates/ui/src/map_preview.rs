@@ -96,15 +96,41 @@ pub fn content(shell: &Shell, display: &Display, theme: &Theme) -> AnyElement {
                     window.focus(&clicked);
                 })
         })
-        .child(element(
+        .child(div().flex_1().min_h_0().child(element(
             shell,
             "preview-map",
             shapes,
             shell.preview.map.clone(),
             theme,
-        ))
+        )))
+        .when_some(display.profile.clone(), |d, profile| {
+            let handles = &shell.preview.map;
+            d.child(
+                div()
+                    .flex_none()
+                    .h(gpui::px(PROFILE_HEIGHT))
+                    .border_t_1()
+                    .border_color(theme.border)
+                    .child(crate::elements::profile::chart(
+                        "preview-profile",
+                        profile,
+                        crate::elements::profile::Colors {
+                            line: theme.map_track,
+                            text: theme.text,
+                            muted: theme.text_muted,
+                            grid: theme.map_grid,
+                            paper: theme.bg,
+                        },
+                        Rc::clone(&handles.mark),
+                        Rc::clone(&handles.profile_hover),
+                    )),
+            )
+        })
         .into_any_element()
 }
+
+/// The elevation profile under a map, in pixels.
+const PROFILE_HEIGHT: f32 = 96.;
 
 /// The popup that chooses the background.
 pub const BACKGROUND_POPUP: &str = "background";

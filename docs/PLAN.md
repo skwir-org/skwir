@@ -638,6 +638,16 @@ only network code). Each step below ships on its own.
   grid; an elevation profile under the preview (a plan's planned altitudes);
   positions of videos (the MP4 location atom); a "Show on map" link on the
   Details position row.
+  *Built 2026-09-27* (ADR-020 addendum). TCX, FIT (a bounded decoder of
+  its own), IGC and NMEA read; a track's thumbnail is its lines drawn to
+  scale (tiny-skia, a fallback after the desktop's thumbnailers); the
+  profile sits under the map, its pointer marking the place on the map;
+  videos give their position from `moov/udta/©xyz` or QuickTime's keys
+  (`bibli_platform::mp4`), placed in the Map view and in Details beside
+  the player; a Details row can carry a command (`Detail::action`, core),
+  and a picture's or a video's position runs `ui.view` to the Map view,
+  which opens on the one file selected. Found with it: the Map view, hidden
+  and shown again, showed its old places without scanning again.
 - **D′. Flight and drone plans.** Flight plans: Garmin `.fpl`, MSFS/FSX `.pln`,
   X-Plane `.fms`, Little Navmap `.lnmpln`. Drone missions: QGroundControl `.plan`
   (waypoints, survey polygons, geofence, rally points), MAVLink `.waypoints`
@@ -646,6 +656,28 @@ only network code). Each step below ships on its own.
   extension and confirmed by its content. Details: departure and destination,
   legs, distance (nautical miles beside kilometres for a flight), cruising or
   highest altitude with its reference, waypoint count.
+  *Built 2026-09-27* (ADR-020 addendum), MAVLink also as `.mission` and
+  `.txt`. Every format of step D and D′ is confirmed by its first 4 KiB
+  (the MIME database calls a `.fit` a FITS image, a `.pln` a PlanPerfect
+  spreadsheet, a `.plan` a Calligra project), and the provider comes
+  before the readers of tables and text, so a Litchi `.csv` is a mission
+  and any other `.csv` a table. The Map view does not look inside `.txt`
+  and `.csv` files: a folder's notes and spreadsheets are not places.
+  Written by three agents in parallel, one crate file each, integrated with
+  their shared code moved to `text.rs` (lines, with a log's and a plan's
+  policy), `flight.rs` and `mission.rs`; the collector counts a line only
+  once it holds points. Verified: 88 geo tests (71 of the parsers'), and
+  in the release build on Xvfb one synthetic file of each format
+  (invented places): each previews with its facts and profile, a
+  `.txt` and a `.csv` that are not missions keep their text and table
+  previews, the grid draws every line's thumbnail, the Map view places the
+  fourteen that say where they are, "Show on map" opens the Map view on a
+  picture, and the profile's pointer marks the track. Not verified: a real
+  file of any of these formats (none may be copied here; each was written
+  from its documentation), a video's position in Details (the synthetic
+  video has no streams, so no poster carries its facts), the dark theme.
+  An altitude of 0 in a flight plan is taken as not given: the formats
+  write 0 for a fix without one, so a plan's field at sea level has none.
 - **Later, each with its own decision:** a query facet over positions (a field
   filled on demand, a core ADR); geotagging photos from a track and removing
   locations (plans with inverses, proposed for review); offline place names;

@@ -35,6 +35,8 @@ use crate::view::{Nav, PaneView};
 pub const ID: &str = "map";
 /// A key moves the map by this many pixels.
 const PAN_STEP: f64 = 120.;
+/// The map opened on a file shows the streets around it.
+const FOCUS_ZOOM: f64 = 15.;
 
 #[derive(Deserialize)]
 struct Placed {
@@ -73,6 +75,9 @@ pub struct MapView {
     shapes: Arc<Shapes>,
     counts: (usize, usize, usize, bool),
     selection: (u64, Arc<HashSet<EntryId>>),
+    /// The file the map opens on, once it is placed: the one selected
+    /// when the view was shown ("Show on map" in Details).
+    focus: Option<EntryId>,
 }
 
 impl MapView {
@@ -258,7 +263,17 @@ impl PaneView for MapView {
         if let Some((revision, ids)) = selection {
             self.selection = (revision, Arc::new(ids));
         }
-        shell.map_views.insert(pane);
+        // Shown just now: its scan was let go when it was hidden, so it
+        // asks again (what the plugin remembers places it at once), and
+        // with one file selected the map opens on it.
+        if shell.map_views.insert(pane) {
+            self.requested = None;
+            self.counts.3 = false;
+            self.focus = match self.selection.1.iter().collect::<Vec<_>>().as_slice() {
+                [only] => Some(**only),
+                _ => None,
+            };
+        }
         if self.requested.as_ref() != Some(&source) {
             self.requested = Some(source);
             if let Err(error) = shell
@@ -272,6 +287,20 @@ impl PaneView for MapView {
             }
         }
         self.receive(shell, cx);
+        if let Some(entry) = self.focus {
+            if let Some(place) = self.places.iter().find(|p| p.entry == entry) {
+                let (x, y) = map::math::project(place.at);
+                self.handles.view.set(Some(View {
+                    x,
+                    y,
+                    zoom: FOCUS_ZOOM,
+                }));
+                self.focus = None;
+            } else if self.counts.3 {
+                // Looked at everything: it has no place.
+                self.focus = None;
+            }
+        }
 
         let theme = cx.global::<Theme>().clone();
         let (placed, _, _, complete) = self.counts;

@@ -136,3 +136,34 @@ fn push(text: &mut String, more: &str) -> anyhow::Result<()> {
     text.push_str(more);
     Ok(())
 }
+
+/// The local name of the root element of the XML document `head` begins,
+/// and its attributes (namespace declarations among them), to recognise a
+/// format from a file's first bytes. `None` when they begin no XML.
+pub fn root(head: &[u8]) -> Option<(String, Vec<(String, String)>)> {
+    let local = |name: &str| name.rsplit(':').next().unwrap_or(name).to_owned();
+    let mut reader = quick_xml::Reader::from_reader(head);
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        match reader.read_event_into(&mut buf).ok()? {
+            Event::Start(start) | Event::Empty(start) => {
+                let attributes = start
+                    .attributes()
+                    .flatten()
+                    .map(|attribute| {
+                        let value = attribute
+                            .normalized_value(XmlVersion::Implicit1_0)
+                            .map(std::borrow::Cow::into_owned)
+                            .unwrap_or_default();
+                        (local(attribute.key.as_ref()), value)
+                    })
+                    .collect();
+                return Some((local(start.name().as_ref()), attributes));
+            }
+            Event::Text(text) if !text.xml10_content().trim().is_empty() => return None,
+            Event::Eof => return None,
+            _ => {}
+        }
+    }
+}

@@ -125,6 +125,10 @@ current source before assuming a planned crate, command, or API exists.
   (New Folder, Bookmark This Folder, Open Folder With) also says `folder`,
   so a search or the shelf never offers it. Rarely used items set
   `submenu`; the menu expands that group in place. Give items an `icon`.
+- **Details lead somewhere.** A provider's fact can carry a command
+  (`Detail::with_action`, drawn as a link after the value, run through
+  `Shell::run`): a position shows the file on the map. The row itself
+  still copies its value; the link is the only thing that acts.
 - **Nothing to list is a state, not a blank.** `placeholder.rs` says why a
   pane is empty (empty folder, no results, empty shelf) or why it failed, in
   the user's words with the system's message as the detail, and offers the

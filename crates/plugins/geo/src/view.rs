@@ -162,17 +162,25 @@ pub struct Scanner {
 
 /// Whether a name is one this view reads: a picture, or a track.
 fn readable(name: &std::ffi::OsStr) -> Option<Kind> {
-    if crate::Format::of(Path::new(name)).is_some() {
+    if crate::Format::placeable(Path::new(name)) {
         return Some(Kind::Track);
     }
-    bibli_platform::mime::by_name(name)
-        .filter(|mime| bibli_platform::mime::is_kind(mime, bibli_platform::mime::Kind::Image))
-        .map(|_| Kind::Picture)
+    let mime = bibli_platform::mime::by_name(name)?;
+    let is = |kind| bibli_platform::mime::is_kind(&mime, kind);
+    if is(bibli_platform::mime::Kind::Image) {
+        Some(Kind::Picture)
+    } else if is(bibli_platform::mime::Kind::Video) {
+        Some(Kind::Video)
+    } else {
+        None
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
     Picture,
+    /// Where a phone recorded it (`bibli_platform::mp4`).
+    Video,
     Track,
 }
 
@@ -546,8 +554,12 @@ impl Scanner {
             .and_then(|bytes| serde_json::from_slice::<Found>(&bytes).ok())
             .unwrap_or_else(|| {
                 let found = match kind {
-                    Kind::Picture => {
-                        let taken = bibli_platform::exif::taken(path);
+                    Kind::Picture | Kind::Video => {
+                        let taken = if kind == Kind::Video {
+                            bibli_platform::mp4::taken(path)
+                        } else {
+                            bibli_platform::exif::taken(path)
+                        };
                         Found {
                             at: taken.at.map(|at| [at.lat, at.lon]),
                             line: Vec::new(),
