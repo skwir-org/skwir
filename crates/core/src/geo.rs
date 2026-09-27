@@ -36,6 +36,24 @@ impl LatLon {
     }
 
     /// The distance to `other` along the Earth's surface (haversine).
+    /// As a field's value (`entry::keys::POSITION`).
+    pub fn to_value(self) -> crate::entry::Value {
+        use crate::entry::Value;
+        Value::List(vec![Value::Float(self.lat), Value::Float(self.lon)])
+    }
+
+    /// From a field's value, if it is a position.
+    pub fn from_value(value: &crate::entry::Value) -> Option<LatLon> {
+        use crate::entry::Value;
+        match value {
+            Value::List(parts) => match parts.as_slice() {
+                [Value::Float(lat), Value::Float(lon)] => LatLon::new(*lat, *lon),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     pub fn distance(self, other: LatLon) -> f64 {
         let (lat1, lat2) = (self.lat.to_radians(), other.lat.to_radians());
         let dlat = lat2 - lat1;

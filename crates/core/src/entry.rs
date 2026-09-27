@@ -116,6 +116,10 @@ pub mod keys {
     /// [`crate::metadata::TAGS_XATTR`]. Written by the tags plugin, read by
     /// search and the views.
     pub const TAGS: &str = "tags";
+    /// Where the file says it was made: a picture's or a video's position,
+    /// `Value::List` of two `Value::Float` (latitude, longitude, degrees).
+    /// Read on demand (`crate::fields`), never at hydration (ADR-020).
+    pub const POSITION: &str = "position";
 }
 
 /// The metadata bag. Keys are sorted for deterministic serialization.

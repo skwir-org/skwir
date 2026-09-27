@@ -100,16 +100,10 @@ struct Sources {
 
 impl Sources {
     fn from_env() -> Self {
-        let data_home = std::env::var_os("XDG_DATA_HOME")
-            .filter(|d| !d.is_empty())
-            .map(PathBuf::from)
-            .or_else(|| dirs::home_dir().map(|h| h.join(".local/share")));
-        let data_dirs = dirs_var("XDG_DATA_DIRS", "/usr/local/share:/usr/share");
-        let config_home = std::env::var_os("XDG_CONFIG_HOME")
-            .filter(|d| !d.is_empty())
-            .map(PathBuf::from)
-            .or_else(|| dirs::home_dir().map(|h| h.join(".config")));
-        let config_dirs = dirs_var("XDG_CONFIG_DIRS", "/etc/xdg");
+        let data_home = crate::xdg::data_home();
+        let data_dirs = crate::xdg::data_dirs();
+        let config_home = crate::xdg::config_home();
+        let config_dirs = crate::xdg::config_dirs();
         let data: Vec<PathBuf> = data_home
             .into_iter()
             .chain(data_dirs)
@@ -142,15 +136,6 @@ impl Sources {
             user_lists,
         }
     }
-}
-
-fn dirs_var(name: &str, default: &str) -> Vec<PathBuf> {
-    let value = std::env::var_os(name)
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| default.into());
-    std::env::split_paths(&value)
-        .filter(|p| p.is_absolute())
-        .collect()
 }
 
 fn dedup(paths: &mut Vec<PathBuf>) {

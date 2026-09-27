@@ -223,6 +223,10 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                     }
                 ))),
         )
+        // What the plan left out, and why.
+        .when_some(plan.note.clone(), |d, note| {
+            d.child(div().text_xs().text_color(theme.text_muted).child(note))
+        })
         .child(list)
         .child(
             div()
@@ -278,6 +282,7 @@ mod tests {
     fn diff_lines_carry_change_text_and_status() {
         let diff = PlanDiff {
             title: "t".into(),
+            note: None,
             steps: vec![
                 (
                     Change::Rename {
@@ -296,6 +301,7 @@ mod tests {
                     Change::Metadata {
                         path: PathBuf::from("/a/w"),
                         field: "tags".into(),
+                        words: None,
                     },
                     StepStatus::Conflict {
                         reason: "gone".into(),

@@ -15,6 +15,7 @@ mod flight;
 mod fms;
 mod fpl;
 mod geojson;
+mod geotag;
 mod gpx;
 mod igc;
 mod kml;
@@ -23,7 +24,9 @@ mod lnmpln;
 mod mavlink;
 mod mission;
 mod nmea;
+mod places;
 mod pln;
+mod position;
 mod qgc;
 mod tcx;
 mod text;
@@ -71,6 +74,22 @@ struct PaneArgs {
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
+struct LocateArgs {
+    /// A place's name, compared without case or accents.
+    name: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct AreaArgs {
+    pane: Option<PaneId>,
+    /// The area's edges in degrees; `west` past `east` crosses ±180°.
+    south: f64,
+    west: f64,
+    north: f64,
+    east: f64,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 struct PointsArgs {
     pane: Option<PaneId>,
     /// Points already had: only those after them are returned.
@@ -99,12 +118,17 @@ impl Plugin for GeoPlugin {
     fn description(&self) -> &'static str {
         "Show GPS tracks and routes (GPX, KML, KMZ, GeoJSON, TCX, FIT, IGC, NMEA), flight plans (Garmin, Flight Simulator, X-Plane, Little Navmap) and drone missions (QGroundControl, MAVLink, Litchi, DJI) on a map, with their distance, time and climb, and the pictures and videos of a folder in the Map view. Nothing a file links to is fetched"
     }
+    fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
+        vec![geotag::requirement()]
+    }
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Previews
     }
     fn register(&self, app: &App) {
         app.previews.register(ID, Arc::new(Provider));
         app.thumbnails.register(ID, Arc::new(thumb::Lines));
+        app.fields.register(ID, Arc::new(position::Positions));
+        geotag::register(app);
         let mut spec = ViewSpec::named(VIEW, "Map", "map", Arc::clone(&self.revision)).lens();
         // After Usage, the other lens.
         spec.order = 110;
@@ -158,6 +182,55 @@ impl Plugin for GeoPlugin {
                 Ok(Outcome::Done)
             },
         );
+        app.commands.register::<LocateArgs, _>(
+            ID,
+            "geo.locate",
+            "Where is a place",
+            "The places of that name bibli knows offline, biggest first, with their positions: for scripts and agents",
+            |args, _| {
+                let places: Vec<serde_json::Value> = places::find(&args.name)
+                    .into_iter()
+                    .take(20)
+                    .map(|place| {
+                        serde_json::json!({
+                            "name": place.name,
+                            "lat": place.at.lat,
+                            "lon": place.at.lon,
+                            "country": place.country,
+                        })
+                    })
+                    .collect();
+                Ok(Outcome::Value(serde_json::json!({
+                    "places": places,
+                    "credit": places::attribution(),
+                })))
+            },
+        );
+        app.commands.register::<AreaArgs, _>(
+            ID,
+            "geo.search_area",
+            "Search this area",
+            "Show the pictures and videos of the folder and its subfolders that were made inside an area",
+            |args, app| {
+                let edge = |value: f64| {
+                    let text = format!("{value:.5}");
+                    text.trim_end_matches('0').trim_end_matches('.').to_owned()
+                };
+                app.dispatch(&bibli_core::command::Invocation::with_args(
+                    "query.search",
+                    &serde_json::json!({
+                        "expr": format!(
+                            "(kind:image OR kind:video) inside:{},{},{},{}",
+                            edge(args.south),
+                            edge(args.west),
+                            edge(args.north),
+                            edge(args.east)
+                        ),
+                        "pane": app.pane_or_active(args.pane),
+                    }),
+                ))
+            },
+        );
         app.commands.register::<PaneArgs, _>(
             ID,
             "geo.search_subfolders",
@@ -178,6 +251,7 @@ impl Plugin for GeoPlugin {
         if let Some(scanner) = self.scanner.lock().take() {
             scanner.stop();
         }
+        places::release();
     }
 }
 

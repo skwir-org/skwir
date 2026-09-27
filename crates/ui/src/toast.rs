@@ -115,6 +115,10 @@ pub fn describe(title: &str, run: RunKind, first: Option<&Change>, applied: usiz
             directory: true,
         }) if one => format!("Created folder {}", quoted(path)),
         Some(Change::Create { path, .. }) if one => format!("Created {}", quoted(path)),
+        // A step that says what it did says it best.
+        Some(Change::Metadata {
+            words: Some(words), ..
+        }) if one => capitalized(&words.did),
         _ if applied == 0 => format!("{}: nothing to do", capitalized(title)),
         _ => format!("{} ({many})", capitalized(title)),
     }

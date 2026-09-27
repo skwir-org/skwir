@@ -678,12 +678,16 @@ only network code). Each step below ships on its own.
   video has no streams, so no poster carries its facts), the dark theme.
   An altitude of 0 in a flight plan is taken as not given: the formats
   write 0 for a fix without one, so a plan's field at sea level has none.
-- **Later, each with its own decision** (proposed and deferred in ADR-022,
-  which records what each must respect and the options seen): a query
-  facet over positions (a field filled on demand, a core ADR); geotagging
-  photos from a track and removing locations (plans with inverses,
-  proposed for review); offline place names; local PMTiles/MBTiles
-  backgrounds.
+- **Later, each with its own decision** (ADR-022): search by place,
+  geotagging and removing locations, and offline place names are
+  *built 2026-09-27* (ADR-022's "Decided" paragraphs, ADR-023 for the
+  fields read on demand). Verified in the real app on Xvfb: three pictures
+  matched along a track through the user's time zone and applied with the
+  modification time kept to the nanosecond, a location removed and undone,
+  `near:` finding the one picture within 500 m, "This area" the four in
+  view, and a picture near a town named in Details. Written by two agents
+  in parallel for geotagging and place names, integrated with the fields
+  contract. Local PMTiles/MBTiles backgrounds remain proposed.
 
 Tests and fixtures use invented coordinates only. `bibli-bench gen` gains
 geotagged pictures and a 100 000-point GPX; `budgets.toml` gains the GPX parse

@@ -264,6 +264,20 @@ pub mod math {
         (unit / per_pixel, label)
     }
 
+    /// The area `view` shows at `size`: south, west, north, east, in
+    /// degrees; the whole of the longitudes when it shows a world or more.
+    pub fn area(view: &View, size: (f64, f64)) -> [f64; 4] {
+        let (x0, y0) = view.to_world((0., 0.), size);
+        let (x1, y1) = view.to_world(size, size);
+        let (north, west) = unproject(x0, y0.clamp(0., 1.));
+        let (south, east) = unproject(x1, y1.clamp(0., 1.));
+        if x1 - x0 >= 1. {
+            [south, -180., north, 180.]
+        } else {
+            [south, wrap_lon(west), north, wrap_lon(east)]
+        }
+    }
+
     /// The spacing of a sunflower spiral (item `k` at `SPACING · pitch ·
     /// √(k + ½)`, each turned by the golden angle from the one before) that
     /// keeps axis-aligned squares of side `pitch` apart however many there
@@ -709,6 +723,10 @@ pub struct Handles {
     pub view: Rc<Cell<Option<View>>>,
     /// The view drawn last, for a key to zoom from.
     pub shown: Rc<Cell<Option<View>>>,
+    /// The area drawn last, south, west, north, east in degrees (west
+    /// past east across ±180°): read by an action on what is shown
+    /// (search this area), never for layout.
+    pub shown_area: Rc<Cell<Option<[f64; 4]>>>,
     /// Where a drag was last seen.
     drag: Rc<Cell<Option<gpui::Point<Pixels>>>>,
     /// Where the press was and how many clicks it counted: a release near
@@ -1025,6 +1043,7 @@ impl Element for Map {
             })
             .clamp(size.1);
         self.handles.shown.set(Some(view));
+        self.handles.shown_area.set(Some(math::area(&view, size)));
         let offset = self
             .shapes
             .bounds
@@ -2063,6 +2082,30 @@ mod tests {
         }
         .clamp(600.);
         assert_eq!(small.y, 0.5);
+    }
+
+    #[test]
+    fn the_area_shown_is_its_edges_in_degrees() {
+        let size = (512., 512.);
+        let (x, y) = project(at(10., 20.));
+        let [south, west, north, east] = area(&View { x, y, zoom: 8. }, size);
+        assert!(south < 10. && north > 10. && west < 20. && east > 20.);
+        // Two tiles of 256 at zoom 8 cover 360 / 128 degrees of longitude.
+        assert!(((east - west) - 360. / 128.).abs() < 1e-9, "{west} {east}");
+        // Across ±180°: the west edge is past the east one.
+        let (x, y) = project(at(60., 179.9));
+        let [_, west, _, east] = area(&View { x, y, zoom: 8. }, size);
+        assert!(west > east, "{west} {east}");
+        // The world and more: every longitude.
+        let [_, west, _, east] = area(
+            &View {
+                x: 0.5,
+                y: 0.5,
+                zoom: 0.,
+            },
+            (2048., 512.),
+        );
+        assert_eq!((west, east), (-180., 180.));
     }
 
     #[test]

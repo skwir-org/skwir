@@ -157,6 +157,7 @@ impl Operation for SetTags {
         Change::Metadata {
             path: self.entry.path.clone(),
             field: FIELD.into(),
+            words: None,
         }
     }
     fn check(&self, _ctx: &StepContext) -> StepStatus {

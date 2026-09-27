@@ -447,14 +447,7 @@ mod imp {
 
     /// `$XDG_DATA_HOME`, then `$XDG_DATA_DIRS`: where the database lives.
     fn data_dirs() -> Vec<std::path::PathBuf> {
-        let home = std::env::var_os("XDG_DATA_HOME")
-            .map(std::path::PathBuf::from)
-            .or_else(|| dirs::home_dir().map(|home| home.join(".local/share")));
-        let system = std::env::var_os("XDG_DATA_DIRS")
-            .unwrap_or_else(|| "/usr/local/share:/usr/share".into());
-        home.into_iter()
-            .chain(std::env::split_paths(&system))
-            .collect()
+        crate::xdg::data_search()
     }
 
     pub fn generic_icon_name(m: &Mime) -> String {

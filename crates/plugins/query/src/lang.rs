@@ -11,6 +11,7 @@
 //! term    := word | "name:" pat | "ext:" list | "type:" kind | "mime:" glob
 //!          | "kind:" kinds | "size" cmp | "modified" cmp | "created" cmp | "accessed" cmp
 //!          | "tag:" word | "content:" text | "content:/" regex "/" flags?
+//!          | "near:" lat "," lon ("~" distance)? | "inside:" south "," west "," north "," east
 //! options := "in:" path | "depth:" n | "hidden:" bool | "case:" ("sensitive"|"insensitive")
 //! ```
 //!
@@ -39,6 +40,14 @@
 //! quotes `\` escapes the next character, and `\xNN` stands for one byte, so
 //! `in:` can name a folder whose name is not UTF-8. [`quote`] and
 //! [`quote_os`] write a literal back in this form.
+//!
+//! Places (ADR-022, ADR-023): `near:10.12,20.12~5km` holds the files that
+//! say they were made within 5 km of that point (1 km without a
+//! distance; `m` or `km`), `inside:9.9,19.9,10.2,20.3` those inside the
+//! box of those edges in degrees (south, west, north, east; west past
+//! east crosses ±180°). A file says where it was made through the field
+//! `position`, read on demand from its content (a picture's EXIF), so
+//! these terms are decided last, as `content:` is.
 //!
 //! Regexes: `content:/re/` runs to the first `/` not escaped with `\` (so
 //! it may hold spaces and parentheses), followed by flags: `i` ignores
@@ -212,6 +221,21 @@ pub enum Term {
     },
     Tag(String),
     Content(ContentPat),
+    /// Within `radius` metres of `at`.
+    Near {
+        at: bibli_core::geo::LatLon,
+        radius: f64,
+        text: String,
+    },
+    /// Inside the box of these edges, in degrees; `west > east` crosses
+    /// ±180°.
+    Inside {
+        south: f64,
+        west: f64,
+        north: f64,
+        east: f64,
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -228,9 +252,9 @@ impl std::error::Error for ParseError {}
 
 /// The keys a word can start with. Only these open a quote after their
 /// colon; any other word with a colon (`http://x`, `a:'b`) is a name.
-const KEYS: [&str; 15] = [
+const KEYS: [&str; 17] = [
     "name", "ext", "type", "mime", "kind", "tag", "content", "size", "modified", "created",
-    "accessed", "in", "depth", "hidden", "case",
+    "accessed", "in", "depth", "hidden", "case", "near", "inside",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -643,6 +667,8 @@ impl Parser<'_> {
             }
             "tag" => Ok(Term::Tag(v.to_owned())),
             "content" => Ok(Term::Content(parse_content(v, w.quoted, cs)?)),
+            "near" => parse_near(v),
+            "inside" => parse_inside(v),
             "size" => parse_size(&format!(":{v}")),
             _ => {
                 let field = TimeField::ALL
@@ -653,6 +679,112 @@ impl Parser<'_> {
             }
         }
     }
+}
+
+/// A number of degrees as the printer writes it: at most 5 decimals (a
+/// metre), no trailing zeros.
+fn degrees(value: f64) -> String {
+    let text = format!("{value:.5}");
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    if text == "-0" {
+        "0".into()
+    } else {
+        text.into()
+    }
+}
+
+/// `5km`, `500m`, `2.5km`; a bare number is kilometres. Metres, and the
+/// text the printer writes back.
+fn parse_distance(text: &str) -> Result<(f64, String), ParseError> {
+    let text = text.trim();
+    let (number, metres_per) = if let Some(n) = text.strip_suffix("km") {
+        (n, 1000.)
+    } else if let Some(n) = text.strip_suffix('m') {
+        (n, 1.)
+    } else {
+        (text, 1000.)
+    };
+    let value: f64 = number.trim().parse().map_err(|_| {
+        ParseError(format!(
+            "near: expects a distance such as 5km or 500m, got `{text}`"
+        ))
+    })?;
+    let metres = value * metres_per;
+    if !(metres > 0. && metres <= 20_037_509.) {
+        return Err(ParseError(format!(
+            "near: a distance of `{text}` is not one on the Earth"
+        )));
+    }
+    let written = if metres >= 1000. {
+        format!("{}km", degrees(metres / 1000.))
+    } else {
+        format!("{}m", degrees(metres))
+    };
+    Ok((metres, written))
+}
+
+/// Numbers separated by commas, as many as asked.
+fn numbers(text: &str, count: usize, key: &str, expected: &str) -> Result<Vec<f64>, ParseError> {
+    let values: Vec<f64> = text
+        .split(',')
+        .map(|n| n.trim().parse::<f64>())
+        .collect::<Result<_, _>>()
+        .map_err(|_| ParseError(format!("{key}: expects {expected}, got `{text}`")))?;
+    if values.len() != count || values.iter().any(|v| !v.is_finite()) {
+        return Err(ParseError(format!(
+            "{key}: expects {expected}, got `{text}`"
+        )));
+    }
+    Ok(values)
+}
+
+/// `near:10.12,20.12~5km`: a point, and how far from it (1 km unsaid).
+fn parse_near(v: &str) -> Result<Term, ParseError> {
+    let (point, distance) = v.split_once('~').map_or((v, None), |(p, d)| (p, Some(d)));
+    let values = numbers(
+        point,
+        2,
+        "near",
+        "a latitude and a longitude, such as 45.1,6.2",
+    )?;
+    let at = bibli_core::geo::LatLon::new(values[0], values[1])
+        .filter(|_| (-90. ..=90.).contains(&values[0]))
+        .ok_or_else(|| ParseError(format!("near: `{point}` is not a place")))?;
+    let (radius, written) = match distance {
+        Some(d) => parse_distance(d)?,
+        None => (1000., "1km".into()),
+    };
+    Ok(Term::Near {
+        at,
+        radius,
+        text: format!("near:{},{}~{written}", degrees(at.lat), degrees(at.lon)),
+    })
+}
+
+/// `inside:9.9,19.9,10.2,20.3`: south, west, north, east.
+fn parse_inside(v: &str) -> Result<Term, ParseError> {
+    let expected = "south, west, north and east edges, such as 9.9,19.9,10.2,20.3";
+    let values = numbers(v, 4, "inside", expected)?;
+    let (south, west, north, east) = (values[0], values[1], values[2], values[3]);
+    let latitude = |x: f64| (-90. ..=90.).contains(&x);
+    let longitude = |x: f64| (-180. ..=180.).contains(&x);
+    if !(latitude(south) && latitude(north) && south <= north && longitude(west) && longitude(east))
+    {
+        return Err(ParseError(format!("inside: expects {expected}, got `{v}`")));
+    }
+    Ok(Term::Inside {
+        south,
+        west,
+        north,
+        east,
+        text: format!(
+            "inside:{},{},{},{}",
+            degrees(south),
+            degrees(west),
+            degrees(north),
+            degrees(east)
+        ),
+    })
 }
 
 /// The words `kind:` takes, for an error message.
@@ -918,7 +1050,10 @@ impl fmt::Display for Term {
                 let words: Vec<&str> = kinds.iter().map(|k| k.name()).collect();
                 write!(f, "kind:{}", words.join(","))
             }
-            Term::Size { text, .. } | Term::Time { text, .. } => f.write_str(text),
+            Term::Size { text, .. }
+            | Term::Time { text, .. }
+            | Term::Near { text, .. }
+            | Term::Inside { text, .. } => f.write_str(text),
             Term::Tag(t) => write!(f, "tag:{}", quote(t)),
             Term::Content(p) if p.regex => {
                 // Escape a `/` the source left bare, so the regex ends where it should.
@@ -1175,11 +1310,21 @@ impl Query {
 // ---------------------------------------------------------------- matching
 
 /// What the matcher looks at. `metadata` is `None` before stat.
+/// What the late terms read with: the fields a file gives when asked
+/// (`near:`, `inside:`), on the search's worker, and the search's token.
+#[derive(Clone, Copy)]
+pub struct Late<'a> {
+    pub fields: &'a bibli_core::fields::Fields,
+    pub cancel: &'a bibli_core::CancelToken,
+}
+
 pub struct Candidate<'a> {
     pub name: &'a OsStr,
     pub kind: EntryKind,
     pub path: &'a Path,
     pub metadata: Option<&'a Metadata>,
+    /// Without it, a place term is never decided.
+    late: Option<Late<'a>>,
     /// The name as text, and lowercased, computed once for all the terms.
     text: Cow<'a, str>,
     lowered: OnceCell<String>,
@@ -1197,9 +1342,26 @@ impl<'a> Candidate<'a> {
             kind,
             path,
             metadata,
+            late: None,
             text: name.to_string_lossy(),
             lowered: OnceCell::new(),
         }
+    }
+
+    /// The same candidate, able to read fields for the late terms.
+    #[must_use]
+    pub fn with_late(mut self, late: Late<'a>) -> Self {
+        self.late = Some(late);
+        self
+    }
+
+    /// Where the file says it was made, read now.
+    fn position(&self) -> Option<bibli_core::geo::LatLon> {
+        let late = self.late?;
+        late.fields
+            .get(keys::POSITION, self.path, late.cancel)
+            .as_ref()
+            .and_then(bibli_core::geo::LatLon::from_value)
     }
 
     fn lowered(&self) -> &str {
@@ -1306,6 +1468,41 @@ impl Term {
                 }
                 yes_no(content_matches(c.path, p))
             }
+            Term::Near { .. } | Term::Inside { .. } => {
+                if c.kind != EntryKind::File {
+                    return Verdict::No;
+                }
+                if !content {
+                    return Verdict::Unknown;
+                }
+                yes_no(c.position().is_some_and(|at| self.holds(at)))
+            }
+        }
+    }
+}
+
+impl Term {
+    /// Whether a place term holds a position; false for any other term.
+    fn holds(&self, at: bibli_core::geo::LatLon) -> bool {
+        match self {
+            Term::Near {
+                at: center, radius, ..
+            } => center.distance(at) <= *radius,
+            Term::Inside {
+                south,
+                west,
+                north,
+                east,
+                ..
+            } => {
+                (*south..=*north).contains(&at.lat)
+                    && if west <= east {
+                        (*west..=*east).contains(&at.lon)
+                    } else {
+                        at.lon >= *west || at.lon <= *east
+                    }
+            }
+            _ => false,
         }
     }
 }
@@ -1405,6 +1602,109 @@ mod tests {
 
     fn q(s: &str) -> Query {
         parse_at(s, now()).unwrap_or_else(|e| panic!("{s}: {e}"))
+    }
+
+    /// Answers `position` from a text file holding `lat,lon`.
+    struct Written;
+    impl bibli_core::fields::FieldProvider for Written {
+        fn id(&self) -> &'static str {
+            "written"
+        }
+        fn keys(&self) -> &'static [&'static str] {
+            &[keys::POSITION]
+        }
+        fn accepts(&self, _: &str, _: &OsStr) -> bool {
+            true
+        }
+        fn read(
+            &self,
+            _: &str,
+            path: &Path,
+            _: &bibli_core::CancelToken,
+        ) -> anyhow::Result<Option<Value>> {
+            let text = std::fs::read_to_string(path)?;
+            let (lat, lon) = text.trim().split_once(',').unwrap();
+            Ok(bibli_core::geo::LatLon::new(lat.parse()?, lon.parse()?)
+                .map(bibli_core::geo::LatLon::to_value))
+        }
+    }
+
+    #[test]
+    fn places_parse_and_print_back_as_one_meaning() {
+        assert_eq!(
+            q("near:10.120000,20.12~5km").to_string(),
+            "near:10.12,20.12~5km"
+        );
+        assert_eq!(q("near:10.12,20.12").to_string(), "near:10.12,20.12~1km");
+        assert_eq!(
+            q("near:10.12,20.12~500m").to_string(),
+            "near:10.12,20.12~500m"
+        );
+        assert_eq!(
+            q("near:10.12,20.12~2.5").to_string(),
+            "near:10.12,20.12~2.5km"
+        );
+        assert_eq!(
+            q("inside:9.9,19.9,10.2,20.3 kind:image").to_string(),
+            "inside:9.9,19.9,10.2,20.3 kind:image"
+        );
+        for bad in [
+            "near:95,20",
+            "near:10",
+            "near:10,20~-3km",
+            "near:10,20~far",
+            "inside:10.2,19.9,9.9,20.3",
+            "inside:9.9,19.9,10.2",
+        ] {
+            assert!(parse_at(bad, now()).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn places_hold_the_files_that_say_they_were_made_there() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fields = bibli_core::fields::Fields::default();
+        fields.register("test", std::sync::Arc::new(Written));
+        let cancel = bibli_core::CancelToken::new();
+        let late = Late {
+            fields: &fields,
+            cancel: &cancel,
+        };
+        let file = |name: &str, at: &str| {
+            let path = tmp.path().join(name);
+            std::fs::write(&path, at).unwrap();
+            path
+        };
+        // 1.1 km apart north to south; across ±180° for the box.
+        let here = file("here.jpg", "10.12,20.12");
+        let north = file("north.jpg", "10.13,20.12");
+        let over = file("over the line.jpg", "60.0,-179.9");
+        let decide = |query: &str, path: &Path| {
+            let c = Candidate::new(path.file_name().unwrap(), EntryKind::File, path, None)
+                .with_late(late);
+            let expr = q(query).expr.unwrap();
+            // Nothing is read before the late pass.
+            assert_eq!(expr.eval(&c, false), Verdict::Unknown, "{query}");
+            expr.eval(&c, true)
+        };
+        assert_eq!(decide("near:10.12,20.12~500m", &here), Verdict::Yes);
+        assert_eq!(decide("near:10.12,20.12~500m", &north), Verdict::No);
+        assert_eq!(decide("near:10.12,20.12~2km", &north), Verdict::Yes);
+        assert_eq!(decide("inside:10,20,10.125,20.2", &here), Verdict::Yes);
+        assert_eq!(decide("inside:10,20,10.125,20.2", &north), Verdict::No);
+        assert_eq!(decide("inside:59,179.5,61,-179.5", &over), Verdict::Yes);
+        assert_eq!(decide("inside:59,-179.5,61,179.5", &over), Verdict::No);
+        // A folder, or a candidate that cannot read fields, is never near.
+        let dir = Candidate::new(OsStr::new("d"), EntryKind::Directory, tmp.path(), None);
+        assert_eq!(
+            q("near:10.12,20.12").expr.unwrap().eval(&dir, true),
+            Verdict::No
+        );
+        let blind = Candidate::new(OsStr::new("here.jpg"), EntryKind::File, &here, None);
+        assert_eq!(
+            q("near:10.12,20.12").expr.unwrap().eval(&blind, true),
+            Verdict::No
+        );
     }
 
     fn cand<'a>(name: &'a str, kind: EntryKind, md: Option<&'a Metadata>) -> Candidate<'a> {

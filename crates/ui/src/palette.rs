@@ -66,6 +66,11 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.zoom", r#"{"dir":"reset"}"#, "Zoom reset"),
     ("ui.map_view_fit", "{}", "Map: fit to its files"),
     (
+        "ui.map_view_search_area",
+        "{}",
+        "Map: search the pictures and videos of this area",
+    ),
+    (
         "ui.map_view_spread",
         "{}",
         "Map: spread the files at one place, or group them",

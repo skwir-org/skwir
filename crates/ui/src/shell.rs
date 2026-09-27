@@ -229,6 +229,9 @@ pub struct Shell {
     /// Panes whose Map view spreads the files at one place
     /// (`ui.map_view_spread`).
     pub(crate) map_spread: std::collections::HashSet<PaneId>,
+    /// The area each pane's Map view drew last, for `ui.map_view_search_area`.
+    pub(crate) map_areas:
+        std::collections::HashMap<PaneId, std::rc::Rc<std::cell::Cell<Option<[f64; 4]>>>>,
     /// The terminal under the panes (F4).
     pub terminal: crate::terminal::TerminalState,
     /// Panes side by side or stacked, the preview at the right or the bottom.
@@ -442,6 +445,7 @@ impl Shell {
             map_notes: crate::map_preview::Notes::default(),
             map_views: std::collections::HashSet::new(),
             map_spread: std::collections::HashSet::new(),
+            map_areas: std::collections::HashMap::new(),
             terminal: crate::terminal::TerminalState::new(cx.focus_handle()),
             layout: crate::layout::Layout::default(),
             toasts: crate::toast::ToastState::default(),
@@ -1470,6 +1474,7 @@ impl Shell {
             "map_open" => self.map_open_external(cx),
             "map_view_fit" => self.map_view_fit(cx),
             "map_view_spread" => self.map_view_spread(cx),
+            "map_view_search_area" => self.map_view_search_area(window, cx),
             "toggle_preview" => self.toggle_preview(window, cx),
             "preview_close" => self.preview_close(window, cx),
             "reader_continuous" => self.reader_continuous(window, cx),

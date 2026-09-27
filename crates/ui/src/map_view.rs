@@ -364,6 +364,16 @@ impl PaneView for MapView {
         if folder {
             header = header.child(
                 Button::new(
+                    format!("map-view-area-{}", pane.0),
+                    "search",
+                    "Search the pictures and videos of this folder and its subfolders made in the area shown",
+                    "ui.map_view_search_area",
+                )
+                .label("This area")
+                .render(shell, cx),
+            );
+            header = header.child(
+                Button::new(
                     format!("map-view-subfolders-{}", pane.0),
                     "search",
                     "Show the pictures and tracks of the subfolders too",
@@ -373,6 +383,9 @@ impl PaneView for MapView {
                 .render(shell, cx),
             );
         }
+        shell
+            .map_areas
+            .insert(pane, Rc::clone(&self.handles.shown_area));
         let spread = shell.map_spread.contains(&pane);
         header = header.child(
             Button::new(
@@ -501,6 +514,31 @@ impl Shell {
         }
     }
 
+    /// `ui.map_view_search_area`: the pictures and videos of the active
+    /// pane's folder and subfolders made inside the area its map shows.
+    pub(crate) fn map_view_search_area(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.ui().view_id != ID {
+            return;
+        }
+        let pane = self.pane;
+        let Some([south, west, north, east]) = self.map_areas.get(&pane).and_then(|a| a.get())
+        else {
+            return;
+        };
+        self.run(
+            "geo.search_area",
+            serde_json::json!({
+                "pane": pane,
+                "south": south,
+                "west": west,
+                "north": north,
+                "east": east,
+            }),
+            window,
+            cx,
+        );
+    }
+
     /// Panes that stopped showing their map let their scan go.
     pub(crate) fn sync_map_views(&mut self) {
         let shown: HashSet<_> = self
@@ -518,6 +556,7 @@ impl Shell {
         // A pane keeps its choice to spread while it lives.
         let ws = self.app.workspace.read();
         self.map_spread.retain(|&pane| ws.pane(pane).is_some());
+        self.map_areas.retain(|pane, _| ws.pane(*pane).is_some());
         drop(ws);
         for pane in gone {
             self.map_views.remove(&pane);

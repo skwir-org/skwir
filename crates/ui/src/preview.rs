@@ -261,6 +261,13 @@ pub struct PreviewState {
     pub descend: Option<String>,
     nested_tx: flume::Sender<(u64, Arc<Nested>)>,
     nested_rx: flume::Receiver<(u64, Arc<Nested>)>,
+    /// Fields read on demand that Details shows (a picture's place,
+    /// `bibli_core::fields`), for the entry of `details_at`: read on a
+    /// worker, arriving with the generation they were asked at.
+    pub fields: Vec<crate::details::Row>,
+    fields_generation: u64,
+    fields_tx: flume::Sender<(u64, Vec<crate::details::Row>)>,
+    fields_rx: flume::Receiver<(u64, Vec<crate::details::Row>)>,
     /// What the entry says about itself, collected when it or its listing
     /// changes (`details_at`), never while painting.
     pub details: Vec<crate::details::Group>,
@@ -284,6 +291,7 @@ impl Default for PreviewState {
     fn default() -> Self {
         let (tx, rx) = flume::unbounded();
         let (nested_tx, nested_rx) = flume::unbounded();
+        let (fields_tx, fields_rx) = flume::unbounded();
         PreviewState {
             reader: crate::reader::ReaderState::default(),
             inspection: crate::inspector::State::default(),
@@ -322,6 +330,10 @@ impl Default for PreviewState {
             descend: None,
             nested_tx,
             nested_rx,
+            fields: Vec::new(),
+            fields_generation: 0,
+            fields_tx,
+            fields_rx,
             details: Vec::new(),
             details_at: None,
             selection_summary: None,
@@ -777,6 +789,7 @@ impl Shell {
         if self.preview.details_at != Some(seen) {
             self.preview.details_at = Some(seen);
             self.preview.details = crate::details::entry_groups(&entry, &key.path);
+            self.read_fields(&entry, &key.path);
             self.preview.neighbours = self
                 .media_kind()
                 .map_or((None, None), |kind| self.media_neighbours(id, kind));
@@ -788,6 +801,12 @@ impl Shell {
                     crate::details::Row::new("Total size", format::size(selection.bytes)),
                 ],
             });
+        }
+        while let Ok((generation, rows)) = self.preview.fields_rx.try_recv() {
+            if generation == self.preview.fields_generation {
+                self.preview.fields = rows;
+                cx.notify();
+            }
         }
         while let Ok((generation, member)) = self.preview.nested_rx.try_recv() {
             if generation == self.preview.generation && self.preview.nested.len() < NESTING {
@@ -1446,6 +1465,51 @@ impl Shell {
                 .get_or_insert_with(|| cx.focus_handle());
         }
         self.preview.content = content;
+    }
+
+    /// The fields Details shows for `entry` at `path` (a picture's place,
+    /// `bibli_core::fields`), read on a worker; what was shown for another
+    /// entry goes at once, and a late answer for it is dropped.
+    fn read_fields(&mut self, entry: &bibli_core::entry::Entry, path: &std::path::Path) {
+        self.preview.fields_generation += 1;
+        self.preview.fields.clear();
+        if entry.is_dir() {
+            return;
+        }
+        let shown = self.app.fields.shown_for(&entry.name);
+        if shown.is_empty() {
+            return;
+        }
+        let generation = self.preview.fields_generation;
+        let tx = self.preview.fields_tx.clone();
+        let fields = Arc::clone(&self.app.fields);
+        let path = path.to_path_buf();
+        let wake = self.app.waker_handle();
+        let cancel = self.app.lifetime().child();
+        self.app.scheduler.spawn(
+            bibli_core::scheduler::Priority::Visible,
+            "detail-fields",
+            cancel.clone(),
+            move || {
+                let rows: Vec<crate::details::Row> = shown
+                    .into_iter()
+                    .filter_map(|(key, label)| {
+                        let text = match fields.get(key, &path, &cancel)? {
+                            bibli_core::entry::Value::Text(text) => text.to_string(),
+                            _ => return None,
+                        };
+                        let name = path.file_name().unwrap_or_default();
+                        Some(crate::details::Row {
+                            source: fields.credit(key, name).map(Into::into),
+                            ..crate::details::Row::new(label, text)
+                        })
+                    })
+                    .collect();
+                if !rows.is_empty() && tx.send((generation, rows)).is_ok() {
+                    wake();
+                }
+            },
+        );
     }
 
     fn cancel_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {

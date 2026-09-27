@@ -28,6 +28,7 @@ pub mod collate;
 pub mod command;
 pub mod document;
 pub mod entry;
+pub mod fields;
 pub mod fs;
 pub mod geo;
 pub mod location;

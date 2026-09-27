@@ -257,16 +257,14 @@ pub fn parse_thumbnailer(name: &str, text: &str) -> Option<ThumbnailerEntry> {
 /// The directories the desktop keeps thumbnailers in, most specific first.
 pub fn default_thumbnailer_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    if let Some(d) = dirs::data_dir() {
+    if let Some(d) = crate::xdg::data_home() {
         dirs.push(d.join("thumbnailers"));
     }
     if let Some(h) = dirs::home_dir() {
         dirs.push(h.join(".nix-profile/share/thumbnailers"));
     }
-    let data_dirs =
-        std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
-    for d in data_dirs.split(':').filter(|d| !d.is_empty()) {
-        dirs.push(Path::new(d).join("thumbnailers"));
+    for d in crate::xdg::data_dirs() {
+        dirs.push(d.join("thumbnailers"));
     }
     dirs.push(PathBuf::from("/run/current-system/sw/share/thumbnailers"));
     dirs.dedup();

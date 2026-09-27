@@ -110,6 +110,8 @@ pub struct App {
     pub terminals: crate::terminal::Terminals,
     pub thumbnails: Arc<crate::thumbs::Thumbnails>,
     pub metadata: Arc<crate::metadata::MetadataProviders>,
+    /// Fields read when asked, not at hydration (ADR-023).
+    pub fields: Arc<crate::fields::Fields>,
     pub previews: Arc<crate::preview::Previews>,
     /// Where map backgrounds come from (the map-tiles plugin, ADR-020).
     pub tiles: Arc<crate::tiles::Tiles>,
@@ -139,6 +141,8 @@ impl App {
             Some(p) => Settings::load(p)?,
             None => Settings::in_memory(),
         };
+        let cache = Cache::new(config.cache_root);
+        let fields = Arc::new(crate::fields::Fields::new(cache.namespace("fields")));
         let app = Arc::new_cyclic(|weak| App {
             weak: weak.clone(),
             notifications: parking_lot::Mutex::new(Vec::new()),
@@ -149,6 +153,7 @@ impl App {
                 lifetime.child(),
             ),
             metadata: Arc::new(crate::metadata::MetadataProviders::default()),
+            fields,
             previews: Arc::new(crate::preview::Previews::default()),
             tiles: Arc::new(crate::tiles::Tiles::default()),
             proposals: parking_lot::Mutex::new(Vec::new()),
@@ -158,7 +163,7 @@ impl App {
             registry: Registry::default(),
             plugins: PluginHost::default(),
             settings,
-            cache: Cache::new(config.cache_root),
+            cache,
             workspace: RwLock::new(Workspace::default()),
             pending: crate::pending::PendingTransfer::default(),
             player: crate::playing::Player::default(),
@@ -235,6 +240,7 @@ impl App {
         self.executor.remove_observers(owner);
         self.thumbnails.unregister_owner(owner);
         self.metadata.unregister_owner(owner);
+        self.fields.unregister_owner(owner);
         self.previews.unregister_owner(owner);
         self.pending.unregister_owner(owner);
         self.player.unregister_owner(owner);
@@ -265,6 +271,7 @@ impl App {
                 batch_size: self.batch_size,
                 waker: Some(self.waker_handle()),
                 metadata: Arc::clone(&self.metadata),
+                fields: Arc::clone(&self.fields),
             },
         )
     }

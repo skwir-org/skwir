@@ -278,6 +278,8 @@ fn preview_group(shell: &Shell) -> Option<Group> {
             rows.push(Row::new("Subtitles", state.subtitle_tracks.join(", ")));
         }
     }
+    // What plugins read of the file on demand (a picture's place).
+    rows.extend(preview.fields.iter().cloned());
     group("Content", rows)
 }
 

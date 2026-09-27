@@ -160,6 +160,8 @@ pub struct OpenContext {
     pub waker: Option<Waker>,
     /// Metadata providers to run after stat (see [`crate::metadata`]).
     pub metadata: Arc<crate::metadata::MetadataProviders>,
+    /// Fields read on demand (see [`crate::fields`]): a search's `near:`.
+    pub fields: Arc<crate::fields::Fields>,
 }
 
 impl OpenContext {

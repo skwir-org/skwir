@@ -1,10 +1,9 @@
 # ADR-022: Maps, later: search by place, writing locations, names and backgrounds offline
 
-Status: proposed, 2026-09-27, and deferred. Nothing here is built. Each
-part is decided when its work starts, by amending this ADR (accepted,
-with what was chosen) or by an ADR of its own where it says so. What it
-records now is what each part must respect and the options seen, so
-that the work does not start from nothing.
+Status: parts 1 to 3 accepted and built, 2026-09-27 (their decisions are
+the "Decided" paragraphs below); part 4 proposed and deferred. Each part
+is decided when its work starts, by amending this ADR or by an ADR of
+its own where it says so.
 
 ## Context
 
@@ -76,6 +75,18 @@ Whatever is chosen: a position term is evaluated late, as `content:` is
 (only when the cheaper terms have not decided), and a search of a large
 tree reports it is still looking rather than blocking.
 
+**Decided (2026-09-27):** the core contract, in ADR-023
+(`bibli_core::fields`; the geo plugin answers `position` for pictures
+and videos). `near:LAT,LON~DISTANCE` (1 km unsaid) and
+`inside:S,W,N,E` are query terms decided last, as `content:`; the Map
+view's "This area" searches the folder and its subfolders for the
+pictures and videos inside the area shown (`geo.search_area`). Not
+built: `near:` by a place's name (the query language would need the
+names, which are the geo plugin's; `geo.locate { name }` gives a name's
+positions to scripts and agents meanwhile). Terms typed in the address
+bar are read as a location's scheme, as `kind:` always was: a search is
+typed in the Search box, or after `query:`.
+
 ## 2. Writing locations: geotag from a track, remove before sharing
 
 What it is: choose pictures and a track (GPX, FIT, any format read);
@@ -116,6 +127,29 @@ What must hold:
   location" is a copy plan followed by it on the copies, so the
   originals stay as they are.
 
+**Decided (2026-09-27):** as proposed, with ExifTool the only writer and
+a file's modification time kept (to the nanosecond: `-P` keeps whole
+seconds, the exact time is put back). `geo.geotag` matches the pictures
+selected with the one track selected, on a worker, and proposes the
+plan; `geo.remove_location` is applied at once, undoable. A picture that
+states its own time zone (`OffsetTimeOriginal`) is matched through it;
+a picture already placed is left as it is; RAW pictures are left out
+(their sidecars are not written yet) and the plan's note says so.
+Removal takes out every tag that says where the picture was made, and
+undo writes back exactly what the plan read, structures included
+(ExifTool's JSON import): the position (EXIF GPS, XMP tags named GPS* in
+any namespace, a drone maker's among them, QuickTime's coordinates),
+a drone's altitudes, and the place: IPTC's city, sub-location,
+province and country (IIM and XMP), Photoshop's, and IPTC's
+`LocationCreated` and `LocationShown` structures. What stays is where
+the camera was looking (a drone's flight and gimbal angles). Writing a
+position clears only the position: a picture's place names stay, and a
+picture with only a place name is not "already placed". For the review and
+the toast, a step may state its words (`op::Words`, what it will do and
+what it did) and a plan a note under its title (`Plan::note`). Not
+built: changing the cameras' offset from the review (the command takes
+`offset_seconds`), and showing the matches on the Map view.
+
 ## 3. Place names offline
 
 What it is: the nearest place's name for a position, in Details ("Near
@@ -142,6 +176,16 @@ an optional data file found at runtime, as the native workers are, for
 those who install it, with its attribution in Details' source line.
 Names are shown in the language the data has; localized names are left
 out (they multiply the data).
+
+**Decided (2026-09-27):** as proposed. Natural Earth's 7 342 populated
+places are built in (126 KB, 178 KB decoded on first use in 0.5 ms);
+GeoNames `cities1000`, packed by `tools/maps/places.py`, is used
+instead when installed under the XDG data directories
+(`bibli/places/geonames.bin`, 161 535 places, 4.2 MB decoded) and
+credited in Details. A position is named after the place whose extent
+holds it, else "12 km NE of Example Town" for the place nearest relative
+to how far its name carries (15 to 100 km with its size). Details shows
+it as "Place" (the field `geo.place`); map labels from it are not built.
 
 ## 4. Backgrounds from a local file
 

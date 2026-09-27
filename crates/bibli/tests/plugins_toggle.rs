@@ -20,6 +20,10 @@ struct Snapshot {
     panels: usize,
     providers: BTreeSet<&'static str>,
     metadata: Vec<&'static str>,
+    /// Fields read on demand (a picture's position).
+    fields: Vec<&'static str>,
+    /// Operation kinds plans are made of (tags, positions).
+    ops: Vec<&'static str>,
     previews: Vec<&'static str>,
     thumbs: Vec<&'static str>,
     settings: BTreeSet<String>,
@@ -56,6 +60,8 @@ fn snapshot(app: &App) -> Snapshot {
             .filter(|s| app.provider(s).is_some())
             .collect(),
         metadata: app.metadata.ids(),
+        fields: app.fields.ids(),
+        ops: app.ops.kinds(),
         previews: app.previews.ids(),
         thumbs: app.thumbnails.provider_ids(),
         settings: app.settings.schema().into_iter().map(|s| s.key).collect(),

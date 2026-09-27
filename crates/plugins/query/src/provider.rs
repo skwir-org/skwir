@@ -18,7 +18,7 @@ use bibli_core::scheduler::Priority;
 use crossbeam_channel::Receiver;
 use parking_lot::Mutex;
 
-use crate::lang::{self, Candidate, Query, Verdict};
+use crate::lang::{self, Candidate, Late, Query, Verdict};
 
 pub const SCHEME: &str = "query";
 
@@ -87,6 +87,14 @@ struct Batcher<'a> {
 impl Batcher<'_> {
     const MAX_AGE: Duration = Duration::from_millis(100);
 
+    /// What the late terms read with, under this search's token.
+    fn late(&self) -> Late<'_> {
+        Late {
+            fields: &self.shared.ctx.fields,
+            cancel: self.cancel,
+        }
+    }
+
     fn push(&self, entry: Entry, path: PathBuf) {
         if self.cancel.is_cancelled() {
             return;
@@ -141,7 +149,7 @@ impl Deferred<'_> {
         self.shared.ctx.metadata.fill(dir, &mut entries);
         for entry in entries {
             let path = dir.join(&entry.name);
-            if full_match(self.query, &entry, &path) {
+            if full_match(self.query, &entry, &path, self.batcher.late()) {
                 self.batcher.push(entry, path);
             }
         }
@@ -261,12 +269,13 @@ impl Shared {
     }
 }
 
-/// Decide with the entry's stat and metadata, reading content last.
-fn full_match(q: &Query, entry: &Entry, path: &Path) -> bool {
+/// Decide with the entry's stat and metadata, reading content and the
+/// fields asked of it (a place) last.
+fn full_match(q: &Query, entry: &Entry, path: &Path, late: Late<'_>) -> bool {
     let Some(expr) = &q.expr else {
         return true;
     };
-    let c = Candidate::new(&entry.name, entry.kind, path, Some(&entry.metadata));
+    let c = Candidate::new(&entry.name, entry.kind, path, Some(&entry.metadata)).with_late(late);
     match expr.eval(&c, false) {
         Verdict::No => false,
         Verdict::Yes => true,
@@ -275,7 +284,7 @@ fn full_match(q: &Query, entry: &Entry, path: &Path) -> bool {
 }
 
 /// Evaluate one path as far as the dirent and a stat allow.
-fn first(q: &Query, path: &Path, name: &OsStr, kind: EntryKind) -> First {
+fn first(q: &Query, path: &Path, name: &OsStr, kind: EntryKind, late: Late<'_>) -> First {
     let Some(expr) = &q.expr else {
         return stat_path(path).map_or(First::No, First::Yes);
     };
@@ -292,7 +301,7 @@ fn first(q: &Query, path: &Path, name: &OsStr, kind: EntryKind) -> First {
     if q.needs_metadata() {
         return First::NeedsMetadata(entry);
     }
-    if full_match(q, &entry, path) {
+    if full_match(q, &entry, path, late) {
         First::Yes(entry)
     } else {
         First::No
@@ -307,7 +316,7 @@ fn consider(
     batcher: &Batcher<'_>,
     deferred: &mut Deferred<'_>,
 ) {
-    match first(q, path, name, kind) {
+    match first(q, path, name, kind, batcher.late()) {
         First::No => {}
         First::Yes(entry) => batcher.push(entry, path.to_path_buf()),
         First::NeedsMetadata(entry) => {
@@ -494,6 +503,7 @@ mod tests {
             batch_size: 64,
             waker: None,
             metadata: Arc::default(),
+            fields: Arc::default(),
         };
         let query = lang::parse(&location.rest).unwrap();
         let open = QueryLocation::open(location.clone(), query, &ctx, &CancelToken::new());

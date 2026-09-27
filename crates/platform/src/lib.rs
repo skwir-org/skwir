@@ -33,6 +33,7 @@ pub mod thumb_providers;
 pub mod thumbnails;
 pub mod uri;
 pub mod users;
+pub mod xdg;
 
 pub mod inspection;
 /// Every preview bound in one place (see `inspection::limits`).

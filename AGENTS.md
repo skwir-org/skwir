@@ -337,6 +337,9 @@ current source before assuming a planned crate, command, or API exists.
   batch results and anything from a background task or an agent go through
   `App::propose` for review.
 - **Operations have inverses**, a dry-run `check`, and idempotent semantics.
+  A step that changes metadata states its words (`op::Words`: what it will
+  do, for the review, and what it did, for the toast); what a plan left out
+  goes in its note (`Plan::with_note`), under the title, never in it.
   Reference entries by `EntryRef` (id + path hint), never by path alone.
 - **Plugins depend only on `bibli-core` (and `bibli-platform`), never on each
   other.** They talk through core-owned data (entries, metadata fields,
@@ -499,7 +502,10 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   revalidation must not reintroduce unknown blocks or busy flashes. See ADR-007.
 - Entries arrive before metadata. Treat missing fields as unknown, request
   hydration in batches, and react to `Updated` events instead of stat-ing each
-  row during rendering. For virtual locations, use `OpenLocation::path_of` or
+  row during rendering. A fact too costly for every listing (a picture's
+  position) is a field read on demand (`App::fields`, ADR-023): a plugin
+  registers a `FieldProvider`, a caller on a worker asks `Fields::get`,
+  answers are kept by the file's identity; a labelled key shows in Details. For virtual locations, use `OpenLocation::path_of` or
   `App::selected_refs`; a query/shelf location is not a filesystem directory.
 
 ## Settings
@@ -583,6 +589,9 @@ are about to touch, in full:
   Copy tags before restoring read-only permissions and publish the staged
   copy only after metadata succeeds; failed copies must not look complete.
 
+- The XDG directories come from `bibli_platform::xdg` (an empty variable
+  takes its default, relative paths are ignored); do not read the
+  variables again elsewhere.
 - Keep paths as `Path` / `PathBuf` and process arguments separate for as long
   as possible. Shell quoting, query quoting, and URI encoding are different
   grammars; a display string is not an escaped representation of any of them.

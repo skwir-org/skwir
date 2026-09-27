@@ -123,7 +123,20 @@ pub enum Change {
         #[schemars(with = "crate::os_path::PathArg")]
         path: PathBuf,
         field: String,
+        /// What the step does, in the user's words, for the review and the
+        /// toast; without it, the field's name is all they can say.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        words: Option<Words>,
     },
+}
+
+/// A step in the user's words: what it will do, as the review lists it
+/// ("place “a.jpg” at 10.12000, 20.12000"), and what it did, as the toast
+/// says it ("Placed “a.jpg” at 10.12000, 20.12000").
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Words {
+    pub will: String,
+    pub did: String,
 }
 
 impl fmt::Display for Change {
@@ -147,7 +160,12 @@ impl fmt::Display for Change {
                 directory: false,
             } => write!(f, "create {}", path.display()),
             Change::Remove { path } => write!(f, "rmdir {}", path.display()),
-            Change::Metadata { path, field } => write!(f, "set {field} on {}", path.display()),
+            Change::Metadata {
+                words: Some(words), ..
+            } => f.write_str(&words.will),
+            Change::Metadata { path, field, .. } => {
+                write!(f, "set {field} on {}", path.display())
+            }
         }
     }
 }
@@ -262,6 +280,11 @@ impl OpRegistry {
         self.kinds.write().insert(kind, (owner.into(), d));
     }
 
+    /// The kinds registered, in registration order.
+    pub fn kinds(&self) -> Vec<&'static str> {
+        self.kinds.read().keys().copied().collect()
+    }
+
     pub fn unregister_owner(&self, owner: &str) {
         self.kinds.write().retain(|_, (o, _)| &**o != owner);
     }
@@ -288,6 +311,10 @@ static NEXT_PLAN: AtomicU64 = AtomicU64::new(1);
 pub struct Plan {
     pub id: PlanId,
     pub title: String,
+    /// What the review says under the title: what the plan left out and
+    /// why ("3 pictures outside the track's times"). The toast does not
+    /// repeat it.
+    pub note: Option<String>,
     pub steps: Vec<Box<dyn Operation>>,
 }
 
@@ -295,6 +322,8 @@ pub struct Plan {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PlanData {
     pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     pub steps: Vec<OpData>,
 }
 
@@ -302,6 +331,8 @@ pub struct PlanData {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PlanDiff {
     pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     pub steps: Vec<(Change, StepStatus)>,
 }
 
@@ -310,8 +341,16 @@ impl Plan {
         Plan {
             id: PlanId(NEXT_PLAN.fetch_add(1, Ordering::Relaxed)),
             title: title.into(),
+            note: None,
             steps: Vec::new(),
         }
+    }
+
+    /// The same plan, with what the review says under its title.
+    #[must_use]
+    pub fn with_note(mut self, note: impl Into<String>) -> Self {
+        self.note = Some(note.into());
+        self
     }
 
     pub fn with_steps(title: impl Into<String>, steps: Vec<Box<dyn Operation>>) -> Self {
@@ -338,6 +377,7 @@ impl Plan {
         let ctx = StepContext::detached();
         PlanDiff {
             title: self.title.clone(),
+            note: self.note.clone(),
             steps: self
                 .steps
                 .iter()
@@ -357,6 +397,7 @@ impl Plan {
     pub fn to_data(&self) -> PlanData {
         PlanData {
             title: self.title.clone(),
+            note: self.note.clone(),
             steps: self
                 .steps
                 .iter()
@@ -374,7 +415,9 @@ impl Plan {
             .iter()
             .map(|d| registry.build(d))
             .collect::<anyhow::Result<Vec<_>>>()?;
-        Ok(Plan::with_steps(data.title.clone(), steps))
+        let mut plan = Plan::with_steps(data.title.clone(), steps);
+        plan.note.clone_from(&data.note);
+        Ok(plan)
     }
 }
 
