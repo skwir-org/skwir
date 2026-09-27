@@ -1,7 +1,11 @@
 //! Context menu from the registry's `context` menu contributions, filtered by
 //! `when` tokens evaluated against the selection.
 
+use std::collections::HashMap;
+use std::ffi::OsStr;
+
 use bibli_core::registry::MenuItem;
+use bibli_platform::mime::{self, Kind, Mime};
 use gpui::{
     AnyElement, Context, FocusHandle, MouseButton, Pixels, Point, Window, anchored, deferred, div,
     prelude::*, px,
@@ -62,12 +66,116 @@ impl SelectionCtx {
 
 /// Space-separated tokens, all of which must hold; a token of
 /// alternatives (`selection|folder`) holds when one of them does. `None`
-/// always holds.
-pub fn when_holds(when: Option<&str>, ctx: SelectionCtx) -> bool {
+/// always holds. `kind:` and `has:` ask `types`
+/// (`bibli_core::registry::MenuItem` has the vocabulary).
+pub fn when_holds(when: Option<&str>, ctx: SelectionCtx, types: &SelectionTypes) -> bool {
     when.is_none_or(|when| {
         when.split_whitespace()
-            .all(|t| t.split('|').any(|alt| ctx.holds(alt)))
+            .all(|t| t.split('|').any(|alt| token_holds(alt, ctx, types)))
     })
+}
+
+fn token_holds(token: &str, ctx: SelectionCtx, types: &SelectionTypes) -> bool {
+    match token.split_once(':') {
+        Some(("kind", what)) => types.every(what),
+        Some(("has", what)) => types.some(what),
+        _ => ctx.holds(token),
+    }
+}
+
+/// Whether `when` says anything about the selection's types, which are
+/// worth working out only then.
+pub fn asks_types(when: Option<&str>) -> bool {
+    when.is_some_and(|when| when.contains("kind:") || when.contains("has:"))
+}
+
+/// What the selected entries are, as their names say (`mime::by_names`),
+/// for the `kind:` and `has:` tokens. Made when a menu opens, never per
+/// frame: typing names costs.
+#[derive(Clone, Debug, Default)]
+pub struct SelectionTypes {
+    /// Each distinct type of the selection once.
+    types: Vec<EntryType>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct EntryType {
+    dir: bool,
+    /// The type and those it descends from, nearest first; empty when the
+    /// name says nothing.
+    lineage: Vec<Mime>,
+    /// The last extension in lower case: `gpx`.
+    extension: String,
+}
+
+impl SelectionTypes {
+    /// The types of entries given by name and whether each is a folder.
+    pub fn of<'a>(entries: impl IntoIterator<Item = (&'a OsStr, bool)>) -> Self {
+        let (dirs, files): (Vec<_>, Vec<_>) = entries.into_iter().partition(|(_, dir)| *dir);
+        let mut types = Vec::new();
+        if !dirs.is_empty() {
+            types.push(EntryType {
+                dir: true,
+                lineage: vec![Mime("inode/directory".into())],
+                extension: String::new(),
+            });
+        }
+        let names: Vec<&OsStr> = files.iter().map(|(name, _)| *name).collect();
+        let mut lineages: HashMap<Mime, Vec<Mime>> = HashMap::new();
+        for (name, mime) in names.iter().zip(mime::by_names(names.iter().copied())) {
+            let extension = std::path::Path::new(name)
+                .extension()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_ascii_lowercase();
+            let lineage = mime.map_or_else(Vec::new, |m| {
+                lineages.entry(m).or_insert_with_key(mime::lineage).clone()
+            });
+            let ty = EntryType {
+                dir: false,
+                lineage,
+                extension,
+            };
+            if !types.contains(&ty) {
+                types.push(ty);
+            }
+        }
+        SelectionTypes { types }
+    }
+
+    /// `kind:`: every selected entry is `what`.
+    fn every(&self, what: &str) -> bool {
+        !self.types.is_empty() && self.types.iter().all(|t| t.is(what))
+    }
+
+    /// `has:`: one selected entry at least is `what`.
+    fn some(&self, what: &str) -> bool {
+        self.types.iter().any(|t| t.is(what))
+    }
+}
+
+impl EntryType {
+    /// Of `what`: an extension (`.gpx`), a MIME type or `image/*`, or a
+    /// kind's word (`image`, `pictures`).
+    fn is(&self, what: &str) -> bool {
+        if let Some(extension) = what.strip_prefix('.') {
+            return !self.dir && self.extension.eq_ignore_ascii_case(extension);
+        }
+        if let Some((top, sub)) = what.split_once('/') {
+            return self.lineage.iter().any(|m| {
+                if sub == "*" {
+                    m.top_level() == top
+                } else {
+                    m.as_str() == what
+                }
+            });
+        }
+        match Kind::from_name(what) {
+            Some(Kind::Folder) => self.dir,
+            Some(kind) => !self.dir && self.lineage.first().is_some_and(|m| mime::is_kind(m, kind)),
+            None => false,
+        }
+    }
 }
 
 pub struct MenuState {
@@ -184,19 +292,6 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let ctx = self.selection_ctx();
-        let mut items: Vec<MenuItem> = self
-            .app
-            .registry
-            .menus
-            .all()
-            .into_iter()
-            .filter(|m| m.menu == "context" && when_holds(m.when.as_deref(), ctx))
-            .collect();
-        items.sort_by_key(|m| m.order);
-        if items.is_empty() {
-            return;
-        }
         // A row and its pane both see the right-click, and the pane's handler
         // focuses the pane first: keep the one menu and give it focus back.
         if let Some(menu) = self.menu.as_ref().filter(|menu| menu.position == position) {
@@ -204,8 +299,37 @@ impl Shell {
             window.prevent_default();
             return;
         }
+        let items = self.context_items();
+        if items.is_empty() {
+            return;
+        }
         self.menu = Some(MenuState::open(position, items, window, cx));
         cx.notify();
+    }
+
+    /// The context menu's items for the selection: the registered items
+    /// whose `when` holds, in order.
+    fn context_items(&self) -> Vec<MenuItem> {
+        let ctx = self.selection_ctx();
+        let statics: Vec<MenuItem> = self
+            .app
+            .registry
+            .menus
+            .all()
+            .into_iter()
+            .filter(|m| m.menu == "context")
+            .collect();
+        let types = if statics.iter().any(|m| asks_types(m.when.as_deref())) {
+            self.selection_types()
+        } else {
+            SelectionTypes::default()
+        };
+        let mut items: Vec<MenuItem> = statics
+            .into_iter()
+            .filter(|m| when_holds(m.when.as_deref(), ctx, &types))
+            .collect();
+        items.sort_by_key(|m| m.order);
+        items
     }
 
     /// `ui.context_menu` (Menu key, Shift+F10): the menu a right-click on
@@ -632,10 +756,59 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Row, SelectionCtx, rows_of, when_holds};
+    use std::ffi::OsStr;
+
     use bibli_core::command::Invocation;
     use bibli_core::registry::MenuItem;
 
+    use super::{Row, SelectionCtx, SelectionTypes, rows_of};
+
+    /// `when` without types: nothing is known of the selection's.
+    fn when_holds(when: Option<&str>, ctx: SelectionCtx) -> bool {
+        super::when_holds(when, ctx, &SelectionTypes::default())
+    }
+
+    fn types(entries: &[(&str, bool)]) -> SelectionTypes {
+        SelectionTypes::of(entries.iter().map(|(name, dir)| (OsStr::new(*name), *dir)))
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn types_say_what_every_or_some_selected_entry_is() {
+        let holds = |when: &str, entries: &[(&str, bool)]| {
+            let ctx = ctx(entries.len(), false, false);
+            super::when_holds(Some(when), ctx, &types(entries))
+        };
+        let photos = [("a.jpg", false), ("b.PNG", false)];
+        assert!(holds("kind:image", &photos));
+        assert!(holds("kind:pictures", &photos), "a kind's synonym");
+        assert!(holds("has:image/*", &photos));
+        assert!(holds("has:image/png", &photos));
+        assert!(!holds("kind:image/png", &photos));
+        assert!(!holds("kind:video", &photos));
+        let with_track = [("a.jpg", false), ("walk.GPX", false)];
+        assert!(!holds("kind:image", &with_track));
+        assert!(holds("has:image has:.gpx", &with_track));
+        assert!(holds("has:image has:.fit|has:.gpx", &with_track));
+        assert!(!holds("has:image has:.fit", &with_track));
+        // Code is text through its parents; a folder is of no file type.
+        assert!(holds(
+            "kind:text",
+            &[("main.rs", false), ("notes.txt", false)]
+        ));
+        assert!(holds("has:text/plain", &[("main.rs", false)]));
+        assert!(holds("kind:folder", &[("src", true)]));
+        assert!(!holds("has:image", &[("x.png", true)]));
+        assert!(!holds("has:.png", &[("x.png", true)]));
+        // A name that says nothing is of no kind.
+        let unknown = [("a.jpg", false), ("blob.zzq9", false)];
+        assert!(!holds("kind:image", &unknown));
+        assert!(holds("has:image", &unknown));
+        // Nothing selected: nothing holds.
+        assert!(!holds("kind:image", &[]));
+        assert!(!holds("has:image", &[]));
+        assert!(!holds("kind:bogus", &photos));
+    }
     fn item(title: &str, submenu: Option<&str>) -> MenuItem {
         MenuItem {
             menu: "context".into(),

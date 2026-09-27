@@ -123,8 +123,12 @@ current source before assuming a planned crate, command, or API exists.
   view) says `empty` in its `when`: it belongs to the menu opened on the
   background, which first clears the selection. One that needs a folder
   (New Folder, Bookmark This Folder, Open Folder With) also says `folder`,
-  so a search or the shelf never offers it. Rarely used items set
-  `submenu`; the menu expands that group in place. Give items an `icon`.
+  so a search or the shelf never offers it. An item for some files only
+  says which in its `when`: `kind:image` (every selected entry is one) or
+  `has:.gpx` (one is), by kind, MIME type or extension, read from names
+  (`registry::MenuItem`); never offer it to every file and let the command
+  refuse. Rarely used items set `submenu`; the menu expands that group in
+  place. Give items an `icon`.
 - **Details lead somewhere.** A provider's fact can carry a command
   (`Detail::with_action`, drawn as a link after the value, run through
   `Shell::run`): a position shows the file on the map. The row itself

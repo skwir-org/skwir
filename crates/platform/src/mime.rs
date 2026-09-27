@@ -60,6 +60,58 @@ pub fn ambiguous(name: &OsStr) -> bool {
     imp::ambiguous(name)
 }
 
+/// Selections no larger than this have each name asked as it is.
+const EXACT: usize = 64;
+/// Distinct questions one [`by_names`] asks at most.
+const ASKED: usize = 256;
+
+/// [`by_name`] for many names at once (a selection), in their order.
+///
+/// The database takes tens of microseconds a name, so a large selection
+/// cannot be asked name by name on the UI thread. Up to `EXACT` names are
+/// each asked as they are; beyond, a name is asked once per suffix from its
+/// first dot (`.jpg`, `.tar.gz`), as any file with that suffix would be,
+/// so a name only a whole-name pattern knows (`CMakeLists.txt`) takes its
+/// suffix's type there. A name without a suffix is asked as it is. At most
+/// `ASKED` distinct questions: the names past them are unknown (`None`),
+/// which bounds the call whatever the selection. No I/O once the database
+/// is loaded.
+pub fn by_names<'a, I>(names: I) -> Vec<Option<Mime>>
+where
+    I: IntoIterator<Item = &'a OsStr>,
+    I::IntoIter: ExactSizeIterator,
+{
+    let names = names.into_iter();
+    let exact = names.len() <= EXACT;
+    let mut asked: std::collections::HashMap<String, Option<Mime>> =
+        std::collections::HashMap::new();
+    names
+        .map(|name| {
+            let name = name.to_str()?;
+            let question = match suffix(name) {
+                Some(suffix) if !exact => format!("file{suffix}"),
+                _ => name.to_owned(),
+            };
+            if let Some(answer) = asked.get(&question) {
+                return answer.clone();
+            }
+            if asked.len() >= ASKED {
+                return None;
+            }
+            let answer = by_name(OsStr::new(&question));
+            asked.insert(question, answer.clone());
+            answer
+        })
+        .collect()
+}
+
+/// `.tar.gz` for `photos.tar.gz`: from the first dot that does not start
+/// the name (a hidden file's own dot is not a suffix).
+fn suffix(name: &str) -> Option<&str> {
+    let start = name.len() - name.trim_start_matches('.').len();
+    name[start..].find('.').map(|at| &name[start + at..])
+}
+
 /// What the file `name` at `path` is, from its name and, only where the
 /// name is not enough, its bytes: the shared-mime-info order. A name one
 /// type claims is that type. A name several claim is settled by the magic
@@ -504,6 +556,50 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_suffix_starts_at_the_first_dot_after_a_hidden_files_own() {
+        assert_eq!(suffix("a.tar.gz"), Some(".tar.gz"));
+        assert_eq!(suffix("photo.JPG"), Some(".JPG"));
+        assert_eq!(suffix("Makefile"), None);
+        assert_eq!(suffix(".bashrc"), None);
+        assert_eq!(suffix(".config.toml"), Some(".toml"));
+        assert_eq!(suffix(""), None);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn many_names_are_typed_by_their_suffix_and_a_few_as_they_are() {
+        let names = ["a.png", "archive.tar.gz", "Makefile", "notes.md"];
+        let one_by_one: Vec<Option<Mime>> = names.iter().map(|n| by_name(OsStr::new(n))).collect();
+        let few = by_names(names.iter().map(OsStr::new));
+        assert_eq!(few, one_by_one);
+        // Past `EXACT`, the same answers, asked once per suffix.
+        let many: Vec<String> = (0..EXACT * 2)
+            .map(|i| format!("{i}-{}", names[i % names.len()]))
+            .collect();
+        let typed = by_names(many.iter().map(OsStr::new));
+        for (i, answer) in typed.iter().enumerate() {
+            let expected = if names[i % names.len()] == "Makefile" {
+                // A whole-name pattern: `0-Makefile` is its own question.
+                by_name(OsStr::new(&many[i]))
+            } else {
+                one_by_one[i % names.len()].clone()
+            };
+            assert_eq!(*answer, expected, "{}", many[i]);
+        }
+        assert_eq!(typed[0].as_ref().map(Mime::as_str), Some("image/png"));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn names_past_the_questions_asked_are_unknown() {
+        let many: Vec<String> = (0..ASKED + 10).map(|i| format!("f.x{i}q")).collect();
+        let mut names: Vec<&OsStr> = many.iter().map(OsStr::new).collect();
+        names.push(OsStr::new("late.png"));
+        let typed = by_names(names);
+        assert_eq!(typed.last(), Some(&None), "asked too many questions");
+    }
 
     #[test]
     #[cfg(target_os = "linux")]

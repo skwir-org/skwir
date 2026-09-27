@@ -204,6 +204,16 @@ it was read; `remember_session` now writes nothing until
 terminal) appears only at the first input after startup; not investigated
 on a real compositor.
 
+The context menu follows the file (2026-09-28): a menu item's `when` can say
+what the selected entries are, `kind:image` (every one) or `has:.gpx` (one at
+least), by kind, MIME type with its parents, or extension, from their names
+only; Geotag from Track now needs pictures and a track, Remove Location
+pictures, and both left the More group. Found on the way: the MIME database
+takes 55 to 85 µs to type one name, whatever its shape (release build), so
+the menu types a selection with `mime::by_names`, once per suffix beyond 64
+names and at most 256 questions. Open: the list view still asks it for each
+row it draws, a few milliseconds a frame.
+
 ---
 
 Video playback follow-up (ADR-008): `preview-media` now opens an optional

@@ -259,6 +259,16 @@ pub struct Keeper {
 /// itself (New Folder, Bookmark This Folder) says `empty folder`. A token
 /// of alternatives, `selection|folder`, holds when either does.
 ///
+/// Two tokens say what the selected entries are, as their names tell it
+/// (no file is read): `kind:image` holds when every one is of that kind,
+/// `has:image` when one at least is. The part after the colon is a kind
+/// (`image`, `video`, `audio`, `document`, `archive`, `text`, … as the
+/// desktop groups types, the query's `kind:`), a MIME type matched with
+/// its parents (`text/plain` holds for source code; `image/*`), or an
+/// extension (`.gpx`). A file whose name says nothing is of no kind: it
+/// fails `kind:` and does not count for `has:`. These two are for menus:
+/// a key binding's `when` is the pane's key context, which has no types.
+///
 /// `submenu` moves a rarely used item under a parent row of that name,
 /// after the other groups. `icon` names a bundled symbolic icon.
 ///

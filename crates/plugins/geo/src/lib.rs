@@ -302,6 +302,14 @@ const EXTENSIONS: &[(&str, Format)] = &[
     ("csv", Format::Litchi),
 ];
 
+/// The extensions of the formats that can hold a timed track.
+pub(crate) fn track_extensions() -> impl Iterator<Item = &'static str> {
+    EXTENSIONS
+        .iter()
+        .filter(|(_, format)| format.timed())
+        .map(|(extension, _)| *extension)
+}
+
 /// Extensions of files too common to look inside for the Map view: a
 /// folder's text files and spreadsheets are not places.
 const NOT_PLACED: &[&str] = &["txt", "csv"];
@@ -340,6 +348,22 @@ impl Format {
     /// Whether the Map view looks inside files of this name.
     pub(crate) fn placeable(name: &Path) -> bool {
         Self::of(name).is_some() && !NOT_PLACED.contains(&inspection::extension(name).as_str())
+    }
+
+    /// Whether the format can hold a track timed point by point, which
+    /// pictures are placed along (`geo.geotag`): not a plan or a mission.
+    fn timed(self) -> bool {
+        matches!(
+            self,
+            Format::Gpx
+                | Format::Kml
+                | Format::Kmz
+                | Format::GeoJson
+                | Format::Tcx
+                | Format::Fit
+                | Format::Igc
+                | Format::Nmea
+        )
     }
 
     /// Whether the first bytes are asked: the formats of step A are

@@ -64,9 +64,27 @@ pub(crate) fn register(app: &App) {
         "Take the location out of the selected pictures (plan); those without one are left as they are",
         |args, app| remove_location(app, &args),
     );
-    for (title, command, order, icon) in [
-        ("Geotag from Track", "geo.geotag", 160, "map"),
-        ("Remove Location", "geo.remove_location", 161, "close"),
+    // Offered only where they apply: pictures beside a file of a track
+    // format (which one is a track is read when the command runs), and
+    // pictures only.
+    let tracks: Vec<String> = crate::track_extensions()
+        .map(|extension| format!("has:.{extension}"))
+        .collect();
+    for (title, command, when, order, icon) in [
+        (
+            "Geotag from Track",
+            "geo.geotag",
+            format!("has:image {}", tracks.join("|")),
+            160,
+            "map",
+        ),
+        (
+            "Remove Location",
+            "geo.remove_location",
+            "kind:image".to_owned(),
+            161,
+            "close",
+        ),
     ] {
         app.registry.menus.add(
             ID,
@@ -74,12 +92,10 @@ pub(crate) fn register(app: &App) {
                 menu: "context".into(),
                 title: title.into(),
                 command: Invocation::new(command),
-                // Pictures and a track are files; the command says what
-                // else it needs.
-                when: Some("file".into()),
+                when: Some(when),
                 order,
                 icon: Some(icon.into()),
-                submenu: Some("More".into()),
+                submenu: None,
             },
         );
     }
