@@ -147,6 +147,16 @@ still to come are in `docs/preview-frame.md`.
   row, and More is always last, so it never moves. A popup of another tool
   (the zoom picker, the find field) is anchored to that tool, or to More when
   the variant dropped it (`Item::opens`, `preview::active_popup`).
+- **A map is looked at and moved** (`map_preview.rs`, `elements/map.rs`,
+  ADR-020). It is an inspection (`InspectionKind::Map`), so Details, the
+  switch to the source and the way out of a container are the frame's; its
+  places are projected once on the worker (`Display::map`), never while
+  painting. The pointer drags it, the wheel and a double click zoom it around
+  the pointer (the wheel needs no Ctrl: there is nothing to scroll), and once
+  clicked the arrows move it and the zoom keys zoom it (`MapPreview`);
+  Ctrl+0 and Fit fit it to its places at whatever size it is drawn. The view
+  belongs to the file: kept when the file is read again, fitted for another.
+  Its colours are the `map_*` tokens, on paper. A map has no Find.
 - **One of each.** Find is a field under its button with Enter and F3, in the
   reader and in structured previews alike (`DocumentFind`, `InspectorFind`).
   Contents is one drawer (`outline.rs`) for a document's outline, a file's

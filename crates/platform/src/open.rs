@@ -13,6 +13,16 @@ pub fn open_web_uri(uri: &str) -> anyhow::Result<()> {
     open::that_detached(uri).map_err(Into::into)
 }
 
+/// Show a place in the desktop's maps application: a `geo:` URI (RFC 5870)
+/// and nothing else, so no other scheme's handler runs from here.
+pub fn open_geo_uri(uri: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        uri.starts_with("geo:") && !uri.contains(char::is_whitespace),
+        "not a map location"
+    );
+    open::that_detached(uri).map_err(Into::into)
+}
+
 /// Open `path` with the system default application, detached.
 pub fn open_path(path: &Path) -> anyhow::Result<()> {
     open::that_detached(path).map_err(|e| anyhow::anyhow!("open {}: {e}", path.display()))

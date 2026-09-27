@@ -29,6 +29,7 @@ pub mod command;
 pub mod document;
 pub mod entry;
 pub mod fs;
+pub mod geo;
 pub mod location;
 pub mod lru;
 pub mod media;

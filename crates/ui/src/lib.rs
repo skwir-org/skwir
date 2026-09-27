@@ -36,6 +36,7 @@ pub mod keymap;
 pub mod layout;
 pub mod list;
 mod loading;
+mod map_preview;
 mod markdown;
 mod media;
 pub mod menu;

@@ -71,8 +71,9 @@ and no offline downloads. Access can be blocked without notice.
   map is shown. Nothing is loaded at startup.
 - **Projection**: Web Mercator, as every tile source uses, clamped at
   ±85.0511°. Pure, tested math in `bibli-ui`'s map element. Size-dependent
-  placement happens in prepaint. Lines crossing the ±180° meridian are
-  split, never drawn across the world.
+  placement happens in prepaint. A line keeps its longitude continuous
+  across the ±180° meridian (each point within half a world of the one
+  before), so it is drawn across the meridian, never across the world.
 - **Plugins**: `geo` owns the formats (GPX, KML/KMZ, GeoJSON, then TCX,
   FIT, IGC, NMEA, flight plans and drone missions), the preview provider,
   track thumbnails, the Map pane view (a `ViewRole::Lens`, ADR-007) and

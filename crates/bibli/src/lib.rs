@@ -38,6 +38,7 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
         Arc::new(bibli_plugin_preview_fonts::PreviewPlugin),
         Arc::new(bibli_plugin_preview_email::PreviewPlugin),
         Arc::new(bibli_plugin_preview_comics::PreviewPlugin),
+        Arc::new(bibli_plugin_geo::GeoPlugin),
         Arc::new(bibli_plugin_preview_hex::PreviewPlugin),
     ]
 }

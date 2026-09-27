@@ -592,6 +592,7 @@ dependencies = [
  "bibli-core",
  "bibli-platform",
  "bibli-plugin-edit-as-buffer",
+ "bibli-plugin-geo",
  "bibli-plugin-jump",
  "bibli-plugin-mpris",
  "bibli-plugin-open-with",
@@ -772,6 +773,20 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tracing",
+]
+
+[[package]]
+name = "bibli-plugin-geo"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "bibli-core",
+ "bibli-platform",
+ "jiff",
+ "quick-xml 0.42.0",
+ "serde_json",
+ "tempfile",
+ "zip",
 ]
 
 [[package]]

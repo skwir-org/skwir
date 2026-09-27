@@ -45,6 +45,7 @@ bibli-plugin-preview-email.workspace = true
 bibli-plugin-preview-comics.workspace = true
 bibli-plugin-preview-documents.workspace = true
 bibli-plugin-terminal.workspace = true
+bibli-plugin-geo.workspace = true
 bibli-ui.workspace = true
 anyhow.workspace = true
 tracing.workspace = true

@@ -535,6 +535,19 @@ only network code). Each step below ships on its own.
   GeoJSON on a worker, thinned per zoom level, and fills Details: distance,
   moving and total time, climb and descent, highest and lowest points, time span
   in the user's calendar. The background is a themed graticule.
+  *Built 2026-09-27.* The formats stream (quick-xml; a GeoJSON file is parsed
+  whole, up to 16 MiB): a 6 MB, 100 000-point GPX is read in about 80 ms
+  (release, reference machine). Thinning differs from the plan: no
+  Douglas–Peucker levels; a file past `MAX_POINTS` (200 000) keeps every other
+  point, evenly, while its facts count them all, and a line is thinned again to
+  the pixels it covers when drawn (`elements::map::runs`), with the parts
+  outside the view cut. A line without times in KML or GeoJSON is a route (only
+  a recording has times; GeoJSON's `coordTimes` makes a track). The map also
+  draws a scale bar and degree labels on the graticule, marks where the tracks
+  start and end, and labels places while at most 40 are in view. Not built:
+  the Tracks menu (every line is drawn); a notch of the wheel zooms half a
+  level without Ctrl, as maps do. Not verified: the dark theme's map tokens
+  were not looked at in a running window.
 - **B. Backgrounds.** Core `tiles` contract; `map-tiles` with the outline
   (Natural Earth, the default), OpenStreetMap once chosen, and a custom URL; the
   tile cache, attribution, and the link to the setting on a map drawn on the

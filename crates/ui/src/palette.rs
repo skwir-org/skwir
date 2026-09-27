@@ -186,6 +186,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.preview_zoom", r#"{"dir":"in"}"#, "Preview: zoom in"),
     ("ui.preview_zoom", r#"{"dir":"out"}"#, "Preview: zoom out"),
     ("ui.preview_zoom", r#"{"dir":"reset"}"#, "Preview: fit"),
+    ("ui.map_open", "{}", "Map: open in Maps"),
     ("ui.peek", "{}", "Peek"),
     ("ui.search", "{}", "Search…"),
     ("ui.jump", "{}", "Jump…"),

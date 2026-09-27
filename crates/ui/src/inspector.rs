@@ -28,6 +28,8 @@ pub struct Display {
         bibli_core::preview::PreviewRequest,
         bibli_core::inspection::InspectRequest,
     )>,
+    /// A map's places, projected here on the worker (`map_preview`).
+    pub map: Option<Arc<crate::elements::map::Shapes>>,
 }
 impl Display {
     pub fn new(mut data: Inspection, dark: bool) -> Self {
@@ -107,7 +109,16 @@ impl Display {
             .collect();
         let table = (data.kind == InspectionKind::Table)
             .then(|| Arc::new(crate::inspector_rows::shape(&data.columns, &data.rows)));
+        let map = (data.kind == InspectionKind::Map).then(|| {
+            Arc::new(
+                data.geo
+                    .as_deref()
+                    .map(crate::elements::map::Shapes::new)
+                    .unwrap_or_default(),
+            )
+        });
         Self {
+            map,
             table,
             data: Arc::new(data),
             images,
@@ -1349,6 +1360,9 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         ));
     }
 
+    if data.kind == InspectionKind::Map {
+        crate::map_preview::tools(&mut bar, shell);
+    }
     if data.kind == InspectionKind::Hex {
         bar.push(Item::button(
             Slot::View,
@@ -1472,16 +1486,19 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         }));
     }
 
-    bar.push(
-        Item::button(
-            Slot::Tools,
-            2,
-            button("inspect-search", "search", label::FIND, "search")
-                .active(shell.preview.inspection.finding()),
-        )
-        .opens("find"),
-    );
-    bar.popups.push(("find", std::rc::Rc::new(find_panel)));
+    // A map has no text to find.
+    if data.kind != InspectionKind::Map {
+        bar.push(
+            Item::button(
+                Slot::Tools,
+                2,
+                button("inspect-search", "search", label::FIND, "search")
+                    .active(shell.preview.inspection.finding()),
+            )
+            .opens("find"),
+        );
+        bar.popups.push(("find", std::rc::Rc::new(find_panel)));
+    }
     crate::preview_bar::render(&bar, crate::preview::active_popup(shell), shell, theme, cx)
 }
 /// The text size picker, as a document's zoom picker is: the default size,
@@ -1606,6 +1623,9 @@ pub fn content(
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
+    if display.data.kind == InspectionKind::Map {
+        return crate::map_preview::content(shell, display, theme);
+    }
     let data = display.data.clone();
     let shape = display.table.clone();
     let images = display.images.clone();

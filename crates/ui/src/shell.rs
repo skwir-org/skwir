@@ -1439,6 +1439,16 @@ impl Shell {
             "preview_zoom" => {
                 self.preview_zoom(arg("dir").as_deref().unwrap_or("reset"), window, cx);
             }
+            "map_pan" => {
+                let step = |key| {
+                    args.get(key)
+                        .and_then(serde_json::Value::as_f64)
+                        .filter(|v| v.is_finite())
+                        .map_or(0., |v| v.clamp(-10., 10.))
+                };
+                self.map_pan(step("dx"), step("dy"), cx);
+            }
+            "map_open" => self.map_open_external(cx),
             "toggle_preview" => self.toggle_preview(window, cx),
             "preview_close" => self.preview_close(window, cx),
             "reader_continuous" => self.reader_continuous(window, cx),

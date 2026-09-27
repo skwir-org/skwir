@@ -272,6 +272,9 @@ pub struct PreviewState {
     pub details_scroll: gpui::ScrollHandle,
     /// Focus of a picture, so the zoom keys reach it once it is clicked.
     pub image_focus: Option<FocusHandle>,
+    /// Where a map preview is moved and zoomed to: the file's, kept when
+    /// it is read again, dropped with it (`cancel_preview`).
+    pub(crate) map: crate::map_preview::MapState,
     /// Whether the hexadecimal provider is registered, keyed by the preview
     /// registry revision it was read at (see `preview_toolbar::hex_available`).
     pub(crate) hex_provider: std::cell::Cell<Option<(u64, bool)>>,
@@ -325,6 +328,7 @@ impl Default for PreviewState {
             details_open: false,
             details_scroll: gpui::ScrollHandle::new(),
             image_focus: None,
+            map: crate::map_preview::MapState::default(),
             hex_provider: std::cell::Cell::new(None),
         }
     }
@@ -1491,6 +1495,7 @@ impl Shell {
         self.preview.picture_scroll = gpui::ScrollHandle::new();
         self.preview.picture_side = 0;
         self.preview.text_size = None;
+        self.preview.map = crate::map_preview::MapState::default();
     }
 
     pub fn preview_page(&mut self, delta: i32, window: &mut Window, cx: &mut Context<Self>) {
@@ -1703,6 +1708,9 @@ impl Shell {
     /// size and lay it out again, while a chosen zoom or fit still zooms its
     /// pages.
     pub fn preview_zoom(&mut self, direction: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.map_zoom(direction, cx) {
+            return;
+        }
         if matches!(direction, "in" | "out" | "reset") && self.reader_reflows() {
             let size = self.preview.text_size.unwrap_or(TEXT_SIZE);
             let next = match direction {

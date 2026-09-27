@@ -27,6 +27,8 @@ pub enum InspectionKind {
     Book,
     Comic,
     Mail,
+    /// Places on a map (`Inspection::geo`): tracks, routes, waypoints.
+    Map,
 }
 #[derive(Clone, Debug, Default)]
 pub struct Inspection {
@@ -57,6 +59,8 @@ pub struct Inspection {
     /// rest: a provider already parsed the file to build this inspection, so
     /// they cost nothing more.
     pub details: Vec<Detail>,
+    /// What an [`InspectionKind::Map`] places on the map.
+    pub geo: Option<std::sync::Arc<crate::geo::GeoDoc>>,
 }
 /// A page of the printed book (`Inspection::printed_pages`): its number as
 /// printed ("xii", "47"), the section that holds it, and the link to where

@@ -22,6 +22,8 @@ pub const CONFIRM: &str = "Confirm";
 pub const PEEK: &str = "Peek";
 pub const READER: &str = "DocumentReader";
 pub const IMAGE: &str = "ImagePreview";
+/// A map preview, once clicked: arrows move it, the zoom keys zoom it.
+pub const MAP: &str = "MapPreview";
 /// The pinned player's dock.
 pub const PLAYER: &str = "Player";
 pub const REVIEW: &str = "Review";
@@ -307,6 +309,31 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         r#"{"action":"find_next"}"#,
         Some("InspectorFind"),
     ),
+    // A map moves under the arrows, as it does under a drag.
+    (
+        "left",
+        "ui.map_pan",
+        r#"{"dx":-1,"dy":0}"#,
+        Some("MapPreview"),
+    ),
+    (
+        "right",
+        "ui.map_pan",
+        r#"{"dx":1,"dy":0}"#,
+        Some("MapPreview"),
+    ),
+    (
+        "up",
+        "ui.map_pan",
+        r#"{"dx":0,"dy":-1}"#,
+        Some("MapPreview"),
+    ),
+    (
+        "down",
+        "ui.map_pan",
+        r#"{"dx":0,"dy":1}"#,
+        Some("MapPreview"),
+    ),
     ("[", "ui.preview_page", r#"{"delta":-1}"#, Some("Inspector")),
     ("]", "ui.preview_page", r#"{"delta":1}"#, Some("Inspector")),
     ("[", "ui.preview_page", r#"{"delta":-1}"#, Some("reader")),
@@ -392,10 +419,11 @@ const ZOOM_KEYS: [(&str, &str); 6] = [
 
 /// What zooms, where: the pane's view anywhere, what a preview shows where
 /// it has the keyboard. The inspector's text is sized in steps of its own.
-const ZOOMS: [(&str, &str, Option<&str>); 4] = [
+const ZOOMS: [(&str, &str, Option<&str>); 5] = [
     ("ui.zoom", "dir", None),
     ("ui.preview_zoom", "dir", Some("reader")),
     ("ui.preview_zoom", "dir", Some("ImagePreview")),
+    ("ui.preview_zoom", "dir", Some("MapPreview")),
     ("ui.inspect", "action", Some("Inspector")),
 ];
 
@@ -493,6 +521,7 @@ pub fn context_label(context: &str) -> String {
             "Peek" => place = "Peek",
             "DocumentReader" => place = "Document reader",
             "ImagePreview" => place = "Picture preview",
+            "MapPreview" => place = "Map preview",
             "DocumentFind" => place = "Document search",
             "InspectorFind" => place = "Preview search",
             "Review" => place = "Plan review",
