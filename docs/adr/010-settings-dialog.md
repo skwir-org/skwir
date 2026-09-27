@@ -86,3 +86,39 @@ A moved key keeps the user's value: its owner calls
 `Settings::rename(old, new)` before declaring it, which moves a stored
 value when nothing is stored under the new name, and the next save drops
 the old name from the file.
+
+## Addendum (2026-09-27): lists of records, owners' checks, secrets
+
+Tile servers are a list the user builds, each a record of several fields,
+and some of those fields are secrets. None of the kinds held that, and the
+dialog must not learn a key's meaning to draw it.
+
+- **`SettingKind::Records`** (`SettingSpec::records`): a list of tables,
+  each with an `id` and the fields the owner declares (`RecordField`:
+  text, integer with a range, name and value pairs, secret), edited as
+  JSON through `settings.apply` like any other value, so agents and the
+  CLI edit it too. The dialog draws it generically
+  (`crates/ui/src/settings_records.rs`): a row per record with the owner's
+  action (`record_action`, a command run with the record's id, such as a
+  tile server's Test), Edit and Remove; one record edited at a time, in
+  place, its draft kept apart from the rows the dialog rebuilds; Enter
+  saves, Escape cancels. A list is data the user built: it has no Revert,
+  and Reset all leaves it alone.
+- **An owner's check** (`SettingSpec::validate_with`) runs after the
+  kind's wherever a value is validated, in the dialog and in the save: what
+  only the owner knows (a tile address needs `{z}`, `{x}` and `{y}`).
+- **A secret never reaches the settings file.** A secret field holds only
+  `SECRET_STORED` or nothing, and the save refuses anything else. The
+  secret itself goes to the desktop's keyring (`bibli_platform::secrets`,
+  oo7, the client gpui already links; on a worker, since the keyring may
+  ask to be unlocked), found by the setting, the record's id and the
+  field. The dialog validates the whole list first, then stores a new
+  secret, then saves the list; forgetting a secret or removing a record
+  deletes it from the keyring. What reads the secret (the map-tiles
+  plugin) does so on its own threads and keeps it in memory only.
+
+Keyring tests run against a keyring of their own:
+`tools/test/private-keyring.sh` starts a private D-Bus session that
+activates nothing, with a gnome-keyring in a temporary directory, and runs
+the command only once that keyring owns the Secret Service's name. A test
+that needs it refuses to run without the variable the script sets.

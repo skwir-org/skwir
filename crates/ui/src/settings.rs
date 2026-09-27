@@ -293,8 +293,10 @@ impl Row {
         SettingSpec::format_value(&self.spec.default)
     }
 
+    /// A preference changed from its default. A list of records is data
+    /// the user built: no Revert, and Reset all leaves it alone.
     pub fn modified(&self) -> bool {
-        self.value != self.default_text()
+        self.spec.kind != SettingKind::Records && self.value != self.default_text()
     }
 
     pub fn page(&self) -> Page {
@@ -343,6 +345,10 @@ pub struct SettingsView {
     /// Setting to point out after `ui.settings {key}`.
     pub(crate) highlight: Option<String>,
     scroll_to: Option<String>,
+    /// The record edited, per records setting (`settings_records`).
+    pub(crate) drafts: BTreeMap<String, crate::settings_records::Draft>,
+    /// What keyring jobs came back with, for `sync`.
+    pub(crate) keyring: Arc<Mutex<Vec<crate::settings_records::KeyringDone>>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -389,6 +395,8 @@ impl SettingsView {
             rows: Vec::new(),
             requirements: None,
             probe: Arc::new(Mutex::new(None)),
+            drafts: BTreeMap::new(),
+            keyring: Arc::default(),
             root: cx.focus_handle(),
             nav: cx.focus_handle(),
             handles: HashMap::new(),
@@ -639,6 +647,7 @@ impl SettingsView {
             self.requirements = Some(found);
             changed = true;
         }
+        changed |= self.drain_keyring(cx);
         self.flush(cx);
         if changed {
             cx.notify();

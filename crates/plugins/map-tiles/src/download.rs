@@ -9,14 +9,17 @@
 //! module's two threads, newest request first, so waiting for a server
 //! never holds a worker, and a tile that left the view before its turn is
 //! never asked for.
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bibli_core::CancelToken;
 use bibli_core::cache::CacheSlot;
-use bibli_core::tiles::TileDone;
+use bibli_core::tiles::{TileDone, TileRequest};
+use bibli_platform::secrets::{SecretRef, SecretText};
 use parking_lot::{Condvar, Mutex};
+
+use crate::server::{Server, redact};
 
 /// Connections to one server at a time.
 const THREADS: usize = 2;
@@ -110,12 +113,18 @@ fn httpdate(text: &str) -> Option<u64> {
 }
 
 struct Job {
-    url: String,
+    server: Arc<Server>,
+    tile: TileRequest,
+    /// Where the tile is kept in the cache (`Server::cache_key`).
     key: String,
     stale: Option<Cached>,
     cancel: CancelToken,
     done: TileDone,
 }
+
+/// API keys read from the keyring, by server, until the settings change:
+/// the keyring is asked once, which may be once the user unlocked it.
+type Keys = Mutex<HashMap<String, Option<Arc<SecretText>>>>;
 
 #[derive(Default)]
 struct Queue {
@@ -132,6 +141,7 @@ pub struct Downloads {
     /// Ends the threads when the plugin is disabled.
     lifetime: CancelToken,
     user_agent: String,
+    keys: Arc<Keys>,
 }
 
 impl Downloads {
@@ -141,6 +151,7 @@ impl Downloads {
             cache,
             stores: Arc::default(),
             lifetime,
+            keys: Arc::default(),
             user_agent: format!(
                 "bibli/{} (+{})",
                 env!("CARGO_PKG_VERSION"),
@@ -149,10 +160,10 @@ impl Downloads {
         }
     }
 
-    /// Get the tile at `url`: from the cache while it is fresh, else from
-    /// its server. Runs on a scheduler worker.
-    pub fn get(&self, url: String, cancel: CancelToken, done: TileDone) {
-        let key = url.clone();
+    /// Get `tile` of `server`: from the cache while it is fresh, else from
+    /// the server. Runs on a scheduler worker.
+    pub fn get(&self, server: Arc<Server>, tile: TileRequest, cancel: CancelToken, done: TileDone) {
+        let key = server.cache_key(&tile);
         let cached = self
             .cache
             .get(key.as_bytes())
@@ -163,15 +174,39 @@ impl Downloads {
             }
             return;
         }
-        self.start_threads();
-        self.queue.jobs.lock().push_back(Job {
-            url,
+        self.enqueue(Job {
+            server,
+            tile,
             key,
             stale: cached,
             cancel,
             done,
         });
+    }
+
+    /// Ask `server` for `tile` now, whatever the cache holds: a server's
+    /// Test.
+    pub fn ask(&self, server: Arc<Server>, tile: TileRequest, cancel: CancelToken, done: TileDone) {
+        let key = server.cache_key(&tile);
+        self.enqueue(Job {
+            server,
+            tile,
+            key,
+            stale: None,
+            cancel,
+            done,
+        });
+    }
+
+    fn enqueue(&self, job: Job) {
+        self.start_threads();
+        self.queue.jobs.lock().push_back(job);
         self.queue.ready.notify_one();
+    }
+
+    /// The settings changed: a key may have too.
+    pub fn forget_keys(&self) {
+        self.keys.lock().clear();
     }
 
     fn start_threads(&self) {
@@ -182,6 +217,7 @@ impl Downloads {
             let cache = self.cache.clone();
             let stores = Arc::clone(&self.stores);
             let lifetime = self.lifetime.clone();
+            let keys = Arc::clone(&self.keys);
             let agent: ureq::Agent = ureq::Agent::config_builder()
                 .user_agent(self.user_agent.as_str())
                 .timeout_global(Some(Duration::from_secs(15)))
@@ -195,7 +231,7 @@ impl Downloads {
                 .into();
             let spawned = std::thread::Builder::new()
                 .name("map-tiles".into())
-                .spawn(move || work(&queue, &agent, &cache, &stores, &lifetime));
+                .spawn(move || work(&queue, &agent, &cache, &stores, &keys, &lifetime));
             if let Err(error) = spawned {
                 tracing::warn!(%error, "map tiles: no download thread");
                 *started -= 1;
@@ -213,11 +249,30 @@ impl Downloads {
     }
 }
 
+/// The API key of `server`, from the keyring the first time.
+fn key_of(server: &Server, keys: &Keys) -> anyhow::Result<Option<Arc<SecretText>>> {
+    if !server.needs_key() {
+        return Ok(None);
+    }
+    if let Some(key) = keys.lock().get(&server.id) {
+        return Ok(key.clone());
+    }
+    let key = bibli_platform::secrets::lookup(SecretRef {
+        setting: crate::SERVERS_KEY,
+        record: &server.id,
+        field: crate::KEY_FIELD,
+    })?
+    .map(Arc::new);
+    keys.lock().insert(server.id.clone(), key.clone());
+    Ok(key)
+}
+
 fn work(
     queue: &Queue,
     agent: &ureq::Agent,
     cache: &CacheSlot,
     stores: &Mutex<u32>,
+    keys: &Keys,
     lifetime: &CancelToken,
 ) {
     loop {
@@ -237,7 +292,18 @@ fn work(
                 queue.ready.wait_for(&mut jobs, Duration::from_secs(30));
             }
         };
-        let result = fetch(agent, &job);
+        let key = key_of(&job.server, keys);
+        let secret = key
+            .as_ref()
+            .ok()
+            .and_then(Option::as_ref)
+            .map(|k| k.expose());
+        let result = key
+            .as_ref()
+            .map_err(|error| anyhow::anyhow!("{error:#}"))
+            .and_then(|_| fetch(agent, &job, secret))
+            // Whatever the server or the network said, never the key.
+            .map_err(|error| anyhow::anyhow!(redact(&format!("{error:#}"), secret)));
         if job.cancel.is_cancelled() {
             continue;
         }
@@ -261,19 +327,23 @@ fn work(
 /// Ask the server, once more when the connection failed: a kept-alive
 /// connection the server closed while idle fails the first request sent
 /// on it.
-fn fetch(agent: &ureq::Agent, job: &Job) -> anyhow::Result<Cached> {
-    match fetch_once(agent, job) {
+fn fetch(agent: &ureq::Agent, job: &Job, key: Option<&str>) -> anyhow::Result<Cached> {
+    match fetch_once(agent, job, key) {
         Err(error) if error.is::<ureq::Error>() && !job.cancel.is_cancelled() => {
-            tracing::debug!(%error, "map tiles: asking again");
-            fetch_once(agent, job)
+            tracing::debug!(error = %redact(&error.to_string(), key), "map tiles: asking again");
+            fetch_once(agent, job, key)
         }
         result => result,
     }
 }
 
 /// Ask the server, conditionally when a stale copy is kept.
-fn fetch_once(agent: &ureq::Agent, job: &Job) -> anyhow::Result<Cached> {
-    let mut request = agent.get(&job.url);
+fn fetch_once(agent: &ureq::Agent, job: &Job, key: Option<&str>) -> anyhow::Result<Cached> {
+    let url = job.server.address(&job.tile, key)?;
+    let mut request = agent.get(&url);
+    for (name, value) in job.server.request_headers(key)? {
+        request = request.header(name.as_str(), value.as_str());
+    }
     if let Some(stale) = &job.stale {
         if let Some(etag) = &stale.etag {
             request = request.header("If-None-Match", etag);

@@ -237,6 +237,16 @@ impl TextInput {
         }
     }
 
+    /// What an empty field shows.
+    pub fn set_placeholder(
+        &mut self,
+        placeholder: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        self.placeholder = placeholder.into();
+        cx.notify();
+    }
+
     pub fn text(&self) -> &str {
         &self.content
     }

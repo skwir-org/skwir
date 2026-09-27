@@ -159,7 +159,10 @@ still to come are in `docs/preview-frame.md`.
   Its colours are the `map_*` tokens, on paper. A map has no Find. It is
   drawn on the registered tile source's tiles (`map_tiles.rs`), asked for
   in prepaint and cancelled when they leave the view, with the source's
-  attribution at the bottom right whenever its tiles are drawn.
+  attribution at the bottom right whenever its tiles are drawn. Its
+  Background button chooses among the backgrounds the source's setting
+  lists (`map_tiles::Backgrounds`, read once per source revision) and
+  applies the choice through `settings.apply`.
 - **One of each.** Find is a field under its button with Enter and F3, in the
   reader and in structured previews alike (`DocumentFind`, `InspectorFind`).
   Contents is one drawer (`outline.rs`) for a document's outline, a file's

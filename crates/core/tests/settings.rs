@@ -454,3 +454,57 @@ fn a_renamed_preference_keeps_its_value_and_the_file_forgets_the_old_name() {
     settings.rename("old.width", "new.width");
     assert_eq!(settings.get::<String>("new.width").as_deref(), Some("wide"));
 }
+
+#[test]
+fn records_are_checked_field_by_field_and_never_hold_a_secret() {
+    use bibli_core::settings::{RecordField, SettingSpec};
+    let spec = SettingSpec::records(
+        "sample.servers",
+        "Servers",
+        "",
+        "server",
+        vec![
+            RecordField::text("name", "Name", "", "").required(),
+            RecordField::integer("zoom", "Zoom", "", (0, 22)),
+            RecordField::pairs("headers", "Headers", ""),
+            RecordField::secret("key", "Key", ""),
+        ],
+    );
+    let value = spec
+        .parse(r#"[{"id":"a","name":" It's a café ","zoom":"12","headers":[["Referer","x"],["",""]],"key":"keyring"}]"#)
+        .unwrap();
+    let record = &value.as_array().unwrap()[0];
+    assert_eq!(record["name"].as_str(), Some("It's a café"));
+    assert_eq!(record["zoom"].as_integer(), Some(12));
+    // An empty pair is dropped; a filled one kept.
+    assert_eq!(record["headers"].as_array().unwrap().len(), 1);
+    // The editor text round-trips as JSON.
+    let text = SettingSpec::format_value(&value);
+    assert_eq!(spec.parse(&text).unwrap(), value);
+
+    let refused = |text: &str| spec.parse(text).unwrap_err().to_string();
+    assert!(refused(r#"[{"id":"a"}]"#).contains("Name is needed"));
+    assert!(refused(r#"[{"id":"a","name":"x","zoom":30}]"#).contains("0 to 22"));
+    assert!(refused(r#"[{"id":"a","name":"x"},{"id":"a","name":"y"}]"#).contains("share"));
+    assert!(refused(r#"[{"name":"x"}]"#).contains("id"));
+    assert!(refused(r#"[{"id":"a","name":"x","key":"hunter2"}]"#).contains("keyring"));
+    assert!(refused(r#"[{"id":"a","name":"x","headers":[["","v"]]}]"#).contains("needs a name"));
+    // Nothing is a list of nothing.
+    assert_eq!(spec.parse("").unwrap(), toml::Value::Array(Vec::new()));
+}
+
+#[test]
+fn an_owner_check_runs_after_the_kind() {
+    use bibli_core::settings::SettingSpec;
+    let spec = SettingSpec::text("sample.url", "Address", "", "").validate_with(|value| {
+        anyhow::ensure!(
+            value
+                .as_str()
+                .is_some_and(|s| s.is_empty() || s.starts_with("https://")),
+            "must start with https://"
+        );
+        Ok(())
+    });
+    assert!(spec.parse("https://example.org").is_ok());
+    assert!(spec.parse("ftp://example.org").is_err());
+}

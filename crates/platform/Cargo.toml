@@ -38,7 +38,12 @@ percent-encoding = "2"
 encoding_rs = "0.8"
 crossbeam-channel.workspace = true
 rustix = { workspace = true, features = ["process", "event"] }
+futures-lite = "2"
 kamadak-exif = "0.6"
+
+# The desktop's keyring (`secrets`): the client and features gpui already links.
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+oo7 = { version = "0.5", default-features = false, features = ["async-std", "native_crypto"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 xdg-mime.workspace = true

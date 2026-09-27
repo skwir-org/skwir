@@ -499,8 +499,15 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
 ## Settings
 
 - Declare preferences with the `SettingSpec` constructors (`toggle`, `choice`,
-  `integer`, `number`, `text`, `path`, `command`; `data` for collections such
+  `integer`, `number`, `text`, `path`, `command`; `records` for a list the
+  user builds in the dialog, such as tile servers; `data` for collections such
   as saved queries, which stay application data managed by their commands).
+  What only the owner can check goes in `validate_with`. A secret is a
+  record's `secret` field: it goes to the desktop's keyring
+  (`bibli_platform::secrets`, on a worker) and the settings file only says
+  it is there; never put a secret in any other kind of setting, and test
+  the keyring only through `tools/test/private-keyring.sh`, never against
+  the user's.
   The owner states the title, description, unit, step, choice labels and
   section, so the dialog, the palette and agents need no key-specific
   branches. Titles are sentence case without the plugin's name; descriptions

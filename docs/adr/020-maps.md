@@ -109,3 +109,37 @@ PMTiles or MBTiles file, which the contract admits as another source.
 
 Location data is personal. Tests, fixtures and bench data use invented
 coordinates, never a real track or photo.
+
+## Addendum (2026-09-27): tile servers, their headers and keys
+
+One custom address was not enough: people keep several backgrounds
+(topographic, satellite, a provider's own), many need an API key, and some
+need headers (a Referer the key is bound to, an Authorization).
+
+- **Tile servers are a list** (`map-tiles.servers`, a records setting,
+  ADR-010 addendum): a name, an address, subdomains, an attribution, the
+  deepest zoom, headers, and an API key. The background choice
+  (`map-tiles.source`) lists the outline, OpenStreetMap and every server
+  (`server:<id>`); the plugin declares it again when the servers change,
+  and chooses the outline again when the server chosen is removed. The
+  single address of the first version becomes the list's first server.
+- **Addresses take the common forms**: `{z}`, `{x}`, `{y}`; `{-y}` for a
+  server counting rows from the bottom (TMS); `{q}` for a quadkey (Bing);
+  `{s}` for a subdomain (the same one for the same tile); `{r}`, `@2x` on
+  a dense screen; `{key}`. An unknown part, or `{s}` without subdomains, is
+  refused when the server is saved.
+- **Headers** are sent with every request to that server: `User-Agent`
+  replaces bibli's, `Referer`, `Authorization` and the like as written.
+  What the HTTP layer writes itself (`Host`, `Content-Length`,
+  `Connection`, the conditional headers…) is refused. OpenStreetMap's
+  built-in source takes none: its policy wants bibli's own User-Agent.
+- **The API key lives in the keyring**, never in the settings: `{key}` in
+  the address or a header is replaced when a request is made, on the
+  download threads, which read the keyring once per server until the
+  settings change. The cache keeps a tile under the server's id and what
+  shapes its tiles, never under an address holding the key, and an error
+  quoting the address has the key replaced before anyone sees it.
+- **The map chooses its background too**: a Background button in the map
+  preview's toolbar lists the same choices and applies them through
+  `settings.apply`, with a way to the servers in Settings. Each server has
+  a Test, which asks it for one tile now and says what it answered.

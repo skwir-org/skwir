@@ -33,9 +33,27 @@ const TEXTS_MIN: f32 = 240.;
 
 /// Where a row sits in its card.
 #[derive(Clone, Copy)]
-struct Edge {
-    first: bool,
-    last: bool,
+pub(crate) struct Edge {
+    pub(crate) first: bool,
+    pub(crate) last: bool,
+}
+
+/// A row of a card: a setting, a record, a plugin.
+pub(crate) fn card_row(theme: &Theme, edge: Edge) -> gpui::Div {
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap_4()
+        .px_4()
+        .py_3()
+        .bg(theme.surface)
+        .border_color(theme.border)
+        .border_l_1()
+        .border_r_1()
+        .border_b_1()
+        .when(edge.first, |d| d.border_t_1().rounded_t_lg())
+        .when(edge.last, gpui::Styled::rounded_b_lg)
 }
 
 /// What a setting row needs, detached from `self` so controls can borrow it.
@@ -89,7 +107,12 @@ impl SettingsView {
         crate::keymap::title_of(&self.app, hint)
     }
 
-    fn stop(&mut self, focus: &gpui::FocusHandle, item: Option<usize>, key: Option<&str>) {
+    pub(crate) fn stop(
+        &mut self,
+        focus: &gpui::FocusHandle,
+        item: Option<usize>,
+        key: Option<&str>,
+    ) {
         self.stops.push(Stop {
             focus: focus.clone(),
             item,
@@ -225,23 +248,6 @@ impl SettingsView {
 
     // ------------------------------------------------------------ rows
 
-    fn card_row(theme: &Theme, edge: Edge) -> gpui::Div {
-        div()
-            .flex_none()
-            .flex()
-            .items_center()
-            .gap_4()
-            .px_4()
-            .py_3()
-            .bg(theme.surface)
-            .border_color(theme.border)
-            .border_l_1()
-            .border_r_1()
-            .border_b_1()
-            .when(edge.first, |d| d.border_t_1().rounded_t_lg())
-            .when(edge.last, gpui::Styled::rounded_b_lg)
-    }
-
     fn caption(items: &mut Vec<AnyElement>, text: impl Into<SharedString>, theme: &Theme) {
         items.push(
             div()
@@ -330,6 +336,27 @@ impl SettingsView {
                 crate::elements::adaptive::Fit {
                     variants: vec![self.choice_buttons(row, &focus, theme, cx), dropdown],
                 }
+                .into_any_element()
+            }
+            SettingKind::Records => {
+                let focus = self.handle(&format!("control:{key}"), cx);
+                self.stop(&focus, Some(item), Some(&key));
+                let editing = self.drafts.contains_key(&key);
+                controls::button(
+                    format!("add-{key}"),
+                    format!("Add {}", row.spec.constraints.record_name),
+                    Some("plus"),
+                    ButtonStyle::Plain,
+                    &focus,
+                    theme,
+                )
+                .key_context("SettingControl")
+                .when(editing, |b| b.opacity(0.5))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    if !this.drafts.contains_key(&key) {
+                        this.edit_record(&key, None, window, cx);
+                    }
+                }))
                 .into_any_element()
             }
             SettingKind::Data => div().into_any_element(),
@@ -608,14 +635,28 @@ impl SettingsView {
         // Built after the revert button: traversal follows the visual order.
         let control = self.control(row, item, theme, window, cx);
         let highlighted = self.highlight.as_deref() == Some(key.as_str());
+        // A list's records are rows of the same card, under its own.
+        let records = row.spec.kind == SettingKind::Records;
+        let below = records
+            && (!crate::settings_records::records(&row.value).is_empty()
+                || self.drafts.contains_key(&key));
         items.push(
-            Self::card_row(theme, edge)
-                .when(highlighted, |d| d.bg(theme.highlight))
-                .child(texts)
-                .children(revert)
-                .child(control)
-                .into_any_element(),
+            card_row(
+                theme,
+                Edge {
+                    first: edge.first,
+                    last: edge.last && !below,
+                },
+            )
+            .when(highlighted, |d| d.bg(theme.highlight))
+            .child(texts)
+            .children(revert)
+            .child(control)
+            .into_any_element(),
         );
+        if records {
+            self.record_rows(&key, &row.value, edge.last, item, items, theme, window, cx);
+        }
     }
 
     /// The editable settings of one owner, grouped by section.
@@ -709,7 +750,7 @@ impl SettingsView {
                 );
             }
         }
-        let mut row = Self::card_row(theme, edge).child(texts);
+        let mut row = card_row(theme, edge).child(texts);
         if link && plugin.enabled && self.rows.iter().any(|row| row.spec.owner() == id) {
             let focus = self.handle(&format!("plugin-settings:{id}"), cx);
             self.stop(&focus, Some(item), None);
@@ -751,7 +792,7 @@ impl SettingsView {
             }
             keys = keys.child(caps);
         }
-        Self::card_row(theme, edge)
+        card_row(theme, edge)
             .py_2()
             .child(
                 div()
@@ -792,7 +833,7 @@ impl SettingsView {
         let open = self.handle("open-file", cx);
         self.stop(&open, Some(item), None);
         items.push(
-            Self::card_row(
+            card_row(
                 theme,
                 Edge {
                     first: true,
@@ -826,7 +867,7 @@ impl SettingsView {
                 "{n} settings differ from their defaults. Plugins stay enabled or disabled as they are."
             ),
         };
-        let mut row = Self::card_row(
+        let mut row = card_row(
             theme,
             Edge {
                 first: false,

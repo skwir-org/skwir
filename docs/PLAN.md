@@ -567,6 +567,18 @@ only network code). Each step below ships on its own.
   User-Agent naming bibli and its repository; a stale kept-alive connection
   is retried once. The outline was looked at in both themes. Not verified:
   OpenStreetMap's own server.
+- **B′. Tile servers.** *Built 2026-09-27* (ADR-020 and ADR-010 addenda): a
+  list of servers in Settings (a new records kind of setting, drawn by the
+  dialog without knowing what the records are), each with an address in the
+  common forms (`{s}`, `{-y}`, `{q}`, `{r}`, `{key}`), headers, and an API
+  key kept in the desktop's keyring; a Test per server; the background
+  chosen from the map's own toolbar. Verified in the real app inside a
+  private keyring and against a local tile server that refuses requests
+  without the key: adding, testing, choosing, editing, forgetting the key
+  and removing a server, each checked in the settings file (never a secret)
+  and in the keyring (the item written, then deleted). Not verified live:
+  the `{s}`, `{-y}`, `{q}` and `{r}` forms (tested as pure functions), and
+  a keyring that asks to be unlocked.
 - **C. The Map view.** A `ViewRole::Lens` in the View menu. `geo` scans the
   location shown (a folder, or with "Include subfolders" its subtree; a search or
   a timeline bucket as it is) for EXIF positions and track files, visible

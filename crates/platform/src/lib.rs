@@ -38,6 +38,7 @@ pub mod inspection;
 pub use inspection::limits;
 
 pub mod rich_preview;
+pub mod secrets;
 
 pub mod apps;
 pub mod archive;

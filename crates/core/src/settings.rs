@@ -40,6 +40,104 @@ pub enum SettingKind {
     Command,
     /// Application data managed by its owning commands, not by editors.
     Data,
+    /// A list of records the user adds, edits and removes (tile servers):
+    /// each a table of `constraints.fields` plus an `id`, edited as JSON.
+    Records,
+}
+
+/// One field of a record in a [`SettingKind::Records`] setting.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct RecordField {
+    pub key: String,
+    pub title: String,
+    pub description: String,
+    pub kind: FieldKind,
+    /// A record without it is refused.
+    pub required: bool,
+}
+
+/// What a record's field holds, which picks its control.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FieldKind {
+    Text {
+        placeholder: String,
+    },
+    Integer {
+        min: i64,
+        max: i64,
+    },
+    /// Name and value pairs (HTTP headers), stored as `[[name, value], …]`.
+    Pairs,
+    /// A secret kept in the desktop's keyring, never in the settings: the
+    /// field holds only [`SECRET_STORED`] or nothing, and the keyring item
+    /// is found by the setting's key, the record's id and the field's key
+    /// (`bibli_platform::secrets`).
+    Secret,
+}
+
+/// What a [`FieldKind::Secret`] field holds when the keyring has its value.
+pub const SECRET_STORED: &str = "keyring";
+
+impl RecordField {
+    fn new(key: &str, title: &str, description: &str, kind: FieldKind) -> Self {
+        RecordField {
+            key: key.into(),
+            title: title.into(),
+            description: description.into(),
+            kind,
+            required: false,
+        }
+    }
+
+    pub fn text(key: &str, title: &str, description: &str, placeholder: &str) -> Self {
+        Self::new(
+            key,
+            title,
+            description,
+            FieldKind::Text {
+                placeholder: placeholder.into(),
+            },
+        )
+    }
+
+    pub fn integer(key: &str, title: &str, description: &str, (min, max): (i64, i64)) -> Self {
+        Self::new(key, title, description, FieldKind::Integer { min, max })
+    }
+
+    pub fn pairs(key: &str, title: &str, description: &str) -> Self {
+        Self::new(key, title, description, FieldKind::Pairs)
+    }
+
+    pub fn secret(key: &str, title: &str, description: &str) -> Self {
+        Self::new(key, title, description, FieldKind::Secret)
+    }
+
+    #[must_use]
+    pub fn required(mut self) -> Self {
+        self.required = true;
+        self
+    }
+}
+
+/// A button on each record that runs `command` with `{ "id": <record id> }`
+/// (a tile server's Test).
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct RecordAction {
+    pub label: String,
+    pub command: String,
+}
+
+/// The owner's own check of a value, after the kind's: what only it knows
+/// (a tile address needs `{z}`, `{x}` and `{y}`). Runs wherever a value is
+/// validated, in the dialog and in `settings.apply`.
+#[derive(Clone)]
+pub struct Validator(pub std::sync::Arc<dyn Fn(&toml::Value) -> anyhow::Result<()> + Send + Sync>);
+
+impl std::fmt::Debug for Validator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Validator")
+    }
 }
 
 /// One setting's declaration. Build it with the constructors below: the
@@ -61,6 +159,8 @@ pub struct SettingSpec {
     pub constraints: SettingConstraints,
     /// The change takes effect at the next start.
     pub restart_required: bool,
+    #[serde(skip)]
+    pub validator: Option<Validator>,
 }
 
 /// Optional restrictions shared by editors and command validation.
@@ -72,6 +172,11 @@ pub struct SettingConstraints {
     pub integer_range: Option<(i64, i64)>,
     /// Increment of a numeric stepper.
     pub step: i64,
+    /// The fields of a [`SettingKind::Records`] setting's records.
+    pub fields: Vec<RecordField>,
+    /// What one record is called ("tile server"), for "Add tile server".
+    pub record_name: String,
+    pub record_action: Option<RecordAction>,
 }
 
 impl SettingSpec {
@@ -96,6 +201,7 @@ impl SettingSpec {
                 ..SettingConstraints::default()
             },
             restart_required: false,
+            validator: None,
         }
     }
 
@@ -157,6 +263,41 @@ impl SettingSpec {
         spec
     }
 
+    /// A list of records, each made of `fields` (see [`SettingKind::Records`]).
+    pub fn records(
+        key: &str,
+        title: &str,
+        description: &str,
+        record_name: &str,
+        fields: Vec<RecordField>,
+    ) -> Self {
+        let mut spec = Self::new(key, title, description, toml::Value::Array(Vec::new()));
+        spec.kind = SettingKind::Records;
+        spec.constraints.fields = fields;
+        spec.constraints.record_name = record_name.into();
+        spec
+    }
+
+    /// A button on each record, running `command` with the record's id.
+    #[must_use]
+    pub fn record_action(mut self, label: &str, command: &str) -> Self {
+        self.constraints.record_action = Some(RecordAction {
+            label: label.into(),
+            command: command.into(),
+        });
+        self
+    }
+
+    /// The owner's own check, after the kind's (see [`Validator`]).
+    #[must_use]
+    pub fn validate_with(
+        mut self,
+        check: impl Fn(&toml::Value) -> anyhow::Result<()> + Send + Sync + 'static,
+    ) -> Self {
+        self.validator = Some(Validator(std::sync::Arc::new(check)));
+        self
+    }
+
     #[must_use]
     pub fn section(mut self, section: &str) -> Self {
         section.clone_into(&mut self.section);
@@ -202,10 +343,114 @@ impl SettingSpec {
         self.kind != SettingKind::Data
     }
 
+    /// The text an editor shows and sends back: a string as itself, a list
+    /// or a table (records) as JSON, anything else as TOML writes it.
     pub fn format_value(value: &toml::Value) -> String {
-        value
-            .as_str()
-            .map_or_else(|| value.to_string(), str::to_owned)
+        match value {
+            toml::Value::String(text) => text.clone(),
+            toml::Value::Array(_) | toml::Value::Table(_) => {
+                serde_json::to_string(value).unwrap_or_default()
+            }
+            _ => value.to_string(),
+        }
+    }
+
+    /// Records from their JSON text, each checked against the fields.
+    fn parse_records(&self, text: &str) -> anyhow::Result<toml::Value> {
+        let records: Vec<serde_json::Map<String, serde_json::Value>> =
+            serde_json::from_str(if text.trim().is_empty() { "[]" } else { text })
+                .map_err(|error| anyhow::anyhow!("expected a list of records: {error}"))?;
+        let mut ids = std::collections::BTreeSet::new();
+        let mut out = Vec::with_capacity(records.len());
+        for record in records {
+            let id = record
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .filter(|id| !id.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("every record needs an id"))?;
+            anyhow::ensure!(ids.insert(id.to_owned()), "two records share the id {id}");
+            let mut table = toml::Table::new();
+            table.insert("id".into(), toml::Value::String(id.into()));
+            for field in &self.constraints.fields {
+                let value = record.get(&field.key).filter(|v| !v.is_null());
+                let empty = match value {
+                    None => true,
+                    Some(serde_json::Value::String(s)) => s.trim().is_empty(),
+                    Some(serde_json::Value::Array(a)) => a.is_empty(),
+                    Some(_) => false,
+                };
+                anyhow::ensure!(!(field.required && empty), "{} is needed", field.title);
+                let Some(value) = value.filter(|_| !empty) else {
+                    continue;
+                };
+                let converted = match &field.kind {
+                    FieldKind::Text { .. } => toml::Value::String(
+                        value
+                            .as_str()
+                            .ok_or_else(|| anyhow::anyhow!("{} is text", field.title))?
+                            .trim()
+                            .to_owned(),
+                    ),
+                    FieldKind::Integer { min, max } => {
+                        let n = value
+                            .as_i64()
+                            .or_else(|| value.as_str().and_then(|s| s.trim().parse().ok()))
+                            .ok_or_else(|| anyhow::anyhow!("{} is a whole number", field.title))?;
+                        anyhow::ensure!(
+                            (*min..=*max).contains(&n),
+                            "{}: enter a whole number from {min} to {max}",
+                            field.title
+                        );
+                        toml::Value::Integer(n)
+                    }
+                    FieldKind::Pairs => {
+                        let pairs = value
+                            .as_array()
+                            .ok_or_else(|| anyhow::anyhow!("{} is a list of pairs", field.title))?;
+                        let mut list = Vec::with_capacity(pairs.len());
+                        for pair in pairs {
+                            let [name, value] =
+                                pair.as_array().map(Vec::as_slice).unwrap_or_default()
+                            else {
+                                anyhow::bail!("{} is a list of name and value pairs", field.title);
+                            };
+                            let (Some(name), Some(value)) = (name.as_str(), value.as_str()) else {
+                                anyhow::bail!("{}: names and values are text", field.title);
+                            };
+                            if name.trim().is_empty() && value.trim().is_empty() {
+                                continue;
+                            }
+                            anyhow::ensure!(
+                                !name.trim().is_empty(),
+                                "{}: a value needs a name",
+                                field.title
+                            );
+                            list.push(toml::Value::Array(vec![
+                                toml::Value::String(name.trim().into()),
+                                toml::Value::String(value.trim().into()),
+                            ]));
+                        }
+                        if list.is_empty() {
+                            continue;
+                        }
+                        toml::Value::Array(list)
+                    }
+                    FieldKind::Secret => {
+                        // The secret itself goes to the keyring; the settings
+                        // file only says that it is there.
+                        anyhow::ensure!(
+                            value.as_str() == Some(SECRET_STORED),
+                            "{} is kept in the keyring, not in the settings",
+                            field.title
+                        );
+                        toml::Value::String(SECRET_STORED.into())
+                    }
+                };
+                table.insert(field.key.clone(), converted);
+            }
+            out.push(toml::Value::Table(table));
+        }
+        Ok(toml::Value::Array(out))
     }
 
     pub fn parse(&self, text: &str) -> anyhow::Result<toml::Value> {
@@ -215,6 +460,7 @@ impl SettingSpec {
             self.key
         );
         let value = match self.default {
+            _ if self.kind == SettingKind::Records => self.parse_records(text)?,
             toml::Value::String(_) => toml::Value::String(text.into()),
             toml::Value::Boolean(_) => toml::Value::Boolean(
                 text.trim()
@@ -251,6 +497,9 @@ impl SettingSpec {
                 value.as_integer().is_some_and(|n| (min..=max).contains(&n)),
                 "enter a whole number from {min} to {max}"
             );
+        }
+        if let Some(Validator(check)) = &self.validator {
+            check(&value)?;
         }
         Ok(value)
     }

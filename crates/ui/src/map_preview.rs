@@ -94,7 +94,11 @@ pub fn content(shell: &Shell, display: &Display, theme: &Theme) -> AnyElement {
         .into_any_element()
 }
 
-/// The map's tools, in the bar's View slot: zoom out, in, and fit.
+/// The popup that chooses the background.
+pub const BACKGROUND_POPUP: &str = "background";
+
+/// The map's tools, in the bar's View slot: zoom out, in, and fit, then
+/// the background, chosen here as in Settings.
 pub fn tools(bar: &mut Bar, shell: &Shell) {
     let fitted = shell.preview.map.view.get().is_none();
     let step = |id, icon, title, dir| {
@@ -115,6 +119,59 @@ pub fn tools(bar: &mut Bar, shell: &Shell) {
         2,
         step("map-fit", "fit", label::FIT, "reset").active(fitted),
     ));
+    let backgrounds = shell.map_tiles.borrow_mut().backgrounds();
+    if let Some(backgrounds) = backgrounds {
+        bar.push(
+            Item::button(
+                Slot::View,
+                1,
+                Button::new(
+                    "map-background",
+                    "layers",
+                    "Map background",
+                    "ui.preview_menu",
+                )
+                .args(serde_json::json!({ "kind": BACKGROUND_POPUP }))
+                .label(backgrounds.label().to_owned()),
+            )
+            .opens(BACKGROUND_POPUP),
+        );
+        bar.popups.push((
+            BACKGROUND_POPUP,
+            Rc::new(move |shell, theme, cx| {
+                let popup = shell.preview.menu.as_ref()?;
+                let mut list = div().flex().flex_col().gap_1();
+                for (value, label) in &backgrounds.choices {
+                    let chosen = *value == backgrounds.current;
+                    list = list.child(
+                        Button::new(
+                            format!("map-background-{value}"),
+                            if chosen { "check" } else { "" },
+                            label.clone(),
+                            "settings.apply",
+                        )
+                        .args(serde_json::json!({ "changes": { backgrounds.setting.clone(): value } }))
+                        .label(label.clone())
+                        .active(chosen)
+                        .menu()
+                        .render(shell, cx),
+                    );
+                }
+                list = list.child(crate::preview_bar::separator(theme)).child(
+                    Button::new("map-backgrounds-manage", "settings", "Manage backgrounds", "ui.settings")
+                        .args(serde_json::json!({ "key": backgrounds.setting }))
+                        .label("Manage backgrounds…")
+                        .menu()
+                        .render(shell, cx),
+                );
+                Some(
+                    crate::toolbar::popup_panel(popup, "ui.preview_menu", theme, cx)
+                        .child(list)
+                        .into_any_element(),
+                )
+            }),
+        ));
+    }
     bar.push(Item::menu_only(Button::new(
         "map-open-external",
         "open",

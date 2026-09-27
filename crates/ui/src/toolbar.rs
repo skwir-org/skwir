@@ -26,6 +26,7 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "split",
         "split-rows",
         "usage",
+        "layers",
         "calendar",
         "search",
         "settings",

@@ -631,6 +631,7 @@ impl Shell {
             Some("zoom") => "zoom",
             Some("text") => "text",
             Some("unit") => "unit",
+            Some(crate::map_preview::BACKGROUND_POPUP) => crate::map_preview::BACKGROUND_POPUP,
             Some(crate::media::CONTINUE_POPUP) => crate::media::CONTINUE_POPUP,
             _ => "preview",
         };

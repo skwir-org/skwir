@@ -12,7 +12,10 @@ bibli-core.workspace = true
 bibli-platform.workspace = true
 anyhow.workspace = true
 parking_lot.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+schemars.workspace = true
+toml.workspace = true
 tracing.workspace = true
 # Rasterizes the offline outline; the version resvg already brings.
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }

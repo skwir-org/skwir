@@ -58,6 +58,7 @@ pub mod review;
 pub mod search_bar;
 pub mod session;
 pub mod settings;
+mod settings_records;
 mod settings_view;
 pub mod shell;
 pub mod shortcuts;

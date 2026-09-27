@@ -44,6 +44,25 @@ enum Entry {
 
 type Arrival = (Key, Result<Arc<RenderImage>, String>);
 
+/// The backgrounds to choose from, as the setting that chooses them lists
+/// them, and the one chosen.
+#[derive(Clone, Debug)]
+pub struct Backgrounds {
+    pub setting: String,
+    pub current: String,
+    /// Values and labels.
+    pub choices: Vec<(String, String)>,
+}
+
+impl Backgrounds {
+    pub fn label(&self) -> &str {
+        self.choices
+            .iter()
+            .find(|(value, _)| *value == self.current)
+            .map_or(self.current.as_str(), |(_, label)| label.as_str())
+    }
+}
+
 pub struct TileStore {
     tiles: Arc<Tiles>,
     wake: bibli_core::location::Waker,
@@ -56,13 +75,14 @@ pub struct TileStore {
     ready: usize,
     /// Let go, waiting for a window to evict their atlas entries.
     evicted: Vec<Arc<RenderImage>>,
-    info: Option<(u64, Option<SourceInfo>)>,
+    info: Option<(u64, Option<SourceInfo>, Option<Backgrounds>)>,
+    app: Arc<bibli_core::App>,
     /// Why the last tile of this revision failed, until someone says so.
     pub failure: Option<(u64, String)>,
 }
 
 impl TileStore {
-    pub fn new(app: &bibli_core::App) -> TileStore {
+    pub fn new(app: &Arc<bibli_core::App>) -> TileStore {
         let (tx, rx) = flume::unbounded();
         TileStore {
             tiles: Arc::clone(&app.tiles),
@@ -76,6 +96,7 @@ impl TileStore {
             evicted: Vec::new(),
             info: None,
             failure: None,
+            app: Arc::clone(app),
         }
     }
 
@@ -83,14 +104,48 @@ impl TileStore {
         self.tiles.revision()
     }
 
-    /// What the source says about itself, read once per revision.
-    pub fn info(&mut self) -> Option<SourceInfo> {
+    /// What the source says about itself, and the backgrounds its setting
+    /// offers: read once per revision, which a change of that setting
+    /// advances.
+    fn refresh(&mut self) {
         let revision = self.revision();
-        if self.info.as_ref().is_none_or(|(r, _)| *r != revision) {
-            let info = self.tiles.source().map(|(source, _)| source.info());
-            self.info = Some((revision, info));
+        if self.info.as_ref().is_some_and(|(r, _, _)| *r == revision) {
+            return;
         }
-        self.info.as_ref().and_then(|(_, info)| info.clone())
+        let info = self.tiles.source().map(|(source, _)| source.info());
+        let backgrounds = info
+            .as_ref()
+            .and_then(|info| info.setting.as_deref())
+            .and_then(|key| {
+                let spec = self.app.settings.spec(key)?;
+                let current = self.app.settings.text(key).unwrap_or_else(|| {
+                    bibli_core::settings::SettingSpec::format_value(&spec.default)
+                });
+                let choices = spec
+                    .constraints
+                    .choices
+                    .iter()
+                    .map(|value| (value.clone(), spec.choice_label(value).to_owned()))
+                    .collect();
+                Some(Backgrounds {
+                    setting: key.to_owned(),
+                    current,
+                    choices,
+                })
+            });
+        self.info = Some((revision, info, backgrounds));
+    }
+
+    pub fn info(&mut self) -> Option<SourceInfo> {
+        self.refresh();
+        self.info.as_ref().and_then(|(_, info, _)| info.clone())
+    }
+
+    pub fn backgrounds(&mut self) -> Option<Backgrounds> {
+        self.refresh();
+        self.info
+            .as_ref()
+            .and_then(|(_, _, backgrounds)| backgrounds.clone())
     }
 
     pub fn begin_frame(&mut self) {
