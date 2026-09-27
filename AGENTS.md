@@ -514,6 +514,11 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   bibli looks (Appearance), `core.*` what it does with files (General).
 - Renaming or moving a key: call `Settings::rename(old, new)` before
   declaring it, so the value the user chose follows.
+- A row's title and description keep `TEXTS_MIN` of width whatever the
+  control: a choice is segmented buttons only while they fit beside that
+  (`elements::adaptive::Fit` measures both forms, no character counts),
+  else a dropdown, and a text field narrows before the texts do. Keep
+  choice labels to a word or two; the description explains them.
 - The dialog (`crates/ui/src/settings.rs`, rendering in `settings_view.rs`,
   controls in `controls.rs`) is a self-contained entity: it holds the `App`,
   never the shell, and closes through an event. Keep it that way so it can

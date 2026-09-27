@@ -19,7 +19,8 @@ use parking_lot::Mutex;
 const ID: &str = "map-tiles";
 pub const SOURCE_KEY: &str = "map-tiles.source";
 pub const URL_KEY: &str = "map-tiles.url";
-pub const ATTRIBUTION_KEY: &str = "map-tiles.attribution";
+/// After the address in its section: keys are listed in order.
+pub const ATTRIBUTION_KEY: &str = "map-tiles.url_attribution";
 /// The deepest zoom a tile server is asked for.
 const MAX_ZOOM: u8 = 19;
 const OSM_URL: &str = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
@@ -46,26 +47,34 @@ impl Plugin for MapTilesPlugin {
         app.settings.declare(SettingSpec::choice(
             SOURCE_KEY,
             "Map background",
-            "What maps are drawn on. The outline needs no network. The others download the tiles you look at, which tells their server where you look",
+            "What maps are drawn on. The outline of the land needs no network. OpenStreetMap and other servers download the tiles you look at, which tells them where you look",
             "outline",
             &[
-                ("outline", "Outline of the land (offline)"),
-                ("openstreetmap", "OpenStreetMap (downloads tiles)"),
-                ("custom", "Another tile server"),
+                ("outline", "Outline"),
+                ("openstreetmap", "OpenStreetMap"),
+                ("custom", "Other server"),
             ],
         ));
-        app.settings.declare(SettingSpec::text(
-            URL_KEY,
-            "Tile server address",
-            "For another tile server: its address, with {z}, {x} and {y} where the tile goes, such as https://tiles.example.org/{z}/{x}/{y}.png",
-            "",
-        ));
-        app.settings.declare(SettingSpec::text(
-            ATTRIBUTION_KEY,
-            "Tile server attribution",
-            "For another tile server: what its licence asks to show on the map under its tiles",
-            "",
-        ));
+        app.settings.declare(
+            SettingSpec::text(
+                URL_KEY,
+                "Address",
+                "The server's address, with {z}, {x} and {y} where the tile goes, such as https://tiles.example.org/{z}/{x}/{y}.png",
+                "",
+            )
+            .section("Other server"),
+        );
+        app.settings
+            .rename("map-tiles.attribution", ATTRIBUTION_KEY);
+        app.settings.declare(
+            SettingSpec::text(
+                ATTRIBUTION_KEY,
+                "Attribution",
+                "What the server's licence asks to show on the map under its tiles",
+                "",
+            )
+            .section("Other server"),
+        );
         let source = Arc::new(Source {
             app: app.weak(),
             scheduler: app.scheduler.clone(),

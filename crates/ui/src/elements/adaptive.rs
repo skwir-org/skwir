@@ -119,6 +119,126 @@ impl Element for AdaptiveRow {
     }
 }
 
+/// The richest of several versions of one control that fits beside what
+/// shares its line: segmented buttons where there is room, a dropdown
+/// where there is not. Richest first.
+///
+/// It is a flex item that knows its sizes before the line is laid out:
+/// each version is measured in `request_layout`, and the measured layout
+/// gives the widest as its natural width and the narrowest as its minimum.
+/// A neighbour with a minimum of its own (`flex_1().min_w(..)`) then takes
+/// what the widest leaves, or the control shrinks towards the narrowest;
+/// `prepaint` draws the richest version that fits the width it got,
+/// against its right edge. Like `AdaptiveRow`, versions share element ids,
+/// so focus survives a change of version.
+pub struct Fit {
+    pub variants: Vec<AnyElement>,
+}
+
+impl IntoElement for Fit {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+/// The natural sizes of the versions, measured in `request_layout`.
+pub struct Measured(Vec<gpui::Size<Pixels>>);
+
+impl Element for Fit {
+    type RequestLayoutState = Measured;
+    type PrepaintState = Option<usize>;
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Measured) {
+        let sizes: Vec<gpui::Size<Pixels>> = self
+            .variants
+            .iter_mut()
+            .map(|variant| {
+                variant.layout_as_root(
+                    size(AvailableSpace::MaxContent, AvailableSpace::MaxContent),
+                    window,
+                    cx,
+                )
+            })
+            .collect();
+        let widest = sizes.iter().map(|s| s.width).fold(px(0.), Pixels::max);
+        let narrowest = sizes.iter().map(|s| s.width).fold(widest, Pixels::min);
+        let height = sizes.iter().map(|s| s.height).fold(px(0.), Pixels::max);
+        let style = Style {
+            flex_grow: 0.,
+            flex_shrink: 1.,
+            ..Style::default()
+        };
+        let layout = window.request_measured_layout(style, move |known, available, _, _| {
+            let width = known.width.unwrap_or(match available.width {
+                AvailableSpace::MinContent => narrowest,
+                AvailableSpace::MaxContent => widest,
+                AvailableSpace::Definite(room) => room.clamp(narrowest, widest),
+            });
+            size(width, known.height.unwrap_or(height))
+        });
+        (layout, Measured(sizes))
+    }
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        measured: &mut Measured,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<usize> {
+        let widths = &measured.0;
+        // Half a pixel of rounding is not a reason to give up the buttons.
+        let selected = select(self.variants.len(), bounds.size.width + px(0.5), |index| {
+            widths[index].width
+        })?;
+        let natural = measured.0[selected];
+        let width = natural.width.min(bounds.size.width);
+        let variant = &mut self.variants[selected];
+        variant.layout_as_root(
+            size(
+                AvailableSpace::Definite(width),
+                AvailableSpace::Definite(natural.height),
+            ),
+            window,
+            cx,
+        );
+        let origin = bounds.origin
+            + gpui::point(
+                bounds.size.width - width,
+                (bounds.size.height - natural.height) / 2.,
+            );
+        variant.prepaint_at(origin, window, cx);
+        Some(selected)
+    }
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut Measured,
+        selected: &mut Option<usize>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if let Some(selected) = *selected {
+            self.variants[selected].paint(window, cx);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

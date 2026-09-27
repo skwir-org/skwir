@@ -20,9 +20,16 @@ use crate::settings::{
 };
 use crate::theme::Theme;
 
-/// Segmented controls hold this many choices; longer lists use a dropdown.
+/// Segmented controls hold at most this many choices, and only while their
+/// labels fit beside the row's texts (`elements::adaptive::Fit`); otherwise
+/// a dropdown.
 const SEGMENTED_MAX: usize = 4;
 const TEXT_WIDTH: f32 = 260.;
+/// A text field narrows to this before the row's texts give way.
+const FIELD_MIN: f32 = 160.;
+/// A row's title and description keep this much width whatever the
+/// control beside them: the control shrinks, or picks a narrower form.
+const TEXTS_MIN: f32 = 240.;
 
 /// Where a row sits in its card.
 #[derive(Clone, Copy)]
@@ -267,7 +274,7 @@ impl SettingsView {
         let description: SharedString = description.into();
         div()
             .flex_1()
-            .min_w_0()
+            .min_w(px(TEXTS_MIN))
             .flex()
             .flex_col()
             .gap(px(3.))
@@ -311,112 +318,19 @@ impl SettingsView {
                     }))
                     .into_any_element()
             }
-            SettingKind::Choice if row.spec.constraints.choices.len() <= SEGMENTED_MAX => {
-                let focus = self.handle(&format!("control:{key}"), cx);
-                self.stop(&focus, Some(item), Some(&key));
-                let choices = row.spec.constraints.choices.clone();
-                let current = choices.iter().position(|choice| *choice == row.value);
-                let cycle_key = key.clone();
-                let cycle = choices.clone();
-                let mut frame = controls::segmented(format!("choice-{key}"), &focus, theme)
-                    .key_context("SettingControl")
-                    // Space and Enter reach the focused frame as a keyboard
-                    // click; mouse clicks belong to the segments.
-                    .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
-                        if matches!(event, ClickEvent::Keyboard(_)) && !cycle.is_empty() {
-                            let next = current.map_or(0, |index| (index + 1) % cycle.len());
-                            this.change(&cycle_key, cycle[next].clone(), cx);
-                        }
-                    }));
-                for (index, choice) in choices.into_iter().enumerate() {
-                    let label = row.spec.choice_label(&choice).to_owned();
-                    let key = key.clone();
-                    let focus = focus.clone();
-                    frame = frame.child(
-                        controls::segment(
-                            format!("choice-{key}-{choice}"),
-                            label,
-                            current == Some(index),
-                            theme,
-                        )
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                window.focus(&focus);
-                                this.change(&key, choice.clone(), cx);
-                            },
-                        )),
-                    );
-                }
-                frame.into_any_element()
-            }
             SettingKind::Choice => {
                 let focus = self.handle(&format!("control:{key}"), cx);
                 self.stop(&focus, Some(item), Some(&key));
-                let open = self.dropdown.as_deref() == Some(key.as_str());
-                let toggle = key.clone();
-                let mut element = div().child(
-                    controls::dropdown(
-                        format!("choice-{key}"),
-                        row.spec.choice_label(&row.value).to_owned(),
-                        &focus,
-                        theme,
-                    )
-                    .key_context("SettingControl")
-                    .child(row.anchor.marker())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.dropdown = if open { None } else { Some(toggle.clone()) };
-                        cx.notify();
-                    })),
-                );
-                if open {
-                    let hover = theme.hover;
-                    let mut panel = div()
-                        .id(SharedString::from(format!("choices-{key}")))
-                        .min_w(px(150.))
-                        .p_1()
-                        .flex()
-                        .flex_col()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(theme.border)
-                        .bg(theme.bg)
-                        .text_color(theme.text)
-                        .text_xs()
-                        .font_family(self.font.clone())
-                        .shadow_lg()
-                        .occlude()
-                        .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                            this.dropdown = None;
-                            cx.notify();
-                        }));
-                    for choice in row.spec.constraints.choices.clone() {
-                        let selected = choice == row.value;
-                        let label = row.spec.choice_label(&choice).to_owned();
-                        let key = key.clone();
-                        panel = panel.child(
-                            div()
-                                .id(SharedString::from(format!("choice-{key}-{choice}")))
-                                .h(px(26.))
-                                .px_2()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .rounded_sm()
-                                .cursor_pointer()
-                                .hover(move |s| s.bg(hover))
-                                .child(div().w(px(14.)).when(selected, |d| {
-                                    d.child(controls::glyph("check", theme.accent, 14.))
-                                }))
-                                .child(label)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.dropdown = None;
-                                    this.change(&key, choice.clone(), cx);
-                                })),
-                        );
-                    }
-                    element = element.child(row.anchor.popup(panel));
+                let dropdown = self.choice_dropdown(row, &focus, theme, cx);
+                if row.spec.constraints.choices.len() > SEGMENTED_MAX {
+                    return dropdown;
                 }
-                element.into_any_element()
+                // Buttons where their labels fit beside the texts, else the
+                // dropdown: measured, never counted in characters.
+                crate::elements::adaptive::Fit {
+                    variants: vec![self.choice_buttons(row, &focus, theme, cx), dropdown],
+                }
+                .into_any_element()
             }
             SettingKind::Data => div().into_any_element(),
             kind => {
@@ -432,7 +346,15 @@ impl SettingsView {
                     SettingKind::Number => 90.,
                     _ => TEXT_WIDTH,
                 };
-                let mut group = div().flex().flex_none().items_center().gap(px(4.));
+                // A number keeps its width; a text field narrows to
+                // `FIELD_MIN` before the texts beside it give way.
+                let mut group = div().flex().items_center().gap(px(4.)).map(|d| {
+                    if numeric || kind == SettingKind::Number {
+                        d.flex_none()
+                    } else {
+                        d.w(px(width)).min_w(px(FIELD_MIN)).flex_shrink()
+                    }
+                });
                 if numeric {
                     let (less, more) = (key.clone(), key.clone());
                     let (less_focus, more_focus) = (
@@ -476,13 +398,9 @@ impl SettingsView {
                             )),
                         );
                 } else {
+                    let fixed = (kind == SettingKind::Number).then_some(width);
                     group = group.child(controls::field(
-                        &input,
-                        Some(width),
-                        focused,
-                        invalid,
-                        None,
-                        theme,
+                        &input, fixed, focused, invalid, None, theme,
                     ));
                 }
                 if !row.spec.unit.is_empty() {
@@ -512,6 +430,125 @@ impl SettingsView {
                 group.into_any_element()
             }
         }
+    }
+
+    /// A choice as segmented buttons, one per value.
+    fn choice_buttons(
+        &self,
+        row: &Snapshot,
+        focus: &gpui::FocusHandle,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let key = row.spec.key.clone();
+        let choices = row.spec.constraints.choices.clone();
+        let current = choices.iter().position(|choice| *choice == row.value);
+        let cycle_key = key.clone();
+        let cycle = choices.clone();
+        let mut frame = controls::segmented(format!("choice-{key}"), focus, theme)
+            .key_context("SettingControl")
+            // Space and Enter reach the focused frame as a keyboard
+            // click; mouse clicks belong to the segments.
+            .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+                if matches!(event, ClickEvent::Keyboard(_)) && !cycle.is_empty() {
+                    let next = current.map_or(0, |index| (index + 1) % cycle.len());
+                    this.change(&cycle_key, cycle[next].clone(), cx);
+                }
+            }));
+        for (index, choice) in choices.into_iter().enumerate() {
+            let label = row.spec.choice_label(&choice).to_owned();
+            let key = key.clone();
+            let focus = focus.clone();
+            frame = frame.child(
+                controls::segment(
+                    format!("choice-{key}-{choice}"),
+                    label,
+                    current == Some(index),
+                    theme,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    window.focus(&focus);
+                    this.change(&key, choice.clone(), cx);
+                })),
+            );
+        }
+        frame.into_any_element()
+    }
+
+    /// A choice as a dropdown of its values.
+    fn choice_dropdown(
+        &self,
+        row: &Snapshot,
+        focus: &gpui::FocusHandle,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let key = row.spec.key.clone();
+        let open = self.dropdown.as_deref() == Some(key.as_str());
+        let toggle = key.clone();
+        let mut element = div().child(
+            controls::dropdown(
+                format!("choice-{key}"),
+                row.spec.choice_label(&row.value).to_owned(),
+                focus,
+                theme,
+            )
+            .key_context("SettingControl")
+            .child(row.anchor.marker())
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.dropdown = if open { None } else { Some(toggle.clone()) };
+                cx.notify();
+            })),
+        );
+        if open {
+            let hover = theme.hover;
+            let mut panel = div()
+                .id(SharedString::from(format!("choices-{key}")))
+                .min_w(px(150.))
+                .p_1()
+                .flex()
+                .flex_col()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.border)
+                .bg(theme.bg)
+                .text_color(theme.text)
+                .text_xs()
+                .font_family(self.font.clone())
+                .shadow_lg()
+                .occlude()
+                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                    this.dropdown = None;
+                    cx.notify();
+                }));
+            for choice in row.spec.constraints.choices.clone() {
+                let selected = choice == row.value;
+                let label = row.spec.choice_label(&choice).to_owned();
+                let key = key.clone();
+                panel = panel.child(
+                    div()
+                        .id(SharedString::from(format!("choice-{key}-{choice}")))
+                        .h(px(26.))
+                        .px_2()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .rounded_sm()
+                        .cursor_pointer()
+                        .hover(move |s| s.bg(hover))
+                        .child(div().w(px(14.)).when(selected, |d| {
+                            d.child(controls::glyph("check", theme.accent, 14.))
+                        }))
+                        .child(label)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.dropdown = None;
+                            this.change(&key, choice.clone(), cx);
+                        })),
+                );
+            }
+            element = element.child(row.anchor.popup(panel));
+        }
+        element.into_any_element()
     }
 
     fn setting_row(
