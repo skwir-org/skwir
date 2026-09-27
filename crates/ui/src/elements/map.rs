@@ -14,7 +14,7 @@
 //! across ±180° (`Shapes::new`), so a track over the Bering Strait is
 //! drawn across it, not across the world.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -427,16 +427,66 @@ pub struct Map {
     shapes: Arc<Shapes>,
     handles: Handles,
     colors: Colors,
+    tiles: Option<TileLayer>,
 }
 
-pub fn map(id: impl Into<ElementId>, shapes: Arc<Shapes>, handles: Handles, colors: Colors) -> Map {
+/// What a map is drawn on: the tiles of the registered source.
+pub struct TileLayer {
+    pub store: Rc<RefCell<crate::map_tiles::TileStore>>,
+    pub palette: bibli_core::tiles::Palette,
+    /// Follow the attribution's link.
+    pub on_link: Rc<dyn Fn(String, &mut Window, &mut App)>,
+}
+
+pub fn map(
+    id: impl Into<ElementId>,
+    shapes: Arc<Shapes>,
+    handles: Handles,
+    colors: Colors,
+    tiles: Option<TileLayer>,
+) -> Map {
     Map {
         id: id.into(),
         shapes,
         handles,
         colors,
+        tiles,
     }
 }
+
+/// A tile to draw: where, and the part of it that shows (a coarser tile
+/// standing in for a finer one shows only that one's square).
+struct TileDraw {
+    image: Arc<gpui::RenderImage>,
+    bounds: Bounds<Pixels>,
+    clip: Bounds<Pixels>,
+}
+
+/// Where a tile of zoom `z` drawn at `(dx, dy)` (whole tiles from the
+/// world's corner, x continuous) lands on screen, its edges on whole
+/// pixels so neighbours meet without a seam.
+fn tile_bounds(
+    view: &View,
+    z: u8,
+    (dx, dy): (i64, i64),
+    size: (f64, f64),
+    origin: gpui::Point<Pixels>,
+) -> Bounds<Pixels> {
+    let n = f64::from(1u32 << z);
+    let corner = |tx: i64, ty: i64| {
+        let (x, y) = view.to_screen((tx as f64 / n, ty as f64 / n), size);
+        (x.round() as f32, y.round() as f32)
+    };
+    let (x0, y0) = corner(dx, dy);
+    let (x1, y1) = corner(dx + 1, dy + 1);
+    Bounds::new(
+        origin + point(px(x0), px(y0)),
+        gpui::size(px(x1 - x0), px(y1 - y0)),
+    )
+}
+
+/// How many coarser zooms stand in for a tile on its way.
+const STAND_IN: u8 = 4;
 
 impl IntoElement for Map {
     type Element = Self;
@@ -460,6 +510,10 @@ struct Dot {
 pub struct Prepaint {
     hitbox: Hitbox,
     view: View,
+    tiles: Vec<TileDraw>,
+    /// The source's attribution, where it is drawn, and its link with the
+    /// hitbox that takes a click on it.
+    attribution: Option<(ShapedLine, Bounds<Pixels>, Option<(String, Hitbox)>)>,
     grid: Vec<(gpui::Point<Pixels>, gpui::Point<Pixels>)>,
     labels: Vec<Label>,
     /// Runs of screen points, by what they draw.
@@ -606,7 +660,76 @@ impl Element for Map {
             origin + point(px(x as f32), px(y as f32))
         };
 
-        // The graticule, labelled along the top and the left edges.
+        // The background's tiles, a coarser one standing in for each that
+        // is not here yet.
+        let mut tiles = Vec::new();
+        let mut attribution = None;
+        let mut detailed = false;
+        if let Some(layer) = &self.tiles {
+            let mut store = layer.store.borrow_mut();
+            if let Some(info) = store.info() {
+                detailed = info.detailed;
+                store.begin_frame();
+                let z = (view.zoom.round() as u8).min(info.max_zoom);
+                let scale = window.scale_factor().round().clamp(1., 2.) as u8;
+                let request = |z: u8, x: u32, y: u32| bibli_core::tiles::TileRequest {
+                    z,
+                    x,
+                    y,
+                    scale,
+                    palette: layer.palette,
+                };
+                let corners = (view.to_world((0., 0.), size), view.to_world(size, size));
+                for (x, y, dx, dy) in bibli_core::tiles::cover(z, corners.0, corners.1) {
+                    let bounds = tile_bounds(&view, z, (dx, dy), size, origin);
+                    if let Some(image) = store.get(request(z, x, y)) {
+                        tiles.push(TileDraw {
+                            image,
+                            bounds,
+                            clip: bounds,
+                        });
+                        continue;
+                    }
+                    for up in 1..=STAND_IN.min(z) {
+                        let (pz, step) = (z - up, 1i64 << up);
+                        if let Some(image) = store.cached(request(pz, x >> up, y >> up)) {
+                            tiles.push(TileDraw {
+                                image,
+                                bounds: tile_bounds(
+                                    &view,
+                                    pz,
+                                    (dx.div_euclid(step), dy.div_euclid(step)),
+                                    size,
+                                    origin,
+                                ),
+                                clip: bounds,
+                            });
+                            break;
+                        }
+                    }
+                }
+                store.end_frame();
+                // Stand-ins are drawn first, under the tiles they wait for.
+                tiles.sort_by_key(|t| std::cmp::Reverse(t.bounds.size.width));
+                if !info.attribution.is_empty() {
+                    let line = shape(info.attribution.into(), self.colors.text, window);
+                    let width = line.width + px(8.);
+                    let at = bounds.origin
+                        + point(
+                            bounds.size.width - width - px(4.),
+                            bounds.size.height - px(LINE_HEIGHT + 6.),
+                        );
+                    attribution = Some((
+                        line,
+                        Bounds::new(at, gpui::size(width, px(LINE_HEIGHT + 2.))),
+                        info.attribution_url,
+                    ));
+                }
+            }
+        }
+
+        // The graticule, labelled along the top and the left edges, over
+        // a background without streets.
         let step = math::graticule_step(view.zoom, 90.);
         let (north_west, south_east) = (view.to_world((0., 0.), size), view.to_world(size, size));
         let (top, left) = math::unproject(north_west.0, north_west.1);
@@ -615,7 +738,7 @@ impl Element for Map {
         let mut labels = Vec::new();
         let edge = |x: f64, y: f64| origin + point(px(x as f32), px(y as f32));
         let mut lon = (left / step).ceil() * step;
-        while lon <= right && grid.len() < 200 {
+        while !detailed && lon <= right && grid.len() < 200 {
             let (x, _) = view.to_screen(((lon + 180.) / 360., view.y), size);
             grid.push((edge(x, 0.), edge(x, size.1)));
             let text = math::degrees(math::wrap_lon(lon), step, 'E', 'W');
@@ -627,7 +750,7 @@ impl Element for Map {
             lon += step;
         }
         let mut lat = (bottom.max(-math::MAX_LAT) / step).ceil() * step;
-        while lat <= top.min(math::MAX_LAT) && grid.len() < 400 {
+        while !detailed && lat <= top.min(math::MAX_LAT) && grid.len() < 400 {
             let (_, y) = view.to_screen(math::project(LatLon { lat, lon: 0. }), size);
             grid.push((edge(0., y), edge(size.0, y)));
             let text = math::degrees(lat, step, 'N', 'S');
@@ -702,9 +825,21 @@ impl Element for Map {
         let (length, words) = math::scale_bar(lat, view.zoom, 100.);
         let scale = (length, Some(shape(words.into(), self.colors.text, window)));
 
+        let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+        // Over the map's own hitbox, so a click there follows the link and
+        // does not start a drag.
+        let attribution = attribution.map(
+            |(line, card, url): (ShapedLine, Bounds<Pixels>, Option<String>)| {
+                let link =
+                    url.map(|url| (url, window.insert_hitbox(card, HitboxBehavior::BlockMouse)));
+                (line, card, link)
+            },
+        );
         Prepaint {
-            hitbox: window.insert_hitbox(bounds, HitboxBehavior::Normal),
+            hitbox,
             view,
+            tiles,
+            attribution,
             grid,
             labels,
             areas,
@@ -728,6 +863,19 @@ impl Element for Map {
         let colors = self.colors;
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             window.paint_quad(gpui::fill(bounds, colors.paper));
+            for tile in &prepaint.tiles {
+                window.with_content_mask(Some(ContentMask { bounds: tile.clip }), |window| {
+                    if let Err(error) = window.paint_image(
+                        tile.bounds,
+                        gpui::Corners::default(),
+                        Arc::clone(&tile.image),
+                        0,
+                        false,
+                    ) {
+                        tracing::debug!(%error, "map tile");
+                    }
+                });
+            }
             for (from, to) in &prepaint.grid {
                 let line = if from.x == to.x {
                     Bounds::new(*from, size(px(1.), to.y - from.y))
@@ -824,6 +972,23 @@ impl Element for Map {
                     cx,
                 );
             }
+            // Whose tiles these are, whenever they are drawn.
+            if let Some((line, card, _)) = &prepaint.attribution {
+                window.paint_quad(quad(
+                    *card,
+                    px(3.),
+                    colors.paper.opacity(0.85),
+                    px(0.),
+                    gpui::transparent_black(),
+                    BorderStyle::default(),
+                ));
+                let _ = line.paint(
+                    card.origin + point(px(4.), px(1.)),
+                    px(LINE_HEIGHT),
+                    window,
+                    cx,
+                );
+            }
         });
 
         let hitbox = prepaint.hitbox.clone();
@@ -848,6 +1013,19 @@ impl Element for Map {
         };
         let shown = prepaint.view;
 
+        if let (Some((_, _, Some((url, link)))), Some(layer)) = (&prepaint.attribution, &self.tiles)
+        {
+            window.set_cursor_style(CursorStyle::PointingHand, link);
+            let (url, link, on_link) = (url.clone(), link.clone(), Rc::clone(&layer.on_link));
+            window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+                if phase == DispatchPhase::Bubble
+                    && event.button == MouseButton::Left
+                    && link.is_hovered(window)
+                {
+                    on_link(url.clone(), window, cx);
+                }
+            });
+        }
         let (handles, hit) = (self.handles.clone(), hitbox.clone());
         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, _| {
             if phase != DispatchPhase::Bubble

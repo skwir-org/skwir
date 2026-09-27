@@ -156,7 +156,10 @@ still to come are in `docs/preview-frame.md`.
   clicked the arrows move it and the zoom keys zoom it (`MapPreview`);
   Ctrl+0 and Fit fit it to its places at whatever size it is drawn. The view
   belongs to the file: kept when the file is read again, fitted for another.
-  Its colours are the `map_*` tokens, on paper. A map has no Find.
+  Its colours are the `map_*` tokens, on paper. A map has no Find. It is
+  drawn on the registered tile source's tiles (`map_tiles.rs`), asked for
+  in prepaint and cancelled when they leave the view, with the source's
+  attribution at the bottom right whenever its tiles are drawn.
 - **One of each.** Find is a field under its button with Enter and F3, in the
   reader and in structured previews alike (`DocumentFind`, `InspectorFind`).
   Contents is one drawer (`outline.rs`) for a document's outline, a file's

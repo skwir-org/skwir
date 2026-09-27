@@ -1,7 +1,7 @@
 # ADR-020: Maps, their backgrounds, and bibli's first network requests
 
-Status: accepted, 2026-09-27. Nothing is built yet; `docs/PLAN.md`, "Maps",
-orders the work.
+Status: accepted, 2026-09-27. Previews on a map and their backgrounds are
+built (steps A and B of `docs/PLAN.md`, "Maps"); the Map view is not yet.
 
 ## Context
 
@@ -30,9 +30,10 @@ and no offline downloads. Access can be blocked without notice.
 
 - **Every background is raster tiles** served through one core contract,
   `tiles::TileSource`: owner-tagged, asked for `{z, x, y, scale, palette}`
-  on the scheduler with a cancel token, answering RGBA pixels, like
-  `thumbs`. The UI draws tiles and its overlays (lines, markers) and knows
-  no source. Rendering vector tiles, a styling engine of its own, is out
+  with a cancel token, answering RGBA pixels through a callback. A request
+  is asynchronous so a download never holds a scheduler worker: the source
+  decides where the work runs. The UI draws tiles and its overlays (lines,
+  markers) and knows no source. Rendering vector tiles, a styling engine of its own, is out
   of scope.
 - **Three sources, in a plugin of their own, `map-tiles`**:
   - *Outline*, the default: Natural Earth's land, lakes and borders
@@ -57,9 +58,13 @@ and no offline downloads. Access can be blocked without notice.
 - **Choosing a network source is the user's act.** A map shown on the
   outline says, once, that street detail needs a map source, with a link
   to the setting (`set_status_about`).
-- **HTTP**: `ureq` with rustls, blocking, on scheduler workers, with one
-  kept-alive connection per host and a deadline per request. HTTP/2, which
-  the policy recommends, is not available in ureq. The client is private
+- **HTTP**: `ureq` with rustls and the system's certificates
+  (`rustls-platform-verifier`), blocking, on two threads of the plugin's
+  own, one kept-alive connection each, newest request first, a deadline
+  per request, and one retry when a connection fails (a server closes
+  idle ones). A cached tile is read on a scheduler worker and never waits
+  behind a download. HTTP/2, which the policy recommends, is not available
+  in ureq. The client is private
   to `map-tiles`. There is no network layer in the core: remote file
   systems come from installed tools (mounts, rclone; ADR-021), not from
   protocols implemented in bibli. If a second plugin needs HTTP (a
@@ -91,9 +96,12 @@ and no offline downloads. Access can be blocked without notice.
 
 Bibli makes network requests for the first time, and only after the user
 chose a network source. Until then, maps show the outline, which is enough
-to see a country or a region and not a street. The outline's data adds to
-the binary's size; its size is measured and recorded here when it is
-built.
+to see a country or a region and not a street. The outline's data adds
+514 KB to the binary (Natural Earth 5.1.2: 1:110m below zoom 3, 1:50m
+from it; about 110 000 points, packed by `tools/maps/natural_earth.py`).
+It is decoded when a map first needs it, in 7 ms, and kept, about 1 MB,
+while the plugin is enabled; a tile is drawn in 0.25 to 7 ms on a worker
+(release build, reference machine).
 
 The OSM server can refuse bibli at any time; the custom source is the way
 out, and the outline remains. Offline street maps would come from a local

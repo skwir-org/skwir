@@ -8,9 +8,10 @@
 //! zoom keys zoom it, Ctrl+0 fits it again). The view belongs to the file
 //! shown: a changed file is read again where the map is; another file is
 //! fitted.
+use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui::{AnyElement, Context, MouseButton, div, prelude::*};
+use gpui::{AnyElement, Context, MouseButton, Window, div, prelude::*};
 
 use crate::elements::map::{self, Colors, Handles, Shapes, View};
 use crate::inspector::Display;
@@ -22,6 +23,18 @@ use crate::toolbar::Button;
 
 /// A key moves the map by this many pixels.
 const PAN_STEP: f64 = 120.;
+/// Zoomed in this far on a background without streets, the map says,
+/// once, where streets can be had.
+const DETAIL_ZOOM: f64 = 10.;
+
+/// What the maps said once and need not say again this session.
+#[derive(Default)]
+pub struct Notes {
+    /// That the background has no streets.
+    hinted: bool,
+    /// That the tiles of this source revision failed.
+    failed: Option<u64>,
+}
 
 /// The map's view, kept with the preview (`PreviewState::map`).
 pub type MapState = Handles;
@@ -39,6 +52,24 @@ fn colors(theme: &Theme) -> Colors {
 
 pub fn content(shell: &Shell, display: &Display, theme: &Theme) -> AnyElement {
     let shapes = display.map.clone().unwrap_or_default();
+    let app = Arc::clone(&shell.app);
+    let tiles = map::TileLayer {
+        store: Rc::clone(&shell.map_tiles),
+        palette: crate::map_tiles::palette(theme),
+        on_link: Rc::new(move |url: String, _: &mut Window, _: &mut gpui::App| {
+            let notify = Arc::clone(&app);
+            app.scheduler.spawn(
+                bibli_core::scheduler::Priority::Visible,
+                "map-attribution",
+                app.lifetime().child(),
+                move || {
+                    if let Err(error) = bibli_platform::open::open_web_uri(&url) {
+                        notify.notify(bibli_core::app::NotifyLevel::Error, error.to_string());
+                    }
+                },
+            );
+        }),
+    };
     let focus = shell.preview.inspection.focus.clone();
     div()
         .flex_1()
@@ -58,6 +89,7 @@ pub fn content(shell: &Shell, display: &Display, theme: &Theme) -> AnyElement {
             shapes,
             shell.preview.map.clone(),
             colors(theme),
+            Some(tiles),
         ))
         .into_any_element()
 }
@@ -92,6 +124,52 @@ pub fn tools(bar: &mut Bar, shell: &Shell) {
 }
 
 impl Shell {
+    /// Take the tiles that came, let the atlas go of those let go, and say
+    /// once what is worth saying: a background that failed, or one without
+    /// streets zoomed in to them. No map shown, no tiles kept.
+    pub(crate) fn sync_map_tiles(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let shown = self.map_shown().is_some();
+        let (arrived, evicted, failure, info) = {
+            let mut store = self.map_tiles.borrow_mut();
+            if !shown && !store.is_empty() {
+                store.clear();
+            }
+            let arrived = store.receive();
+            let info = shown.then(|| store.info()).flatten();
+            (arrived, store.take_evicted(), store.failure.take(), info)
+        };
+        for image in evicted {
+            cx.drop_image(image, Some(window));
+        }
+        if arrived {
+            cx.notify();
+        }
+        let setting = crate::map_tiles::SETTING;
+        if let Some((revision, error)) = failure
+            && self.map_notes.failed != Some(revision)
+            && shown
+        {
+            self.map_notes.failed = Some(revision);
+            self.set_status_about(
+                format!("Map tiles could not be loaded: {error}"),
+                setting,
+                cx,
+            );
+        }
+        if let Some(info) = info
+            && !info.detailed
+            && !self.map_notes.hinted
+            && self.map_view().is_some_and(|view| view.zoom >= DETAIL_ZOOM)
+        {
+            self.map_notes.hinted = true;
+            self.set_hint_about(
+                "Streets are not drawn on this map background; another one can show them",
+                info.setting.as_deref().unwrap_or(setting),
+                cx,
+            );
+        }
+    }
+
     /// The map shown in the preview, if one is.
     fn map_shown(&self) -> Option<&Arc<Shapes>> {
         match &self.preview.content {

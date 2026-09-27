@@ -72,6 +72,7 @@ bibli-plugin-preview-comics = { path = "crates/plugins/preview-comics" }
 bibli-plugin-preview-documents = { path = "crates/plugins/preview-documents" }
 bibli-plugin-terminal = { path = "crates/plugins/terminal" }
 bibli-plugin-geo = { path = "crates/plugins/geo" }
+bibli-plugin-map-tiles = { path = "crates/plugins/map-tiles" }
 
 # UI toolkit (ADR-001). Pinned exactly: the API moves between releases.
 gpui = "=0.2.2"

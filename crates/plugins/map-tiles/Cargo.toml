@@ -1,0 +1,27 @@
+[package]
+name = "bibli-plugin-map-tiles"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+# Named in the User-Agent, as the tile policy asks.
+repository.workspace = true
+
+[dependencies]
+bibli-core.workspace = true
+bibli-platform.workspace = true
+anyhow.workspace = true
+parking_lot.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+# Rasterizes the offline outline; the version resvg already brings.
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
+# The one HTTP client (ADR-020): blocking, on this plugin's own threads, with
+# the system's certificates.
+ureq = { version = "3", default-features = false, features = ["rustls", "platform-verifier"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

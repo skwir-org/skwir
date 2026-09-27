@@ -111,6 +111,8 @@ pub struct App {
     pub thumbnails: Arc<crate::thumbs::Thumbnails>,
     pub metadata: Arc<crate::metadata::MetadataProviders>,
     pub previews: Arc<crate::preview::Previews>,
+    /// Where map backgrounds come from (the map-tiles plugin, ADR-020).
+    pub tiles: Arc<crate::tiles::Tiles>,
     /// Plans proposed for review (by plugins whose work finishes later, or by
     /// agents). The UI drains them with `take_proposals`.
     proposals: parking_lot::Mutex<Vec<Plan>>,
@@ -146,6 +148,7 @@ impl App {
             ),
             metadata: Arc::new(crate::metadata::MetadataProviders::default()),
             previews: Arc::new(crate::preview::Previews::default()),
+            tiles: Arc::new(crate::tiles::Tiles::default()),
             proposals: parking_lot::Mutex::new(Vec::new()),
             scheduler,
             commands: CommandRegistry::default(),
@@ -227,6 +230,7 @@ impl App {
         self.player.unregister_owner(owner);
         self.tallies.unregister_owner(owner);
         self.terminals.unregister_owner(owner);
+        self.tiles.unregister_owner(owner);
         self.registry.remove_owner(owner);
         self.providers.write().retain(|_, (o, _)| &**o != owner);
         for spec in self.settings.schema() {

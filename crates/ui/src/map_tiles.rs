@@ -1,0 +1,277 @@
+//! The tiles maps are drawn on (ADR-020), as the UI keeps them: asked of
+//! the registered source for what a map shows, decoded and uploaded on the
+//! source's thread, kept up to `BUDGET` bytes while maps are shown, and
+//! let go (their atlas entries too) when no map is.
+//!
+//! A map asks in its `prepaint` for the tiles it covers (`get`); what it
+//! did not ask for in a frame and is still on its way is cancelled
+//! (`end_frame`), so panning past a place never downloads it. A tile of
+//! another source revision (the setting chose another background) is
+//! never shown.
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use bibli_core::CancelToken;
+use bibli_core::tiles::{Palette, SourceInfo, TileRequest, Tiles};
+use gpui::RenderImage;
+
+/// How long a tile that failed is left blank before it is asked again.
+const RETRY: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The setting that chooses the background (the map-tiles plugin's).
+pub const SETTING: &str = "map-tiles.source";
+
+/// Decoded tiles kept: at 256 pixels a side, about 190 of them; at 512,
+/// about 48, several screens of a large panel.
+const BUDGET: usize = 48 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Key {
+    revision: u64,
+    request: TileRequest,
+}
+
+enum Entry {
+    Loading(CancelToken),
+    Ready {
+        image: Arc<RenderImage>,
+        bytes: usize,
+        used: u64,
+    },
+    /// Asked again once `RETRY` has passed, or for another source.
+    Failed(std::time::Instant),
+}
+
+type Arrival = (Key, Result<Arc<RenderImage>, String>);
+
+pub struct TileStore {
+    tiles: Arc<Tiles>,
+    wake: bibli_core::location::Waker,
+    tx: flume::Sender<Arrival>,
+    rx: flume::Receiver<Arrival>,
+    entries: HashMap<Key, Entry>,
+    frame: u64,
+    /// Tiles on their way that a map asked for this frame.
+    wanted: Vec<Key>,
+    ready: usize,
+    /// Let go, waiting for a window to evict their atlas entries.
+    evicted: Vec<Arc<RenderImage>>,
+    info: Option<(u64, Option<SourceInfo>)>,
+    /// Why the last tile of this revision failed, until someone says so.
+    pub failure: Option<(u64, String)>,
+}
+
+impl TileStore {
+    pub fn new(app: &bibli_core::App) -> TileStore {
+        let (tx, rx) = flume::unbounded();
+        TileStore {
+            tiles: Arc::clone(&app.tiles),
+            wake: app.waker_handle(),
+            tx,
+            rx,
+            entries: HashMap::new(),
+            frame: 0,
+            wanted: Vec::new(),
+            ready: 0,
+            evicted: Vec::new(),
+            info: None,
+            failure: None,
+        }
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.tiles.revision()
+    }
+
+    /// What the source says about itself, read once per revision.
+    pub fn info(&mut self) -> Option<SourceInfo> {
+        let revision = self.revision();
+        if self.info.as_ref().is_none_or(|(r, _)| *r != revision) {
+            let info = self.tiles.source().map(|(source, _)| source.info());
+            self.info = Some((revision, info));
+        }
+        self.info.as_ref().and_then(|(_, info)| info.clone())
+    }
+
+    pub fn begin_frame(&mut self) {
+        self.frame += 1;
+    }
+
+    /// The tile, if it is here; asked for if it is not.
+    pub fn get(&mut self, request: TileRequest) -> Option<Arc<RenderImage>> {
+        let key = Key {
+            revision: self.revision(),
+            request,
+        };
+        let frame = self.frame;
+        match self.entries.get_mut(&key) {
+            Some(Entry::Ready { image, used, .. }) => {
+                *used = frame;
+                return Some(Arc::clone(image));
+            }
+            Some(Entry::Loading(_)) => {
+                // Still wanted: `end_frame` keeps it.
+                self.wanted.push(key);
+                return None;
+            }
+            Some(Entry::Failed(when)) if when.elapsed() < RETRY => return None,
+            Some(Entry::Failed(_)) | None => {}
+        }
+        let (source, lifetime) = self.tiles.source()?;
+        let cancel = lifetime.child();
+        let (tx, wake) = (self.tx.clone(), Arc::clone(&self.wake));
+        self.entries.insert(key, Entry::Loading(cancel.clone()));
+        self.wanted.push(key);
+        source.request(
+            request,
+            cancel,
+            Box::new(move |tile| {
+                let image = tile.map_err(|e| format!("{e:#}")).and_then(|image| {
+                    crate::thumbs::to_render_image(&image)
+                        .ok_or_else(|| "the tile is not a picture".to_owned())
+                });
+                if tx.send((key, image)).is_ok() {
+                    wake();
+                }
+            }),
+        );
+        None
+    }
+
+    /// A tile already here, without asking for it: a coarser one stands in
+    /// while a finer one comes.
+    pub fn cached(&mut self, request: TileRequest) -> Option<Arc<RenderImage>> {
+        let key = Key {
+            revision: self.revision(),
+            request,
+        };
+        match self.entries.get_mut(&key) {
+            Some(Entry::Ready { image, used, .. }) => {
+                *used = self.frame;
+                Some(Arc::clone(image))
+            }
+            _ => None,
+        }
+    }
+
+    /// After a map asked for what it shows: cancel what it no longer
+    /// shows, forget other revisions, and keep the kept tiles in budget,
+    /// the least recently drawn going first.
+    pub fn end_frame(&mut self) {
+        let revision = self.revision();
+        let wanted: std::collections::HashSet<Key> = self.wanted.drain(..).collect();
+        let mut gone = Vec::new();
+        for (key, entry) in &self.entries {
+            let stale = key.revision != revision;
+            match entry {
+                Entry::Loading(cancel) if stale || !wanted.contains(key) => {
+                    cancel.cancel();
+                    gone.push(*key);
+                }
+                Entry::Ready { .. } | Entry::Failed(_) if stale => gone.push(*key),
+                _ => {}
+            }
+        }
+        for key in gone {
+            self.remove(&key);
+        }
+        if self.ready > BUDGET {
+            let mut kept: Vec<(u64, Key)> = self
+                .entries
+                .iter()
+                .filter_map(|(key, entry)| match entry {
+                    Entry::Ready { used, .. } if *used < self.frame => Some((*used, *key)),
+                    _ => None,
+                })
+                .collect();
+            kept.sort_unstable_by_key(|(used, _)| *used);
+            for (_, key) in kept {
+                if self.ready <= BUDGET {
+                    break;
+                }
+                self.remove(&key);
+            }
+        }
+    }
+
+    fn remove(&mut self, key: &Key) {
+        match self.entries.remove(key) {
+            Some(Entry::Ready { image, bytes, .. }) => {
+                self.ready -= bytes;
+                self.evicted.push(image);
+            }
+            Some(Entry::Loading(cancel)) => cancel.cancel(),
+            _ => {}
+        }
+    }
+
+    /// Take what the source sent. True when a map has more to draw.
+    pub fn receive(&mut self) -> bool {
+        let mut arrived = false;
+        while let Ok((key, result)) = self.rx.try_recv() {
+            // Only what is still awaited: a tile cancelled on its way stays
+            // gone.
+            if !matches!(self.entries.get(&key), Some(Entry::Loading(_))) {
+                if let Ok(image) = result {
+                    self.evicted.push(image);
+                }
+                continue;
+            }
+            match result {
+                Ok(image) => {
+                    let size = image.size(0);
+                    let bytes = usize::try_from(size.width.0).unwrap_or(0)
+                        * usize::try_from(size.height.0).unwrap_or(0)
+                        * 4;
+                    self.ready += bytes;
+                    self.entries.insert(
+                        key,
+                        Entry::Ready {
+                            image,
+                            bytes,
+                            used: self.frame,
+                        },
+                    );
+                }
+                Err(error) => {
+                    self.entries
+                        .insert(key, Entry::Failed(std::time::Instant::now()));
+                    self.failure = Some((key.revision, error));
+                }
+            }
+            arrived = true;
+        }
+        arrived
+    }
+
+    /// Let every tile go: no map is shown.
+    pub fn clear(&mut self) {
+        let keys: Vec<Key> = self.entries.keys().copied().collect();
+        for key in keys {
+            self.remove(&key);
+        }
+        self.wanted.clear();
+    }
+
+    /// Tiles let go, for their atlas entries to be evicted with a window.
+    pub fn take_evicted(&mut self) -> Vec<Arc<RenderImage>> {
+        std::mem::take(&mut self.evicted)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+/// The palette a drawn source uses, from the theme's map tokens.
+pub fn palette(theme: &crate::theme::Theme) -> Palette {
+    let rgba = |color: gpui::Hsla| {
+        let c = gpui::Rgba::from(color);
+        [c.r, c.g, c.b, c.a].map(|v| (v.clamp(0., 1.) * 255.).round() as u8)
+    };
+    Palette {
+        land: rgba(theme.map_land),
+        water: rgba(theme.map_water),
+        border: rgba(theme.map_border),
+    }
+}

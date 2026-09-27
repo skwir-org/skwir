@@ -13,7 +13,8 @@
 //!   `success`/`warning`/`error` for outcomes, `scrim` behind a dialog,
 //!   `drop_target` under a drag, `on_fill` for text on a saturated fill.
 //!   `map_*` draw a map: its graticule, a track, and a route with the
-//!   places and areas of a file.
+//!   places and areas of a file; land, water and borders are the offline
+//!   background's.
 //!   `terminal` is the sixteen ANSI colours a terminal's programs name; its
 //!   default text and background are `text` and `bg`.
 //!   Do not derive a hover from `border` or `surface` locally.
@@ -73,6 +74,10 @@ pub struct Theme {
     /// told apart at a glance, and from the graticule.
     pub map_track: Hsla,
     pub map_route: Hsla,
+    /// What the offline background draws: land, water, and borders.
+    pub map_land: Hsla,
+    pub map_water: Hsla,
+    pub map_border: Hsla,
     /// The ANSI colours, black to white then their bright kin, readable on
     /// `bg`. They are VS Code's defaults for its light and dark themes,
     /// whose backgrounds are close to ours.
@@ -116,6 +121,9 @@ impl Theme {
             map_grid: rgb(0xe6e6e6).into(),
             map_track: rgb(0x2f6feb).into(),
             map_route: rgb(0x9333ea).into(),
+            map_land: rgb(0xf3f1ec).into(),
+            map_water: rgb(0xd5e3f0).into(),
+            map_border: rgb(0xb3aaa0).into(),
             terminal: palette([
                 0x000000, 0xcd3131, 0x00bc00, 0x949800, 0x0451a5, 0xbc05bc, 0x0598bc, 0x555555,
                 0x666666, 0xcd3131, 0x14ce14, 0xb5ba00, 0x0451a5, 0xbc05bc, 0x0598bc, 0xa5a5a5,
@@ -153,6 +161,9 @@ impl Theme {
             map_grid: rgb(0x2c2c2c).into(),
             map_track: rgb(0x6ea8fe).into(),
             map_route: rgb(0xc084fc).into(),
+            map_land: rgb(0x2b2a27).into(),
+            map_water: rgb(0x18212b).into(),
+            map_border: rgb(0x57514a).into(),
             terminal: palette([
                 0x000000, 0xcd3131, 0x0dbc79, 0xe5e510, 0x2472c8, 0xbc3fbc, 0x11a8cd, 0xe5e5e5,
                 0x666666, 0xf14c4c, 0x23d18b, 0xf5f543, 0x3b8eea, 0xd670d6, 0x29b8db, 0xe5e5e5,

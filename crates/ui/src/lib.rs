@@ -37,6 +37,7 @@ pub mod layout;
 pub mod list;
 mod loading;
 mod map_preview;
+mod map_tiles;
 mod markdown;
 mod media;
 pub mod menu;

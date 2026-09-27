@@ -27,6 +27,8 @@ struct Snapshot {
     player: Vec<String>,
     /// Who runs the terminal panel's shells.
     terminals: Option<String>,
+    /// Who draws map backgrounds.
+    tiles: Option<String>,
 }
 
 fn snapshot(app: &App) -> Snapshot {
@@ -59,6 +61,7 @@ fn snapshot(app: &App) -> Snapshot {
         settings: app.settings.schema().into_iter().map(|s| s.key).collect(),
         player: app.player.listeners(),
         terminals: app.terminals.owner(),
+        tiles: app.tiles.owner(),
     }
 }
 

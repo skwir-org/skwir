@@ -47,6 +47,7 @@ pub mod tabs;
 pub mod tally;
 pub mod terminal;
 pub mod thumbs;
+pub mod tiles;
 pub mod workspace;
 
 pub use app::App;

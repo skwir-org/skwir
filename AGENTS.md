@@ -376,6 +376,11 @@ current source before assuming a planned crate, command, or API exists.
   the pointer does has a key: the middle button's background tab is
   Ctrl+Enter, the right button's menu the Menu key and Shift+F10, Ctrl+click
   is Ctrl+arrows then Ctrl+Space.
+- **Network.** Only the `map-tiles` plugin makes requests (ADR-020), and
+  only once the user chose a background that downloads; nothing a file
+  names is fetched. The core has no network layer and bibli speaks no
+  file-system protocol (ADR-021). A new use of the network is a decision
+  with an ADR of its own.
 - **Unsafe.** The workspace sets `unsafe_code = "warn"`; `just lint` promotes
   warnings to errors. Any exception needs a narrowly scoped `#[allow]` with a
   justification, as in `crates/bibli/src/gpu.rs` (setting an environment

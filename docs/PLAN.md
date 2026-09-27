@@ -552,6 +552,21 @@ only network code). Each step below ships on its own.
   (Natural Earth, the default), OpenStreetMap once chosen, and a custom URL; the
   tile cache, attribution, and the link to the setting on a map drawn on the
   outline.
+  *Built 2026-09-27.* As planned, with these choices: a source answers
+  through a callback (downloads never hold a scheduler worker); the UI's
+  `map_tiles::TileStore` asks in the map's prepaint for the tiles it
+  covers, cancels those that left the view, keeps 48 MB of decoded tiles
+  while a map is shown and lets them go with their atlas entries when none
+  is; a coarser tile already here stands in while a finer one comes. The
+  graticule is drawn only over a background without streets. A failed
+  background is said once per source revision; zoomed to street level on
+  the outline, a hint (not an error: `Shell::set_hint_about`) links to the
+  setting. Verified in the real app against a local tile server (never
+  OpenStreetMap's): each tile asked once, from the cache after a restart,
+  conditionally (`If-None-Match`, answered 304) once expired, the
+  User-Agent naming bibli and its repository; a stale kept-alive connection
+  is retried once. The outline was looked at in both themes. Not verified:
+  OpenStreetMap's own server.
 - **C. The Map view.** A `ViewRole::Lens` in the View menu. `geo` scans the
   location shown (a folder, or with "Include subfolders" its subtree; a search or
   a timeline bucket as it is) for EXIF positions and track files, visible

@@ -48,10 +48,25 @@ impl Shell {
     ) {
         let text = text.into();
         tracing::warn!(%text, "status");
+        self.toast_about(text, Tone::Error, setting, cx);
+    }
+
+    /// Something worth knowing, not a failure, that a setting changes:
+    /// the toast links to it.
+    pub fn set_hint_about(
+        &mut self,
+        text: impl Into<String>,
+        setting: &str,
+        cx: &mut Context<Self>,
+    ) {
+        self.toast_about(text.into(), Tone::Info, setting, cx);
+    }
+
+    fn toast_about(&mut self, text: String, tone: Tone, setting: &str, cx: &mut Context<Self>) {
         self.toast(
             Toast {
                 text,
-                tone: Tone::Error,
+                tone,
                 action: Some(Action {
                     label: "Open setting".into(),
                     command: "ui.settings".into(),

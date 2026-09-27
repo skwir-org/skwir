@@ -221,6 +221,9 @@ pub struct Shell {
     pub reviews: VecDeque<crate::review::Review>,
     pub review_focus: Option<crate::review::ReviewFocus>,
     pub timeline: TimelineState,
+    /// The tiles maps are drawn on, while a map is shown (`map_tiles`).
+    pub(crate) map_tiles: std::rc::Rc<std::cell::RefCell<crate::map_tiles::TileStore>>,
+    pub(crate) map_notes: crate::map_preview::Notes,
     /// The terminal under the panes (F4).
     pub terminal: crate::terminal::TerminalState,
     /// Panes side by side or stacked, the preview at the right or the bottom.
@@ -374,6 +377,9 @@ impl Shell {
         .detach();
 
         let pane = app.workspace.read().active_id();
+        let map_tiles = std::rc::Rc::new(std::cell::RefCell::new(
+            crate::map_tiles::TileStore::new(&app),
+        ));
         let mut shell = Shell {
             app,
             pane,
@@ -427,6 +433,8 @@ impl Shell {
             reviews: VecDeque::new(),
             review_focus: None,
             timeline: TimelineState::default(),
+            map_tiles,
+            map_notes: crate::map_preview::Notes::default(),
             terminal: crate::terminal::TerminalState::new(cx.focus_handle()),
             layout: crate::layout::Layout::default(),
             toasts: crate::toast::ToastState::default(),
@@ -1681,6 +1689,7 @@ impl Shell {
             self.add_reviews(proposals, window, cx);
         }
         self.sync_review_focus(window, cx);
+        self.sync_map_tiles(window, cx);
         // Follow the workspace's tabs and active pane (commands change them).
         self.sync_tabs(window, cx);
         let saved = self.pane;
