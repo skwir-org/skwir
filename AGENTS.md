@@ -127,7 +127,10 @@ current source before assuming a planned crate, command, or API exists.
   says which in its `when`: `kind:image` (every selected entry is one) or
   `has:.gpx` (one is), by kind, MIME type or extension, read from names
   (`registry::MenuItem`); never offer it to every file and let the command
-  refuse. Rarely used items set `submenu`; the menu expands that group in
+  refuse. Words that depend on the environment ("Open With Image Viewer")
+  come from a `MenuSource`, a command that answers from memory while the
+  menu opens and replaces the plain items, which stay registered for the
+  palette. Rarely used items set `submenu`; the menu expands that group in
   place. Give items an `icon`.
 - **Details lead somewhere.** A provider's fact can carry a command
   (`Detail::with_action`, drawn as a link after the value, run through

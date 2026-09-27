@@ -10,14 +10,16 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use bibli_core::app::{App, NotifyLevel, PaneArg};
+use bibli_core::cancel::CancelToken;
 use bibli_core::command::{Invocation, Outcome};
 use bibli_core::entry::{EntryId, EntryKind};
 use bibli_core::location::Location;
 use bibli_core::os_path::PathArg;
 use bibli_core::plugin::Plugin;
-use bibli_core::registry::{KeyBinding, MenuItem};
+use bibli_core::registry::{KeyBinding, MenuItem, MenuSource};
 use bibli_core::scheduler::Priority;
 use bibli_core::workspace::PaneId;
 use bibli_platform::apps::{Application, AssociationEdit, Catalog, Stamp};
@@ -35,6 +37,10 @@ struct CatalogCache {
     /// when `None`.
     sources: Option<(Vec<PathBuf>, Vec<PathBuf>)>,
     last: Mutex<Option<(Stamp, Arc<Catalog>)>>,
+    /// A worker is reading the catalog again for the menu (`refresh`).
+    refreshing: AtomicBool,
+    /// What that worker lives for: until the plugin is disabled.
+    work: Mutex<Option<CancelToken>>,
 }
 
 type Cached = Arc<CatalogCache>;
@@ -52,6 +58,15 @@ impl CatalogCache {
             Some((dirs, lists)) => Catalog::from_paths(dirs, lists),
             None => Catalog::load(),
         }
+    }
+
+    /// The catalog last read, as it was: no stat, for the menu, which
+    /// cannot wait on the disk.
+    fn remembered(&self) -> Option<Arc<Catalog>> {
+        self.last
+            .lock()
+            .as_ref()
+            .map(|(_, catalog)| Arc::clone(catalog))
     }
 
     /// The lists a default may be written to.
@@ -186,6 +201,96 @@ fn catalog(cache: &Cached) -> Arc<Catalog> {
     let catalog = Arc::new(cache.load());
     *cache.last.lock() = Some((stamp, Arc::clone(&catalog)));
     catalog
+}
+
+/// Read the catalog again on a worker if it changed, once at a time: what
+/// the next menu names. An install or a default chosen elsewhere shows
+/// from the menu after the one that noticed it.
+fn refresh(cache: &Cached, app: &App) {
+    if cache.refreshing.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let token = cache
+        .work
+        .lock()
+        .get_or_insert_with(|| app.lifetime().child())
+        .clone();
+    let cache = Arc::clone(cache);
+    let job = token.clone();
+    app.scheduler.spawn(
+        Priority::Background,
+        "open-with.catalog",
+        token,
+        move || {
+            catalog(&cache);
+            if job.is_cancelled() {
+                // Disabled while it read: keep nothing.
+                cache.last.lock().take();
+            }
+            cache.refreshing.store(false, Ordering::Release);
+        },
+    );
+}
+
+/// `open_with.menu`: the context menu's Open for the selection, from the
+/// catalog in memory. Files whose names say their types, sharing one
+/// default application: "Open With" it; the picker stays Open With….
+/// Anything else (a folder, a type the name does not say, types with no
+/// common default, the catalog not read yet) answers no items, and the
+/// menu keeps its plain Open.
+fn menu(pane: Option<PaneId>, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
+    let nothing = || Ok(Outcome::Value(serde_json::json!({ "items": [] })));
+    let pane = app.pane_or_active(pane);
+    let catalog = cache.remembered();
+    refresh(cache, app);
+    let Some(catalog) = catalog else {
+        return nothing();
+    };
+    let names: Vec<std::ffi::OsString> = {
+        let ws = app.workspace.read();
+        let Some(p) = ws.pane(pane) else {
+            return nothing();
+        };
+        let mut names = Vec::with_capacity(p.selection.len());
+        for id in p.selection.iter() {
+            match p.listing.get(id) {
+                Some(e) if matches!(e.kind, EntryKind::File | EntryKind::Symlink) => {
+                    names.push(e.name.clone());
+                }
+                _ => return nothing(),
+            }
+        }
+        names
+    };
+    let mut types: Vec<Mime> = Vec::new();
+    for m in mime::by_names(names.iter().map(std::ffi::OsString::as_os_str)) {
+        let Some(m) = m else { return nothing() };
+        if !types.contains(&m) {
+            types.push(m);
+        }
+    }
+    let mut defaults = types
+        .iter()
+        .map(|m| catalog.default_for_lineage(&mime::lineage(m)));
+    let Some(Some(default)) = defaults.next() else {
+        return nothing();
+    };
+    if !defaults.all(|d| d.is_some_and(|d| d.id == default.id)) {
+        return nothing();
+    }
+    let item = MenuItem {
+        menu: "context".into(),
+        title: format!("Open With {}", default.name),
+        command: Invocation::with_args(
+            "open_with",
+            &serde_json::json!({ "app": default.id, "pane": pane }),
+        ),
+        when: None,
+        order: 0,
+        icon: Some("open".into()),
+        submenu: None,
+    };
+    Ok(Outcome::Value(serde_json::json!({ "items": [item] })))
 }
 
 #[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
@@ -722,6 +827,25 @@ impl Plugin for OpenWithPlugin {
                 submenu: None,
             },
         );
+        let cache = Arc::clone(&self.catalog);
+        app.commands.register::<PaneArg, _>(
+            ID,
+            "open_with.menu",
+            "Name the default application in the context menu",
+            "The context menu's Open for the selection, naming the default application its files share; no items when the selection's types or the applications are not known yet. Answers from memory",
+            move |a, app| menu(a.pane, &cache, app),
+        );
+        app.registry.menu_sources.add(
+            ID,
+            MenuSource {
+                menu: "context".into(),
+                when: Some("selection".into()),
+                command: Invocation::new("open_with.menu"),
+                replaces: vec![Invocation::new("open")],
+            },
+        );
+        // Read before the first menu asks.
+        refresh(&self.catalog, app);
         app.registry.keymap.add(
             ID,
             KeyBinding {
@@ -733,6 +857,11 @@ impl Plugin for OpenWithPlugin {
     }
 
     fn on_disable(&self, _app: &App) {
+        if let Some(work) = self.catalog.work.lock().take() {
+            work.cancel();
+        }
+        // A job cancelled before it started never says it ended.
+        self.catalog.refreshing.store(false, Ordering::Release);
         self.catalog.last.lock().take();
     }
 }
@@ -848,9 +977,11 @@ mod tests {
         app.plugins.add(Arc::new(OpenWithPlugin::default()), &app);
         assert!(app.commands.get("open").is_some());
         assert_eq!(app.registry.menus.all().len(), 4);
+        assert_eq!(app.registry.menu_sources.all().len(), 1);
         app.plugins.set_enabled(ID, false, &app);
         assert!(app.commands.get("open").is_none());
         assert!(app.registry.menus.all().is_empty());
+        assert!(app.registry.menu_sources.all().is_empty());
     }
 
     /// Desktop entries under `dir/applications`, and a list making
@@ -912,6 +1043,8 @@ mod tests {
                 vec![dir.join("mimeapps.list")],
             )),
             last: Mutex::default(),
+            refreshing: AtomicBool::default(),
+            work: Mutex::default(),
         })
     }
 
@@ -1045,6 +1178,55 @@ mod tests {
             app.dispatch(&Invocation::new("open_with.choices")).is_err(),
             "nothing selected is nothing to open"
         );
+    }
+
+    #[test]
+    fn the_menu_names_the_default_application_of_the_selection() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        let photo = "it's a “photo” .png";
+        for name in [photo, "b.png", "notes.txt", "no-type-9q"] {
+            std::fs::write(root.join(name), b"").unwrap();
+        }
+        fake_catalog(tmp.path(), std::path::Path::new("record"));
+        let cache = cached(tmp.path());
+        let plugin = OpenWithPlugin {
+            catalog: Arc::clone(&cache),
+        };
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(plugin), &app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&root)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        // Registering read the catalog on a worker.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while cache.remembered().is_none() {
+            assert!(std::time::Instant::now() < deadline, "never read");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let items = |names: &[&str]| {
+            select(&app, pane, names);
+            let Outcome::Value(answer) = app.dispatch(&Invocation::new("open_with.menu")).unwrap()
+            else {
+                panic!("the items are a value")
+            };
+            answer["items"].as_array().unwrap().clone()
+        };
+        let photos = items(&[photo, "b.png"]);
+        let titles: Vec<&str> = photos
+            .iter()
+            .map(|item| item["title"].as_str().unwrap())
+            .collect();
+        assert_eq!(titles, ["Open With Viewer"], "the default alone");
+        let args = &photos[0]["command"]["args"];
+        assert_eq!(photos[0]["command"]["name"], "open_with");
+        assert_eq!(args["app"], "viewer.desktop");
+        assert_eq!(args["pane"], serde_json::to_value(pane).unwrap());
+        assert!(items(&["notes.txt"]).is_empty(), "no default for the type");
+        assert!(items(&[photo, "notes.txt"]).is_empty(), "no default shared");
+        assert!(items(&[photo, "no-type-9q"]).is_empty(), "a type not known");
+        assert!(items(&["sub"]).is_empty(), "a folder opens here");
     }
 
     #[test]

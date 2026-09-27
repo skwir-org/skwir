@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::ffi::OsStr;
 
-use bibli_core::registry::MenuItem;
+use bibli_core::registry::{MenuItem, MenuSource};
 use bibli_platform::mime::{self, Kind, Mime};
 use gpui::{
     AnyElement, Context, FocusHandle, MouseButton, Pixels, Point, Window, anchored, deferred, div,
@@ -285,6 +285,20 @@ pub fn rows_of(items: &[MenuItem], expanded: Option<&str>) -> Vec<Row> {
     rows
 }
 
+/// The items, with each source's answer in place of what it replaces
+/// (an empty answer replaces nothing), in order.
+fn merge(mut items: Vec<MenuItem>, answers: Vec<(MenuSource, Vec<MenuItem>)>) -> Vec<MenuItem> {
+    for (source, answer) in answers {
+        if answer.is_empty() {
+            continue;
+        }
+        items.retain(|m| !source.replaces.contains(&m.command));
+        items.extend(answer);
+    }
+    items.sort_by_key(|m| m.order);
+    items
+}
+
 impl Shell {
     pub fn open_context_menu(
         &mut self,
@@ -308,28 +322,73 @@ impl Shell {
     }
 
     /// The context menu's items for the selection: the registered items
-    /// whose `when` holds, in order.
+    /// whose `when` holds, with what the sources that apply answer in place
+    /// of the items they replace, in order.
     fn context_items(&self) -> Vec<MenuItem> {
         let ctx = self.selection_ctx();
-        let statics: Vec<MenuItem> = self
-            .app
-            .registry
+        let registry = &self.app.registry;
+        let statics: Vec<MenuItem> = registry
             .menus
             .all()
             .into_iter()
             .filter(|m| m.menu == "context")
             .collect();
-        let types = if statics.iter().any(|m| asks_types(m.when.as_deref())) {
+        let sources: Vec<MenuSource> = registry
+            .menu_sources
+            .all()
+            .into_iter()
+            .filter(|s| s.menu == "context")
+            .collect();
+        let whens = statics.iter().map(|m| m.when.as_deref());
+        let types = if whens
+            .chain(sources.iter().map(|s| s.when.as_deref()))
+            .any(asks_types)
+        {
             self.selection_types()
         } else {
             SelectionTypes::default()
         };
-        let mut items: Vec<MenuItem> = statics
+        let items: Vec<MenuItem> = statics
             .into_iter()
             .filter(|m| when_holds(m.when.as_deref(), ctx, &types))
             .collect();
-        items.sort_by_key(|m| m.order);
-        items
+        let answers = sources
+            .into_iter()
+            .filter(|source| when_holds(source.when.as_deref(), ctx, &types))
+            .map(|source| {
+                let answer = self.source_items(&source);
+                (source, answer)
+            })
+            .collect();
+        merge(items, answers)
+    }
+
+    /// What `source` answers for the active pane; nothing when it fails.
+    fn source_items(&self, source: &MenuSource) -> Vec<MenuItem> {
+        #[derive(serde::Deserialize)]
+        struct Answer {
+            items: Vec<MenuItem>,
+        }
+        let mut command = source.command.clone();
+        if let Some(args) = command.args.as_object_mut() {
+            args.insert("pane".into(), serde_json::json!(self.pane));
+        }
+        match self.app.dispatch(&command) {
+            Ok(bibli_core::command::Outcome::Value(value)) => {
+                match serde_json::from_value::<Answer>(value) {
+                    Ok(answer) => answer.items,
+                    Err(e) => {
+                        tracing::debug!(command = %command.name, "menu source answer: {e}");
+                        Vec::new()
+                    }
+                }
+            }
+            Ok(_) => Vec::new(),
+            Err(e) => {
+                tracing::debug!(command = %command.name, "menu source: {e:#}");
+                Vec::new()
+            }
+        }
     }
 
     /// `ui.context_menu` (Menu key, Shift+F10): the menu a right-click on
@@ -759,7 +818,7 @@ mod tests {
     use std::ffi::OsStr;
 
     use bibli_core::command::Invocation;
-    use bibli_core::registry::MenuItem;
+    use bibli_core::registry::{MenuItem, MenuSource};
 
     use super::{Row, SelectionCtx, SelectionTypes, rows_of};
 
@@ -770,6 +829,44 @@ mod tests {
 
     fn types(entries: &[(&str, bool)]) -> SelectionTypes {
         SelectionTypes::of(entries.iter().map(|(name, dir)| (OsStr::new(*name), *dir)))
+    }
+
+    #[test]
+    fn a_source_answering_takes_the_place_of_what_it_replaces() {
+        let at = |title: &str, name: &str, order| MenuItem {
+            command: Invocation::new(name),
+            order,
+            ..item(title, None)
+        };
+        let statics = vec![
+            at("Open", "open", 0),
+            at("Open With…", "choose", 1),
+            at("Copy", "copy", 120),
+        ];
+        let source = MenuSource {
+            menu: "context".into(),
+            when: None,
+            command: Invocation::new("source"),
+            replaces: vec![Invocation::new("open"), Invocation::new("choose")],
+        };
+        let titles =
+            |items: Vec<MenuItem>| -> Vec<String> { items.into_iter().map(|m| m.title).collect() };
+        let answer = vec![
+            at("Open With Viewer", "open_with", 0),
+            at("Other…", "choose", 1),
+        ];
+        assert_eq!(
+            titles(super::merge(
+                statics.clone(),
+                vec![(source.clone(), answer)]
+            )),
+            ["Open With Viewer", "Other…", "Copy"]
+        );
+        assert_eq!(
+            titles(super::merge(statics, vec![(source, Vec::new())])),
+            ["Open", "Open With…", "Copy"],
+            "no answer: the registered items stay"
+        );
     }
 
     #[test]

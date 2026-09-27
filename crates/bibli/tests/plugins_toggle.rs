@@ -13,6 +13,8 @@ struct Snapshot {
     commands: BTreeSet<String>,
     keymap: usize,
     menus: usize,
+    /// Items made when a menu opens (the default application named).
+    menu_sources: usize,
     places: usize,
     /// What keeps a kind of location in the sidebar (bookmarks, searches).
     keepers: Vec<String>,
@@ -45,6 +47,7 @@ fn snapshot(app: &App) -> Snapshot {
             .collect(),
         keymap: app.registry.keymap.all().len(),
         menus: app.registry.menus.all().len(),
+        menu_sources: app.registry.menu_sources.all().len(),
         places: app.registry.places.all().len(),
         keepers: app
             .registry

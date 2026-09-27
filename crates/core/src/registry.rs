@@ -1,5 +1,6 @@
-//! UI-facing registries: views, panels, places, menu items, key bindings,
-//! and what keeps a location in the sidebar.
+//! UI-facing registries: views, panels, places, menu items and the sources
+//! of those made when a menu opens, key bindings, and what keeps a
+//! location in the sidebar.
 //! The core stores descriptors tagged by owner; the UI crate interprets them.
 //! Every contribution can be withdrawn by owner when a plugin is disabled.
 
@@ -9,7 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
 use parking_lot::RwLock;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::command::Invocation;
 use crate::location::Location;
@@ -276,7 +277,7 @@ pub struct Keeper {
 /// the UI draws a separator between groups. Convention for `context`:
 /// 0xx open/navigate, 1xx edit (rename, cut, copy, paste), 2xx create,
 /// 3xx destructive (trash, delete), 4xx misc (refresh).
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MenuItem {
     /// `context`, `main`, or a plugin-defined menu id.
     pub menu: String,
@@ -286,6 +287,27 @@ pub struct MenuItem {
     pub order: i32,
     pub icon: Option<String>,
     pub submenu: Option<String>,
+}
+
+/// Items of a menu that depend on what the owner knows when it opens
+/// ("Open With Image Viewer"): the UI dispatches `command` with the pane
+/// (`{"pane": id}`) each time the menu opens where `when` holds (the same
+/// tokens as [`MenuItem::when`]), and adds the [`MenuItem`]s it answers
+/// (`{"items": [...]}`), whose own `when` is not evaluated.
+///
+/// The command runs on the UI thread while the menu opens: it answers from
+/// what the owner keeps in memory, and refreshes that on a worker. An
+/// answer of no items, or an error, leaves the menu as it would be without
+/// the source; one with items takes the place of the static items whose
+/// command is in `replaces`, which stay registered as the fallback and for
+/// the palette.
+#[derive(Clone, Debug, Serialize)]
+pub struct MenuSource {
+    /// `context`, like [`MenuItem::menu`].
+    pub menu: String,
+    pub when: Option<String>,
+    pub command: Invocation,
+    pub replaces: Vec<Invocation>,
 }
 
 /// A key binding. `keys` uses the `ctrl-shift-n` notation; chords are space-separated.
@@ -302,6 +324,7 @@ pub struct Registry {
     pub panels: Contributions<PanelSpec>,
     pub places: Contributions<Place>,
     pub menus: Contributions<MenuItem>,
+    pub menu_sources: Contributions<MenuSource>,
     pub keymap: Contributions<KeyBinding>,
     pub keepers: Contributions<Keeper>,
     gate: Arc<OwnerGate>,
@@ -315,6 +338,7 @@ impl Default for Registry {
             panels: Contributions::gated(Arc::clone(&gate)),
             places: Contributions::gated(Arc::clone(&gate)),
             menus: Contributions::gated(Arc::clone(&gate)),
+            menu_sources: Contributions::gated(Arc::clone(&gate)),
             keymap: Contributions::gated(Arc::clone(&gate)),
             keepers: Contributions::gated(Arc::clone(&gate)),
             gate,
@@ -335,6 +359,7 @@ impl Registry {
         self.panels.remove_owner(owner);
         self.places.remove_owner(owner);
         self.menus.remove_owner(owner);
+        self.menu_sources.remove_owner(owner);
         self.keymap.remove_owner(owner);
         self.keepers.remove_owner(owner);
     }
