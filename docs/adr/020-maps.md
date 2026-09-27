@@ -217,3 +217,18 @@ a real network, and OpenStreetMap's own server.
   A click selects (Ctrl toggles), Shift and a drag selects what a
   rectangle holds, a double click opens; the arrows move the map, the zoom
   keys zoom it and Home fits it to its files.
+- **Files at one place are spread, not only counted.** A bubble that
+  zooming cannot pull apart (its files share a position, or the map is at
+  its deepest zoom) opens in place on a click, until a click beside it;
+  Spread (`ui.map_view_spread`, the header's button) does it for every
+  place instead of bubbles. The files go on a sunflower spiral around
+  their point (`math::spread`), in the order their cameras' clocks give
+  (EXIF `DateTimeOriginal`, kept by the scanner as digits: an order, not
+  an instant), the undated last, each with a line to the point. Spirals
+  that would overlap join around their mean point until none do, so
+  nothing hides anything. A spiral of up to eight shows 40 px pictures,
+  a larger one smaller ones down to 20 px, past 120 dots; at most 200
+  pictures are asked for in view, the rest are dots in their places.
+  Markers up to 400 px outside the map are laid out too, so a spiral
+  reaching into view is whole; past 3 000 in that reach, Spread gives
+  way to bubbles.

@@ -28,9 +28,32 @@ pub fn details(path: &Path) -> Vec<Detail> {
     metadata(path).map(|exif| read(&exif)).unwrap_or_default()
 }
 
-/// Where the picture was taken, if the camera knew: for the Map view.
-pub fn position(path: &Path) -> Option<LatLon> {
-    located(&metadata(path)?)
+/// Where and when a picture was taken, for the Map view.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Taken {
+    /// The position, if the camera knew it.
+    pub at: Option<LatLon>,
+    /// The camera's clock as it wrote it, as digits (`20260701083000`):
+    /// an order between pictures, not an instant, since a picture rarely
+    /// says its time zone.
+    pub clock: Option<u64>,
+}
+
+/// Where and when the picture was taken, from one read of its metadata.
+pub fn taken(path: &Path) -> Taken {
+    metadata(path).map_or_else(Taken::default, |exif| Taken {
+        at: located(&exif),
+        clock: text(&exif, Tag::DateTimeOriginal)
+            .or_else(|| text(&exif, Tag::DateTime))
+            .and_then(|text| clock(&text)),
+    })
+}
+
+/// `2026:07:01 08:30:00` as `20260701083000`; `None` without a whole date
+/// and time.
+fn clock(text: &str) -> Option<u64> {
+    let digits: String = text.chars().filter(char::is_ascii_digit).take(14).collect();
+    (digits.len() == 14).then(|| digits.parse().ok()).flatten()
 }
 
 /// The position the metadata gives. A receiver that had no fix often
@@ -227,6 +250,14 @@ mod tests {
                 .read_raw(data)
                 .expect("the synthetic directory parses"),
         )
+    }
+
+    #[test]
+    fn a_camera_s_clock_reads_as_an_order() {
+        assert_eq!(clock("2026:07:01 08:30:00"), Some(20_260_701_083_000));
+        assert!(clock("2026:07:01 08:30:00") < clock("2026:07:01 08:30:01"));
+        assert_eq!(clock("2026:07:01"), None);
+        assert_eq!(clock("    :  :     :  :  "), None);
     }
 
     #[test]

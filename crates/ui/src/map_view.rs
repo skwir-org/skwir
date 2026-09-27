@@ -7,9 +7,13 @@
 //! It is a view like the others: a click selects (Ctrl adds or takes away,
 //! a double click opens), Shift and a drag draws a rectangle that selects
 //! what it holds, the preview follows the selection, Enter opens it. Close
-//! markers merge into a bubble with their count, which a click opens; a
-//! marker standing alone for a picture shows the picture. The arrows move
-//! the map and the zoom keys zoom it; Home fits it to its files again.
+//! markers merge into a bubble with their count, which a click opens: it
+//! zooms in, or, for files at one place, spreads them around it in the
+//! order they were taken until a click beside them. Spread
+//! (`ui.map_view_spread`) does that for every place at once, instead of
+//! bubbles. A marker standing alone for a picture shows the picture. The
+//! arrows move the map and the zoom keys zoom it; Home fits it to its
+//! files again.
 use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -39,6 +43,8 @@ struct Placed {
     lon: f64,
     #[serde(default)]
     line: Vec<Vec<[f64; 2]>>,
+    #[serde(default)]
+    clock: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -139,6 +145,7 @@ impl MapView {
                 at,
                 name,
                 line,
+                clock: placed.clock,
             });
         }
         self.counts = (
@@ -224,8 +231,9 @@ impl PaneView for MapView {
     }
 
     fn reset(&mut self) {
-        // Another location: fitted to its own files.
+        // Another location: fitted to its own files, nothing opened.
         self.handles.view.set(None);
+        self.handles.fold();
     }
 
     fn render(&mut self, shell: &mut Shell, _: &mut Window, cx: &mut Context<Shell>) -> AnyElement {
@@ -303,6 +311,21 @@ impl PaneView for MapView {
                 .render(shell, cx),
             );
         }
+        let spread = shell.map_spread.contains(&pane);
+        header = header.child(
+            Button::new(
+                format!("map-view-spread-{}", pane.0),
+                "spread",
+                if spread {
+                    "Group the files at one place into a count again"
+                } else {
+                    "Spread the files at one place around it, in the order they were taken"
+                },
+                "ui.map_view_spread",
+            )
+            .active(spread)
+            .render(shell, cx),
+        );
         header = header.child(
             Button::new(
                 format!("map-view-fit-{}", pane.0),
@@ -372,7 +395,8 @@ impl PaneView for MapView {
             self.handles.clone(),
             &theme,
         )
-        .picking(picking);
+        .picking(picking)
+        .spread(spread);
         div()
             .flex_1()
             .min_h_0()
@@ -393,6 +417,18 @@ impl Shell {
         }
     }
 
+    /// `ui.map_view_spread`: the active pane's map spreads the files at
+    /// one place around it, or groups them into a count again.
+    pub(crate) fn map_view_spread(&mut self, cx: &mut Context<Self>) {
+        if self.ui().view_id == ID {
+            let pane = self.pane;
+            if !self.map_spread.remove(&pane) {
+                self.map_spread.insert(pane);
+            }
+            cx.notify();
+        }
+    }
+
     /// Panes that stopped showing their map let their scan go.
     pub(crate) fn sync_map_views(&mut self) {
         let shown: HashSet<_> = self
@@ -407,6 +443,10 @@ impl Shell {
             .copied()
             .filter(|pane| !shown.contains(pane))
             .collect();
+        // A pane keeps its choice to spread while it lives.
+        let ws = self.app.workspace.read();
+        self.map_spread.retain(|&pane| ws.pane(pane).is_some());
+        drop(ws);
         for pane in gone {
             self.map_views.remove(&pane);
             let _ = self

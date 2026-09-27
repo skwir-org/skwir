@@ -45,6 +45,8 @@ const PUBLISH: Duration = Duration::from_millis(200);
 const LINE_POINTS: usize = 400;
 /// Files remembered in memory; beyond, the cache on disk answers.
 const REMEMBERED: usize = 200_000;
+/// What the cache keeps about a file; a change of `Found` changes it.
+const FOUND_VERSION: u32 = 2;
 
 /// A file placed on the map.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -56,6 +58,10 @@ pub struct Placed {
     /// picture.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub line: Vec<Vec<[f64; 2]>>,
+    /// A picture's camera clock (`bibli_platform::exif::Taken::clock`):
+    /// the order of pictures taken at one place.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clock: Option<u64>,
 }
 
 /// What a file says about where it is, kept by its identity.
@@ -64,6 +70,8 @@ struct Found {
     at: Option<[f64; 2]>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     line: Vec<Vec<[f64; 2]>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    clock: Option<u64>,
 }
 
 /// A file to look at: its entry and its path.
@@ -174,12 +182,14 @@ fn track(path: &Path, cancel: &CancelToken) -> Found {
         return Found {
             at: None,
             line: Vec::new(),
+            clock: None,
         };
     };
     let Some(doc) = data.geo else {
         return Found {
             at: None,
             line: Vec::new(),
+            clock: None,
         };
     };
     let total: usize = doc
@@ -213,7 +223,11 @@ fn track(path: &Path, cancel: &CancelToken) -> Found {
         .and_then(|s| s.first())
         .copied()
         .or_else(|| doc.waypoints.first().map(|w| [w.at.lat, w.at.lon]));
-    Found { at, line }
+    Found {
+        at,
+        line,
+        clock: None,
+    }
 }
 
 impl Scanner {
@@ -431,6 +445,7 @@ impl Scanner {
                                 lat,
                                 lon,
                                 line: found.line,
+                                clock: found.clock,
                             })
                         });
                         let mut publish = false;
@@ -520,8 +535,9 @@ impl Scanner {
         if let Some(found) = self.remembered.lock().get(&identity) {
             return Some(found.clone());
         }
+        // Versioned: what an older bibli kept did not have the clock.
         let key = format!(
-            "{}:{}:{}:{}",
+            "{FOUND_VERSION}:{}:{}:{}:{}",
             candidate.id.dev, candidate.id.ino, identity.1, identity.2
         );
         let found = self
@@ -530,10 +546,14 @@ impl Scanner {
             .and_then(|bytes| serde_json::from_slice::<Found>(&bytes).ok())
             .unwrap_or_else(|| {
                 let found = match kind {
-                    Kind::Picture => Found {
-                        at: bibli_platform::exif::position(path).map(|at| [at.lat, at.lon]),
-                        line: Vec::new(),
-                    },
+                    Kind::Picture => {
+                        let taken = bibli_platform::exif::taken(path);
+                        Found {
+                            at: taken.at.map(|at| [at.lat, at.lon]),
+                            line: Vec::new(),
+                            clock: taken.clock,
+                        }
+                    }
                     Kind::Track => track(path, cancel),
                 };
                 if !cancel.is_cancelled()

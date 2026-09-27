@@ -64,6 +64,12 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.zoom", r#"{"dir":"in"}"#, "Zoom in"),
     ("ui.zoom", r#"{"dir":"out"}"#, "Zoom out"),
     ("ui.zoom", r#"{"dir":"reset"}"#, "Zoom reset"),
+    ("ui.map_view_fit", "{}", "Map: fit to its files"),
+    (
+        "ui.map_view_spread",
+        "{}",
+        "Map: spread the files at one place, or group them",
+    ),
     ("ui.toggle_preview", "{}", "Toggle preview panel"),
     ("ui.terminal", "{}", "Toggle terminal"),
     ("ui.terminal_copy", "{}", "Terminal: copy"),

@@ -44,6 +44,8 @@ const LABELS: usize = 40;
 
 /// The pure part: projection, views, fitting and the scales drawn on top.
 pub mod math {
+    use std::collections::HashMap;
+
     use super::{FIT_PADDING, MAX_ZOOM, POINT_ZOOM, TILE};
     use bibli_core::geo::{EARTH_RADIUS, LatLon};
 
@@ -261,6 +263,147 @@ pub mod math {
         };
         (unit / per_pixel, label)
     }
+
+    /// The spacing of a sunflower spiral (item `k` at `SPACING · pitch ·
+    /// √(k + ½)`, each turned by the golden angle from the one before) that
+    /// keeps axis-aligned squares of side `pitch` apart however many there
+    /// are (`spiral_squares_never_overlap`). The half leaves the centre to
+    /// the point they share.
+    const SPACING: f64 = 0.86;
+
+    /// Where the `k`th square of a spiral of squares of side `pitch` sits,
+    /// from the spiral's centre. The spiral grows outwards without moving
+    /// the squares already placed.
+    pub fn spiral(k: usize, pitch: f64) -> (f64, f64) {
+        let golden = std::f64::consts::PI * (3. - 5f64.sqrt());
+        let k = k as f64;
+        let r = SPACING * pitch * (k + 0.5).sqrt();
+        let angle = k * golden;
+        (r * angle.cos(), r * angle.sin())
+    }
+
+    /// How far from its centre a spiral of `n` squares of side `side`,
+    /// `gap` apart, reaches; a single square stands on its point.
+    pub fn spiral_reach(n: usize, side: f64, gap: f64) -> f64 {
+        let corner = side * std::f64::consts::FRAC_1_SQRT_2;
+        if n <= 1 {
+            corner
+        } else {
+            SPACING * (side + gap) * (n as f64 - 0.5).sqrt() + corner
+        }
+    }
+
+    /// Where an item of `spread` goes.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub struct Spot {
+        /// Its square's centre.
+        pub at: (f64, f64),
+        pub side: f64,
+        /// Where it really is.
+        pub point: (f64, f64),
+        /// It shares its spiral: drawn with a line to `point`.
+        pub spread: bool,
+    }
+
+    /// Items at `points` (pixels), in the order they take along a spiral,
+    /// laid out so that none hides another: those whose spirals would
+    /// overlap join one, around their mean point, until no two spirals
+    /// overlap, and each spiral's squares are `side(n)` for its `n`
+    /// items, `gap` apart. An item alone stays on its point. Pure, and in
+    /// `O(n log n)` a pass while the spirals are apart.
+    pub fn spread(points: &[(f64, f64)], side: impl Fn(usize) -> f64, gap: f64) -> Vec<Spot> {
+        fn root(parent: &mut [usize], mut i: usize) -> usize {
+            while parent[i] != i {
+                parent[i] = parent[parent[i]];
+                i = parent[i];
+            }
+            i
+        }
+        let mut groups: Vec<Vec<usize>> = (0..points.len()).map(|i| vec![i]).collect();
+        let centre = |members: &[usize]| {
+            let n = members.len() as f64;
+            let (x, y) = members
+                .iter()
+                .fold((0., 0.), |(x, y), &i| (x + points[i].0, y + points[i].1));
+            (x / n, y / n)
+        };
+        // Each pass joins every two spirals that overlap; one that joins
+        // nothing ends. A pass joins at least two, so there are fewer
+        // passes than items.
+        loop {
+            let discs: Vec<(f64, f64, f64)> = groups
+                .iter()
+                .map(|members| {
+                    let (x, y) = centre(members);
+                    let n = members.len();
+                    (x, y, spiral_reach(n, side(n), gap))
+                })
+                .collect();
+            let mut order: Vec<usize> = (0..discs.len()).collect();
+            order.sort_by(|&a, &b| (discs[a].0 - discs[a].2).total_cmp(&(discs[b].0 - discs[b].2)));
+            let mut parent: Vec<usize> = (0..discs.len()).collect();
+            let mut joined = false;
+            let mut active: Vec<usize> = Vec::new();
+            for &i in &order {
+                let (x, y, r) = discs[i];
+                active.retain(|&j| discs[j].0 + discs[j].2 + gap > x - r);
+                for &j in &active {
+                    let (jx, jy, jr) = discs[j];
+                    if (x - jx).hypot(y - jy) < r + jr + gap {
+                        let (a, b) = (root(&mut parent, i), root(&mut parent, j));
+                        if a != b {
+                            parent[a] = b;
+                            joined = true;
+                        }
+                    }
+                }
+                active.push(i);
+            }
+            if !joined {
+                break;
+            }
+            let mut merged: HashMap<usize, Vec<usize>> = HashMap::new();
+            for (g, members) in groups.into_iter().enumerate() {
+                merged
+                    .entry(root(&mut parent, g))
+                    .or_default()
+                    .extend(members);
+            }
+            groups = merged.into_values().collect();
+            for members in &mut groups {
+                members.sort_unstable();
+            }
+        }
+        let mut spots = vec![
+            Spot {
+                at: (0., 0.),
+                side: 0.,
+                point: (0., 0.),
+                spread: false,
+            };
+            points.len()
+        ];
+        for members in &groups {
+            let n = members.len();
+            let side = side(n);
+            let (cx, cy) = centre(members);
+            for (k, &i) in members.iter().enumerate() {
+                let at = if n == 1 {
+                    points[i]
+                } else {
+                    let (dx, dy) = spiral(k, side + gap);
+                    (cx + dx, cy + dy)
+                };
+                spots[i] = Spot {
+                    at,
+                    side,
+                    point: points[i],
+                    spread: n > 1,
+                };
+            }
+        }
+        spots
+    }
 }
 
 /// A file's places, projected once, on the worker that received them.
@@ -299,6 +442,9 @@ pub struct Marker {
     pub kind: MarkerKind,
     /// The file it stands for, in the Map view: what a click selects.
     pub entry: Option<EntryId>,
+    /// A picture's camera clock: markers spread around one place follow
+    /// it (`bibli_platform::exif::Taken::clock`).
+    pub clock: Option<u64>,
 }
 
 /// A file the Map view places: where, its name, and a track's line.
@@ -307,6 +453,7 @@ pub struct Place {
     pub at: LatLon,
     pub name: SharedString,
     pub line: Vec<Vec<LatLon>>,
+    pub clock: Option<u64>,
 }
 
 /// `x` moved by whole worlds to within half a world of `near`.
@@ -385,6 +532,7 @@ impl Shapes {
                         MarkerKind::Place
                     },
                     entry: None,
+                    clock: None,
                 }
             })
             .collect();
@@ -396,6 +544,7 @@ impl Shapes {
                 label: SharedString::default(),
                 kind: MarkerKind::Start,
                 entry: None,
+                clock: None,
             });
         }
         if let Some(&end) = tracks()
@@ -408,6 +557,7 @@ impl Shapes {
                 label: SharedString::default(),
                 kind: MarkerKind::End,
                 entry: None,
+                clock: None,
             });
         }
         Shapes {
@@ -457,6 +607,7 @@ impl Shapes {
                     MarkerKind::Picture
                 },
                 entry: Some(place.entry),
+                clock: place.clock,
             });
             if track {
                 let segments = place
@@ -516,6 +667,22 @@ pub struct Picking {
 /// Markers closer than this on screen merge into one: more than a
 /// picture marker's side, so pictures standing alone never overlap.
 const CLUSTER: f32 = 48.;
+/// Spread markers (`Map::spread`, or a bubble opened in place): a spiral
+/// of a few shows its pictures at `THUMB`, a larger one smaller, down to
+/// `SPREAD_LEAST`; past `SPREAD_DOTS` in a spiral they are dots, and
+/// past `SPREAD_THUMBS` pictures in view the rest are dots in their places.
+const SPREAD_LEAST: f32 = 20.;
+const SPREAD_FULL_UP_TO: f32 = 8.;
+const SPREAD_DOTS: usize = 120;
+const SPREAD_THUMBS: usize = 200;
+const SPREAD_DOT: f32 = 12.;
+const SPREAD_GAP: f32 = 4.;
+/// Markers this far outside the map are spread too, so a spiral that
+/// reaches into view is whole and panning does not regroup what shows.
+const SPREAD_MARGIN: f32 = 400.;
+/// Past this many markers in reach, `Map::spread` gives way to bubbles:
+/// the spirals would cover the map.
+const SPREAD_MOST: usize = 3000;
 /// Markers standing alone show their picture while at most this many do.
 const THUMBS: usize = 60;
 const THUMB: f32 = 40.;
@@ -548,6 +715,19 @@ pub struct Handles {
     press: Rc<Cell<Option<(gpui::Point<Pixels>, usize)>>>,
     /// A Shift+drag rectangle: where it started, where it is.
     band: Rc<Cell<Option<(gpui::Point<Pixels>, gpui::Point<Pixels>)>>>,
+    /// The files of a bubble opened in place: markers zooming could not
+    /// pull apart, spread around where they are until a click beside them.
+    opened: Rc<RefCell<HashSet<EntryId>>>,
+}
+
+impl Handles {
+    /// Fold a bubble opened in place; whether one was.
+    pub fn fold(&self) -> bool {
+        let mut opened = self.opened.borrow_mut();
+        let was = !opened.is_empty();
+        opened.clear();
+        was
+    }
 }
 
 pub struct Map {
@@ -557,6 +737,7 @@ pub struct Map {
     colors: Colors,
     tiles: Option<TileLayer>,
     picking: Option<Picking>,
+    spread: bool,
 }
 
 impl Map {
@@ -564,6 +745,15 @@ impl Map {
     #[must_use]
     pub fn picking(mut self, picking: Picking) -> Self {
         self.picking = Some(picking);
+        self
+    }
+
+    /// Files' markers never merge into bubbles: those at one place are
+    /// spread on a spiral around it, in the order they were taken, each
+    /// with a line to where it is (`math::spread`).
+    #[must_use]
+    pub fn spread(mut self, spread: bool) -> Self {
+        self.spread = spread;
         self
     }
 }
@@ -590,6 +780,7 @@ pub fn map(
         colors,
         tiles,
         picking: None,
+        spread: false,
     }
 }
 
@@ -647,6 +838,8 @@ struct Dot {
     selected: bool,
     /// A marker standing alone for a picture, drawn as the picture.
     picture: Option<Arc<gpui::RenderImage>>,
+    /// The picture's side.
+    side: f32,
 }
 
 /// Markers merged into one bubble.
@@ -656,6 +849,16 @@ struct Cluster {
     count: ShapedLine,
     selected: bool,
 }
+
+/// A file's marker in the Map view: the file, where it is on screen,
+/// what it is, its name and its camera clock.
+type File = (
+    EntryId,
+    gpui::Point<Pixels>,
+    MarkerKind,
+    SharedString,
+    Option<u64>,
+);
 
 /// What a point on screen picks, topmost last.
 struct Hit {
@@ -678,6 +881,9 @@ pub struct Prepaint {
     routes: Vec<Vec<gpui::Point<Pixels>>>,
     tracks: Vec<Vec<gpui::Point<Pixels>>>,
     dots: Vec<Dot>,
+    /// Spread markers' lines to where they are, and those places.
+    leaders: Vec<(gpui::Point<Pixels>, gpui::Point<Pixels>)>,
+    anchors: Vec<gpui::Point<Pixels>>,
     clusters: Vec<Cluster>,
     hits: Vec<Hit>,
     /// Where each file's marker is, for a rectangle to hold.
@@ -986,42 +1192,21 @@ impl Element for Map {
         }
 
         let inside = |p: gpui::Point<Pixels>| bounds.contains(&p);
+        let reach = bounds.dilate(px(SPREAD_MARGIN));
         let mut dots = Vec::new();
         let mut named = Vec::new();
-        // Files' markers close together merge (the Map view), as map
-        // libraries do: each joins the group whose first marker is within
-        // `CLUSTER` pixels, looked for in its cell and the eight around it,
-        // or starts one. Recomputed as the view moves.
-        let mut groups: Vec<Vec<(EntryId, gpui::Point<Pixels>, MarkerKind, SharedString)>> =
-            Vec::new();
-        let mut seeds: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+        // Files' markers (the Map view): the file, where, what, its name
+        // and its clock. Those near enough to be spread into view too.
+        let mut files: Vec<File> = Vec::new();
         for marker in &self.shapes.markers {
             let p = at((marker.at.0 + offset, marker.at.1));
-            if !inside(p) {
+            if let (Some(entry), Some(_)) = (marker.entry, &self.picking) {
+                if reach.contains(&p) {
+                    files.push((entry, p, marker.kind, marker.label.clone(), marker.clock));
+                }
                 continue;
             }
-            if let (Some(entry), Some(_)) = (marker.entry, &self.picking) {
-                let local = p - origin;
-                let cell = (
-                    (f32::from(local.x) / CLUSTER).floor() as i32,
-                    (f32::from(local.y) / CLUSTER).floor() as i32,
-                );
-                let near = (-1..=1)
-                    .flat_map(|dx| (-1..=1).map(move |dy| (cell.0 + dx, cell.1 + dy)))
-                    .filter_map(|c| seeds.get(&c))
-                    .flatten()
-                    .copied()
-                    .find(|&g| {
-                        let d = groups[g][0].1 - p;
-                        f32::from(d.x).hypot(f32::from(d.y)) < CLUSTER
-                    });
-                let member = (entry, p, marker.kind, marker.label.clone());
-                if let Some(g) = near {
-                    groups[g].push(member);
-                } else {
-                    seeds.entry(cell).or_default().push(groups.len());
-                    groups.push(vec![member]);
-                }
+            if !inside(p) {
                 continue;
             }
             dots.push(Dot {
@@ -1029,14 +1214,53 @@ impl Element for Map {
                 kind: marker.kind,
                 selected: false,
                 picture: None,
+                side: THUMB,
             });
             if !marker.label.is_empty() {
                 named.push((p, marker.label.clone()));
             }
         }
+        // Spread: every file with `Map::spread` while they are not so many
+        // that spirals would cover the map, else a bubble opened in place.
+        let spread_all = self.spread && files.len() <= SPREAD_MOST;
+        let (mut spread, clustered): (Vec<File>, Vec<File>) = {
+            let opened = self.handles.opened.borrow();
+            files
+                .into_iter()
+                .partition(|file| spread_all || opened.contains(&file.0))
+        };
+        // The others close together merge, as map libraries do: each joins
+        // the group whose first marker is within `CLUSTER` pixels, looked
+        // for in its cell and the eight around it, or starts one.
+        // Recomputed as the view moves.
+        let mut groups: Vec<Vec<File>> = Vec::new();
+        let mut seeds: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+        for file in clustered.into_iter().filter(|file| inside(file.1)) {
+            let local = file.1 - origin;
+            let cell = (
+                (f32::from(local.x) / CLUSTER).floor() as i32,
+                (f32::from(local.y) / CLUSTER).floor() as i32,
+            );
+            let near = (-1..=1)
+                .flat_map(|dx| (-1..=1).map(move |dy| (cell.0 + dx, cell.1 + dy)))
+                .filter_map(|c| seeds.get(&c))
+                .flatten()
+                .copied()
+                .find(|&g| {
+                    let d = groups[g][0].1 - file.1;
+                    f32::from(d.x).hypot(f32::from(d.y)) < CLUSTER
+                });
+            if let Some(g) = near {
+                groups[g].push(file);
+            } else {
+                seeds.entry(cell).or_default().push(groups.len());
+                groups.push(vec![file]);
+            }
+        }
         let mut clusters = Vec::new();
         let mut hits = Vec::new();
         let mut placed = Vec::new();
+        let (mut leaders, mut anchors) = (Vec::new(), Vec::new());
         if let Some(picking) = &self.picking {
             let alone = groups.iter().filter(|members| members.len() == 1).count();
             let mut cells = groups;
@@ -1047,11 +1271,11 @@ impl Element for Map {
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
             for members in cells {
-                placed.extend(members.iter().map(|(entry, p, _, _)| (*entry, *p)));
+                placed.extend(members.iter().map(|(entry, p, ..)| (*entry, *p)));
                 let selected = members
                     .iter()
                     .any(|(entry, ..)| picking.selected.contains(entry));
-                if let [(entry, p, kind, label)] = members.as_slice() {
+                if let [(entry, p, kind, label, _)] = members.as_slice() {
                     let picture = (*kind == MarkerKind::Picture && alone <= THUMBS)
                         .then(|| (picking.thumb)(*entry, window, cx))
                         .flatten();
@@ -1061,6 +1285,7 @@ impl Element for Map {
                         kind: *kind,
                         selected,
                         picture,
+                        side: THUMB,
                     });
                     hits.push(Hit {
                         at: *p,
@@ -1073,7 +1298,7 @@ impl Element for Map {
                     continue;
                 }
                 let n = members.len() as f32;
-                let (sx, sy) = members.iter().fold((0f32, 0f32), |(x, y), (_, p, _, _)| {
+                let (sx, sy) = members.iter().fold((0f32, 0f32), |(x, y), (_, p, ..)| {
                     (x + f32::from(p.x), y + f32::from(p.y))
                 });
                 let centre = point(px(sx / n), px(sy / n));
@@ -1084,7 +1309,7 @@ impl Element for Map {
                 };
                 let radius = 11. + 2. * (text.len() as f32);
                 let mut rect: Option<math::Rect> = None;
-                for (_, p, _, _) in &members {
+                for (_, p, ..) in &members {
                     let (x, y) = view.to_world(
                         (
                             f64::from(f32::from(p.x - origin.x)),
@@ -1123,6 +1348,65 @@ impl Element for Map {
                     selected,
                 });
             }
+            if !spread.is_empty() {
+                // Along each spiral in the order they were taken, the
+                // undated after, then by name.
+                spread.sort_by(|a, b| (a.4.is_none(), a.4, &a.3).cmp(&(b.4.is_none(), b.4, &b.3)));
+                let square_side = |n: usize| {
+                    f64::from(if n > SPREAD_DOTS {
+                        SPREAD_DOT
+                    } else {
+                        (THUMB * (SPREAD_FULL_UP_TO / n as f32).sqrt()).clamp(SPREAD_LEAST, THUMB)
+                    })
+                };
+                let points: Vec<(f64, f64)> = spread
+                    .iter()
+                    .map(|file| {
+                        let local = file.1 - origin;
+                        (f64::from(f32::from(local.x)), f64::from(f32::from(local.y)))
+                    })
+                    .collect();
+                let spots = math::spread(&points, square_side, f64::from(SPREAD_GAP));
+                let mut anchored = HashSet::new();
+                let mut pictures = 0;
+                for ((entry, p, kind, label, _), spot) in spread.iter().zip(&spots) {
+                    let at = origin + point(px(spot.at.0 as f32), px(spot.at.1 as f32));
+                    let square = spot.side as f32;
+                    if spot.spread {
+                        leaders.push((at, *p));
+                        if anchored.insert((f32::from(p.x).to_bits(), f32::from(p.y).to_bits())) {
+                            anchors.push(*p);
+                        }
+                    }
+                    let selected = picking.selected.contains(entry);
+                    // Pictures in view ask for theirs, as many as the
+                    // budget allows; the others are dots in their places.
+                    let picture = (*kind == MarkerKind::Picture
+                        && square >= SPREAD_LEAST
+                        && pictures < SPREAD_THUMBS
+                        && bounds.dilate(px(square)).contains(&at))
+                    .then(|| (picking.thumb)(*entry, window, cx))
+                    .flatten();
+                    pictures += usize::from(picture.is_some());
+                    let radius = if picture.is_some() { square / 2. } else { 7. };
+                    dots.push(Dot {
+                        at,
+                        kind: *kind,
+                        selected,
+                        picture,
+                        side: square,
+                    });
+                    hits.push(Hit {
+                        at,
+                        radius,
+                        pick: Pick::Entry(*entry),
+                    });
+                    placed.push((*entry, at));
+                    if selected && !label.is_empty() {
+                        named.push((at + point(px(radius - 6.), px(0.)), label.clone()));
+                    }
+                }
+            }
         }
         if named.len() <= LABELS {
             for (p, label) in named {
@@ -1159,6 +1443,8 @@ impl Element for Map {
             routes,
             tracks,
             dots,
+            leaders,
+            anchors,
             clusters,
             hits,
             placed,
@@ -1231,6 +1517,28 @@ impl Element for Map {
                     stroke(window, run, false, 3., color);
                 }
             }
+            // Spread markers' lines to where they are, in one path, and
+            // those places, under the markers.
+            if !prepaint.leaders.is_empty() {
+                let mut path = PathBuilder::stroke(px(1.));
+                for (from, to) in &prepaint.leaders {
+                    path.move_to(*from);
+                    path.line_to(*to);
+                }
+                if let Ok(path) = path.build() {
+                    window.paint_path(path, colors.track.opacity(0.6));
+                }
+            }
+            for anchor in &prepaint.anchors {
+                window.paint_quad(quad(
+                    Bounds::new(*anchor - point(px(3.), px(3.)), size(px(6.), px(6.))),
+                    px(3.),
+                    colors.track,
+                    px(1.),
+                    colors.paper,
+                    BorderStyle::Solid,
+                ));
+            }
             for cluster in &prepaint.clusters {
                 let r = cluster.radius;
                 window.paint_quad(quad(
@@ -1253,14 +1561,14 @@ impl Element for Map {
             }
             for dot in &prepaint.dots {
                 if let Some(picture) = &dot.picture {
-                    let half = THUMB / 2.;
+                    let half = dot.side / 2.;
                     let frame = Bounds::new(
                         dot.at - point(px(half), px(half)),
-                        size(px(THUMB), px(THUMB)),
+                        size(px(dot.side), px(dot.side)),
                     );
                     window.paint_quad(quad(
                         frame,
-                        px(6.),
+                        px((dot.side * 0.15).min(6.)),
                         colors.paper,
                         px(if dot.selected { 3. } else { 2. }),
                         if dot.selected {
@@ -1270,7 +1578,7 @@ impl Element for Map {
                         },
                         BorderStyle::Solid,
                     ));
-                    let side = THUMB - 6.;
+                    let side = dot.side - 6.;
                     let inner = Bounds::new(
                         frame.origin + point(px(3.), px(3.)),
                         size(px(side), px(side)),
@@ -1526,7 +1834,9 @@ impl Element for Map {
                 .map_or(Pick::Nothing, |(_, _, pick)| pick.clone());
             // A cluster opens where it is: zoomed to its files, as long as
             // zooming can pull them apart.
-            if let Pick::Cluster(_, rect) = &picked {
+            // Files at one place, or zoomed in all the way, open in place
+            // instead: spread around where they are.
+            if let Pick::Cluster(files, rect) = &picked {
                 let view = handles.view.get().unwrap_or(shown);
                 let wide = rect.x1 - rect.x0 > 1e-12 || rect.y1 - rect.y0 > 1e-12;
                 if wide && view.zoom < MAX_ZOOM - 0.5 {
@@ -1535,8 +1845,14 @@ impl Element for Map {
                         zoom: fitted.zoom.max(view.zoom + 1.),
                         ..fitted
                     }));
-                    return;
+                } else {
+                    *handles.opened.borrow_mut() = files.iter().copied().collect();
                 }
+                return;
+            }
+            // A click beside a bubble opened in place folds it.
+            if picked == Pick::Nothing && handles.fold() && clicks == 1 {
+                return;
             }
             if picked == Pick::Nothing && clicks == 2 {
                 // A double click on the map itself zooms in there.
@@ -1611,6 +1927,66 @@ mod tests {
 
     fn at(lat: f64, lon: f64) -> LatLon {
         LatLon::new(lat, lon).unwrap()
+    }
+
+    /// Two squares, by centre and side, share some area.
+    fn overlap(a: &Spot, b: &Spot) -> bool {
+        let reach = f64::midpoint(a.side, b.side);
+        (a.at.0 - b.at.0).abs() < reach - 1e-9 && (a.at.1 - b.at.1).abs() < reach - 1e-9
+    }
+
+    #[test]
+    fn spiral_squares_never_overlap() {
+        for n in [2, 3, 5, 8, 13, 40, 150, 1000] {
+            let squares: Vec<Spot> = (0..n)
+                .map(|k| Spot {
+                    at: spiral(k, 1.),
+                    side: 1.,
+                    point: (0., 0.),
+                    spread: true,
+                })
+                .collect();
+            for (i, a) in squares.iter().enumerate() {
+                for b in &squares[i + 1..] {
+                    assert!(!overlap(a, b), "{n}: {a:?} and {b:?}");
+                }
+                // Inside what the spiral says it reaches.
+                assert!(a.at.0.hypot(a.at.1) + 0.5 * 2f64.sqrt() <= spiral_reach(n, 1., 0.) + 1e-9);
+            }
+        }
+    }
+
+    #[test]
+    fn a_spread_hides_nothing_and_keeps_its_order() {
+        // Three piles of pictures taken at one spot each, two of them close
+        // enough that their spirals would overlap, and one alone.
+        let mut points = Vec::new();
+        points.extend(std::iter::repeat_n((100., 100.), 30));
+        points.extend(std::iter::repeat_n((130., 110.), 12));
+        points.extend(std::iter::repeat_n((600., 400.), 5));
+        points.push((900., 50.));
+        let side = |n: usize| if n > 20 { 20. } else { 40. };
+        let spots = spread(&points, side, 4.);
+        for (i, a) in spots.iter().enumerate() {
+            assert_eq!(a.point, points[i]);
+            for b in &spots[i + 1..] {
+                assert!(!overlap(a, b), "{a:?} and {b:?}");
+            }
+        }
+        // The alone stays where it is; the others share their spirals.
+        assert_eq!(spots[47].at, (900., 50.));
+        assert!(!spots[47].spread);
+        assert!(spots[..47].iter().all(|s| s.spread));
+        // The two close piles joined (the sizes of 42), the far one did not.
+        assert!(spots[..42].iter().all(|s| s.side == 20.));
+        assert!(spots[42..47].iter().all(|s| s.side == 40.));
+        // The first in the order is the nearest the centre, and so on out.
+        let centre = (
+            (30. * 100. + 12. * 130.) / 42.,
+            (30. * 100. + 12. * 110.) / 42.,
+        );
+        let from = |s: &Spot| (s.at.0 - centre.0).hypot(s.at.1 - centre.1);
+        assert!(spots[..42].windows(2).all(|w| from(&w[0]) <= from(&w[1])));
     }
 
     #[test]

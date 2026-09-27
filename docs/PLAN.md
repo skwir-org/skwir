@@ -623,6 +623,17 @@ only network code). Each step below ships on its own.
   path in `crates/plugins/geo/tests/map_view.rs`. Not verified: the double
   click that opens (it starts the desktop's viewer); a folder of thousands
   of pictures (no geotagged bench data yet); the dark theme.
+  Then, spreading (ADR-020 addendum): a bubble of files at one place opens
+  in place as a spiral in the order they were taken, and Spread does it
+  for every place. Verified on Xvfb with 24 synthetic pictures at one
+  position whose hue follows their shuffled dates (the spiral runs from
+  red at its centre to violet at its rim, the two undated last), 5 more
+  1 km away (their spiral joins the first when zoomed out and parts when
+  zoomed in), a click selecting, a click beside folding, a band holding
+  what it covers, and 307 pictures at one spot drawn as a spiral of dots
+  at 0.5% idle CPU. The planned "+N" tile past the budget became dots in
+  their places, and Escape does not fold (it is the pane's `select_none`;
+  a click beside does).
 - **D. More formats and polish.** TCX, FIT, IGC and NMEA; track thumbnails in the
   grid; an elevation profile under the preview (a plan's planned altitudes);
   positions of videos (the MP4 location atom); a "Show on map" link on the

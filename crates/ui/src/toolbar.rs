@@ -28,6 +28,7 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "usage",
         "layers",
         "map",
+        "spread",
         "grip",
         "calendar",
         "search",
