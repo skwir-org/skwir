@@ -37,6 +37,10 @@ pub const ID: &str = "map";
 const PAN_STEP: f64 = 120.;
 /// The map opened on a file shows the streets around it.
 const FOCUS_ZOOM: f64 = 15.;
+/// The placeholder of a location with nothing to place stays this long at
+/// most while the next location's scan has placed nothing yet: a folder
+/// of notes after another does not blink.
+const HOLD: std::time::Duration = std::time::Duration::from_millis(250);
 
 #[derive(Deserialize)]
 struct Placed {
@@ -78,6 +82,10 @@ pub struct MapView {
     /// The file the map opens on, once it is placed: the one selected
     /// when the view was shown ("Show on map" in Details).
     focus: Option<EntryId>,
+    /// The placeholder was drawn last, and since when it is held for the
+    /// location shown now (`HOLD`).
+    placeholder_shown: bool,
+    hold: Option<std::time::Instant>,
 }
 
 impl MapView {
@@ -274,6 +282,22 @@ impl PaneView for MapView {
                 _ => None,
             };
         }
+        // Another location, after one with nothing to place: its
+        // placeholder is held while this one's scan has nothing yet.
+        if self.placeholder_shown
+            && self
+                .requested
+                .as_ref()
+                .is_some_and(|requested| requested.0 != source.0)
+        {
+            self.hold = Some(std::time::Instant::now());
+            // A redraw when the hold ends, whatever else wakes the window.
+            cx.spawn(async move |shell, cx| {
+                cx.background_executor().timer(HOLD).await;
+                let _ = shell.update(cx, |_, cx| cx.notify());
+            })
+            .detach();
+        }
         if self.requested.as_ref() != Some(&source) {
             self.requested = Some(source);
             if let Err(error) = shell
@@ -303,9 +327,18 @@ impl PaneView for MapView {
         }
 
         let theme = cx.global::<Theme>().clone();
-        let (placed, _, _, complete) = self.counts;
-        // Nothing here says where it is: say so, and offer the subfolders.
-        if complete && placed == 0 {
+        let (_, _, _, complete) = self.counts;
+        // With nothing placed there is no map to draw: a map of nothing
+        // fits the whole world, which would flash before the placeholder.
+        // Nothing here says where it is: say so, and offer the subfolders;
+        // while the scan looks, the header says so over the empty paper.
+        let nothing = self.places.is_empty();
+        let held = self.hold.is_some_and(|since| since.elapsed() < HOLD);
+        if !nothing || complete || !held {
+            self.hold = None;
+        }
+        self.placeholder_shown = nothing && (complete || held);
+        if self.placeholder_shown {
             let placeholder = crate::placeholder::Placeholder {
                 icon: "map",
                 title: "Nothing here says where it is".into(),
@@ -366,6 +399,16 @@ impl PaneView for MapView {
             .render(shell, cx),
         );
 
+        if nothing {
+            return div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(header)
+                .child(div().flex_1().bg(theme.bg))
+                .into_any_element();
+        }
         let weak = cx.entity().downgrade();
         let picked = weak.clone();
         let picking = Picking {
