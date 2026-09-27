@@ -584,7 +584,10 @@ only network code). Each step below ships on its own.
   standing in when zooming out, and HTTP/2 through hyper in place of `ureq`.
   At 150 ms a tile, opening a map now shows its middle in 175 ms (it came
   last) and the whole view in 431 ms (was 626), and zooming out two levels
-  completes in about 1 s (was 1.9).
+  completes in about 1 s (was 1.9). Found after step C: a tile's outline
+  showed as a darker line at some fractional zooms, gpui filtering a
+  magnified image's edge with the empty atlas slot beside it; fixed in
+  the vendored gpui (patch 0008, `vendor/gpui/README.bibli.md`).
 - **C. The Map view.** A `ViewRole::Lens` in the View menu. `geo` scans the
   location shown (a folder, or with "Include subfolders" its subtree; a search or
   a timeline bucket as it is) for EXIF positions and track files, visible

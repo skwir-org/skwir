@@ -117,6 +117,21 @@ layout (`crates/gpui/...`) so they apply there with `git apply -p1`.
   the key-down of its own keyboard click. A test in `elements::div`
   (`keyboard_click_tests`), run by `just list-check`.
 
+- `0008-clamp-image-sampling-to-its-atlas-tile.patch`: images share the
+  polychrome atlas without padding between them (`padding: 0`), and sprites
+  are sampled with a linear filter. An image drawn larger than its pixels
+  (a map tile at a fractional zoom, 1 to 1.41 times) then filtered its edge
+  texels with whatever lay beside it in the atlas, weighted up to
+  `0.5 - 0.5 / scale`: another tile, invisibly, but a slot left empty
+  showed as a darker line along the image's edge (a tile's outline across
+  a map). The polychrome sprite fragment shader clamps its coordinate to
+  half a texel inside the sprite's atlas tile, so an image samples only
+  itself; inside the tile nothing changes. WGSL (Blade), Metal and HLSL
+  alike; only the WGSL is compiled here, the others are mechanical.
+  Verified on Xvfb with lavapipe: a map opened on a fresh start and zoomed
+  in half a level showed a tile's outline at the same place on every
+  start, and does not with the patch.
+
 ## Regenerating a patch
 
     G=$(ls -d ~/.cargo/registry/src/*/gpui-0.2.2)

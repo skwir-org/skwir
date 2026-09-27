@@ -1169,7 +1169,16 @@ PolychromeSpriteVertexOutput polychrome_sprite_vertex(uint vertex_id: SV_VertexI
 
 float4 polychrome_sprite_fragment(PolychromeSpriteFragmentInput input): SV_Target {
     PolychromeSprite sprite = poly_sprites[input.sprite_id];
-    float4 sample = t_sprite.Sample(s_sprite, input.tile_position);
+    // Images are packed in the atlas without padding: a magnified one would
+    // filter its edge texels with whatever lies beside it. Sample no nearer
+    // to its tile's edge than half a texel.
+    float2 atlas_size;
+    t_sprite.GetDimensions(atlas_size.x, atlas_size.y);
+    float2 tile_origin = float2(sprite.tile.bounds.origin);
+    float2 tile_end = tile_origin + float2(sprite.tile.bounds.size);
+    float2 tile_position = clamp(input.tile_position, (tile_origin + 0.5) / atlas_size,
+                                 (tile_end - 0.5) / atlas_size);
+    float4 sample = t_sprite.Sample(s_sprite, tile_position);
     float distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
 
     float4 color = sample;
