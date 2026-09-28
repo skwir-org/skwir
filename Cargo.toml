@@ -69,6 +69,7 @@ bibli-plugin-preview-playlists = { path = "crates/plugins/preview-playlists" }
 bibli-plugin-mpris = { path = "crates/plugins/mpris" }
 bibli-plugin-preview-structured = { path = "crates/plugins/preview-structured" }
 bibli-plugin-preview-fonts = { path = "crates/plugins/preview-fonts" }
+bibli-plugin-preview-models = { path = "crates/plugins/preview-models" }
 bibli-plugin-preview-email = { path = "crates/plugins/preview-email" }
 bibli-plugin-preview-comics = { path = "crates/plugins/preview-comics" }
 bibli-plugin-preview-documents = { path = "crates/plugins/preview-documents" }

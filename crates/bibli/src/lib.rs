@@ -36,6 +36,7 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
         Arc::new(bibli_plugin_mpris::MprisPlugin::default()),
         Arc::new(bibli_plugin_preview_structured::PreviewPlugin),
         Arc::new(bibli_plugin_preview_fonts::PreviewPlugin),
+        Arc::new(bibli_plugin_preview_models::PreviewPlugin),
         Arc::new(bibli_plugin_preview_email::PreviewPlugin),
         Arc::new(bibli_plugin_preview_comics::PreviewPlugin),
         Arc::new(bibli_plugin_geo::GeoPlugin::default()),

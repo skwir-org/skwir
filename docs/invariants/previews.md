@@ -45,8 +45,15 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
 - A picture is decoded in the process when `thumb_providers::decodes` says
   so; any other `image/*` type is the desktop thumbnailer's to draw
   (`thumbnails` plugin, a fallback provider), and so is a 3D model (the
-  `model/*` types and what the MIME database draws as a picture, `pictured`), and what it drew is all there
-  is (`Pixels::Drawn`: never sharpened, its own size from EXIF when known).
+  `model/*` types and what the MIME database draws as a picture,
+  `pictured`), and what it drew is all there is (`Pixels::Drawn`: never
+  sharpened, its own size from EXIF when known).
+- A model, drawing or print is shown by the picture its application stored
+  in it (`preview-models`), read from where the format keeps it and no
+  further: a Blender file's blocks before its `TEST` block (a compressed
+  one decoded as a stream, only that far), a package's named members, a
+  G-code's first `TEXT_INPUT` and last `TAIL` bytes, a DWG's listed
+  pictures. Nothing is drawn in 3D in the process.
   A decoder added in the process adds its type there, which is what keeps
   the fallback away. Floating-point pictures hold linear light and are
   encoded as sRGB in `picture::decode`, which every shown picture passes.

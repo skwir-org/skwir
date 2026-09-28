@@ -41,6 +41,7 @@ bibli-plugin-preview-playlists.workspace = true
 bibli-plugin-mpris.workspace = true
 bibli-plugin-preview-structured.workspace = true
 bibli-plugin-preview-fonts.workspace = true
+bibli-plugin-preview-models.workspace = true
 bibli-plugin-preview-email.workspace = true
 bibli-plugin-preview-comics.workspace = true
 bibli-plugin-preview-documents.workspace = true

@@ -546,6 +546,7 @@ dependencies = [
  "bibli-plugin-preview-hex",
  "bibli-plugin-preview-markdown",
  "bibli-plugin-preview-media",
+ "bibli-plugin-preview-models",
  "bibli-plugin-preview-playlists",
  "bibli-plugin-preview-structured",
  "bibli-plugin-preview-tables",
@@ -953,6 +954,22 @@ dependencies = [
  "bibli-platform",
  "tempfile",
  "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "bibli-plugin-preview-models"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "bibli-core",
+ "bibli-platform",
+ "flate2",
+ "image",
+ "quick-xml 0.42.0",
+ "ruzstd",
+ "tempfile",
+ "zip",
 ]
 
 [[package]]
@@ -6888,6 +6905,12 @@ dependencies = [
  "unicode-properties",
  "unicode-script",
 ]
+
+[[package]]
+name = "ruzstd"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a252f5e20f038fe7b4ea53e073e65398d652c864cc162fc77c56c2f13717b888"
 
 [[package]]
 name = "ryu"

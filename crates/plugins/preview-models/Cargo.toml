@@ -1,0 +1,28 @@
+[package]
+name = "bibli-plugin-preview-models"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bibli-core.workspace = true
+bibli-platform.workspace = true
+anyhow.workspace = true
+image.workspace = true
+# Blender files saved compressed: gzip before 3.0, Zstandard since. Both
+# are decoded as a stream, only as far as the picture near their start.
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+ruzstd = { version = "0.9", default-features = false, features = ["std"] }
+# 3MF packages and FreeCAD documents are zips; the version and inflater
+# already in the tree.
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+quick-xml = "0.42"
+# G-code carries its pictures in base64 comments.
+base64 = "0.22"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
