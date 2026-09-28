@@ -538,6 +538,7 @@ dependencies = [
  "bibli-plugin-ops-basic",
  "bibli-plugin-places",
  "bibli-plugin-preview-archives",
+ "bibli-plugin-preview-circuits",
  "bibli-plugin-preview-comics",
  "bibli-plugin-preview-documents",
  "bibli-plugin-preview-email",
@@ -869,6 +870,16 @@ dependencies = [
  "bibli-core",
  "bibli-platform",
  "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "bibli-plugin-preview-circuits"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "bibli-core",
+ "bibli-platform",
  "tempfile",
 ]
 

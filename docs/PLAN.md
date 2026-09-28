@@ -80,6 +80,17 @@ bitmap, zlib-compressed, in the properties table) show their stored
 picture too; checked on two `SketchUp` 2021 models, a `LayOut` 2021
 document and two Rhino 5 models; older `SketchUp` and newer Rhino files
 only on synthetic ones.
+Circuits (2026-09-28): the new `preview-circuits` plugin draws KiCad
+boards, footprints, schematics and symbol libraries (KiCad 6 onwards;
+boards since 4) from their S-expressions, written as SVG for the inert
+rasterizer, with a board's size, layers, footprints, nets, tracks and
+vias, a schematic's symbols and sheets in Details. Checked against
+`kicad-cli`'s own SVG on KiCad's demo projects (KiCad 9 and 10 files):
+pins land on wires, turned and mirrored symbols match, multi-unit
+references are lettered. Release build, 2048 px: 50 to 600 ms a file;
+peak about 25 MB beyond the file's own size (an 84 MB board: 3.3 s,
+111 MB, so files over 32 MiB are not drawn). Text is set in a system
+font: KiCad's stroke font is GPL.
 Audio and video (2026-09-25, ADR-016): `preview-audio` is folded into
 `preview-media` ("Preview: audio and video"), which declares every playback
 preference, the shell player's included (keep playing while you browse, on by
