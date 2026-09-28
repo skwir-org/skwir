@@ -14,9 +14,9 @@ use std::path::Path;
 /// its resources (the meshes, megabytes of them).
 const MODEL_HEAD: u64 = 64 * 1024;
 
-type Archive = zip::ZipArchive<std::io::BufReader<std::fs::File>>;
+pub(crate) type Archive = zip::ZipArchive<std::io::BufReader<std::fs::File>>;
 
-fn open(path: &Path) -> anyhow::Result<Archive> {
+pub(crate) fn open(path: &Path) -> anyhow::Result<Archive> {
     let archive = zip::ZipArchive::new(std::io::BufReader::new(inspection::open(path)?))?;
     anyhow::ensure!(
         archive.len() <= limits::CONTAINER_MEMBERS,
@@ -27,7 +27,7 @@ fn open(path: &Path) -> anyhow::Result<Archive> {
 }
 
 /// The member `name`, if it is there and within `bound` once inflated.
-fn member(archive: &mut Archive, name: &str, bound: u64) -> Option<Vec<u8>> {
+pub(crate) fn member(archive: &mut Archive, name: &str, bound: u64) -> Option<Vec<u8>> {
     let file = archive.by_name(name).ok()?;
     if file.size() > bound {
         return None;
@@ -46,7 +46,7 @@ fn member_head(archive: &mut Archive, name: &str, bound: u64) -> Option<Vec<u8>>
 }
 
 /// An attribute of an element, unescaped.
-fn attribute(element: &quick_xml::events::BytesStart<'_>, name: &str) -> Option<String> {
+pub(crate) fn attribute(element: &quick_xml::events::BytesStart<'_>, name: &str) -> Option<String> {
     element
         .attributes()
         .flatten()

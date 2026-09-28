@@ -73,7 +73,13 @@ volume when watertight, triangles). 3DBenchy (225 706 triangles) takes
 leaves meshes to an installed thumbnailer. STEP and IGES stay with f3d
 (its nixpkgs build names STEP `application/vnd.step`, which the MIME
 database here does not, so those need f3d's own MIME types); OpenCASCADE
-would be a helper of its own if ever wanted.
+would be a helper of its own if ever wanted. `SketchUp` models (the
+PNG a 2021 model keeps in the zip after its header, or among an older
+one's first bytes), `LayOut` documents and Rhino models (the preview
+bitmap, zlib-compressed, in the properties table) show their stored
+picture too; checked on two `SketchUp` 2021 models, a `LayOut` 2021
+document and two Rhino 5 models; older `SketchUp` and newer Rhino files
+only on synthetic ones.
 Audio and video (2026-09-25, ADR-016): `preview-audio` is folded into
 `preview-media` ("Preview: audio and video"), which declares every playback
 preference, the shell player's included (keep playing while you browse, on by

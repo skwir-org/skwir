@@ -1,8 +1,8 @@
 //! bibli plugin: 3D models, drawings and prints, shown by the picture their
 //! own application stored in them, with what the file says of itself in
 //! Details. A Blender file, a 3MF package, a `FreeCAD` document, a DWG or DXF
-//! drawing and a G-code print each carry one, near their start; reading it
-//! costs a few hundred kilobytes. A mesh that carries none (STL, OBJ, PLY,
+//! drawing, a `SketchUp` or Rhino model and a G-code print each carry one;
+//! reading it costs a few hundred kilobytes. A mesh that carries none (STL, OBJ, PLY,
 //! OFF, glTF, a 3MF its slicer did not picture) is drawn by a helper of its
 //! own, `bibli-model-worker`, and measured. The same pictures are the
 //! grid's thumbnails, after any thumbnailer the desktop installed for
@@ -12,6 +12,8 @@ mod cad;
 mod gcode;
 mod mesh;
 mod package;
+mod rhino;
+mod sketchup;
 
 use bibli_core::{
     App, CancelToken,
@@ -37,7 +39,7 @@ impl Plugin for PreviewPlugin {
         "Preview: 3D models and prints"
     }
     fn description(&self) -> &'static str {
-        "Show Blender files, 3MF packages, FreeCAD documents, DWG and DXF drawings and G-code prints by the picture stored in them, and draw STL, OBJ, PLY, OFF and glTF models; print time, filament, size, volume and version in Details"
+        "Show Blender files, 3MF packages, FreeCAD documents, SketchUp and Rhino models, DWG and DXF drawings and G-code prints by the picture stored in them, and draw STL, OBJ, PLY, OFF and glTF models; print time, filament, size, volume and version in Details"
     }
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Previews
@@ -67,6 +69,9 @@ enum Format {
     FreeCad,
     Dwg,
     Dxf,
+    SketchUp,
+    LayOut,
+    Rhino,
     /// A mesh the helper draws.
     Mesh(MeshFormat),
 }
@@ -90,6 +95,9 @@ impl Format {
             "fcstd" => Some(Format::FreeCad),
             "dwg" => Some(Format::Dwg),
             "dxf" => Some(Format::Dxf),
+            "skp" => Some(Format::SketchUp),
+            "layout" => Some(Format::LayOut),
+            "3dm" => Some(Format::Rhino),
             "stl" => Some(Format::Mesh(MeshFormat::Stl)),
             // Also a compiled object's name: the mesh is read only if the
             // file is text (`inspect`).
@@ -138,6 +146,9 @@ impl Format {
             Format::FreeCad => package::freecad(path, side, cancel),
             Format::Dwg => cad::dwg(path, side, cancel),
             Format::Dxf => cad::dxf(path, side, cancel),
+            Format::SketchUp => sketchup::model(path, side, cancel),
+            Format::LayOut => sketchup::layout(path, side, cancel),
+            Format::Rhino => rhino::read(path, side, cancel),
             Format::Mesh(format) => mesh::read(path, format, side, cancel),
         }
     }
@@ -316,6 +327,9 @@ mod tests {
         assert_eq!(of("scene.blender", None), None);
         assert_eq!(of("PART.FCStd", None), Some(Format::FreeCad));
         assert_eq!(of("plate.3MF", None), Some(Format::ThreeMf));
+        assert_eq!(of("house.skp", None), Some(Format::SketchUp));
+        assert_eq!(of("sheets.layout", None), Some(Format::LayOut));
+        assert_eq!(of("part.3dm", None), Some(Format::Rhino));
         assert_eq!(of("print", Some("text/x.gcode")), Some(Format::Gcode));
         assert_eq!(of("notes.txt", Some("text/plain")), None);
     }

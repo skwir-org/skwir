@@ -40,7 +40,7 @@ fn release(version: &str) -> Option<&'static str> {
 
 /// A bitmap stored without its file header, as the `image` crate reads one
 /// inside an icon.
-fn bitmap(dib: &[u8], side: u32) -> Option<bibli_core::thumbs::Image> {
+pub(crate) fn bitmap(dib: &[u8], side: u32) -> Option<bibli_core::thumbs::Image> {
     let decoder =
         image::codecs::bmp::BmpDecoder::new_without_file_header(std::io::Cursor::new(dib)).ok()?;
     let (width, height) = image::ImageDecoder::dimensions(&decoder);
