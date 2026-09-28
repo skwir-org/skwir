@@ -1,7 +1,9 @@
-//! Reading mode for Markdown and HTML files; all parsing and embedded image
-//! reads run on workers. Both end as the same semantic blocks, so they read
-//! alike, and both keep their source one toggle away.
+//! Reading mode for Markdown and HTML files, and Jupyter notebooks; all
+//! parsing and embedded image reads run on workers. All end as the same
+//! semantic blocks, so they read alike, and all keep their source one
+//! toggle away.
 mod markdown;
+mod notebook;
 use bibli_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection, InspectionKind},
@@ -16,10 +18,10 @@ impl Plugin for PreviewPlugin {
         "preview-markdown"
     }
     fn title(&self) -> &'static str {
-        "Preview: Markdown and HTML"
+        "Preview: Markdown, HTML and notebooks"
     }
     fn description(&self) -> &'static str {
-        "Read Markdown and HTML files as documents, with headings, tables, code and local images; switch to the source at any time. HTML is inert: no scripts, fonts or remote content"
+        "Read Markdown and HTML files and Jupyter notebooks as documents, with headings, tables, code and local images; switch to the source at any time. HTML is inert: no scripts, fonts or remote content"
     }
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Previews
@@ -65,7 +67,7 @@ impl PreviewProvider for Provider {
     fn accepts(&self, req: &PreviewRequest) -> bool {
         matches!(
             inspection::extension(&req.entry.path).as_str(),
-            "md" | "markdown" | "mdown" | "html" | "htm" | "xhtml"
+            "md" | "markdown" | "mdown" | "html" | "htm" | "xhtml" | "ipynb"
         )
     }
     /// A picture the document named, beside it: the same containment as
@@ -78,6 +80,9 @@ impl PreviewProvider for Provider {
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<bibli_core::thumbs::Image>> {
         let path = req.entry.resolve()?;
+        if key.starts_with(notebook::OUTPUT) && inspection::extension(&path) == "ipynb" {
+            return Ok(notebook::decoded(&notebook::read(&path, cancel)?, key));
+        }
         let base = path.parent().unwrap_or(std::path::Path::new("."));
         Ok(rich_preview::local_image(base, key, cancel))
     }
@@ -92,6 +97,9 @@ impl PreviewProvider for Provider {
             return Ok(None);
         }
         let path = req.entry.resolve()?;
+        if inspection::extension(&path) == "ipynb" {
+            return notebook(&path, cancel).map(Some);
+        }
         let (source, encoding) = inspection::read_text(&path, cancel)?;
         let base = path.parent().unwrap_or(std::path::Path::new("."));
         let image = |href: &str| rich_preview::local_picture(base, href, cancel);
@@ -127,6 +135,42 @@ impl PreviewProvider for Provider {
             page,
         )))
     }
+}
+
+/// A notebook read as a document: its Markdown, its code and outputs, and
+/// its pictures beside it or drawn by its outputs.
+fn notebook(path: &std::path::Path, cancel: &CancelToken) -> anyhow::Result<Inspection> {
+    let value = notebook::read(path, cancel)?;
+    let read = notebook::markdown(&value, cancel)?;
+    let base = path.parent().unwrap_or(std::path::Path::new("."));
+    let page = markdown::parse(&read.markdown, cancel, |href| {
+        notebook::named(&value, href).or_else(|| rich_preview::local_picture(base, href, cancel))
+    })?;
+    let mut data = measured(
+        Inspection {
+            kind: InspectionKind::Markdown,
+            title: "Notebook".into(),
+            source_available: true,
+            notice: if read.shortened > 0 {
+                format!(
+                    "{} output{} shortened to their first lines",
+                    read.shortened,
+                    if read.shortened == 1 { "" } else { "s" }
+                )
+            } else {
+                String::new()
+            },
+            ..Inspection::default()
+        },
+        inspection::Encoding::Utf8,
+        page,
+    );
+    data.details.extend(inspection::details([
+        ("Cells", inspection::count(read.cells)),
+        ("Language", read.language),
+        ("Kernel", read.kernel),
+    ]));
+    Ok(data)
 }
 
 #[cfg(test)]
@@ -178,5 +222,100 @@ mod tests {
             read_as("CHANGELOG.md", changelog.as_bytes(), &source).is_none(),
             "the source is the shared code view"
         );
+    }
+
+    #[test]
+    fn a_notebook_reads_as_its_markdown_code_and_outputs() {
+        // A 1 × 1 PNG, as a notebook stores a plot.
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        let document = serde_json::json!({
+            "nbformat": 4,
+            "nbformat_minor": 5,
+            "metadata": {
+                "kernelspec": {"name": "python3", "display_name": "Python 3", "language": "python"}
+            },
+            "cells": [
+                {"cell_type": "markdown", "source": ["# Café results\n", "Some *text*."]},
+                {"cell_type": "code", "execution_count": 1,
+                 "source": "print('```')\nvalue = 1 + 1",
+                 "outputs": [
+                    {"output_type": "stream", "name": "stdout", "text": ["```\n"]},
+                    {"output_type": "execute_result", "execution_count": 1,
+                     "data": {"text/plain": ["2"]}, "metadata": {}},
+                    {"output_type": "display_data",
+                     "data": {"image/png": png, "text/plain": ["<Figure>"]}, "metadata": {}},
+                    {"output_type": "error", "ename": "ValueError", "evalue": "bad",
+                     "traceback": ["\u{1b}[0;31mValueError\u{1b}[0m", "bad value"]}
+                 ]},
+                {"cell_type": "raw", "source": "not for reading"}
+            ]
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a notebook’s name.ipynb");
+        std::fs::write(&path, document.to_string()).unwrap();
+        let data = notebook(&path, &CancelToken::new()).unwrap();
+        assert_eq!(data.blocks[0].heading, 1);
+        assert_eq!(data.blocks[0].text, "Café results");
+        let code: Vec<_> = data
+            .blocks
+            .iter()
+            .filter(|block| block.code)
+            .map(|block| (block.language.as_deref(), block.text.as_str()))
+            .collect();
+        assert_eq!(
+            code,
+            [
+                (Some("python"), "print('```')\nvalue = 1 + 1"),
+                // A printed fence stays text, and a traceback loses its colours.
+                (Some("output"), "```"),
+                (Some("output"), "2"),
+                (Some("output"), "ValueError\nbad value"),
+            ]
+        );
+        assert!(
+            !data
+                .blocks
+                .iter()
+                .any(|block| block.text.contains("not for reading"))
+        );
+        let key = data
+            .blocks
+            .iter()
+            .find_map(|block| match &block.picture {
+                Some(bibli_core::inspection::Picture::Later {
+                    key,
+                    width: 1,
+                    height: 1,
+                }) => Some(key.clone()),
+                _ => None,
+            })
+            .expect("the plot is named for later");
+        let request = PreviewRequest {
+            entry: bibli_core::op::EntryRef::from_path(&path).unwrap(),
+            mime: Some("application/x-ipynb+json".into()),
+            page: 1,
+            seconds: None,
+            max_side: 64,
+            text_size: None,
+        };
+        let image = Provider
+            .picture(
+                &request,
+                &InspectRequest::default(),
+                &key,
+                &CancelToken::new(),
+            )
+            .unwrap()
+            .expect("decoded when seen");
+        assert_eq!((image.width, image.height), (1, 1));
+        let fact = |label: &str| {
+            data.details
+                .iter()
+                .find(|d| d.label == label)
+                .map(|d| d.value.clone())
+        };
+        assert_eq!(fact("Cells").as_deref(), Some("3"));
+        assert_eq!(fact("Language").as_deref(), Some("python"));
+        assert_eq!(fact("Kernel").as_deref(), Some("Python 3"));
     }
 }
