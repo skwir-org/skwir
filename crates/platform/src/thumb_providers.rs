@@ -157,6 +157,8 @@ const SUBTYPES: &[&str] = &[
     "x-portable-graymap",
     "x-portable-bitmap",
     "x-portable-anymap",
+    "x-exr",
+    "x-dds",
 ];
 
 /// Refuse to decode anything larger than this many pixels.
