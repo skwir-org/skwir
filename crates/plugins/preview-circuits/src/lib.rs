@@ -1,10 +1,13 @@
 //! bibli plugin: circuit boards and schematics drawn from their files.
-//! `KiCad`'s boards, footprints, schematics and symbol libraries are text,
-//! read here and written as SVG, which bibli's inert rasterizer draws
-//! (`inspection::drawing`): in the preview panel, with what the file holds
-//! in Details and its text one toggle away, and as the grid's thumbnails.
-//! Nothing outside the file is read.
+//! `KiCad`'s boards, footprints, schematics and symbol libraries, and the
+//! Gerber and Excellon drill files any design program sends to the board
+//! maker, are text, read here and written as SVG, which bibli's inert
+//! rasterizer draws (`inspection::drawing`): in the preview panel, with
+//! what the file holds in Details and its text one toggle away, and as
+//! the grid's thumbnails. Nothing outside the file is read.
 mod board;
+mod drill;
+mod gerber;
 mod schematic;
 mod sexpr;
 mod svg;
@@ -38,7 +41,7 @@ impl Plugin for PreviewPlugin {
         "Preview: circuit boards and schematics"
     }
     fn description(&self) -> &'static str {
-        "Draw KiCad boards, footprints, schematics and symbol libraries; board size, layers, footprints, nets and symbols in Details"
+        "Draw KiCad boards, footprints, schematics and symbol libraries, and Gerber and drill files; board size, layers, footprints, nets, symbols and holes in Details"
     }
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Previews
@@ -56,6 +59,10 @@ enum Format {
     Footprint,
     Schematic,
     Symbols,
+    /// A Gerber layer, whatever made it.
+    Gerber,
+    /// An Excellon drill file.
+    Drill,
 }
 
 impl Format {
@@ -67,6 +74,19 @@ impl Format {
             "kicad_mod" => Format::Footprint,
             "kicad_sch" => Format::Schematic,
             "kicad_sym" => Format::Symbols,
+            // A layer's name says which (`.gtl`, top copper); `.gbr` is
+            // also a GIMP brush's, taken only if it is Gerber (`ours`).
+            "gbr" | "ger" | "gbx" | "pho" | "gtl" | "gbl" | "gts" | "gbs" | "gto" | "gbo"
+            | "gtp" | "gbp" | "gta" | "gba" | "gko" | "gml" => Format::Gerber,
+            // Inner layers and outlines by number: `.g2`, `.gp1`, `.gm1`.
+            name if ["g", "gp", "gm"].iter().any(|prefix| {
+                name.strip_prefix(prefix)
+                    .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+            }) =>
+            {
+                Format::Gerber
+            }
+            "drl" | "xln" | "exc" | "xnc" => Format::Drill,
             _ => return None,
         })
     }
@@ -78,7 +98,30 @@ impl Format {
             Format::Footprint => "KiCad footprint",
             Format::Schematic => "KiCad schematic",
             Format::Symbols => "KiCad symbol library",
+            Format::Gerber => "Gerber layer",
+            Format::Drill => "Drill file",
         }
+    }
+
+    /// Whether the file is what its name says: a `.gbr` may be a GIMP
+    /// brush, left to the other previews. Reads its start.
+    fn ours(self, path: &Path) -> anyhow::Result<bool> {
+        use std::io::Read as _;
+        if !matches!(self, Format::Gerber | Format::Drill) {
+            return Ok(true);
+        }
+        let mut head = Vec::new();
+        inspection::open(path)?
+            .take(64 * 1024)
+            .read_to_end(&mut head)?;
+        if head.contains(&0) {
+            return Ok(false);
+        }
+        let head = String::from_utf8_lossy(&head);
+        Ok(match self {
+            Format::Gerber => gerber::looks_like(&head),
+            _ => drill::looks_like(&head),
+        })
     }
 
     fn read(self, path: &Path, cancel: &CancelToken) -> anyhow::Result<Found> {
@@ -90,6 +133,25 @@ impl Format {
             Format::Footprint => board::footprint_file(&text),
             Format::Schematic => schematic::schematic(&text, cancel),
             Format::Symbols => schematic::library(&text),
+            Format::Gerber => {
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                let drawn = gerber::draw(&text, &name, cancel)?;
+                Ok(Found {
+                    svg: drawn.svg,
+                    details: drawn.details,
+                    notice: drawn.left_out.then(|| {
+                        "Drawn in part: the layer holds more than is drawn here".to_owned()
+                    }),
+                })
+            }
+            Format::Drill => {
+                let drawn = drill::draw(&text, cancel)?;
+                Ok(Found {
+                    svg: drawn.svg,
+                    details: drawn.details,
+                    notice: None,
+                })
+            }
         }
     }
 }
@@ -103,6 +165,8 @@ fn too_large(path: &Path) -> anyhow::Result<bool> {
 struct Found {
     svg: Option<String>,
     details: Vec<(String, String)>,
+    /// What was left out, and why.
+    notice: Option<String>,
 }
 
 /// A drawing rasterized `side` pixels on its longer side.
@@ -122,8 +186,13 @@ impl PreviewProvider for Provider {
     fn id(&self) -> &'static str {
         ID
     }
+    /// Called on a worker (the registry's dispatch), so what a name could
+    /// be two things (a `.gbr` brush) is settled by reading its start: the
+    /// first provider that accepts owns the file, and one that is not ours
+    /// is left to the others.
     fn accepts(&self, req: &PreviewRequest) -> bool {
-        Format::of(&req.entry.path).is_some()
+        Format::of(&req.entry.path)
+            .is_some_and(|format| format.ours(&req.entry.path).unwrap_or(false))
     }
     fn inspect(
         &self,
@@ -156,10 +225,9 @@ impl PreviewProvider for Provider {
             Some(svg) => Some(raster(svg, PANEL_SIDE, cancel)?),
             None => None,
         };
-        let notice = if image.is_none() {
-            "Nothing is drawn in this file".to_owned()
-        } else {
-            String::new()
+        let notice = match (&image, found.notice) {
+            (None, _) => "Nothing is drawn in this file".to_owned(),
+            (Some(_), notice) => notice.unwrap_or_default(),
         };
         Ok(Some(Inspection {
             kind: InspectionKind::Text,
@@ -195,7 +263,7 @@ impl ThumbnailProvider for Pictures {
         let Some(format) = Format::of(&path) else {
             return Ok(None);
         };
-        if too_large(&path)? {
+        if too_large(&path)? || !format.ours(&path)? {
             return Ok(None);
         }
         match format.read(&path, cancel)?.svg {
@@ -230,6 +298,11 @@ mod tests {
         assert_eq!(of("amp.kicad_sch"), Some(Format::Schematic));
         assert_eq!(of("parts.kicad_sym"), Some(Format::Symbols));
         assert_eq!(of("amp.kicad_pro"), None);
+        assert_eq!(of("board-F_Cu.gtl"), Some(Format::Gerber));
+        assert_eq!(of("board-In2_Cu.g2"), Some(Format::Gerber));
+        assert_eq!(of("board-Edge_Cuts.gm1"), Some(Format::Gerber));
+        assert_eq!(of("board.drl"), Some(Format::Drill));
+        assert_eq!(of("g.txt"), None);
     }
 
     #[test]
@@ -310,6 +383,11 @@ mod tests {
             .unwrap();
         assert_eq!(data.notice, "Too large to draw (more than 32 MiB)");
         assert!(data.source_available);
+        // A GIMP brush named like a Gerber layer is not ours: left to the
+        // other previews.
+        let brush = dir.path().join("pencil.gbr");
+        std::fs::write(&brush, b"\0\0\0\x1c\0\0\0\x02GIMP\0\0\0\x0a").unwrap();
+        assert!(!Provider.accepts(&request(&brush)));
         std::fs::write(&path, "(kicad_sch (wire (pts").unwrap();
         assert!(
             Provider

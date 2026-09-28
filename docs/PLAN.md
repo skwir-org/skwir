@@ -106,6 +106,15 @@ programs (cncjs's examples, LinuxCNC's, a PrusaSlicer print stripped
 of its thumbnails) in 140 ms at most in release, at 1024 pixels as at
 128; the three that compute their moves with parameters are left as
 text.
+Gerber and drill files (2026-09-28): the circuits plugin draws a
+Gerber layer (RS-274X: macros with their arithmetic, regions, arcs in
+both quadrant modes, clear polarity, step and repeat, aperture blocks;
+the deprecated knockout is not) in its layer's colour, and an Excellon
+drill file's holes, slots and routes. Compared with gerbv on KiCad's
+exports (KiCad 10, with and without X2 attributes), a demo project's
+own and gerbv's test files: the same pictures, where gerbv's older
+build does not itself draw a macro's rotation or a block; 60 ms at
+most in release.
 Audio and video (2026-09-25, ADR-016): `preview-audio` is folded into
 `preview-media` ("Preview: audio and video"), which declares every playback
 preference, the shell player's included (keep playing while you browse, on by

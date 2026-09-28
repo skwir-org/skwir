@@ -657,6 +657,7 @@ pub fn board(text: &str, cancel: &bibli_core::CancelToken) -> anyhow::Result<Fou
     Ok(Found {
         svg: canvas.finish(BACKGROUND, translucent),
         details,
+        notice: None,
     })
 }
 
@@ -709,6 +710,7 @@ pub fn footprint_file(text: &str) -> anyhow::Result<Found> {
     Ok(Found {
         svg: canvas.finish(BACKGROUND, translucent),
         details,
+        notice: None,
     })
 }
 

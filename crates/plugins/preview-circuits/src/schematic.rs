@@ -915,6 +915,7 @@ pub fn schematic(text: &str, cancel: &bibli_core::CancelToken) -> anyhow::Result
     Ok(Found {
         svg: canvas.finish(BACKGROUND, |_| false),
         details,
+        notice: None,
     })
 }
 
@@ -959,6 +960,7 @@ pub fn library(text: &str) -> anyhow::Result<Found> {
     Ok(Found {
         svg: canvas.finish(BACKGROUND, |_| false),
         details,
+        notice: None,
     })
 }
 

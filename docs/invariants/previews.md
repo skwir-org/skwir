@@ -259,6 +259,15 @@ still to come are in `docs/preview-frame.md`.
   same rule (`preview::compute`): text is read as text whatever it is called.
   The unknown-file icon (`icons::unknown`) is the one place the desktop's
   octet-stream stands for "unknown"; it is a picture, never a claim.
+- **Whoever accepts a file owns it.** The first provider whose `accepts`
+  holds presents the file (`Previews::dispatch`); an `inspect` that
+  answers `None` is not a way to pass it on (the panel then says the
+  provider has no preview). A name two formats share is settled in
+  `accepts`, which runs on the worker: by the type the bytes gave when
+  the database knows both (a GIMP brush's `.gbr`), else by reading the
+  file's start (`NetCDF`'s `.nc` and a CNC program's, a `.gbr` Gerber
+  layer). A thumbnail provider's `accepts` runs on the UI thread and looks
+  at names only; its `thumbnail` returns `None` for a file not its own.
 - **The header is a card** (`preview::header`): the entry's icon, its name
   (a trail inside a container) and one line of type, size and date. It is
   the one place that says what the panel shows, and clicking it opens
