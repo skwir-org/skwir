@@ -212,7 +212,13 @@ pictures, and both left the More group. A plugin can add items made when the
 menu opens (`registry::MenuSource`, a command answering from memory):
 `open-with` names the default application in Open ("Open With Image
 Viewer"), from a catalog it reads on a worker; the others stay behind
-Open With…. Found on the way: the MIME database
+Open With…. The default is the desktop's rule (XDG MIME Applications, as
+gio reads it): the default a list names for the type or a parent, else the
+first application a list added or an entry declares. Open starts that
+application itself: `xdg-open` on Hyprland reads only named defaults and
+`mimeinfo.cache`, so a picture the user had KDE remember for Gwenview
+opened in a browser. `xdg-open` remains for what the catalog opens nothing
+with. Found on the way: the MIME database
 takes 55 to 85 µs to type one name, whatever its shape (release build), so
 the menu types a selection with `mime::by_names`, once per suffix beyond 64
 names and at most 256 questions. Open: the list view still asks it for each

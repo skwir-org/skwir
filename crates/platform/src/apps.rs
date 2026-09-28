@@ -260,10 +260,23 @@ impl Catalog {
             .find_map(|id| self.get(id))
     }
 
-    /// The default for the nearest type of `lineage` that has one: a C
-    /// source opens where plain text does unless it has its own.
+    /// What opens a file of the first type of `lineage` (the type and those
+    /// it descends from, nearest first: `mime::lineage`), as the desktop
+    /// chooses it (the XDG MIME Applications specification, as gio and
+    /// `xdg-open` read it): the default the lists name for the nearest type
+    /// that has one, so a C source opens where plain text does unless it
+    /// has its own; else, most lists naming no default for most types, the
+    /// first application associated with the nearest type that has one,
+    /// added by a list or declared by its entry, and not removed.
     pub fn default_for_lineage(&self, lineage: &[Mime]) -> Option<&Application> {
-        lineage.iter().find_map(|m| self.default_for(m.as_str()))
+        lineage
+            .iter()
+            .find_map(|m| self.default_for(m.as_str()))
+            .or_else(|| {
+                lineage
+                    .iter()
+                    .find_map(|m| self.for_type(m.as_str()).into_iter().next())
+            })
     }
 
     /// The applications associated with `mime` itself: its default, then
@@ -1066,7 +1079,65 @@ mod tests {
             ["editor.desktop", "kde-sub.desktop"]
         );
         let lineage = [Mime("text/x-csrc".into()), Mime("text/plain".into())];
-        assert!(catalog.default_for_lineage(&lineage).is_none());
+        assert_eq!(
+            catalog.default_for_lineage(&lineage).unwrap().id,
+            "editor.desktop",
+            "no default named: the first application of the nearest type that has one"
+        );
+    }
+
+    #[test]
+    fn the_default_is_the_one_named_else_the_first_associated() {
+        let tmp = tempfile::tempdir().unwrap();
+        let apps = tmp.path().join("applications");
+        let entry = |name: &str, mime: &str| {
+            format!(
+                "[Desktop Entry]\nType=Application\nName={name}\nExec={name} %F\nMimeType={mime}\n"
+            )
+        };
+        write(&apps, "aviewer.desktop", &entry("aviewer", "image/png;"));
+        write(&apps, "gallery.desktop", &entry("gallery", "image/png;"));
+        write(
+            &apps,
+            "hex.desktop",
+            &entry("hex", "application/octet-stream;"),
+        );
+        write(&apps, "cc.desktop", &entry("cc", "text/x-csrc;"));
+        write(&apps, "notes.desktop", &entry("notes", "text/plain;"));
+        write(&apps, "player.desktop", &entry("player", ""));
+        let list = tmp.path().join("mimeapps.list");
+        write(
+            tmp.path(),
+            "mimeapps.list",
+            "[Added Associations]\nimage/png=gallery.desktop;\nvideo/mp4=player.desktop;\n\n\
+             [Default Applications]\ntext/plain=notes.desktop;\n",
+        );
+        let catalog = Catalog::from_paths(&[apps], &[list]);
+        let default = |types: &[&str]| {
+            let lineage: Vec<Mime> = types.iter().map(|t| Mime((*t).into())).collect();
+            catalog.default_for_lineage(&lineage).map(|a| a.id.clone())
+        };
+        assert_eq!(
+            default(&["image/png", "application/octet-stream"]).as_deref(),
+            Some("gallery.desktop"),
+            "no default named: the list's addition before the entries that declare the type"
+        );
+        assert_eq!(
+            default(&["video/mp4", "application/octet-stream"]).as_deref(),
+            Some("player.desktop"),
+            "added by a list only"
+        );
+        assert_eq!(
+            default(&["text/x-csrc", "text/plain", "application/octet-stream"]).as_deref(),
+            Some("notes.desktop"),
+            "a parent's named default before the type's own associations"
+        );
+        assert_eq!(
+            default(&["application/x-thing", "application/octet-stream"]).as_deref(),
+            Some("hex.desktop"),
+            "what opens any stream of bytes, as the desktop would"
+        );
+        assert_eq!(default(&["inode/directory"]), None, "nothing opens it");
     }
 
     #[test]

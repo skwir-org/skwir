@@ -2,6 +2,12 @@
 //! enters directories, opens a terminal in the current directory, and opens
 //! files or folders with an application the user chooses.
 //!
+//! The default application is the catalog's (`Catalog::default_for_lineage`,
+//! the desktop's rule), for Open as for the menu that names it: not
+//! `xdg-open`'s, which some desktops reduce to a simpler rule that ignores
+//! the applications the user added for a type. `xdg-open` opens only what
+//! the catalog has no application for.
+//!
 //! Choosing is the shell's `ui.choose` picker: `open_with.choices` lists
 //! the applications for the selection, each choice an `open_with` that
 //! names its application, pane and entries. The desktop's catalog of
@@ -93,10 +99,10 @@ struct OpenArgs {
     ids: Vec<EntryId>,
 }
 
-fn open(args: OpenArgs, app: &App) -> anyhow::Result<Outcome> {
+fn open(args: OpenArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
     let pane = app.pane_or_active(args.pane);
-    // Resolve (kind, path) for every target while holding the read lock, then release it.
-    let (targets, lifetime): (Vec<(EntryKind, std::path::PathBuf)>, _) = {
+    // Resolve the targets while holding the read lock, then release it.
+    let (targets, lifetime): (Vec<Target>, _) = {
         let ws = app.workspace.read();
         let p = ws
             .pane(pane)
@@ -115,7 +121,7 @@ fn open(args: OpenArgs, app: &App) -> anyhow::Result<Outcome> {
             .filter_map(|id| {
                 let kind = p.listing.get(id)?.kind;
                 let path = open.path_of(id)?;
-                Some((kind, path))
+                Some(Target { path, kind })
             })
             .collect();
         (targets, p.location_lifetime())
@@ -124,41 +130,84 @@ fn open(args: OpenArgs, app: &App) -> anyhow::Result<Outcome> {
         anyhow::bail!("nothing to open");
     }
     match targets.as_slice() {
-        [(EntryKind::Directory, dir)] => {
-            app.navigate(pane, &Location::from_path(dir))?;
+        [
+            Target {
+                kind: EntryKind::Directory,
+                path,
+            },
+        ] => {
+            app.navigate(pane, &Location::from_path(path))?;
             return Ok(Outcome::Done);
         }
         // A link may lead to a folder, which opens here like one; asking
         // follows the link, which can wait on a sleeping disk, so a worker
         // asks. Navigating away first cancels it.
-        [(EntryKind::Symlink | EntryKind::Unknown, path)] => {
+        [
+            Target {
+                kind: EntryKind::Symlink | EntryKind::Unknown,
+                path,
+            },
+        ] => {
             let path = path.clone();
             let weak = app.weak();
             let cancel = lifetime.clone();
+            let cache = Arc::clone(cache);
             app.scheduler
                 .spawn(Priority::Normal, "open-with.resolve", lifetime, move || {
                     let Some(app) = weak.upgrade() else { return };
-                    let result = if path.is_dir() {
+                    if path.is_dir() {
                         if cancel.is_cancelled() {
                             return;
                         }
-                        app.navigate(pane, &Location::from_path(&path))
+                        match app.navigate(pane, &Location::from_path(&path)) {
+                            Ok(()) => app.wake(),
+                            Err(e) => app.notify(NotifyLevel::Error, format!("{e:#}")),
+                        }
                     } else {
-                        bibli_platform::open::open_path(&path)
-                    };
-                    match result {
-                        Ok(()) => app.wake(),
-                        Err(e) => app.notify(NotifyLevel::Error, format!("{e:#}")),
+                        launch_defaults(&app, &cache, targets);
                     }
                 });
             return Ok(Outcome::Done);
         }
         _ => {}
     }
-    for (_, path) in &targets {
-        bibli_platform::open::open_path(path)?;
-    }
+    // Typing a file can read its head, and starting a program touches the
+    // disk.
+    let cache = Arc::clone(cache);
+    spawn(app, "open-with.open", move |app| {
+        launch_defaults(app, &cache, targets);
+    });
     Ok(Outcome::Done)
+}
+
+/// Open each target with the application the catalog chooses for its type
+/// (what the menu names), the files of one application in one run, as
+/// its command line takes them; what no application opens, with the
+/// desktop's opener. On a worker: reads the files' heads.
+fn launch_defaults(app: &App, cache: &Cached, targets: Vec<Target>) {
+    let catalog = catalog(cache);
+    let mut runs: Vec<(&Application, Vec<PathBuf>)> = Vec::new();
+    let mut rest: Vec<PathBuf> = Vec::new();
+    for target in targets {
+        let lineage = mime::lineage(&target.mime());
+        match catalog.default_for_lineage(&lineage) {
+            Some(application) => match runs.iter_mut().find(|(a, _)| a.id == application.id) {
+                Some((_, paths)) => paths.push(target.path),
+                None => runs.push((application, vec![target.path])),
+            },
+            None => rest.push(target.path),
+        }
+    }
+    let started = runs
+        .iter()
+        .map(|(application, paths)| application.launch(paths))
+        .chain(
+            rest.iter()
+                .map(|path| bibli_platform::open::open_path(path)),
+        );
+    for e in started.filter_map(Result::err) {
+        app.notify(NotifyLevel::Error, format!("{e:#}"));
+    }
 }
 
 /// The directory a "here" action refers to: the single selected directory if
@@ -234,7 +283,9 @@ fn refresh(cache: &Cached, app: &App) {
 
 /// `open_with.menu`: the context menu's Open for the selection, from the
 /// catalog in memory. Files whose names say their types, sharing one
-/// default application: "Open With" it; the picker stays Open With….
+/// default application: "Open With" it, the application `open` starts
+/// (which types a file by its bytes where the name is ambiguous, `.ogg`);
+/// the picker stays Open With….
 /// Anything else (a folder, a type the name does not say, types with no
 /// common default, the catalog not read yet) answers no items, and the
 /// menu keeps its plain Open.
@@ -646,11 +697,13 @@ fn apply_edit(app: &App, cache: &Cached, edit: &AssociationEdit, undo: bool) {
     match bibli_platform::apps::edit_associations(edit) {
         Ok(changed) => {
             let catalog = catalog(cache);
-            let now = catalog.default_for(&edit.mime);
+            // What opens the type now, named or not: an undo may leave
+            // the desktop's own choice.
+            let now = catalog.default_for_lineage(&mime::lineage(&Mime(edit.mime.clone())));
             let text = match (now, &changed) {
                 (Some(application), Some(_)) => format!("{} now opens {files}", application.name),
                 (Some(application), None) => format!("{} already opens {files}", application.name),
-                (None, _) => format!("No application is the default for {files}"),
+                (None, _) => format!("No application opens {files}"),
             };
             match changed {
                 Some(inverse) => app.notify_with_action(
@@ -714,7 +767,14 @@ impl Plugin for OpenWithPlugin {
     }
 
     fn register(&self, app: &App) {
-        app.commands.register::<OpenArgs, _>(ID, "open", "Open", "Enter the selected directory, or open the selected files with their default application", open);
+        let cache = Arc::clone(&self.catalog);
+        app.commands.register::<OpenArgs, _>(
+            ID,
+            "open",
+            "Open",
+            "Enter the selected directory, or open the selected files with the default application of their type, as the desktop's lists choose it (the one the context menu names)",
+            move |a, app| open(a, &cache, app),
+        );
         app.commands.register::<PaneArg, _>(
             ID,
             "open_terminal",
@@ -1083,7 +1143,7 @@ mod tests {
         );
         assert_eq!(
             ranked(&catalog, &["inode/directory"])[0],
-            own("browser.desktop", Some(Fit::Exact), false),
+            own("browser.desktop", Some(Fit::Exact), true),
             "a folder is not a stream of bytes"
         );
     }
@@ -1223,10 +1283,81 @@ mod tests {
         assert_eq!(photos[0]["command"]["name"], "open_with");
         assert_eq!(args["app"], "viewer.desktop");
         assert_eq!(args["pane"], serde_json::to_value(pane).unwrap());
-        assert!(items(&["notes.txt"]).is_empty(), "no default for the type");
+        let text = items(&["notes.txt"]);
+        assert_eq!(
+            text[0]["title"], "Open With Editor",
+            "no default named: the first application that declares the type"
+        );
         assert!(items(&[photo, "notes.txt"]).is_empty(), "no default shared");
         assert!(items(&[photo, "no-type-9q"]).is_empty(), "a type not known");
         assert!(items(&["sub"]).is_empty(), "a folder opens here");
+    }
+
+    /// A program that writes its arguments, one a line, to `out`.
+    fn recorder(dir: &std::path::Path, out: &std::path::Path) -> PathBuf {
+        let record = dir.join("record");
+        std::fs::write(
+            &record,
+            format!(
+                "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > '{}.tmp' && mv '{0}.tmp' '{0}'\n",
+                out.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&record, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        record
+    }
+
+    /// The lines `out` holds once a program wrote it, sorted.
+    fn recorded(out: &std::path::Path) -> Vec<String> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !out.exists() {
+            assert!(std::time::Instant::now() < deadline, "never launched");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let mut got: Vec<String> = std::fs::read_to_string(out)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        got.sort();
+        got
+    }
+
+    #[test]
+    fn open_starts_the_default_application_the_menu_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let names = ["a b.png", "it's.png"];
+        for name in names {
+            std::fs::write(root.join(name), b"").unwrap();
+        }
+        let out = tmp.path().join("out");
+        let record = recorder(tmp.path(), &out);
+        let plugin = OpenWithPlugin {
+            catalog: {
+                fake_catalog(tmp.path(), &record);
+                cached(tmp.path())
+            },
+        };
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(plugin), &app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&root)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        select(&app, pane, &names);
+        app.dispatch(&Invocation::new("open")).unwrap();
+        let want: Vec<String> = names
+            .iter()
+            .map(|n| root.join(n).display().to_string())
+            .collect();
+        assert_eq!(
+            recorded(&out),
+            want,
+            "the catalog's default, once with every file of its type, not xdg-open"
+        );
     }
 
     #[test]
@@ -1239,17 +1370,7 @@ mod tests {
             std::fs::write(root.join(name), b"").unwrap();
         }
         let out = tmp.path().join("out");
-        let record = tmp.path().join("record");
-        std::fs::write(
-            &record,
-            format!(
-                "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > '{}.tmp' && mv '{0}.tmp' '{0}'\n",
-                out.display()
-            ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&record, std::os::unix::fs::PermissionsExt::from_mode(0o755))
-            .unwrap();
+        let record = recorder(tmp.path(), &out);
         let plugin = OpenWithPlugin {
             catalog: {
                 fake_catalog(tmp.path(), &record);
@@ -1267,22 +1388,11 @@ mod tests {
             &serde_json::json!({ "app": "viewer.desktop", "set_default": true }),
         ))
         .unwrap();
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while !out.exists() {
-            assert!(std::time::Instant::now() < deadline, "never launched");
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        let mut got: Vec<String> = std::fs::read_to_string(&out)
-            .unwrap()
-            .lines()
-            .map(str::to_owned)
-            .collect();
-        got.sort();
         let want: Vec<String> = names
             .iter()
             .map(|n| root.join(n).display().to_string())
             .collect();
-        assert_eq!(got, want, "one run with every file, as %F says");
+        assert_eq!(recorded(&out), want, "one run with every file, as %F says");
         assert_eq!(
             next_notification(&app).text,
             "Viewer now opens PNG image files",
