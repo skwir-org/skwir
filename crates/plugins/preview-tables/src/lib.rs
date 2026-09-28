@@ -1,4 +1,5 @@
-//! CSV/TSV tables streamed from the file a page at a time, every cell bounded.
+//! CSV/TSV and JSON Lines tables streamed from the file a page at a time,
+//! every cell bounded.
 use bibli_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection, Row},
@@ -13,10 +14,10 @@ impl Plugin for PreviewPlugin {
         "preview-tables"
     }
     fn title(&self) -> &'static str {
-        "Preview: CSV and TSV"
+        "Preview: tables"
     }
     fn description(&self) -> &'static str {
-        "Show CSV and TSV files as aligned tables"
+        "Show CSV, TSV and JSON Lines files as aligned tables"
     }
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Previews
@@ -25,6 +26,8 @@ impl Plugin for PreviewPlugin {
         app.previews.register(self.id(), Arc::new(Provider));
     }
 }
+mod jsonl;
+
 struct Provider;
 impl PreviewProvider for Provider {
     fn id(&self) -> &'static str {
@@ -33,7 +36,7 @@ impl PreviewProvider for Provider {
     fn accepts(&self, req: &PreviewRequest) -> bool {
         matches!(
             inspection::extension(&req.entry.path).as_str(),
-            "csv" | "tsv"
+            "csv" | "tsv" | "jsonl" | "ndjson"
         )
     }
     fn inspect(
@@ -47,7 +50,10 @@ impl PreviewProvider for Provider {
             return Ok(None);
         }
         let path = req.entry.resolve()?;
-        table(&path, view.offset, cancel).map(Some)
+        match inspection::extension(&path).as_str() {
+            "jsonl" | "ndjson" => jsonl::table(&path, view.offset, cancel).map(Some),
+            _ => table(&path, view.offset, cancel).map(Some),
+        }
     }
 }
 
@@ -207,7 +213,7 @@ impl Bounds {
 }
 
 /// Keep at most `TABLE_CELL` characters of a cell and mark the cut visibly.
-fn bounded_cell(cell: &str, truncated: &mut usize) -> String {
+pub(crate) fn bounded_cell(cell: &str, truncated: &mut usize) -> String {
     match cell.char_indices().nth(limits::TABLE_CELL) {
         Some((end, _)) => {
             *truncated += 1;

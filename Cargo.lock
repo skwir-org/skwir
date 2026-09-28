@@ -1047,6 +1047,8 @@ dependencies = [
  "bibli-core",
  "bibli-platform",
  "csv",
+ "indexmap",
+ "serde",
  "serde_json",
  "tempfile",
 ]

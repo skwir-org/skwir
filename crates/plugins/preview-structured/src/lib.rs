@@ -16,7 +16,7 @@ impl Plugin for PreviewPlugin {
         "Preview: structured data"
     }
     fn description(&self) -> &'static str {
-        "Show JSON, YAML and TOML with syntax colors and foldable blocks"
+        "Show JSON (with comments, and JSON5), YAML and TOML with syntax colors and foldable blocks"
     }
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Previews
@@ -33,7 +33,7 @@ impl PreviewProvider for Provider {
     fn accepts(&self, req: &PreviewRequest) -> bool {
         matches!(
             inspection::extension(&req.entry.path).as_str(),
-            "json" | "yaml" | "yml" | "toml"
+            "json" | "jsonc" | "json5" | "yaml" | "yml" | "toml"
         )
     }
     fn inspect(
@@ -72,9 +72,25 @@ fn code(
     cancel: &CancelToken,
 ) -> anyhow::Result<Inspection> {
     inspection::check(cancel)?;
-    // An empty file has nothing to format: it is shown as it is.
-    let text = if language == "json" && !original && !source.trim().is_empty() {
-        let value: serde_json::Value = serde_json::from_str(source)?;
+    // JSON is checked by parsing it, and printed from the value unless its
+    // source was asked for. JSON as editors write it (`tsconfig.json`,
+    // settings) has comments and trailing commas, which printing would
+    // lose: like JSONC, it is shown as written once it parses without them
+    // (blanked in place, so an error still points at its line). JSON5
+    // (unquoted keys, single quotes) is shown as written unchecked: its
+    // folds come from the same lexer, which steps over its strings and
+    // comments alike. An empty file has nothing to check.
+    let parsed = match language {
+        "json" | "jsonc" if !source.trim().is_empty() => {
+            let value = serde_json::from_str::<serde_json::Value>(source).ok();
+            if value.is_none() {
+                serde_json::from_str::<serde_json::Value>(&folds::without_comments(source))?;
+            }
+            value
+        }
+        _ => None,
+    };
+    let text = if let Some(value) = parsed.filter(|_| language == "json" && !original) {
         let mut pending = vec![(&value, 0)];
         let mut count = 0;
         while let Some((node, depth)) = pending.pop() {
@@ -98,10 +114,6 @@ fn code(
         }
         serde_json::to_string_pretty(&value)?
     } else {
-        if language == "json" && !source.trim().is_empty() {
-            // Folds are read lexically from text known to be JSON.
-            serde_json::from_str::<serde_json::Value>(source)?;
-        }
         source.to_owned()
     };
     anyhow::ensure!(
@@ -123,7 +135,15 @@ fn code(
         .map(|line| Block {
             text: line.trim_end_matches('\r').into(),
             code: true,
-            language: Some(language.into()),
+            // bat's JSON grammar colours comments too.
+            language: Some(
+                if language.starts_with("json") {
+                    "json"
+                } else {
+                    language
+                }
+                .into(),
+            ),
             ..Block::default()
         })
         .collect();
@@ -163,6 +183,43 @@ mod tests {
         let raw = code(source, "json", true, &CancelToken::new()).unwrap();
         assert_eq!(raw.plain_text(), source);
         assert!(raw.folds.is_empty());
+    }
+
+    #[test]
+    fn json_with_comments_is_shown_as_written_and_folded() {
+        // As `tsconfig.json` is written: comments, a trailing comma, and
+        // brackets in a comment and in a string that fold nothing.
+        let source = "{\n  // paths [not a fold\n  \"paths\": {\n    \"@/*\": [\"src/*\"],\n  },\n  /* { */ \"strict\": true,\n}\n";
+        for language in ["json", "jsonc"] {
+            let data = code(source, language, false, &CancelToken::new()).unwrap();
+            assert_eq!(data.plain_text(), source, "{language} keeps its comments");
+            assert_eq!(data.folds, [0..6, 2..4]);
+            assert_eq!(data.blocks[0].language.as_deref(), Some("json"));
+        }
+        let error = code(
+            "{ \"a\": // no value\n }",
+            "jsonc",
+            false,
+            &CancelToken::new(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("line 2"), "{error}");
+    }
+
+    #[test]
+    fn json5_folds_step_over_single_quoted_strings() {
+        let source = "{\n  unquoted: 'a ] and a {',\n  list: [\n    0x10,\n  ],\n}\n";
+        let data = code(source, "json5", false, &CancelToken::new()).unwrap();
+        assert_eq!(data.plain_text(), source);
+        assert_eq!(data.folds, [0..5, 2..4]);
+    }
+
+    #[test]
+    fn comments_and_trailing_commas_are_blanked_in_place() {
+        let blanked = folds::without_comments("[1, \"x\", \"//\", /* c */ 2, // d\n]");
+        assert_eq!(blanked, "[1, \"x\", \"//\",         2      \n]");
+        assert_eq!(folds::without_comments("{\"a\": [1,],}"), "{\"a\": [1 ] }");
+        assert_eq!(folds::without_comments("1 / 2"), "1 / 2");
     }
 
     #[test]

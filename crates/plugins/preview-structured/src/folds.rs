@@ -32,31 +32,106 @@ pub fn parse(
     Ok(folds)
 }
 
-/// JSON's delimiters, read from text the caller has already parsed as JSON
-/// (or produced by printing a parsed value): its only place for a stray
-/// bracket is a string, which the lexer below steps over, so no second
-/// parse is needed to trust them.
+/// Where the lexer is in JSON, JSONC or JSON5 text.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lexed {
+    Code,
+    /// In a string opened by this quote (JSON5 also has `'`).
+    Quoted(char),
+    /// After a backslash in a string opened by this quote.
+    Escaped(char),
+    /// After a `/` that may open a comment.
+    Slash,
+    Line,
+    Block,
+    /// After a `*` in a block comment.
+    Star,
+}
+
+impl Lexed {
+    /// The state after `ch`, and whether `ch` is a token: code outside
+    /// strings and comments, or the quote that opens a string. A `/` that
+    /// opened no comment is neither.
+    fn next(self, ch: char) -> (Self, bool) {
+        match (self, ch) {
+            (Self::Code | Self::Slash, '"' | '\'') => (Self::Quoted(ch), true),
+            (Self::Code, '/') => (Self::Slash, false),
+            (Self::Slash, '/') => (Self::Line, false),
+            (Self::Slash, '*') => (Self::Block, false),
+            (Self::Code | Self::Slash, _) => (Self::Code, true),
+            (Self::Quoted(quote), '\\') => (Self::Escaped(quote), false),
+            (Self::Quoted(quote), _) if ch == quote => (Self::Code, false),
+            (Self::Quoted(quote) | Self::Escaped(quote), _) => (Self::Quoted(quote), false),
+            (Self::Line, '\n') | (Self::Star, '/') => (Self::Code, false),
+            (Self::Line, _) => (Self::Line, false),
+            (Self::Block | Self::Star, '*') => (Self::Star, false),
+            (Self::Block | Self::Star, _) => (Self::Block, false),
+        }
+    }
+}
+
+/// JSONC as JSON: comments blanked (their line breaks kept) and trailing
+/// commas dropped, to check that what is shown as written is JSON else.
+pub fn without_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut state = Lexed::Code;
+    for ch in text.chars() {
+        let (next, _) = state.next(ch);
+        match (state, next) {
+            (Lexed::Slash, Lexed::Line | Lexed::Block) => out.push_str("  "),
+            (Lexed::Slash, _) => {
+                out.push('/');
+                out.push(ch);
+            }
+            (_, Lexed::Slash) => {}
+            (Lexed::Line | Lexed::Block | Lexed::Star, _) if ch != '\n' => out.push(' '),
+            _ => out.push(ch),
+        }
+        state = next;
+    }
+    if state == Lexed::Slash {
+        out.push('/');
+    }
+    // A comma whose next token closes its object or array is a trailing
+    // comma.
+    let mut kept = String::with_capacity(out.len());
+    let mut comma = None;
+    let mut state = Lexed::Code;
+    for ch in out.chars() {
+        let (next, token) = state.next(ch);
+        state = next;
+        if token && !ch.is_whitespace() {
+            if let Some(at) = comma.take()
+                && matches!(ch, '}' | ']')
+            {
+                kept.replace_range(at..=at, " ");
+            }
+            if ch == ',' {
+                comma = Some(kept.len());
+            }
+        }
+        kept.push(ch);
+    }
+    kept
+}
+
+/// JSON's delimiters (JSONC's and JSON5's too), read lexically: a stray
+/// bracket can only be in a string or a comment, which the lexer steps
+/// over, so no parse is needed to trust them.
 fn json(text: &str, cancel: &CancelToken) -> anyhow::Result<Vec<Range<usize>>> {
     let mut folds = Vec::new();
     let mut stack = Vec::new();
-    let (mut quoted, mut escaped) = (false, false);
+    let mut state = Lexed::Code;
     let mut line = 0;
     for ch in text.chars() {
         if ch == '\n' {
             line += 1;
             check(cancel)?;
         }
-        if quoted {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                quoted = false;
-            }
-        } else {
+        let (next, token) = state.next(ch);
+        state = next;
+        if token {
             match ch {
-                '"' => quoted = true,
                 '{' | '[' => {
                     anyhow::ensure!(
                         stack.len() < limits::NESTING,
