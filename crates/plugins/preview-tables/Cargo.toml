@@ -15,7 +15,7 @@ csv = "1"
 # Excel workbooks, read cell by cell; the zip version already in the tree,
 # walked first to bound what calamine reads whole.
 calamine = { version = "0.36", default-features = false }
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 # SQLite databases, read by the system's libsqlite3 (ADR-022), not a
 # bundled copy.
 rusqlite = { version = "0.40", default-features = false, features = ["hooks"] }
