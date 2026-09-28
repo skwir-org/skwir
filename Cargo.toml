@@ -14,6 +14,7 @@ members = [
     "crates/media-worker",
     "crates/archive-worker",
     "crates/mermaid-worker",
+    "crates/model-worker",
 ]
 # The native workers link Poppler, MuPDF, GStreamer and libarchive. They are optional
 # at runtime and stay out of the default build so the application, plugins and
@@ -29,6 +30,7 @@ default-members = [
     "crates/alloc",
     "crates/pdf-worker",
     "crates/mermaid-worker",
+    "crates/model-worker",
 ]
 # Toolkit spikes live in their own workspace so their heavy dependency
 # trees never touch the main build.

@@ -56,6 +56,24 @@ of its own (16.3 MB), a default member since it needs no native library.
 Its SVG is made for resvg and drawn on white like a drawing in HTML
 (decoded with the page, `EMBEDDED_IMAGES` of them); without the helper a
 diagram stays code.
+3D models (2026-09-28): the desktop's thumbnailers (f3d, Blender's) now
+draw 3D models for the preview panel as they did for the grid (the
+`model/*` types and what the MIME database draws as a picture). The new
+`preview-models` plugin shows Blender files, 3MF packages, FreeCAD
+documents, DWG and DXF drawings and G-code (text or Prusa's binary) by the
+picture stored in them, read only as far as it (a compressed Blender file
+is decoded as a stream that far), with a print's time, filament and
+printer, a Blender file's version and scenes, in Details; about 120 KB of
+bibli's code. Meshes that store no picture (STL, OBJ, PLY, OFF, glTF, a
+3MF left unpictured) are drawn by `bibli-model-worker`, pure Rust (1 MB
+of code), a default member: a z-buffered view from the front, right and
+above, drawn at twice the size and averaged down, and measured (size,
+volume when watertight, triangles). 3DBenchy (225 706 triangles) takes
+140 ms, its volume 15.55 cm³ as published. Without the helper the plugin
+leaves meshes to an installed thumbnailer. STEP and IGES stay with f3d
+(its nixpkgs build names STEP `application/vnd.step`, which the MIME
+database here does not, so those need f3d's own MIME types); OpenCASCADE
+would be a helper of its own if ever wanted.
 Audio and video (2026-09-25, ADR-016): `preview-audio` is folded into
 `preview-media` ("Preview: audio and video"), which declares every playback
 preference, the shell player's included (keep playing while you browse, on by

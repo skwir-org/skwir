@@ -2,12 +2,15 @@
 //! own application stored in them, with what the file says of itself in
 //! Details. A Blender file, a 3MF package, a `FreeCAD` document, a DWG or DXF
 //! drawing and a G-code print each carry one, near their start; reading it
-//! costs a few hundred kilobytes, and nothing is drawn in 3D here. The same
-//! pictures are the grid's thumbnails, after any thumbnailer the desktop
-//! installed for these files.
+//! costs a few hundred kilobytes. A mesh that carries none (STL, OBJ, PLY,
+//! OFF, glTF, a 3MF its slicer did not picture) is drawn by a helper of its
+//! own, `bibli-model-worker`, and measured. The same pictures are the
+//! grid's thumbnails, after any thumbnailer the desktop installed for
+//! these files.
 mod blend;
 mod cad;
 mod gcode;
+mod mesh;
 mod package;
 
 use bibli_core::{
@@ -18,6 +21,7 @@ use bibli_core::{
     thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider},
 };
 use bibli_platform::inspection::{self, limits};
+use bibli_platform::model::MeshFormat;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -33,10 +37,17 @@ impl Plugin for PreviewPlugin {
         "Preview: 3D models and prints"
     }
     fn description(&self) -> &'static str {
-        "Show Blender files, 3MF packages, FreeCAD documents, DWG and DXF drawings and G-code prints by the picture stored in them, with their print time, filament, version and scenes in Details"
+        "Show Blender files, 3MF packages, FreeCAD documents, DWG and DXF drawings and G-code prints by the picture stored in them, and draw STL, OBJ, PLY, OFF and glTF models; print time, filament, size, volume and version in Details"
     }
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Previews
+    }
+    fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
+        vec![bibli_core::plugin::Requirement::new(
+            "bibli-model-worker",
+            "3D models without a stored picture drawn and measured",
+            || bibli_platform::model::worker_path().is_some(),
+        )]
     }
     fn register(&self, app: &App) {
         app.previews.register(ID, Arc::new(Provider));
@@ -56,6 +67,8 @@ enum Format {
     FreeCad,
     Dwg,
     Dxf,
+    /// A mesh the helper draws.
+    Mesh(MeshFormat),
 }
 
 impl Format {
@@ -77,6 +90,13 @@ impl Format {
             "fcstd" => Some(Format::FreeCad),
             "dwg" => Some(Format::Dwg),
             "dxf" => Some(Format::Dxf),
+            "stl" => Some(Format::Mesh(MeshFormat::Stl)),
+            // Also a compiled object's name: the mesh is read only if the
+            // file is text (`inspect`).
+            "obj" => Some(Format::Mesh(MeshFormat::Obj)),
+            "ply" => Some(Format::Mesh(MeshFormat::Ply)),
+            "off" => Some(Format::Mesh(MeshFormat::Off)),
+            "gltf" | "glb" => Some(Format::Mesh(MeshFormat::Gltf)),
             _ => None,
         };
         by_name.or_else(|| match mime? {
@@ -85,8 +105,20 @@ impl Format {
             "model/3mf" => Some(Format::ThreeMf),
             "image/vnd.dwg" => Some(Format::Dwg),
             "image/vnd.dxf" => Some(Format::Dxf),
+            "model/stl" | "model/x.stl-ascii" | "model/x.stl-binary" => {
+                Some(Format::Mesh(MeshFormat::Stl))
+            }
+            "model/obj" => Some(Format::Mesh(MeshFormat::Obj)),
+            "model/gltf-binary" | "model/gltf+json" => Some(Format::Mesh(MeshFormat::Gltf)),
             _ => None,
         })
+    }
+
+    /// Whether this file is read here: a mesh only while its helper is
+    /// installed, so a thumbnailer the desktop has (f3d) can show it
+    /// instead. Asked on a worker, never while drawing.
+    fn available(self) -> bool {
+        !matches!(self, Format::Mesh(_)) || bibli_platform::model::worker_path().is_some()
     }
 
     /// Text a reader can switch to.
@@ -106,6 +138,7 @@ impl Format {
             Format::FreeCad => package::freecad(path, side, cancel),
             Format::Dwg => cad::dwg(path, side, cancel),
             Format::Dxf => cad::dxf(path, side, cancel),
+            Format::Mesh(format) => mesh::read(path, format, side, cancel),
         }
     }
 }
@@ -118,6 +151,8 @@ struct Found {
     picture: Option<Image>,
     /// Facts in the order they are shown.
     details: Vec<(String, String)>,
+    /// What was left out, and why.
+    notice: Option<String>,
 }
 
 /// `image` at most `side` pixels on its longer side, never enlarged.
@@ -153,7 +188,7 @@ impl PreviewProvider for Provider {
         ID
     }
     fn accepts(&self, req: &PreviewRequest) -> bool {
-        Format::of(&req.entry.path, req.mime.as_deref()).is_some()
+        Format::of(&req.entry.path, req.mime.as_deref()).is_some_and(Format::available)
     }
     fn inspect(
         &self,
@@ -169,7 +204,20 @@ impl PreviewProvider for Provider {
         let Some(format) = Format::of(&path, req.mime.as_deref()) else {
             return Ok(None);
         };
-        let found = format.read(&path, limits::IMAGE_DISPLAY_SIDE, cancel)?;
+        if format == Format::Mesh(MeshFormat::Obj) && !is_text(&path)? {
+            return Ok(Some(Inspection {
+                kind: InspectionKind::Text,
+                title: "Object file".into(),
+                notice: "Not a Wavefront OBJ model".into(),
+                ..Inspection::default()
+            }));
+        }
+        let side = match format {
+            Format::Mesh(_) | Format::ThreeMf => MESH_SIDE,
+            _ => limits::IMAGE_DISPLAY_SIDE,
+        };
+        let found = format.read(&path, side, cancel)?;
+        let notice = found.notice.unwrap_or_default();
         let details = found
             .details
             .into_iter()
@@ -182,6 +230,7 @@ impl PreviewProvider for Provider {
                 image: Some(picture),
                 details,
                 source_available: format.is_text(),
+                notice,
                 ..Inspection::default()
             },
             // Text without a picture is read as the text it is.
@@ -194,11 +243,27 @@ impl PreviewProvider for Provider {
                 kind: InspectionKind::Text,
                 title: found.title,
                 details,
-                notice: "No picture is stored in this file".into(),
+                notice: if notice.is_empty() {
+                    "No picture is stored in this file".into()
+                } else {
+                    notice
+                },
                 ..Inspection::default()
             },
         }))
     }
+}
+
+/// The side a mesh is drawn at for the panel: its width on a dense screen.
+const MESH_SIDE: u32 = 1024;
+
+/// Whether the file begins as text: an OBJ model does, a compiled object
+/// does not.
+fn is_text(path: &Path) -> anyhow::Result<bool> {
+    use std::io::Read;
+    let mut head = Vec::new();
+    inspection::open(path)?.take(1024).read_to_end(&mut head)?;
+    Ok(inspection::text_prefix(&head).is_some_and(|text| text.len() + 4 >= head.len()))
 }
 
 /// The grid's thumbnails: the same pictures. A fallback: a thumbnailer the
@@ -220,6 +285,9 @@ impl ThumbnailProvider for Pictures {
         let Some(format) = Format::of(&path, req.mime.as_deref()) else {
             return Ok(None);
         };
+        if !format.available() || (format == Format::Mesh(MeshFormat::Obj) && !is_text(&path)?) {
+            return Ok(None);
+        }
         Ok(format.read(&path, req.size.pixels(), cancel)?.picture)
     }
 }
@@ -324,5 +392,159 @@ mod tests {
         assert!(data.image.is_none());
         assert_eq!(data.notice, "No picture is stored in this file");
         assert_eq!(data.details[0].value, "DWG 2000");
+    }
+    /// Point `BIBLI_MODEL_WORKER` at `worker`. Tests run in processes of
+    /// their own under nextest, so the variable reaches no other test.
+    fn use_worker(worker: &Path) {
+        // SAFETY: no other thread of this test process reads the environment.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("BIBLI_MODEL_WORKER", worker);
+        }
+    }
+
+    /// The helper built into the target directory this test runs from
+    /// (the test binary sits in its `deps`). Without it the test says so
+    /// and passes, unless `BIBLI_REQUIRE_WORKERS` is set.
+    fn with_model_worker() -> bool {
+        let built = std::env::current_exe()
+            .ok()
+            .and_then(|exe| Some(exe.parent()?.parent()?.join("bibli-model-worker")))
+            .filter(|path| path.is_file());
+        let Some(worker) = built else {
+            assert!(
+                std::env::var_os("BIBLI_REQUIRE_WORKERS").is_none(),
+                "bibli-model-worker is not built"
+            );
+            eprintln!("skipped: bibli-model-worker is not built");
+            return false;
+        };
+        use_worker(&worker);
+        true
+    }
+
+    /// A binary STL of a 10 mm cube.
+    fn cube_stl() -> Vec<u8> {
+        let p = |x: u8, y: u8, z: u8| [f32::from(x) * 10., f32::from(y) * 10., f32::from(z) * 10.];
+        let faces = [
+            [p(0, 0, 0), p(1, 1, 0), p(1, 0, 0)],
+            [p(0, 0, 0), p(0, 1, 0), p(1, 1, 0)],
+            [p(0, 0, 1), p(1, 0, 1), p(1, 1, 1)],
+            [p(0, 0, 1), p(1, 1, 1), p(0, 1, 1)],
+            [p(0, 0, 0), p(1, 0, 0), p(1, 0, 1)],
+            [p(0, 0, 0), p(1, 0, 1), p(0, 0, 1)],
+            [p(1, 0, 0), p(1, 1, 0), p(1, 1, 1)],
+            [p(1, 0, 0), p(1, 1, 1), p(1, 0, 1)],
+            [p(1, 1, 0), p(0, 1, 0), p(0, 1, 1)],
+            [p(1, 1, 0), p(0, 1, 1), p(1, 1, 1)],
+            [p(0, 1, 0), p(0, 0, 0), p(0, 0, 1)],
+            [p(0, 1, 0), p(0, 0, 1), p(0, 1, 1)],
+        ];
+        let mut out = vec![b' '; 80];
+        out.extend(12u32.to_le_bytes());
+        for face in faces {
+            out.extend([0u8; 12]);
+            for v in face.iter().flatten() {
+                out.extend(v.to_le_bytes());
+            }
+            out.extend([0, 0]);
+        }
+        out
+    }
+
+    #[test]
+    fn a_mesh_is_drawn_and_measured_by_its_helper() {
+        if !with_model_worker() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a part’s cube.stl");
+        std::fs::write(&path, cube_stl()).unwrap();
+        let request = request(&path);
+        assert!(Provider.accepts(&request));
+        let data = Provider
+            .inspect(&request, &InspectRequest::default(), &CancelToken::new())
+            .unwrap()
+            .unwrap();
+        let image = data.image.expect("the model drawn");
+        assert_eq!(image.width.max(image.height), MESH_SIDE);
+        let said: Vec<String> = data
+            .details
+            .iter()
+            .map(|d| format!("{}: {}", d.label, d.value))
+            .collect();
+        assert_eq!(
+            said,
+            [
+                "Size: 10 × 10 × 10 mm",
+                "Volume: 1 cm³",
+                "Watertight: Yes",
+                "Triangles: 12"
+            ]
+        );
+        let thumbnail = Pictures
+            .thumbnail(
+                &ThumbRequest {
+                    entry: request.entry.clone(),
+                    mime: None,
+                    mtime: None,
+                    size: bibli_core::thumbs::ThumbSize::Normal,
+                },
+                &CancelToken::new(),
+            )
+            .unwrap()
+            .expect("the grid's picture");
+        assert_eq!(thumbnail.width.max(thumbnail.height), 128);
+        // A compiled object named like a model is not drawn.
+        let object = dir.path().join("main.obj");
+        std::fs::write(&object, b"\x7fELF\x02\x01\x01\0\0\0\0\0\0\0\0\0\x01\0").unwrap();
+        let data = Provider
+            .inspect(
+                &super::tests::request(&object),
+                &InspectRequest::default(),
+                &CancelToken::new(),
+            )
+            .unwrap()
+            .unwrap();
+        assert!(data.image.is_none());
+        assert_eq!(data.notice, "Not a Wavefront OBJ model");
+    }
+
+    #[test]
+    fn without_its_helper_a_mesh_is_left_to_the_desktop() {
+        use_worker(Path::new("/nonexistent/bibli-model-worker"));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cube.stl");
+        std::fs::write(&path, cube_stl()).unwrap();
+        assert!(
+            !Provider.accepts(&request(&path)),
+            "f3d's picture may show it"
+        );
+        // A 3MF is still read for what it says, and says what is missing.
+        let package = dir.path().join("bare.3mf");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&package).unwrap());
+        zip.start_file("3D/3dmodel.model", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        std::io::Write::write_all(
+            &mut zip,
+            br#"<model unit="millimeter"><metadata name="Application">A slicer</metadata><resources/></model>"#,
+        )
+        .unwrap();
+        zip.finish().unwrap();
+        let data = Provider
+            .inspect(
+                &request(&package),
+                &InspectRequest::default(),
+                &CancelToken::new(),
+            )
+            .unwrap()
+            .unwrap();
+        assert!(data.image.is_none());
+        assert!(
+            data.notice.contains("bibli-model-worker"),
+            "{}",
+            data.notice
+        );
+        assert_eq!(data.details[0].value, "A slicer");
     }
 }

@@ -18,7 +18,7 @@ build-all:
 # Build what is shipped: bibli and every helper, without debug info, into
 # target/dist (the `dist` profile). Helpers sit beside bibli, where it finds them.
 dist:
-    cargo build --profile dist -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-mupdf-worker -p bibli-media-worker -p bibli-archive-worker -p bibli-mermaid-worker
+    cargo build --profile dist -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-mupdf-worker -p bibli-media-worker -p bibli-archive-worker -p bibli-mermaid-worker -p bibli-model-worker
 
 # Run the tests of the default members.
 test:
@@ -92,12 +92,12 @@ spike toolkit gpu="intel" rows="100000":
 
 # Run the app (release) on a directory, default: the current one.
 run dir=".":
-    cargo build --release -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-mupdf-worker -p bibli-media-worker -p bibli-archive-worker -p bibli-mermaid-worker
+    cargo build --release -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-mupdf-worker -p bibli-media-worker -p bibli-archive-worker -p bibli-mermaid-worker -p bibli-model-worker
     ./target/release/bibli {{dir}}
 
 # Profile the app with samply (opens the Firefox Profiler UI when done).
 flame dir=".":
-    cargo build --release -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-mupdf-worker -p bibli-media-worker -p bibli-archive-worker -p bibli-mermaid-worker
+    cargo build --release -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-mupdf-worker -p bibli-media-worker -p bibli-archive-worker -p bibli-mermaid-worker -p bibli-model-worker
     samply record ./target/release/bibli {{dir}}
 
 # Profile a bench profile's listing with a flamegraph SVG.

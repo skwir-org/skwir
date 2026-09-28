@@ -1,0 +1,29 @@
+[package]
+name = "bibli-model-worker"
+description = "bibli helper: 3D meshes read and drawn as a picture, in a process of its own"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+png.workspace = true
+# STL, ASCII or binary; no dependencies of its own.
+stl_io = "0.11"
+# OBJ, without the materials (they would name other files).
+tobj = { version = "4", default-features = false }
+# glTF and GLB, read with the accessors' helpers; buffers are loaded here.
+gltf = { version = "1.4", default-features = false, features = ["utils"] }
+base64 = "0.22"
+# 3MF packages: the zip and XML readers already in the tree.
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+quick-xml = "0.42"
+
+[dev-dependencies]
+tempfile.workspace = true
+# Test files built as the helper reads them.
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+[lints]
+workspace = true

@@ -115,11 +115,41 @@ pub fn three_mf(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<
     if let Some(info) = member(&mut archive, "Metadata/slice_info.config", bound) {
         details.extend(slice_info(&info));
     }
-    Ok(Found {
-        title: "3MF".into(),
-        picture,
-        details,
-    })
+    if picture.is_some() {
+        return Ok(Found {
+            title: "3MF".into(),
+            picture,
+            details,
+            notice: None,
+        });
+    }
+    // No picture stored: the model drawn, and measured, by the helper.
+    drop(archive);
+    let format = bibli_platform::model::MeshFormat::ThreeMf;
+    if bibli_platform::model::worker_path().is_none() {
+        return Ok(Found {
+            title: "3MF".into(),
+            picture: None,
+            details,
+            notice: Some("Install bibli-model-worker to draw models that store no picture".into()),
+        });
+    }
+    match crate::mesh::read(path, format, side, cancel) {
+        Ok(mut drawn) => {
+            // The size says the unit.
+            details.retain(|(label, _)| label != "Unit");
+            details.append(&mut drawn.details);
+            drawn.details = details;
+            Ok(drawn)
+        }
+        // What the package says is still worth reading.
+        Err(error) => Ok(Found {
+            title: "3MF".into(),
+            picture: None,
+            details,
+            notice: Some(format!("{error:#}")),
+        }),
+    }
 }
 
 /// What the model's XML says before its resources: its unit, and the
@@ -247,6 +277,7 @@ pub fn freecad(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<F
         title: "FreeCAD document".into(),
         picture,
         details,
+        notice: None,
     })
 }
 

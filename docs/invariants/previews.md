@@ -53,7 +53,12 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   further: a Blender file's blocks before its `TEST` block (a compressed
   one decoded as a stream, only that far), a package's named members, a
   G-code's first `TEXT_INPUT` and last `TAIL` bytes, a DWG's listed
-  pictures. Nothing is drawn in 3D in the process.
+  pictures. Nothing is drawn in 3D in the process: a mesh with no picture
+  of its own goes to `bibli-model-worker` (`bibli_platform::model`), which
+  reads the file itself within `model::BYTES` and `model::TRIANGLES`,
+  follows a glTF's buffers only to files below the model's folder, and
+  answers a line of measures and a PNG. Without the helper the plugin
+  does not take the mesh, so a desktop thumbnailer can.
   A decoder added in the process adds its type there, which is what keeps
   the fallback away. Floating-point pictures hold linear light and are
   encoded as sRGB in `picture::decode`, which every shown picture passes.
