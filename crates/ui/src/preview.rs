@@ -438,14 +438,9 @@ fn opens_as_pages(shell: &Shell) -> bool {
         || matches!(extension.as_str(), "pdf" | "cbz" | "cbr" | "cb7" | "cbt")
 }
 
-/// An image's own size, from its header.
+/// An image's own size, from its header, turned as it is shown.
 fn image_size(path: &Path) -> Option<(u32, u32)> {
-    let file = std::io::BufReader::new(bibli_platform::file::open_regular(path).ok()?);
-    image::ImageReader::new(file)
-        .with_guessed_format()
-        .ok()?
-        .into_dimensions()
-        .ok()
+    bibli_platform::picture::size(bibli_platform::picture::open(path).ok()?).ok()
 }
 
 /// An image decoded at most `side` pixels on its longer side (at least the
@@ -456,11 +451,8 @@ fn decode_image(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<
         IMAGE_MAX_SIDE,
         bibli_platform::inspection::limits::PICTURE_SIDE,
     );
-    let reader = || -> anyhow::Result<_> {
-        let file = std::io::BufReader::new(bibli_platform::file::open_regular(path)?);
-        Ok(image::ImageReader::new(file).with_guessed_format()?)
-    };
-    let (w, h) = reader()?.into_dimensions()?;
+    let reader = || bibli_platform::picture::open(path);
+    let (w, h) = bibli_platform::picture::size(reader()?)?;
     anyhow::ensure!(
         u64::from(w) * u64::from(h) <= 64 * 1024 * 1024,
         "image is too large to preview"
@@ -472,7 +464,7 @@ fn decode_image(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<
     if cancel.is_cancelled() {
         anyhow::bail!("cancelled");
     }
-    let img = reader()?.decode()?;
+    let img = bibli_platform::picture::decode(reader()?)?;
     if cancel.is_cancelled() {
         anyhow::bail!("cancelled");
     }

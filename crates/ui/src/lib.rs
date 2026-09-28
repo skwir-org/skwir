@@ -142,9 +142,8 @@ mod dev_thumbs {
             req: &ThumbRequest,
             cancel: &CancelToken,
         ) -> anyhow::Result<Option<Image>> {
-            let img = image::ImageReader::open(&req.entry.path)?
-                .with_guessed_format()?
-                .decode()?;
+            let img =
+                bibli_platform::picture::decode(bibli_platform::picture::open(&req.entry.path)?)?;
             if cancel.is_cancelled() {
                 return Ok(None);
             }

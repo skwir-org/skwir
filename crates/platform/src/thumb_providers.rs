@@ -6,7 +6,6 @@
 
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,7 +13,7 @@ use std::time::Duration;
 use anyhow::Context;
 use bibli_core::cancel::CancelToken;
 use bibli_core::thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider};
-use image::{DynamicImage, ImageDecoder as _};
+use image::DynamicImage;
 
 use crate::thumbnails::{ThumbCache, ThumbSize};
 
@@ -177,25 +176,17 @@ impl ThumbnailProvider for ImageDecoder {
 
     fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
         let path = &req.entry.path;
-        let open = || -> anyhow::Result<image::ImageReader<BufReader<std::fs::File>>> {
-            let f = crate::file::open_regular(path)
-                .with_context(|| format!("open {}", path.display()))?;
-            Ok(image::ImageReader::new(BufReader::new(f)).with_guessed_format()?)
-        };
+        let open =
+            || crate::picture::open(path).with_context(|| format!("open {}", path.display()));
         let (w, h) = open()?.into_dimensions()?;
         anyhow::ensure!(
             u64::from(w) * u64::from(h) <= MAX_PIXELS,
             "{w}x{h} is too large to thumbnail"
         );
-        let mut decoder = open()?.into_decoder()?;
-        let orientation = decoder
-            .orientation()
-            .unwrap_or(image::metadata::Orientation::NoTransforms);
-        let mut img = DynamicImage::from_decoder(decoder)?;
+        let img = crate::picture::decode(open()?)?;
         if cancel.is_cancelled() {
             return Ok(None);
         }
-        img.apply_orientation(orientation);
         Ok(Some(fit(img, req.size.pixels())))
     }
 }

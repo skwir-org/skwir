@@ -408,7 +408,7 @@ pub fn picture(bytes: &[u8], side: u32) -> anyhow::Result<Decoded> {
     image_limits.max_image_height = Some(limits::IMAGE_SIDE);
     image_limits.max_alloc = Some(limits::IMAGE_ALLOC);
     reader.limits(image_limits);
-    let mut img = reader.decode()?;
+    let mut img = crate::picture::decode(reader)?;
     let own = (img.width(), img.height());
     // Only shrink: `thumbnail` would otherwise scale a tiny icon up to the
     // display side and hand the UI megabytes of pixels per embedded image.
@@ -445,11 +445,12 @@ pub fn picture_size(bytes: &[u8]) -> Option<(u32, u32)> {
             size.height().round().max(1.) as u32,
         )
     } else {
-        image::ImageReader::new(std::io::Cursor::new(bytes))
-            .with_guessed_format()
-            .ok()?
-            .into_dimensions()
-            .ok()?
+        crate::picture::size(
+            image::ImageReader::new(std::io::Cursor::new(bytes))
+                .with_guessed_format()
+                .ok()?,
+        )
+        .ok()?
     };
     (width > 0 && height > 0 && width <= limits::IMAGE_SIDE && height <= limits::IMAGE_SIDE)
         .then(|| shown(width, height, limits::IMAGE_DISPLAY_SIDE))

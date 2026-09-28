@@ -1276,13 +1276,14 @@ impl Fonts {
     }
 }
 
-/// A picture's own size, read from its header.
+/// A picture's own size, read from its header, turned as it is drawn.
 fn dimensions(bytes: &[u8]) -> Option<(f32, f32)> {
-    let (width, height) = image::ImageReader::new(std::io::Cursor::new(bytes))
-        .with_guessed_format()
-        .ok()?
-        .into_dimensions()
-        .ok()?;
+    let (width, height) = crate::picture::size(
+        image::ImageReader::new(std::io::Cursor::new(bytes))
+            .with_guessed_format()
+            .ok()?,
+    )
+    .ok()?;
     Some((width as f32, height as f32))
 }
 
@@ -1370,7 +1371,7 @@ fn draw(
     bounds.max_image_height = Some(limits::IMAGE_SIDE);
     bounds.max_alloc = Some(limits::IMAGE_ALLOC);
     reader.limits(bounds);
-    let mut picture = reader.decode().ok()?;
+    let mut picture = crate::picture::decode(reader).ok()?;
     let [a, b, c, d, e, f] = transform;
     let place = view
         .pre_concat(tiny_skia::Transform::from_row(a, b, c, d, e, f))

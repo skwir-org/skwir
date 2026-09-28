@@ -7,6 +7,7 @@
 //! - [`mime`]: type detection by name (no I/O) or by content.
 //! - [`calendar`]: the user's time zone and first weekday, for dates people read.
 //! - [`icons`]: XDG icon theme lookup with caching.
+//! - [`picture`]: picture files decoded and sized the way their EXIF Orientation turns them.
 //! - [`thumbnails`]: the freedesktop thumbnail cache: lookup, load, store.
 //! - [`thumb_providers`]: thumbnail providers for the core service: cache, image decoder, external thumbnailers.
 //! - [`places`]: home, XDG user dirs, GTK bookmarks, mounted volumes.
@@ -26,6 +27,7 @@ pub mod media;
 pub mod mime;
 pub mod mp4;
 pub mod open;
+pub mod picture;
 pub mod places;
 pub mod preview;
 pub mod process;
