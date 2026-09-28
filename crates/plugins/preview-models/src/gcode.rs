@@ -241,16 +241,24 @@ pub fn text(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Foun
             }
         }
     }
-    let picture = largest(&lines).and_then(|stored| {
+    let mut picture = largest(&lines).and_then(|stored| {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(stored.base64)
             .ok()?;
         crate::decoded(&bytes, side)
     });
+    let mut details = facts.into_details();
+    // No picture stored: the moves drawn.
+    if picture.is_none()
+        && let Some(drawn) = crate::toolpath::draw(path, side, cancel)?
+    {
+        picture = Some(drawn.picture);
+        details.extend(drawn.details);
+    }
     Ok(Found {
         title: "G-code".into(),
         picture,
-        details: facts.into_details(),
+        details,
         notice: None,
     })
 }

@@ -20,6 +20,9 @@ zip = { version = "8", default-features = false, features = ["deflate-flate2-zli
 quick-xml = "0.42"
 # G-code carries its pictures in base64 comments.
 base64 = "0.22"
+# G-code without one is drawn from its moves: the version and features
+# resvg already brings.
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
 
 [dev-dependencies]
 tempfile.workspace = true

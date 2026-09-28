@@ -3,7 +3,8 @@
 //! Details. A Blender file, a 3MF package, a `FreeCAD` document, a DWG
 //! drawing, a `SketchUp` or Rhino model and a G-code print each carry one;
 //! reading it costs a few hundred kilobytes. A DXF drawing is drawn from
-//! its entities (`dxf`), which most never picture. A mesh that carries none (STL, OBJ, PLY,
+//! its entities (`dxf`), which most never picture, and G-code that stores
+//! none from its moves (`toolpath`). A mesh that carries none (STL, OBJ, PLY,
 //! OFF, glTF, a 3MF its slicer did not picture) is drawn by a helper of its
 //! own, `bibli-model-worker`, and measured. The same pictures are the
 //! grid's thumbnails, after any thumbnailer the desktop installed for
@@ -16,6 +17,7 @@ mod mesh;
 mod package;
 mod rhino;
 mod sketchup;
+mod toolpath;
 
 use bibli_core::{
     App, CancelToken,
@@ -41,7 +43,7 @@ impl Plugin for PreviewPlugin {
         "Preview: 3D models and prints"
     }
     fn description(&self) -> &'static str {
-        "Show Blender files, 3MF packages, FreeCAD documents, SketchUp and Rhino models, DWG drawings and G-code prints by the picture stored in them, and draw DXF drawings and STL, OBJ, PLY, OFF and glTF models; print time, filament, size, volume and version in Details"
+        "Show Blender files, 3MF packages, FreeCAD documents, SketchUp and Rhino models, DWG drawings and G-code prints by the picture stored in them, and draw DXF drawings, G-code toolpaths and STL, OBJ, PLY, OFF and glTF models; print time, filament, size, volume and version in Details"
     }
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Previews
@@ -91,7 +93,9 @@ impl Format {
             {
                 Some(Format::Blend)
             }
-            "gcode" | "gco" => Some(Format::Gcode),
+            // Prints, and milling and laser programs; `.nc` is also
+            // `NetCDF`'s, whose binary files are left to others (`inspect`).
+            "gcode" | "gco" | "nc" | "ngc" | "tap" | "cnc" => Some(Format::Gcode),
             "bgcode" => Some(Format::Bgcode),
             "3mf" => Some(Format::ThreeMf),
             "fcstd" => Some(Format::FreeCad),
@@ -217,6 +221,13 @@ impl PreviewProvider for Provider {
         let Some(format) = Format::of(&path, req.mime.as_deref()) else {
             return Ok(None);
         };
+        // A CNC program's name is also a binary format's (`.nc`, `.tap`).
+        if format == Format::Gcode
+            && !matches!(inspection::extension(&path).as_str(), "gcode" | "gco")
+            && !is_text(&path)?
+        {
+            return Ok(None);
+        }
         if format == Format::Mesh(MeshFormat::Obj) && !is_text(&path)? {
             return Ok(Some(Inspection {
                 kind: InspectionKind::Text,
@@ -298,7 +309,8 @@ impl ThumbnailProvider for Pictures {
         let Some(format) = Format::of(&path, req.mime.as_deref()) else {
             return Ok(None);
         };
-        if !format.available() || (format == Format::Mesh(MeshFormat::Obj) && !is_text(&path)?) {
+        let text_only = matches!(format, Format::Mesh(MeshFormat::Obj) | Format::Gcode);
+        if !format.available() || (text_only && !is_text(&path)?) {
             return Ok(None);
         }
         Ok(format.read(&path, req.size.pixels(), cancel)?.picture)
@@ -333,24 +345,44 @@ mod tests {
         assert_eq!(of("sheets.layout", None), Some(Format::LayOut));
         assert_eq!(of("part.3dm", None), Some(Format::Rhino));
         assert_eq!(of("print", Some("text/x.gcode")), Some(Format::Gcode));
+        assert_eq!(of("sign.nc", None), Some(Format::Gcode));
         assert_eq!(of("notes.txt", Some("text/plain")), None);
     }
 
     #[test]
-    fn gcode_without_a_picture_is_read_as_text_with_its_facts() {
+    fn gcode_without_a_picture_is_drawn_or_read_as_text() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a part’s print.gcode");
-        std::fs::write(&path, ";TIME:65\nG28\nG1 X10\n").unwrap();
+        // Nothing moves: its text, with its facts.
+        std::fs::write(&path, ";TIME:65\nM104 S200\nM140 S60\n").unwrap();
         let cancel = CancelToken::new();
         let data = Provider
             .inspect(&request(&path), &InspectRequest::default(), &cancel)
             .unwrap()
             .unwrap();
         assert!(data.image.is_none());
-        assert!(data.plain_text().contains("G1 X10"));
+        assert!(data.plain_text().contains("M104 S200"));
         assert_eq!(data.details[0].label, "Print time");
         assert_eq!(data.details[0].value, "1m 5s");
         assert!(!data.source_available, "it is its source already");
+        // It moves: drawn, its text one toggle away.
+        std::fs::write(&path, ";TIME:65\nG28\nG1 X10 Y5 F600\n").unwrap();
+        let data = Provider
+            .inspect(&request(&path), &InspectRequest::default(), &cancel)
+            .unwrap()
+            .unwrap();
+        assert!(data.image.is_some());
+        assert!(data.source_available);
+        assert_eq!(data.details[1].label, "Size");
+        // A binary file named like a program is left to others.
+        let binary = dir.path().join("climate.nc");
+        std::fs::write(&binary, b"CDF\x01\0\0\0\x0a\0\0\0\x01").unwrap();
+        assert!(
+            Provider
+                .inspect(&request(&binary), &InspectRequest::default(), &cancel)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

@@ -98,6 +98,14 @@ set in a system font, fitted and aligned text stretched between its
 points. Compared with ezdxf's own renderer on 18 files (ezdxf's
 examples, KiCad's exports and one other): the same geometry;
 3 to 790 ms each in release.
+G-code without a picture (2026-09-28) is drawn from its moves: prints
+from the front, right and above in their features' colours or by
+height, CNC and laser programs from above by depth, arcs in any plane
+included. Streamed twice, nothing held but the picture: 16 real
+programs (cncjs's examples, LinuxCNC's, a PrusaSlicer print stripped
+of its thumbnails) in 140 ms at most in release, at 1024 pixels as at
+128; the three that compute their moves with parameters are left as
+text.
 Audio and video (2026-09-25, ADR-016): `preview-audio` is folded into
 `preview-media` ("Preview: audio and video"), which declares every playback
 preference, the shell player's included (keep playing while you browse, on by

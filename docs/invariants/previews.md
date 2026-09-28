@@ -70,7 +70,10 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   so, their source one toggle away. A DXF's blocks are expanded within
   budgets of points, texts, inserts and depth (`dxf::POINTS`, `INSERTS`,
   `DEPTH`): an insert of arrays of arrays multiplies, and what is left out
-  is said.
+  is said. A G-code program with no picture is drawn from its moves
+  (`toolpath`) straight into pixels (tiny-skia, already in the tree): it
+  is streamed twice, for its bounds and to draw, so what is held is the
+  picture, never the moves; segments shorter than a pixel are merged.
   A decoder added in the process adds its type there, which is what keeps
   the fallback away. Floating-point pictures hold linear light and are
   encoded as sRGB in `picture::decode`, which every shown picture passes.
