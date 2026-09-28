@@ -204,8 +204,14 @@ impl PreviewProvider for Provider {
     fn id(&self) -> &'static str {
         ID
     }
+    /// Called on a worker (the registry's dispatch), so a CNC program's
+    /// name, also a binary format's (`.nc`), is settled by its start: the
+    /// first provider that accepts owns the file.
     fn accepts(&self, req: &PreviewRequest) -> bool {
-        Format::of(&req.entry.path, req.mime.as_deref()).is_some_and(Format::available)
+        Format::of(&req.entry.path, req.mime.as_deref()).is_some_and(|format| {
+            format.available()
+                && (!machining(&req.entry.path) || is_text(&req.entry.path).unwrap_or(false))
+        })
     }
     fn inspect(
         &self,
@@ -221,13 +227,6 @@ impl PreviewProvider for Provider {
         let Some(format) = Format::of(&path, req.mime.as_deref()) else {
             return Ok(None);
         };
-        // A CNC program's name is also a binary format's (`.nc`, `.tap`).
-        if format == Format::Gcode
-            && !matches!(inspection::extension(&path).as_str(), "gcode" | "gco")
-            && !is_text(&path)?
-        {
-            return Ok(None);
-        }
         if format == Format::Mesh(MeshFormat::Obj) && !is_text(&path)? {
             return Ok(Some(Inspection {
                 kind: InspectionKind::Text,
@@ -281,6 +280,15 @@ impl PreviewProvider for Provider {
 /// The side a mesh is drawn at for the panel: its width on a dense screen.
 const MESH_SIDE: u32 = 1024;
 
+/// Whether the name is a milling or laser program's, which other formats
+/// share (`NetCDF`'s `.nc`, a tape image's `.tap`).
+fn machining(path: &Path) -> bool {
+    matches!(
+        inspection::extension(path).as_str(),
+        "nc" | "ngc" | "tap" | "cnc"
+    )
+}
+
 /// Whether the file begins as text: an OBJ model does, a compiled object
 /// does not.
 fn is_text(path: &Path) -> anyhow::Result<bool> {
@@ -309,7 +317,7 @@ impl ThumbnailProvider for Pictures {
         let Some(format) = Format::of(&path, req.mime.as_deref()) else {
             return Ok(None);
         };
-        let text_only = matches!(format, Format::Mesh(MeshFormat::Obj) | Format::Gcode);
+        let text_only = format == Format::Mesh(MeshFormat::Obj) || machining(&path);
         if !format.available() || (text_only && !is_text(&path)?) {
             return Ok(None);
         }
@@ -374,15 +382,13 @@ mod tests {
         assert!(data.image.is_some());
         assert!(data.source_available);
         assert_eq!(data.details[1].label, "Size");
-        // A binary file named like a program is left to others.
+        // A binary file named like a program is left to the others.
         let binary = dir.path().join("climate.nc");
         std::fs::write(&binary, b"CDF\x01\0\0\0\x0a\0\0\0\x01").unwrap();
-        assert!(
-            Provider
-                .inspect(&request(&binary), &InspectRequest::default(), &cancel)
-                .unwrap()
-                .is_none()
-        );
+        assert!(!Provider.accepts(&request(&binary)));
+        let program = dir.path().join("sign.nc");
+        std::fs::write(&program, "G0 X0 Y0\nG1 X10\n").unwrap();
+        assert!(Provider.accepts(&request(&program)));
     }
 
     #[test]
