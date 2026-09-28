@@ -91,6 +91,13 @@ references are lettered. Release build, 2048 px: 50 to 600 ms a file;
 peak about 25 MB beyond the file's own size (an 84 MB board: 3.3 s,
 111 MB, so files over 32 MiB are not drawn). Text is set in a system
 font: KiCad's stroke font is GPL.
+DXF drawings (2026-09-28) are drawn from their entities rather than only
+by the thumbnail few of them store: model space, blocks and dimensions
+expanded within budgets, `AutoCAD`'s colour index, hatches filled, text
+set in a system font, fitted and aligned text stretched between its
+points. Compared with ezdxf's own renderer on 18 files (ezdxf's
+examples, KiCad's exports and one other): the same geometry;
+3 to 790 ms each in release.
 Audio and video (2026-09-25, ADR-016): `preview-audio` is folded into
 `preview-media` ("Preview: audio and video"), which declares every playback
 preference, the shell player's included (keep playing while you browse, on by

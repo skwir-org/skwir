@@ -2,8 +2,9 @@
 //! stores in a drawing when it saves, and the format's version. In a DWG
 //! file, the header's word at byte 13 is where its pictures are listed,
 //! after a fixed sentinel: a bitmap (without its file header) or, since
-//! 2013, a PNG, each by its place in the file. In a DXF file, the
-//! `THUMBNAILIMAGE` section holds the bitmap in hexadecimal, at the end.
+//! 2013, a PNG, each by its place in the file. A DXF file is drawn from
+//! its entities (`dxf`); when nothing is, the `THUMBNAILIMAGE` section at
+//! its end may hold a bitmap in hexadecimal.
 use crate::Found;
 use bibli_core::CancelToken;
 use bibli_platform::inspection::{self, limits};
@@ -21,6 +22,8 @@ const PNG: u8 = 6;
 /// version.
 const DXF_TAIL: u64 = 2 * 1024 * 1024;
 const DXF_HEAD: u64 = 64 * 1024;
+/// The largest DXF drawn from its entities: its text is held whole.
+const DXF_DRAWN: usize = 32 * 1024 * 1024;
 
 /// The release a format version (`AC1032`) was introduced with.
 fn release(version: &str) -> Option<&'static str> {
@@ -138,6 +141,23 @@ pub fn dxf(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Found
         ));
     }
     inspection::check(cancel)?;
+    // Drawn from its entities, when it is not too large to.
+    if len <= DXF_DRAWN as u64 {
+        let text = inspection::read_bounded(path, DXF_DRAWN, "The drawing", cancel)?;
+        let drawing = crate::dxf::draw(&String::from_utf8_lossy(&text), cancel)?;
+        found.details.extend(drawing.details);
+        found.notice = drawing.notice;
+        if let Some(svg) = drawing.svg {
+            let drawn = inspection::drawing(svg.as_bytes(), Some(side))?;
+            found.picture = Some(bibli_core::thumbs::Image {
+                width: drawn.width,
+                height: drawn.height,
+                rgba: drawn.rgba.into(),
+            });
+            return Ok(found);
+        }
+    }
+    // Else the picture it stored, if any.
     let from = len.saturating_sub(DXF_TAIL);
     file.seek(SeekFrom::Start(from))?;
     let mut tail = Vec::new();

@@ -1,14 +1,16 @@
 //! bibli plugin: 3D models, drawings and prints, shown by the picture their
 //! own application stored in them, with what the file says of itself in
-//! Details. A Blender file, a 3MF package, a `FreeCAD` document, a DWG or DXF
+//! Details. A Blender file, a 3MF package, a `FreeCAD` document, a DWG
 //! drawing, a `SketchUp` or Rhino model and a G-code print each carry one;
-//! reading it costs a few hundred kilobytes. A mesh that carries none (STL, OBJ, PLY,
+//! reading it costs a few hundred kilobytes. A DXF drawing is drawn from
+//! its entities (`dxf`), which most never picture. A mesh that carries none (STL, OBJ, PLY,
 //! OFF, glTF, a 3MF its slicer did not picture) is drawn by a helper of its
 //! own, `bibli-model-worker`, and measured. The same pictures are the
 //! grid's thumbnails, after any thumbnailer the desktop installed for
 //! these files.
 mod blend;
 mod cad;
+mod dxf;
 mod gcode;
 mod mesh;
 mod package;
@@ -39,7 +41,7 @@ impl Plugin for PreviewPlugin {
         "Preview: 3D models and prints"
     }
     fn description(&self) -> &'static str {
-        "Show Blender files, 3MF packages, FreeCAD documents, SketchUp and Rhino models, DWG and DXF drawings and G-code prints by the picture stored in them, and draw STL, OBJ, PLY, OFF and glTF models; print time, filament, size, volume and version in Details"
+        "Show Blender files, 3MF packages, FreeCAD documents, SketchUp and Rhino models, DWG drawings and G-code prints by the picture stored in them, and draw DXF drawings and STL, OBJ, PLY, OFF and glTF models; print time, filament, size, volume and version in Details"
     }
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Previews

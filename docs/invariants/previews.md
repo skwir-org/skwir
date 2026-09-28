@@ -60,13 +60,17 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   answers a line of measures and a PNG. Without the helper the plugin
   does not take the mesh, so a desktop thumbnailer can.
 - A drawing made from a file's own content (`preview-circuits`: KiCad's
-  boards, footprints, schematics and symbol libraries) is written as SVG
+  boards, footprints, schematics and symbol libraries; `preview-models`:
+  a DXF's entities) is written as SVG
   and rasterized by `inspection::drawing`, the inert path every drawing
   takes: nothing it names outside itself is read, text is set in the
   system's fonts (KiCad's stroke font is GPL, not ours to carry). A board
   is read an item at a time (`sexpr::Reader`), so the whole tree is never
   held; its text is, which is why files over `INPUT` are not drawn and say
-  so, their source one toggle away.
+  so, their source one toggle away. A DXF's blocks are expanded within
+  budgets of points, texts, inserts and depth (`dxf::POINTS`, `INSERTS`,
+  `DEPTH`): an insert of arrays of arrays multiplies, and what is left out
+  is said.
   A decoder added in the process adds its type there, which is what keeps
   the fallback away. Floating-point pictures hold linear light and are
   encoded as sRGB in `picture::decode`, which every shown picture passes.
