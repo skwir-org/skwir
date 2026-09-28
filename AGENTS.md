@@ -416,6 +416,7 @@ crates/poppler-worker optional native PDF reader process (linked poppler-glib)
 crates/mupdf-worker optional native PDF reader process (linked MuPDF, AGPL; ADR-014)
 crates/media-worker optional audio/video player process (linked GStreamer)
 crates/archive-worker optional archive reader process (linked libarchive)
+crates/mermaid-worker optional Mermaid diagram layout process (pure Rust, merman)
 crates/plugins/*   one crate per plugin (see docs/PLAN.md Phase 2 and 4)
 crates/bench       synthetic trees and the performance regression check
 vendor/gpui        patched gpui 0.2.2 (see vendor/gpui/README.bibli.md)

@@ -49,6 +49,13 @@ readers there allocate the whole grid) and SQLite databases (the system's
 libsqlite3, read-only and immutable) are tables; Jupyter notebooks read as
 documents. Radiance HDR and farbfeld stay out: the MIME database names
 neither.
+Mermaid (2026-09-28): fenced `mermaid` blocks in Markdown and notebooks are
+drawn by merman, Zed's Rust Mermaid, in `bibli-mermaid-worker`: linked into
+bibli it added 14.7 MB of code (51.9 to 66.6 MB of text), so it is a helper
+of its own (16.3 MB), a default member since it needs no native library.
+Its SVG is made for resvg and drawn on white like a drawing in HTML
+(decoded with the page, `EMBEDDED_IMAGES` of them); without the helper a
+diagram stays code.
 Audio and video (2026-09-25, ADR-016): `preview-audio` is folded into
 `preview-media` ("Preview: audio and video"), which declares every playback
 preference, the shell player's included (keep playing while you browse, on by

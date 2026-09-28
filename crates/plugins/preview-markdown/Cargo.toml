@@ -13,6 +13,7 @@ serde_json.workspace = true
 pulldown-cmark = { version = "0.13", default-features = false }
 # A notebook's pictures; the version already in the tree.
 base64 = "0.22"
+tracing.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

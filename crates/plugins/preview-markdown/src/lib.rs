@@ -2,6 +2,7 @@
 //! parsing and embedded image reads run on workers. All end as the same
 //! semantic blocks, so they read alike, and all keep their source one
 //! toggle away.
+mod diagram;
 mod markdown;
 mod notebook;
 use bibli_core::{
@@ -21,10 +22,17 @@ impl Plugin for PreviewPlugin {
         "Preview: Markdown, HTML and notebooks"
     }
     fn description(&self) -> &'static str {
-        "Read Markdown and HTML files and Jupyter notebooks as documents, with headings, tables, code and local images; switch to the source at any time. HTML is inert: no scripts, fonts or remote content"
+        "Read Markdown and HTML files and Jupyter notebooks as documents, with headings, tables, code, Mermaid diagrams and local images; switch to the source at any time. HTML is inert: no scripts, fonts or remote content"
     }
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Previews
+    }
+    fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
+        vec![bibli_core::plugin::Requirement::new(
+            "bibli-mermaid-worker",
+            "Mermaid diagrams drawn in Markdown",
+            || bibli_platform::diagram::worker_path().is_some(),
+        )]
     }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));

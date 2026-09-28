@@ -55,6 +55,11 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   readers build the grid whole, are not read); what a library reads whole
   is inflated once through a counter first; a table declaring its own
   unpacked size (WOFF) is inflated by our bounded inflater.
+- A Mermaid diagram is a drawing in the page: its source goes to
+  `bibli-mermaid-worker` (`bibli_platform::diagram`), never to a layout
+  engine linked into bibli, and its SVG is decoded with the page like an
+  HTML drawing, within `EMBEDDED_IMAGES`. Whatever cannot be drawn, the
+  helper missing included, stays the code it was written as.
 - A database is opened read-only and immutable (nothing written beside
   it, WAL or not), its schema untrusted, tables only, each cell bounded in
   the query, cancellation wired to SQLite's progress handler.

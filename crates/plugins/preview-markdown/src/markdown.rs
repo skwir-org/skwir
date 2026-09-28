@@ -214,6 +214,7 @@ pub fn parse(
     let mut cell_start = 0usize;
     let mut html = String::new();
     let mut anchors = Anchors::default();
+    let mut diagrams = 0;
 
     for event in Parser::new_ext(source, options) {
         check(cancel)?;
@@ -361,6 +362,19 @@ pub fn parse(
                 if current.text.ends_with('\n') {
                     current.text.pop();
                 }
+                // A diagram is part of the page, like a drawing in HTML:
+                // drawn with it, a few per page; past them, or when it
+                // cannot be drawn, it stays the code it is written in.
+                if current.language.as_deref() == Some("mermaid")
+                    && diagrams < limits::EMBEDDED_IMAGES
+                    && let Some(image) = crate::diagram::mermaid(&current.text, cancel)
+                {
+                    diagrams += 1;
+                    current.text.clear();
+                    current.code = false;
+                    current.language = None;
+                    current.picture = Some(Picture::Ready(image));
+                }
                 flush(&mut blocks, &mut current, &mut marker);
             }
             Event::Start(Tag::Table(_)) => {
@@ -482,6 +496,70 @@ mod tests {
                 .map(|r| &text[r.range.clone()]),
             Some("link")
         );
+    }
+
+    /// Point `BIBLI_MERMAID_WORKER` at `worker`. Tests run in processes of
+    /// their own under nextest, so the variable reaches no other test.
+    fn use_worker(worker: &std::path::Path) {
+        // SAFETY: no other thread of this test process reads the environment.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("BIBLI_MERMAID_WORKER", worker);
+        }
+    }
+
+    /// The helper built into the target directory this test runs from
+    /// (the test binary sits in its `deps`). Without it the test says so
+    /// and passes, unless `BIBLI_REQUIRE_WORKERS` is set.
+    fn with_mermaid_worker() -> bool {
+        let built = std::env::current_exe()
+            .ok()
+            .and_then(|exe| Some(exe.parent()?.parent()?.join("bibli-mermaid-worker")))
+            .filter(|path| path.is_file());
+        let Some(worker) = built else {
+            assert!(
+                std::env::var_os("BIBLI_REQUIRE_WORKERS").is_none(),
+                "bibli-mermaid-worker is not built"
+            );
+            eprintln!("skipped: bibli-mermaid-worker is not built");
+            return false;
+        };
+        use_worker(&worker);
+        true
+    }
+
+    const DIAGRAMS: &str = "```mermaid\nflowchart LR\n  A[Read] --> B[Show]\n```\n\n```mermaid\nnot a diagram at all\n```\n";
+
+    #[test]
+    fn a_mermaid_block_is_drawn_and_a_broken_one_stays_code() {
+        if !with_mermaid_worker() {
+            return;
+        }
+        let blocks = parse(DIAGRAMS);
+        let Some(Picture::Ready(image)) = &blocks[0].picture else {
+            panic!("the diagram is a picture: {:?}", blocks[0].text);
+        };
+        assert!(!blocks[0].code);
+        assert!(image.width > image.height, "laid out left to right");
+        // On white, and something drawn on it.
+        assert_eq!(&image.rgba[..4], &[255, 255, 255, 255]);
+        assert!(image.rgba.chunks(4).any(|pixel| pixel[0] < 128));
+        assert!(blocks[1].picture.is_none());
+        assert!(blocks[1].code);
+        assert_eq!(blocks[1].language.as_deref(), Some("mermaid"));
+        assert_eq!(blocks[1].text, "not a diagram at all");
+    }
+
+    #[test]
+    fn without_its_helper_a_mermaid_block_stays_code() {
+        use_worker(std::path::Path::new("/nonexistent/bibli-mermaid-worker"));
+        let blocks = parse(DIAGRAMS);
+        assert!(
+            blocks
+                .iter()
+                .all(|block| block.picture.is_none() && block.code)
+        );
+        assert_eq!(blocks[0].text, "flowchart LR\n  A[Read] --> B[Show]");
     }
 
     #[test]

@@ -18,6 +18,7 @@
 //! - [`process`]: bounded tool runs, and children started without waiting on them.
 
 pub mod calendar;
+pub mod diagram;
 pub mod document;
 pub mod exif;
 pub mod file;
