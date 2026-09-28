@@ -49,7 +49,7 @@ impl PreviewProvider for Provider {
     fn accepts(&self, req: &PreviewRequest) -> bool {
         matches!(
             inspection::extension(&req.entry.path).as_str(),
-            "ttf" | "otf" | "ttc"
+            "ttf" | "otf" | "ttc" | "woff" | "woff2"
         )
     }
     fn inspect(
@@ -60,11 +60,53 @@ impl PreviewProvider for Provider {
     ) -> anyhow::Result<Option<Inspection>> {
         let bytes =
             inspection::read_bounded(&req.entry.resolve()?, limits::BINARY_INPUT, "Font", cancel)?;
-        specimen(bytes, view, cancel).map(Some)
+        let (font, packed) = unpacked(bytes)?;
+        specimen(font, packed, view, cancel).map(Some)
+    }
+}
+/// A web font unpacked into the font it carries, and what it was packed
+/// as, for Details; any other font as it is. Bounded like every input:
+/// WOFF is inflated table by table within `limits::BINARY_INPUT` (a table
+/// can declare any size), WOFF2 within its decoder's own bound (at most
+/// 100 times its size, and 128 MB).
+fn unpacked(bytes: Vec<u8>) -> anyhow::Result<(Vec<u8>, Option<&'static str>)> {
+    let damaged = || anyhow::anyhow!("The web font is damaged or uses an unknown feature");
+    match bytes.get(..4) {
+        Some(b"wOFF") => {
+            let mut left = limits::BINARY_INPUT;
+            let mut over = false;
+            let mut inflate = |data: &[u8], size: usize| {
+                if size > left {
+                    over = true;
+                    return Err("over the bound".into());
+                }
+                left -= size;
+                let mut table = Vec::with_capacity(size);
+                flate2::Decompress::new(true).decompress_vec(
+                    data,
+                    &mut table,
+                    flate2::FlushDecompress::Finish,
+                )?;
+                Ok(table)
+            };
+            let font = wuff::decompress_woff1_with_custom_z(&bytes, &mut inflate);
+            anyhow::ensure!(
+                !over,
+                "Font exceeds {} preview limit",
+                limits::describe(limits::BINARY_INPUT)
+            );
+            Ok((font.map_err(|_| damaged())?, Some("WOFF")))
+        }
+        Some(b"wOF2") => Ok((
+            wuff::decompress_woff2(&bytes).map_err(|_| damaged())?,
+            Some("WOFF2"),
+        )),
+        _ => Ok((bytes, None)),
     }
 }
 fn specimen(
     bytes: Vec<u8>,
+    packed: Option<&str>,
     view: &InspectRequest,
     cancel: &CancelToken,
 ) -> anyhow::Result<Inspection> {
@@ -105,6 +147,7 @@ fn specimen(
         ("Glyphs", inspection::count(usize::from(glyphs))),
         ("Outlines", outlines.map(str::to_owned)),
         ("Variable", face.is_variable().then(|| "Yes".to_owned())),
+        ("Packed as", packed.map(str::to_owned)),
     ]);
     let font = fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default())
         .map_err(anyhow::Error::msg)?;
@@ -356,8 +399,10 @@ mod tests {
     }
 
     fn render(font: Vec<u8>, query: Option<&str>) -> anyhow::Result<Inspection> {
+        let (font, packed) = unpacked(font)?;
         specimen(
             font,
+            packed,
             &InspectRequest {
                 query: query.map(str::to_owned),
                 ..InspectRequest::default()
@@ -420,5 +465,94 @@ mod tests {
         assert!(!glyph_fits(WIDTH + 1, HEIGHT));
         assert!(!glyph_fits(usize::MAX, 2));
         assert!(glyph_fits(0, 0));
+    }
+
+    /// `font` packed as WOFF, each table compressed; a table can instead
+    /// declare `declared` as its unpacked length.
+    fn woff(font: &[u8], declared: Option<u32>) -> Vec<u8> {
+        use std::io::Write;
+        let be16 = |at: usize| usize::from(u16::from_be_bytes([font[at], font[at + 1]]));
+        let be32 = |at: usize| u32::from_be_bytes(font[at..at + 4].try_into().unwrap());
+        let count = be16(4);
+        let mut directory = Vec::new();
+        let mut data = Vec::new();
+        let start = 44 + 20 * count;
+        for entry in 0..count {
+            let at = 12 + 16 * entry;
+            let (offset, length) = (be32(at + 8) as usize, be32(at + 12));
+            let table = &font[offset..offset + length as usize];
+            let mut encoder =
+                flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+            encoder.write_all(table).unwrap();
+            let packed = encoder.finish().unwrap();
+            let packed = if packed.len() < table.len() {
+                packed
+            } else {
+                table.to_vec()
+            };
+            directory.extend_from_slice(&font[at..at + 4]);
+            directory.extend_from_slice(&((start + data.len()) as u32).to_be_bytes());
+            directory.extend_from_slice(&(packed.len() as u32).to_be_bytes());
+            directory.extend_from_slice(&declared.unwrap_or(length).to_be_bytes());
+            directory.extend_from_slice(&be32(at + 4).to_be_bytes());
+            data.extend_from_slice(&packed);
+            while !data.len().is_multiple_of(4) {
+                data.push(0);
+            }
+        }
+        let mut out = b"wOFF".to_vec();
+        out.extend_from_slice(&font[..4]);
+        out.extend_from_slice(&((start + data.len()) as u32).to_be_bytes());
+        out.extend_from_slice(&(count as u16).to_be_bytes());
+        out.extend_from_slice(&[0, 0]);
+        out.extend_from_slice(&(font.len() as u32).to_be_bytes());
+        out.extend_from_slice(&[0, 1, 0, 0]);
+        out.extend_from_slice(&[0; 20]);
+        out.extend(directory);
+        out.extend(data);
+        out
+    }
+
+    fn packed_as(data: &Inspection) -> Option<&str> {
+        data.details
+            .iter()
+            .find(|d| d.label == "Packed as")
+            .map(|d| d.value.as_str())
+    }
+
+    #[test]
+    fn web_fonts_are_unpacked_into_the_font_they_carry() {
+        let plain = render(synthetic_ttf(1000, 400, 400), Some("A")).unwrap();
+        assert_eq!(packed_as(&plain), None);
+        let woff = render(woff(&synthetic_ttf(1000, 400, 400), None), Some("A")).unwrap();
+        assert_eq!(packed_as(&woff), Some("WOFF"));
+        // The same font packed as WOFF2 by fontTools, its outlines transformed.
+        let woff2 = render(
+            include_bytes!("testdata/synthetic.woff2").to_vec(),
+            Some("A"),
+        )
+        .unwrap();
+        assert_eq!(packed_as(&woff2), Some("WOFF2"));
+        for data in [&woff, &woff2] {
+            let unpacked: Vec<_> = data
+                .details
+                .iter()
+                .filter(|d| d.label != "Packed as")
+                .cloned()
+                .collect();
+            assert_eq!(unpacked, plain.details);
+            assert_eq!(
+                data.image.as_ref().unwrap().rgba,
+                plain.image.as_ref().unwrap().rgba
+            );
+        }
+    }
+
+    #[test]
+    fn a_web_font_that_lies_about_its_size_is_refused_before_allocating() {
+        let error = render(woff(&synthetic_ttf(1000, 400, 400), Some(u32::MAX)), None).unwrap_err();
+        assert!(error.to_string().contains("exceeds"), "{error}");
+        let error = render(b"wOF2 and nothing else".to_vec(), None).unwrap_err();
+        assert!(error.to_string().contains("damaged"), "{error}");
     }
 }

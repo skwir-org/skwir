@@ -12,9 +12,14 @@ anyhow.workspace = true
 serde_json.workspace = true
 fontdue = "0.9"
 ttf-parser = "0.25"
+# Web fonts: WOFF2's decoder (brotli, transformed tables) in pure Rust; WOFF
+# is inflated here, within the input bound, by the flate2 already in the tree.
+wuff = { version = "0.2", default-features = false, features = ["brotli"] }
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 
 [dev-dependencies]
 tempfile.workspace = true
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 
 [lints]
 workspace = true
