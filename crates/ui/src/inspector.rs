@@ -1391,14 +1391,14 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         bar.push(Item::button(
             Slot::View,
             0,
-            button("inspect-expand-all", "plus", "Expand all", "expand_all"),
+            button("inspect-expand-all", "unfold", "Expand all", "expand_all"),
         ));
         bar.push(Item::button(
             Slot::View,
             0,
             button(
                 "inspect-collapse-all",
-                "minus",
+                "fold",
                 "Collapse all",
                 "collapse_all",
             ),

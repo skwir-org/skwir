@@ -40,6 +40,8 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "right",
         "plus",
         "minus",
+        "unfold",
+        "fold",
         "fit",
         "width",
         "copy",
