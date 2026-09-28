@@ -106,8 +106,9 @@ fn app_row(
     }
     bar = bar.child(views);
     if mode < 2 {
+        // No separator: the views' group has its own border, and the View
+        // menu is their options, not another subject.
         bar = bar
-            .child(toolbar::separator(&theme))
             .child(
                 labelled(
                     Button::new(
@@ -122,7 +123,8 @@ fn app_row(
                     "View",
                     mode,
                 )
-                .render(shell, cx),
+                .render(shell, cx)
+                .ml(px(4.)),
             )
             .child(
                 labelled(
