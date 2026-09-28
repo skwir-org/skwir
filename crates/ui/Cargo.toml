@@ -23,6 +23,7 @@ toml.workspace = true
 bibli-platform.workspace = true
 image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
 syntect.workspace = true
+two-face.workspace = true
 smallvec = "1"
 
 [features]

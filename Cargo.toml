@@ -120,6 +120,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-segmentation = "1"
 jiff = "0.2"
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
+# bat's grammars over syntect's defaults (TypeScript, Nix, Dockerfile, TOML…),
+# built for the same pure-Rust regex engine.
+two-face = { version = "0.5", default-features = false, features = ["syntect-default-fancy"] }
 indexmap = "2"
 proptest = "1"
 tempfile = "3"

@@ -10,28 +10,11 @@ use std::sync::OnceLock;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 
-pub(crate) fn syntaxes(language: Option<&str>) -> &'static SyntaxSet {
-    static DEFAULTS: OnceLock<SyntaxSet> = OnceLock::new();
-    static TOML: OnceLock<SyntaxSet> = OnceLock::new();
-    if language.is_some_and(|language| language.eq_ignore_ascii_case("toml")) {
-        TOML.get_or_init(|| {
-            // Keep the bundled grammar separate: rebuilding the precompiled
-            // default set would delay every language's first preview.
-            let mut builder = syntect::parsing::SyntaxSetBuilder::new();
-            builder.add_plain_text_syntax();
-            builder.add(
-                syntect::parsing::SyntaxDefinition::load_from_str(
-                    include_str!("../assets/syntaxes/TOML.sublime-syntax"),
-                    true,
-                    None,
-                )
-                .expect("bundled TOML grammar"),
-            );
-            builder.build()
-        })
-    } else {
-        DEFAULTS.get_or_init(SyntaxSet::load_defaults_newlines)
-    }
+/// bat's grammars, syntect's defaults among them: read once, each
+/// grammar compiled when a file first needs it.
+pub(crate) fn syntaxes() -> &'static SyntaxSet {
+    static SET: OnceLock<SyntaxSet> = OnceLock::new();
+    SET.get_or_init(two_face::syntax::extra_newlines)
 }
 
 fn themes() -> &'static ThemeSet {
@@ -49,7 +32,7 @@ pub(crate) struct Highlighter {
 
 impl Highlighter {
     pub fn new(language: Option<&str>, dark: bool) -> Self {
-        let syntaxes = syntaxes(language);
+        let syntaxes = syntaxes();
         let syntax = language
             .and_then(|language| syntaxes.find_syntax_by_token(language))
             .unwrap_or_else(|| syntaxes.find_syntax_plain_text());
@@ -268,6 +251,23 @@ mod tests {
             visible(&data, &BTreeSet::new()),
             (0..10).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn everyday_languages_are_highlighted_by_extension_or_name() {
+        for (language, line) in [
+            ("ts", "const answer: number = 42;"),
+            ("tsx", "const answer: number = 42;"),
+            ("nix", "{ pkgs ? import <nixpkgs> {} }: pkgs.hello"),
+            ("Dockerfile", "FROM alpine:3 AS build"),
+            ("kt", "val answer: Int = 42"),
+            ("ini", "name = value ; a note"),
+            ("typescript", "const answer: number = 42;"),
+        ] {
+            let runs = Highlighter::new(Some(language), false).line(line);
+            let colors: BTreeSet<_> = runs.iter().filter_map(|run| run.color).collect();
+            assert!(colors.len() > 1, "{language} is highlighted: {runs:?}");
+        }
     }
 
     #[test]
