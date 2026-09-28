@@ -42,6 +42,22 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   content is replaced. What cannot be read again (a message's parts) or is
   part of the page (an SVG drawing) is `Picture::Ready`, decoded with the
   page and bounded by `EMBEDDED_IMAGES`.
+- A picture is decoded in the process when `thumb_providers::decodes` says
+  so; any other `image/*` type is the desktop thumbnailer's to draw
+  (`thumbnails` plugin, a fallback provider), and what it drew is all there
+  is (`Pixels::Drawn`: never sharpened, its own size from EXIF when known).
+  A decoder added in the process adds its type there, which is what keeps
+  the fallback away. Floating-point pictures hold linear light and are
+  encoded as sRGB in `picture::decode`, which every shown picture passes.
+- A reader never lets a library allocate from what a file claims. Cells
+  are streamed and only the page kept (spreadsheets: two cells a million
+  rows apart must cost two cells, which is why ODS and XLS, whose calamine
+  readers build the grid whole, are not read); what a library reads whole
+  is inflated once through a counter first; a table declaring its own
+  unpacked size (WOFF) is inflated by our bounded inflater.
+- A database is opened read-only and immutable (nothing written beside
+  it, WAL or not), its schema untrusted, tables only, each cell bounded in
+  the query, cancellation wired to SQLite's progress handler.
 - A block is text, a rule or a table row: `BlockKind`, not a set of flags that
   can disagree. A table row is text too: its cells are ranges of `Block::text`,
   which holds them joined by tabs, so a cell keeps its emphasis, code and links

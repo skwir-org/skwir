@@ -22,15 +22,22 @@ Each format is enabled by an independent plugin in **Settings → Plugins**:
 | --- | --- |
 | `preview-media` | Audio and video in one player: playback, seeking, volume, speed (pitch kept), audio and subtitle tracks, fullscreen for video; tags, embedded cover and a spectrum ring in the cover's colour for audio. Previous and Next step through the folder's files of the same kind or a playlist. **Keep playing while you browse** (on by default) pins what plays so it goes on in a player at the foot of the preview, steered from the status bar and from the desktop's media keys (MPRIS), without a gap between tracks. **Play on selection** starts a file once selected; **When a track ends** stops, plays the next or shuffles. ReplayGain and the video engine are settings. |
 | `preview-hex` | Read-only hexadecimal/ASCII ranges for binary files; available explicitly for any file. Jump to a decimal or `0x` offset; search text or `hex: 00 ff 7a` byte sequences. |
-| `preview-markdown` | Markdown and HTML reading mode with source toggle, headings, emphasis, lists, tables, code highlighting, links and local images. HTML keeps what its stylesheets say about emphasis, alignment, indents and hidden text, and is inert: no scripts, fonts or remote content. |
+| `preview-markdown` | Markdown and HTML reading mode with source toggle, headings, emphasis, lists, tables, code highlighting, links and local images. HTML keeps what its stylesheets say about emphasis, alignment, indents and hidden text, and is inert: no scripts, fonts or remote content. Jupyter notebooks (`.ipynb`, format 4) read the same way: Markdown cells, code in the kernel's language, and what each cell printed, returned, raised or plotted. |
 | `preview-archives` | File-list-style archive tree with themed icons, folders first, aligned sizes, expand/collapse controls and selected-member image/text previews; other members show paged hexadecimal bytes. |
 | `preview-epub` | Reflowing EPUB chapters, contents, embedded images, links and footnotes (which open under their reference), text size, selection/copy, source and book search. The book's stylesheets give it its italics, centred titles, indents and hidden text; its fonts and colours give way to the theme. Chapters follow each other: scroll on past the end of one to read the next. A fixed-layout book (a comic, a picture book) opens in the document reader like a PDF, continuously or a page at a time, each page drawn as its book lays it out, lettering in the book's own fonts, and sharper as it is zoomed. The Book engine setting can instead give every book to MuPDF (optional worker), which lays it out into pages in the document reader; there the size keys lay it out again at a larger or smaller text size and keep the place. How wide lines may grow is the Reading width preference, or the Full width button beside the text size. The toolbar reads like the document reader's: previous chapter, the chapter number (click to type one), next; smaller, the text size as a picker, larger; then Full width. A book that lists the page numbers of its printed edition can be counted by them instead: the picker after the count switches between chapters and printed pages, and the Printed page numbers preference remembers the choice. A PDF that names its pages (front matter in roman numerals, a body starting at 1 further in) is counted the same way in the reader. |
 | `preview-playlists` | M3U/M3U8, PLS, XSPF and CUE files as a list of tracks with titles, artists and lengths; missing and remote entries are marked. A track on this machine opens in the player, whose Previous and Next then walk the playlist. Nothing is fetched. |
-| `preview-tables` | CSV/TSV tables, quoted multiline cells, horizontal scrolling and section navigation. |
-| `preview-structured` | Syntax-highlighted JSON/YAML/TOML code with line numbers, folding and source toggle. |
-| `preview-fonts` | TTF/OTF/TTC specimens and character sheets. Find sets the specimen text; sections advance through supported characters. |
+| `preview-tables` | CSV/TSV tables, quoted multiline cells, horizontal scrolling and section navigation. JSON Lines (`.jsonl`, `.ndjson`): a row per line, the keys as columns. Excel workbooks (`.xlsx`, `.xlsm`, `.xlsb`): each sheet's cells, sheet after sheet; the **Spreadsheets** setting (Table or Pages) gives them to LibreOffice's pages instead. SQLite databases: each table's rows, table after table, opened read-only so nothing is written beside them. |
+| `preview-structured` | Syntax-highlighted JSON/YAML/TOML code with line numbers, folding and source toggle. JSON with comments (JSONC, `tsconfig.json`) and JSON5 are shown as written. |
+| `preview-fonts` | TTF/OTF/TTC and WOFF/WOFF2 specimens and character sheets. Find sets the specimen text; sections advance through supported characters. |
 | `preview-email` | EML headers, inert HTML/text, embedded content-ID images and attachment previews. |
 | `preview-comics` | CBZ/CBR/CB7/CBT comics in the document reader, continuously or a page at a time, pages in numeric filename order, each decoded at the size it is shown. |
+
+Pictures are decoded in the process (PNG, JPEG, GIF, WebP, BMP, TIFF, ICO,
+QOI, TGA, PNM, OpenEXR, DDS) and SVG drawings are drawn, sharper as they are
+zoomed. A picture of another kind (HEIC, AVIF, JPEG XL, a camera's raw file)
+is shown as the desktop's thumbnailer for it draws it, 1024 pixels at most,
+when one is installed (`thumbnails` plugin). Code is highlighted with bat's
+grammars.
 
 Text can be drag-selected and copied with the toolbar or **Ctrl+C** while the
 reader has focus. With no text range, Copy uses the selected row or current
@@ -60,6 +67,9 @@ need no external runtime or network service.
 - Archives and comics: `bibli-archive-worker` plus libarchive. Neither 7-Zip nor
   libarchive loads into the UI process.
 - Existing PDF, Office and video backend settings are unchanged.
+- SQLite databases: the system's `libsqlite3`, which bibli links.
+- HEIC, AVIF, JPEG XL and raw photos: a thumbnailer for them (libheif's
+  `heif-thumbnailer`, for example); without one they show no picture.
 
 ASF containers (`application/vnd.ms-asf`, `application/x-ms-asf`, or `.asf`)
 use `preview-media`. GStreamer discovers their streams: video files use the video
@@ -88,7 +98,9 @@ Structured previews format JSON with two-space indentation; TOML and YAML keep
 their original syntax, indentation, comments and ordering. Click a gutter arrow
 to fold an object, array or section; the toolbar also offers expand/collapse all.
 Find reveals matching lines, and text selection/copy preserves blank lines.
-Source shows the original JSON formatting. These are read-only presentations.
+Source shows the original JSON formatting. JSON with comments or trailing
+commas, JSONC and JSON5 are never reformatted: they show as written, folded
+where their brackets say. These are read-only presentations.
 Invalid or oversized documents fall back to paginated source with a diagnostic;
 code previews are bounded to 2 MiB, 10000 lines and 4096 bytes per line.
 

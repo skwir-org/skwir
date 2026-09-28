@@ -36,6 +36,19 @@ Poppler, GStreamer or libarchive. Open gate: idle PSS is about 118 to 120 MB aga
 been loosened. The per-change validation history that used to sit here is in
 `docs/STATUS-LOG.md`.
 
+More previews (2026-09-28): SVG drawings are drawn by resvg (inert, sharper
+as they are zoomed; `Pixels` says how far a picture may sharpen); OpenEXR and
+DDS decode in the process, floating-point light encoded as sRGB in
+`picture::decode`; a picture bibli does not decode (HEIC, AVIF, JPEG XL, raw)
+is drawn by the desktop's thumbnailer at 1024 px (`thumbnails` plugin,
+`PreviewInfo::Picture`). Code is highlighted with bat's 213 grammars
+(two-face), about 1.2 MB more once code is first shown. Fonts read WOFF and
+WOFF2; JSON with comments, JSONC and JSON5 show as written; JSON Lines, Excel
+workbooks (calamine, cells streamed: ODS and XLS stay with LibreOffice, whose
+readers there allocate the whole grid) and SQLite databases (the system's
+libsqlite3, read-only and immutable) are tables; Jupyter notebooks read as
+documents. Radiance HDR and farbfeld stay out: the MIME database names
+neither.
 Audio and video (2026-09-25, ADR-016): `preview-audio` is folded into
 `preview-media` ("Preview: audio and video"), which declares every playback
 preference, the shell player's included (keep playing while you browse, on by
