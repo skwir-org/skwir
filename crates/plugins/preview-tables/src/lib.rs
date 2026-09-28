@@ -1,43 +1,79 @@
-//! CSV/TSV and JSON Lines tables streamed from the file a page at a time,
-//! every cell bounded.
+//! CSV/TSV, JSON Lines and spreadsheet tables streamed from the file a page
+//! at a time, every cell bounded.
 use bibli_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection, Row},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
+    settings::SettingSpec,
 };
 use bibli_platform::inspection::{self, Encoding, limits};
 use std::{io::Read, sync::Arc};
+
+const ID: &str = "preview-tables";
+/// How a spreadsheet is shown: its cells as a table, or its pages as
+/// `LibreOffice` prints them.
+const SPREADSHEETS: &str = "preview-tables.spreadsheets";
+
 pub struct PreviewPlugin;
+impl PreviewPlugin {
+    /// The provider, with the spreadsheet presentation the settings name.
+    fn provider(app: &App) {
+        let pages = app.settings.get::<String>(SPREADSHEETS).as_deref() == Some("pages");
+        app.previews.unregister(ID, ID);
+        app.previews.register(ID, Arc::new(Provider { pages }));
+    }
+}
 impl Plugin for PreviewPlugin {
     fn id(&self) -> &'static str {
-        "preview-tables"
+        ID
     }
     fn title(&self) -> &'static str {
         "Preview: tables"
     }
     fn description(&self) -> &'static str {
-        "Show CSV, TSV and JSON Lines files as aligned tables"
+        "Show CSV, TSV and JSON Lines files and spreadsheets as aligned tables"
     }
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Previews
     }
     fn register(&self, app: &App) {
-        app.previews.register(self.id(), Arc::new(Provider));
+        app.settings.declare(SettingSpec::choice(
+            SPREADSHEETS,
+            "Spreadsheets",
+            "Excel workbooks (.xlsx, .xlsm, .xlsb) show their cells as a table, a sheet after another. Pages shows them as LibreOffice prints them, when it is installed.",
+            "table",
+            &[("table", "Table"), ("pages", "Pages")],
+        ));
+        Self::provider(app);
+    }
+    fn on_settings_changed(&self, app: &App, keys: &[String]) {
+        if keys.iter().any(|key| key == SPREADSHEETS) {
+            Self::provider(app);
+        }
     }
 }
 mod jsonl;
+mod spreadsheet;
 
-struct Provider;
+struct Provider {
+    /// Spreadsheets are `LibreOffice`'s to draw as pages, when it is there.
+    pages: bool,
+}
 impl PreviewProvider for Provider {
     fn id(&self) -> &'static str {
-        "preview-tables"
+        ID
+    }
+    /// Before the document reader, which also claims spreadsheets.
+    fn priority(&self) -> i32 {
+        10
     }
     fn accepts(&self, req: &PreviewRequest) -> bool {
-        matches!(
-            inspection::extension(&req.entry.path).as_str(),
-            "csv" | "tsv" | "jsonl" | "ndjson"
-        )
+        let extension = inspection::extension(&req.entry.path);
+        if spreadsheet::EXTENSIONS.contains(&extension.as_str()) {
+            return !(self.pages && bibli_platform::process::required("libreoffice").is_ok());
+        }
+        matches!(extension.as_str(), "csv" | "tsv" | "jsonl" | "ndjson")
     }
     fn inspect(
         &self,
@@ -50,8 +86,12 @@ impl PreviewProvider for Provider {
             return Ok(None);
         }
         let path = req.entry.resolve()?;
-        match inspection::extension(&path).as_str() {
+        let extension = inspection::extension(&path);
+        match extension.as_str() {
             "jsonl" | "ndjson" => jsonl::table(&path, view.offset, cancel).map(Some),
+            _ if spreadsheet::EXTENSIONS.contains(&extension.as_str()) => {
+                spreadsheet::table(&path, view.offset, cancel).map(Some)
+            }
             _ => table(&path, view.offset, cancel).map(Some),
         }
     }

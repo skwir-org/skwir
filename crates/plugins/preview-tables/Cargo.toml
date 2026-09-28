@@ -12,6 +12,10 @@ anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 csv = "1"
+# Excel workbooks, read cell by cell; the zip version already in the tree,
+# walked first to bound what calamine reads whole.
+calamine = { version = "0.36", default-features = false }
+zip = { version = "8", default-features = false, features = ["deflate"] }
 # A line's keys in the order it writes them.
 indexmap = { workspace = true, features = ["serde"] }
 
