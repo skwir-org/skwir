@@ -132,6 +132,18 @@ layout (`crates/gpui/...`) so they apply there with `git apply -p1`.
   in half a level showed a tile's outline at the same place on every
   start, and does not with the patch.
 
+- `0009-image-formats-gpui-decodes.patch`: gpui asked for `image` with its
+  default features, which include `avif`: in `image` 0.25 that is the AVIF
+  *encoder*, rav1e, 2.4 MB of machine code nothing calls (decoding AVIF is
+  the separate `avif-native`). gpui now names the formats it decodes itself
+  (`ImageFormat`: PNG, JPEG, WebP, GIF, BMP, TIFF); bibli's crates name
+  theirs, and features add up, so what bibli decodes is unchanged. Also
+  gone: Radiance HDR and farbfeld, which nothing reaches, and `image`'s
+  `rayon` (parallel OpenEXR decoding; our previews run on workers already).
+  In Zed the dependency is declared in the workspace `Cargo.toml`, so the
+  same change belongs there upstream; this diff is against the published
+  manifest.
+
 ## Regenerating a patch
 
     G=$(ls -d ~/.cargo/registry/src/*/gpui-0.2.2)
