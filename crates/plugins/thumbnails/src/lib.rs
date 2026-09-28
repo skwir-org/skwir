@@ -60,7 +60,8 @@ impl ThumbnailProvider for Discovered {
 /// Pictures bibli does not decode itself (HEIF, AVIF, JPEG XL, a camera's
 /// raw file) previewed as the desktop's thumbnailer draws them, at the
 /// largest size the thumbnail cache knows, and kept there like any
-/// thumbnail so the next look, and other applications, find it drawn.
+/// thumbnail so the next look, and other applications, find it drawn. A 3D
+/// model is one too (`pictured`): what f3d or Blender draws of it.
 struct Pictures {
     thumbnailers: Arc<Discovered>,
     cache: Option<ThumbCache>,
@@ -82,7 +83,7 @@ impl PreviewProvider for Pictures {
 
     fn accepts(&self, req: &PreviewRequest) -> bool {
         req.mime.as_deref().is_some_and(|mime| {
-            mime.starts_with("image/")
+            pictured(mime)
                 && !thumb_providers::decodes(mime)
                 && self
                     .thumbnailers
@@ -104,15 +105,30 @@ impl PreviewProvider for Pictures {
         } else {
             self.draw(&path, mime, cancel)?
         };
-        let (width, height) = own_size(
-            bibli_platform::exif::dimensions(&path),
-            (image.width, image.height),
-        );
+        // Only a picture has a camera's size to read.
+        let written = mime
+            .starts_with("image/")
+            .then(|| bibli_platform::exif::dimensions(&path))
+            .flatten();
+        let (width, height) = own_size(written, (image.width, image.height));
         Ok(Preview {
             image,
             info: PreviewInfo::Picture { width, height },
         })
     }
+}
+
+/// Whether a file of type `mime` is something to look at, which a
+/// thumbnailer's picture shows: an image, a 3D model (the `model` media
+/// type: STL, glTF, STEP, IGES), or what the MIME database draws as a
+/// picture (`Kind::Image`: a Blender file, a 3MF package).
+fn pictured(mime: &str) -> bool {
+    mime.starts_with("image/")
+        || mime.starts_with("model/")
+        || bibli_platform::mime::is_kind(
+            &bibli_platform::mime::Mime(mime.to_owned()),
+            bibli_platform::mime::Kind::Image,
+        )
 }
 
 impl Pictures {
@@ -419,7 +435,9 @@ mod tests {
                 name: "heif".into(),
                 try_exec: None,
                 exec: format!("{} %s %i %o", tool.display()),
-                mime_types: vec!["image/heif".into(), "image/png".into()],
+                mime_types: ["image/heif", "image/png", "model/stl", "text/plain"]
+                    .map(str::to_owned)
+                    .to_vec(),
             }]));
         let cache = ThumbCache::at(dir.path().join("cache"));
         let pictures = Pictures {
@@ -440,6 +458,14 @@ mod tests {
             "bibli decodes a PNG itself"
         );
         assert!(!pictures.accepts(&request("image/jxl")), "nothing draws it");
+        assert!(
+            pictures.accepts(&request("model/stl")),
+            "a 3D model is shown as its thumbnailer draws it"
+        );
+        assert!(
+            !pictures.accepts(&request("text/plain")),
+            "text is read, not pictured, whatever claims it"
+        );
         let heif = request("image/heif");
         assert!(pictures.accepts(&heif));
         let preview = pictures.render(&heif, &CancelToken::new()).unwrap();

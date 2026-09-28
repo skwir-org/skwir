@@ -44,7 +44,8 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   page and bounded by `EMBEDDED_IMAGES`.
 - A picture is decoded in the process when `thumb_providers::decodes` says
   so; any other `image/*` type is the desktop thumbnailer's to draw
-  (`thumbnails` plugin, a fallback provider), and what it drew is all there
+  (`thumbnails` plugin, a fallback provider), and so is a 3D model (the
+  `model/*` types and what the MIME database draws as a picture, `pictured`), and what it drew is all there
   is (`Pixels::Drawn`: never sharpened, its own size from EXIF when known).
   A decoder added in the process adds its type there, which is what keeps
   the fallback away. Floating-point pictures hold linear light and are

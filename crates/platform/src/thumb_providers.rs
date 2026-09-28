@@ -418,6 +418,10 @@ impl Thumbnailers {
         for (i, e) in entries.iter().enumerate() {
             for m in &e.mime_types {
                 by_mime.entry(m.clone()).or_insert(i);
+                // A file's type is the database's own name for it: a
+                // thumbnailer that claims an alias claims that type too.
+                let canonical = crate::mime::unalias(&crate::mime::Mime(m.clone())).0;
+                by_mime.entry(canonical).or_insert(i);
             }
         }
         Thumbnailers {
@@ -693,6 +697,19 @@ mod tests {
     use bibli_core::thumbs::ThumbSize as CoreSize;
 
     const SAMPLE: &str = "[Thumbnailer Entry]\nTryExec=totem-video-thumbnailer\nExec=totem-video-thumbnailer -s %s %u %o\nMimeType=video/mp4;video/x-matroska;\n";
+
+    #[test]
+    fn a_thumbnailer_that_claims_an_alias_claims_the_type() {
+        let t = Thumbnailers::new(vec![ThumbnailerEntry {
+            name: "models".into(),
+            try_exec: None,
+            exec: "draw %i %o".into(),
+            mime_types: vec!["model/x.stl-binary".into()],
+        }]);
+        assert!(t.claims("model/x.stl-binary"));
+        assert!(t.claims("model/stl"), "the database's name for it");
+        assert!(!t.claims("model/obj"));
+    }
 
     #[test]
     fn parses_a_thumbnailer_file() {

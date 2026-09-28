@@ -36,7 +36,9 @@ Pictures are decoded in the process (PNG, JPEG, GIF, WebP, BMP, TIFF, ICO,
 QOI, TGA, PNM, OpenEXR, DDS) and SVG drawings are drawn, sharper as they are
 zoomed. A picture of another kind (HEIC, AVIF, JPEG XL, a camera's raw file)
 is shown as the desktop's thumbnailer for it draws it, 1024 pixels at most,
-when one is installed (`thumbnails` plugin). Code is highlighted with bat's
+when one is installed (`thumbnails` plugin). So is a 3D model (STL, glTF,
+STEP, IGES, a Blender file…) when f3d, Blender or another thumbnailer
+claims its type. Code is highlighted with bat's
 grammars.
 
 Text can be drag-selected and copied with the toolbar or **Ctrl+C** while the

@@ -326,6 +326,12 @@ pub fn is_directory(mime: &Mime) -> bool {
     mime.0 == "inode/directory"
 }
 
+/// The type `mime` is another name for (`model/x.stl-binary` is
+/// `model/stl`), or `mime` itself. No I/O once the database is loaded.
+pub fn unalias(mime: &Mime) -> Mime {
+    imp::unalias(mime)
+}
+
 /// `mime` and the types it descends from, nearest first, each once: its
 /// declared parents and theirs, then the ones every type implies, as the
 /// desktop reads them to find an application: `text/plain` under any
