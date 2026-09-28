@@ -35,12 +35,7 @@ use resvg::{
     usvg::{self, fontdb},
 };
 use scraper::{ElementRef, Node};
-use std::{
-    collections::HashMap,
-    fmt::Write,
-    rc::Rc,
-    sync::{Arc, LazyLock},
-};
+use std::{collections::HashMap, fmt::Write, rc::Rc, sync::Arc};
 
 /// Characters of text one page may set.
 const TEXT: usize = 100_000;
@@ -1118,17 +1113,11 @@ impl Metrics {
     }
 }
 
-/// The system's fonts, read once: for text whose book brings no font.
-static SYSTEM: LazyLock<fontdb::Database> = LazyLock::new(|| {
-    let mut db = fontdb::Database::new();
-    db.load_system_fonts();
-    db
-});
-
 impl Fonts {
     fn new(faces: Vec<super::style::FontFace>) -> Self {
         Self {
-            db: SYSTEM.clone(),
+            // The system's, for text whose book brings no font.
+            db: crate::inspection::system_fonts().as_ref().clone(),
             faces,
             loaded: Vec::new(),
             metrics: HashMap::new(),

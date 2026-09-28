@@ -467,19 +467,62 @@ fn is_svg(bytes: &[u8]) -> bool {
 /// side. It is inert: nothing it names outside itself (a file, a URL) is
 /// read, only pictures embedded in it as data.
 fn svg(bytes: &[u8], side: u32) -> anyhow::Result<Decoded> {
-    use resvg::tiny_skia;
     let tree = svg_tree(bytes)?;
+    let own = own_size(&tree);
+    let (width, height) = shown(own.0, own.1, side);
+    render_svg(&tree, own, (width, height))
+}
+/// A drawing file (SVG, or SVG compressed as `.svgz`) read whole, within
+/// `limits::BINARY_INPUT` before and after inflating.
+pub fn read_drawing(path: &Path, cancel: &CancelToken) -> anyhow::Result<Vec<u8>> {
+    let bytes = read_bounded(path, limits::BINARY_INPUT, "Drawing", cancel)?;
+    if bytes.starts_with(&[0x1f, 0x8b]) {
+        let inflated = flate2::read::GzDecoder::new(bytes.as_slice());
+        return copy_bounded(inflated, limits::BINARY_INPUT, "Drawing", cancel);
+    }
+    Ok(bytes)
+}
+/// The size a drawing (`read_drawing`) declares: what 100% is.
+pub fn drawing_size(bytes: &[u8]) -> anyhow::Result<(u32, u32)> {
+    Ok(own_size(&svg_tree(bytes)?))
+}
+/// A drawing (`read_drawing`) rasterized for the preview, as inert as a
+/// picture in a document. Without `side` it is drawn at its own size,
+/// within the display side; with one, fitted to it on its longer side, and
+/// enlarged too: a drawing has as many pixels as it is asked for.
+pub fn drawing(bytes: &[u8], side: Option<u32>) -> anyhow::Result<Decoded> {
+    let tree = svg_tree(bytes)?;
+    let own = own_size(&tree);
+    let drawn = match side {
+        None => shown(own.0, own.1, limits::IMAGE_DISPLAY_SIDE),
+        Some(side) => {
+            let side = f64::from(side.clamp(64, limits::PICTURE_SIDE));
+            let scale = side / f64::from(own.0.max(own.1));
+            let fit = |length: u32| ((f64::from(length) * scale).round() as u32).max(1);
+            (fit(own.0), fit(own.1))
+        }
+    };
+    render_svg(&tree, own, drawn)
+}
+fn own_size(tree: &resvg::usvg::Tree) -> (u32, u32) {
     let drawn = tree.size();
-    let own = (
+    (
         drawn.width().round().max(1.) as u32,
         drawn.height().round().max(1.) as u32,
-    );
-    let (width, height) = shown(own.0, own.1, side);
+    )
+}
+fn render_svg(
+    tree: &resvg::usvg::Tree,
+    own: (u32, u32),
+    (width, height): (u32, u32),
+) -> anyhow::Result<Decoded> {
+    use resvg::tiny_skia;
+    let drawn = tree.size();
     let scale = (width as f32 / drawn.width()).min(height as f32 / drawn.height());
     let mut pixmap = tiny_skia::Pixmap::new(width, height)
         .ok_or_else(|| anyhow::anyhow!("SVG picture has no size"))?;
     resvg::render(
-        &tree,
+        tree,
         tiny_skia::Transform::from_scale(scale, scale),
         &mut pixmap.as_mut(),
     );
@@ -498,9 +541,25 @@ fn svg(bytes: &[u8], side: u32) -> anyhow::Result<Decoded> {
         own,
     })
 }
-/// An SVG document parsed with every reference outside itself refused.
+/// The system's fonts, read once on the first worker that needs them: for
+/// a drawing's text, and a book's that brings no font.
+pub(crate) fn system_fonts() -> &'static std::sync::Arc<resvg::usvg::fontdb::Database> {
+    static SYSTEM: std::sync::LazyLock<std::sync::Arc<resvg::usvg::fontdb::Database>> =
+        std::sync::LazyLock::new(|| {
+            let mut db = resvg::usvg::fontdb::Database::new();
+            db.load_system_fonts();
+            std::sync::Arc::new(db)
+        });
+    &SYSTEM
+}
+/// An SVG document parsed with every reference outside itself refused, its
+/// text set in the system's fonts. Reading those is costly the first time:
+/// a drawing without text never does.
 fn svg_tree(bytes: &[u8]) -> anyhow::Result<resvg::usvg::Tree> {
     let mut options = resvg::usvg::Options::default();
+    if bytes.windows(5).any(|window| window == b"<text") {
+        options.fontdb = std::sync::Arc::clone(system_fonts());
+    }
     options.image_href_resolver.resolve_string = Box::new(|_, _| None);
     Ok(resvg::usvg::Tree::from_data(bytes, &options)?)
 }
@@ -689,6 +748,62 @@ mod tests {
         assert_eq!(at(2400), (2400, 480));
         assert_eq!(at(u32::MAX), (limits::PICTURE_SIDE, 819), "bounded");
         assert_eq!(image(&bytes).map(|i| i.width).unwrap(), 1600);
+    }
+
+    const DRAWING: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20">
+        <rect width="40" height="20" fill="#ff0000"/></svg>"##;
+
+    #[test]
+    fn a_drawing_is_drawn_at_its_own_size_or_the_side_asked() {
+        let at = |side| {
+            let decoded = drawing(DRAWING.as_bytes(), side).unwrap();
+            assert_eq!(decoded.own, (40, 20), "100% is the drawing's own size");
+            assert_eq!(&decoded.rgba[..4], &[255, 0, 0, 255]);
+            (decoded.width, decoded.height)
+        };
+        assert_eq!(at(None), (40, 20));
+        assert_eq!(at(Some(800)), (800, 400), "a drawing is enlarged");
+        assert_eq!(
+            at(Some(u32::MAX)),
+            (limits::PICTURE_SIDE, limits::PICTURE_SIDE / 2),
+            "bounded"
+        );
+        assert_eq!(drawing_size(DRAWING.as_bytes()).unwrap(), (40, 20));
+    }
+
+    #[test]
+    #[ignore = "needs the system's fonts"]
+    fn a_drawings_text_is_set_in_the_systems_fonts() {
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="60">
+            <text x="10" y="40" font-family="sans-serif" font-size="32">Hello</text></svg>"#;
+        let decoded = drawing(svg.as_bytes(), None).unwrap();
+        assert!(
+            decoded.rgba.chunks(4).any(|pixel| pixel[3] > 0),
+            "text is drawn"
+        );
+    }
+
+    #[test]
+    fn a_compressed_drawing_is_inflated_within_bounds() {
+        use std::io::Write;
+        let gzip = |bytes: &[u8]| {
+            let mut encoder =
+                flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            encoder.write_all(bytes).unwrap();
+            encoder.finish().unwrap()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("drawing.svgz");
+        std::fs::write(&path, gzip(DRAWING.as_bytes())).unwrap();
+        let cancel = CancelToken::new();
+        let bytes = read_drawing(&path, &cancel).unwrap();
+        assert_eq!(drawing_size(&bytes).unwrap(), (40, 20));
+
+        let mut bomb = DRAWING.as_bytes().to_vec();
+        bomb.resize(limits::BINARY_INPUT + 1, b' ');
+        std::fs::write(&path, gzip(&bomb)).unwrap();
+        let error = read_drawing(&path, &cancel).unwrap_err();
+        assert!(error.to_string().contains("exceeds"), "{error}");
     }
 
     #[test]

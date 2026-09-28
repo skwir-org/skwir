@@ -49,6 +49,9 @@ pub enum PreviewContent {
         /// What the file says about the picture (EXIF), read on the worker
         /// that decoded it, for the panel's Details.
         facts: Vec<bibli_core::inspection::Detail>,
+        /// Drawn from a vector document (SVG): it has as many pixels as it
+        /// is asked for, so a zoom sharpens it past its own size.
+        drawing: bool,
     },
     Dir {
         items: usize,
@@ -438,8 +441,13 @@ fn opens_as_pages(shell: &Shell) -> bool {
         || matches!(extension.as_str(), "pdf" | "cbz" | "cbr" | "cb7" | "cbt")
 }
 
-/// An image's own size, from its header, turned as it is shown.
-fn image_size(path: &Path) -> Option<(u32, u32)> {
+/// An image's own size, from its header, turned as it is shown; a
+/// drawing's, from its document.
+fn image_size(path: &Path, mime: &str, cancel: &CancelToken) -> Option<(u32, u32)> {
+    use bibli_platform::inspection;
+    if matches!(mime, "image/svg+xml" | "image/svg+xml-compressed") {
+        return inspection::drawing_size(&inspection::read_drawing(path, cancel).ok()?).ok();
+    }
     bibli_platform::picture::size(bibli_platform::picture::open(path).ok()?).ok()
 }
 
@@ -483,6 +491,30 @@ fn decode_image(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<
         detail: None,
         document: None,
         facts: bibli_platform::exif::details(path),
+        drawing: false,
+    })
+}
+
+/// A drawing (SVG) rasterized at its own size, or, once the panel asked
+/// for `side` pixels (a zoom, a high-density panel), at that; its own size
+/// is what 100% is.
+fn decode_drawing(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<PreviewContent> {
+    use bibli_platform::inspection;
+    let bytes = inspection::read_drawing(path, cancel)?;
+    let decoded = inspection::drawing(&bytes, (side > 0).then_some(side))?;
+    if cancel.is_cancelled() {
+        anyhow::bail!("cancelled");
+    }
+    let image = crate::thumbs::owned_render_image(decoded.width, decoded.height, decoded.rgba)
+        .ok_or_else(|| anyhow::anyhow!("invalid image"))?;
+    Ok(PreviewContent::Image {
+        image,
+        width: decoded.own.0,
+        height: decoded.own.1,
+        detail: None,
+        document: None,
+        facts: Vec::new(),
+        drawing: true,
     })
 }
 
@@ -583,6 +615,10 @@ fn compute(
         };
     }
     let top = mime.and_then(|m| m.split('/').next()).unwrap_or("");
+    if matches!(mime, Some("image/svg+xml" | "image/svg+xml-compressed")) {
+        return decode_drawing(path, picture_side, cancel)
+            .unwrap_or_else(|e| PreviewContent::Error(format!("{e:#}")));
+    }
     if top == "image" {
         return decode_image(path, picture_side, cancel)
             .unwrap_or_else(|e| PreviewContent::Error(format!("{e:#}")));
@@ -1048,6 +1084,7 @@ impl Shell {
                     detail: None,
                     document: None,
                     facts: Vec::new(),
+                    drawing: false,
                 }),
                 window,
                 cx,
@@ -1220,9 +1257,8 @@ impl Shell {
                         let own = request
                             .mime
                             .as_deref()
-                            .is_some_and(|mime| mime.starts_with("image/"))
-                            .then(|| image_size(&path))
-                            .flatten()
+                            .filter(|mime| mime.starts_with("image/"))
+                            .and_then(|mime| image_size(&path, mime, &cancel))
                             .unwrap_or_else(|| {
                                 let scale = f64::from(IMAGE_MAX_SIDE)
                                     / f64::from(image.width.max(image.height).max(1));
@@ -1238,6 +1274,7 @@ impl Shell {
                             detail: None,
                             document: None,
                             facts: Vec::new(),
+                            drawing: false,
                         };
                         if !cancel.is_cancelled() {
                             let _ = tx.send(PreviewResult {
@@ -1282,6 +1319,7 @@ impl Shell {
                                 // Where it was recorded, which Details
                                 // shows beside what the player says.
                                 facts: bibli_platform::mp4::details(&path),
+                                drawing: false,
                             };
                             send(content, true, None, None);
                         }
@@ -1318,6 +1356,7 @@ impl Shell {
                                     }),
                                     document: Some(page.content),
                                     facts: Vec::new(),
+                                    drawing: false,
                                 })
                             })
                             .unwrap_or_else(|e| PreviewContent::Error(format!("{e:#}")));
@@ -1340,6 +1379,7 @@ impl Shell {
                             detail: Some(preview.info),
                             document: None,
                             facts: Vec::new(),
+                            drawing: false,
                         },
                         None => PreviewContent::Error("Invalid preview image".into()),
                     },
@@ -2247,6 +2287,7 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
             width,
             height,
             document,
+            drawing,
             ..
         }) => {
             let picture = if let Some(document) = document.as_ref().filter(|_| interactive) {
@@ -2265,11 +2306,16 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                     &p.picture_scroll,
                     "preview-image-scroll",
                     // A picture shown smaller than its own size was decoded
-                    // smaller; one given at its pixels has no more.
+                    // smaller; one given at its pixels has no more. A
+                    // drawing has as many as it is asked for.
                     Some(Sharpen {
                         shell: cx.entity().downgrade(),
                         asked: p.picture_side,
-                        most: (*width).max(*height),
+                        most: if *drawing {
+                            bibli_platform::inspection::limits::PICTURE_SIDE
+                        } else {
+                            (*width).max(*height)
+                        },
                     }),
                 )
             };
@@ -2892,6 +2938,34 @@ mod tests {
         assert_eq!(sharper(20_000., 1600, 0, u32::MAX), Some(PICTURE_SIDE));
         assert_eq!(sharper(20_000., PICTURE_SIDE, 0, u32::MAX), None);
         assert_eq!(sharper(f32::NAN, 1600, 0, u32::MAX), None);
+    }
+
+    #[test]
+    fn a_drawing_is_shown_at_its_own_size_and_drawn_at_the_side_asked() {
+        use super::{PreviewContent, compute};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a drawing’s name.svg");
+        std::fs::write(
+            &path,
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20"/></svg>"#,
+        )
+        .unwrap();
+        let cancel = bibli_core::CancelToken::new();
+        for (side, drawn) in [(0, 40), (1024, 1024)] {
+            let content = compute(&path, false, Some("image/svg+xml"), false, 0, side, &cancel);
+            let PreviewContent::Image {
+                image,
+                width,
+                height,
+                drawing,
+                ..
+            } = content
+            else {
+                panic!("a drawing is a picture");
+            };
+            assert_eq!((width, height, drawing), (40, 20, true));
+            assert_eq!(image.size(0).width.0, drawn);
+        }
     }
 
     #[test]

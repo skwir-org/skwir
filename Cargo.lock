@@ -735,6 +735,7 @@ dependencies = [
  "dirs 7.0.0",
  "ego-tree",
  "encoding_rs",
+ "flate2",
  "freedesktop-icons",
  "futures-lite 2.6.1",
  "image",

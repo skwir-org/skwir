@@ -34,6 +34,9 @@ roxmltree.workspace = true
 resvg = { version = "0.45", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 # Font metrics for laying out a fixed page's text; the version fontdb uses.
 ttf-parser = "0.25"
+# Compressed drawings (`.svgz`), inflated within a bound; the version and
+# backend already in the tree.
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 percent-encoding = "2"
 encoding_rs = "0.8"
 crossbeam-channel.workspace = true
