@@ -1,5 +1,5 @@
-//! CSV/TSV, JSON Lines and spreadsheet tables streamed from the file a page
-//! at a time, every cell bounded.
+//! CSV/TSV, JSON Lines, spreadsheet and SQLite tables streamed from the file
+//! a page at a time, every cell bounded.
 use bibli_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection, Row},
@@ -32,7 +32,7 @@ impl Plugin for PreviewPlugin {
         "Preview: tables"
     }
     fn description(&self) -> &'static str {
-        "Show CSV, TSV and JSON Lines files and spreadsheets as aligned tables"
+        "Show CSV, TSV and JSON Lines files, spreadsheets and SQLite databases as aligned tables"
     }
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Previews
@@ -55,6 +55,7 @@ impl Plugin for PreviewPlugin {
 }
 mod jsonl;
 mod spreadsheet;
+mod sqlite;
 
 struct Provider {
     /// Spreadsheets are `LibreOffice`'s to draw as pages, when it is there.
@@ -74,6 +75,11 @@ impl PreviewProvider for Provider {
             return !(self.pages && bibli_platform::process::required("libreoffice").is_ok());
         }
         matches!(extension.as_str(), "csv" | "tsv" | "jsonl" | "ndjson")
+            || sqlite::EXTENSIONS.contains(&extension.as_str())
+            || req
+                .mime
+                .as_deref()
+                .is_some_and(|mime| sqlite::MIMES.contains(&mime))
     }
     fn inspect(
         &self,
@@ -87,7 +93,14 @@ impl PreviewProvider for Provider {
         }
         let path = req.entry.resolve()?;
         let extension = inspection::extension(&path);
+        let database = req
+            .mime
+            .as_deref()
+            .is_some_and(|mime| sqlite::MIMES.contains(&mime));
         match extension.as_str() {
+            _ if database || sqlite::EXTENSIONS.contains(&extension.as_str()) => {
+                sqlite::table(&path, view.offset, cancel).map(Some)
+            }
             "jsonl" | "ndjson" => jsonl::table(&path, view.offset, cancel).map(Some),
             _ if spreadsheet::EXTENSIONS.contains(&extension.as_str()) => {
                 spreadsheet::table(&path, view.offset, cancel).map(Some)
