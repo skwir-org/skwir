@@ -57,6 +57,7 @@ mod reader_scroll;
 pub mod renamebulk;
 pub mod review;
 pub mod search_bar;
+mod sequence;
 pub mod session;
 pub mod settings;
 mod settings_records;
@@ -194,7 +195,11 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
             let font = pick_font(cx, &FONT_CANDIDATES, "ui");
             let mono_font = pick_font(cx, &MONO_CANDIDATES, "mono");
             tracing::debug!(ms = started.elapsed().as_millis() as u64, "font picked");
-            let keymap = keymap::install(&app, cx);
+            let keymap =
+                keymap::install(&app, bibli_core::keymap::user_bindings(&app.settings), cx);
+            // A key that begins a binding of several strokes waits for the
+            // next as long as it takes; `sequence.rs` shows what can follow.
+            cx.set_key_sequence_timeout(None);
             // Debug aid: `RUST_LOG=bibli_ui=trace` shows every keystroke GPUI saw.
             cx.observe_keystrokes(|ev, _, _| {
                 tracing::trace!(keystroke = %ev.keystroke.unparse(), "keystroke");

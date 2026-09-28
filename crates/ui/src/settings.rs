@@ -255,6 +255,7 @@ impl Page {
     pub fn of_owner(owner: &str) -> Page {
         match owner {
             CORE_OWNER => Page::General,
+            bibli_core::keymap::OWNER => Page::Keyboard,
             UI_OWNER => Page::Appearance,
             READING_OWNER => Page::Reading,
             other => Page::Plugin(other.to_owned()),
@@ -445,6 +446,13 @@ impl SettingsView {
             .iter()
             .find(|plugin| plugin.id == id)
             .map_or_else(|| id.to_owned(), |plugin| plugin.title.clone())
+    }
+
+    /// The keymap changed while the dialog is open (a shortcut saved here,
+    /// a plugin turned on or off).
+    pub fn set_key_hints(&mut self, hints: Vec<KeyHint>, cx: &mut Context<Self>) {
+        self.key_hints = hints;
+        cx.notify();
     }
 
     pub(crate) fn page_title(&self, page: &Page) -> String {

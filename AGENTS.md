@@ -177,6 +177,26 @@ current source before assuming a planned crate, command, or API exists.
   only a name in `keymap::context_label`. A command run three times with the
   pointer gets one hint naming its shortcut, once ever; call
   `Shell::note_pointer_use` from any new pointer-only entry point.
+- **Keys come in layers** (ADR-024), lowest first: the plugins' defaults
+  (`Registry::keymap`), the shell's own (`keymap::BUILTIN`), key schemes
+  (`Registry::schemes`, the `vim` plugin), the user's
+  (`keyboard.bindings`, a setting the core declares, edited on the
+  Keyboard page). `keymap::install` lists them in that order, so a later
+  layer wins whatever order plugins were enabled in; a binding a later one
+  hides is left out of the hints, so no menu or tooltip names a key that
+  does something else. A user's record without a command frees its keys
+  (`gpui::NoAction`). Type-ahead is on only while no binding takes an
+  unmodified character in the file list (`Keymap::typeahead`). A binding
+  of several strokes waits for the next without a timeout (vendored patch
+  0010) and `sequence.rs` shows what can follow. A plugin that changes
+  standard keys is off until asked (`Plugin::enabled_by_default`).
+- **The selection knows whether it was picked.** An arrow or a click
+  selects the item reached, which then follows the cursor; toggles, ranges
+  and select all pick. A scheme's moves say `follow` (`ui.cursor` with
+  `step: follow`), which moves a selection that follows and leaves a picked
+  one; `pick` is yazi's mark; a sweep (`select_sweep`) holds a range while
+  the cursor moves and the pane's key context says `sweep` meanwhile. The
+  standard keys use none of these and behave as they always did.
 - **What waits for a paste is core data.** The clipboard's owner publishes
   it in `App::pending` (entry ids and whether a paste will move them); the
   shell snapshots it once per frame. Every view dims cut entries
@@ -375,9 +395,10 @@ current source before assuming a planned crate, command, or API exists.
   `vendor/gpui/README.bibli.md` before touching it. gpui's API moves between
   releases: read the vendored source, not memory. Always set an explicit font
   family (the default stack costs 35-50 ms per frame when it fails to resolve).
-- **Conventions.** Key bindings use gpui notation (`ctrl-shift-n`); `when` is
+- **Conventions.** Key bindings use gpui notation (`ctrl-shift-n`, `G` for
+  Shift+G, `g g` for a sequence); `when` is
   a space-separated list of tokens that must all hold (`selection`, `single`,
-  `dir`, `file`, `empty`, `folder`; `pane`/`address`/`palette` for context);
+  `dir`, `file`, `empty`, `folder`, `sweep`; `pane`/`address`/`palette` for context);
   `a|b` holds when either does. A command that works in a folder but can
   run from a search uses `App::work_dir`, not `pane_dir`. Menu `order` groups
   by the hundreds digit (0xx open, 1xx edit, 2xx create, 3xx destructive,

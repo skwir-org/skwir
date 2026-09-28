@@ -661,12 +661,16 @@ impl PaneView for ListView {
     }
 
     fn nav_delta(&self, nav: Nav, shell: &Shell) -> Option<isize> {
-        let page = shell.ui().list.visible_rows.saturating_sub(1).max(1) as isize;
+        let rows = shell.ui().list.visible_rows;
+        let page = rows.saturating_sub(1).max(1) as isize;
+        let half = (rows / 2).max(1) as isize;
         match nav {
             Nav::Up => Some(-1),
             Nav::Down => Some(1),
             Nav::PageUp => Some(-page),
             Nav::PageDown => Some(page),
+            Nav::HalfPageUp => Some(-half),
+            Nav::HalfPageDown => Some(half),
             Nav::Left | Nav::Right | Nav::Home | Nav::End => None,
         }
     }

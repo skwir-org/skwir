@@ -22,7 +22,8 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 pub use builtin::{
-    Copy, Delete, Mkdir, Move, Rename, Restore, Rmdir, Swap, Trash, register_builtin,
+    Copy, Delete, Mkdir, Move, NewFile, RemoveEmptyFile, Rename, Restore, Rmdir, Swap, Trash,
+    register_builtin,
 };
 pub use context::{Cancelled, StepContext};
 pub use entry_ref::{EntryRef, ResolveError};

@@ -12,6 +12,8 @@ use bibli_core::plugin::Plugin;
 struct Snapshot {
     commands: BTreeSet<String>,
     keymap: usize,
+    /// A key scheme's bindings (the vim plugin's).
+    schemes: usize,
     menus: usize,
     /// Items made when a menu opens (the default application named).
     menu_sources: usize,
@@ -46,6 +48,7 @@ fn snapshot(app: &App) -> Snapshot {
             .map(|c| c.name.to_string())
             .collect(),
         keymap: app.registry.keymap.all().len(),
+        schemes: app.registry.schemes.all().len(),
         menus: app.registry.menus.all().len(),
         menu_sources: app.registry.menu_sources.all().len(),
         places: app.registry.places.all().len(),
@@ -87,6 +90,12 @@ fn every_plugin_disables_without_a_trace_and_re_enables() {
         let app = App::new(AppConfig::ephemeral(tmp.path().join(id))).unwrap();
         let before = snapshot(&app);
         app.plugins.add(Arc::clone(&plugin), &app);
+        // A plugin off by default (a key scheme) contributes nothing until
+        // it is turned on.
+        if !plugin.enabled_by_default() {
+            assert_eq!(snapshot(&app), before, "{id} is off until turned on");
+            assert!(app.plugins.set_enabled(id, true, &app), "{id}: toggle on");
+        }
         let enabled = snapshot(&app);
         assert_ne!(before, enabled, "{id} must contribute something");
         assert!(app.plugins.set_enabled(id, false, &app), "{id}: toggle off");

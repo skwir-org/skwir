@@ -125,3 +125,10 @@ Keyring tests run against a keyring of their own:
 activates nothing, with a gnome-keyring in a temporary directory, and runs
 the command only once that keyring owns the Secret Service's name. A test
 that needs it refuses to run without the variable the script sets.
+
+## Addendum (2026-09-28): the user's keys
+
+The Keyboard page is no longer only read. ADR-024 made the persisted
+layer: `keyboard.bindings`, a list of records the core declares, edited
+here with the records editor above the list of shortcuts, which marks the
+user's own. The namespace `keyboard` is this page, as `core` is General.

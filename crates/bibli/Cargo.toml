@@ -49,6 +49,7 @@ bibli-plugin-preview-documents.workspace = true
 bibli-plugin-terminal.workspace = true
 bibli-plugin-geo.workspace = true
 bibli-plugin-map-tiles.workspace = true
+bibli-plugin-vim.workspace = true
 bibli-ui.workspace = true
 anyhow.workspace = true
 tracing.workspace = true

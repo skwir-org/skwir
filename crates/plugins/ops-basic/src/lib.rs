@@ -203,6 +203,13 @@ const MENU: &[(&str, &str, Option<&str>, i32, &str)] = &[
         200,
         "folder-plus",
     ),
+    (
+        "New File",
+        "ui.new_file_prompt",
+        Some("empty folder"),
+        201,
+        "file-plus",
+    ),
     ("Move to Trash", "trash", Some("selection"), 300, "trash"),
     (
         "Delete Permanently",

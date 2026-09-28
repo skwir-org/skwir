@@ -43,5 +43,7 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
         Arc::new(bibli_plugin_geo::GeoPlugin::default()),
         Arc::new(bibli_plugin_map_tiles::MapTilesPlugin::default()),
         Arc::new(bibli_plugin_preview_hex::PreviewPlugin),
+        // A key scheme: off until the user turns it on.
+        Arc::new(bibli_plugin_vim::VimPlugin::default()),
     ]
 }

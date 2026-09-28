@@ -1,5 +1,5 @@
 //! UI-facing registries: views, panels, places, menu items and the sources
-//! of those made when a menu opens, key bindings, and what keeps a
+//! of those made when a menu opens, key bindings and key schemes, and what keeps a
 //! location in the sidebar.
 //! The core stores descriptors tagged by owner; the UI crate interprets them.
 //! Every contribution can be withdrawn by owner when a plugin is disabled.
@@ -310,7 +310,10 @@ pub struct MenuSource {
     pub replaces: Vec<Invocation>,
 }
 
-/// A key binding. `keys` uses the `ctrl-shift-n` notation; chords are space-separated.
+/// A key binding. `keys` uses the `ctrl-shift-n` notation; chords are
+/// space-separated. Plugins add their defaults to `Registry::keymap`, below
+/// the shell's own keys; a key scheme adds its keys to `Registry::schemes`,
+/// over the shell's (ADR-024, and `crate::keymap` for the user's).
 #[derive(Clone, Debug, Serialize)]
 pub struct KeyBinding {
     pub keys: String,
@@ -326,6 +329,9 @@ pub struct Registry {
     pub menus: Contributions<MenuItem>,
     pub menu_sources: Contributions<MenuSource>,
     pub keymap: Contributions<KeyBinding>,
+    /// A key scheme's bindings (the `vim` plugin's): over the shell's own
+    /// and every plugin's defaults, whatever order plugins were enabled in.
+    pub schemes: Contributions<KeyBinding>,
     pub keepers: Contributions<Keeper>,
     gate: Arc<OwnerGate>,
 }
@@ -340,6 +346,7 @@ impl Default for Registry {
             menus: Contributions::gated(Arc::clone(&gate)),
             menu_sources: Contributions::gated(Arc::clone(&gate)),
             keymap: Contributions::gated(Arc::clone(&gate)),
+            schemes: Contributions::gated(Arc::clone(&gate)),
             keepers: Contributions::gated(Arc::clone(&gate)),
             gate,
         }
@@ -361,6 +368,7 @@ impl Registry {
         self.menus.remove_owner(owner);
         self.menu_sources.remove_owner(owner);
         self.keymap.remove_owner(owner);
+        self.schemes.remove_owner(owner);
         self.keepers.remove_owner(owner);
     }
 }

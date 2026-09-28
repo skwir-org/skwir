@@ -84,15 +84,16 @@ pub const HEIGHT: f32 = 26.;
 pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let selection = shell.selection_ctx();
-    let (count, complete, error, is_query) = {
+    let (count, complete, error, is_query, sweep) = {
         let ws = shell.app.workspace.read();
         let pane = ws.pane(shell.pane);
-        pane.map_or((0, true, None, false), |p| {
+        pane.map_or((0, true, None, false, None), |p| {
             (
                 shell.ui().list.sorted.len(),
                 p.listing.is_complete(),
                 p.listing.error().map(str::to_owned),
                 p.location().is_some_and(|l| &*l.scheme == "query"),
+                p.selection.sweeping(),
             )
         })
     };
@@ -126,6 +127,26 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
             text = format!("{text} · {}", format::size(selection.bytes));
         }
         bar = bar.child(div().text_color(theme.text).child(text));
+    }
+    // A sweep is a mode: the keys act differently while it lasts.
+    if let Some(unset) = sweep {
+        let (mode, keys) = (
+            if unset { "Deselecting" } else { "Selecting" },
+            shell.keys_for("select_sweep_end", &serde_json::json!({})),
+        );
+        let text = match keys {
+            Some(keys) => format!("{mode} as the cursor moves · {keys} to stop"),
+            None => format!("{mode} as the cursor moves"),
+        };
+        bar = bar.child(
+            div()
+                .flex_none()
+                .px_1()
+                .rounded_sm()
+                .bg(theme.selection_bg)
+                .text_color(theme.selection_text)
+                .child(text),
+        );
     }
     // With nothing listed the pane itself explains the failure.
     if let Some(e) = error.filter(|_| count > 0) {

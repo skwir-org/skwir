@@ -414,7 +414,10 @@ impl PaneView for GridView {
     fn nav_delta(&self, nav: Nav, _: &Shell) -> Option<isize> {
         // Geometry from the last prepaint, never from a measured width.
         let cols = self.scroll.cols() as isize;
-        let page = (self.scroll.rows_visible().saturating_sub(1).max(1) as isize) * cols;
+        let rows = self.scroll.rows_visible();
+        let page = (rows.saturating_sub(1).max(1) as isize) * cols;
+        // Whole rows, so the cursor stays in its column.
+        let half = ((rows / 2).max(1) as isize) * cols;
         match nav {
             Nav::Up => Some(-cols),
             Nav::Down => Some(cols),
@@ -422,6 +425,8 @@ impl PaneView for GridView {
             Nav::Right => Some(1),
             Nav::PageUp => Some(-page),
             Nav::PageDown => Some(page),
+            Nav::HalfPageUp => Some(-half),
+            Nav::HalfPageDown => Some(half),
             Nav::Home | Nav::End => None,
         }
     }

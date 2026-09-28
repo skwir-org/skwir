@@ -1,5 +1,5 @@
 //! The built-in operations: rename, move, copy, swap, trash, restore, delete,
-//! mkdir, rmdir. Each is idempotent (`check` detects an effect already in
+//! mkdir, rmdir, new file and its removal. Each is idempotent (`check` detects an effect already in
 //! place) and returns its inverse from `apply`.
 //!
 //! Names are `OsString`s and paths `PathBuf`s from end to end, serialized
@@ -932,6 +932,103 @@ impl Operation for Rmdir {
     }
 }
 
+// ------------------------------------------------------------------ new file
+
+/// Create an empty file (parent must exist), never over an existing one.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct NewFile {
+    #[serde(with = "crate::os_path")]
+    #[schemars(with = "PathArg")]
+    pub path: PathBuf,
+}
+
+impl Operation for NewFile {
+    fn kind(&self) -> &'static str {
+        "new_file"
+    }
+    fn clone_box(&self) -> Box<dyn Operation> {
+        Box::new(self.clone())
+    }
+    fn args(&self) -> serde_json::Value {
+        serde_json::to_value(self).expect("serializable")
+    }
+    fn describe(&self) -> Change {
+        Change::Create {
+            path: self.path.clone(),
+            directory: false,
+        }
+    }
+    fn check(&self, _ctx: &StepContext) -> StepStatus {
+        if self.path.components().any(|c| c == Component::ParentDir) {
+            return conflict(format!("{} contains “..”", self.path.display()));
+        }
+        match self.path.file_name().map(invalid_name) {
+            None => return conflict(format!("{} has no name", self.path.display())),
+            Some(Some(invalid)) => return invalid,
+            Some(None) => {}
+        }
+        match std::fs::symlink_metadata(&self.path) {
+            // What this step makes: applied already.
+            Ok(m) if m.is_file() && m.len() == 0 => StepStatus::AlreadyDone,
+            Ok(_) => conflict(format!("{} already exists", self.path.display())),
+            Err(_) if self.path.parent().is_some_and(Path::is_dir) => pending(true),
+            Err(_) => conflict("parent directory does not exist"),
+        }
+    }
+    fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&self.path)
+            .with_context(|| format!("create {}", self.path.display()))?;
+        Ok(Some(Box::new(RemoveEmptyFile {
+            path: self.path.clone(),
+        })))
+    }
+}
+
+/// Remove a file that is still empty: the undo of [`NewFile`], which never
+/// takes what was written into the file since.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RemoveEmptyFile {
+    #[serde(with = "crate::os_path")]
+    #[schemars(with = "PathArg")]
+    pub path: PathBuf,
+}
+
+impl Operation for RemoveEmptyFile {
+    fn kind(&self) -> &'static str {
+        "remove_empty_file"
+    }
+    fn clone_box(&self) -> Box<dyn Operation> {
+        Box::new(self.clone())
+    }
+    fn args(&self) -> serde_json::Value {
+        serde_json::to_value(self).expect("serializable")
+    }
+    fn describe(&self) -> Change {
+        Change::Remove {
+            path: self.path.clone(),
+        }
+    }
+    fn check(&self, _ctx: &StepContext) -> StepStatus {
+        match std::fs::symlink_metadata(&self.path) {
+            Ok(m) if m.is_file() && m.len() == 0 => pending(true),
+            Ok(m) if m.is_file() => conflict(format!("{} is no longer empty", self.path.display())),
+            Ok(_) => conflict(format!("{} is not a file", self.path.display())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => StepStatus::AlreadyDone,
+            Err(e) => conflict(e.to_string()),
+        }
+    }
+    fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+        std::fs::remove_file(&self.path)
+            .with_context(|| format!("remove {}", self.path.display()))?;
+        Ok(Some(Box::new(NewFile {
+            path: self.path.clone(),
+        })))
+    }
+}
+
 /// Register every built-in operation kind under the `core` owner.
 pub fn register_builtin(reg: &OpRegistry) {
     reg.register::<Rename>("core", "rename");
@@ -943,4 +1040,6 @@ pub fn register_builtin(reg: &OpRegistry) {
     reg.register::<Delete>("core", "delete");
     reg.register::<Mkdir>("core", "mkdir");
     reg.register::<Rmdir>("core", "rmdir");
+    reg.register::<NewFile>("core", "new_file");
+    reg.register::<RemoveEmptyFile>("core", "remove_empty_file");
 }

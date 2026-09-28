@@ -2,6 +2,7 @@
 //! Every binding runs one action, [`RunCommand`], which the shell routes.
 
 use bibli_core::App;
+use bibli_core::keymap::UserBinding;
 use gpui::{Action, KeyBinding, Keystroke};
 
 /// The single action every key binding maps to.
@@ -42,7 +43,8 @@ const TERMINAL_PASSTHROUGH: [&str; 2] = ["ui.terminal", "ui.palette"];
 pub const BULK: &str = "BulkRename";
 pub const MENU: &str = "ContextMenu";
 
-/// A binding as the palette shows it: keys and command name.
+/// A binding as the palette shows it: keys and command name. Only the
+/// bindings that can run are hints: one a later layer hides is not.
 #[derive(Clone, Debug)]
 pub struct KeyHint {
     pub keys: String,
@@ -50,6 +52,7 @@ pub struct KeyHint {
     pub args: serde_json::Value,
     /// The GPUI context predicate the binding is active in.
     pub context: String,
+    pub layer: Layer,
 }
 
 /// Bindings the shell always needs, independent of plugins: every `ui.*`
@@ -510,6 +513,7 @@ fn condition(flag: &str) -> String {
         "dir" => "on a folder",
         "file" => "on a file",
         "folder" => "in a folder",
+        "sweep" => "selecting as the cursor moves",
         other => other,
     }
     .to_owned()
@@ -566,6 +570,9 @@ pub fn context_label(context: &str) -> String {
 /// the registered title for core and plugin commands, a readable form of
 /// the name otherwise.
 pub fn title_of(app: &App, hint: &KeyHint) -> String {
+    if let Some(title) = move_title(&hint.command, &hint.args) {
+        return title;
+    }
     if let Some((_, _, title)) = crate::palette::ui_commands()
         .iter()
         .find(|(name, args, _)| *name == hint.command && *args == hint.args)
@@ -609,6 +616,53 @@ pub fn title_of(app: &App, hint: &KeyHint) -> String {
     title
 }
 
+/// What a binding with arguments does, in words, where the command's title
+/// alone would not say: a cursor move (`ui.cursor`, `ui.cursor_pick`, not in
+/// the palette but listed with their keys), a place to go (`navigate`).
+fn move_title(command: &str, args: &serde_json::Value) -> Option<String> {
+    let text = |key| args.get(key).and_then(serde_json::Value::as_str);
+    match command {
+        "navigate" => {
+            let location = text("location")?;
+            let place = match location.trim_end_matches('/') {
+                "~" => "your home folder",
+                path => path.rsplit('/').next().filter(|name| !name.is_empty())?,
+            };
+            Some(format!("Go to {place}"))
+        }
+        "ui.cursor_pick" => Some(
+            if args.get("advance").and_then(serde_json::Value::as_bool) == Some(false) {
+                "Pick or unpick".to_owned()
+            } else {
+                "Pick or unpick, then go to the next".to_owned()
+            },
+        ),
+        "ui.cursor" => {
+            let verb = match text("step") {
+                Some("extend") => "Extend the selection",
+                Some("move") => "Move the cursor",
+                Some("follow") => "Go",
+                _ => "Select",
+            };
+            let to = match text("to").unwrap_or("down") {
+                "page_up" => "a page up",
+                "page_down" => "a page down",
+                "half_page_up" => "half a page up",
+                "half_page_down" => "half a page down",
+                "home" => "to the first item",
+                "end" => "to the last item",
+                "here" if verb == "Select" => {
+                    return Some("Select only the item under the cursor".into());
+                }
+                "here" => "to the item under the cursor",
+                other => other,
+            };
+            Some(format!("{verb} {to}"))
+        }
+        _ => None,
+    }
+}
+
 /// `ctrl-shift-p` as key caps; a binding may be a sequence of strokes.
 pub fn key_caps(keys: &str) -> Vec<Vec<String>> {
     keys.split_whitespace()
@@ -623,6 +677,14 @@ pub fn key_caps(keys: &str) -> Vec<Vec<String>> {
                 } else {
                     part
                 };
+                // `G` is how a scheme binds Shift+G: say so, since `g`
+                // is drawn as the same cap.
+                if part.len() == 1
+                    && part.as_bytes()[0].is_ascii_uppercase()
+                    && !caps.iter().any(|cap| cap == "Shift")
+                {
+                    caps.push("Shift".into());
+                }
                 caps.push(match part {
                     "ctrl" => "Ctrl".into(),
                     "shift" => "Shift".into(),
@@ -662,108 +724,370 @@ fn valid_keys(keys: &str) -> bool {
     !keys.is_empty() && keys.split_whitespace().all(|k| Keystroke::parse(k).is_ok())
 }
 
+/// Where a binding comes from, lowest precedence first (ADR-024): a later
+/// layer wins where both apply, whatever order plugins were enabled in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Layer {
+    /// A plugin's default keys (`Registry::keymap`).
+    Plugin,
+    /// The shell's own ([`BUILTIN`]).
+    Shell,
+    /// A key scheme's (`Registry::schemes`: the vim plugin).
+    Scheme,
+    /// The user's (`keyboard.bindings`).
+    User,
+}
+
+/// A binding before GPUI has it: `command` is `None` for a user's record
+/// that frees its keys.
+#[derive(Clone, Debug, PartialEq)]
+struct Spec {
+    keys: String,
+    command: Option<(String, serde_json::Value)>,
+    context: String,
+    layer: Layer,
+}
+
 /// The keymap as the shell knows it: what GPUI binds, what the palette,
-/// menus and F1 show, and the registry revision it was built from.
+/// menus and F1 show, and what it was built from.
 pub struct Keymap {
     pub hints: Vec<KeyHint>,
-    pub revision: u64,
+    pub stamp: Stamp,
+    /// Whether letters typed in the file list jump to a name: not while the
+    /// keymap takes an unmodified character there.
+    pub typeahead: bool,
+}
+
+/// What a keymap was built from: the registries' revisions and the user's
+/// bindings.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Stamp {
+    pub revisions: (u64, u64),
+    pub user: Vec<UserBinding>,
+}
+
+impl Stamp {
+    /// The registries' revisions now, for a cheap comparison per sync.
+    pub fn revisions(app: &App) -> (u64, u64) {
+        (
+            app.registry.keymap.revision(),
+            app.registry.schemes.revision(),
+        )
+    }
 }
 
 /// The keys bound to `command` with exactly `args`, as people read them.
 /// The one lookup behind every shortcut the interface shows (menus, the
 /// palette, toolbar tooltips, the status bar): matching the name alone would
-/// show Zoom in's keys beside Zoom out.
+/// show Zoom in's keys beside Zoom out. The highest layer's keys, the first
+/// of a layer that binds several (Ctrl+H before Alt+.).
 pub fn keys_for(hints: &[KeyHint], command: &str, args: &serde_json::Value) -> Option<String> {
     let empty = serde_json::Value::Object(serde_json::Map::new());
     let args = if args.is_null() { &empty } else { args };
     hints
         .iter()
-        .find(|hint| hint.command == command && hint.args == *args)
+        .filter(|hint| hint.command == command && hint.args == *args)
+        .fold(None, |best: Option<&KeyHint>, hint| match best {
+            Some(best) if best.layer >= hint.layer => Some(best),
+            _ => Some(hint),
+        })
         .map(|hint| display_keys(&hint.keys))
 }
 
-/// Every binding: the plugins' from the registry, then the shell's own.
-/// A binding the shell and a plugin both declare is listed once.
-fn specs(app: &App) -> Vec<(String, String, serde_json::Value, String)> {
-    let mut specs: Vec<(String, String, serde_json::Value, String)> = app
-        .registry
-        .keymap
-        .all()
-        .into_iter()
-        .map(|b| {
+/// Every binding, in the order of their layers: the plugins', the shell's
+/// own, the schemes', the user's. A binding declared twice is listed once,
+/// in the higher of its layers.
+fn specs(app: &App, user: &[UserBinding]) -> Vec<Spec> {
+    let registered = |bindings: Vec<bibli_core::registry::KeyBinding>, layer| {
+        bindings.into_iter().map(move |b| Spec {
+            keys: b.keys,
+            command: Some((b.command.name.to_string(), b.command.args)),
+            context: context_of(b.when.as_deref()),
+            layer,
+        })
+    };
+    let shell = BUILTIN
+        .iter()
+        .map(|(keys, command, when)| (*keys, *command, serde_json::json!({}), *when))
+        .chain(BUILTIN_ARGS.iter().map(|(keys, command, args, when)| {
             (
-                b.keys.clone(),
-                b.command.name.to_string(),
-                b.command.args.clone(),
-                context_of(b.when.as_deref()),
+                *keys,
+                *command,
+                serde_json::from_str(args).expect("valid builtin args"),
+                *when,
             )
+        }))
+        .map(|(keys, command, args, when)| Spec {
+            keys: keys.into(),
+            command: Some((command.into(), args)),
+            context: context_of(when),
+            layer: Layer::Shell,
+        })
+        .chain(zoom_specs().map(|(keys, command, args, context)| Spec {
+            keys,
+            command: Some((command, args)),
+            context,
+            layer: Layer::Shell,
+        }));
+    let mine = user.iter().map(|b| Spec {
+        keys: b.keys.clone(),
+        command: b
+            .command
+            .as_ref()
+            .map(|c| (c.name.to_string(), c.args.clone())),
+        context: context_of(b.when.as_deref()),
+        layer: Layer::User,
+    });
+    let specs: Vec<Spec> = registered(app.registry.keymap.all(), Layer::Plugin)
+        .chain(shell)
+        .chain(registered(app.registry.schemes.all(), Layer::Scheme))
+        .chain(mine)
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    let mut kept: Vec<Spec> = specs
+        .into_iter()
+        .rev()
+        .filter(|spec| {
+            seen.insert((
+                spec.keys.clone(),
+                spec.command
+                    .as_ref()
+                    .map(|(name, args)| (name.clone(), args.to_string())),
+                spec.context.clone(),
+            ))
         })
         .collect();
-    for (keys, command, when) in BUILTIN {
-        specs.push((
-            (*keys).into(),
-            (*command).into(),
-            serde_json::json!({}),
-            context_of(*when),
-        ));
-    }
-    for (keys, command, args, when) in BUILTIN_ARGS {
-        specs.push((
-            (*keys).into(),
-            (*command).into(),
-            serde_json::from_str(args).expect("valid builtin args"),
-            context_of(*when),
-        ));
-    }
-    specs.extend(zoom_specs());
-    let mut seen = std::collections::HashSet::new();
-    specs.retain(|spec| seen.insert(spec.clone()));
-    specs
+    kept.reverse();
+    kept
 }
 
-/// Replace every binding in GPUI with the registry's current keymap plus
-/// the shell's and the text input's own. Called at startup and again
-/// whenever the registry's keymap revision moves (a plugin enabled or
-/// disabled), so a plugin's keys come and go with it.
-pub fn install(app: &App, cx: &mut gpui::App) -> Keymap {
+/// The conditions of a context predicate (`Pane && single`), each an
+/// atom: a place, a flag, or a group of alternatives.
+fn conditions(context: &str) -> Vec<&str> {
+    context
+        .split("&&")
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
+/// Which specs a later one hides: GPUI takes the deepest place first, then
+/// the latest binding, so a later binding of the same keys that asks for no
+/// more than an earlier one (`Pane` over `Pane && empty`) always wins where
+/// the earlier would apply.
+fn shadowed(specs: &[Spec]) -> Vec<bool> {
+    (0..specs.len())
+        .map(|i| {
+            let mine = conditions(&specs[i].context);
+            specs[i + 1..].iter().any(|later| {
+                later.keys == specs[i].keys
+                    && conditions(&later.context)
+                        .iter()
+                        .all(|atom| mine.contains(atom))
+            })
+        })
+        .collect()
+}
+
+/// Whether a binding takes a character typed in the file list: its first
+/// stroke is one character, with Shift at most (`j`, `G`, `/`, `g g`).
+fn takes_a_character(spec: &Spec) -> bool {
+    let place = conditions(&spec.context).first().copied();
+    let Some(first) = spec.keys.split_whitespace().next() else {
+        return false;
+    };
+    let Ok(stroke) = Keystroke::parse(first) else {
+        return false;
+    };
+    let m = stroke.modifiers;
+    place == Some(PANE)
+        && spec.command.is_some()
+        && stroke.key.chars().count() == 1
+        && !(m.control || m.alt || m.platform || m.function)
+}
+
+/// Replace every binding in GPUI with the registries' current keymaps, the
+/// shell's and the text input's own, and the user's. Called at startup and
+/// again whenever one of them changes (a plugin enabled or disabled, a
+/// shortcut saved), so a plugin's keys come and go with it.
+pub fn install(app: &App, user: Vec<UserBinding>, cx: &mut gpui::App) -> Keymap {
     // Read before the bindings: a change in between is picked up next time.
-    let revision = app.registry.keymap.revision();
+    let revisions = Stamp::revisions(app);
+    let specs = specs(app, &user);
+    let hidden = shadowed(&specs);
     let mut hints = Vec::new();
     let mut bindings = Vec::new();
-    for (keys, name, args, context) in specs(app) {
-        if !valid_keys(&keys) {
-            tracing::warn!(keys, name, "skipping key binding with unparsable keys");
+    let mut typeahead = true;
+    for (spec, hidden) in specs.into_iter().zip(hidden) {
+        if !valid_keys(&spec.keys) {
+            tracing::warn!(
+                keys = spec.keys,
+                layer = ?spec.layer,
+                "skipping key binding with unparsable keys"
+            );
             continue;
         }
-        if context == ROOT && !TERMINAL_PASSTHROUGH.contains(&name.as_str()) {
+        if !hidden && takes_a_character(&spec) {
+            typeahead = false;
+        }
+        let Some((name, args)) = spec.command else {
+            // Freed keys: nothing below this binding runs where it applies.
+            bindings.push(KeyBinding::new(
+                &spec.keys,
+                gpui::NoAction,
+                Some(&spec.context),
+            ));
+            continue;
+        };
+        if spec.context == ROOT && !TERMINAL_PASSTHROUGH.contains(&name.as_str()) {
             // The deeper context's binding to nothing wins, and the key
             // goes on to the terminal's own listener.
-            bindings.push(KeyBinding::new(&keys, gpui::NoAction, Some(TERMINAL)));
+            bindings.push(KeyBinding::new(&spec.keys, gpui::NoAction, Some(TERMINAL)));
         }
-        hints.push(KeyHint {
-            keys: keys.clone(),
-            command: name.clone(),
-            args: args.clone(),
-            context: context.clone(),
-        });
+        if !hidden {
+            hints.push(KeyHint {
+                keys: spec.keys.clone(),
+                command: name.clone(),
+                args: args.clone(),
+                context: spec.context.clone(),
+                layer: spec.layer,
+            });
+        }
         bindings.push(KeyBinding::new(
-            &keys,
+            &spec.keys,
             RunCommand { name, args },
-            Some(&context),
+            Some(&spec.context),
         ));
     }
     cx.clear_key_bindings();
     cx.bind_keys(crate::input::key_bindings());
     cx.bind_keys(bindings);
-    Keymap { hints, revision }
+    Keymap {
+        hints,
+        stamp: Stamp { revisions, user },
+        typeahead,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        BUILTIN, BUILTIN_ARGS, context_label, context_of, display_keys, key_caps, valid_keys,
-        zoom_specs,
+        BUILTIN, BUILTIN_ARGS, Layer, Spec, context_label, context_of, display_keys, key_caps,
+        shadowed, specs, takes_a_character, valid_keys, zoom_specs,
     };
+    use bibli_core::command::Invocation;
+    use bibli_core::keymap::UserBinding;
+    use bibli_core::registry::KeyBinding;
+
+    fn spec(keys: &str, command: &str, when: Option<&str>, layer: Layer) -> Spec {
+        Spec {
+            keys: keys.into(),
+            command: Some((command.into(), serde_json::json!({}))),
+            context: context_of(when),
+            layer,
+        }
+    }
+
+    /// A later binding hides an earlier one of the same keys when it asks
+    /// for no more: GPUI would never run the earlier where both apply.
+    #[test]
+    fn a_later_binding_that_asks_for_no_more_hides_an_earlier_one() {
+        let specs = [
+            spec(
+                "escape",
+                "clipboard_clear",
+                Some("pane empty"),
+                Layer::Plugin,
+            ),
+            spec(
+                "f2",
+                "ui.rename_bulk_prompt",
+                Some("pane selection"),
+                Layer::Plugin,
+            ),
+            spec("space", "ui.peek", Some("pane"), Layer::Shell),
+            spec("f2", "ui.rename_prompt", Some("pane single"), Layer::Shell),
+            spec("ctrl-f", "ui.search", None, Layer::Plugin),
+            spec("escape", "ui.cursor", Some("pane"), Layer::Scheme),
+            spec("space", "ui.cursor_pick", Some("pane"), Layer::Scheme),
+            spec("ctrl-f", "ui.cursor", Some("pane"), Layer::Scheme),
+            spec(
+                "escape",
+                "select_sweep_end",
+                Some("pane sweep"),
+                Layer::Scheme,
+            ),
+        ];
+        let hidden: Vec<&str> = specs
+            .iter()
+            .zip(shadowed(&specs))
+            .filter(|(_, hidden)| *hidden)
+            .map(|(spec, _)| spec.command.as_ref().unwrap().0.as_str())
+            .collect();
+        // F2 for one item and for several both apply somewhere; Ctrl+F in
+        // the list leaves Ctrl+F elsewhere; Escape while sweeping adds a
+        // case, it hides nothing.
+        assert_eq!(hidden, ["clipboard_clear", "ui.peek"]);
+    }
+
+    #[test]
+    fn letters_bound_in_the_file_list_stop_type_ahead() {
+        let takes = |keys: &str, when: Option<&str>| {
+            takes_a_character(&spec(keys, "x", when, Layer::Scheme))
+        };
+        assert!(takes("j", Some("pane")));
+        assert!(takes("G", Some("pane")));
+        assert!(takes("shift-g", Some("pane selection")));
+        assert!(takes("g g", Some("pane")));
+        assert!(takes("/", Some("pane")));
+        assert!(!takes("space", Some("pane")));
+        assert!(!takes("ctrl-j", Some("pane")));
+        assert!(!takes("j", None), "anywhere is not the file list alone");
+        assert!(!takes("m", Some("reader")));
+        let freed = Spec {
+            command: None,
+            ..spec("j", "x", Some("pane"), Layer::User)
+        };
+        assert!(!takes_a_character(&freed), "freeing a key binds nothing");
+    }
+
+    /// The layers stand in their order whatever order the plugins came in:
+    /// a scheme over the shell over a plugin, the user over everything.
+    #[test]
+    fn layers_stand_in_their_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = bibli_core::App::new(bibli_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let bind = |keys: &str, command: &str| KeyBinding {
+            keys: keys.into(),
+            command: Invocation::new(command),
+            when: Some("pane".into()),
+        };
+        app.registry
+            .schemes
+            .add("scheme", bind("space", "ui.cursor_pick"));
+        app.registry
+            .keymap
+            .add("late-plugin", bind("space", "late"));
+        let user = [UserBinding {
+            keys: "space".into(),
+            command: None,
+            when: Some("pane".into()),
+        }];
+        let space: Vec<(Option<String>, Layer)> = specs(&app, &user)
+            .into_iter()
+            .filter(|s| s.keys == "space" && s.context == "Pane")
+            .map(|s| (s.command.map(|(name, _)| name), s.layer))
+            .collect();
+        assert_eq!(
+            space,
+            [
+                (Some("late".into()), Layer::Plugin),
+                (Some("ui.peek".into()), Layer::Shell),
+                (Some("ui.cursor_pick".into()), Layer::Scheme),
+                (None, Layer::User),
+            ]
+        );
+    }
 
     /// A key GPUI cannot parse is skipped with a warning at startup: the
     /// shell's own must all parse, including the unusual names (the Menu
@@ -794,6 +1118,20 @@ mod tests {
     }
 
     #[test]
+    fn a_place_to_go_is_named() {
+        let title = |args| super::move_title("navigate", &args);
+        assert_eq!(
+            title(serde_json::json!({ "location": "~" })).as_deref(),
+            Some("Go to your home folder")
+        );
+        assert_eq!(
+            title(serde_json::json!({ "location": "/nowhere/Téléchargements" })).as_deref(),
+            Some("Go to Téléchargements")
+        );
+        assert_eq!(title(serde_json::json!({})), None);
+    }
+
+    #[test]
     fn contexts_read_as_places_and_conditions() {
         assert_eq!(context_label("Shell"), "Anywhere");
         assert_eq!(
@@ -807,6 +1145,9 @@ mod tests {
         assert_eq!(key_caps("ctrl-shift-p"), vec![vec!["Ctrl", "Shift", "P"]]);
         assert_eq!(key_caps("ctrl--"), vec![vec!["Ctrl", "-"]]);
         assert_eq!(key_caps("g g"), vec![vec!["G"], vec!["G"]]);
+        assert_eq!(key_caps("G"), vec![vec!["Shift", "G"]]);
+        assert_eq!(key_caps("shift-g"), vec![vec!["Shift", "G"]]);
+        assert_eq!(display_keys(", M"), ", Shift+M");
         assert_eq!(key_caps("alt-pageup"), vec![vec!["Alt", "Page Up"]]);
         assert_eq!(display_keys("ctrl-shift-n"), "Ctrl+Shift+N");
     }

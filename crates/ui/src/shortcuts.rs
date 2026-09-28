@@ -40,10 +40,13 @@ pub struct Nudges {
 /// contexts on the focus path. Conditions such as `single` are keys of the
 /// pane's own context, so one rule covers places and conditions.
 pub fn applies(predicate: &str, holds: &dyn Fn(&str) -> bool) -> bool {
-    predicate
-        .split("&&")
-        .map(str::trim)
-        .all(|token| token.is_empty() || holds(token))
+    predicate.split("&&").map(str::trim).all(|token| {
+        // Alternatives, `(selection || folder)`: one of them is enough.
+        match token.strip_prefix('(').and_then(|t| t.strip_suffix(')')) {
+            Some(alts) => alts.split("||").map(str::trim).any(holds),
+            None => token.is_empty() || holds(token),
+        }
+    })
 }
 
 impl Shell {
@@ -258,5 +261,7 @@ mod tests {
         assert!(applies("Pane && single", &pane_with_one_file));
         assert!(!applies("Pane && split", &pane_with_one_file));
         assert!(!applies("DocumentReader", &pane_with_one_file));
+        assert!(applies("Pane && (split || single)", &pane_with_one_file));
+        assert!(!applies("Pane && (split || empty)", &pane_with_one_file));
     }
 }

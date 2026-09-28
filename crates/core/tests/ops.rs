@@ -713,3 +713,68 @@ fn observers_hear_what_holds_after_each_run_until_withdrawn() {
     assert!(app.executor.redo_blocking(app.lifetime()).is_some());
     assert_eq!(heard.lock().len(), 2, "withdrawn with its owner");
 }
+
+/// `new_file`: the user-facing command makes an empty file with an odd
+/// name, undo takes it away, redo brings it back, and an undo never takes a
+/// file that was written into since.
+#[test]
+fn a_new_file_is_created_undone_and_never_undone_once_written_into() {
+    let tmp = Scratch::new();
+    let root = tmp.path();
+    let app = app(root);
+    navigate(&app, root);
+    let name = "l’été d'un « fichier ».txt";
+    let plan = match app
+        .dispatch(&bibli_core::command::Invocation::with_args(
+            "new_file",
+            &serde_json::json!({ "name": name }),
+        ))
+        .unwrap()
+    {
+        bibli_core::command::Outcome::Plan(plan) => plan,
+        other => panic!("expected a plan, got {other:?}"),
+    };
+    assert!(apply(&app, &plan).error.is_none());
+    let path = root.join(name);
+    assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
+    // Applying again is a no-op: the empty file is what the step makes.
+    let again = apply(&app, &plan);
+    assert!(again.error.is_none());
+    assert_eq!(again.applied, 0);
+
+    let undone = app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert!(undone.error.is_none());
+    assert!(!path.exists());
+    let redone = app.executor.redo_blocking(app.lifetime()).unwrap();
+    assert!(redone.error.is_none());
+    assert!(path.is_file());
+
+    std::fs::write(&path, "written since").unwrap();
+    let refused = app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert!(
+        refused.error.is_some(),
+        "an undo must not take written content"
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "written since");
+}
+
+#[test]
+fn a_new_file_never_replaces_what_is_there() {
+    let tmp = Scratch::new();
+    let root = tmp.path();
+    std::fs::write(root.join("taken"), "keep me").unwrap();
+    let plan = Plan::with_steps(
+        "new file",
+        vec![Box::new(bibli_core::op::NewFile {
+            path: root.join("taken"),
+        })],
+    );
+    assert!(matches!(
+        plan.diff().steps[0].1,
+        StepStatus::Conflict { .. }
+    ));
+    assert_eq!(
+        std::fs::read_to_string(root.join("taken")).unwrap(),
+        "keep me"
+    );
+}

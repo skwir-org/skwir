@@ -132,6 +132,17 @@ impl Default for Preferences {
     }
 }
 
+/// The keymap GPUI has: `sync` installs it again when the registries or
+/// the user's bindings change.
+pub(crate) struct Installed {
+    stamp: keymap::Stamp,
+    /// The settings revision the user's bindings were last read at.
+    settings: u64,
+    /// Whether letters typed in the file list jump to a name
+    /// (`keymap::Keymap::typeahead`).
+    pub typeahead: bool,
+}
+
 pub struct Shell {
     pub app: Arc<App>,
     /// The pane commands act on: the workspace's active pane, or the pane
@@ -158,9 +169,8 @@ pub struct Shell {
     pub font: SharedString,
     pub mono_font: SharedString,
     pub key_hints: Vec<KeyHint>,
-    /// Keymap registry revision `key_hints` and GPUI's bindings were built
-    /// from; `sync` installs them again when it moves.
-    keymap_revision: u64,
+    /// What `key_hints` and GPUI's bindings were built from.
+    pub(crate) keys: Installed,
     /// Icon size of the grid's tiles.
     pub zoom: u32,
     /// Icon size of the list's and the columns' rows; their height follows.
@@ -247,6 +257,11 @@ pub struct Shell {
     pub unlock_device: Option<String>,
     pub nudges: crate::shortcuts::Nudges,
     pub last_search: String,
+    /// What `/` looked for last, and whether backward: `n` and `N` look
+    /// for it again.
+    pub last_find: Option<(String, bool)>,
+    /// Keys typed that wait for the next, and what can follow.
+    pub(crate) sequence: Option<crate::sequence::Sequence>,
     pub shelf_count: usize,
     /// `App::tallies` revision `shelf_count` was read at.
     tallies_revision: Option<u64>,
@@ -309,6 +324,7 @@ impl Shell {
             cx.set_global(Theme::resolve(&this.app, window.appearance()));
             cx.notify();
         }));
+        subs.push(cx.observe_pending_input(window, Self::on_pending_input));
         // The keyboard is never left with nothing to act on. When what had
         // focus leaves the window (a tab or pane closed, a placeholder or a
         // toolbar variant replaced, a dialog giving focus back to something
@@ -404,7 +420,11 @@ impl Shell {
             font,
             mono_font,
             key_hints: keymap.hints,
-            keymap_revision: keymap.revision,
+            keys: Installed {
+                stamp: keymap.stamp,
+                settings: 0,
+                typeahead: keymap.typeahead,
+            },
             zoom: DEFAULT_ZOOM,
             row_zoom: crate::views::list::DEFAULT_ROW_ZOOM,
             sidebar_hidden: false,
@@ -455,6 +475,8 @@ impl Shell {
             unlock_device: None,
             nudges: crate::shortcuts::Nudges::default(),
             last_search: String::new(),
+            last_find: None,
+            sequence: None,
             shelf_count: 0,
             tallies_revision: None,
             press_collapse: None,
@@ -919,12 +941,24 @@ impl Shell {
 
     /// Install the key bindings again when a plugin added or withdrew some.
     fn sync_keymap(&mut self, cx: &mut Context<Self>) {
-        if self.app.registry.keymap.revision() == self.keymap_revision {
+        let revisions = keymap::Stamp::revisions(&self.app);
+        let settings = self.app.settings.revision();
+        if revisions == self.keys.stamp.revisions && settings == self.keys.settings {
             return;
         }
-        let keymap = keymap::install(&self.app, cx);
+        self.keys.settings = settings;
+        let user = bibli_core::keymap::user_bindings(&self.app.settings);
+        if revisions == self.keys.stamp.revisions && user == self.keys.stamp.user {
+            return;
+        }
+        let keymap = keymap::install(&self.app, user, cx);
         self.key_hints = keymap.hints;
-        self.keymap_revision = keymap.revision;
+        self.keys.stamp = keymap.stamp;
+        self.keys.typeahead = keymap.typeahead;
+        if let Some(settings) = &self.settings {
+            let hints = self.key_hints.clone();
+            settings.update(cx, |settings, cx| settings.set_key_hints(hints, cx));
+        }
         cx.notify();
     }
 
@@ -1261,16 +1295,64 @@ impl Shell {
                     None => self.set_status("select exactly one entry to rename", true, cx),
                 }
             }
+            "new_file_prompt" => {
+                self.open_prompt(PromptKind::NewFile, "New file", "", None, window, cx);
+            }
+            "find" => {
+                let backward = args
+                    .get("backward")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                let origin = self.cursor_id();
+                let title = if backward { "Find before" } else { "Find" };
+                self.open_prompt(
+                    PromptKind::Find { origin, backward },
+                    title,
+                    "",
+                    None,
+                    window,
+                    cx,
+                );
+            }
+            "find_next" => {
+                let delta = args
+                    .get("delta")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(1);
+                match self.last_find.clone() {
+                    Some((pattern, _)) => match self.find_from(None, &pattern, delta < 0) {
+                        Some(ix) => self.cursor_to(ix as isize, Step::Follow, window, cx),
+                        None => self.set_status(format!("No name holds “{pattern}”"), false, cx),
+                    },
+                    None => self.set_status("Nothing to find again: press / first", false, cx),
+                }
+            }
+            "cursor" => self.cursor_command(args, window, cx),
+            "cursor_pick" => {
+                let advance = args
+                    .get("advance")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(true);
+                self.pick_cursor(advance, window, cx);
+            }
             "mkdir_prompt" => {
                 self.open_prompt(PromptKind::Mkdir, "New folder", "", None, window, cx);
             }
             "search" => {
-                let last = self.last_search.clone();
+                // A text to start from (`content:`) is typed after, not
+                // over: the cursor waits at its end.
+                let (text, select) = match arg("text") {
+                    Some(text) => {
+                        let end = text.len();
+                        (text, Some(end..end))
+                    }
+                    None => (self.last_search.clone(), None),
+                };
                 self.open_prompt(
                     PromptKind::Search,
                     "Search (e.g. kind:image modified:this-week)",
-                    &last,
-                    None,
+                    &text,
+                    select,
                     window,
                     cx,
                 );
@@ -2055,6 +2137,7 @@ impl Render for Shell {
             .clone()
             .map(gpui::IntoElement::into_any_element);
         let toast = crate::toast::render(self, cx);
+        let sequence = crate::sequence::render(self, cx);
         let shortcuts = crate::shortcuts::render(self, cx);
         let overlays = [
             menu::render(self, cx),
@@ -2143,6 +2226,7 @@ impl Render for Shell {
             )
             .child(status_bar)
             .children(toast)
+            .children(sequence)
             .children(overlays.into_iter().flatten())
             .children(settings)
             .children(shortcuts)

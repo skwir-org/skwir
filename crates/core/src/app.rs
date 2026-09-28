@@ -178,6 +178,7 @@ impl App {
         op::register_builtin(&app.ops);
         builtin::register(&app);
         crate::tabs::register(&app);
+        crate::keymap::declare(&app.settings);
         crate::settings::register(&app);
         crate::plugin::register(&app);
         crate::playing::register(&app);
@@ -576,6 +577,13 @@ pub enum SelectMode {
     /// Move the cursor to the given id and leave the selection as it is
     /// (ctrl+arrows), so the keyboard can pick items that are not adjacent.
     Cursor,
+    /// Move the cursor to the given id: a selection that follows the
+    /// cursor moves with it, a picked one stays, a sweep covers up to it
+    /// (a key scheme's moves, ADR-024).
+    Follow,
+    /// Pick the given ids, or unpick those picked (yazi's mark): a
+    /// selection that followed the cursor is not a pick.
+    Pick,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -599,6 +607,15 @@ pub struct SelectArgs {
     pub names: Vec<PathArg>,
     #[serde(default)]
     pub mode: SelectMode,
+    #[serde(default)]
+    pub pane: Option<PaneId>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SweepArgs {
+    /// Deselect what the range covers instead of selecting it.
+    #[serde(default)]
+    pub unset: bool,
     #[serde(default)]
     pub pane: Option<PaneId>,
 }
@@ -808,6 +825,13 @@ mod builtin {
                             p.selection.cursor = Some(target);
                         }
                     }
+                    SelectMode::Follow => {
+                        if let Some(&target) = ids.last() {
+                            let order = p.listing.sorted(p.sort);
+                            p.selection.follow(target, &order);
+                        }
+                    }
+                    SelectMode::Pick => ids.into_iter().for_each(|id| p.selection.pick(id)),
                 }
                 Ok(Outcome::Done)
             },
@@ -910,6 +934,37 @@ mod builtin {
                 let pane = app.pane_or_active(a.pane);
                 if let Some(p) = app.workspace.write().pane_mut(pane) {
                     p.selection.clear();
+                }
+                Ok(Outcome::Done)
+            },
+        );
+
+        c.register::<SweepArgs, _>(
+            "core",
+            "select_sweep",
+            "Select as the cursor moves",
+            "Hold a range from the cursor: moving selects, or with `unset` deselects, what lies between",
+            |a, app| {
+                let pane = app.pane_or_active(a.pane);
+                let mut ws = app.workspace.write();
+                let p = ws
+                    .pane_mut(pane)
+                    .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                let order = p.listing.sorted(p.sort);
+                p.selection.sweep_start(a.unset, &order);
+                Ok(Outcome::Done)
+            },
+        );
+
+        c.register::<PaneArg, _>(
+            "core",
+            "select_sweep_end",
+            "Stop selecting as the cursor moves",
+            "End the range held from the cursor, keeping what it covers",
+            |a, app| {
+                let pane = app.pane_or_active(a.pane);
+                if let Some(p) = app.workspace.write().pane_mut(pane) {
+                    p.selection.sweep_end();
                 }
                 Ok(Outcome::Done)
             },
@@ -1026,6 +1081,25 @@ mod builtin {
                 Ok(Outcome::Plan(Plan::with_steps(
                     format!("new folder {}", name.display()),
                     vec![Box::new(op::Mkdir {
+                        path: dir.join(name),
+                    })],
+                )))
+            },
+        );
+
+        c.register::<MkdirArgs, _>(
+            "core",
+            "new_file",
+            "New file",
+            "Create an empty file in the current directory (plan)",
+            |a, app| {
+                let pane = app.pane_or_active(a.pane);
+                let dir = app.pane_dir(pane)?;
+                let name = a.name.into_inner().into_os_string();
+                op::valid_file_name(&name)?;
+                Ok(Outcome::Plan(Plan::with_steps(
+                    format!("new file {}", name.display()),
+                    vec![Box::new(op::NewFile {
                         path: dir.join(name),
                     })],
                 )))

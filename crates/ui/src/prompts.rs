@@ -18,6 +18,14 @@ pub enum PromptKind {
     Passphrase,
     Rename,
     Mkdir,
+    /// A new file; a name ending in `/` is a folder, as in yazi.
+    NewFile,
+    /// `/`: a name in the pane, found as it is typed from where the cursor
+    /// was (`origin`), after it or, `backward`, before it.
+    Find {
+        origin: Option<bibli_core::EntryId>,
+        backward: bool,
+    },
     Search,
     Tags,
     InspectJump {
@@ -71,6 +79,8 @@ impl Shell {
             PromptKind::Passphrase => "Passphrase",
             PromptKind::Rename => "New name",
             PromptKind::Mkdir => "Folder name",
+            PromptKind::NewFile => "File name, or a folder name ending in /",
+            PromptKind::Find { .. } => "Part of a name (capitals: exact case)",
             PromptKind::Search => {
                 "kind:document modified:this-week *.pdf size>10M  (in: picks the root)"
             }
@@ -167,7 +177,16 @@ impl Shell {
                     this.unlock_device = None;
                     this.close_prompt(window, cx);
                 }
-                InputEvent::Changed => {}
+                InputEvent::Changed => {
+                    if let Some(PromptKind::Find { origin, backward }) =
+                        this.prompt.as_ref().map(|p| p.kind)
+                    {
+                        let pattern = input.read(cx).text().to_owned();
+                        if let Some(ix) = this.find_from(origin, &pattern, backward) {
+                            this.cursor_to(ix as isize, crate::list::Step::Follow, window, cx);
+                        }
+                    }
+                }
             },
         );
         input.update(cx, |i, _| i.focus(window));
@@ -239,6 +258,18 @@ impl Shell {
             }
             PromptKind::Mkdir if !text.is_empty() => {
                 self.run("mkdir", serde_json::json!({ "name": text }), window, cx);
+            }
+            PromptKind::NewFile => match text.strip_suffix('/') {
+                Some(folder) if !folder.is_empty() => {
+                    self.run("mkdir", serde_json::json!({ "name": folder }), window, cx);
+                }
+                None if !text.is_empty() => {
+                    self.run("new_file", serde_json::json!({ "name": text }), window, cx);
+                }
+                _ => {}
+            },
+            PromptKind::Find { backward, .. } => {
+                self.last_find = (!text.is_empty()).then_some((text, backward));
             }
             // Empty, everything below the folder: the chips then narrow it.
             PromptKind::Search => {

@@ -27,6 +27,9 @@ pub enum Nav {
     Right,
     PageUp,
     PageDown,
+    /// Half a page, as vim's Ctrl+U and Ctrl+D move.
+    HalfPageUp,
+    HalfPageDown,
     Home,
     End,
 }

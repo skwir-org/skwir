@@ -144,6 +144,14 @@ layout (`crates/gpui/...`) so they apply there with `git apply -p1`.
   same change belongs there upstream; this diff is against the published
   manifest.
 
+- `0010-key-sequence-timeout.patch`: a keystroke that begins a binding of
+  several strokes (`g g`) waited one second for the next and was then
+  replayed alone, a constant in `Window::dispatch_key_event`.
+  `App::set_key_sequence_timeout` sets it; `None` waits until the next key,
+  as yazi and a modal editor do. bibli waits (ADR-024) and shows what may
+  follow (`crates/ui/src/sequence.rs`), so reading the strip is not a race.
+  A change of focus still drops the pending keys, as before.
+
 ## Regenerating a patch
 
     G=$(ls -d ~/.cargo/registry/src/*/gpui-0.2.2)

@@ -95,3 +95,46 @@ fn a_range_can_be_added_to_what_is_selected() {
     select_mode(&app, "b's", "range_to");
     assert_eq!(selected(&app), ["b's", "c ü", "d"]);
 }
+
+fn sweep(app: &App, unset: bool) {
+    app.dispatch(&Invocation::with_args(
+        "select_sweep",
+        &serde_json::json!({ "unset": unset }),
+    ))
+    .expect("sweep");
+}
+
+/// yazi's keys through the commands: moves leave picked items alone, a
+/// pick starts from nothing, a sweep covers a range in the order shown.
+#[test]
+fn picks_and_sweeps_through_the_commands() {
+    let (_tmp, app) = tree();
+    select(&app, &["a one"]);
+    select_mode(&app, "b's", "follow");
+    assert_eq!(selected(&app), ["b's"], "a selection that follows moves");
+    select_mode(&app, "b's", "pick");
+    select_mode(&app, "d", "follow");
+    assert_eq!(selected(&app), ["b's"], "a picked one stays");
+    assert_eq!(cursor(&app).as_deref(), Some("d"));
+    select_mode(&app, "d", "pick");
+    assert_eq!(selected(&app), ["b's", "d"]);
+
+    // A sweep from "a one" to "c ü", over what was picked.
+    select_mode(&app, "a one", "follow");
+    sweep(&app, false);
+    select_mode(&app, "c ü", "follow");
+    assert_eq!(selected(&app), ["a one", "b's", "c ü", "d"]);
+    app.dispatch(&Invocation::new("select_sweep_end")).unwrap();
+    select_mode(&app, "a one", "follow");
+    assert_eq!(selected(&app), ["a one", "b's", "c ü", "d"]);
+
+    // An unset sweep takes a range away.
+    select_mode(&app, "b's", "follow");
+    sweep(&app, true);
+    select_mode(&app, "c ü", "follow");
+    assert_eq!(selected(&app), ["a one", "d"]);
+    // Anything else ends it: a click replaces the selection.
+    select(&app, &["c ü"]);
+    select_mode(&app, "d", "follow");
+    assert_eq!(selected(&app), ["d"]);
+}

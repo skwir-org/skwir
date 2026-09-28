@@ -8,7 +8,8 @@
 //! - [`metadata`]: providers that fill entry fields during hydration.
 //! - [`command`]: commands as data, the registry, and dispatch.
 //! - [`op`]: operations with inverses, plans, the executor, and the undo journal.
-//! - [`registry`]: views, panels, places, menus, keymap, settings schema.
+//! - [`registry`]: views, panels, places, menus, keymap, settings schema;
+//!   [`keymap`]: the user's key bindings, the keymap's last layer.
 //! - [`plugin`]: the plugin lifecycle with runtime toggles.
 //! - [`scheduler`]: the priority work queue with cancellation.
 //! - [`cache`] and [`settings`]: the throwaway cache and namespaced settings.
@@ -31,6 +32,7 @@ pub mod entry;
 pub mod fields;
 pub mod fs;
 pub mod geo;
+pub mod keymap;
 pub mod location;
 pub mod lru;
 pub mod media;

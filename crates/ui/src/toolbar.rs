@@ -67,6 +67,7 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "chevron-right",
         "sort",
         "folder-plus",
+        "file-plus",
         "command",
         "rename",
         "cut",

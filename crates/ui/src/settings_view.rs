@@ -801,6 +801,15 @@ impl SettingsView {
                     .truncate()
                     .child(self.command_title(hint)),
             )
+            .when(hint.layer == crate::keymap::Layer::User, |row| {
+                row.child(
+                    div()
+                        .flex_none()
+                        .text_xs()
+                        .text_color(theme.text_muted)
+                        .child("Yours"),
+                )
+            })
             .child(keys)
             .into_any_element()
     }
@@ -1044,7 +1053,9 @@ impl Render for SettingsView {
                 Page::Plugins => {
                     "Everything beyond the core is a plugin. Turning one off removes its commands, views and settings until it is turned on again."
                 }
-                Page::Keyboard => "Every shortcut, grouped by where it applies.",
+                Page::Keyboard => {
+                    "Your shortcuts, then every shortcut in use, grouped by where it applies. Yours replace the others on the same keys."
+                }
                 Page::Plugin(_) => "",
             };
             match &page {
@@ -1082,6 +1093,7 @@ impl Render for SettingsView {
                     }
                 }
                 Page::Keyboard => {
+                    self.owner_rows(bibli_core::keymap::OWNER, &mut items, &theme, window, cx);
                     self.page_keyboard("", &mut items, &theme);
                 }
                 Page::Plugin(id) => self.page_plugin(id, &mut items, &theme, window, cx),

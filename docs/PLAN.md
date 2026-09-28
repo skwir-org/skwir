@@ -36,6 +36,29 @@ Poppler, GStreamer or libarchive. Open gate: idle PSS is about 118 to 120 MB aga
 been loosened. The per-change validation history that used to sit here is in
 `docs/STATUS-LOG.md`.
 
+Keys (2026-09-28, ADR-024): a `vim` plugin, off by default, binds yazi's
+keymap in the file list (hjkl, `g g`/`G`, Ctrl+U/D, Space to pick, `v`
+and `V` for a range, `y x p d D a r`, `/ ? n N`, `, m` and the other
+sorts, `g h`/`g c`/`g d`, `t t`, 1 to 9, `[ ] { }`, `~`), each key a
+command anyone can run. The selection now knows whether it was picked
+(`Selection::picked`): a scheme's moves `follow` (a picked selection
+stays while the cursor moves) and a sweep holds a range while it moves,
+shown in the status bar; the standard keys are unchanged. Keys come in
+layers (plugins, shell, schemes, the user's), so a scheme wins whatever
+order plugins were toggled in, and a binding a later one hides is no
+longer named by menus or tooltips. The user's shortcuts are a setting
+(`keyboard.bindings`) edited on the Keyboard page, which ADR-010 had
+left read-only; an empty command frees a key. Type-ahead yields while
+letters are bound in the file list. A key that begins a sequence waits
+for the next (vendored patch 0010) under a strip listing what can
+follow. New for everyone: `new_file` (New File in the folder's menu; a
+name ending in `/` is a folder), `ui.find`. Deviations from yazi: no line
+modes, links, tasks or trash place; Left, Right and Tab keep bibli's
+meaning; `f` and `s` both search, as bibli has no filter apart from
+search; `u` undoes (vim's, not yazi's). 874 default tests pass; checked
+on an isolated X display: picking, sweeping, `g` sequences, find, new
+file and folder, undo, a user shortcut saved, restarted and run, and
+type-ahead back once the plugin is off.
 More previews (2026-09-28): SVG drawings are drawn by resvg (inert, sharper
 as they are zoomed; `Pixels` says how far a picture may sharpen); OpenEXR and
 DDS decode in the process, floating-point light encoded as sRGB in

@@ -1,0 +1,52 @@
+diff --git a/crates/gpui/src/app.rs b/crates/gpui/src/app.rs
+index d4bd779..c149037 100644
+--- a/crates/gpui/src/app.rs
++++ b/crates/gpui/src/app.rs
+@@ -588,6 +588,9 @@ pub struct App {
+     pub(crate) inspector_element_registry: InspectorElementRegistry,
+     #[cfg(any(test, feature = "test-support", debug_assertions))]
+     pub(crate) name: Option<&'static str>,
++    /// How long a keystroke that begins a multi-stroke binding waits for
++    /// the next one; `None` waits until it comes.
++    pub(crate) key_sequence_timeout: Option<Duration>,
+     quitting: bool,
+ }
+ 
+@@ -663,6 +666,7 @@ impl App {
+ 
+                 #[cfg(any(test, feature = "test-support", debug_assertions))]
+                 name: None,
++                key_sequence_timeout: Some(Duration::from_secs(1)),
+             }),
+         });
+ 
+@@ -1388,6 +1392,13 @@ impl App {
+         .context("window not found")
+     }
+ 
++    /// How long a keystroke that begins a multi-stroke binding (`g g`)
++    /// waits for the next one before it is replayed alone: one second by
++    /// default, `None` to wait until the next key, as a modal editor does.
++    pub fn set_key_sequence_timeout(&mut self, timeout: Option<Duration>) {
++        self.key_sequence_timeout = timeout;
++    }
++
+     /// Creates an `AsyncApp`, which can be cloned and has a static lifetime
+     /// so it can be held across `await` points.
+     pub fn to_async(&self) -> AsyncApp {
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index 4ef474c..386e8a5 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -3835,8 +3835,9 @@ impl Window {
+         if !match_result.pending.is_empty() {
+             currently_pending.keystrokes = match_result.pending;
+             currently_pending.focus = self.focus;
+-            currently_pending.timer = Some(self.spawn(cx, async move |cx| {
+-                cx.background_executor.timer(Duration::from_secs(1)).await;
++            let timeout = cx.key_sequence_timeout;
++            currently_pending.timer = timeout.map(|timeout| self.spawn(cx, async move |cx| {
++                cx.background_executor.timer(timeout).await;
+                 cx.update(move |window, cx| {
+                     let Some(currently_pending) = window
+                         .pending_input

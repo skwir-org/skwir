@@ -24,11 +24,53 @@ use crate::view::Nav;
 /// What a keyboard move does to the selection: select the item reached
 /// (arrows), extend to it from the anchor (Shift), or only move the cursor
 /// (Ctrl), so Ctrl+Space can then pick items that are not side by side.
+/// A key scheme's moves follow (`SelectMode::Follow`, ADR-024): the
+/// selection moves with the cursor unless it was picked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {
     Select,
     Extend,
     Cursor,
+    Follow,
+}
+
+impl Step {
+    /// `ui.cursor`'s `step` argument.
+    fn parse(step: Option<&str>) -> Step {
+        match step {
+            Some("extend") => Step::Extend,
+            Some("move") => Step::Cursor,
+            Some("follow") => Step::Follow,
+            _ => Step::Select,
+        }
+    }
+}
+
+/// `ui.cursor`'s `to` argument; `here` is the item under the cursor.
+fn nav_of(to: &str) -> Option<Nav> {
+    Some(match to {
+        "up" => Nav::Up,
+        "down" => Nav::Down,
+        "left" => Nav::Left,
+        "right" => Nav::Right,
+        "page_up" => Nav::PageUp,
+        "page_down" => Nav::PageDown,
+        "half_page_up" => Nav::HalfPageUp,
+        "half_page_down" => Nav::HalfPageDown,
+        "home" => Nav::Home,
+        "end" => Nav::End,
+        _ => return None,
+    })
+}
+
+/// Whether `name` matches what `/` looks for: anywhere in the name, case
+/// ignored unless the pattern has a capital (yazi's smart case).
+pub fn find_matches(name: &str, pattern: &str) -> bool {
+    if pattern.chars().any(char::is_uppercase) {
+        name.contains(pattern)
+    } else {
+        name.to_lowercase().contains(&pattern.to_lowercase())
+    }
 }
 
 pub struct ListState {
@@ -252,6 +294,14 @@ impl Shell {
         if self.ui().view_id == "usage" {
             kc.add("usage");
         }
+        let sweeping = {
+            let ws = self.app.workspace.read();
+            ws.pane(self.pane)
+                .is_some_and(|p| p.selection.sweeping().is_some())
+        };
+        if sweeping {
+            kc.add("sweep");
+        }
         kc
     }
 
@@ -305,6 +355,7 @@ impl Shell {
             Step::Select => "replace",
             Step::Extend => "range_to",
             Step::Cursor => "cursor",
+            Step::Follow => "follow",
         };
         self.select_ids(vec![id], mode, window, cx);
         self.with_view(|v, _| v.scroll_to(target));
@@ -329,6 +380,73 @@ impl Shell {
             return;
         };
         self.select_ids(vec![id], "toggle", window, cx);
+    }
+
+    /// `ui.cursor_pick`: pick or unpick the item under the cursor (the
+    /// first, before the cursor has one), then move to the next as yazi's
+    /// Space does unless `advance` is false.
+    pub fn pick_cursor(&mut self, advance: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self
+            .cursor_id()
+            .or_else(|| self.ui().list.sorted.first().copied())
+        else {
+            return;
+        };
+        self.select_ids(vec![id], "pick", window, cx);
+        if advance {
+            self.cursor_move(1, Step::Follow, window, cx);
+        }
+    }
+
+    /// `ui.cursor { to, step }`: every keyboard move with every step, so a
+    /// key scheme binds moves without a command of its own for each.
+    pub fn cursor_command(
+        &mut self,
+        args: &serde_json::Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let text = |key| args.get(key).and_then(serde_json::Value::as_str);
+        let step = Step::parse(text("step"));
+        match text("to").unwrap_or("down") {
+            "here" => {
+                if let Some(ix) = self.cursor_index() {
+                    self.cursor_to(ix as isize, step, window, cx);
+                }
+            }
+            to => match nav_of(to) {
+                Some(nav) => self.navigate_by(nav, step, window, cx),
+                None => self.set_status(format!("ui.cursor cannot go to “{to}”"), true, cx),
+            },
+        }
+    }
+
+    /// The next entry after `from` (the cursor when `None`), or before it
+    /// when `backward`, whose name `find_matches` the pattern, around the
+    /// end.
+    pub fn find_from(&self, from: Option<EntryId>, pattern: &str, backward: bool) -> Option<usize> {
+        if pattern.is_empty() {
+            return None;
+        }
+        let ws = self.app.workspace.read();
+        let pane = ws.pane(self.pane)?;
+        let sorted = &self.ui().list.sorted;
+        let len = sorted.len();
+        let start = from
+            .or(pane.selection.cursor)
+            .and_then(|c| sorted.iter().position(|id| *id == c));
+        (1..=len)
+            .map(|step| match (start, backward) {
+                (Some(s), false) => (s + step) % len,
+                (Some(s), true) => (s + len - step % len) % len,
+                (None, false) => step - 1,
+                (None, true) => len - step,
+            })
+            .find(|ix| {
+                pane.listing
+                    .get(sorted[*ix])
+                    .is_some_and(|e| find_matches(&e.name_str(), pattern))
+            })
     }
 
     /// Keyboard navigation, interpreted by the active view.
@@ -487,6 +605,10 @@ impl Shell {
     }
 
     fn on_pane_key_down(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // Letters are commands while the keymap takes them here.
+        if !self.keys.typeahead {
+            return;
+        }
         let ks = &ev.keystroke;
         if ks.modifiers.control
             || ks.modifiers.alt
@@ -699,4 +821,17 @@ pub fn entry_mouse<E: InteractiveElement>(
                 this.on_entry_mouse_up(pane, ix, window, cx);
             }),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::find_matches;
+
+    #[test]
+    fn a_find_ignores_case_until_the_pattern_has_a_capital() {
+        assert!(find_matches("Rapport d'été.pdf", "été"));
+        assert!(find_matches("Rapport d'été.pdf", "rapp"));
+        assert!(!find_matches("rapport.pdf", "Rapp"));
+        assert!(find_matches("Rapport.pdf", "Rapp"));
+    }
 }

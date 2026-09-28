@@ -3835,8 +3835,9 @@ impl Window {
         if !match_result.pending.is_empty() {
             currently_pending.keystrokes = match_result.pending;
             currently_pending.focus = self.focus;
-            currently_pending.timer = Some(self.spawn(cx, async move |cx| {
-                cx.background_executor.timer(Duration::from_secs(1)).await;
+            let timeout = cx.key_sequence_timeout;
+            currently_pending.timer = timeout.map(|timeout| self.spawn(cx, async move |cx| {
+                cx.background_executor.timer(timeout).await;
                 cx.update(move |window, cx| {
                     let Some(currently_pending) = window
                         .pending_input

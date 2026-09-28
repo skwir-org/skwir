@@ -20,6 +20,11 @@ pub trait Plugin: Send + Sync {
     }
     /// Where the plugin is listed among the others.
     fn category(&self) -> Category;
+    /// Whether the plugin is on until the user turns it off. A plugin that
+    /// changes what standard keys do (a key scheme) waits to be asked.
+    fn enabled_by_default(&self) -> bool {
+        true
+    }
     /// Contribute to the app. Called on enable.
     fn register(&self, app: &App);
     /// Apply changed preferences on a worker. Read-through settings need no hook.
@@ -203,13 +208,14 @@ impl PluginHost {
         format!("plugins.{id}.enabled")
     }
 
-    /// Add a plugin. It is enabled unless `plugins.<id>.enabled = false` in settings.
+    /// Add a plugin. It is enabled as `plugins.<id>.enabled` says in the
+    /// settings, else as the plugin says (`Plugin::enabled_by_default`).
     pub fn add(&self, plugin: Arc<dyn Plugin>, app: &App) {
         let _lifecycle = self.lifecycle.lock();
         let enabled = app
             .settings
             .get::<bool>(&Self::setting_key(plugin.id()))
-            .unwrap_or(true);
+            .unwrap_or_else(|| plugin.enabled_by_default());
         app.registry.set_owner_enabled(plugin.id(), enabled);
         if enabled {
             plugin.register(app);

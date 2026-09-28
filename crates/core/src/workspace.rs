@@ -48,14 +48,33 @@ pub struct Tab {
 }
 
 /// Multi-selection with an anchor (for range selection) and a cursor (keyboard focus).
+///
+/// The items were either picked (toggled, added, a range, all) or they follow
+/// the cursor (an arrow or a click selects the one item reached). The
+/// standard keys never ask; a key scheme's moves do (`SelectMode::Follow`,
+/// `SelectMode::Pick`, ADR-024): a move carries a selection that follows the
+/// cursor along and leaves a picked one where it is.
 #[derive(Clone, Debug, Default)]
 pub struct Selection {
     items: IndexSet<EntryId>,
     pub anchor: Option<EntryId>,
     pub cursor: Option<EntryId>,
+    picked: bool,
+    sweep: Option<Sweep>,
     /// Stamped from one process-wide counter whenever the items change, so
     /// two selections never share a nonzero stamp; 0 is an untouched one.
     revision: u64,
+}
+
+/// A range held while the cursor moves (yazi's visual mode): what lies
+/// between `from` and the cursor is selected, or with `unset` deselected,
+/// over the items picked when it began. Any change to the selection other
+/// than a move ends it; [`Selection::sweep_end`] keeps what it covers.
+#[derive(Clone, Debug)]
+struct Sweep {
+    from: EntryId,
+    unset: bool,
+    base: IndexSet<EntryId>,
 }
 
 static SELECTION_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -72,19 +91,34 @@ impl Selection {
         self.revision = SELECTION_REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
+    /// Whether the items were picked rather than following the cursor.
+    pub fn picked(&self) -> bool {
+        self.picked
+    }
+
+    /// `Some(unset)` while a sweep lasts: whether it deselects.
+    pub fn sweeping(&self) -> Option<bool> {
+        self.sweep.as_ref().map(|sweep| sweep.unset)
+    }
+
     /// Deselect everything. The cursor stays where it was, so the keyboard
     /// carries on from there; a new location resets the whole selection.
     pub fn clear(&mut self) {
         self.touch();
         self.items.clear();
         self.anchor = None;
+        self.picked = false;
+        self.sweep = None;
     }
 
+    /// Select `ids`. One item follows the cursor; several were picked.
     pub fn set(&mut self, ids: impl IntoIterator<Item = EntryId>) {
         self.touch();
         self.items = ids.into_iter().collect();
         self.anchor = self.items.first().copied();
         self.cursor = self.items.last().copied();
+        self.picked = self.items.len() > 1;
+        self.sweep = None;
     }
 
     pub fn add(&mut self, id: EntryId) {
@@ -92,6 +126,8 @@ impl Selection {
         self.items.insert(id);
         self.cursor = Some(id);
         self.anchor.get_or_insert(id);
+        self.picked = true;
+        self.sweep = None;
     }
 
     pub fn toggle(&mut self, id: EntryId) {
@@ -101,6 +137,87 @@ impl Selection {
             self.anchor.get_or_insert(id);
         }
         self.cursor = Some(id);
+        self.picked = !self.items.is_empty();
+        self.sweep = None;
+    }
+
+    /// Pick `id`, or unpick it if it was picked. A selection that followed
+    /// the cursor is not a pick, so the first pick starts from nothing;
+    /// unpicking the last item gives the selection back to the cursor.
+    pub fn pick(&mut self, id: EntryId) {
+        self.touch();
+        self.sweep = None;
+        if !self.picked {
+            self.items.clear();
+            self.anchor = None;
+        }
+        if !self.items.shift_remove(&id) {
+            self.items.insert(id);
+            self.anchor.get_or_insert(id);
+        }
+        self.cursor = Some(id);
+        self.picked = !self.items.is_empty();
+        if !self.picked {
+            self.items.insert(id);
+            self.anchor = Some(id);
+        }
+    }
+
+    /// Move the cursor to `id`, `order` being the pane's sorted order: a
+    /// sweep covers up to it, a selection that follows the cursor moves
+    /// with it, a picked one stays.
+    pub fn follow(&mut self, id: EntryId, order: &[EntryId]) {
+        if self.sweep.is_some() {
+            self.cursor = Some(id);
+            self.redraw_sweep(order);
+        } else if self.picked {
+            self.cursor = Some(id);
+        } else {
+            self.set([id]);
+        }
+    }
+
+    /// Hold a range from the cursor while it moves: selecting, or with
+    /// `unset` deselecting, over what was picked. Without a cursor there is
+    /// nothing to start from.
+    pub fn sweep_start(&mut self, unset: bool, order: &[EntryId]) {
+        let Some(from) = self.cursor else { return };
+        let base = if self.picked {
+            self.items.clone()
+        } else {
+            IndexSet::new()
+        };
+        self.sweep = Some(Sweep { from, unset, base });
+        self.redraw_sweep(order);
+    }
+
+    /// End the sweep, keeping what it covers.
+    pub fn sweep_end(&mut self) {
+        if self.sweep.take().is_some() {
+            self.picked = !self.items.is_empty();
+        }
+    }
+
+    fn redraw_sweep(&mut self, order: &[EntryId]) {
+        let Some(sweep) = &self.sweep else { return };
+        let cursor = self.cursor.unwrap_or(sweep.from);
+        let pos = |id: EntryId| order.iter().position(|x| *x == id);
+        let range: &[EntryId] = match (pos(sweep.from), pos(cursor)) {
+            (Some(a), Some(b)) => &order[a.min(b)..=a.max(b)],
+            _ => std::slice::from_ref(&sweep.from),
+        };
+        let mut items = sweep.base.clone();
+        if sweep.unset {
+            for id in range {
+                items.shift_remove(id);
+            }
+        } else {
+            items.extend(range.iter().copied());
+        }
+        self.anchor = Some(sweep.from);
+        self.items = items;
+        self.picked = true;
+        self.touch();
     }
 
     pub fn remove(&mut self, id: EntryId) {
@@ -112,6 +229,8 @@ impl Selection {
         if self.cursor == Some(id) {
             self.cursor = self.items.last().copied();
         }
+        self.picked &= !self.items.is_empty();
+        self.sweep = None;
     }
 
     pub fn contains(&self, id: EntryId) -> bool {
@@ -143,6 +262,14 @@ impl Selection {
         if self.cursor.is_some_and(|c| listing.get(c).is_none()) {
             self.cursor = self.items.last().copied();
         }
+        if let Some(sweep) = &mut self.sweep {
+            if listing.get(sweep.from).is_none() {
+                self.sweep = None;
+            } else {
+                sweep.base.retain(|id| listing.get(*id).is_some());
+            }
+        }
+        self.picked &= !self.items.is_empty();
     }
 }
 
@@ -805,5 +932,99 @@ mod tests {
         sel.remove(id(1));
         sel.remove(id(3));
         assert_eq!((sel.anchor, sel.cursor), (Some(id(2)), Some(id(2))));
+    }
+
+    fn items(sel: &Selection) -> Vec<u64> {
+        sel.iter().map(|id| id.ino).collect()
+    }
+
+    #[test]
+    fn a_move_carries_a_selection_that_follows_and_leaves_a_picked_one() {
+        let id = |ino| EntryId { dev: 1, ino };
+        let order: Vec<EntryId> = (1..=5).map(id).collect();
+        let mut sel = Selection::default();
+        sel.set([id(1)]);
+        assert!(!sel.picked());
+        sel.follow(id(2), &order);
+        assert_eq!(items(&sel), [2]);
+        // The first pick starts from nothing: the item followed is not one.
+        sel.pick(id(2));
+        assert!(sel.picked());
+        sel.follow(id(3), &order);
+        sel.pick(id(3));
+        sel.follow(id(4), &order);
+        assert_eq!(items(&sel), [2, 3]);
+        assert_eq!(sel.cursor, Some(id(4)));
+        // Unpicking the last one gives the selection back to the cursor.
+        sel.pick(id(3));
+        sel.pick(id(2));
+        assert!(!sel.picked());
+        assert_eq!(items(&sel), [2]);
+        sel.follow(id(5), &order);
+        assert_eq!(items(&sel), [5]);
+    }
+
+    #[test]
+    fn the_standard_keys_are_unchanged() {
+        let id = |ino| EntryId { dev: 1, ino };
+        let mut sel = Selection::default();
+        sel.set([id(1)]);
+        // Ctrl+click on the one selected item deselects it, as it did.
+        sel.toggle(id(1));
+        assert!(sel.is_empty());
+        sel.set([id(1)]);
+        sel.toggle(id(2));
+        assert_eq!(items(&sel), [1, 2]);
+        assert!(sel.picked());
+        sel.set([id(3)]);
+        assert!(!sel.picked());
+    }
+
+    #[test]
+    fn a_sweep_covers_the_range_over_what_was_picked_and_ends_on_any_other_change() {
+        let id = |ino| EntryId { dev: 1, ino };
+        let order: Vec<EntryId> = (1..=6).map(id).collect();
+        let mut sel = Selection::default();
+        sel.set([id(1)]);
+        sel.pick(id(1));
+        sel.follow(id(3), &order);
+        sel.sweep_start(false, &order);
+        assert_eq!(sel.sweeping(), Some(false));
+        assert_eq!(items(&sel), [1, 3]);
+        sel.follow(id(5), &order);
+        assert_eq!(items(&sel), [1, 3, 4, 5]);
+        // Back past its start: the range turns around.
+        sel.follow(id(2), &order);
+        assert_eq!(items(&sel), [1, 2, 3]);
+        sel.sweep_end();
+        assert_eq!(sel.sweeping(), None);
+        sel.follow(id(6), &order);
+        assert_eq!(items(&sel), [1, 2, 3], "what it covered stays picked");
+
+        sel.follow(id(3), &order);
+        sel.sweep_start(true, &order);
+        sel.follow(id(1), &order);
+        assert_eq!(items(&sel), Vec::<u64>::new());
+        sel.sweep_end();
+        assert!(!sel.picked(), "nothing left: the selection follows again");
+        sel.follow(id(4), &order);
+        assert_eq!(items(&sel), [4]);
+
+        sel.sweep_start(false, &order);
+        sel.toggle(id(6));
+        assert_eq!(sel.sweeping(), None);
+    }
+
+    #[test]
+    fn a_sweep_whose_start_is_gone_ends() {
+        let id = |ino| EntryId { dev: 1, ino };
+        let order: Vec<EntryId> = (1..=3).map(id).collect();
+        let mut sel = Selection::default();
+        sel.set([id(2)]);
+        sel.sweep_start(false, &order);
+        sel.follow(id(3), &order);
+        sel.retain_in(&Listing::default());
+        assert_eq!(sel.sweeping(), None);
+        assert!(!sel.picked());
     }
 }

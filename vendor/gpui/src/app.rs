@@ -588,6 +588,9 @@ pub struct App {
     pub(crate) inspector_element_registry: InspectorElementRegistry,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
+    /// How long a keystroke that begins a multi-stroke binding waits for
+    /// the next one; `None` waits until it comes.
+    pub(crate) key_sequence_timeout: Option<Duration>,
     quitting: bool,
 }
 
@@ -663,6 +666,7 @@ impl App {
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
+                key_sequence_timeout: Some(Duration::from_secs(1)),
             }),
         });
 
@@ -1386,6 +1390,13 @@ impl App {
             Some(result)
         })
         .context("window not found")
+    }
+
+    /// How long a keystroke that begins a multi-stroke binding (`g g`)
+    /// waits for the next one before it is replayed alone: one second by
+    /// default, `None` to wait until the next key, as a modal editor does.
+    pub fn set_key_sequence_timeout(&mut self, timeout: Option<Duration>) {
+        self.key_sequence_timeout = timeout;
     }
 
     /// Creates an `AsyncApp`, which can be cloned and has a static lifetime

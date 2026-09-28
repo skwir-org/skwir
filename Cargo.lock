@@ -560,6 +560,7 @@ dependencies = [
  "bibli-plugin-thumbnails",
  "bibli-plugin-timeline",
  "bibli-plugin-usage",
+ "bibli-plugin-vim",
  "bibli-ui",
  "dirs 7.0.0",
  "flate2",
@@ -1177,6 +1178,17 @@ dependencies = [
  "rustix 1.1.5",
  "schemars",
  "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "bibli-plugin-vim"
+version = "0.0.1"
+dependencies = [
+ "bibli-core",
+ "bibli-platform",
+ "parking_lot",
  "serde_json",
  "tempfile",
 ]
