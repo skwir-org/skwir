@@ -634,6 +634,7 @@ just lint           cargo fmt --check + clippy --all-targets -D warnings
 just lint-all       the same over the whole workspace (what CI runs)
 just bench-check    generate bench-data/ on demand and enforce budgets
 just run [dir]      run the release binary
+just dist           build bibli and every helper without debug info (target/dist)
 just flame [dir]    profile with samply
 ```
 

@@ -15,6 +15,11 @@ workers:
 build-all:
     cargo build --workspace
 
+# Build what is shipped: bibli and every helper, without debug info, into
+# target/dist (the `dist` profile). Helpers sit beside bibli, where it finds them.
+dist:
+    cargo build --profile dist -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-mupdf-worker -p bibli-media-worker -p bibli-archive-worker -p bibli-mermaid-worker
+
 # Run the tests of the default members.
 test:
     cargo nextest run --no-tests=pass

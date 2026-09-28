@@ -157,6 +157,14 @@ codegen-units = 4
 [profile.bench]
 inherits = "release"
 
+# What is shipped (`just dist`): release without the symbols it keeps for
+# flamegraphs, std's included. Function names stay, so a panic's backtrace
+# still reads; a packager splits them off if they must go too.
+[profile.dist]
+inherits = "release"
+debug = false
+strip = "debuginfo"
+
 # Vendored gpui 0.2.2 with bibli's patches (see vendor/gpui/README.bibli.md).
 # Remove this table and the vendor directory once the patches are upstream.
 [patch.crates-io]
