@@ -10,9 +10,11 @@ rust-version.workspace = true
 bibli-core.workspace = true
 bibli-platform.workspace = true
 anyhow.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+image.workspace = true
 parking_lot.workspace = true
 
 [lints]

@@ -244,7 +244,7 @@ impl Shell {
                         }),
                         document: Some(page.content),
                         facts: Vec::new(),
-                        drawing: false,
+                        pixels: crate::preview::Pixels::Own,
                     }),
                     window,
                     cx,

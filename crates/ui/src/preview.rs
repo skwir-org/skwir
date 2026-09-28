@@ -49,9 +49,8 @@ pub enum PreviewContent {
         /// What the file says about the picture (EXIF), read on the worker
         /// that decoded it, for the panel's Details.
         facts: Vec<bibli_core::inspection::Detail>,
-        /// Drawn from a vector document (SVG): it has as many pixels as it
-        /// is asked for, so a zoom sharpens it past its own size.
-        drawing: bool,
+        /// How many pixels it can have, which bounds a zoom's sharpening.
+        pixels: Pixels,
     },
     Dir {
         items: usize,
@@ -59,6 +58,18 @@ pub enum PreviewContent {
     },
     Generic,
     Error(String),
+}
+
+/// How many pixels a picture can be drawn with (`Sharpen::most`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pixels {
+    /// A raster: its own, at most.
+    Own,
+    /// A drawing (SVG): as many as it is asked for, past its own size.
+    Any,
+    /// What another program drew (a thumbnailer, for a format bibli does
+    /// not decode): what it gave is all there is.
+    Drawn,
 }
 
 /// The player a preview result brings.
@@ -491,7 +502,7 @@ fn decode_image(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<
         detail: None,
         document: None,
         facts: bibli_platform::exif::details(path),
-        drawing: false,
+        pixels: Pixels::Own,
     })
 }
 
@@ -514,7 +525,7 @@ fn decode_drawing(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Resul
         detail: None,
         document: None,
         facts: Vec::new(),
-        drawing: true,
+        pixels: Pixels::Any,
     })
 }
 
@@ -982,6 +993,7 @@ impl Shell {
                     }
                 }
                 PreviewInfo::Video { seconds, .. } => self.preview.seconds = Some(*seconds),
+                PreviewInfo::Picture { .. } => {}
             }
         }
         if let PreviewContent::Error(error) = &result.content
@@ -1084,7 +1096,7 @@ impl Shell {
                     detail: None,
                     document: None,
                     facts: Vec::new(),
-                    drawing: false,
+                    pixels: Pixels::Own,
                 }),
                 window,
                 cx,
@@ -1274,7 +1286,7 @@ impl Shell {
                             detail: None,
                             document: None,
                             facts: Vec::new(),
-                            drawing: false,
+                            pixels: Pixels::Own,
                         };
                         if !cancel.is_cancelled() {
                             let _ = tx.send(PreviewResult {
@@ -1319,7 +1331,7 @@ impl Shell {
                                 // Where it was recorded, which Details
                                 // shows beside what the player says.
                                 facts: bibli_platform::mp4::details(&path),
-                                drawing: false,
+                                pixels: Pixels::Own,
                             };
                             send(content, true, None, None);
                         }
@@ -1356,7 +1368,7 @@ impl Shell {
                                     }),
                                     document: Some(page.content),
                                     facts: Vec::new(),
-                                    drawing: false,
+                                    pixels: Pixels::Own,
                                 })
                             })
                             .unwrap_or_else(|e| PreviewContent::Error(format!("{e:#}")));
@@ -1372,14 +1384,27 @@ impl Shell {
                 };
                 let content = match result {
                     Ok(Some(preview)) => match crate::thumbs::to_render_image(&preview.image) {
-                        Some(image) => PreviewContent::Image {
-                            image,
-                            width: preview.image.width,
-                            height: preview.image.height,
-                            detail: Some(preview.info),
-                            document: None,
-                            facts: Vec::new(),
-                            drawing: false,
+                        // Drawn by another program: its own size, not the
+                        // one drawn, is what 100% and Details say.
+                        Some(image) => match preview.info {
+                            PreviewInfo::Picture { width, height } => PreviewContent::Image {
+                                image,
+                                width,
+                                height,
+                                detail: None,
+                                document: None,
+                                facts: bibli_platform::exif::details(&path),
+                                pixels: Pixels::Drawn,
+                            },
+                            info => PreviewContent::Image {
+                                image,
+                                width: preview.image.width,
+                                height: preview.image.height,
+                                detail: Some(info),
+                                document: None,
+                                facts: Vec::new(),
+                                pixels: Pixels::Own,
+                            },
                         },
                         None => PreviewContent::Error("Invalid preview image".into()),
                     },
@@ -2287,7 +2312,7 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
             width,
             height,
             document,
-            drawing,
+            pixels,
             ..
         }) => {
             let picture = if let Some(document) = document.as_ref().filter(|_| interactive) {
@@ -2306,15 +2331,14 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                     &p.picture_scroll,
                     "preview-image-scroll",
                     // A picture shown smaller than its own size was decoded
-                    // smaller; one given at its pixels has no more. A
-                    // drawing has as many as it is asked for.
+                    // smaller; one given at its pixels has no more.
                     Some(Sharpen {
                         shell: cx.entity().downgrade(),
                         asked: p.picture_side,
-                        most: if *drawing {
-                            bibli_platform::inspection::limits::PICTURE_SIDE
-                        } else {
-                            (*width).max(*height)
+                        most: match pixels {
+                            Pixels::Own => (*width).max(*height),
+                            Pixels::Any => bibli_platform::inspection::limits::PICTURE_SIDE,
+                            Pixels::Drawn => 0,
                         },
                     }),
                 )
@@ -2957,13 +2981,13 @@ mod tests {
                 image,
                 width,
                 height,
-                drawing,
+                pixels,
                 ..
             } = content
             else {
                 panic!("a drawing is a picture");
             };
-            assert_eq!((width, height, drawing), (40, 20, true));
+            assert_eq!((width, height, pixels), (40, 20, super::Pixels::Any));
             assert_eq!(image.size(0).width.0, drawn);
         }
     }

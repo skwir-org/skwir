@@ -1,6 +1,7 @@
 //! bibli plugin: thumbnails. Registers, in order, the freedesktop cache
 //! (read and write-back), the in-process image decoder, and the desktop's
-//! installed thumbnailers into the core thumbnail service.
+//! installed thumbnailers into the core thumbnail service. The same
+//! thumbnailers preview the pictures bibli does not decode (`Pictures`).
 //!
 //! Settings: `thumbnails.write_cache` (bool, default true) and
 //! `thumbnails.budget_mb` (integer, default 64).
@@ -11,10 +12,12 @@ use std::sync::{Arc, OnceLock};
 use bibli_core::App;
 use bibli_core::cancel::CancelToken;
 use bibli_core::plugin::Plugin;
+use bibli_core::preview::{Preview, PreviewInfo, PreviewProvider, PreviewRequest};
 use bibli_core::scheduler::Priority;
 use bibli_core::settings::SettingSpec;
 use bibli_core::thumbs::{Image, ThumbRequest, ThumbnailProvider};
-use bibli_platform::thumb_providers::{FreedesktopCache, ImageDecoder, Thumbnailers};
+use bibli_platform::thumb_providers::{self, FreedesktopCache, ImageDecoder, Thumbnailers};
+use bibli_platform::thumbnails::{ThumbCache, ThumbSize};
 
 const ID: &str = "thumbnails";
 const WRITE_CACHE: &str = "thumbnails.write_cache";
@@ -54,6 +57,105 @@ impl ThumbnailProvider for Discovered {
     }
 }
 
+/// Pictures bibli does not decode itself (HEIF, AVIF, JPEG XL, a camera's
+/// raw file) previewed as the desktop's thumbnailer draws them, at the
+/// largest size the thumbnail cache knows, and kept there like any
+/// thumbnail so the next look, and other applications, find it drawn.
+struct Pictures {
+    thumbnailers: Arc<Discovered>,
+    cache: Option<ThumbCache>,
+    write_back: bool,
+}
+
+/// What the preview asks a thumbnailer to draw.
+const PICTURE_SIZE: ThumbSize = ThumbSize::XXLarge;
+
+impl PreviewProvider for Pictures {
+    fn id(&self) -> &'static str {
+        "desktop-pictures"
+    }
+
+    /// A fallback: a provider that reads the format itself goes first.
+    fn priority(&self) -> i32 {
+        -50
+    }
+
+    fn accepts(&self, req: &PreviewRequest) -> bool {
+        req.mime.as_deref().is_some_and(|mime| {
+            mime.starts_with("image/")
+                && !thumb_providers::decodes(mime)
+                && self
+                    .thumbnailers
+                    .found
+                    .get()
+                    .is_some_and(|t| t.claims(mime))
+        })
+    }
+
+    fn render(&self, req: &PreviewRequest, cancel: &CancelToken) -> anyhow::Result<Preview> {
+        let path = req.entry.resolve()?;
+        let mime = req.mime.as_deref().unwrap_or_default();
+        let cached = self
+            .cache
+            .as_ref()
+            .and_then(|c| c.load(&path, PICTURE_SIZE));
+        let image = if let Some(image) = cached {
+            image
+        } else {
+            self.draw(&path, mime, cancel)?
+        };
+        let (width, height) = own_size(
+            bibli_platform::exif::dimensions(&path),
+            (image.width, image.height),
+        );
+        Ok(Preview {
+            image,
+            info: PreviewInfo::Picture { width, height },
+        })
+    }
+}
+
+impl Pictures {
+    /// The picture drawn by its thumbnailer, and kept in the cache.
+    fn draw(
+        &self,
+        path: &std::path::Path,
+        mime: &str,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Image> {
+        let thumbnailers = self
+            .thumbnailers
+            .found
+            .get()
+            .ok_or_else(|| anyhow::anyhow!("No thumbnailer draws this picture"))?;
+        let image = thumbnailers
+            .draw(path, mime, PICTURE_SIZE.pixels(), cancel)?
+            .ok_or_else(|| anyhow::anyhow!("cancelled"))?;
+        if let Some(cache) = self.cache.as_ref().filter(|_| self.write_back)
+            && let Ok(modified) = std::fs::metadata(path).and_then(|m| m.modified())
+            && let Err(error) = cache.store(path, PICTURE_SIZE, &image, modified)
+        {
+            tracing::debug!("picture cache write failed: {error:#}");
+        }
+        Ok(image)
+    }
+}
+
+/// The picture's own size, as its camera wrote it (`written`), standing the
+/// way the thumbnailer drew it (`drawn`): a camera writes the sensor's
+/// size, a thumbnailer turns the picture upright. Without one, what was
+/// drawn.
+fn own_size(written: Option<(u32, u32)>, drawn: (u32, u32)) -> (u32, u32) {
+    let Some((width, height)) = written else {
+        return drawn;
+    };
+    if (width > height) == (drawn.0 > drawn.1) || drawn.0 == drawn.1 {
+        (width, height)
+    } else {
+        (height, width)
+    }
+}
+
 fn budget(app: &App) {
     let budget_mb = app
         .settings
@@ -76,6 +178,15 @@ impl ThumbnailsPlugin {
         app.thumbnails.register(
             ID,
             Arc::clone(&self.thumbnailers) as Arc<dyn ThumbnailProvider>,
+        );
+        app.previews.unregister(ID, "desktop-pictures");
+        app.previews.register(
+            ID,
+            Arc::new(Pictures {
+                thumbnailers: Arc::clone(&self.thumbnailers),
+                cache: ThumbCache::desktop(),
+                write_back,
+            }),
         );
     }
 }
@@ -285,5 +396,73 @@ mod tests {
             background_before <= 40,
             "{background_before} background thumbnails completed before the visible ones"
         );
+    }
+
+    #[test]
+    fn a_picture_bibli_cannot_decode_is_previewed_as_its_thumbnailer_draws_it() {
+        use bibli_platform::thumb_providers::ThumbnailerEntry;
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        // A "HEIF" photo that is a PNG inside, and a thumbnailer that
+        // draws it by copying it, as `heif-thumbnailer -s %s %i %o` would.
+        let photo = dir.path().join("a photo’s name.heic");
+        image::RgbImage::from_pixel(30, 20, image::Rgb([0, 128, 255]))
+            .save_with_format(&photo, image::ImageFormat::Png)
+            .unwrap();
+        let tool = dir.path().join("draw");
+        std::fs::write(&tool, "#!/bin/sh\ncp \"$2\" \"$3\"\n").unwrap();
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let discovered = Arc::new(Discovered::default());
+        let _ = discovered
+            .found
+            .set(Thumbnailers::new(vec![ThumbnailerEntry {
+                name: "heif".into(),
+                try_exec: None,
+                exec: format!("{} %s %i %o", tool.display()),
+                mime_types: vec!["image/heif".into(), "image/png".into()],
+            }]));
+        let cache = ThumbCache::at(dir.path().join("cache"));
+        let pictures = Pictures {
+            thumbnailers: discovered,
+            cache: Some(cache.clone()),
+            write_back: true,
+        };
+        let request = |mime: &str| PreviewRequest {
+            entry: EntryRef::from_path(&photo).unwrap(),
+            mime: Some(mime.into()),
+            page: 1,
+            seconds: None,
+            max_side: 2048,
+            text_size: None,
+        };
+        assert!(
+            !pictures.accepts(&request("image/png")),
+            "bibli decodes a PNG itself"
+        );
+        assert!(!pictures.accepts(&request("image/jxl")), "nothing draws it");
+        let heif = request("image/heif");
+        assert!(pictures.accepts(&heif));
+        let preview = pictures.render(&heif, &CancelToken::new()).unwrap();
+        assert_eq!((preview.image.width, preview.image.height), (30, 20));
+        assert_eq!(
+            preview.info,
+            PreviewInfo::Picture {
+                width: 30,
+                height: 20
+            }
+        );
+        assert!(
+            cache.lookup(&photo, PICTURE_SIZE).is_some(),
+            "kept in the desktop's cache"
+        );
+    }
+
+    #[test]
+    fn a_pictures_own_size_stands_the_way_it_was_drawn() {
+        assert_eq!(own_size(None, (1024, 768)), (1024, 768));
+        assert_eq!(own_size(Some((4032, 3024)), (1024, 768)), (4032, 3024));
+        // The camera wrote the sensor's size; the thumbnailer turned it up.
+        assert_eq!(own_size(Some((4032, 3024)), (768, 1024)), (3024, 4032));
+        assert_eq!(own_size(Some((4032, 3024)), (512, 512)), (4032, 3024));
     }
 }

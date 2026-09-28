@@ -28,6 +28,20 @@ pub fn details(path: &Path) -> Vec<Detail> {
     metadata(path).map(|exif| read(&exif)).unwrap_or_default()
 }
 
+/// The picture's own width and height as its camera wrote them, for a
+/// picture whose pixels are read by another program. Before any turn: the
+/// caller knows which way what it was given stands.
+pub fn dimensions(path: &Path) -> Option<(u32, u32)> {
+    let exif = metadata(path)?;
+    let length = |tag| {
+        exif.get_field(tag, In::PRIMARY)?
+            .value
+            .get_uint(0)
+            .filter(|length| *length > 0)
+    };
+    Some((length(Tag::PixelXDimension)?, length(Tag::PixelYDimension)?))
+}
+
 /// Where and when a picture was taken, for the Map view.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Taken {

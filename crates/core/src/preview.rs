@@ -28,8 +28,22 @@ pub struct PreviewRequest {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum PreviewInfo {
-    Document { page: u32, pages: u32 },
-    Video { seconds: f64, duration: Option<f64> },
+    Document {
+        page: u32,
+        pages: u32,
+    },
+    Video {
+        seconds: f64,
+        duration: Option<f64>,
+    },
+    /// A picture another program drew at a size of its choosing (a desktop
+    /// thumbnailer, for a format bibli does not decode): what it drew is all
+    /// there is. `width` × `height` is the picture's own size when the file
+    /// says it, else the size drawn.
+    Picture {
+        width: u32,
+        height: u32,
+    },
 }
 
 #[derive(Clone, Debug)]

@@ -161,6 +161,17 @@ const SUBTYPES: &[&str] = &[
     "x-dds",
 ];
 
+/// Whether bibli decodes pictures of type `mime` itself: a raster the
+/// `image` crate reads, or a drawing (`inspection::drawing`).
+pub fn decodes(mime: &str) -> bool {
+    raster(mime) || matches!(mime, "image/svg+xml" | "image/svg+xml-compressed")
+}
+
+fn raster(mime: &str) -> bool {
+    mime.strip_prefix("image/")
+        .is_some_and(|sub| SUBTYPES.contains(&sub))
+}
+
 /// Refuse to decode anything larger than this many pixels.
 const MAX_PIXELS: u64 = 64 * 1024 * 1024;
 
@@ -170,10 +181,7 @@ impl ThumbnailProvider for ImageDecoder {
     }
 
     fn accepts(&self, req: &ThumbRequest) -> bool {
-        mime_of(req).is_some_and(|m| {
-            m.strip_prefix("image/")
-                .is_some_and(|sub| SUBTYPES.contains(&sub))
-        })
+        mime_of(req).is_some_and(|m| raster(&m))
     }
 
     fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
@@ -427,21 +435,44 @@ impl Thumbnailers {
         &self.entries
     }
 
+    /// Whether a thumbnailer claims files of type `mime`.
+    pub fn claims(&self, mime: &str) -> bool {
+        self.by_mime.contains_key(mime)
+    }
+
+    /// The file at `path`, of type `mime`, drawn by the thumbnailer that
+    /// claims it, at most `pixels` on its longer side: a thumbnail, or, for
+    /// a picture bibli does not decode, its preview. `None` when none
+    /// claims it or the request was cancelled.
+    pub fn draw(
+        &self,
+        path: &Path,
+        mime: &str,
+        pixels: u32,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Option<Image>> {
+        match self.by_mime.get(mime) {
+            Some(&i) => self.run(&self.entries[i], path, pixels, cancel),
+            None => Ok(None),
+        }
+    }
+
     fn run(
         &self,
         entry: &ThumbnailerEntry,
-        req: &ThumbRequest,
+        path: &Path,
+        pixels: u32,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Image>> {
         // A FIFO named `x.mp4` would hold the thumbnailer until its timeout.
         anyhow::ensure!(
-            std::fs::metadata(&req.entry.path)?.is_file(),
+            std::fs::metadata(path)?.is_file(),
             "{} is not a regular file",
-            req.entry.path.display()
+            path.display()
         );
         let scratch = tempfile::tempdir()?;
         let output = scratch.path().join("thumbnail.png");
-        let argv = substitute_exec(&entry.exec, &req.entry.path, &output, req.size.pixels());
+        let argv = substitute_exec(&entry.exec, path, &output, pixels);
         let Some((exe, exe_args)) = argv.split_first() else {
             anyhow::bail!("empty Exec in {}", entry.name)
         };
@@ -462,7 +493,7 @@ impl Thumbnailers {
             "thumbnailer output is too large"
         );
         image::open(&output)
-            .map(|img| Some(fit(img, req.size.pixels())))
+            .map(|img| Some(fit(img, pixels)))
             .with_context(|| format!("{}: decode its output", entry.name))
     }
 }
@@ -480,10 +511,7 @@ impl ThumbnailProvider for Thumbnailers {
         let Some(m) = mime_of(req) else {
             return Ok(None);
         };
-        let Some(&i) = self.by_mime.get(&*m) else {
-            return Ok(None);
-        };
-        self.run(&self.entries[i], req, cancel)
+        self.draw(&req.entry.path, &m, req.size.pixels(), cancel)
     }
 }
 
