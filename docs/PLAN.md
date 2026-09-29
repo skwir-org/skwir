@@ -87,22 +87,10 @@ player's strip) ends the last pane's footer, and the sidebar and the
 preview panel, which need none, run to the window's foot. With nothing
 selected, a pane's footer says what its files weigh ("5,000 items ·
 488.3 KB"), summed by a worker since the listing knows only the sizes of
-the rows drawn. Step C, reconsidered: not the footer (it holds state)
-but a pill floating over the foot of a pane's list, and only while its
-selection was picked (Ctrl+click, a range, a rubber band, Select all), so
-browsing with the arrows never brings it. It lays the context menu flat:
-the first item of each group gets a button, then the second, up to five
-(Open, Open With…, Cut, Copy, Move to Trash for a few files; a menu
-source's "Open With LibreOffice Calc" and Rename for one), with their
-words while they fit, then as icons; ⋯ opens the whole menu standing on
-it, × deselects. "Actions for picked files" (`ui.selection_bar`, on by
-default) turns it off. Checked on an isolated display: Select all, a
-plain click (no bar), Ctrl+click, ⋯ opened and closed again, Copy and
-Add to Shelf from it, a toast rising above it, a split narrowing it to
-icons, a drag and a right press on it leaving the selection alone, idle
-CPU back to 0%. Gap: it covers the last rows of a list scrolled to its
-end; the fix is room under the rows while it shows, which `uniform_list`
-does not draw into yet.
+the rows drawn. Step C, a selection's action bar built from the context
+menu's items, was tried (a pill over the foot of a pane while its
+selection was picked, commit 37204aa) and reverted: not convinced it is
+needed beside the context menu and the keys.
 
 Busy volumes (2026-09-29): a volume being unlocked, mounted or unmounted
 says so on its sidebar row (`Place::busy`: a still hourglass and

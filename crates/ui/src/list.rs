@@ -742,14 +742,8 @@ impl Shell {
     }
 
     /// Wrap a view's element in the pane container: focus, key context,
-    /// type-ahead, empty-area context menu, external drops, and over its
-    /// foot the selection's bar (`action_bar.rs`).
-    pub fn pane_container(
-        &mut self,
-        content: AnyElement,
-        bar: Option<AnyElement>,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    /// type-ahead, empty-area context menu, external drops.
+    pub fn pane_container(&mut self, content: AnyElement, cx: &mut Context<Self>) -> AnyElement {
         let tint = cx.global::<Theme>().drop_target;
         let key_context = self.pane_key_context();
         let pane = self.pane;
@@ -814,7 +808,6 @@ impl Shell {
                 this.drop_external(paths.paths(), window, cx);
             }))
             .child(content)
-            .children(bar)
             .into_any_element()
     }
 }

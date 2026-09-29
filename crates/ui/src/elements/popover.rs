@@ -37,19 +37,6 @@ impl PopoverAnchor {
         )
     }
 
-    /// `panel` over the anchor, its right edge on the anchor's, reaching
-    /// left and up: the menu of a button at the foot of a pane, drawn at
-    /// `priority`.
-    pub fn popup_above_right(&self, priority: usize, panel: AnyElement) -> AnyElement {
-        let mut panel = Some(panel);
-        below_at(
-            std::slice::from_ref(self),
-            priority,
-            gpui::Corner::BottomRight,
-            move || panel.take(),
-        )
-    }
-
     /// A popup whose content depends on the variant an adaptive row chose:
     /// `panels[variant]`, or the last one. The choice is read in the deferred
     /// prepaint, after the row made it in this same frame, so a menu can hold
@@ -92,10 +79,7 @@ fn below(
     below_at(anchors, priority, gpui::Corner::TopLeft, panel)
 }
 
-/// `below`, the panel's `corner` at the anchor's matching corner: a top
-/// corner of the panel under the anchor's bottom edge, a bottom one over
-/// its top edge (a bar at the foot of a pane opens its menu upwards),
-/// with the height left on that side.
+/// `below`, the panel's `corner` at the anchor's matching bottom corner.
 fn below_at(
     anchors: &[PopoverAnchor],
     priority: usize,
@@ -108,30 +92,16 @@ fn below_at(
             move |_, window, cx| {
                 let bounds = anchors.iter().find_map(|a| a.get())?;
                 let (gap, margin) = (px(6.), px(8.));
-                let (room, at, offset) = match corner {
-                    gpui::Corner::TopLeft | gpui::Corner::TopRight => (
-                        window.viewport_size().height - bounds.bottom() - gap - margin,
-                        if corner == gpui::Corner::TopRight {
-                            bounds.bottom_right()
-                        } else {
-                            bounds.bottom_left()
-                        },
-                        gap,
-                    ),
-                    gpui::Corner::BottomLeft | gpui::Corner::BottomRight => (
-                        bounds.top() - gap - margin,
-                        if corner == gpui::Corner::BottomRight {
-                            bounds.top_right()
-                        } else {
-                            bounds.origin
-                        },
-                        -gap,
-                    ),
+                let room = window.viewport_size().height - bounds.bottom() - gap - margin;
+                let at = if corner == gpui::Corner::TopRight {
+                    bounds.bottom_right()
+                } else {
+                    bounds.bottom_left()
                 };
                 let mut popup = gpui::anchored()
                     .anchor(corner)
                     .position(at)
-                    .offset(gpui::point(px(0.), offset))
+                    .offset(gpui::point(px(0.), gap))
                     .snap_to_window_with_margin(margin)
                     .child(
                         gpui::div()

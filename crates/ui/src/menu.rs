@@ -194,10 +194,6 @@ pub struct MenuState {
     /// Opened from the keyboard: no pointer says where, so the menu hangs
     /// from the cursor's row of this pane, or from the pane.
     pub keyboard: Option<KeyboardAnchor>,
-    /// Opened from a button at the foot of a pane (the selection bar's ⋯):
-    /// the menu stands on it, clear of the button, so a second press on
-    /// the button lands on the button.
-    pub over: Option<PopoverAnchor>,
 }
 
 /// Where a menu opened with the Menu key or Shift+F10 is drawn: under the
@@ -232,7 +228,6 @@ impl MenuState {
             expanded: None,
             back,
             keyboard: None,
-            over: None,
         }
     }
 }
@@ -329,7 +324,7 @@ impl Shell {
     /// The context menu's items for the selection: the registered items
     /// whose `when` holds, with what the sources that apply answer in place
     /// of the items they replace, in order.
-    pub(crate) fn context_items(&self) -> Vec<MenuItem> {
+    fn context_items(&self) -> Vec<MenuItem> {
         let ctx = self.selection_ctx();
         let registry = &self.app.registry;
         let statics: Vec<MenuItem> = registry
@@ -394,25 +389,6 @@ impl Shell {
                 Vec::new()
             }
         }
-    }
-
-    /// The selection's menu standing on `anchor`, a button at the foot of
-    /// the pane.
-    pub fn open_context_menu_over(
-        &mut self,
-        anchor: PopoverAnchor,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.close_context_menu(window, cx);
-        let items = self.context_items();
-        if items.is_empty() {
-            return;
-        }
-        let mut menu = MenuState::open(Point::default(), items, window, cx);
-        menu.over = Some(anchor);
-        self.menu = Some(menu);
-        cx.notify();
     }
 
     /// `ui.context_menu` (Menu key, Shift+F10): the menu a right-click on
@@ -733,12 +709,6 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .track_focus(&menu.focus)
         .key_context(crate::keymap::MENU)
         .on_mouse_down_out(cx.listener(|this, _, window, cx| {
-            // A press on the selection bar's ⋯ that closes it leaves it
-            // closed (`Shell::just_dismissed`).
-            this.note_dismissed(
-                &serde_json::json!({ "pointer": true }),
-                "context-menu".into(),
-            );
             this.close_context_menu(window, cx);
         }));
     let mut previous: Option<&MenuItem> = None;
@@ -832,9 +802,6 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                     )
                 }),
         );
-    }
-    if let Some(anchor) = &menu.over {
-        return Some(anchor.popup_above_right(2, panel.into_any_element()));
     }
     if let Some(anchor) = &menu.keyboard {
         let anchors = [anchor.row.clone(), anchor.area.clone()];

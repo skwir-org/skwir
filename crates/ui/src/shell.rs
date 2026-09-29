@@ -64,8 +64,6 @@ pub struct PaneUi {
     pub omni: Option<crate::omnibox::Omni>,
     /// What the files it shows weigh, for its footer (`weight.rs`).
     pub weight: crate::weight::Weight,
-    /// What its selection's bar offers (`action_bar.rs`).
-    pub actions: crate::action_bar::Actions,
     /// The chips of the search it shows (`search_bar`).
     pub chips: crate::search_bar::Chips,
     /// The placeholder's button, kept so Tab can reach it.
@@ -134,8 +132,6 @@ pub struct Preferences {
     pub grid_fill: bool,
     /// `ui.single_tab`: the tab of a window that has only one is drawn.
     pub single_tab: bool,
-    /// `ui.selection_bar`: a picked selection has a bar of its actions.
-    pub selection_bar: bool,
     /// `ui.printed_pages`: a book's position counts its printed pages.
     pub printed_pages: bool,
     /// How audio and video play.
@@ -148,7 +144,6 @@ impl Default for Preferences {
             friendly_dates: true,
             grid_fill: false,
             single_tab: false,
-            selection_bar: true,
             printed_pages: false,
             player: crate::player::PlayerPrefs::default(),
         }
@@ -669,7 +664,6 @@ impl Shell {
             last_search: String::new(),
             omni: None,
             weight: crate::weight::Weight::default(),
-            actions: crate::action_bar::Actions::default(),
             chips: crate::search_bar::Chips::default(),
             placeholder_focus: cx.focus_handle(),
             returning: true,
@@ -1839,11 +1833,6 @@ impl Shell {
                 .settings
                 .get::<bool>(crate::settings::SINGLE_TAB_KEY)
                 .unwrap_or(false);
-            self.prefs.selection_bar = self
-                .app
-                .settings
-                .get::<bool>(crate::settings::SELECTION_BAR_KEY)
-                .unwrap_or(true);
             self.reading_measure = crate::markdown::measure(
                 &self
                     .app
@@ -2040,8 +2029,7 @@ impl Shell {
             }
         };
         let message = crate::loading::message(self, id);
-        let bar = crate::action_bar::render(self, cx);
-        let file_area = self.pane_container(body, bar, cx);
+        let file_area = self.pane_container(body, cx);
         let strip = if active {
             timeline::render(self, cx)
         } else {
@@ -2219,7 +2207,6 @@ impl Render for Shell {
         let strip = crate::tabs::render(self, cx);
         let pane_ids: Vec<PaneId> = self.panes.iter().map(|p| p.id).collect();
         let split = pane_ids.len() == 2;
-
         let mut columns = Vec::new();
         for (index, id) in pane_ids.into_iter().enumerate() {
             // Split, the panes share the room as the edge between them was
