@@ -221,6 +221,15 @@ pub struct Shell {
     pub confirm: Option<ConfirmState>,
     pub menu: Option<MenuState>,
     pub toolbar_menu: Option<crate::toolbar::Popup>,
+    /// A pane row's menu of places: the history, or a folder's folders.
+    pub nav_menu: Option<crate::nav_menu::NavMenu>,
+    /// Counts the folder menus asked for: an answer for an older one is
+    /// dropped.
+    pub nav_asked: u64,
+    /// Counts the presses of a mouse button in the window, and which popup
+    /// the last press closed from outside (`note_dismissed`).
+    pub(crate) presses: u64,
+    pub(crate) dismissed: Option<(u64, String)>,
     /// A search chip's open choices.
     pub search_menu: Option<crate::search_bar::ChipMenu>,
     pub settings: Option<Entity<crate::settings::SettingsView>>,
@@ -454,6 +463,10 @@ impl Shell {
             confirm: None,
             menu: None,
             toolbar_menu: None,
+            nav_menu: None,
+            nav_asked: 0,
+            presses: 0,
+            dismissed: None,
             search_menu: None,
             settings: None,
             settings_subscription: None,
@@ -1250,6 +1263,8 @@ impl Shell {
             "toolbar_next" => window.focus_next(),
             "toolbar_prev" => window.focus_prev(),
             "toolbar_menu" => self.toggle_toolbar_menu(args, window, cx),
+            "history_menu" => self.toggle_history_menu(args, window, cx),
+            "subfolder_menu" => self.toggle_subfolder_menu(args, window, cx),
             "search_chip" => self.toggle_search_chip(args, window, cx),
             name if name.starts_with("settings_") => self.settings_command(name, args, window, cx),
             "shortcuts" => self.toggle_shortcuts(window, cx),
@@ -2171,6 +2186,9 @@ impl Render for Shell {
         let root = div()
             .key_context(keymap::ROOT)
             .on_action(cx.listener(Self::on_run_command))
+            // Before anything under the pointer: a popup closed by this
+            // press notes it (`note_dismissed`).
+            .capture_any_mouse_down(cx.listener(|this, _, _, _| this.presses += 1))
             // The mouse's side buttons, where no pane under the pointer
             // took them first.
             .on_mouse_down(

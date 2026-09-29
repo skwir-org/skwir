@@ -209,6 +209,12 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.map_open", "{}", "Map: open in Maps"),
     ("ui.peek", "{}", "Peek"),
     ("ui.search", "{}", "Search…"),
+    ("ui.history_menu", "{}", "Back: history…"),
+    (
+        "ui.history_menu",
+        r#"{"forward":true}"#,
+        "Forward: history…",
+    ),
     ("ui.jump", "{}", "Jump…"),
     ("ui.rename_bulk_prompt", "{}", "Rename several…"),
     ("ui.tags_prompt", "{}", "Tags…"),

@@ -305,6 +305,9 @@ fn invoke(
         return;
     }
     shell.activate_pane(pane, cx);
+    if !matches!(command, "ui.history_menu" | "ui.subfolder_menu") {
+        shell.close_nav_menu(window);
+    }
     if !matches!(
         command,
         "ui.toolbar_menu" | "ui.reader_menu" | "ui.preview_menu"
@@ -324,6 +327,28 @@ fn invoke(
         args["pane"] = serde_json::json!(pane);
     }
     shell.run(command, args, window, cx);
+}
+
+impl Shell {
+    /// A popup's toggle, closing it: when a press outside closed it
+    /// (`pointer` in `args`), note which (`what`) and with which press.
+    pub(crate) fn note_dismissed(&mut self, args: &serde_json::Value, what: String) {
+        if args.get("pointer").and_then(serde_json::Value::as_bool) == Some(true) {
+            self.dismissed = Some((self.presses, what));
+        }
+    }
+
+    /// A popup's toggle, opening it: whether the press this click began
+    /// has just closed that same popup. The press lands outside the popup,
+    /// on the button that opened it, and closes it first; the click that
+    /// follows then leaves it closed, as a second click on a menu button
+    /// does everywhere.
+    pub(crate) fn just_dismissed(&mut self, what: &str) -> bool {
+        let presses = self.presses;
+        self.dismissed
+            .take()
+            .is_some_and(|(press, closed)| press == presses && closed == what)
+    }
 }
 
 pub fn separator(theme: &Theme) -> Div {
@@ -404,8 +429,16 @@ pub fn popup_panel(
                 cx.propagate();
             }
         }))
+        // A press outside closes it, and says so: the click that press
+        // begins, on the button that opened it, must not open it again
+        // (`Shell::note_dismissed`).
         .on_mouse_down_out(cx.listener(move |this, _, window, cx| {
-            this.run(close, serde_json::json!({"close":true}), window, cx);
+            this.run(
+                close,
+                serde_json::json!({"close": true, "pointer": true}),
+                window,
+                cx,
+            );
         }))
 }
 

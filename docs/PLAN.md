@@ -48,7 +48,12 @@ segment and Alt+Up; the folder's menu and Ctrl+Shift+N). Chrome above the
 first row: a folder 108 to 104 px; split with two tabs and a search 217 to
 177 px. Checked in a window on an isolated display (folder, split, narrow
 split, the View menu from the right pane, More, a search, the sidebar
-hidden) and idle CPU back to 0%. This is step A of the toolbar overhaul;
+hidden) and idle CPU back to 0%. Then, still A: a right-click on Back or
+Forward lists the history that way (`back`/`forward` take `steps`), and
+the trail's chevrons list the folders inside the segment before them (a
+last one after the folder shown), read on a worker; a second click on a
+menu's button now closes it, the View and More menus included, which
+used to open again. This is step A of the toolbar overhaul;
 next, search in the address field with its chips as pills (B), then a
 selection's action bar built from the context menu's items (C).
 

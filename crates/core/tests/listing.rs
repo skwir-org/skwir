@@ -290,6 +290,22 @@ fn forward_returns_where_back_came_from_and_a_new_navigation_forgets_it() {
         Some(third),
         "navigating drops the forward history"
     );
+    // A history menu goes through several at once, and never past the ends:
+    // first, third, second.
+    go(&second);
+    let steps = |name: &str, steps: usize| {
+        app.dispatch(&bibli_core::command::Invocation::with_args(
+            name,
+            &serde_json::json!({ "steps": steps }),
+        ))
+        .unwrap();
+    };
+    steps("back", 2);
+    assert_eq!(at(&app), Some(first.clone()));
+    steps("back", 5);
+    assert_eq!(at(&app), Some(first), "nothing that far back");
+    steps("forward", 2);
+    assert_eq!(at(&app), Some(second));
 }
 
 fn entry_id(

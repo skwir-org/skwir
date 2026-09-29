@@ -629,6 +629,18 @@ pub struct PaneArg {
     pub pane: Option<PaneId>,
 }
 
+/// `back` and `forward`: how far through the pane's history.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct HistoryArgs {
+    /// The pane to act on; the active pane when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane: Option<PaneId>,
+    /// How many locations to go through at once; one when omitted (a
+    /// history menu jumps several).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steps: Option<usize>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct NavigateArgs {
     /// A path or `scheme:rest`; a path that is not UTF-8 as `{"bytes": [..]}`.
@@ -846,17 +858,18 @@ mod builtin {
                 true,
             ),
         ] {
-            c.register::<PaneArg, _>("core", name, title, description, move |a, app| {
+            c.register::<HistoryArgs, _>("core", name, title, description, move |a, app| {
                 let pane = app.pane_or_active(a.pane);
+                let steps = a.steps.unwrap_or(1).max(1);
                 let target = {
                     let ws = app.workspace.read();
                     let p = ws
                         .pane(pane)
                         .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
                     let pos = if forward {
-                        p.history_pos.checked_add(1)
+                        p.history_pos.checked_add(steps)
                     } else {
-                        p.history_pos.checked_sub(1)
+                        p.history_pos.checked_sub(steps)
                     };
                     pos.and_then(|pos| Some((pos, p.history.get(pos)?.clone())))
                 };

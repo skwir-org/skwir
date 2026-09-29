@@ -106,7 +106,15 @@ current source before assuming a planned crate, command, or API exists.
   pane's own row (`render_address`): Back, Forward, the address (the
   breadcrumb trail, or the text being edited) ending with the button that
   keeps the location in the sidebar, then how the pane shows its folder.
-  There is no Up button: the trail's parent segment and Alt+Up do it. The
+  There is no Up button: the trail's parent segment and Alt+Up do it.
+  Back and Forward list the history that way on a right-click
+  (`ui.history_menu`, `back`/`forward` with `steps`); each chevron of the
+  trail lists the folders inside the segment before it, and one after the
+  last those inside the folder shown (`ui.subfolder_menu`, read on a
+  worker, `nav_menu.rs`). A popup closed by a press outside it says so
+  (`pointer` in its close command) and the toggle notes it
+  (`Shell::note_dismissed`), so the click that press begins on its own
+  button leaves it closed instead of opening it again. The
   view buttons are the views that show the listing (`ViewRole::Listing`:
   list, grid, columns); a shape chosen now and then (`ViewRole::Alternate`:
   the tree) and a lens, a view that gathers data of its own

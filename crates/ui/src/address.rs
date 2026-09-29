@@ -37,7 +37,11 @@ impl Shell {
             menu.restore(window);
             kind
         });
-        if !close && open != Some(kind) {
+        if close {
+            if let Some(open) = open {
+                self.note_dismissed(args, open.to_owned());
+            }
+        } else if open != Some(kind) && !self.just_dismissed(kind) {
             self.toolbar_menu = Some(toolbar::Popup::new(kind, window, cx));
         }
         cx.notify();
@@ -523,6 +527,8 @@ struct PaneRow {
     edge: gpui::Hsla,
     location: Option<bibli_core::Location>,
     menu_open: bool,
+    /// The menu of places open from this row, if one is.
+    nav: Option<crate::nav_menu::NavWhat>,
 }
 
 /// A pane's row: Back and Forward, the address (a trail of folders, or the
@@ -564,9 +570,15 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
                     .toolbar_menu
                     .as_ref()
                     .is_some_and(|menu| menu.kind == VIEW_OPTIONS),
+            nav: shell
+                .nav_menu
+                .as_ref()
+                .filter(|menu| menu.pane == shell.pane)
+                .map(|menu| menu.what.clone()),
         }
     };
     let anchor = PopoverAnchor::default();
+    let nav_anchor = PopoverAnchor::default();
     let mut bar = div()
         .id(("pane-address", shell.pane.0 as usize))
         .tab_group()
@@ -580,7 +592,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         .child(AdaptiveRow {
             variants: [true, false]
                 .into_iter()
-                .map(|wide| pane_row(shell, &row, wide, &anchor, cx))
+                .map(|wide| pane_row(shell, &row, wide, [&anchor, &nav_anchor], cx))
                 .collect(),
             height: PANE_ROW_HEIGHT - 1.,
             chosen: None,
@@ -597,15 +609,58 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         }
         bar = bar.child(anchor.popup(panel));
     }
+    if let Some(panel) = crate::nav_menu::panel(shell, shell.pane, cx) {
+        bar = bar.child(nav_anchor.popup(panel));
+    }
     bar.into_any_element()
 }
 
-/// One variant of a pane's row (see `render_address`).
+/// Back or Forward: its right button lists the history that way.
+fn history_button(
+    shell: &Shell,
+    row: &PaneRow,
+    forward: bool,
+    anchor: &PopoverAnchor,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let (id, title, command, enabled) = if forward {
+        ("forward", "Forward", "forward", row.forward)
+    } else {
+        ("back", "Back", "back", row.back)
+    };
+    let open = row.nav == Some(crate::nav_menu::NavWhat::History { forward });
+    let pane = shell.pane;
+    Button::new(id, id, title, command)
+        .enabled(enabled)
+        .active(open)
+        .anchor_if(anchor, open)
+        .render(shell, cx)
+        .on_mouse_down(
+            gpui::MouseButton::Right,
+            cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                // The menu takes the keyboard; the button must not take it
+                // back once this handler returns.
+                window.prevent_default();
+                this.activate_pane(pane, cx);
+                this.run(
+                    "ui.history_menu",
+                    serde_json::json!({ "forward": forward }),
+                    window,
+                    cx,
+                );
+            }),
+        )
+        .into_any_element()
+}
+
+/// One variant of a pane's row (see `render_address`). `anchors` are the
+/// View menu's and the menu of places'.
 fn pane_row(
     shell: &Shell,
     row: &PaneRow,
     wide: bool,
-    anchor: &PopoverAnchor,
+    [anchor, nav_anchor]: [&PopoverAnchor; 2],
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
@@ -629,7 +684,14 @@ fn pane_row(
                 this.activate_pane(pane, cx);
                 this.run("ui.focus_address", serde_json::json!({}), window, cx);
             }))
-            .child(breadcrumbs(shell, path, &theme, cx))
+            .child(breadcrumbs(
+                shell,
+                path,
+                row.nav.as_ref(),
+                nav_anchor,
+                &theme,
+                cx,
+            ))
             .into_any_element(),
         None => div()
             .flex_1()
@@ -695,16 +757,8 @@ fn pane_row(
         .flex()
         .items_center()
         .gap(px(3.))
-        .child(
-            Button::new("back", "back", "Back", "back")
-                .enabled(row.back)
-                .render(shell, cx),
-        )
-        .child(
-            Button::new("forward", "forward", "Forward", "forward")
-                .enabled(row.forward)
-                .render(shell, cx),
-        )
+        .child(history_button(shell, row, false, nav_anchor, cx))
+        .child(history_button(shell, row, true, nav_anchor, cx))
         .child(field)
         .child(view_control(shell, wide, anchor, row.menu_open, cx));
     if row.location.as_ref().is_some_and(|l| &*l.scheme == "shelf") {
@@ -760,11 +814,18 @@ pub fn crumbs(path: &std::path::Path, home: Option<&std::path::Path>) -> Vec<(St
 /// The trail, laid out by flexbox alone: the segments are given last first to
 /// a right-to-left wrapping line one row tall, so the ones nearest the current
 /// folder stay and the outermost wrap out of sight in a narrow pane, with
-/// nothing measured. Every segment but the outermost carries its separator:
+/// nothing measured. Every segment but the outermost carries its chevron:
 /// a trail that starts with one visibly continues to the left.
+///
+/// A chevron lists the folders inside the segment before it, the one the
+/// trail goes on into marked; one more after the last lists the folders
+/// inside the folder shown. `open` is the menu of places open from this
+/// row, whose chevron hangs it from `anchor`.
 fn breadcrumbs(
     shell: &Shell,
     path: &std::path::Path,
+    open: Option<&crate::nav_menu::NavWhat>,
+    anchor: &PopoverAnchor,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
@@ -784,7 +845,56 @@ fn breadcrumbs(
         // `Start`/`End` follow the writing mode, not the flex direction).
         .justify_start()
         .line_height(px(24.));
-    for (index, (label, target)) in crumbs.into_iter().enumerate().rev() {
+    let chevron =
+        |index: usize, folder: &PathBuf, current: Option<&PathBuf>, cx: &mut Context<Shell>| {
+            let shown = open
+                == Some(&crate::nav_menu::NavWhat::Subfolders {
+                    folder: folder.clone(),
+                });
+            let args = serde_json::json!({
+                "path": PathArg::from(folder.as_path()),
+                "current": current.map(|c| PathArg::from(c.as_path())),
+            });
+            let font = shell.font.clone();
+            let name = folder.file_name().map_or_else(
+                || folder.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            );
+            let tip: gpui::SharedString = format!("Folders in {name}").into();
+            let hover = theme.hover;
+            div()
+                .id(("crumb-folders", index))
+                .relative()
+                .flex_none()
+                .h(px(24.))
+                .w(px(16.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_sm()
+                .cursor_pointer()
+                .hover(move |s| s.bg(hover))
+                .when(shown, |d| d.bg(theme.hover))
+                .tooltip(move |_, cx| toolbar::tooltip(tip.clone(), font.clone(), cx))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.activate_pane(pane, cx);
+                    this.run("ui.subfolder_menu", args.clone(), window, cx);
+                }))
+                .child(
+                    gpui::svg()
+                        .path(if shown {
+                            "toolbar/chevron.svg"
+                        } else {
+                            "toolbar/chevron-right.svg"
+                        })
+                        .size(px(12.))
+                        .flex_none()
+                        .text_color(theme.text_muted),
+                )
+                .when(shown, |d| d.child(anchor.marker()))
+        };
+    for (index, (label, target)) in crumbs.iter().enumerate().rev() {
         let hover = theme.hover;
         let open = target.clone();
         let in_tab = target.clone();
@@ -829,23 +939,20 @@ fn breadcrumbs(
                     );
                 }),
             )
-            .child(label);
-        let segment = crate::dnd::droppable_dir(segment, target, cx);
+            .child(label.clone());
+        let segment = crate::dnd::droppable_dir(segment, target.clone(), cx);
+        let before = index
+            .checked_sub(1)
+            .map(|parent| chevron(index, &crumbs[parent].1, Some(target), cx));
+        let after = (index == last).then(|| chevron(index + 1, target, None, cx));
         trail = trail.child(
             div()
                 .flex()
                 .flex_none()
                 .items_center()
-                .when(index > 0, |d| {
-                    d.child(
-                        gpui::svg()
-                            .path("toolbar/chevron-right.svg")
-                            .size(px(12.))
-                            .flex_none()
-                            .text_color(theme.text_muted),
-                    )
-                })
-                .child(segment),
+                .children(before)
+                .child(segment)
+                .children(after),
         );
     }
     trail.into_any_element()
