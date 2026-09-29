@@ -84,7 +84,10 @@ name and count. The status bar went the way of the toolbar: each pane has
 its own footer (what it lists, what is selected there, its size), the
 window's state (Undo, what waits for a paste, the shelf, proposals, the
 player's strip) ends the last pane's footer, and the sidebar and the
-preview panel, which need none, run to the window's foot. Next: a
+preview panel, which need none, run to the window's foot. With nothing
+selected, a pane's footer says what its files weigh ("5,000 items ·
+488.3 KB"), summed by a worker since the listing knows only the sizes of
+the rows drawn. Next: a
 selection's action bar built
 from the context menu's items (C).
 

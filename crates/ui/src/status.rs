@@ -123,6 +123,16 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
             None => format::count(count, "item"),
         },
     };
+    // Nothing selected: what the files shown weigh, as a selection's size
+    // is counted (folders not measured), once a worker has summed them
+    // (`weight.rs`).
+    let listed = (selection.count == 0)
+        .then(|| shell.listed_bytes())
+        .flatten();
+    let items = match listed {
+        Some(bytes) => format!("{items} · {}", format::size(bytes)),
+        None => items,
+    };
     let mut bar = div()
         .id(("pane-footer", shell.pane.0 as usize))
         .flex_none()

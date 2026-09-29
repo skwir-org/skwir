@@ -81,6 +81,7 @@ pub mod typenames;
 pub mod usage;
 pub mod view;
 pub mod views;
+mod weight;
 
 use std::sync::Arc;
 use std::time::Instant;

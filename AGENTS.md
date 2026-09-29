@@ -93,7 +93,9 @@ current source before assuming a planned crate, command, or API exists.
   with Cancel (`Executor::cancel`). `Shell::set_status` is a toast;
   `set_status_about` adds a link to the setting that fixes the problem.
   Footers hold state, never messages (`status.rs`): each pane's footer
-  its counts and selection size; the window's state (Undo, what waits for
+  its counts and selection size, and with nothing selected what its files
+  weigh (`weight.rs`: summed by a worker, the listing knowing only the
+  sizes of the rows drawn); the window's state (Undo, what waits for
   a paste, the shelf, proposals, the player's strip) ends the last pane's
   footer, at the window's bottom right either way a split runs. The side
   panels have no footer: they run to the window's foot. A key whose command needs a selection carries `selection` in its

@@ -62,6 +62,8 @@ pub struct PaneUi {
     pub last_search: String,
     /// The address field while it is typed in (`omnibox.rs`).
     pub omni: Option<crate::omnibox::Omni>,
+    /// What the files it shows weigh, for its footer (`weight.rs`).
+    pub weight: crate::weight::Weight,
     /// The chips of the search it shows (`search_bar`).
     pub chips: crate::search_bar::Chips,
     /// The placeholder's button, kept so Tab can reach it.
@@ -661,6 +663,7 @@ impl Shell {
             loading: crate::loading::State::default(),
             last_search: String::new(),
             omni: None,
+            weight: crate::weight::Weight::default(),
             chips: crate::search_bar::Chips::default(),
             placeholder_focus: cx.focus_handle(),
             returning: true,
@@ -2033,6 +2036,7 @@ impl Shell {
             None
         };
         // Its footer; the last pane's ends with the window's own state.
+        self.sync_weight(window, cx);
         let last = self.panes.last().map(|p| p.id) == Some(id);
         let footer = status::render(self, last, cx);
         self.pane = saved;
