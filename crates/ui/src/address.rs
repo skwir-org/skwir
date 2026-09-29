@@ -535,6 +535,8 @@ struct PaneRow {
     /// The field's edge: focused, the active pane's, or none.
     edge: gpui::Hsla,
     location: Option<bibli_core::Location>,
+    /// What the names shown must hold, typed in the field (`omnibox.rs`).
+    filter: Option<String>,
     menu_open: bool,
     /// The menu of places open from this row, if one is.
     nav: Option<crate::nav_menu::NavWhat>,
@@ -573,6 +575,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
             } else {
                 theme.surface
             },
+            filter: pane.and_then(|p| p.filter().map(str::to_owned)),
             location,
             // The View menu hangs from the active pane's button: the pane it
             // acts on.
@@ -640,6 +643,48 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
     bar.into_any_element()
 }
 
+/// The filter typed in the field, once the field let go of the keyboard:
+/// pressed, it is typed in again (Enter then searches the folders inside);
+/// its × shows everything, as Escape in the pane does.
+fn filter_pill(shell: &Shell, filter: &str, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
+    let pane = shell.pane;
+    let hover = theme.hover;
+    Button::new(
+        "filter-pill",
+        "search",
+        format!("Only the names holding “{filter}”"),
+        "ui.search",
+    )
+    .args(serde_json::json!({ "text": filter }))
+    .label(format!("“{filter}”"))
+    .active(true)
+    .render(shell, cx)
+    .h(px(22.))
+    .max_w(px(200.))
+    .rounded_full()
+    .pr(px(2.))
+    .mr(px(2.))
+    .child(
+        div()
+            .id("filter-clear")
+            .size(px(18.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_full()
+            .cursor_pointer()
+            .hover(move |s| s.bg(hover))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.activate_pane(pane, cx);
+                this.set_filter(None);
+                cx.notify();
+            }))
+            .child(crate::controls::glyph("close", theme.selection_text, 10.)),
+    )
+    .into_any_element()
+}
+
 /// Back or Forward: its right button lists the history that way.
 fn history_button(
     shell: &Shell,
@@ -698,27 +743,40 @@ fn pane_row(
         Address::Pills => crate::search_bar::pills(shell, chip_anchor, cx)
             .unwrap_or_else(|| div().into_any_element()),
         Address::Trail(path) => div()
-            .id(("address-trail", pane.0 as usize))
             .flex_1()
             .w(px(0.))
             .min_w_0()
             .h_full()
             .flex()
             .items_center()
-            .px(px(3.))
-            .cursor_text()
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.activate_pane(pane, cx);
-                this.run("ui.focus_address", serde_json::json!({}), window, cx);
-            }))
-            .child(breadcrumbs(
-                shell,
-                path,
-                row.nav.as_ref(),
-                nav_anchor,
-                &theme,
-                cx,
-            ))
+            .child(
+                div()
+                    .id(("address-trail", pane.0 as usize))
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .px(px(3.))
+                    .cursor_text()
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.activate_pane(pane, cx);
+                        this.run("ui.focus_address", serde_json::json!({}), window, cx);
+                    }))
+                    .child(breadcrumbs(
+                        shell,
+                        path,
+                        row.nav.as_ref(),
+                        nav_anchor,
+                        &theme,
+                        cx,
+                    )),
+            )
+            .children(
+                row.filter
+                    .as_deref()
+                    .map(|filter| filter_pill(shell, filter, &theme, cx)),
+            )
             .into_any_element(),
         // While a search is typed, where it looks stands before the text.
         Address::Text => div()

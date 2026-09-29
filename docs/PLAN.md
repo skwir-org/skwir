@@ -60,9 +60,17 @@ where one types: Ctrl+F starts a search there with where it looks as a
 pill, a dropdown offers searching here or at home, files containing the
 words, Jump's places, a path to go to, and `>` for the palette; the search
 prompt is gone. A search's tab and history rows read what it looks for
-and where (`LocationProvider::title`). Still to come in B: typing
-filters the folder shown as you type. Then a selection's action bar
-built from the context menu's items (C).
+and where (`LocationProvider::title`). Words typed over a folder filter
+it as they are typed (the core's `filter`, applied by `Pane::order`, so
+select all takes only what is shown), with the count as "1 of 7 items",
+a pill on the trail once the field lets go, Escape to show everything,
+and a state of its own when nothing matches; Enter then searches the
+folders inside. The dropdown hangs from the field's right end so the
+filtered names stay in sight. Checked in a window on an isolated display
+(pills, Filter, a facet chosen from it, the scope menu, a pill removed,
+Ctrl+F, Down and Enter, a path, `>`, filtering, the pill, Escape, no
+match) and idle CPU back to 0%. Next: a selection's action bar built
+from the context menu's items (C).
 
 Busy volumes (2026-09-29): a volume being unlocked, mounted or unmounted
 says so on its sidebar row (`Place::busy`: a still hourglass and

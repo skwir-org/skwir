@@ -171,6 +171,9 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
 
 /// Builtin bindings that carry arguments (`keys, command, args json, when`).
 const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
+    // A pane filtered by name shows everything again before Escape
+    // deselects (`select_none`, the plugins' binding).
+    ("escape", "filter", "{}", Some("pane filtered")),
     // The address field's dropdown: the keyboard stays in the field.
     ("up", "ui.omnibox_move", r#"{"delta":-1}"#, Some("address")),
     ("down", "ui.omnibox_move", r#"{"delta":1}"#, Some("address")),
@@ -538,6 +541,7 @@ fn condition(flag: &str) -> String {
         "file" => "on a file",
         "folder" => "in a folder",
         "sweep" => "selecting as the cursor moves",
+        "filtered" => "filtered by name",
         other => other,
     }
     .to_owned()

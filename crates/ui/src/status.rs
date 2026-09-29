@@ -84,16 +84,18 @@ pub const HEIGHT: f32 = 26.;
 pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let selection = shell.selection_ctx();
-    let (count, complete, error, is_query, sweep) = {
+    let (count, complete, error, is_query, sweep, total) = {
         let ws = shell.app.workspace.read();
         let pane = ws.pane(shell.pane);
-        pane.map_or((0, true, None, false, None), |p| {
+        pane.map_or((0, true, None, false, None, None), |p| {
             (
                 shell.ui().list.sorted.len(),
                 p.listing.is_complete(),
                 p.listing.error().map(str::to_owned),
                 p.location().is_some_and(|l| &*l.scheme == "query"),
                 p.selection.sweeping(),
+                // Filtered by name: how many there are in all.
+                p.filter().map(|_| p.listing.sorted(p.sort).len()),
             )
         })
     };
@@ -105,7 +107,14 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
         (false, false) if error.is_none() && loading => {
             format!("Loading… {}", format::count(count, "item"))
         }
-        (false, _) => format::count(count, "item"),
+        (false, _) => match total {
+            Some(total) => format!(
+                "{} of {}",
+                format::thousands(count),
+                format::count(total, "item")
+            ),
+            None => format::count(count, "item"),
+        },
     };
     let mut bar = div()
         .h(px(HEIGHT))

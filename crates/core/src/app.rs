@@ -629,6 +629,17 @@ pub struct PaneArg {
     pub pane: Option<PaneId>,
 }
 
+/// `filter`: what the names shown must hold.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct FilterArgs {
+    /// The pane to act on; the active pane when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane: Option<PaneId>,
+    /// Part of a name; empty or omitted shows every entry again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
+
 /// `back` and `forward`: how far through the pane's history.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct HistoryArgs {
@@ -981,6 +992,21 @@ mod builtin {
                 if let Some(h) = a.show_hidden {
                     p.sort.show_hidden = h;
                 }
+                Ok(Outcome::Done)
+            },
+        );
+
+        c.register::<FilterArgs, _>(
+            "core",
+            "filter",
+            "Filter by name",
+            "Show only the entries whose name holds `text` (case ignored unless it has a capital), until the pane shows another location; without `text`, all of them",
+            |a, app| {
+                let pane = app.pane_or_active(a.pane);
+                if let Some(p) = app.workspace.write().pane_mut(pane) {
+                    p.set_filter(a.text.as_deref());
+                }
+                app.wake();
                 Ok(Outcome::Done)
             },
         );

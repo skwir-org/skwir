@@ -388,7 +388,13 @@ current source before assuming a planned crate, command, or API exists.
   (Up and Down are bound in its context); a row runs on the press with
   `prevent_default`, so nothing under it takes the focus. The search is
   `query.search` with the text as `expr` and the pill as `root`: the UI
-  still knows no query syntax.
+  still knows no query syntax. Words typed over a folder (not a search)
+  filter it at once: the core's `filter`, which `Pane::order` applies, so
+  select all, ranges and the views see only what is shown, and what is
+  selected and filtered out is deselected. Showing another location
+  clears it; Escape in the field or in the pane (`filtered` in its key
+  context) shows everything; once the field lets go, the filter stays as a
+  pill on the trail.
 - **Popups own the keyboard.** A menu or popover takes focus when it opens
   and returns it when it closes, with its own key context (see `menu.rs`):
   otherwise keys act on a selection hidden behind it. Focus never

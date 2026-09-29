@@ -406,6 +406,26 @@ pub struct Pane {
     /// set, or one of their listings.
     tree_version: u64,
     order_cache: parking_lot::Mutex<Option<OrderCache>>,
+    /// Only the entries whose name holds this are shown (`Pane::order`):
+    /// what is typed in the address field before Enter searches. The
+    /// pane's like its sort; showing another location clears it.
+    filter: Option<Arc<str>>,
+    /// Changes with the filter.
+    filter_version: u64,
+    /// The filtered order, the order it filtered (by identity) and the
+    /// filter's version.
+    filter_cache: parking_lot::Mutex<Option<(Arc<[EntryId]>, u64, Arc<[EntryId]>)>>,
+}
+
+/// Whether `name` holds `filter`: anywhere in it, case ignored unless the
+/// filter has a capital.
+pub fn name_holds(name: &OsStr, filter: &str) -> bool {
+    let name = name.to_string_lossy();
+    if filter.chars().any(char::is_uppercase) {
+        name.contains(filter)
+    } else {
+        name.to_lowercase().contains(&filter.to_lowercase())
+    }
 }
 
 impl Pane {
@@ -427,6 +447,9 @@ impl Pane {
             expanded_version: 0,
             tree_version: 0,
             order_cache: parking_lot::Mutex::new(None),
+            filter: None,
+            filter_version: 0,
+            filter_cache: parking_lot::Mutex::new(None),
         }
     }
 
@@ -462,6 +485,39 @@ impl Pane {
         if !self.expanded.is_empty() {
             self.expanded.clear();
             self.expanded_changed();
+        }
+        self.set_filter(None);
+    }
+
+    /// What the pane's names must hold to be shown, if anything.
+    pub fn filter(&self) -> Option<&str> {
+        self.filter.as_deref()
+    }
+
+    /// Changes with the filter: a view keys what it drew on it beside the
+    /// listing's version.
+    pub fn filter_version(&self) -> u64 {
+        self.filter_version
+    }
+
+    /// Show only the entries whose name holds `text` (empty or `None`:
+    /// all). What is selected and no longer shown is deselected, as a
+    /// hidden file is: a Delete must not take what cannot be seen.
+    pub(crate) fn set_filter(&mut self, text: Option<&str>) {
+        let text = text.map(str::trim).filter(|t| !t.is_empty());
+        if self.filter.as_deref() == text {
+            return;
+        }
+        self.filter = text.map(Arc::from);
+        self.filter_version += 1;
+        if let Some(filter) = &self.filter {
+            let (listing, kept, expanded) = (&self.listing, &self.kept, &self.expanded);
+            self.selection.retain(|id| {
+                listing
+                    .get(id)
+                    .or_else(|| opened(kept, expanded).find_map(|(_, k)| k.listing.get(id)))
+                    .is_some_and(|e| name_holds(&e.name, filter))
+            });
         }
     }
 
@@ -832,9 +888,32 @@ impl Pane {
     }
 
     /// The entries the pane shows, in the order shown: the listing sorted,
-    /// each opened folder's entries after it, sorted the same way. What
-    /// range selection, select all and the views follow.
+    /// each opened folder's entries after it, sorted the same way, those
+    /// the filter keeps. What range selection, select all and the views
+    /// follow.
     pub fn order(&self) -> Arc<[EntryId]> {
+        let all = self.unfiltered_order();
+        let Some(filter) = &self.filter else {
+            return all;
+        };
+        let mut cache = self.filter_cache.lock();
+        if let Some((from, version, order)) = cache.as_ref()
+            && Arc::ptr_eq(from, &all)
+            && *version == self.filter_version
+        {
+            return Arc::clone(order);
+        }
+        let order: Arc<[EntryId]> = all
+            .iter()
+            .copied()
+            .filter(|id| self.entry(*id).is_some_and(|e| name_holds(&e.name, filter)))
+            .collect();
+        *cache = Some((all, self.filter_version, Arc::clone(&order)));
+        order
+    }
+
+    /// `order` before the filter.
+    fn unfiltered_order(&self) -> Arc<[EntryId]> {
         let top = self.listing.sorted(self.sort);
         if self.expanded.is_empty() {
             return top;

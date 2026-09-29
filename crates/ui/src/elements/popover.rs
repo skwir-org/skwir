@@ -24,6 +24,19 @@ impl PopoverAnchor {
         )
     }
 
+    /// `panel` under the anchor's right edge, reaching left: what it
+    /// covers is at the right of what the anchor is over (the address
+    /// field's dropdown leaves the names of the list below it in sight).
+    pub fn popup_right(&self, panel: impl IntoElement) -> AnyElement {
+        let mut panel = Some(panel.into_any_element());
+        below_at(
+            std::slice::from_ref(self),
+            3,
+            gpui::Corner::TopRight,
+            move || panel.take(),
+        )
+    }
+
     /// A popup whose content depends on the variant an adaptive row chose:
     /// `panels[variant]`, or the last one. The choice is read in the deferred
     /// prepaint, after the row made it in this same frame, so a menu can hold
@@ -61,6 +74,16 @@ impl PopoverAnchor {
 fn below(
     anchors: &[PopoverAnchor],
     priority: usize,
+    panel: impl FnMut() -> Option<AnyElement> + 'static,
+) -> AnyElement {
+    below_at(anchors, priority, gpui::Corner::TopLeft, panel)
+}
+
+/// `below`, the panel's `corner` at the anchor's matching bottom corner.
+fn below_at(
+    anchors: &[PopoverAnchor],
+    priority: usize,
+    corner: gpui::Corner,
     mut panel: impl FnMut() -> Option<AnyElement> + 'static,
 ) -> AnyElement {
     let anchors: Vec<_> = anchors.iter().map(|a| a.0.clone()).collect();
@@ -70,8 +93,14 @@ fn below(
                 let bounds = anchors.iter().find_map(|a| a.get())?;
                 let (gap, margin) = (px(6.), px(8.));
                 let room = window.viewport_size().height - bounds.bottom() - gap - margin;
+                let at = if corner == gpui::Corner::TopRight {
+                    bounds.bottom_right()
+                } else {
+                    bounds.bottom_left()
+                };
                 let mut popup = gpui::anchored()
-                    .position(bounds.bottom_left())
+                    .anchor(corner)
+                    .position(at)
                     .offset(gpui::point(px(0.), gap))
                     .snap_to_window_with_margin(margin)
                     .child(

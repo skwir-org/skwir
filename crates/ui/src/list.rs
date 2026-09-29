@@ -76,7 +76,7 @@ pub fn find_matches(name: &str, pattern: &str) -> bool {
 pub struct ListState {
     /// Entry ids in display order, from the core's cached sort.
     pub sorted: std::sync::Arc<[EntryId]>,
-    sorted_at: Option<(u64, u64, SortSpec)>,
+    sorted_at: Option<(u64, u64, SortSpec, u64)>,
     /// Hydration requested and not yet answered. Kept for as long as the
     /// pane holds the same listing: an answer arrives as an update that
     /// hydrates the entry (or removes it), so nothing asked for needs asking
@@ -124,7 +124,12 @@ impl ListState {
             self.reset();
             self.listing = Some(listing.id());
         }
-        let at = (listing.version(), pane.tree_version(), pane.sort);
+        let at = (
+            listing.version(),
+            pane.tree_version(),
+            pane.sort,
+            pane.filter_version(),
+        );
         if self.sorted_at == Some(at) {
             return false;
         }
@@ -134,7 +139,7 @@ impl ListState {
     }
 
     pub fn version(&self) -> Option<u64> {
-        self.sorted_at.map(|(v, _, _)| v)
+        self.sorted_at.map(|(v, _, _, _)| v)
     }
 
     fn reset(&mut self) {
@@ -301,11 +306,16 @@ impl Shell {
         if self.ui().view_id == "usage" {
             kc.add("usage");
         }
-        let sweeping = {
+        let (sweeping, filtered) = {
             let ws = self.app.workspace.read();
-            ws.pane(self.pane)
-                .is_some_and(|p| p.selection.sweeping().is_some())
+            ws.pane(self.pane).map_or((false, false), |p| {
+                (p.selection.sweeping().is_some(), p.filter().is_some())
+            })
         };
+        // Escape shows everything again before it deselects.
+        if filtered {
+            kc.add("filtered");
+        }
         if sweeping {
             kc.add("sweep");
         }

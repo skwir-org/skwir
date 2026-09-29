@@ -168,6 +168,7 @@ impl Shell {
         let no_places = words.is_empty()
             || self.names_location(&words)
             || self.app.commands.get("jump.candidates").is_none();
+        self.filter_as_typed(&words);
         let omni = self.ui_mut().omni.get_or_insert_with(Omni::default);
         omni.edited = true;
         omni.highlighted = 0;
@@ -204,6 +205,42 @@ impl Shell {
             );
         }
         cx.notify();
+    }
+
+    /// Words typed over a folder (not a search: its text is the query)
+    /// show only the names that hold them, at once, in memory (the core's
+    /// `filter`); Enter then searches the folders inside too.
+    fn filter_as_typed(&mut self, words: &str) {
+        let pane = self.pane;
+        let filters = self
+            .app
+            .pane_location(pane)
+            .is_some_and(|l| &*l.scheme != "query");
+        if !filters {
+            return;
+        }
+        let wanted = (!words.is_empty() && !self.names_location(words)).then_some(words);
+        let current = self
+            .app
+            .workspace
+            .read()
+            .pane(pane)
+            .and_then(|p| p.filter().map(str::to_owned));
+        if current.as_deref() != wanted {
+            self.set_filter(wanted);
+        }
+    }
+
+    /// Show only the names of the active pane that hold `text`, or all.
+    /// Dispatched directly: what is typed is not traced.
+    pub(crate) fn set_filter(&mut self, text: Option<&str>) {
+        let pane = self.pane;
+        if let Err(error) = self.app.dispatch(&Invocation::with_args(
+            "filter",
+            &serde_json::json!({ "text": text, "pane": pane }),
+        )) {
+            tracing::warn!("filter: {error:#}");
+        }
     }
 
     /// Up or Down in the dropdown (`ui.omnibox_move { delta }`).
@@ -243,6 +280,7 @@ impl Shell {
         window.focus(&self.ui().focus);
         match chosen {
             _ if text.is_empty() => {
+                self.set_filter(None);
                 let shown = self.ui().address_shown.clone();
                 let address = self.ui().address.clone();
                 address.update(cx, |input, cx| input.set_text(shown, cx));
@@ -284,9 +322,10 @@ impl Shell {
         cx.notify();
     }
 
-    /// Escape: the field shows where the pane is again.
+    /// Escape: the field shows where the pane is again, all of it.
     pub fn omnibox_cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.ui_mut().omni = None;
+        self.set_filter(None);
         let shown = self.ui().address_shown.clone();
         let address = self.ui().address.clone();
         address.update(cx, |input, cx| input.set_text(shown, cx));
@@ -373,7 +412,9 @@ pub fn scope_pill(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
 }
 
 /// The dropdown under the field of the pane being rendered, while it is
-/// typed in and its text says something; `anchor` is the field's.
+/// typed in and its text says something; `anchor` is the field's. It hangs
+/// from the field's right end, so the names the typing filters stay in
+/// sight at the left.
 pub fn dropdown(
     shell: &Shell,
     anchor: &PopoverAnchor,
@@ -532,7 +573,7 @@ pub fn dropdown(
             .text_color(theme.text_muted)
             .child("Start with / or ~ for a path, > for a command. Escape goes back."),
     );
-    Some(anchor.popup(panel))
+    Some(anchor.popup_right(panel))
 }
 
 #[cfg(test)]

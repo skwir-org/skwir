@@ -96,6 +96,16 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
     if !state.listing.is_complete() {
         return None;
     }
+    // Filtered by name down to nothing: say so, and the way back.
+    if let Some(filter) = state.filter() {
+        return Some(Placeholder {
+            icon: "search",
+            title: format!("No name here holds “{filter}”"),
+            detail: "Press Enter in the address field to search the folders inside too.".to_owned(),
+            action: Some(("Show everything", "filter")),
+            problem: false,
+        });
+    }
     let location = state.location()?;
     // The pane's own search: in a split, the other pane may have searched
     // for something else since.

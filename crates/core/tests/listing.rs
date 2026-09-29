@@ -528,3 +528,69 @@ fn going_up_adopts_the_kept_listing_and_going_down_keeps_the_one_left() {
         listed
     );
 }
+
+#[test]
+fn a_filter_shows_only_names_holding_it_until_the_pane_shows_another_folder() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("it's a folder");
+    std::fs::create_dir(&dir).unwrap();
+    for name in [
+        "Report 2026.pdf",
+        "it's a report.txt",
+        "notes.md",
+        "REPORTS",
+    ] {
+        std::fs::write(dir.join(name), b"example").unwrap();
+    }
+    let app = app(tmp.path());
+    let pane = active(&app);
+    navigate(&app, &dir);
+    let shown = |app: &bibli_core::App| -> Vec<String> {
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        let mut names: Vec<String> = p
+            .order()
+            .iter()
+            .map(|id| p.entry(*id).unwrap().name.to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    };
+    let filter = |text: Option<&str>| {
+        app.dispatch(&bibli_core::command::Invocation::with_args(
+            "filter",
+            &serde_json::json!({ "text": text }),
+        ))
+        .unwrap();
+    };
+    select(&app, &["notes.md"]);
+    filter(Some("rep"));
+    // Case ignored for a filter in lower case; what is no longer shown is
+    // no longer selected.
+    assert_eq!(
+        shown(&app),
+        ["REPORTS", "Report 2026.pdf", "it's a report.txt"]
+    );
+    assert!(
+        app.workspace
+            .read()
+            .pane(pane)
+            .unwrap()
+            .selection
+            .is_empty()
+    );
+    // Select all takes what is shown, nothing hidden by the filter.
+    app.dispatch(&bibli_core::command::Invocation::new("select_all"))
+        .unwrap();
+    assert_eq!(app.workspace.read().pane(pane).unwrap().selection.len(), 3);
+    // A capital asks for that case.
+    filter(Some("Rep"));
+    assert_eq!(shown(&app), ["Report 2026.pdf"]);
+    filter(None);
+    assert_eq!(shown(&app).len(), 4);
+    // Another folder shows everything again.
+    filter(Some("rep"));
+    navigate(&app, tmp.path());
+    let ws = app.workspace.read();
+    assert_eq!(ws.pane(pane).unwrap().filter(), None);
+}
