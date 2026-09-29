@@ -220,6 +220,14 @@ pub trait OpenLocation: Send + Sync {
 pub trait LocationProvider: Send + Sync {
     fn scheme(&self) -> &str;
     fn open(&self, location: &Location, ctx: OpenContext) -> anyhow::Result<Arc<dyn OpenLocation>>;
+
+    /// A name for `location` in words (a tab, a message), when the text
+    /// after the scheme is not one: "PDF files in Projects" for a search.
+    /// Answered from the text alone, without I/O: it is asked while
+    /// drawing labels.
+    fn title(&self, _location: &Location) -> Option<String> {
+        None
+    }
 }
 
 /// What to sort a listing by. Directories always come first.

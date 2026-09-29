@@ -41,6 +41,11 @@ impl LocationProvider for QueryProvider {
         SCHEME
     }
 
+    /// What the search looks for and where, as a saved one is named.
+    fn title(&self, location: &Location) -> Option<String> {
+        Some(crate::suggested_name(&location.rest))
+    }
+
     fn open(&self, location: &Location, ctx: OpenContext) -> anyhow::Result<Arc<dyn OpenLocation>> {
         let query = lang::parse(&location.rest).map_err(|e| anyhow::anyhow!("query: {e}"))?;
         // Whether the root is a folder is I/O (a sleeping disk can block

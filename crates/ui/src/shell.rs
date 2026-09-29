@@ -1949,8 +1949,8 @@ impl Shell {
         let theme = cx.global::<Theme>().clone();
         // The pane commands act on among those drawn.
         let active = saved == id;
+        crate::search_bar::sync(self, window);
         let address_bar = address::render_address(self, window, cx);
-        let search_bar = crate::search_bar::render(self, window, cx);
         // The Usage view draws its own scanning and empty states.
         let placeholder = (self.ui().view_id != "usage")
             .then(|| crate::placeholder::of(self, id))
@@ -2014,7 +2014,6 @@ impl Shell {
                     .border_color(if active { theme.accent } else { theme.border })
             })
             .child(address_bar)
-            .children(search_bar)
             .when_some(message, |d, message| {
                 d.child(
                     div()

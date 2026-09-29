@@ -92,8 +92,9 @@ pub struct PaneInfo {
 
 impl App {
     /// A name for `location`, as a tab or a message says it: the title of
-    /// the sidebar place it is, else the folder's name, else the text after
-    /// the scheme (a search's query).
+    /// the sidebar place it is, else the folder's name, else what its
+    /// provider calls it (`LocationProvider::title`), else the text after
+    /// the scheme.
     pub fn location_title(&self, location: &Location) -> String {
         if let Some(place) = self
             .registry
@@ -107,6 +108,12 @@ impl App {
                 || path.display().to_string(),
                 |name| name.to_string_lossy().into_owned(),
             );
+        }
+        if let Some(title) = self
+            .provider(&location.scheme)
+            .and_then(|provider| provider.title(location))
+        {
+            return title;
         }
         let rest = location.rest.trim();
         if rest.is_empty() {

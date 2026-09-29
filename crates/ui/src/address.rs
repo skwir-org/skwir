@@ -516,13 +516,22 @@ pub fn render_window_row(shell: &mut Shell, sidebar: f32, cx: &mut Context<Shell
     row.into_any_element()
 }
 
+/// What the address field shows.
+enum Address {
+    /// A folder, as a trail of places.
+    Trail(PathBuf),
+    /// A search, as pills (`search_bar::pills`).
+    Pills,
+    /// The text: while it is being edited (Ctrl+L, or a click beside the
+    /// trail or the pills), and for other locations.
+    Text,
+}
+
 /// What a pane's row shows, read once for both of its variants.
 struct PaneRow {
     back: bool,
     forward: bool,
-    /// The folder shown as a trail, `None` for the text field: while it is
-    /// being edited, and for locations that are not folders.
-    trail: Option<PathBuf>,
+    address: Address,
     /// The field's edge: focused, the active pane's, or none.
     edge: gpui::Hsla,
     location: Option<bibli_core::Location>,
@@ -551,10 +560,12 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         PaneRow {
             back: pane.is_some_and(|p| p.history_pos > 0),
             forward: pane.is_some_and(|p| p.history_pos + 1 < p.history.len()),
-            trail: location
-                .as_ref()
-                .and_then(bibli_core::Location::path)
-                .filter(|_| !focused),
+            address: match location.as_ref().and_then(bibli_core::Location::path) {
+                _ if focused => Address::Text,
+                Some(path) => Address::Trail(path),
+                None if !shell.ui().chips.chips.is_empty() => Address::Pills,
+                None => Address::Text,
+            },
             edge: if focused {
                 theme.accent
             } else if active {
@@ -579,6 +590,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
     };
     let anchor = PopoverAnchor::default();
     let nav_anchor = PopoverAnchor::default();
+    let chip_anchor = PopoverAnchor::default();
     let mut bar = div()
         .id(("pane-address", shell.pane.0 as usize))
         .tab_group()
@@ -592,7 +604,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         .child(AdaptiveRow {
             variants: [true, false]
                 .into_iter()
-                .map(|wide| pane_row(shell, &row, wide, [&anchor, &nav_anchor], cx))
+                .map(|wide| pane_row(shell, &row, wide, [&anchor, &nav_anchor, &chip_anchor], cx))
                 .collect(),
             height: PANE_ROW_HEIGHT - 1.,
             chosen: None,
@@ -608,6 +620,9 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
             }
         }
         bar = bar.child(anchor.popup(panel));
+    }
+    if let Some(popup) = crate::search_bar::popup(shell, &chip_anchor, cx) {
+        bar = bar.child(popup);
     }
     if let Some(panel) = crate::nav_menu::panel(shell, shell.pane, cx) {
         bar = bar.child(nav_anchor.popup(panel));
@@ -655,22 +670,23 @@ fn history_button(
 }
 
 /// One variant of a pane's row (see `render_address`). `anchors` are the
-/// View menu's and the menu of places'.
+/// View menu's, the menu of places' and the search's popover's.
 fn pane_row(
     shell: &Shell,
     row: &PaneRow,
     wide: bool,
-    [anchor, nav_anchor]: [&PopoverAnchor; 2],
+    [anchor, nav_anchor, chip_anchor]: [&PopoverAnchor; 3],
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let pane = shell.pane;
-    // A folder reads as a trail of places; the text field takes over while
-    // it is being edited (Ctrl+L, or a click beside the trail) and for
-    // locations that are not folders. No width of its own: the field's
-    // minimum is what a variant is measured with.
-    let address = match &row.trail {
-        Some(path) => div()
+    // A folder reads as a trail of places and a search as pills; the text
+    // field takes over while it is being edited. No width of its own: the
+    // field's minimum is what a variant is measured with.
+    let address = match &row.address {
+        Address::Pills => crate::search_bar::pills(shell, chip_anchor, cx)
+            .unwrap_or_else(|| div().into_any_element()),
+        Address::Trail(path) => div()
             .id(("address-trail", pane.0 as usize))
             .flex_1()
             .w(px(0.))
@@ -693,7 +709,7 @@ fn pane_row(
                 cx,
             ))
             .into_any_element(),
-        None => div()
+        Address::Text => div()
             .flex_1()
             .w(px(0.))
             .min_w_0()

@@ -66,10 +66,16 @@ pub struct Choice {
     pub active: bool,
 }
 
-/// A search's chips, in the order they are shown.
+/// A search's chips, in the order they are shown, and the search cut in
+/// two for whoever edits it: where it looks (`root`) and the rest
+/// (`text`, the query without its `in:`), which `query.search` puts
+/// together again (`expr` and `root`).
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct Description {
     pub chips: Vec<Chip>,
+    #[serde(with = "bibli_core::os_path")]
+    pub root: std::path::PathBuf,
+    pub text: String,
 }
 
 /// A query cut into facets. Each keeps the text it prints as, so a
@@ -553,7 +559,16 @@ pub fn describe(expr: &str, tags_known: bool) -> Result<Description, String> {
             clear: Some(refine_invocation("advanced", Some(&index))),
         });
     }
-    Ok(Description { chips })
+    let text = Query {
+        root_given: false,
+        ..q.clone()
+    }
+    .to_string();
+    Ok(Description {
+        chips,
+        root: q.root,
+        text,
+    })
 }
 
 #[cfg(test)]
@@ -592,8 +607,15 @@ mod tests {
             .map(|c| c.value.clone().unwrap())
             .collect();
         assert_eq!(advanced, ["(name:a OR name:b)", "NOT name:draft"]);
+        // The search cut in two: where it looks, and the rest.
+        assert_eq!(d.root, std::path::Path::new("/data"));
+        let again = lang::parse(&format!("{} in:/data", d.text)).unwrap();
+        let q = lang::parse(r#"invoice "two words" kind:document modified:this-week size>1M tag:work content:total (a OR b) -draft in:/data depth:1"#).unwrap();
+        assert_eq!(again.to_string(), q.to_string());
+        assert!(!d.text.contains("in:"), "{}", d.text);
         // Nothing is set on an empty search but where it looks.
         let d = describe("in:/data", false).unwrap();
+        assert_eq!(d.text, "");
         assert!(d.chips.iter().all(|c| c.value.is_none()));
         assert!(d.chips.iter().all(|c| c.id == "where" || c.clear.is_none()));
     }

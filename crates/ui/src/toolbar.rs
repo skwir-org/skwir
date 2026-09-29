@@ -267,7 +267,14 @@ impl Button {
                         .flex_none(),
                 )
             })
-            .children(self.label)
+            // A label too long for a menu keeps both ends, as names do.
+            .children(self.label.map(|label| {
+                div()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis_middle()
+                    .child(label)
+            }))
             .when(self.shape == Shape::Dropdown, |d| {
                 d.gap(px(2.)).child(
                     svg()

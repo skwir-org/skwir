@@ -362,17 +362,21 @@ current source before assuming a planned crate, command, or API exists.
   what is said of the container holds for it. Unmounting locks the container under the
   filesystem. Test this with fake `lsblk`/`udisksctl` scripts first on PATH,
   never on a real drive.
-- **Search chips.** A pane showing a search has a row of chips under its
-  address row (`search_bar.rs`): what `query.describe` says the search is,
-  facet by facet, each choice the invocation the plugin gave
-  (`query.refine`, or `ui.ask` for a value to type). The query plugin owns
-  the meaning (`facets.rs`: the facets, their presets, how a query is cut
-  into them and written back); the UI knows no query syntax and reads the
-  chips once per location, never per frame. The text stays the one truth:
-  a part no facet holds is a chip of its own, and the address bar edits
-  the whole. A choice navigates, so Back undoes it. An affordance that
-  goes with what it acts on (a chip's ×) takes no focus; the keyboard
-  reaches the same through the chip's menu.
+- **Search chips.** A pane showing a search draws it in its address field
+  as pills (`search_bar.rs`): where it looks first, then each facet
+  `query.describe` says is set, then "+ Filter", which lists the facets
+  not set; each choice is the invocation the plugin gave (`query.refine`,
+  or `ui.ask` for a value to type). The query plugin owns the meaning
+  (`facets.rs`: the facets, their presets, how a query is cut into them
+  and written back, and the search cut in two, `root` and `text`, for
+  whoever edits it); the UI knows no query syntax and reads the chips once
+  per location, never per frame. The text stays the one truth: a part no
+  facet holds is a pill of its own, and a click beside the pills (or
+  Ctrl+L) edits the whole. A choice navigates, so Back undoes it. An
+  affordance that goes with what it acts on (a pill's ×) takes no focus;
+  the keyboard reaches the same through the pill's menu. A location is
+  named in words by its provider (`LocationProvider::title`: a search as
+  what it looks for and where), for tabs and menus.
 - **Popups own the keyboard.** A menu or popover takes focus when it opens
   and returns it when it closes, with its own key context (see `menu.rs`):
   otherwise keys act on a selection hidden behind it. Focus never
