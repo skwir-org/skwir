@@ -77,7 +77,10 @@ row; a sidebar not drawn leaves its buttons in the first pane's row), and the ta
 shows with two tabs or more, or one with "Show a lone tab"
 (`ui.single_tab`, off by default). A window of one tab has one row of
 bars above its lists, split side by side or stacked: 72 px above a
-folder's first row. Next: a selection's action bar built
+folder's first row. With nothing selected, the preview panel shows where
+the pane is: the folder, as a selected one, with a Volume group in
+Details (device, filesystem, free space), or a search's or the shelf's
+name and count. Next: a selection's action bar built
 from the context menu's items (C).
 
 Busy volumes (2026-09-29): a volume being unlocked, mounted or unmounted

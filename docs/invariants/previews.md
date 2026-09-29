@@ -136,6 +136,15 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
 Every preview fills one frame; none builds its own. The design and what is
 still to come are in `docs/preview-frame.md`.
 
+- **Nothing selected shows where the pane is.** A folder is previewed as
+  a selected one would be (its items, Details), named as the sidebar
+  names it, with a Volume group in Details (the volume as the sidebar
+  names it, device, filesystem, free space): the folder is stat-ed and the
+  volume measured on a worker (`Shell::here`, `VolumeFacts`), again when
+  the pane shows another location or its listing completes a change, and
+  what was shown stays until the answer. A location that is not a folder
+  (a search, the shelf, Recent) gets its name and count in the header and
+  nothing below: no tools, no empty Details.
 - **A wait is shown only once it has lasted.** The panel has one delayed
   "still loading" signal (`Shell::sync_busy`, `preview_busy`), like the
   pane's (`loading.rs`): a request that takes longer than `BUSY_AFTER`

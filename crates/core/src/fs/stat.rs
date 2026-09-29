@@ -73,8 +73,24 @@ pub fn stat_entry(dirfd: &impl AsFd, entry: &mut Entry) -> bool {
 
 /// Stat a full path into a fresh entry (used by the watcher and by operations).
 pub fn stat_path(path: &Path) -> Option<Entry> {
-    let parent = path.parent()?;
-    let name: &OsStr = path.file_name()?;
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        // The root has no parent to be stat-ed from: it is its own `.`.
+        let root = rustix::fs::open(
+            path,
+            rustix::fs::OFlags::RDONLY
+                | rustix::fs::OFlags::DIRECTORY
+                | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )
+        .ok()?;
+        let mut e = Entry::new(EntryId { dev: 0, ino: 0 }, ".", EntryKind::Unknown);
+        if !stat_entry(&root, &mut e) {
+            return None;
+        }
+        path.as_os_str().clone_into(&mut e.name);
+        return Some(e);
+    };
+    let name: &OsStr = name;
     let dir = rustix::fs::open(
         parent,
         rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::DIRECTORY | rustix::fs::OFlags::CLOEXEC,
@@ -103,4 +119,25 @@ pub fn id_of(path: &Path) -> Option<EntryId> {
         dev: rustix::fs::makedev(st.stx_dev_major, st.stx_dev_minor),
         ino: st.stx_ino,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{id_of, stat_path};
+    use std::path::Path;
+
+    #[test]
+    fn the_root_and_a_folder_are_stat_ed_by_their_path() {
+        let root = stat_path(Path::new("/")).expect("the root");
+        assert!(root.is_dir());
+        assert_eq!(root.name, "/");
+        assert_eq!(Some(root.id), id_of(Path::new("/")));
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("it's a folder");
+        std::fs::create_dir(&dir).unwrap();
+        let entry = stat_path(&dir).expect("a folder");
+        assert!(entry.is_dir());
+        assert_eq!(entry.name, "it's a folder");
+        assert_eq!(Some(entry.id), id_of(&dir));
+    }
 }

@@ -303,7 +303,12 @@ pub fn alone(shell: &Shell) -> bool {
 /// size and date, so the groups here repeat none of those.
 pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let preview = &shell.preview;
-    if preview.info.name.is_empty() {
+    // Nothing to say (a search named with nothing selected): no section,
+    // not an empty one with its scrollbar.
+    let nothing = preview.details.is_empty()
+        && preview.selection_summary.is_none()
+        && preview.fields.is_empty();
+    if preview.info.name.is_empty() || nothing {
         return None;
     }
     let alone = alone(shell);

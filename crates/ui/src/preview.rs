@@ -307,6 +307,71 @@ pub struct PreviewState {
     /// Whether the hexadecimal provider is registered, keyed by the preview
     /// registry revision it was read at (see `preview_toolbar::hex_available`).
     pub(crate) hex_provider: std::cell::Cell<Option<(u64, bool)>>,
+    /// Where the pane is, shown while nothing is selected (`Shell::here`).
+    here: Option<Here>,
+}
+
+/// The folder a pane shows, as the panel shows it while nothing in it is
+/// selected: stat-ed, with the volume that holds it, on a worker (a sleeping
+/// disk blocks both), again when the pane shows another location or its
+/// listing completes a change.
+struct Here {
+    /// The pane, the location's text, and the listing's version once
+    /// complete (0 while it streams).
+    stamp: (PaneId, String, u64),
+    entry: Option<bibli_core::entry::Entry>,
+    volume: Option<crate::details::Group>,
+}
+
+/// What the worker learns of the volume holding a folder: the mount it is
+/// under, and its free and total bytes.
+struct VolumeFacts {
+    mount: Option<bibli_platform::places::Mount>,
+    space: Option<(u64, u64)>,
+}
+
+impl VolumeFacts {
+    /// Read on a worker: the mount table and the filesystem's counts.
+    fn of(path: &Path) -> Self {
+        let mount = bibli_platform::places::mounts()
+            .into_iter()
+            .filter(|m| path.starts_with(&m.path))
+            .max_by_key(|m| m.path.as_os_str().len());
+        VolumeFacts {
+            mount,
+            space: bibli_platform::places::space(path),
+        }
+    }
+
+    /// Details' Volume group, the volume named as the sidebar names it.
+    fn group(self, app: &bibli_core::App) -> Option<crate::details::Group> {
+        use crate::details::Row;
+        let mut rows = Vec::new();
+        if let Some(mount) = &self.mount {
+            let name = app.location_title(&bibli_core::Location::from_path(&mount.path));
+            rows.push(Row::new("Volume", name));
+            if !mount.source.is_empty() {
+                rows.push(Row::new("Device", mount.source.clone()));
+            }
+            rows.push(Row::new("Filesystem", mount.fstype.clone()));
+        }
+        if let Some((free, total)) = self.space {
+            rows.push(Row::new(
+                "Free",
+                format!("{} of {}", format::size(free), format::size(total)),
+            ));
+        }
+        if let Some(mount) = &self.mount {
+            rows.push(Row::new(
+                "Mounted at",
+                mount.path.to_string_lossy().into_owned(),
+            ));
+        }
+        (!rows.is_empty()).then(|| crate::details::Group {
+            title: "Volume".into(),
+            rows,
+        })
+    }
 }
 
 impl Default for PreviewState {
@@ -367,6 +432,7 @@ impl Default for PreviewState {
             image_focus: None,
             map: crate::map_preview::MapState::default(),
             hex_provider: std::cell::Cell::new(None),
+            here: None,
         }
     }
 }
@@ -745,12 +811,10 @@ impl Shell {
             while self.preview.rx.try_recv().is_ok() {}
             return;
         }
-        let Some(id) = self.cursor_id() else {
-            self.cancel_preview(window, cx);
-            return;
-        };
         let dark = cx.global::<Theme>().is_dark;
-        let current = {
+        // Nothing selected: where the pane is (`here`).
+        let cursor = self.cursor_id();
+        let current = if let Some(id) = cursor {
             let ws = self.app.workspace.read();
             ws.pane(self.pane).and_then(|pane| {
                 let e = pane.entry(id)?;
@@ -792,11 +856,18 @@ impl Shell {
                     e.clone(),
                 ))
             })
+        } else {
+            self.here(dark, window, cx)
         };
         let Some((seen, key, version, entry)) = current else {
             self.cancel_preview(window, cx);
+            if cursor.is_none() {
+                self.name_location();
+            }
             return;
         };
+        let here = cursor.is_none();
+        let id = key.id;
         // Invalidate before draining results: an old result must never land on
         // a newly selected file, a changed file, or a different pane. Inside a
         // container, a changed container is another preview: what was
@@ -843,6 +914,12 @@ impl Shell {
                 is_dir: entry.is_dir(),
                 icon: self.icons.for_entry(&entry, 48),
             };
+            // Where the pane is reads as the sidebar and the tabs name it.
+            if here {
+                self.preview.info.name = self
+                    .app
+                    .location_title(&bibli_core::Location::from_path(&key.path));
+            }
             // Play on selection is the wish a step makes, made by the
             // selection: the track plays once shown, and the dock of what
             // it replaces stays aside meanwhile (`dock_shown`).
@@ -858,7 +935,7 @@ impl Shell {
             }
             self.preview.version = Some(version.clone());
             self.describe_version(&version, entry.is_dir());
-            if !entry.metadata.is_hydrated() {
+            if !here && !entry.metadata.is_hydrated() {
                 self.request_hydrate(vec![id]);
             }
         } else if changed {
@@ -866,9 +943,18 @@ impl Shell {
             self.describe_version(&version, entry.is_dir());
             self.preview_changed(before, &version, window, cx);
         }
+        // An icon not known when the entry was shown is asked for again
+        // until it is (the theme is read on a worker, `icons.request`).
+        if self.preview.info.icon.is_none() {
+            self.preview.info.icon = self.icons.for_entry(&entry, 48);
+        }
         if self.preview.details_at != Some(seen) {
             self.preview.details_at = Some(seen);
             self.preview.details = crate::details::entry_groups(&entry, &key.path);
+            if here && let Some(volume) = self.preview.here.as_ref().and_then(|h| h.volume.clone())
+            {
+                self.preview.details.push(volume);
+            }
             self.read_fields(&entry, &key.path);
             self.preview.neighbours = self
                 .media_kind()
@@ -907,6 +993,114 @@ impl Shell {
             return;
         }
         self.preview_request(&key, &version, &entry);
+    }
+
+    /// What the panel shows while nothing is selected in the active pane:
+    /// the folder it shows, once stat-ed on a worker with its volume
+    /// (`Here`), as a selected folder would be, with a Volume group in
+    /// Details. `None` for a location that is not a folder (a search, the
+    /// shelf), or until the worker answers.
+    fn here(
+        &mut self,
+        dark: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<(u64, PreviewKey, Version, bibli_core::entry::Entry)> {
+        let pane = self.pane;
+        let (location, path, stamp_version, listing_version) = {
+            let ws = self.app.workspace.read();
+            let p = ws.pane(pane)?;
+            let location = p.location()?;
+            let listing = &p.listing;
+            (
+                location.to_string(),
+                location.path()?,
+                if listing.is_complete() {
+                    listing.version()
+                } else {
+                    0
+                },
+                listing.version(),
+            )
+        };
+        let stamp = (pane, location, stamp_version);
+        if self.preview.here.as_ref().map(|h| &h.stamp) != Some(&stamp) {
+            // What was shown for the stamp before stays until the answer:
+            // a folder that changed does not blink.
+            let kept = self
+                .preview
+                .here
+                .take()
+                .filter(|h| h.stamp.0 == stamp.0 && h.stamp.1 == stamp.1);
+            let (entry, volume) = kept.map_or((None, None), |h| (h.entry, h.volume));
+            self.preview.here = Some(Here {
+                stamp: stamp.clone(),
+                entry,
+                volume,
+            });
+            let asked = path.clone();
+            self.off_thread(
+                "preview-here",
+                move || {
+                    (
+                        bibli_core::fs::stat::stat_path(&asked),
+                        VolumeFacts::of(&asked),
+                    )
+                },
+                move |shell, (entry, facts), _, cx| {
+                    let volume = facts.group(&shell.app);
+                    if let Some(here) = shell.preview.here.as_mut().filter(|h| h.stamp == stamp) {
+                        here.entry = entry;
+                        here.volume = volume;
+                        cx.notify();
+                    }
+                },
+                window,
+                cx,
+            );
+        }
+        let here = self.preview.here.as_ref()?;
+        let entry = here.entry.clone()?;
+        let seen = listing_version
+            .wrapping_mul(31)
+            .wrapping_add(u64::from(here.volume.is_some()))
+            .wrapping_mul(2)
+            .wrapping_add(u64::from(bibli_platform::users::loaded()));
+        Some((
+            seen,
+            PreviewKey {
+                pane,
+                id: entry.id,
+                path,
+                providers: self.app.previews.revision(),
+            },
+            Version {
+                modified: entry
+                    .metadata
+                    .value(keys::MODIFIED)
+                    .and_then(bibli_core::Value::as_time),
+                size: None,
+                dark,
+            },
+            entry,
+        ))
+    }
+
+    /// Nothing selected where there is no folder (a search, the shelf,
+    /// Recent): the header names the location and what it holds.
+    fn name_location(&mut self) {
+        let Some(location) = self.app.pane_location(self.pane) else {
+            return;
+        };
+        self.preview.info.name = self.app.location_title(&location);
+        let count = self.ui().list.sorted.len();
+        self.preview.info.size = Some(if &*location.scheme == "query" {
+            format::count(count, "result")
+        } else {
+            format::count(count, "item")
+        });
+        self.preview.details.clear();
+        self.preview.details_at = None;
     }
 
     /// The header's size and date, from the listing's metadata.
@@ -2220,7 +2414,9 @@ fn body(
     if !alone {
         frame = frame.children(details.take());
     }
-    if interactive && !shell.preview.info.name.is_empty() {
+    // A location named with nothing to preview (a search, the shelf, with
+    // nothing selected) has no tools.
+    if interactive && !shell.preview.info.name.is_empty() && shell.preview.key.is_some() {
         let controls = if matches!(shell.preview.content, Some(PreviewContent::Inspection(_))) {
             crate::inspector::toolbar(shell, theme, cx)
         } else if shell.preview.media.session.is_some() {
