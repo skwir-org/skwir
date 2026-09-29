@@ -12,11 +12,12 @@
 //! under it. A pinned film shows its frames in the place of the cover, at
 //! whatever height was dragged.
 //!
-//! Only the picture (the film, the cover, the file's icon without one)
-//! answers clicks like the panel's player (`media::clickable`): one toggles
-//! playback, two reveal a film in the panel and go fullscreen there. A
-//! click anywhere else but the transport shows the track in the panel, as
-//! it plays.
+//! Only the picture (the film, the cover of the compact row, the cover's
+//! disc of the tall figure, `halo::OnDisc`) answers clicks like the
+//! panel's player (`media::clickable`): one toggles playback, two reveal a
+//! film in the panel and go fullscreen there. A click anywhere else but the
+//! transport, the ring round the disc included, shows the track in the
+//! panel, as it plays.
 //!
 //! The height is a remembered preference, not a measured size, so the form
 //! is chosen here in render, as the panel's width is. The dock steps aside
@@ -182,10 +183,46 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
             .into_any_element();
         crate::media::surface("dock-film", film, Flash::Dock, shell, cx)
     } else if tall {
+        // Only the cover's disc plays and pauses, with its own tooltip and
+        // highlight; the ring around it and the room beside it show the
+        // track, as the rest of the figure does.
+        let disc = Rc::new(std::cell::Cell::new(None));
+        let hit = Rc::clone(&disc);
+        let target = div()
+            .id("dock-cover")
+            .size_full()
+            .rounded_full()
+            .cursor_pointer()
+            // Its edge, where the figure's click begins, drawn on hover.
+            .border_2()
+            .border_color(gpui::transparent_black())
+            .hover(|d| d.border_color(theme.accent))
+            .tooltip(play_tip(shell))
+            // What is under the disc is not hovered while the pointer is on
+            // it: the figure lights up only where a click shows the track.
+            .occlude()
+            .on_click(
+                cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+                    cx.stop_propagation();
+                    let keyboard = matches!(event, gpui::ClickEvent::Keyboard(_));
+                    if keyboard
+                        || hit
+                            .get()
+                            .is_some_and(|d| crate::elements::halo::on_disc(event.position(), d))
+                    {
+                        this.media_clicked(Flash::Dock, event, window, cx);
+                    } else {
+                        // A corner of the disc's square is the figure's.
+                        this.player_reveal(window, cx);
+                    }
+                }),
+            );
         let square = crate::media::halo_square(state, pinned.cover.clone(), tint, &theme)
+            .child(crate::elements::halo::OnDisc {
+                child: target.into_any_element(),
+                disc,
+            })
             .children(crate::media::flash(Flash::Dock, shell, 1.));
-        let square =
-            crate::media::clickable("dock-cover", square, Flash::Dock, cx).tooltip(play_tip(shell));
         let figure =
             crate::media::audio_figure(state, title.clone(), square.into_any_element(), &theme);
         reveal(shell, "dock-figure", figure, cx).into_any_element()

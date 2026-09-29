@@ -165,7 +165,11 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
   closed the last pane's footer keeps a strip of the controls instead, so the
   controls move but are never lost. Only its picture answers clicks as a
   player (`Flash::Dock`): the film, or the cover (the file's icon without
-  one), which stops the click there; a click anywhere else in the dock but
+  one), which stops the click there. In the tall dock that is the cover's
+  disc and nothing more (`halo::OnDisc`, placed in prepaint as the halo
+  paints it, the click tested against the circle): the ring of the
+  spectrum and the room beside it are the figure's, and the disc hides the
+  figure's hover, so its accent edge is the limit. A click anywhere else in the dock but
   the transport shows the track in the panel, and shows it as it plays,
   never pausing it. A double click on a film reveals it in
   the panel, which goes fullscreen once it shows the session

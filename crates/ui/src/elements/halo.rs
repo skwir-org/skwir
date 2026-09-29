@@ -7,12 +7,15 @@
 //! is no timer here: the worker publishes a spectrum at most every 50 ms of
 //! audio and each one is a frame; paused, the rays shrink to a calm ring.
 //! Everything is sized in `paint`, from the element's real bounds.
+use std::cell::Cell;
 use std::f32::consts::PI;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    App, Bounds, Corners, Element, ElementId, GlobalElementId, Hsla, InspectorElementId,
-    IntoElement, LayoutId, Pixels, RenderImage, Style, Window, point, px, relative, size,
+    AnyElement, App, Bounds, Corners, Element, ElementId, GlobalElementId, Hsla,
+    InspectorElementId, IntoElement, LayoutId, Pixels, RenderImage, Style, Window, point, px,
+    relative, size,
 };
 
 pub struct Halo {
@@ -29,6 +32,118 @@ pub struct Halo {
 
 /// Share of the half-side the cover's disc takes; the rays have the rest.
 const DISC: f32 = 0.56;
+/// Below this half-side the halo draws nothing.
+const LEAST_HALF: f32 = 24.;
+
+/// The cover's disc of a halo drawn in `bounds`: its centre and radius, as
+/// `paint` draws it and `OnDisc` places what answers on it. `None` where the
+/// box is too small for a halo.
+pub fn disc_of(bounds: Bounds<Pixels>) -> Option<(gpui::Point<Pixels>, f32)> {
+    let half = f32::from(bounds.size.width.min(bounds.size.height)) / 2.;
+    (half >= LEAST_HALF).then(|| (bounds.center(), half * DISC))
+}
+
+/// Whether `at` is on a disc of `centre` and `radius`: a click there is
+/// the disc's, a click in a corner of its square is not.
+pub fn on_disc(at: gpui::Point<Pixels>, (centre, radius): (gpui::Point<Pixels>, f32)) -> bool {
+    let (dx, dy) = (f32::from(at.x - centre.x), f32::from(at.y - centre.y));
+    dx * dx + dy * dy <= radius * radius
+}
+
+/// `child` laid over the cover's disc of a `Halo` drawn in the same box: on
+/// the disc's square, found from the box's real bounds in prepaint, as the
+/// halo finds the disc when it paints. `disc` receives the disc this frame,
+/// so a click can tell the disc from the corners of its square (`on_disc`).
+/// Only what is on the disc answers as the disc: the ring around it and the
+/// room beside it belong to whatever holds the halo.
+pub struct OnDisc {
+    pub child: AnyElement,
+    pub disc: Rc<Cell<Option<(gpui::Point<Pixels>, f32)>>>,
+}
+
+impl IntoElement for OnDisc {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl Element for OnDisc {
+    type RequestLayoutState = ();
+    type PrepaintState = bool;
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        let mut style = Style {
+            position: gpui::Position::Absolute,
+            ..Style::default()
+        };
+        style.inset.top = px(0.).into();
+        style.inset.left = px(0.).into();
+        style.size.width = relative(1.).into();
+        style.size.height = relative(1.).into();
+        (window.request_layout(style, [], cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        (): &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        let disc = disc_of(bounds);
+        self.disc.set(disc);
+        let Some((centre, radius)) = disc else {
+            return false;
+        };
+        let side = px(radius * 2.);
+        self.child.layout_as_root(
+            size(
+                gpui::AvailableSpace::Definite(side),
+                gpui::AvailableSpace::Definite(side),
+            ),
+            window,
+            cx,
+        );
+        self.child.prepaint_at(
+            point(centre.x - px(radius), centre.y - px(radius)),
+            window,
+            cx,
+        );
+        true
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        (): &mut (),
+        placed: &mut bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if *placed {
+            self.child.paint(window, cx);
+        }
+    }
+}
 /// Between the disc and the foot of a ray.
 const GAP: f32 = 7.;
 
@@ -168,13 +283,11 @@ impl Element for Halo {
         window: &mut Window,
         _: &mut App,
     ) {
-        let half = f32::from(bounds.size.width.min(bounds.size.height)) / 2.;
-        if half < 24. {
+        let Some((centre, disc)) = disc_of(bounds) else {
             return;
-        }
-        let centre = bounds.center();
+        };
+        let half = disc / DISC;
         let (cx, cy) = (f32::from(centre.x), f32::from(centre.y));
-        let disc = half * DISC;
         let reach = (half - disc - GAP - 2.).max(4.);
         let bands = self.spectrum.len().max(1);
         let swell = if self.playing {
@@ -275,6 +388,29 @@ impl Element for Halo {
 
 #[cfg(test)]
 mod tests {
+    use super::{disc_of, on_disc};
+    use gpui::{Bounds, point, px, size};
+
+    #[test]
+    fn the_disc_is_in_the_smaller_side_and_its_corners_are_not_on_it() {
+        // A wide, short box: the disc is centred in its height.
+        let bounds = Bounds::new(point(px(0.), px(0.)), size(px(400.), px(200.)));
+        let (centre, radius) = disc_of(bounds).unwrap();
+        assert_eq!(centre, point(px(200.), px(100.)));
+        assert!((radius - 100. * 0.56).abs() < 0.01);
+        let disc = (centre, radius);
+        assert!(on_disc(centre, disc));
+        assert!(on_disc(point(px(200. + radius - 1.), px(100.)), disc));
+        // A corner of the disc's square, and the room beside the halo.
+        assert!(!on_disc(
+            point(px(200. + radius - 2.), px(100. + radius - 2.)),
+            disc
+        ));
+        assert!(!on_disc(point(px(20.), px(100.)), disc));
+        // Too small a box draws no halo, and nothing answers on it.
+        assert!(disc_of(Bounds::new(point(px(0.), px(0.)), size(px(40.), px(40.)))).is_none());
+    }
+
     use super::*;
 
     #[test]
