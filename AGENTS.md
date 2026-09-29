@@ -167,7 +167,13 @@ current source before assuming a planned crate, command, or API exists.
   come from a `MenuSource`, a command that answers from memory while the
   menu opens and replaces the plain items, which stay registered for the
   palette. Rarely used items set `submenu`; the menu expands that group in
-  place. Give items an `icon`.
+  place. Give items an `icon`. A selection that was picked (Ctrl+click,
+  a range, a rubber band, Select all; never one that follows the cursor)
+  gets the menu laid flat over the foot of its pane (`action_bar.rs`,
+  `ui.selection_bar`): the first item of each group has a button, then
+  the second, so what a group puts first is what a picked selection is
+  offered; ⋯ opens the menu standing on it. Its buttons take no focus
+  (the Menu key has the same), and a toast rises above it.
 - **Details lead somewhere.** A provider's fact can carry a command
   (`Detail::with_action`, drawn as a link after the value, run through
   `Shell::run`): a position shows the file on the map. The row itself

@@ -49,6 +49,8 @@ pub const COLUMN_KEYS: [&str; 3] = ["ui.column_size", "ui.column_modified", "ui.
 pub const GRID_FILL_KEY: &str = "ui.grid_fill";
 /// Whether the tab strip shows for a window that has only one tab.
 pub const SINGLE_TAB_KEY: &str = "ui.single_tab";
+/// Whether a picked selection has a bar of its actions over its list.
+pub const SELECTION_BAR_KEY: &str = "ui.selection_bar";
 /// How documents are read: one scrolling column, or a page at a time.
 pub const READER_CONTINUOUS_KEY: &str = "reading.continuous";
 /// How wide a reading column may grow (`markdown::measure`).
@@ -110,6 +112,15 @@ pub fn declare(app: &App) {
             false,
         )
         .section("Tabs"),
+    );
+    app.settings.declare(
+        SettingSpec::toggle(
+            SELECTION_BAR_KEY,
+            "Actions for picked files",
+            "Once you pick files (Ctrl+click, Shift+click, a rubber band, Select all), a bar at the foot of the list offers what their menu does. Off leaves that to the menu and the keys.",
+            true,
+        )
+        .section("Selection"),
     );
     app.settings.declare(
         SettingSpec::toggle(

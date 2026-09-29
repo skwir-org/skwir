@@ -387,10 +387,16 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
         )
     };
     let generation = shell.toasts.generation;
+    // Above a selection's bar, whose buttons its message is often about.
+    let lift = if shell.action_bar_shown() {
+        crate::action_bar::CLEARANCE
+    } else {
+        0.
+    };
     Some(
         div()
             .absolute()
-            .bottom(px(38.))
+            .bottom(px(38. + lift))
             .left_0()
             .right_0()
             .flex()

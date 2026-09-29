@@ -14,6 +14,7 @@
     clippy::ignored_unit_patterns
 )]
 
+mod action_bar;
 pub mod address;
 mod archive_preview;
 pub mod choose;
