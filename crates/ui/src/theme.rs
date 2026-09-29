@@ -23,7 +23,8 @@
 //!   toasts, cards, dialogs), `rounded_full` for pills.
 //! - elevation: `shadow_md` for menus and popovers, `shadow_lg` for toasts
 //!   and dialogs; nothing else casts a shadow.
-//! - spacing: multiples of 4 px; rows are 26 px, controls 28 px, bars 42 px.
+//! - spacing: multiples of 4 px; rows are 26 px, controls 28 px, bars 42 px
+//!   (the window row, whose tabs stand on its foot, 38 px).
 
 use gpui::{Global, Hsla, WindowAppearance, rgb};
 

@@ -2119,13 +2119,13 @@ impl Render for Shell {
             .observe(f32::from(viewport.width), f32::from(viewport.height));
         let (stacked, bottom) = (self.layout.stacked(), self.layout.bottom());
         let theme = cx.global::<Theme>().clone();
-        let toolbar = address::render_toolbar(self, cx);
         // The window's own width is known before layout, unlike an element's.
         // Below it the panes keep the room: places stay reachable through the
         // address bar, the palette and Jump.
         let sidebar_width = self.sidebar_drawn_width(window);
+        // The window row's corner stands over the sidebar, as wide.
+        let toolbar = address::render_window_row(self, sidebar_width, cx);
         let side = (sidebar_width > 0.).then(|| sidebar::render(self, sidebar_width, cx));
-        let strip = crate::tabs::render(self, cx);
         let pane_ids: Vec<PaneId> = self.panes.iter().map(|p| p.id).collect();
         let split = pane_ids.len() == 2;
         let mut columns = Vec::new();
@@ -2212,9 +2212,8 @@ impl Render for Shell {
                             .min_w_0()
                             .min_h_0()
                             .when(bottom, gpui::Styled::flex_col)
-                            // The tabs over the panes they arrange, and
-                            // the terminal under them, whose top edge is
-                            // dragged within this column.
+                            // The panes, and the terminal under them, whose
+                            // top edge is dragged within this column.
                             .child(
                                 div()
                                     .flex()
@@ -2223,7 +2222,6 @@ impl Render for Shell {
                                     .min_w_0()
                                     .min_h_0()
                                     .on_drag_move(cx.listener(Self::on_terminal_height_drag))
-                                    .children(strip)
                                     .child(
                                         div()
                                             .flex()

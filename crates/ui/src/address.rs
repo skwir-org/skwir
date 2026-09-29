@@ -1,6 +1,7 @@
-//! Grouped application tools and pane-owned navigation/address controls.
+//! The window row (tabs and the window's own tools) and each pane's row
+//! (navigation, the address, how the pane shows its folder).
 use crate::{
-    elements::adaptive::AdaptiveRow,
+    elements::{adaptive::AdaptiveRow, popover::PopoverAnchor},
     keymap,
     shell::Shell,
     theme::Theme,
@@ -10,6 +11,13 @@ use bibli_core::os_path::PathArg;
 use bibli_core::registry::{ViewRole, ViewSpec};
 use gpui::{AnyElement, Context, Window, div, prelude::*, px};
 use std::path::PathBuf;
+
+/// The window row's height: tabs 30 px tall standing on its foot.
+pub const WINDOW_ROW_HEIGHT: f32 = 38.;
+/// What the address field keeps before the view buttons fold into one.
+const FIELD_MIN: f32 = 180.;
+/// A pane row's height.
+const PANE_ROW_HEIGHT: f32 = 42.;
 
 impl Shell {
     /// `ui.toolbar_menu { kind }`: open that menu, or close the open one.
@@ -39,24 +47,19 @@ impl Shell {
 const VIEW_OPTIONS: &str = "view_options";
 const MORE: &str = "more";
 
-/// A labelled button in wide toolbars, an icon in narrower ones.
-fn labelled(button: Button, label: &'static str, mode: usize) -> Button {
-    if mode == 0 {
-        button.label(label)
+/// A view's bundled icon, or the grid's for a plugin view without one.
+fn view_icon(spec: &ViewSpec) -> gpui::SharedString {
+    if toolbar::asset(&format!("toolbar/{}.svg", spec.icon)).is_some() {
+        spec.icon.clone().into()
     } else {
-        button
+        "grid".into()
     }
 }
 
 fn view_button(shell: &Shell, spec: &ViewSpec, prefix: &str) -> Button {
-    let icon = if toolbar::asset(&format!("toolbar/{}.svg", spec.icon)).is_some() {
-        spec.icon.clone()
-    } else {
-        "grid".into()
-    };
     Button::new(
         format!("{prefix}-{}", spec.id),
-        icon,
+        view_icon(spec),
         format!("{} view", spec.title),
         "ui.view",
     )
@@ -64,36 +67,50 @@ fn view_button(shell: &Shell, spec: &ViewSpec, prefix: &str) -> Button {
     .active(shell.ui().view_id == &*spec.id)
 }
 
-/// The toolbar's view buttons: the views that show the listing, and an
+/// The pane row's view buttons: the views that show the listing, and an
 /// alternate shape or a lens only while it is shown; the View menu offers
-/// them all. The narrowest
-/// variant keeps the current view alone.
-fn toolbar_views(views: Vec<ViewSpec>, current: &str, narrowest: bool) -> Vec<ViewSpec> {
+/// them all.
+fn toolbar_views(views: Vec<ViewSpec>, current: &str) -> Vec<ViewSpec> {
     views
         .into_iter()
-        .filter(|s| &*s.id == current || (!narrowest && s.role == ViewRole::Listing))
+        .filter(|s| &*s.id == current || s.role == ViewRole::Listing)
         .collect()
 }
 
-/// The application row. Left: how the folder is shown (views, their options) and
-/// what can be added to it. Right: finding things, the two panels, and the
-/// rest behind More. Navigation belongs to each pane's own row.
-///
-/// Modes: 0 has labels, 1 icons only, 2 keeps the current view, Search and
-/// More, whose menu then carries everything that was dropped.
-fn app_row(
+/// How the pane shows its folder: its view buttons and the View menu
+/// beside them (`wide`), or one button, the current view's icon, that
+/// opens the menu, which starts with every view.
+fn view_control(
     shell: &Shell,
-    mode: usize,
-    anchors: &[crate::elements::popover::PopoverAnchor; 2],
+    wide: bool,
+    anchor: &PopoverAnchor,
+    open: bool,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
+    let menu = |id: &'static str, icon: gpui::SharedString, title: String| {
+        Button::new(id, icon, title, "ui.toolbar_menu")
+            .args(serde_json::json!({"kind": VIEW_OPTIONS}))
+            .anchor_if(anchor, true)
+            .active(open)
+            .dropdown()
+    };
+    let views = shell.available_views();
+    let current = shell.ui().view_id;
+    if !wide {
+        let shown = views.iter().find(|s| &*s.id == current);
+        return menu(
+            "view-menu",
+            shown.map_or_else(|| "list".into(), view_icon),
+            match shown {
+                Some(spec) => format!("{} view, sort, hidden files and zoom", spec.title),
+                None => "Views, sort, hidden files and zoom".into(),
+            },
+        )
+        .render(shell, cx)
+        .into_any_element();
+    }
     let theme = cx.global::<Theme>().clone();
-    let open = shell.toolbar_menu.as_ref().map(|menu| menu.kind);
-    let (split_icon, split_tip) = shell.layout.split_button();
-    // One id for every variant, so a focused button keeps its focus handle
-    // (gpui element state keyed by the id path) across a responsive reflow.
-    let mut bar = toolbar::row(&theme).id("app-tools");
-    let mut views = div()
+    let mut group = div()
         .flex()
         .flex_none()
         .gap(px(1.))
@@ -102,80 +119,28 @@ fn app_row(
         .border_1()
         .border_color(theme.border)
         .bg(theme.bg);
-    for spec in toolbar_views(shell.available_views(), shell.ui().view_id, mode == 2) {
-        views = views.child(view_button(shell, &spec, "view").render(shell, cx));
-    }
-    bar = bar.child(views);
-    if mode < 2 {
-        // No separator: the views' group has its own border, and the View
-        // menu is their options, not another subject.
-        bar = bar
-            .child(
-                labelled(
-                    Button::new(
-                        "view-options",
-                        "sliders",
-                        "Views, sort, hidden files and zoom",
-                        "ui.toolbar_menu",
-                    )
-                    .args(serde_json::json!({"kind": VIEW_OPTIONS}))
-                    .anchor_if(&anchors[0], true)
-                    .active(open == Some(VIEW_OPTIONS)),
-                    "View",
-                    mode,
-                )
+    for spec in toolbar_views(views, current) {
+        group = group.child(
+            view_button(shell, &spec, "view")
                 .render(shell, cx)
-                .ml(px(4.)),
-            )
-            .child(
-                labelled(
-                    Button::new("new-folder", "folder-plus", "New folder", "ui.mkdir_prompt"),
-                    "New folder",
-                    mode,
-                )
-                .render(shell, cx),
-            );
+                .h(px(24.)),
+        );
     }
-    bar = bar.child(div().flex_1().min_w(px(12.)));
-    bar = bar
-        .child(Button::new("file-search", "search", "Search files", "ui.search").render(shell, cx));
-    if mode < 2 {
-        bar = bar
-            .child(toolbar::separator(&theme))
-            // In the order of what they open: the split is in the middle of
-            // the window, the preview panel at its right edge.
-            .child(
-                labelled(
-                    Button::new("split-toggle", split_icon, split_tip, "ui.split")
-                        .active(shell.is_split()),
-                    "Split",
-                    mode,
-                )
-                .render(shell, cx),
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(2.))
+        .child(group)
+        .child(
+            menu(
+                "view-options",
+                "sliders".into(),
+                "Sort, hidden files and zoom".into(),
             )
-            .child(
-                labelled(
-                    Button::new(
-                        "preview-toggle",
-                        shell.layout.preview_icon(),
-                        "Preview panel",
-                        "ui.toggle_preview",
-                    )
-                    .active(shell.preview.open),
-                    "Preview",
-                    mode,
-                )
-                .render(shell, cx),
-            );
-    }
-    bar.child(
-        Button::new("tools-more", "more", "More", "ui.toolbar_menu")
-            .args(serde_json::json!({"kind": MORE}))
-            .anchor_if(&anchors[1], true)
-            .active(open == Some(MORE))
             .render(shell, cx),
-    )
-    .into_any_element()
+        )
+        .into_any_element()
 }
 
 /// A menu row: the shared button, full width, with its state as a check.
@@ -185,9 +150,8 @@ fn menu_item(button: Button, label: impl Into<gpui::SharedString>) -> Button {
 
 /// The View menu, in its titled groups: how the active pane shows
 /// its folder, never how the window is arranged (that is in More, under
-/// Layout). It starts with every view, the lenses the toolbar leaves out
-/// included. The narrowest toolbar, which has no View button, puts
-/// all of it in More.
+/// Layout). It starts with every view, the lenses the pane row leaves out
+/// included: a narrow pane row has only the button that opens it.
 fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
     use bibli_core::SortKey;
     let views = shell
@@ -311,42 +275,14 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
     ]
 }
 
-/// More's Layout groups: the window's panels, then where the split's panes
-/// and the preview go. Split and Preview are toggled from the toolbar
-/// unless `everything` (the narrowest variant, which dropped them).
-fn layout_groups(shell: &Shell, everything: bool) -> Vec<(&'static str, Vec<Button>)> {
-    let (split_icon, split_tip) = shell.layout.split_button();
+/// More's Layout groups: the panels without a button of their own, then
+/// where the split's panes and the preview go.
+fn layout_groups(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
     let mut panels = vec![menu_item(
-        Button::new(
-            "menu-sidebar",
-            "sidebar",
-            "Show the sidebar",
-            "ui.toggle_sidebar",
-        )
-        .active(!shell.sidebar_hidden),
-        "Sidebar",
-    )];
-    if everything {
-        panels.push(menu_item(
-            Button::new("menu-split", split_icon, split_tip, "ui.split").active(shell.is_split()),
-            "Split panes",
-        ));
-        panels.push(menu_item(
-            Button::new(
-                "menu-preview",
-                shell.layout.preview_icon(),
-                "Preview panel",
-                "ui.toggle_preview",
-            )
-            .active(shell.preview.open),
-            "Preview panel",
-        ));
-    }
-    panels.push(menu_item(
         Button::new("menu-timeline", "calendar", "Timeline", "ui.timeline")
             .active(shell.timeline.open),
         "Timeline",
-    ));
+    )];
     // The terminal is a plugin's: without it, nothing says it exists.
     if shell.app.terminals.provider().is_some() {
         panels.push(menu_item(
@@ -363,8 +299,6 @@ fn layout_groups(shell: &Shell, everything: bool) -> Vec<(&'static str, Vec<Butt
     ]
 }
 
-/// The choices of one side of the window's arrangement (`ui.layout`), the
-/// current one checked. Automatic says what it means in this window.
 fn layout_items(shell: &Shell, what: &'static str) -> Vec<Button> {
     use crate::layout::{Member, Panes, Preview};
     let layout = &shell.layout;
@@ -450,38 +384,16 @@ fn group_title(title: &'static str, theme: &Theme) -> gpui::Div {
         .child(title)
 }
 
-/// The More menu. It holds what has no button in the chosen toolbar variant:
-/// always the window's layout, New tab, the palette and Settings; in the
-/// narrowest variant also the View menu, views first, and the folder tools
-/// that variant dropped.
+/// The More menu: what has no button, the window's layout, New tab, the
+/// palette and Settings.
 fn more_panel(
     shell: &Shell,
     popup: &toolbar::Popup,
-    everything: bool,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let mut panel = toolbar::popup_panel(popup, "ui.toolbar_menu", theme, cx);
-    let mut groups = Vec::new();
-    if everything {
-        // Without the View button, its whole menu is here: the views first.
-        let mut options = view_options(shell).into_iter();
-        groups.extend(options.next());
-        groups.push((
-            "Folder",
-            vec![menu_item(
-                Button::new(
-                    "menu-new-folder",
-                    "folder-plus",
-                    "New folder",
-                    "ui.mkdir_prompt",
-                ),
-                "New folder…",
-            )],
-        ));
-        groups.extend(options);
-    }
-    groups.extend(layout_groups(shell, everything));
+    let mut groups = layout_groups(shell);
     groups.push((
         "bibli",
         [
@@ -520,24 +432,162 @@ fn more_panel(
     panel.into_any_element()
 }
 
-pub fn render_toolbar(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
+/// The window row, what is about the window: over the sidebar (`sidebar`
+/// wide, 0 when it is not drawn) its toggle and More, over the panes the
+/// tabs, then the Split and Preview toggles in the order of what they open
+/// (the middle of the window, then its edge). Everything about how a pane
+/// shows its folder is in that pane's own row.
+pub fn render_window_row(shell: &mut Shell, sidebar: f32, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
-    let anchors = [
-        crate::elements::popover::PopoverAnchor::default(),
-        crate::elements::popover::PopoverAnchor::default(),
-    ];
-    let chosen = crate::elements::adaptive::Chosen::default();
-    let mut root = div().relative().flex_none().child(AdaptiveRow {
-        variants: (0..3)
-            .map(|mode| app_row(shell, mode, &anchors, cx))
-            .collect(),
-        height: 42.,
-        chosen: Some(chosen.clone()),
-    });
-    let Some(popup) = &shell.toolbar_menu else {
-        return root.into_any_element();
+    let anchor = PopoverAnchor::default();
+    let open = shell.toolbar_menu.as_ref().map(|menu| menu.kind);
+    let (split_icon, split_tip) = shell.layout.split_button();
+    let side = div()
+        .flex_none()
+        .h_full()
+        .flex()
+        .items_center()
+        .gap(px(2.))
+        .px(px(6.))
+        // Over the sidebar, its edge continued; a sidebar put away leaves
+        // the two buttons at the window's corner.
+        .when(sidebar > 0., |d| {
+            d.w(px(sidebar)).border_r_1().border_color(theme.border)
+        })
+        .child(
+            Button::new("sidebar-toggle", "sidebar", "Sidebar", "ui.toggle_sidebar")
+                .active(!shell.sidebar_hidden)
+                .render(shell, cx),
+        )
+        .when(sidebar > 0., |d| d.child(div().flex_1()))
+        .child(
+            Button::new("tools-more", "more", "More", "ui.toolbar_menu")
+                .args(serde_json::json!({"kind": MORE}))
+                .anchor_if(&anchor, true)
+                .active(open == Some(MORE))
+                .render(shell, cx),
+        );
+    let tabs = crate::tabs::render(shell, cx);
+    let panels = div()
+        .flex_none()
+        .h_full()
+        .flex()
+        .items_center()
+        .gap(px(2.))
+        .px(px(6.))
+        .child(
+            Button::new("split-toggle", split_icon, split_tip, "ui.split")
+                .active(shell.is_split())
+                .render(shell, cx),
+        )
+        .child(
+            Button::new(
+                "preview-toggle",
+                shell.layout.preview_icon(),
+                "Preview panel",
+                "ui.toggle_preview",
+            )
+            .active(shell.preview.open)
+            .render(shell, cx),
+        );
+    let mut row = div()
+        .id("window-row")
+        .tab_group()
+        .relative()
+        .flex_none()
+        .w_full()
+        .h(px(WINDOW_ROW_HEIGHT))
+        .flex()
+        .bg(theme.surface)
+        .border_b_1()
+        .border_color(theme.border)
+        .child(side)
+        .child(tabs)
+        .child(panels);
+    if let Some(popup) = &shell.toolbar_menu
+        && popup.kind == MORE
+    {
+        row = row.child(anchor.popup(more_panel(shell, popup, &theme, cx)));
+    }
+    row.into_any_element()
+}
+
+/// What a pane's row shows, read once for both of its variants.
+struct PaneRow {
+    back: bool,
+    forward: bool,
+    /// The folder shown as a trail, `None` for the text field: while it is
+    /// being edited, and for locations that are not folders.
+    trail: Option<PathBuf>,
+    /// The field's edge: focused, the active pane's, or none.
+    edge: gpui::Hsla,
+    location: Option<bibli_core::Location>,
+    menu_open: bool,
+}
+
+/// A pane's row: Back and Forward, the address (a trail of folders, or the
+/// text being edited) with the button that keeps it in the sidebar, then
+/// how the pane shows its folder. Up is the trail's parent segment, or
+/// Alt+Up.
+///
+/// Two variants, chosen in prepaint by `AdaptiveRow`: the view buttons
+/// while the address keeps `FIELD_MIN`, else the one button that opens the
+/// View menu. The address counts as `FIELD_MIN` when a variant is measured
+/// (its content has no width of its own) and takes the rest when drawn.
+pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> AnyElement {
+    let theme = cx.global::<Theme>().clone();
+    let row = {
+        let ws = shell.app.workspace.read();
+        let pane = ws.pane(shell.pane);
+        let location = pane.and_then(|p| p.location()).cloned();
+        let active = ws.active_id() == shell.pane;
+        let focused = shell.ui().address.read(cx).is_focused(window);
+        PaneRow {
+            back: pane.is_some_and(|p| p.history_pos > 0),
+            forward: pane.is_some_and(|p| p.history_pos + 1 < p.history.len()),
+            trail: location
+                .as_ref()
+                .and_then(bibli_core::Location::path)
+                .filter(|_| !focused),
+            edge: if focused {
+                theme.accent
+            } else if active {
+                theme.border
+            } else {
+                theme.surface
+            },
+            location,
+            // The View menu hangs from the active pane's button: the pane it
+            // acts on.
+            menu_open: active
+                && shell
+                    .toolbar_menu
+                    .as_ref()
+                    .is_some_and(|menu| menu.kind == VIEW_OPTIONS),
+        }
     };
-    if popup.kind == VIEW_OPTIONS {
+    let anchor = PopoverAnchor::default();
+    let mut bar = div()
+        .id(("pane-address", shell.pane.0 as usize))
+        .tab_group()
+        .relative()
+        .w_full()
+        .flex_none()
+        .px(px(6.))
+        .border_b_1()
+        .border_color(theme.border)
+        .bg(theme.surface)
+        .child(AdaptiveRow {
+            variants: [true, false]
+                .into_iter()
+                .map(|wide| pane_row(shell, &row, wide, &anchor, cx))
+                .collect(),
+            height: PANE_ROW_HEIGHT - 1.,
+            chosen: None,
+        });
+    if row.menu_open
+        && let Some(popup) = &shell.toolbar_menu
+    {
         let mut panel = toolbar::popup_panel(popup, "ui.toolbar_menu", &theme, cx);
         for (title, items) in view_options(shell) {
             panel = panel.child(group_title(title, &theme));
@@ -545,108 +595,69 @@ pub fn render_toolbar(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
                 panel = panel.child(item.render(shell, cx));
             }
         }
-        root = root.child(anchors[0].popup(panel));
-    } else {
-        // One panel per toolbar variant; the row's choice picks it, this frame.
-        let panels = (0..3)
-            .map(|mode| more_panel(shell, popup, mode == 2, &theme, cx))
-            .collect();
-        root = root.child(anchors[1].popup_for(&chosen, panels));
+        bar = bar.child(anchor.popup(panel));
     }
-    root.into_any_element()
+    bar.into_any_element()
 }
 
-pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> AnyElement {
+/// One variant of a pane's row (see `render_address`).
+fn pane_row(
+    shell: &Shell,
+    row: &PaneRow,
+    wide: bool,
+    anchor: &PopoverAnchor,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
-    let ui = shell.ui();
-    let focused = ui.address.read(cx).is_focused(window);
-    let (back, forward, path, up, is_shelf, active, location) = {
-        let ws = shell.app.workspace.read();
-        let pane = ws.pane(shell.pane);
-        (
-            pane.is_some_and(|p| p.history_pos > 0),
-            pane.is_some_and(|p| p.history_pos + 1 < p.history.len()),
-            pane.and_then(|p| p.location())
-                .and_then(bibli_core::Location::path),
-            pane.and_then(|p| p.location())
-                .and_then(bibli_core::Location::path)
-                .is_some_and(|p| p.parent().is_some()),
-            pane.and_then(|p| p.location())
-                .is_some_and(|l| &*l.scheme == "shelf"),
-            ws.active_id() == shell.pane,
-            pane.and_then(|p| p.location()).cloned(),
-        )
+    let pane = shell.pane;
+    // A folder reads as a trail of places; the text field takes over while
+    // it is being edited (Ctrl+L, or a click beside the trail) and for
+    // locations that are not folders. No width of its own: the field's
+    // minimum is what a variant is measured with.
+    let address = match &row.trail {
+        Some(path) => div()
+            .id(("address-trail", pane.0 as usize))
+            .flex_1()
+            .w(px(0.))
+            .min_w_0()
+            .h_full()
+            .flex()
+            .items_center()
+            .px(px(3.))
+            .cursor_text()
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.activate_pane(pane, cx);
+                this.run("ui.focus_address", serde_json::json!({}), window, cx);
+            }))
+            .child(breadcrumbs(shell, path, &theme, cx))
+            .into_any_element(),
+        None => div()
+            .flex_1()
+            .w(px(0.))
+            .min_w_0()
+            .px_2()
+            .child(shell.ui().address.clone())
+            .into_any_element(),
     };
-    let mut bar = div()
-        .id(("pane-address", shell.pane.0 as usize))
-        .tab_group()
-        .h(px(42.))
-        .w_full()
-        .flex_none()
+    let mut field = div()
+        .id(("address-field", pane.0 as usize))
+        .flex_1()
+        .min_w(px(FIELD_MIN))
+        .h(px(30.))
         .flex()
         .items_center()
-        .gap(px(3.))
-        .px(px(6.))
-        .border_b_1()
-        .border_color(theme.border)
-        .bg(theme.surface)
-        .child(
-            Button::new("back", "back", "Back", "back")
-                .enabled(back)
-                .render(shell, cx),
-        )
-        .child(
-            Button::new("forward", "forward", "Forward", "forward")
-                .enabled(forward)
-                .render(shell, cx),
-        )
-        .child(
-            Button::new("up", "up", "Parent folder", "up")
-                .enabled(up)
-                .render(shell, cx),
-        )
-        .child({
-            let field = div()
-                .id(("address-field", shell.pane.0 as usize))
-                .flex_1()
-                .min_w_0()
-                .h(px(30.))
-                .flex()
-                .items_center()
-                .rounded_md()
-                .border_1()
-                .border_color(if focused {
-                    theme.accent
-                } else if active {
-                    theme.border
-                } else {
-                    theme.surface
-                })
-                .bg(theme.bg)
-                .key_context(keymap::ADDRESS);
-            match path.clone().filter(|_| !focused) {
-                // A folder reads as a trail of places; the text field takes
-                // over while it is being edited (Ctrl+L, or a click beside
-                // the trail) and for locations that are not folders.
-                Some(path) => {
-                    let pane = shell.pane;
-                    field
-                        .px(px(3.))
-                        .cursor_text()
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.activate_pane(pane, cx);
-                            this.run("ui.focus_address", serde_json::json!({}), window, cx);
-                        }))
-                        .child(breadcrumbs(shell, &path, &theme, cx))
-                }
-                None => field.px_2().child(ui.address.clone()),
-            }
-        });
+        .rounded_md()
+        .border_1()
+        .border_color(row.edge)
+        .bg(theme.bg)
+        .key_context(keymap::ADDRESS)
+        .child(address);
     // Keep what the pane shows in the sidebar, a folder as a bookmark or a
     // search as a saved search, while a plugin keeps such locations:
     // filled when it is kept, and pressing it then takes it back with the
-    // place's own command.
-    if let Some(location) = &location {
+    // place's own command. It ends the field: it is about what the field
+    // shows.
+    if let Some(location) = &row.location {
         let registry = &shell.app.registry;
         let keeper = registry.keepers.find(|k| *k.scheme == *location.scheme);
         let kept = registry
@@ -669,10 +680,34 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
             (None, None) => None,
         };
         if let Some(button) = button {
-            bar = bar.child(button.render(shell, cx));
+            field = field.child(
+                button
+                    .render(shell, cx)
+                    .h(px(24.))
+                    .min_w(px(24.))
+                    .px(px(4.))
+                    .mr(px(2.)),
+            );
         }
     }
-    if is_shelf {
+    let mut line = div()
+        .size_full()
+        .flex()
+        .items_center()
+        .gap(px(3.))
+        .child(
+            Button::new("back", "back", "Back", "back")
+                .enabled(row.back)
+                .render(shell, cx),
+        )
+        .child(
+            Button::new("forward", "forward", "Forward", "forward")
+                .enabled(row.forward)
+                .render(shell, cx),
+        )
+        .child(field)
+        .child(view_control(shell, wide, anchor, row.menu_open, cx));
+    if row.location.as_ref().is_some_and(|l| &*l.scheme == "shelf") {
         for (id, icon, title, command) in [
             (
                 "shelf-move",
@@ -687,14 +722,14 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
                 "ui.shelf_copy_here",
             ),
         ] {
-            bar = bar.child(
+            line = line.child(
                 Button::new(id, icon, title, command)
                     .enabled(shell.is_split())
                     .render(shell, cx),
             );
         }
     }
-    bar.into_any_element()
+    line.into_any_element()
 }
 
 /// The folders leading to `path`, outermost first, each with the path it
@@ -822,14 +857,14 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
-    fn shown(current: &str, narrowest: bool) -> Vec<String> {
+    fn shown(current: &str) -> Vec<String> {
         let views = vec![
             ViewSpec::named("list", "List", "list", Arc::default()),
             ViewSpec::named("tree", "Tree", "tree", Arc::default()).alternate(),
             ViewSpec::named("grid", "Grid", "grid", Arc::default()),
             ViewSpec::named("usage", "Usage", "usage", Arc::default()).lens(),
         ];
-        toolbar_views(views, current, narrowest)
+        toolbar_views(views, current)
             .into_iter()
             .map(|spec| spec.id.to_string())
             .collect()
@@ -837,11 +872,9 @@ mod tests {
 
     #[test]
     fn a_lens_or_an_alternate_has_a_button_only_while_it_is_shown() {
-        assert_eq!(shown("grid", false), ["list", "grid"]);
-        assert_eq!(shown("usage", false), ["list", "grid", "usage"]);
-        assert_eq!(shown("tree", false), ["list", "tree", "grid"]);
-        assert_eq!(shown("grid", true), ["grid"]);
-        assert_eq!(shown("usage", true), ["usage"]);
+        assert_eq!(shown("grid"), ["list", "grid"]);
+        assert_eq!(shown("usage"), ["list", "grid", "usage"]);
+        assert_eq!(shown("tree"), ["list", "tree", "grid"]);
     }
 
     fn labels(path: &str, home: Option<&str>) -> Vec<String> {

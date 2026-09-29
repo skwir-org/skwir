@@ -1,4 +1,4 @@
-//! Tabs (ADR-018): the strip above the panes, and the shell following the
+//! Tabs (ADR-018): the strip in the window row, and the shell following the
 //! workspace's tabs.
 //!
 //! The core owns the tabs (`bibli_core::tabs`): which panes each groups,
@@ -14,9 +14,11 @@
 //! finished, for at most `HOLD` (`Shell::present`): the window goes from
 //! one finished frame to the next, with no blank or half-listed one.
 //!
-//! The strip shows only with two tabs or more. A tab is named like the place
-//! it shows, is a drop target like a sidebar row, is dragged to reorder,
-//! and closes with its ×, a middle click or Ctrl+W.
+//! The tabs stand in the window row (`address::render_window_row`), over
+//! the panes, so a second tab costs no height; the one tab of a window
+//! shows too, without a × (the last tab stays). A tab is named like the
+//! place it shows, is a drop target like a sidebar row, is dragged to
+//! reorder, and closes with its ×, a middle click or Ctrl+W.
 
 use std::collections::HashMap;
 
@@ -367,10 +369,6 @@ impl Shell {
     fn sync_tab_labels(&mut self) {
         let shows: Vec<(TabId, Option<Location>)> = {
             let ws = self.app.workspace.read();
-            if ws.tabs().len() < 2 {
-                self.tab_labels = Labels::default();
-                return;
-            }
             ws.tabs()
                 .iter()
                 .map(|t| (t.id, ws.pane(t.active).and_then(|p| p.shown()).cloned()))
@@ -421,28 +419,22 @@ impl Shell {
     }
 }
 
-/// The tab strip, when there are two tabs or more.
-pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
+/// The tabs, standing on the foot of the window row, and the button that
+/// opens another.
+pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
     shell.sync_tab_labels();
-    if shell.tab_labels.labels.len() < 2 {
-        return None;
-    }
-    let theme = cx.global::<Theme>().clone();
     let shown = shell.shown_tab;
     let labels = shell.tab_labels.labels.clone();
     let mut strip = div()
         .id("tab-strip")
-        .flex_none()
-        .h(px(36.))
-        .w_full()
+        .flex_1()
         .min_w_0()
+        .h_full()
+        .overflow_hidden()
         .flex()
         .items_end()
         .gap(px(2.))
         .px(px(6.))
-        .bg(theme.surface)
-        .border_b_1()
-        .border_color(theme.border)
         // A double click beside the tabs opens one, as in a browser.
         .on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
             if event.click_count() == 2 {
@@ -487,8 +479,8 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
     }
     let new = crate::toolbar::Button::new("tab-strip-new", "plus", "New tab", "tab.new")
         .render(shell, cx);
-    strip = strip.child(div().flex_none().pb(px(2.)).child(new));
-    Some(strip.into_any_element())
+    strip = strip.child(div().flex_none().h_full().flex().items_center().child(new));
+    strip.into_any_element()
 }
 
 fn tab(
@@ -590,7 +582,7 @@ fn tab(
                 .text_ellipsis_middle()
                 .child(label.title.clone()),
         )
-        .child(close)
+        .when(count > 1, |d| d.child(close))
         .child(gap(index, count, true, cx))
         .child(gap(index + 1, count, false, cx));
     if let Some(folder) = label.folder.clone() {

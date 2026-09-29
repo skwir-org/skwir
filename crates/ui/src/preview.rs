@@ -2702,8 +2702,8 @@ pub(crate) const PANE_KEEP: f32 = 240.;
 /// What each stacked pane keeps when the panel is dragged tall: its own
 /// row and a few of its entries.
 pub(crate) const PANE_KEEP_HEIGHT: f32 = 160.;
-/// The application toolbar above everything (`address::render_toolbar`).
-const TOOLBAR_HEIGHT: f32 = 42.;
+/// The window row above everything (`address::render_window_row`).
+const TOOLBAR_HEIGHT: f32 = crate::address::WINDOW_ROW_HEIGHT;
 
 /// A picture as every preview shows one: whole in the panel (Fit), as wide
 /// as the panel (Fit width), or at a share of its own size, scrolling in

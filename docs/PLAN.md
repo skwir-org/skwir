@@ -36,6 +36,22 @@ Poppler, GStreamer or libarchive. Open gate: idle PSS is about 118 to 120 MB aga
 been loosened. The per-change validation history that used to sit here is in
 `docs/STATUS-LOG.md`.
 
+Window row and pane rows (2026-09-29): the application toolbar became the
+window row, 38 px: over the sidebar its toggle and More, over the panes the
+tabs (ADR-018 addendum: shown even when there is one, so a second tab no
+longer adds a strip), then the Split and Preview toggles. The views and the
+View menu moved to each pane's row, so a split's panes show and change
+their own; a narrow pane folds them into one button (two `AdaptiveRow`
+variants, the address counted at its minimum). The bookmark button ends the
+address field; Up and New folder lost their buttons (the trail's parent
+segment and Alt+Up; the folder's menu and Ctrl+Shift+N). Chrome above the
+first row: a folder 108 to 104 px; split with two tabs and a search 217 to
+177 px. Checked in a window on an isolated display (folder, split, narrow
+split, the View menu from the right pane, More, a search, the sidebar
+hidden) and idle CPU back to 0%. This is step A of the toolbar overhaul;
+next, search in the address field with its chips as pills (B), then a
+selection's action bar built from the context menu's items (C).
+
 Busy volumes (2026-09-29): a volume being unlocked, mounted or unmounted
 says so on its sidebar row (`Place::busy`: a still hourglass and
 "Unlocking…" in place of its details, since nothing animates) from the

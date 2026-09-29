@@ -8,7 +8,7 @@
 //! Copy has no button: it is Ctrl+C and the content's own right-click menu,
 //! where people look for it.
 //!
-//! The menu rule is the application toolbar's: More holds what has no button
+//! The menu rule is every responsive toolbar's: More holds what has no button
 //! in the variant the row chose this frame (`PopoverAnchor::popup_for`), plus
 //! what never has one (open externally, copy the path, a kind's own settings).
 //! Nothing is both a button and a menu row, and More is always there, so it

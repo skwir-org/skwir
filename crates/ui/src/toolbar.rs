@@ -131,9 +131,19 @@ pub struct Button {
     anchor: Option<crate::elements::popover::PopoverAnchor>,
     pub active: bool,
     pub enabled: bool,
+    shape: Shape,
+}
+
+/// How a button stands among its neighbours.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shape {
+    /// In a toolbar: its icon, and its label if it has one.
+    Tool,
+    /// Opens a menu: a small chevron after the icon says so.
+    Dropdown,
     /// A row of a popup menu: full width, left-aligned, with an icon slot
     /// that stays when the icon is empty so labels line up.
-    menu: bool,
+    MenuRow,
 }
 impl Button {
     pub fn new(
@@ -152,7 +162,7 @@ impl Button {
             anchor: None,
             active: false,
             enabled: true,
-            menu: false,
+            shape: Shape::Tool,
         }
     }
     pub fn title(&self) -> SharedString {
@@ -167,7 +177,12 @@ impl Button {
         self
     }
     pub fn menu(mut self) -> Self {
-        self.menu = true;
+        self.shape = Shape::MenuRow;
+        self
+    }
+    /// Draw the chevron of a button that opens a menu.
+    pub fn dropdown(mut self) -> Self {
+        self.shape = Shape::Dropdown;
         self
     }
     pub fn active(mut self, active: bool) -> Self {
@@ -195,6 +210,7 @@ impl Button {
         let command = self.command.clone();
         let args = self.args.clone();
         let enabled = self.enabled;
+        let menu = self.shape == Shape::MenuRow;
         // The shortcut comes from the keymap, never from the title: it
         // follows what is bound, and goes when its plugin does.
         let title: SharedString = match shell.keys_for(&command, &args) {
@@ -210,9 +226,9 @@ impl Button {
             .px(px(6.))
             .flex()
             .items_center()
-            .when(!self.menu, gpui::Styled::justify_center)
-            .when(self.menu, |d| d.w_full().px_2())
-            .gap(px(if self.menu { 10. } else { 6. }))
+            .when(!menu, gpui::Styled::justify_center)
+            .when(menu, |d| d.w_full().px_2())
+            .gap(px(if menu { 10. } else { 6. }))
             .rounded_md()
             .border_1()
             .border_color(gpui::transparent_black())
@@ -235,7 +251,7 @@ impl Button {
             })
             .when(!enabled, |d| d.opacity(0.35))
             .tooltip(move |_, cx| tooltip(title.clone(), font.clone(), cx))
-            .when(self.menu && self.icon.is_empty(), |d| {
+            .when(menu && self.icon.is_empty(), |d| {
                 d.child(div().size(px(16.)).flex_none())
             })
             .when(!self.icon.is_empty(), |d| {
@@ -252,6 +268,15 @@ impl Button {
                 )
             })
             .children(self.label)
+            .when(self.shape == Shape::Dropdown, |d| {
+                d.gap(px(2.)).child(
+                    svg()
+                        .path("toolbar/chevron.svg")
+                        .text_color(theme.text_muted)
+                        .size(px(10.))
+                        .flex_none(),
+                )
+            })
             .children(self.anchor.map(|anchor| anchor.marker()))
             .on_click(cx.listener(move |this, _, window, cx| {
                 if enabled {

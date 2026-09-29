@@ -97,30 +97,40 @@ current source before assuming a planned crate, command, or API exists.
   `when`, so it does nothing instead of reporting "nothing selected". The only
   animation allowed is a bounded entrance (under 200 ms) that ends by itself;
   the player's play/pause flash (`media::FLASH_MS`) is the one longer one.
-- **Application row and pane row.** The application toolbar holds what is
-  about the window: views, the View menu, New folder, Search, the
-  Split and Preview toggles (in the order of what they open: the middle of
-  the window, then its edge), and More (everything else, so the
-  narrowest variant loses nothing). The view buttons are the views that
-  show the listing (`ViewRole::Listing`: list, grid, columns); a shape
-  chosen now and then (`ViewRole::Alternate`: the tree) and a lens, a
-  view that gathers data of its own (`ViewRole::Lens`: Usage), have a
-  button only while shown, and the view states its role, never the
-  shell. View is only how the active
-  pane shows its folder (every view, sort, direction, hidden files, zoom, and in the
-  grid Fill thumbnails); how the window is arranged is More's Layout
-  groups (the sidebar, the timeline, the terminal, where the split and
-  the preview go, and where a file of an archive is previewed beside the
-  archive's rows). Split panes sit side by side or stacked,
-  and the preview is at the right or the bottom (`layout.rs`): each a choice
-  in More's Layout (`ui.layout`) whose default, Automatic, follows the
-  window's shape, decided in `Shell::render` from the window's size like the
-  sidebar. The toggles' icons show the arrangement they open; Shift+F3
-  splits the other way for that split only. Navigation is per pane: Back, Forward, Up and the
-  breadcrumb trail live in each pane's own row (`address.rs`). The trail and
-  the list's detail columns use the same layout-only technique, a wrapping
-  flex line one row tall, so the segments nearest the current folder stay
-  when a pane is narrow. Clicking beside the trail, or Ctrl+L, edits the path.
+- **Window row and pane row.** The window row (`address::render_window_row`)
+  holds what is about the window: over the sidebar, as wide as it is drawn,
+  the sidebar toggle and More (everything without a button); over the panes
+  the tabs, shown even when there is one, so a second costs no height; then
+  the Split and Preview toggles (in the order of what they open: the middle
+  of the window, then its edge). Everything about one pane is in that
+  pane's own row (`render_address`): Back, Forward, the address (the
+  breadcrumb trail, or the text being edited) ending with the button that
+  keeps the location in the sidebar, then how the pane shows its folder.
+  There is no Up button: the trail's parent segment and Alt+Up do it. The
+  view buttons are the views that show the listing (`ViewRole::Listing`:
+  list, grid, columns); a shape chosen now and then (`ViewRole::Alternate`:
+  the tree) and a lens, a view that gathers data of its own
+  (`ViewRole::Lens`: Usage), have a button only while shown, and the view
+  states its role, never the shell. Beside them the View menu: how that
+  pane shows its folder (every view, sort, direction, hidden files, zoom,
+  and in the grid Fill thumbnails). A pane row has two variants chosen by
+  `AdaptiveRow`: the buttons while the address keeps `FIELD_MIN`, else
+  one button with the current view's icon that opens the View menu; the
+  address has no width of its own when a variant is measured, so a long
+  path never folds the buttons. The View menu hangs from the active pane's
+  row, the pane it acts on. How the window is arranged is More's Layout
+  groups (the timeline, the terminal, where the split and the preview go,
+  and where a file of an archive is previewed beside the archive's rows).
+  Split panes sit side by side or stacked, and the preview is at the right
+  or the bottom (`layout.rs`): each a choice in More's Layout (`ui.layout`)
+  whose default, Automatic, follows the window's shape, decided in
+  `Shell::render` from the window's size like the sidebar. The toggles'
+  icons show the arrangement they open; Shift+F3 splits the other way for
+  that split only. New folder has no button: it is the folder's own menu
+  and Ctrl+Shift+N. The trail and the list's detail columns use the same
+  layout-only technique, a wrapping flex line one row tall, so the segments
+  nearest the current folder stay when a pane is narrow. Clicking beside
+  the trail, or Ctrl+L, edits the path.
 - **Context menu.** An item about the folder itself (New Folder, Refresh, a
   view) says `empty` in its `when`: it belongs to the menu opened on the
   background, which first clears the selection. One that needs a folder

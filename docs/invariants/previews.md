@@ -189,7 +189,7 @@ still to come are in `docs/preview-frame.md`.
   a popup of kind `text`). Shared
   actions take their words from `preview_bar::label`. An item says the
   narrowest of the three variants that still shows it (`keep`).
-- **The menu rule** is the application toolbar's: More holds the buttons the
+- **The menu rule** is every responsive toolbar's: More holds the buttons the
   chosen variant dropped (`PopoverAnchor::popup_for`), a kind's settings that
   never have a button (volume, speed, tracks), and what no kind has a button
   for (open externally, copy the path). Nothing is both a button and a menu

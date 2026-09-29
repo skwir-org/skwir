@@ -189,3 +189,16 @@ lets go. The budget above holds for the default only; with the setting
 off, memory grows with what the tabs list, as ten windows would. Measured
 with it off: a switch between two listed tabs of 2 000 entries is drawn
 0.02 to 0.04 ms after it is asked for.
+
+## Addendum: the tabs move into the window row (2026-09-29)
+
+"The strip shows only with two tabs or more" is withdrawn. The
+application toolbar became the window row (`address::render_window_row`):
+over the sidebar its toggle and More, over the panes the tabs, then the
+Split and Preview toggles; what the toolbar held about one pane (its views
+and View menu) went to that pane's own row. The tabs stand in that row
+whatever their number, so the second tab no longer adds a 36 px strip
+above the panes, and the one tab of a window shows the place it shows.
+The last tab has no × (the command does nothing on it). Everything else
+above holds: a tab is a drop target, is dragged to reorder, closes with a
+middle click, and the wheel over the tabs goes through them.
