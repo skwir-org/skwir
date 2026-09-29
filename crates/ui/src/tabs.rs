@@ -1,4 +1,4 @@
-//! Tabs (ADR-018): the strip in the window row, and the shell following the
+//! Tabs (ADR-018): the strip above the panes, and the shell following the
 //! workspace's tabs.
 //!
 //! The core owns the tabs (`bibli_core::tabs`): which panes each groups,
@@ -14,11 +14,12 @@
 //! finished, for at most `HOLD` (`Shell::present`): the window goes from
 //! one finished frame to the next, with no blank or half-listed one.
 //!
-//! The tabs stand in the window row (`address::render_window_row`), over
-//! the panes, so a second tab costs no height, and hiding the one tab of a
-//! window moves nothing either. That one shows only when asked
-//! (`ui.single_tab`), without a × (the last tab stays); the + that opens
-//! another is always there. A tab is named like the
+//! The strip stands over the panes, as they are what a tab changes, when
+//! there are two tabs or more, or one and it is asked for
+//! (`ui.single_tab`, drawn without a ×: the last tab stays). Without it a
+//! window has no row above its panes' own: New tab is then More's, Ctrl+T's
+//! and the middle button's, and a second tab brings the strip, which moves
+//! the panes down (`STRIP_HEIGHT`). A tab is named like the
 //! place it shows, is a drop target like a sidebar row, is dragged to
 //! reorder, and closes with its ×, a middle click or Ctrl+W.
 
@@ -421,22 +422,34 @@ impl Shell {
     }
 }
 
-/// The tabs, standing on the foot of the window row, and the button that
-/// opens another.
-pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
+/// The strip's height, above the panes when it shows: a row's, so its
+/// edge meets the sidebar header's; the tabs stand on its foot.
+pub const STRIP_HEIGHT: f32 = crate::address::PANE_ROW_HEIGHT;
+
+/// The tab strip, when it shows (see the module comment), and the button
+/// that opens another tab.
+pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     shell.sync_tab_labels();
     let shown = shell.shown_tab;
     let labels = shell.tab_labels.labels.clone();
+    if labels.len() < 2 && !shell.prefs.single_tab {
+        return None;
+    }
+    let theme = cx.global::<Theme>().clone();
     let mut strip = div()
         .id("tab-strip")
-        .flex_1()
+        .flex_none()
+        .h(px(STRIP_HEIGHT))
+        .w_full()
         .min_w_0()
-        .h_full()
         .overflow_hidden()
         .flex()
         .items_end()
         .gap(px(2.))
         .px(px(6.))
+        .bg(theme.surface)
+        .border_b_1()
+        .border_color(theme.border)
         // A double click beside the tabs opens one, as in a browser.
         .on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
             if event.click_count() == 2 {
@@ -469,12 +482,6 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
             }),
         );
     let count = labels.len();
-    // A lone tab only when asked: the row keeps its tools either way.
-    let labels = if count > 1 || shell.prefs.single_tab {
-        labels
-    } else {
-        Vec::new()
-    };
     for (index, label) in labels.into_iter().enumerate() {
         strip = strip.child(tab(
             shell,
@@ -488,7 +495,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
     let new = crate::toolbar::Button::new("tab-strip-new", "plus", "New tab", "tab.new")
         .render(shell, cx);
     strip = strip.child(div().flex_none().h_full().flex().items_center().child(new));
-    strip.into_any_element()
+    Some(strip.into_any_element())
 }
 
 fn tab(

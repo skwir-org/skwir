@@ -1,5 +1,6 @@
-//! The window row (tabs and the window's own tools) and each pane's row
-//! (navigation, the address, how the pane shows its folder).
+//! Each pane's row (navigation, the address, how the pane shows its
+//! folder), the sidebar's header, and where the window's own tools go
+//! among them (see `corner`).
 use crate::{
     elements::{adaptive::AdaptiveRow, popover::PopoverAnchor},
     keymap,
@@ -12,12 +13,10 @@ use bibli_core::registry::{ViewRole, ViewSpec};
 use gpui::{AnyElement, Context, Window, div, prelude::*, px};
 use std::path::PathBuf;
 
-/// The window row's height: tabs 30 px tall standing on its foot.
-pub const WINDOW_ROW_HEIGHT: f32 = 38.;
 /// What the address field keeps before the view buttons fold into one.
 const FIELD_MIN: f32 = 180.;
-/// A pane row's height.
-const PANE_ROW_HEIGHT: f32 = 42.;
+/// A pane row's height, and the sidebar header's.
+pub const PANE_ROW_HEIGHT: f32 = 42.;
 
 impl Shell {
     /// `ui.toolbar_menu { kind }`: open that menu, or close the open one.
@@ -436,84 +435,87 @@ fn more_panel(
     panel.into_any_element()
 }
 
-/// The window row, what is about the window: over the sidebar (`sidebar`
-/// wide, 0 when it is not drawn) its toggle and More, over the panes the
-/// tabs, then the Split and Preview toggles in the order of what they open
-/// (the middle of the window, then its edge). Everything about how a pane
-/// shows its folder is in that pane's own row.
-pub fn render_window_row(shell: &mut Shell, sidebar: f32, cx: &mut Context<Shell>) -> AnyElement {
-    let theme = cx.global::<Theme>().clone();
-    let anchor = PopoverAnchor::default();
+/// The window's own tools have no row of their own: each area owns its
+/// top. The sidebar's header holds its toggle and More; a sidebar not
+/// drawn leaves them at the start of the first pane's row
+/// (`Shell::corner_pane`). Split and Preview end the row of the pane at
+/// the window's right, or of the top one when the split is stacked
+/// (`Shell::toggles_pane`), in the order of what they open: the middle of
+/// the window, then its edge. Tabs, when there are two or more (or one
+/// asked for, `ui.single_tab`), are a strip above the panes (`tabs.rs`).
+/// So a window of one tab has one row above its lists, split or not.
+///
+/// The sidebar toggle and More, as the sidebar's header or a pane row
+/// starts with them. More hangs from `Shell::more_anchor`.
+fn corner(shell: &Shell, cx: &mut Context<Shell>) -> [AnyElement; 2] {
     let open = shell.toolbar_menu.as_ref().map(|menu| menu.kind);
+    [
+        Button::new("sidebar-toggle", "sidebar", "Sidebar", "ui.toggle_sidebar")
+            .active(!shell.sidebar_hidden)
+            .render(shell, cx)
+            .into_any_element(),
+        Button::new("tools-more", "more", "More", "ui.toolbar_menu")
+            .args(serde_json::json!({"kind": MORE}))
+            .anchor_if(&shell.more_anchor, true)
+            .active(open == Some(MORE))
+            .render(shell, cx)
+            .into_any_element(),
+    ]
+}
+
+/// Split and Preview, at the end of the row that has them.
+fn panel_toggles(shell: &Shell, cx: &mut Context<Shell>) -> [AnyElement; 2] {
     let (split_icon, split_tip) = shell.layout.split_button();
-    let side = div()
-        .flex_none()
-        .h_full()
-        .flex()
-        .items_center()
-        .gap(px(2.))
-        .px(px(6.))
-        // Over the sidebar, its edge continued; a sidebar put away leaves
-        // the two buttons at the window's corner.
-        .when(sidebar > 0., |d| {
-            d.w(px(sidebar)).border_r_1().border_color(theme.border)
-        })
-        .child(
-            Button::new("sidebar-toggle", "sidebar", "Sidebar", "ui.toggle_sidebar")
-                .active(!shell.sidebar_hidden)
-                .render(shell, cx),
+    [
+        Button::new("split-toggle", split_icon, split_tip, "ui.split")
+            .active(shell.is_split())
+            .render(shell, cx)
+            .into_any_element(),
+        Button::new(
+            "preview-toggle",
+            shell.layout.preview_icon(),
+            "Preview panel",
+            "ui.toggle_preview",
         )
-        .when(sidebar > 0., |d| d.child(div().flex_1()))
-        .child(
-            Button::new("tools-more", "more", "More", "ui.toolbar_menu")
-                .args(serde_json::json!({"kind": MORE}))
-                .anchor_if(&anchor, true)
-                .active(open == Some(MORE))
-                .render(shell, cx),
-        );
-    let tabs = crate::tabs::render(shell, cx);
-    let panels = div()
-        .flex_none()
-        .h_full()
-        .flex()
-        .items_center()
-        .gap(px(2.))
-        .px(px(6.))
-        .child(
-            Button::new("split-toggle", split_icon, split_tip, "ui.split")
-                .active(shell.is_split())
-                .render(shell, cx),
-        )
-        .child(
-            Button::new(
-                "preview-toggle",
-                shell.layout.preview_icon(),
-                "Preview panel",
-                "ui.toggle_preview",
-            )
-            .active(shell.preview.open)
-            .render(shell, cx),
-        );
-    let mut row = div()
-        .id("window-row")
+        .active(shell.preview.open)
+        .render(shell, cx)
+        .into_any_element(),
+    ]
+}
+
+/// The sidebar's header: its toggle, and More. As tall as a pane's row,
+/// so their edges meet.
+pub fn sidebar_header(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
+    let theme = cx.global::<Theme>().clone();
+    let [toggle, more] = corner(shell, cx);
+    div()
+        .id("sidebar-header")
         .tab_group()
-        .relative()
         .flex_none()
-        .w_full()
-        .h(px(WINDOW_ROW_HEIGHT))
+        .h(px(PANE_ROW_HEIGHT))
         .flex()
+        .items_center()
+        .gap(px(2.))
+        .px(px(6.))
         .bg(theme.surface)
         .border_b_1()
+        .border_r_1()
         .border_color(theme.border)
-        .child(side)
-        .child(tabs)
-        .child(panels);
-    if let Some(popup) = &shell.toolbar_menu
-        && popup.kind == MORE
-    {
-        row = row.child(anchor.popup(more_panel(shell, popup, &theme, cx)));
-    }
-    row.into_any_element()
+        .child(toggle)
+        .child(div().flex_1())
+        .child(more)
+        .into_any_element()
+}
+
+/// The More menu, under its button wherever it is this frame.
+pub fn more_popup(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
+    let popup = shell.toolbar_menu.as_ref().filter(|p| p.kind == MORE)?;
+    let theme = cx.global::<Theme>().clone();
+    Some(
+        shell
+            .more_anchor
+            .popup(more_panel(shell, popup, &theme, cx)),
+    )
 }
 
 /// What the address field shows.
@@ -540,6 +542,16 @@ struct PaneRow {
     menu_open: bool,
     /// The menu of places open from this row, if one is.
     nav: Option<crate::nav_menu::NavWhat>,
+    /// The window's tools this row holds (see `corner`).
+    ends: Ends,
+}
+
+/// The window's tools a pane's row holds: the sidebar toggle and More at
+/// its start, Split and Preview at its end.
+#[derive(Clone, Copy)]
+struct Ends {
+    corner: bool,
+    toggles: bool,
 }
 
 /// A pane's row: Back and Forward, the address (a trail of folders, or the
@@ -589,6 +601,10 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
                 .as_ref()
                 .filter(|menu| menu.pane == shell.pane)
                 .map(|menu| menu.what.clone()),
+            ends: Ends {
+                corner: shell.corner_pane() == Some(shell.pane),
+                toggles: shell.toggles_pane() == Some(shell.pane),
+            },
         }
     };
     let anchor = PopoverAnchor::default();
@@ -599,9 +615,9 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         .id(("pane-address", shell.pane.0 as usize))
         .tab_group()
         .relative()
+        .px(px(6.))
         .w_full()
         .flex_none()
-        .px(px(6.))
         .border_b_1()
         .border_color(theme.border)
         .bg(theme.surface)
@@ -849,11 +865,16 @@ fn pane_row(
             );
         }
     }
-    let mut line = div()
-        .size_full()
-        .flex()
-        .items_center()
-        .gap(px(3.))
+    let theme = cx.global::<Theme>().clone();
+    let mut line = div().size_full().flex().items_center().gap(px(3.));
+    if row.ends.corner {
+        let [toggle, more] = corner(shell, cx);
+        line = line
+            .child(toggle)
+            .child(more)
+            .child(toolbar::separator(&theme));
+    }
+    line = line
         .child(history_button(shell, row, false, nav_anchor, cx))
         .child(history_button(shell, row, true, nav_anchor, cx))
         .child(field)
@@ -879,6 +900,13 @@ fn pane_row(
                     .render(shell, cx),
             );
         }
+    }
+    if row.ends.toggles {
+        let [split, preview] = panel_toggles(shell, cx);
+        line = line
+            .child(toolbar::separator(&theme))
+            .child(split)
+            .child(preview);
     }
     line.into_any_element()
 }

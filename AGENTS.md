@@ -97,16 +97,22 @@ current source before assuming a planned crate, command, or API exists.
   `when`, so it does nothing instead of reporting "nothing selected". The only
   animation allowed is a bounded entrance (under 200 ms) that ends by itself;
   the player's play/pause flash (`media::FLASH_MS`) is the one longer one.
-- **Window row and pane row.** The window row (`address::render_window_row`)
-  holds what is about the window: over the sidebar, as wide as it is drawn,
-  the sidebar toggle and More (everything without a button); over the panes
-  the tabs, so a second costs no height (a lone tab shows only with
-  `ui.single_tab`; hiding it moves nothing, the + stays); then
-  the Split and Preview toggles (in the order of what they open: the middle
-  of the window, then its edge). Everything about one pane is in that
-  pane's own row (`render_address`): Back, Forward, the address (the
-  breadcrumb trail, or the text being edited) ending with the button that
-  keeps the location in the sidebar, then how the pane shows its folder.
+- **Each area owns its top.** There is no window row: a window of one
+  tab has one row of bars above its lists, split or not. The sidebar's
+  header (`address::sidebar_header`, a row's height) holds its toggle and
+  More (everything without a button); a sidebar not drawn leaves them at
+  the start of the first pane's row (`Shell::corner_pane`). Split and
+  Preview end the row of the pane at the window's right, or of the top
+  one when the split is stacked (`Shell::toggles_pane`), in the order of
+  what they open: the middle of the window, then its edge. Tabs are a
+  strip above the panes, what a tab changes, when there are two or more,
+  or one and `ui.single_tab` asks for it (`tabs.rs`); a second tab
+  brings it and moves the panes down one row. More hangs from
+  `Shell::more_anchor`, wherever its button is this frame.
+  Everything about one pane is in that pane's own row (`render_address`):
+  Back, Forward, the address (the breadcrumb trail, or the text being
+  edited) ending with the button that keeps the location in the sidebar,
+  then how the pane shows its folder.
   There is no Up button: the trail's parent segment and Alt+Up do it.
   Back and Forward list the history that way on a right-click
   (`ui.history_menu`, `back`/`forward` with `steps`); each chevron of the

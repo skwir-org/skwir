@@ -439,15 +439,22 @@ pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElem
         .on_drag(SidebarResize, |_, _, _, cx| {
             cx.new(|_| crate::preview::NoDragView)
         });
+    // Its header holds the window's toggle and More, level with the panes'
+    // rows; the places scroll below it.
+    let header = crate::address::sidebar_header(shell, cx);
     div()
         .relative()
         .w(px(width))
         .h_full()
         .flex_none()
-        .child(column)
-        .child(crate::elements::scrollbar::vertical(
-            "sidebar-scrollbar",
-            crate::elements::scrollbar::Scrolls::Offset(shell.sidebar_scroll.clone()),
+        .flex()
+        .flex_col()
+        .child(header)
+        .child(div().relative().flex_1().min_h_0().child(column).child(
+            crate::elements::scrollbar::vertical(
+                "sidebar-scrollbar",
+                crate::elements::scrollbar::Scrolls::Offset(shell.sidebar_scroll.clone()),
+            ),
         ))
         .child(edge)
         .into_any_element()

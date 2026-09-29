@@ -234,6 +234,12 @@ pub struct Shell {
     /// Counts the folder menus asked for: an answer for an older one is
     /// dropped.
     pub nav_asked: u64,
+    /// How wide the sidebar is drawn this frame, from the window's size
+    /// (`sidebar_drawn_width`; 0 when it is not): drawn, its header holds
+    /// the window's toggle and More, else the first pane's row does.
+    pub(crate) sidebar_drawn: f32,
+    /// Where More hangs from this frame, wherever its button is.
+    pub(crate) more_anchor: crate::elements::popover::PopoverAnchor,
     /// Counts the presses of a mouse button in the window, and which popup
     /// the last press closed from outside (`note_dismissed`).
     pub(crate) presses: u64,
@@ -474,6 +480,8 @@ impl Shell {
             nav_asked: 0,
             presses: 0,
             dismissed: None,
+            sidebar_drawn: 0.,
+            more_anchor: crate::elements::popover::PopoverAnchor::default(),
             search_menu: None,
             settings: None,
             settings_subscription: None,
@@ -667,6 +675,26 @@ impl Shell {
             .find(|p| p.id == self.pane)
             .or_else(|| self.panes.first())
             .expect("at least one pane")
+    }
+
+    /// The pane whose row starts with the sidebar toggle and More: the
+    /// first (left, or top), while the sidebar is not drawn; the sidebar's
+    /// header has them otherwise (`address::corner`).
+    pub fn corner_pane(&self) -> Option<PaneId> {
+        (self.sidebar_drawn <= 0.)
+            .then(|| self.panes.first().map(|p| p.id))
+            .flatten()
+    }
+
+    /// The pane whose row ends with Split and Preview: the one at the
+    /// window's right, or the top one when the split is stacked.
+    pub fn toggles_pane(&self) -> Option<PaneId> {
+        let pane = if self.layout.stacked() {
+            self.panes.first()
+        } else {
+            self.panes.last()
+        };
+        pane.map(|p| p.id)
     }
 
     /// The UI of pane `id`, wherever it is: drawn, held, or dormant.
@@ -2140,9 +2168,12 @@ impl Render for Shell {
         // Below it the panes keep the room: places stay reachable through the
         // address bar, the palette and Jump.
         let sidebar_width = self.sidebar_drawn_width(window);
-        // The window row's corner stands over the sidebar, as wide.
-        let toolbar = address::render_window_row(self, sidebar_width, cx);
+        // Where the window's own tools go this frame (`address::corner`):
+        // the sidebar's header, or the first pane's row.
+        self.sidebar_drawn = sidebar_width;
+        self.more_anchor = crate::elements::popover::PopoverAnchor::default();
         let side = (sidebar_width > 0.).then(|| sidebar::render(self, sidebar_width, cx));
+        let strip = crate::tabs::render(self, cx);
         let pane_ids: Vec<PaneId> = self.panes.iter().map(|p| p.id).collect();
         let split = pane_ids.len() == 2;
         let mut columns = Vec::new();
@@ -2174,6 +2205,7 @@ impl Render for Shell {
         let sequence = crate::sequence::render(self, cx);
         let shortcuts = crate::shortcuts::render(self, cx);
         let overlays = [
+            address::more_popup(self, cx),
             menu::render(self, cx),
             prompts::render_prompt(self, cx),
             prompts::render_confirm(self, cx),
@@ -2213,7 +2245,6 @@ impl Render for Shell {
             .text_sm()
             .bg(theme.bg)
             .text_color(theme.text)
-            .child(toolbar)
             .child(
                 div()
                     .flex()
@@ -2232,8 +2263,9 @@ impl Render for Shell {
                             .min_w_0()
                             .min_h_0()
                             .when(bottom, gpui::Styled::flex_col)
-                            // The panes, and the terminal under them, whose
-                            // top edge is dragged within this column.
+                            // The tabs over the panes they arrange, and the
+                            // terminal under them, whose top edge is dragged
+                            // within this column.
                             .child(
                                 div()
                                     .flex()
@@ -2242,6 +2274,7 @@ impl Render for Shell {
                                     .min_w_0()
                                     .min_h_0()
                                     .on_drag_move(cx.listener(Self::on_terminal_height_drag))
+                                    .children(strip)
                                     .child(
                                         div()
                                             .flex()

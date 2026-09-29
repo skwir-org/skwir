@@ -69,7 +69,14 @@ folders inside. The dropdown hangs from the field's right end so the
 filtered names stay in sight. Checked in a window on an isolated display
 (pills, Filter, a facet chosen from it, the scope menu, a pill removed,
 Ctrl+F, Down and Enter, a path, `>`, filtering, the pill, Escape, no
-match) and idle CPU back to 0%. Next: a selection's action bar built
+match) and idle CPU back to 0%. Then the application toolbar went: each
+area owns its top (the sidebar's header holds its toggle and More, Split
+and Preview end the last pane's row, a sidebar not drawn leaves its
+buttons in the first pane's row), and the tab strip above the panes
+shows with two tabs or more, or one with "Show a lone tab"
+(`ui.single_tab`, off by default). A window of one tab has one row of
+bars above its lists, split side by side or stacked: 72 px above a
+folder's first row. Next: a selection's action bar built
 from the context menu's items (C).
 
 Busy volumes (2026-09-29): a volume being unlocked, mounted or unmounted

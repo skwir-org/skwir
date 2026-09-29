@@ -190,19 +190,31 @@ off, memory grows with what the tabs list, as ten windows would. Measured
 with it off: a switch between two listed tabs of 2 000 entries is drawn
 0.02 to 0.04 ms after it is asked for.
 
-## Addendum: the tabs move into the window row (2026-09-29)
+## Addendum: no row of the window's own (2026-09-29)
 
-"The strip shows only with two tabs or more" is withdrawn. The
-application toolbar became the window row (`address::render_window_row`):
-over the sidebar its toggle and More, over the panes the tabs, then the
-Split and Preview toggles; what the toolbar held about one pane (its views
-and View menu) went to that pane's own row. The tabs stand in that row
-whatever their number, so the second tab no longer adds a 36 px strip
-above the panes, and the one tab of a window shows the place it shows.
-The last tab has no × (the command does nothing on it), and since
-2026-09-29 it is drawn only with "Show a lone tab" (`ui.single_tab`,
-Appearance, off by default): the row keeps its height and its tools
-either way, so the choice moves nothing, and the + stays to open a
-second tab. Everything else
-above holds: a tab is a drop target, is dragged to reorder, closes with a
-middle click, and the wheel over the tabs goes through them.
+The application toolbar, a row across the window, is gone. Each area
+owns its top: the sidebar's header holds the sidebar toggle and More,
+each pane's row holds what is about that pane (its views and View menu
+included), and Split and Preview end the row of the pane at the window's
+right (the top one when stacked). A sidebar not drawn leaves its toggle
+and More at the start of the first pane's row. A window of one tab thus
+has one row of bars above its lists, split or not.
+
+The strip stays above the panes, as this ADR placed it, as tall as a
+row so its edge meets the sidebar header's. It shows with two tabs or
+more, or with one when "Show a lone tab" asks for it (`ui.single_tab`,
+Appearance, off by default), the last tab then without a × (the command
+does nothing on it). Without the strip, New tab is More's, Ctrl+T's and
+the middle button's. The price is a move: a second tab brings the strip
+and the panes go down one row.
+
+On the way here the tabs stood for a day in a row across the window,
+over the panes, beside the window's tools, which cost no height for a
+second tab; drawing a lone pane's row in that row, when the strip was
+not wanted, could not hold a split: two stacked panes have no shared
+band, and side by side the row would have had to mirror every dragged
+edge below it. Each area owning its top has neither problem.
+
+Everything else above holds: a tab is a drop target, is dragged to
+reorder, closes with a middle click, and the wheel over the tabs goes
+through them.
