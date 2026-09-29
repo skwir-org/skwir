@@ -26,7 +26,6 @@ pub enum PromptKind {
         origin: Option<bibli_core::EntryId>,
         backward: bool,
     },
-    Search,
     Tags,
     InspectJump {
         pane: bibli_core::workspace::PaneId,
@@ -81,9 +80,6 @@ impl Shell {
             PromptKind::Mkdir => "Folder name",
             PromptKind::NewFile => "File name, or a folder name ending in /",
             PromptKind::Find { .. } => "Part of a name (capitals: exact case)",
-            PromptKind::Search => {
-                "kind:document modified:this-week *.pdf size>10M  (in: picks the root)"
-            }
             PromptKind::Tags => "tag1, tag2 (empty clears)",
             PromptKind::Ask => "",
         };
@@ -270,18 +266,6 @@ impl Shell {
             },
             PromptKind::Find { backward, .. } => {
                 self.last_find = (!text.is_empty()).then_some((text, backward));
-            }
-            // Empty, everything below the folder: the chips then narrow it.
-            PromptKind::Search => {
-                self.last_search.clone_from(&text);
-                self.ui_mut().last_search.clone_from(&text);
-                let pane = self.pane;
-                self.run(
-                    "query.search",
-                    serde_json::json!({ "expr": text, "pane": pane }),
-                    window,
-                    cx,
-                );
             }
             PromptKind::Tags => {
                 let tags: Vec<String> = text

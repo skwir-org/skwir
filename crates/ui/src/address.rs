@@ -591,6 +591,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
     let anchor = PopoverAnchor::default();
     let nav_anchor = PopoverAnchor::default();
     let chip_anchor = PopoverAnchor::default();
+    let omni_anchor = PopoverAnchor::default();
     let mut bar = div()
         .id(("pane-address", shell.pane.0 as usize))
         .tab_group()
@@ -604,7 +605,10 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         .child(AdaptiveRow {
             variants: [true, false]
                 .into_iter()
-                .map(|wide| pane_row(shell, &row, wide, [&anchor, &nav_anchor, &chip_anchor], cx))
+                .map(|wide| {
+                    let anchors = [&anchor, &nav_anchor, &chip_anchor, &omni_anchor];
+                    pane_row(shell, &row, wide, anchors, cx)
+                })
                 .collect(),
             height: PANE_ROW_HEIGHT - 1.,
             chosen: None,
@@ -620,6 +624,12 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
             }
         }
         bar = bar.child(anchor.popup(panel));
+    }
+    // What the text typed will do, under the field typed in.
+    if matches!(row.address, Address::Text)
+        && let Some(dropdown) = crate::omnibox::dropdown(shell, &omni_anchor, cx)
+    {
+        bar = bar.child(dropdown);
     }
     if let Some(popup) = crate::search_bar::popup(shell, &chip_anchor, cx) {
         bar = bar.child(popup);
@@ -670,12 +680,13 @@ fn history_button(
 }
 
 /// One variant of a pane's row (see `render_address`). `anchors` are the
-/// View menu's, the menu of places' and the search's popover's.
+/// View menu's, the menu of places', the search's popover's and the
+/// address field's dropdown.
 fn pane_row(
     shell: &Shell,
     row: &PaneRow,
     wide: bool,
-    [anchor, nav_anchor, chip_anchor]: [&PopoverAnchor; 3],
+    [anchor, nav_anchor, chip_anchor, omni_anchor]: [&PopoverAnchor; 4],
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
@@ -709,12 +720,24 @@ fn pane_row(
                 cx,
             ))
             .into_any_element(),
+        // While a search is typed, where it looks stands before the text.
         Address::Text => div()
             .flex_1()
             .w(px(0.))
             .min_w_0()
-            .px_2()
-            .child(shell.ui().address.clone())
+            .h_full()
+            .relative()
+            .flex()
+            .items_center()
+            .children(crate::omnibox::scope_pill(shell, cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .px_2()
+                    .child(shell.ui().address.clone()),
+            )
+            .child(omni_anchor.marker())
             .into_any_element(),
     };
     let mut field = div()

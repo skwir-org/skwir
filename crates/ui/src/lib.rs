@@ -46,6 +46,7 @@ pub mod menu;
 pub mod modal;
 mod nav_menu;
 mod note_popover;
+mod omnibox;
 mod outline;
 pub mod palette;
 pub mod placeholder;

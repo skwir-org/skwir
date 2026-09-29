@@ -372,11 +372,23 @@ current source before assuming a planned crate, command, or API exists.
   whoever edits it); the UI knows no query syntax and reads the chips once
   per location, never per frame. The text stays the one truth: a part no
   facet holds is a pill of its own, and a click beside the pills (or
-  Ctrl+L) edits the whole. A choice navigates, so Back undoes it. An
+  Ctrl+L) edits its text, where it looks staying a pill. A choice navigates, so Back undoes it. An
   affordance that goes with what it acts on (a pill's ×) takes no focus;
   the keyboard reaches the same through the pill's menu. A location is
   named in words by its provider (`LocationProvider::title`: a search as
   what it looks for and where), for tabs and menus.
+- **The address field is where one types** (`omnibox.rs`): Ctrl+F
+  (`ui.search`) starts a search with where it looks as a pill, Ctrl+L
+  edits the path; a pane showing a search edits that search either way.
+  Once the text is edited, a dropdown says what Enter does and offers the
+  rest: a path or a scheme a provider opens goes there; words search where
+  the pill says (Enter), the home folder (Alt+Enter), files containing
+  them (`query.refine`, facet `content`), or go to a place Jump knows;
+  `>` hands the rest to the palette. The keyboard never leaves the field
+  (Up and Down are bound in its context); a row runs on the press with
+  `prevent_default`, so nothing under it takes the focus. The search is
+  `query.search` with the text as `expr` and the pill as `root`: the UI
+  still knows no query syntax.
 - **Popups own the keyboard.** A menu or popover takes focus when it opens
   and returns it when it closes, with its own key context (see `menu.rs`):
   otherwise keys act on a selection hidden behind it. Focus never

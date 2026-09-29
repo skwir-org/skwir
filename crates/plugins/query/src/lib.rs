@@ -185,16 +185,21 @@ pub fn suggested_name(expr: &str) -> String {
     if !query.root_given {
         return what;
     }
+    format!("{what} in {}", place_name(&query.root))
+}
+
+/// A search's root as its name and its chip say it: Home for the home
+/// folder, else the folder's name.
+pub fn place_name(root: &std::path::Path) -> String {
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-    let place = if home.as_deref() == Some(query.root.as_path()) {
+    if home.as_deref() == Some(root) {
         "Home".to_owned()
     } else {
-        query.root.file_name().map_or_else(
-            || query.root.display().to_string(),
+        root.file_name().map_or_else(
+            || root.display().to_string(),
             |name| name.to_string_lossy().into_owned(),
         )
-    };
-    format!("{what} in {place}")
+    }
 }
 
 /// The search a pane shows, or for a folder, an empty one rooted there

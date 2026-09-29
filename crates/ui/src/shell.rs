@@ -60,6 +60,8 @@ pub struct PaneUi {
     pub loading: crate::loading::State,
     /// What this pane last searched for, for its "Nothing found".
     pub last_search: String,
+    /// The address field while it is typed in (`omnibox.rs`).
+    pub omni: Option<crate::omnibox::Omni>,
     /// The chips of the search it shows (`search_bar`).
     pub chips: crate::search_bar::Chips,
     /// The placeholder's button, kept so Tab can reach it.
@@ -265,7 +267,6 @@ pub struct Shell {
     /// The encrypted volume the passphrase prompt is for.
     pub unlock_device: Option<String>,
     pub nudges: crate::shortcuts::Nudges,
-    pub last_search: String,
     /// What `/` looked for last, and whether backward: `n` and `N` look
     /// for it again.
     pub last_find: Option<(String, bool)>,
@@ -487,7 +488,6 @@ impl Shell {
             marquee: None,
             unlock_device: None,
             nudges: crate::shortcuts::Nudges::default(),
-            last_search: String::new(),
             last_find: None,
             sequence: None,
             shelf_count: 0,
@@ -599,28 +599,20 @@ impl Shell {
         let sub = cx.subscribe_in(
             &address,
             window,
-            move |this, input, ev: &InputEvent, window, cx| match ev {
+            move |this, _, ev: &InputEvent, window, cx| match ev {
+                // What the field does is the omnibox's (`omnibox.rs`).
                 InputEvent::Submit => {
-                    let text = input.read(cx).text().trim().to_owned();
                     this.activate_pane(id, cx);
-                    window.focus(&this.ui().focus);
-                    if !text.is_empty() {
-                        this.run(
-                            "navigate",
-                            serde_json::json!({ "location": text }),
-                            window,
-                            cx,
-                        );
-                    }
+                    this.omnibox_submit(false, window, cx);
                 }
                 InputEvent::Cancel => {
                     this.activate_pane(id, cx);
-                    let shown = this.ui().address_shown.clone();
-                    input.update(cx, |i, cx| i.set_text(shown, cx));
-                    window.focus(&this.ui().focus);
-                    cx.notify();
+                    this.omnibox_cancel(window, cx);
                 }
-                InputEvent::Changed => {}
+                InputEvent::Changed => {
+                    this.activate_pane(id, cx);
+                    this.omnibox_changed(window, cx);
+                }
             },
         );
         // Read the revision before the descriptors: a registration landing
@@ -646,6 +638,7 @@ impl Shell {
             usage: UsageState::default(),
             loading: crate::loading::State::default(),
             last_search: String::new(),
+            omni: None,
             chips: crate::search_bar::Chips::default(),
             placeholder_focus: cx.focus_handle(),
             returning: true,
@@ -668,6 +661,15 @@ impl Shell {
             .find(|p| p.id == self.pane)
             .or_else(|| self.panes.first())
             .expect("at least one pane")
+    }
+
+    /// The UI of pane `id`, wherever it is: drawn, held, or dormant.
+    pub fn pane_ui_mut(&mut self, id: PaneId) -> Option<&mut PaneUi> {
+        self.panes
+            .iter_mut()
+            .chain(self.presented.iter_mut().flatten())
+            .find(|p| p.id == id)
+            .or_else(|| self.hidden.get_mut(&id))
     }
 
     pub fn ui_mut(&mut self) -> &mut PaneUi {
@@ -1251,13 +1253,7 @@ impl Shell {
         let arg = |k: &str| args.get(k).and_then(|v| v.as_str()).map(str::to_owned);
         match name {
             "open" => self.open_selection(window, cx),
-            "focus_address" => {
-                let address = self.ui().address.clone();
-                address.update(cx, |i, cx| {
-                    i.select_all_now(cx);
-                    i.focus(window);
-                });
-            }
+            "focus_address" => self.omnibox_begin(false, None, window, cx),
             "focus_pane" => window.focus(&self.ui().focus),
             "settings" => self.open_settings(args, window, cx),
             "toolbar_next" => window.focus_next(),
@@ -1361,24 +1357,20 @@ impl Shell {
             "mkdir_prompt" => {
                 self.open_prompt(PromptKind::Mkdir, "New folder", "", None, window, cx);
             }
-            "search" => {
-                // A text to start from (`content:`) is typed after, not
-                // over: the cursor waits at its end.
-                let (text, select) = match arg("text") {
-                    Some(text) => {
-                        let end = text.len();
-                        (text, Some(end..end))
-                    }
-                    None => (self.last_search.clone(), None),
-                };
-                self.open_prompt(
-                    PromptKind::Search,
-                    "Search (e.g. kind:image modified:this-week)",
-                    &text,
-                    select,
-                    window,
-                    cx,
-                );
+            // The address field, in search: where it looks as a pill, and a
+            // text to start from (`content:`) typed after.
+            "search" => self.omnibox_begin(true, arg("text"), window, cx),
+            "omnibox_move" => {
+                let delta = args
+                    .get("delta")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(1);
+                self.omnibox_move(isize::try_from(delta).unwrap_or(1), cx);
+            }
+            "omnibox_submit" => {
+                let everywhere =
+                    args.get("everywhere").and_then(serde_json::Value::as_bool) == Some(true);
+                self.omnibox_submit(everywhere, window, cx);
             }
             "tags_prompt" => {
                 let current = self.selection_tags().join(", ");

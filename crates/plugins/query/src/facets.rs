@@ -508,10 +508,7 @@ pub fn describe(expr: &str, tags_known: bool) -> Result<Description, String> {
         clear: content.map(|_| refine_invocation("content", None)),
     });
 
-    let folder = q.root.file_name().map_or_else(
-        || q.root.display().to_string(),
-        |name| name.to_string_lossy().into_owned(),
-    );
+    let folder = crate::place_name(&q.root);
     let mut where_value = Vec::new();
     if q.depth == Some(1) {
         where_value.push("this folder only");
@@ -559,11 +556,11 @@ pub fn describe(expr: &str, tags_known: bool) -> Result<Description, String> {
             clear: Some(refine_invocation("advanced", Some(&index))),
         });
     }
-    let text = Query {
+    // Written as `refine` writes a query back: names as typed.
+    let text = p.write(&Query {
         root_given: false,
         ..q.clone()
-    }
-    .to_string();
+    });
     Ok(Description {
         chips,
         root: q.root,

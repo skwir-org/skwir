@@ -53,9 +53,16 @@ Forward lists the history that way (`back`/`forward` take `steps`), and
 the trail's chevrons list the folders inside the segment before them (a
 last one after the folder shown), read on a worker; a second click on a
 menu's button now closes it, the View and More menus included, which
-used to open again. This is step A of the toolbar overhaul;
-next, search in the address field with its chips as pills (B), then a
-selection's action bar built from the context menu's items (C).
+used to open again. This is step A of the toolbar overhaul. Step B: a
+search is drawn in its address field as pills (where it looks, each facet
+set, "+ Filter" for the rest) instead of a row of chips, and the field is
+where one types: Ctrl+F starts a search there with where it looks as a
+pill, a dropdown offers searching here or at home, files containing the
+words, Jump's places, a path to go to, and `>` for the palette; the search
+prompt is gone. A search's tab and history rows read what it looks for
+and where (`LocationProvider::title`). Still to come in B: typing
+filters the folder shown as you type. Then a selection's action bar
+built from the context menu's items (C).
 
 Busy volumes (2026-09-29): a volume being unlocked, mounted or unmounted
 says so on its sidebar row (`Place::busy`: a still hourglass and

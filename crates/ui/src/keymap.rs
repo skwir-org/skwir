@@ -171,6 +171,15 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
 
 /// Builtin bindings that carry arguments (`keys, command, args json, when`).
 const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
+    // The address field's dropdown: the keyboard stays in the field.
+    ("up", "ui.omnibox_move", r#"{"delta":-1}"#, Some("address")),
+    ("down", "ui.omnibox_move", r#"{"delta":1}"#, Some("address")),
+    (
+        "alt-enter",
+        "ui.omnibox_submit",
+        r#"{"everywhere":true}"#,
+        Some("address"),
+    ),
     // Shift+F3 splits the other way from F3, for this split only.
     ("shift-f3", "ui.split", r#"{"axis":"other"}"#, None),
     (
