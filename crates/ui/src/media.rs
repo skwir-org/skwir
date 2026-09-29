@@ -948,7 +948,7 @@ pub(crate) fn scrub(knob: &mut Option<f64>, phase: Option<&str>, seconds: f64) -
 }
 
 /// What a track is called: its title, else its file's name without the
-/// extension. The panel, the dock, the status bar and the desktop agree.
+/// extension. The panel, the dock, the footer's strip and the desktop agree.
 pub(crate) fn track_title(state: &Playback, path: &std::path::Path) -> String {
     if state.title.is_empty() {
         path.file_stem()

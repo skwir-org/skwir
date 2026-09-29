@@ -80,7 +80,12 @@ bars above its lists, split side by side or stacked: 72 px above a
 folder's first row. With nothing selected, the preview panel shows where
 the pane is: the folder, as a selected one, with a Volume group in
 Details (device, filesystem, free space), or a search's or the shelf's
-name and count. Next: a selection's action bar built
+name and count. The status bar went the way of the toolbar: each pane has
+its own footer (what it lists, what is selected there, its size), the
+window's state (Undo, what waits for a paste, the shelf, proposals, the
+player's strip) ends the last pane's footer, and the sidebar and the
+preview panel, which need none, run to the window's foot. Next: a
+selection's action bar built
 from the context menu's items (C).
 
 Busy volumes (2026-09-29): a volume being unlocked, mounted or unmounted

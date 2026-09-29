@@ -21,7 +21,7 @@
 //! The height is a remembered preference, not a measured size, so the form
 //! is chosen here in render, as the panel's width is. The dock steps aside
 //! while the panel shows the pinned session itself, and gives way to the
-//! status bar's strip while the panel is closed.
+//! last pane's footer's strip while the panel is closed.
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -58,14 +58,14 @@ pub struct DockHandle;
 
 impl Shell {
     /// The tallest the dock may be: the panel it stands in keeps the rest.
-    /// At the right edge the panel is as tall as the window; at the bottom,
-    /// as tall as it is drawn.
+    /// At the right edge the panel is as tall as the window, to its foot;
+    /// at the bottom, as tall as it is drawn.
     pub fn dock_height_limit(&self, window: &Window) -> f32 {
         let panel = if self.layout.bottom() {
             self.preview_panel_height()
                 .min(self.preview_height_limit(window))
         } else {
-            f32::from(window.viewport_size().height) - crate::status::HEIGHT
+            f32::from(window.viewport_size().height)
         };
         (panel - PANEL_KEEP).max(COMPACT)
     }
@@ -77,7 +77,8 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let bottom = f32::from(window.viewport_size().height) - crate::status::HEIGHT;
+        // The panel reaches the window's foot, at the right or the bottom.
+        let bottom = f32::from(window.viewport_size().height);
         let y = f32::from(ev.event.position.y);
         self.player.height = (bottom - y).clamp(COMPACT, self.dock_height_limit(window));
         cx.notify();
@@ -206,7 +207,7 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
         .into_any_element()
     };
 
-    // The transport: the same requests the status bar and the desktop send.
+    // The transport: the same requests the footer's strip and the desktop send.
     let request = crate::player::request;
     let duration = state.duration.unwrap_or(0.);
     let position = pinned.scrub.unwrap_or(state.position);

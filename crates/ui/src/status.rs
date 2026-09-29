@@ -1,5 +1,10 @@
-//! Status bar: item and selection counts, executor progress, messages,
-//! undo, the shelf chip, pending proposals.
+//! Each pane's footer: what it lists and what is selected there. The
+//! window's own state (what plays while the preview is closed, the files
+//! waiting for a paste, proposals to review, the shelf, Undo) ends the
+//! footer of the last pane, at the window's bottom right whichever way a
+//! split runs. The side panels have none: the sidebar's facts are on its
+//! rows and the preview's in Details, so they run to the window's foot.
+//! Messages are toasts (`set_status`), never a footer's.
 
 use gpui::{AnyElement, Context, div, prelude::*, px};
 
@@ -78,10 +83,12 @@ impl Shell {
     }
 }
 
-/// The bar's height: the dock above it measures its drag from the bottom.
+/// A pane footer's height.
 pub const HEIGHT: f32 = 26.;
 
-pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
+/// The footer of the pane being rendered; `window` adds the window's own
+/// state at its end (the last pane's).
+pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let selection = shell.selection_ctx();
     let (count, complete, error, is_query, sweep, total) = {
@@ -117,8 +124,12 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
         },
     };
     let mut bar = div()
+        .id(("pane-footer", shell.pane.0 as usize))
+        .flex_none()
         .h(px(HEIGHT))
         .w_full()
+        .min_w_0()
+        .overflow_hidden()
         .flex()
         .flex_row()
         .items_center()
@@ -162,6 +173,9 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
         bar = bar.child(div().text_color(theme.error).truncate().child(e));
     }
     bar = bar.child(div().flex_1());
+    if !window {
+        return bar.into_any_element();
+    }
     bar = bar.children(crate::player::render_status(shell, &theme, cx));
     // The clipboard is invisible once the pane shows another folder: say
     // what is waiting, and let a click (or Escape) forget it.

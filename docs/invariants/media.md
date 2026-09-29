@@ -162,7 +162,7 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
   is given (`VIDEO_HEIGHT` when pinned into a compact dock). It steps aside
   while the panel shows the pinned session itself or is on its way to a
   track that will (`Shell::dock_shown`), and while the panel is
-  closed the status bar keeps a strip of the controls instead, so the
+  closed the last pane's footer keeps a strip of the controls instead, so the
   controls move but are never lost. Only its picture answers clicks as a
   player (`Flash::Dock`): the film, or the cover (the file's icon without
   one), which stops the click there; a click anywhere else in the dock but

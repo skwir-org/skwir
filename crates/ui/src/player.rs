@@ -4,7 +4,7 @@
 //! the session belongs to the window instead: browsing goes on, the music
 //! (or the film) too, and the dock at the foot of the preview panel
 //! (`dock.rs`) holds it: cover or picture, visualizer, transport. With the
-//! panel closed the status bar keeps a strip of the controls instead. The
+//! panel closed the last pane's footer keeps a strip of the controls instead. The
 //! panel shows the same session again whenever its file is selected, and
 //! the dock steps aside while it does; there is never a second player for
 //! one file, and never two playing at once.
@@ -1005,7 +1005,7 @@ impl Shell {
     }
 }
 
-/// The pin in the status bar while the preview panel is closed and the dock
+/// The pin in the last pane's footer while the preview panel is closed and the dock
 /// with it: what plays, and the three controls that matter.
 pub fn render_status(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let pinned = shell
@@ -1082,7 +1082,7 @@ pub fn render_status(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> O
 }
 
 /// A button of the pin's transport: it sends `what` as a `PlayerRequest`,
-/// the same the desktop's media keys send, from the dock and the status bar.
+/// the same the desktop's media keys send, from the dock and the footer's strip.
 pub(crate) fn request(
     id: &'static str,
     icon: &'static str,

@@ -2265,7 +2265,7 @@ impl Shell {
     }
 
     /// The tallest the panel may be at the bottom: everything the stacked
-    /// panes, the toolbar and the status bar do not need.
+    /// panes, their rows and footers, and the tab strip do not need.
     /// How tall the panel at the bottom wants to be: as dragged, else the
     /// default with the pinned player's dock added under it, so a pin does
     /// not take its room from the preview. `preview_height_limit` bounds it.
@@ -2320,14 +2320,14 @@ impl Shell {
     }
 
     /// The top edge of the panel at the bottom follows the pointer; its
-    /// bottom is the status bar's top.
+    /// bottom is the window's foot.
     fn on_resize_height_drag(
         &mut self,
         ev: &DragMoveEvent<ResizeHeightHandle>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let bottom = f32::from(window.viewport_size().height) - crate::status::HEIGHT;
+        let bottom = f32::from(window.viewport_size().height);
         let y = f32::from(ev.event.position.y);
         self.preview.height =
             Some((bottom - y).clamp(MIN_HEIGHT, self.preview_height_limit(window)));
@@ -3084,7 +3084,8 @@ pub fn max_width(window: f32, panes: usize, sidebar: f32) -> f32 {
 /// The tallest the panel may be at the bottom, from the window's height the
 /// same way.
 pub fn max_height(window: f32, panes: usize) -> f32 {
-    let kept = PANE_KEEP_HEIGHT * panes.max(1) as f32 + TOOLBAR_HEIGHT + crate::status::HEIGHT;
+    // Each pane keeps its row, some entries and its footer.
+    let kept = (PANE_KEEP_HEIGHT + crate::status::HEIGHT) * panes.max(1) as f32 + TOOLBAR_HEIGHT;
     (window - kept).max(MIN_HEIGHT)
 }
 

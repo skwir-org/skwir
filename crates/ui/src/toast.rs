@@ -1,5 +1,5 @@
 //! Toasts: what just happened, with the way back. One message at a time sits
-//! above the status bar; a running operation shows its progress there with a
+//! above the panes' footers; a running operation shows its progress there with a
 //! Cancel button and turns into its result ("Moved 3 items to Trash", Undo).
 //!
 //! The only animation is a short entrance that ends by itself; nothing here

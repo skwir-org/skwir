@@ -91,9 +91,12 @@ current source before assuming a planned crate, command, or API exists.
   "Copied 3 items to Archive"), with Undo when the journal can take it back
   and Redo after an undo. A plan with more than one step shows a progress bar
   with Cancel (`Executor::cancel`). `Shell::set_status` is a toast;
-  `set_status_about` adds a link to the setting that fixes the problem. The
-  status bar holds state (counts, selection size, the Undo button), never
-  messages. A key whose command needs a selection carries `selection` in its
+  `set_status_about` adds a link to the setting that fixes the problem.
+  Footers hold state, never messages (`status.rs`): each pane's footer
+  its counts and selection size; the window's state (Undo, what waits for
+  a paste, the shelf, proposals, the player's strip) ends the last pane's
+  footer, at the window's bottom right either way a split runs. The side
+  panels have no footer: they run to the window's foot. A key whose command needs a selection carries `selection` in its
   `when`, so it does nothing instead of reporting "nothing selected". The only
   animation allowed is a bounded entrance (under 200 ms) that ends by itself;
   the player's play/pause flash (`media::FLASH_MS`) is the one longer one.
@@ -239,7 +242,7 @@ current source before assuming a planned crate, command, or API exists.
 - **What waits for a paste is core data.** The clipboard's owner publishes
   it in `App::pending` (entry ids and whether a paste will move them); the
   shell snapshots it once per frame. Every view dims cut entries
-  (`views::list::CUT_OPACITY`) and the status bar shows the count, because
+  (`views::list::CUT_OPACITY`) and the last pane's footer shows the count, because
   the clipboard is invisible once the pane shows another folder. Escape with
   nothing selected, or a click on that count, forgets it.
 - **Rubber band.** `elements/marquee.rs` sits over a view's scroll area: it
@@ -341,9 +344,9 @@ current source before assuming a planned crate, command, or API exists.
   Music or a film can be pinned to keep playing while the selection moves
   (`crates/ui/src/player.rs`); the dock at the foot of the preview panel
   (`dock.rs`) then holds it, cover or picture, meter and transport, as tall
-  as its top edge is dragged; with the panel closed the status bar keeps a
-  strip of its controls, an exception to "state, never messages" only in
-  that a player is state. See `docs/invariants/media.md`.
+  as its top edge is dragged; with the panel closed the last pane's footer
+  keeps a strip of its controls, an exception to "state, never messages"
+  only in that a player is state. See `docs/invariants/media.md`.
 - **The terminal panel** (ADR-019) draws core's `terminal::Screen` and
   sends `terminal::Input`; the VT engine (`alacritty_terminal`) never
   leaves the `terminal` plugin, so it can be replaced there alone. The
@@ -656,7 +659,7 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   registration or rendering.
 - `ui.settings` takes `{ "key": "plugin.option" }` or `{ "page": "plugins" }`.
   Report a problem whose remedy is a setting with `App::notify_about_setting`
-  (or `Shell::set_status_about`); the status bar links to it.
+  (or `Shell::set_status_about`); its toast links to it.
 - The dialog is not a deferred draw, because its dropdowns are and GPUI cannot
   nest them. It stays the last overlay child of the shell root.
 - Plugins that capture preferences at registration implement

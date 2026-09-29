@@ -2032,6 +2032,9 @@ impl Shell {
         } else {
             None
         };
+        // Its footer; the last pane's ends with the window's own state.
+        let last = self.panes.last().map(|p| p.id) == Some(id);
+        let footer = status::render(self, last, cx);
         self.pane = saved;
         // Split panes are told apart by the edge they share: the left one
         // side by side, the top one stacked. The active pane's is the accent.
@@ -2082,6 +2085,7 @@ impl Shell {
             })
             .child(file_area)
             .children(strip)
+            .child(footer)
             .children(edge)
             .into_any_element()
     }
@@ -2217,7 +2221,6 @@ impl Render for Shell {
         };
         let panel = preview::render_panel(self, bottom, limit, self.dock_height_limit(window), cx);
         let terminal = self.render_terminal(window, cx);
-        let status_bar = status::render(self, cx);
         // Not deferred: GPUI cannot nest deferred draws and the dialog's own
         // dropdowns are. It is the last overlay, so it paints above the rest.
         let settings = self
@@ -2315,7 +2318,6 @@ impl Render for Shell {
                             .children(panel),
                     ),
             )
-            .child(status_bar)
             .children(toast)
             .children(sequence)
             .children(overlays.into_iter().flatten())

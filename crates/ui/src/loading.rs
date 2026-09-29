@@ -73,7 +73,7 @@ impl Shell {
     }
 }
 
-/// The one delayed "still loading" signal; the status bar and the pane
+/// The one delayed "still loading" signal; the pane's footer and its
 /// banner both derive from it so they never disagree.
 pub fn pending(shell: &Shell, pane: PaneId) -> bool {
     shell

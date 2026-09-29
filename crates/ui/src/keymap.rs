@@ -807,7 +807,7 @@ impl Stamp {
 
 /// The keys bound to `command` with exactly `args`, as people read them.
 /// The one lookup behind every shortcut the interface shows (menus, the
-/// palette, toolbar tooltips, the status bar): matching the name alone would
+/// palette, toolbar tooltips, the footers): matching the name alone would
 /// show Zoom in's keys beside Zoom out. The highest layer's keys, the first
 /// of a layer that binds several (Ctrl+H before Alt+.).
 pub fn keys_for(hints: &[KeyHint], command: &str, args: &serde_json::Value) -> Option<String> {
