@@ -729,6 +729,26 @@ impl Pane {
         true
     }
 
+    /// Let go of the folders under `path` it keeps beside the one shown,
+    /// has opened in place or has just left: their volume is about to be
+    /// unmounted. Returns them, to be closed once the lock is released.
+    pub(crate) fn release_under(&mut self, path: &Path) -> Vec<Kept> {
+        let under = |k: &Kept| k.path.as_ref().is_some_and(|p| p.starts_with(path));
+        if self.expanded.iter().any(|p| p.starts_with(path)) {
+            self.expanded.retain(|p| !p.starts_with(path));
+            self.expanded_changed();
+            self.retain_shown();
+        }
+        let mut released = Vec::new();
+        if self.left.as_ref().is_some_and(under) {
+            released.extend(self.left.take());
+        }
+        let (gone, kept) = std::mem::take(&mut self.kept).into_iter().partition(under);
+        self.kept = kept;
+        released.extend::<Vec<Kept>>(gone);
+        released
+    }
+
     /// Close every folder opened in place.
     pub fn collapse_all(&mut self) -> bool {
         if self.expanded.is_empty() {

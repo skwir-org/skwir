@@ -186,3 +186,57 @@ fn a_folder_opens_in_place_only_under_the_one_shown() {
     .unwrap();
     assert_eq!(drawn(&app, pane), ["sub", "file.txt"]);
 }
+
+/// What the process holds open under `dir`: what makes the kernel refuse
+/// to unmount a volume.
+fn held_under(dir: &Path) -> Vec<std::path::PathBuf> {
+    std::fs::read_dir("/proc/self/fd")
+        .unwrap()
+        .filter_map(|fd| std::fs::read_link(fd.ok()?.path()).ok())
+        .filter(|target| target.starts_with(dir))
+        .collect()
+}
+
+/// Before a volume is unmounted, bibli lets go of it: a pane showing a
+/// folder there goes elsewhere, and the folders it opened in place or kept
+/// there close, until nothing of the process holds the volume.
+#[test]
+fn released_folders_hold_nothing_open() {
+    let tmp = tempfile::tempdir().unwrap();
+    let volume = tmp.path().join("USB stick");
+    let inner = volume.join("it's inside");
+    let elsewhere = tmp.path().join("home");
+    std::fs::create_dir_all(&inner).unwrap();
+    std::fs::create_dir(&elsewhere).unwrap();
+    let app = app(tmp.path());
+    let pane = active(&app);
+    navigate(&app, &volume);
+    expand(&app, &[id(&app, pane, &volume, "it's inside")], "expand");
+    wait(&app, pane, opened_listing_complete(&inner));
+    assert!(
+        !held_under(&volume).is_empty(),
+        "a listing holds its folder"
+    );
+
+    app.release(&volume, &Location::from_path(&elsewhere))
+        .unwrap();
+    wait(&app, pane, |p| {
+        p.listing.is_complete() && p.location().and_then(Location::path) == Some(elsewhere.clone())
+    });
+    {
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        assert!(p.expanded().is_empty());
+        assert!(!p.keeps_any(), "the folder left is not kept");
+    }
+    // Listings close their folders on a worker.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !held_under(&volume).is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "still held: {:?}",
+            held_under(&volume)
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}

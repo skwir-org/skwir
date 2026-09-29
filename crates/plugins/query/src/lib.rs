@@ -411,6 +411,7 @@ fn place(search: SavedQuery) -> Place {
         eject: None,
         activate: None,
         unavailable: None,
+        busy: None,
         menu,
         forget: Some(Invocation::with_args(
             "query.forget",

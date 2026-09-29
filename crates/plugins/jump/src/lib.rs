@@ -267,6 +267,7 @@ impl Plugin for JumpPlugin {
                 eject: None,
                 activate: None,
                 unavailable: None,
+                busy: None,
                 menu: Vec::new(),
                 forget: None,
                 reorder: None,

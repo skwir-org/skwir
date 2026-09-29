@@ -149,7 +149,9 @@ current source before assuming a planned crate, command, or API exists.
 - **Sidebar.** Places carry a theme icon name (one the theme has only as
   `-symbolic` is drawn tinted, `icons::themed`), optionally `space` (filled in
   by a worker: asking a volume can block), an `eject` command, `unavailable`
-  (why it cannot be opened: the row dims and this is its tooltip) and `menu`,
+  (why it cannot be opened: the row dims and this is its tooltip), `busy`
+  (what its owner is doing to it, "Unlocking…": a still hourglass and those
+  words, nothing to click again, until the work ends) and `menu`,
   the place's own right-click items with their arguments. A rescan publishes
   at once and keeps what the worker measured last (`carry_over`) until the
   worker measures again, so nothing blinks. A row is a drop target like any
@@ -330,7 +332,14 @@ current source before assuming a planned crate, command, or API exists.
   a masked input and dispatches `places.unlock` directly, never through
   `Shell::run` (it traces arguments). The passphrase reaches udisks on
   standard input, is never stored, logged or put on a command line, and its
-  argument struct has no `Debug`. Unmounting locks the container under the
+  argument struct has no `Debug`. Before unmounting, `App::release` lets
+  go of everything under the mount point (an open listing holds its
+  folder, and the kernel refuses to unmount a volume anything holds): a
+  pane showing it goes home, folders kept or opened there close. The end
+  of a mount or an unmount corrects the volumes the last `lsblk` saw
+  (`end_busy`), rather than waiting for it to run again. An unlocked
+  container is listed as its cleartext volume (`Volume::container`):
+  what is said of the container holds for it. Unmounting locks the container under the
   filesystem. Test this with fake `lsblk`/`udisksctl` scripts first on PATH,
   never on a real drive.
 - **Search chips.** A pane showing a search has a row of chips under its

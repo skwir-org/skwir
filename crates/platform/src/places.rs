@@ -55,6 +55,10 @@ pub struct Volume {
     /// Encrypted and locked: it needs a passphrase before it can be mounted.
     pub locked: bool,
     pub hotplug: bool,
+    /// The locked container it is the cleartext of (`/dev/sdb2` for
+    /// `/dev/mapper/luks-…`), as `lsblk` names it: once unlocked, a
+    /// container is listed as this volume instead.
+    pub container: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -132,12 +136,22 @@ pub fn parse_lsblk(json: &str) -> Vec<Volume> {
                         .iter()
                         .any(|other| device_name(&other.path) == parent && other.hotplug)
                 });
+            let container = device.pkname.as_ref().and_then(|parent| {
+                devices
+                    .iter()
+                    .find(|other| {
+                        device_name(&other.path) == parent
+                            && other.fstype.as_deref() == Some("crypto_LUKS")
+                    })
+                    .map(|other| other.path.clone())
+            });
             Some(Volume {
                 device: device.path.clone(),
                 label: device.label.clone().unwrap_or_default(),
                 size,
                 locked,
                 hotplug,
+                container,
             })
         })
         .collect()
@@ -268,6 +282,13 @@ pub fn unlock(device: &str, passphrase: &str) -> anyhow::Result<String> {
 
 /// Unmount, then lock the container under it if there is one, so the volume
 /// is safe to unplug and asks for its passphrase next time. Blocks: worker only.
+/// Whether udisks refused because something still uses the volume
+/// (`DeviceBusy`, "target is busy").
+pub fn is_busy(error: &anyhow::Error) -> bool {
+    let text = error.to_string();
+    text.contains("DeviceBusy") || text.contains("target is busy")
+}
+
 pub fn unmount(source: &str) -> anyhow::Result<()> {
     let container = lsblk().and_then(|json| container_of(&json, source));
     udisks("unmount", source, &[], None)?;
@@ -724,6 +745,8 @@ mod tests {
             "inherited from the disk under the container"
         );
         assert_eq!(volumes[2].label, "Backup 4T");
+        assert_eq!(volumes[2].container.as_deref(), Some("/dev/sdb2"));
+        assert_eq!(volumes[0].container, None);
         assert!(super::parse_lsblk("not json").is_empty());
     }
 

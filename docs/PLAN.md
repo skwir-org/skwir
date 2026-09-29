@@ -36,6 +36,25 @@ Poppler, GStreamer or libarchive. Open gate: idle PSS is about 118 to 120 MB aga
 been loosened. The per-change validation history that used to sit here is in
 `docs/STATUS-LOG.md`.
 
+Busy volumes (2026-09-29): a volume being unlocked, mounted or unmounted
+says so on its sidebar row (`Place::busy`: a still hourglass and
+"Unlocking…" in place of its details, since nothing animates) from the
+moment the passphrase is given until the attempt ends, and offers nothing
+to click again meanwhile. When it ends the sidebar is right at once: the
+quick rescan used to borrow the last `lsblk` answer, so a volume just
+unlocked was offered for unlocking again until `lsblk` ran, behind the
+listing of the volume it had opened. Between the unlock and the mount,
+udev's announcement of the new device rescans, and `lsblk` lists the
+container as its cleartext volume, which showed "Not mounted" until the
+next `lsblk` after the mount; that volume now carries its container's
+busy state and goes with it (`Volume::container`). A volume can be unmounted while bibli
+shows it: `App::release` sends the panes showing it home and closes the
+folders kept there (an open listing holds its folder), and the unmount
+waits up to 3 s for helpers to let go before saying another program uses
+it. Checked with fake `lsblk` and `udisksctl` first on PATH, in tests and
+in a window on an isolated display; the release by what the process
+holds open (`/proc/self/fd`). Not checked on a real drive.
+
 Tree view (2026-09-29, ADR-025): a Tree view beside the List in the View
 menu (`ViewRole::Alternate`: a toolbar button only while shown), whose folders open in place under a triangle (Right
 and Left open, enter, close and go to the parent; Collapse all in the View

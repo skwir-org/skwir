@@ -224,6 +224,10 @@ pub struct Place {
     /// bookmarked folder that is not there): the row is drawn as not
     /// available, with this as its tooltip.
     pub unavailable: Option<String>,
+    /// What its owner is doing to it now, in its words ("Unlocking…",
+    /// "Unmounting…"): the row says so in place of its details, and is
+    /// not activated or ejected again until the owner publishes it without.
+    pub busy: Option<String>,
     /// The place's own items in its context menu (rename or remove a
     /// bookmark), with their arguments; the UI adds Open and Eject. `when`
     /// is not evaluated: the owner lists what applies to this place.

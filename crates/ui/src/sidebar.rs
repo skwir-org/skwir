@@ -237,11 +237,19 @@ pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElem
         // Present but not mounted: clicking mounts it (or asks to unlock it).
         let open = open_invocation(&place);
         let waiting = place.unavailable.is_some();
-        let icon: AnyElement = match place
-            .icon
-            .as_deref()
-            .and_then(|name| shell.icons.named(name, ICON_PX as u16))
-        {
+        // Its owner is working on it (unlocking, mounting, unmounting): an
+        // hourglass in place of its icon, still, as nothing here animates,
+        // and what is being done in place of its details.
+        let busy = place.busy.clone();
+        let themed = if busy.is_some() {
+            None
+        } else {
+            place
+                .icon
+                .as_deref()
+                .and_then(|name| shell.icons.named(name, ICON_PX as u16))
+        };
+        let icon: AnyElement = match themed {
             Some(path) => crate::icons::themed(
                 &path,
                 ICON_PX,
@@ -251,6 +259,16 @@ pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElem
                     theme.text_muted
                 },
             ),
+            None if busy.is_some() => controls::glyph(
+                "busy",
+                if is_current {
+                    theme.selection_text
+                } else {
+                    theme.accent
+                },
+                ICON_PX,
+            )
+            .into_any_element(),
             None => div()
                 .size(px(10.))
                 .mx(px(3.))
@@ -267,7 +285,19 @@ pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElem
             .gap(px(3.))
             .child(div().truncate().child(place.title.clone()));
         let mut tip: Option<SharedString> = None;
-        if let Some((free, total)) = place.space {
+        if let Some(busy) = &busy {
+            texts = texts.child(
+                div()
+                    .text_xs()
+                    .truncate()
+                    .text_color(if is_current {
+                        theme.selection_text
+                    } else {
+                        theme.text_muted
+                    })
+                    .child(busy.clone()),
+            );
+        } else if let Some((free, total)) = place.space {
             let used = used_fraction(free, total);
             tip = Some(format!("{} free of {}", format::size(free), format::size(total)).into());
             texts = texts.child(
@@ -299,13 +329,19 @@ pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElem
             .rounded_md()
             .border_1()
             .border_color(gpui::transparent_black())
-            .cursor_pointer()
+            .when(busy.is_none(), gpui::Styled::cursor_pointer)
             .when(is_current, |d| {
                 d.bg(theme.selection_bg).text_color(theme.selection_text)
             })
             .when(!is_current, |d| d.hover(move |s| s.bg(hover)))
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.run(&open.name, open.args.clone(), window, cx);
+            .on_click(cx.listener({
+                let busy = busy.is_some();
+                move |this, _, window, cx| {
+                    // A second click while it unlocks would ask again.
+                    if !busy {
+                        this.run(&open.name, open.args.clone(), window, cx);
+                    }
+                }
             }))
             .on_mouse_down(
                 MouseButton::Right,
@@ -331,18 +367,21 @@ pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElem
             .child(
                 div()
                     .flex_none()
-                    .when(waiting, |d| d.opacity(0.55))
+                    .when(waiting && busy.is_none(), |d| d.opacity(0.55))
                     .child(icon),
             )
             .child(texts.when(waiting, |d| d.text_color(theme.text_muted)));
         if let Some(why) = &place.unavailable {
             tip = Some(why.clone().into());
         }
+        if let Some(busy) = &busy {
+            tip = Some(busy.clone().into());
+        }
         if let Some(tip) = tip {
             let font = font.clone();
             row = row.tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), font.clone(), cx));
         }
-        if let Some(eject) = place.eject.clone() {
+        if let Some(eject) = place.eject.clone().filter(|_| busy.is_none()) {
             let hover = theme.selection_bg;
             row = row.child(
                 div()

@@ -498,6 +498,42 @@ impl App {
         }
     }
 
+    /// Let go of everything under `path` before its volume is unmounted: a
+    /// pane that shows a folder there goes to `to`, and every folder there
+    /// that a pane keeps beside the one it shows, opened in place or just
+    /// left, closes. An open listing holds its directory, and the kernel
+    /// refuses to unmount a volume anything holds. The listings let go of
+    /// their directories on a worker, a moment later; a dormant pane holds
+    /// nothing.
+    pub fn release(&self, path: &Path, to: &Location) -> anyhow::Result<()> {
+        let showing: Vec<PaneId> = self
+            .workspace
+            .read()
+            .panes()
+            .iter()
+            .filter(|p| {
+                p.location()
+                    .and_then(Location::path)
+                    .is_some_and(|shown| shown.starts_with(path))
+            })
+            .map(|p| p.id)
+            .collect();
+        for pane in showing {
+            self.navigate(pane, to)?;
+        }
+        let released: Vec<_> = self
+            .workspace
+            .write()
+            .panes_mut()
+            .iter_mut()
+            .flat_map(|p| p.release_under(path))
+            .collect();
+        // Closed here, outside the lock: closing runs the location's code.
+        drop(released);
+        self.wake();
+        Ok(())
+    }
+
     /// Close every folder `pane` opened in place: what a view that does not
     /// draw them asks (only the tree does).
     pub fn collapse_all(&self, pane: PaneId) {

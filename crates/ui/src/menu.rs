@@ -487,15 +487,22 @@ impl Shell {
             icon: Some(icon.into()),
             submenu: None,
         };
-        let mut items = vec![item(
-            "Open",
-            crate::sidebar::open_invocation(place),
-            0,
-            "open",
-        )];
+        // While its owner works on it (unlocking, unmounting), the menu
+        // offers nothing that would start over or race with that work,
+        // as its row does.
+        let busy = place.busy.is_some();
+        let mut items = Vec::new();
+        if !busy {
+            items.push(item(
+                "Open",
+                crate::sidebar::open_invocation(place),
+                0,
+                "open",
+            ));
+        }
         // A place that must be mounted or unlocked first has nothing to show
         // in a tab yet.
-        if place.activate.is_none() {
+        if place.activate.is_none() && !busy {
             items.push(item(
                 "Open in New Tab",
                 crate::sidebar::open_in_tab(place),
@@ -504,8 +511,11 @@ impl Shell {
             ));
         }
         items.extend(place.menu.iter().cloned());
-        if let Some(eject) = &place.eject {
+        if let Some(eject) = place.eject.as_ref().filter(|_| !busy) {
             items.push(item("Eject", eject.clone(), 350, "eject"));
+        }
+        if items.is_empty() {
+            return;
         }
         items.sort_by_key(|m| m.order);
         self.menu = Some(MenuState::open(position, items, window, cx));

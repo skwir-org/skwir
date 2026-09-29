@@ -20,6 +20,11 @@ use parking_lot::Mutex;
 const ID: &str = "places";
 /// A disk brings several partitions: events this close together are one change.
 const SETTLE: Duration = Duration::from_millis(400);
+/// How long an unmount waits for what bibli let go of to close: its
+/// listings close their directories on a worker, and a preview's reader or
+/// player, and the terminal's shell after its `cd`, are processes of their
+/// own. Past this, what still uses the volume is not ours.
+const RELEASE: Duration = Duration::from_secs(3);
 
 /// The places plugin.
 #[derive(Default)]
@@ -63,6 +68,52 @@ struct Publisher {
     /// What the worker published last, measured: the quick scan borrows
     /// from it until the worker measures again.
     measured: Vec<Place>,
+    /// What was published last, to publish again when `busy` changes.
+    shown: Vec<Place>,
+    /// The places being unlocked, mounted or unmounted, by location, with
+    /// what the row says meanwhile.
+    busy: Vec<Busy>,
+    /// The volumes the last measured scan listed that are the cleartext of
+    /// a container, with the container's place: once unlocked, a container
+    /// is listed as that volume, which is still the same work.
+    cleartext: Vec<Cleartext>,
+}
+
+/// An unlocked container's volume, as `lsblk` lists it in its stead.
+struct Cleartext {
+    volume: Location,
+    container: Location,
+}
+
+struct Busy {
+    location: Location,
+    what: &'static str,
+}
+
+/// Whether the place at `place` is the one at `location`, or the volume
+/// that container is listed as once unlocked.
+fn is_place(place: &Location, location: &Location, cleartext: &[Cleartext]) -> bool {
+    place == location
+        || cleartext
+            .iter()
+            .any(|c| &c.volume == place && &c.container == location)
+}
+
+/// `places` as the work in progress leaves them. A container being
+/// attached is unlocked before it is mounted, and listed meanwhile as its
+/// cleartext volume: that volume says what the container's row said.
+fn mark_busy(places: &mut [Place], busy: &[Busy], cleartext: &[Cleartext]) {
+    for place in places {
+        place.busy = busy
+            .iter()
+            .find(|b| is_place(&place.location, &b.location, cleartext))
+            .map(|b| b.what.to_owned());
+    }
+}
+
+/// The place `volume_place` publishes for the volume at `device`.
+fn device_location(device: &str) -> Location {
+    Location::parse(&format!("device:{device}"))
 }
 
 /// The quick scan, with what the worker measured last (a volume's space, a
@@ -129,7 +180,7 @@ fn volume_place(volume: &bibli_platform::places::Volume) -> Place {
     };
     Place {
         title,
-        location: Location::parse(&format!("device:{}", volume.device)),
+        location: device_location(&volume.device),
         icon: Some(
             if volume.locked {
                 "drive-harddisk-encrypted"
@@ -145,6 +196,7 @@ fn volume_place(volume: &bibli_platform::places::Volume) -> Place {
         eject: None,
         activate: Some(activate),
         unavailable: Some(unavailable.into()),
+        busy: None,
         menu: Vec::new(),
         forget: None,
         reorder: None,
@@ -232,6 +284,7 @@ pub fn scan() -> Vec<Place> {
         eject: None,
         activate: None,
         unavailable: None,
+        busy: None,
         forget: None,
         reorder: None,
     };
@@ -290,8 +343,17 @@ impl Places {
     /// and the plugin is enabled. Under the lock, so a newer scan cannot slip
     /// in between the check and the publication (the registry itself refuses
     /// a disabled owner).
-    fn publish(&self, app: &App, generation: u64, places: Vec<Place>, measured: bool) {
-        let mut publisher = self.0.lock();
+    /// `measured` is what a measured scan found: the volumes that are an
+    /// unlocked container's; `None` for the quick scan.
+    fn publish(
+        &self,
+        app: &App,
+        generation: u64,
+        places: Vec<Place>,
+        measured: Option<Vec<Cleartext>>,
+    ) {
+        let mut guard = self.0.lock();
+        let publisher = &mut *guard;
         if publisher.generation != generation
             || publisher
                 .lifetime
@@ -300,12 +362,61 @@ impl Places {
         {
             return;
         }
-        if measured {
+        if let Some(cleartext) = measured {
             publisher.measured.clone_from(&places);
+            publisher.cleartext = cleartext;
         }
+        let mut places = places;
+        mark_busy(&mut places, &publisher.busy, &publisher.cleartext);
+        publisher.shown.clone_from(&places);
+        app.registry.places.replace_owner(ID, places);
+        drop(guard);
+        app.wake();
+    }
+
+    /// Say on the place at `location` what is being done to it, at once:
+    /// the work runs on a worker and can take a while (udisks asks the
+    /// kernel to open a container, a drive to spin up).
+    fn start_busy(&self, app: &App, location: Location, what: &'static str) {
+        let mut publisher = self.0.lock();
+        if publisher
+            .lifetime
+            .as_ref()
+            .is_none_or(CancelToken::is_cancelled)
+        {
+            return;
+        }
+        publisher.busy.retain(|b| b.location != location);
+        publisher.busy.push(Busy { location, what });
+        let mut places = std::mem::take(&mut publisher.shown);
+        mark_busy(&mut places, &publisher.busy, &publisher.cleartext);
+        publisher.shown.clone_from(&places);
         app.registry.places.replace_owner(ID, places);
         drop(publisher);
         app.wake();
+    }
+
+    /// The work on the place at `location` ended; `gone` when it took the
+    /// place away (a volume mounted is no longer one to mount). The quick
+    /// scan borrows the volumes the last measured one saw (`carry_over`)
+    /// until `lsblk` runs again, on a worker behind whatever the volume
+    /// just opened is listing: without this, a volume just mounted would
+    /// be offered for mounting again until then. Scans already running
+    /// saw the place before the work ended, so they no longer publish.
+    /// Call before `populate`.
+    /// A container unlocked and mounted takes with it the volume it was
+    /// listed as in between.
+    fn end_busy(&self, location: &Location, gone: bool) {
+        let mut publisher = self.0.lock();
+        let publisher = &mut *publisher;
+        publisher.busy.retain(|b| &b.location != location);
+        if gone {
+            let cleartext = &publisher.cleartext;
+            publisher
+                .measured
+                .retain(|p| !is_place(&p.location, location, cleartext));
+        }
+        publisher.generation += 1;
     }
 
     /// Publish the places now; ask each volume for its free space on a
@@ -323,7 +434,7 @@ impl Places {
             )
         };
         let Some(lifetime) = lifetime else { return };
-        self.publish(app, generation, quick, false);
+        self.publish(app, generation, quick, None);
         let (this, weak) = (self.clone(), app.weak());
         app.scheduler.spawn(
             Priority::Background,
@@ -354,13 +465,19 @@ impl Places {
                     .collect();
                 // Volumes that are plugged in but not mounted: `lsblk` is a
                 // process, so it belongs here and not in the synchronous scan.
-                measured.extend(
-                    bibli_platform::places::unmounted_volumes()
-                        .iter()
-                        .map(volume_place),
-                );
+                let volumes = bibli_platform::places::unmounted_volumes();
+                measured.extend(volumes.iter().map(volume_place));
+                let cleartext = volumes
+                    .iter()
+                    .filter_map(|v| {
+                        Some(Cleartext {
+                            volume: device_location(&v.device),
+                            container: device_location(v.container.as_deref()?),
+                        })
+                    })
+                    .collect();
                 if let Some(app) = weak.upgrade() {
-                    this.publish(&app, generation, measured, true);
+                    this.publish(&app, generation, measured, Some(cleartext));
                 }
             },
         );
@@ -411,6 +528,17 @@ fn attach(
 ) {
     let pane = app.pane_or_active(pane);
     let this = places.clone();
+    // The place `volume_place` published for it.
+    let location = Location::parse(&format!("device:{device}"));
+    places.start_busy(
+        app,
+        location.clone(),
+        if passphrase.is_some() {
+            "Unlocking…"
+        } else {
+            "Mounting…"
+        },
+    );
     places.spawn(app, "places-attach", move |app| {
         use bibli_core::app::NotifyLevel;
         let mounted = passphrase
@@ -421,6 +549,7 @@ fn attach(
             .and_then(|cleartext| bibli_platform::places::mount(&cleartext));
         // Whatever happened, the set of volumes may have changed (a
         // container can unlock and its filesystem still fail to mount).
+        this.end_busy(&location, mounted.is_ok());
         this.populate(app);
         match mounted {
             Ok(path) => {
@@ -817,16 +946,43 @@ impl Plugin for PlacesPlugin {
                     .find(|mount| mount.path == *path && mount.removable)
                     .ok_or_else(|| anyhow::anyhow!("not a removable volume"))?;
                 let this = places.clone();
+                let location = Location::from_path(&mount.path);
+                places.start_busy(app, location.clone(), "Unmounting…");
+                // Nothing of bibli's may hold the volume: a pane showing it
+                // goes home, the folders kept there close.
+                let home = bibli_platform::places::home().unwrap_or_else(|| PathBuf::from("/"));
+                app.release(&mount.path, &Location::from_path(home))?;
+                let lifetime = places.lifetime();
                 places.spawn(app, "places-unmount", move |app| {
                     use bibli_core::app::NotifyLevel;
-                    match bibli_platform::places::unmount(&mount.source) {
-                        Ok(()) => {
-                            this.populate(app);
-                            app.notify(
-                                NotifyLevel::Info,
-                                format!("“{}” can be removed", mount.label),
-                            );
+                    let deadline = std::time::Instant::now() + RELEASE;
+                    let unmounted = loop {
+                        match bibli_platform::places::unmount(&mount.source) {
+                            Err(error)
+                                if bibli_platform::places::is_busy(&error)
+                                    && std::time::Instant::now() < deadline
+                                    && !lifetime.as_ref().is_none_or(CancelToken::is_cancelled) =>
+                            {
+                                std::thread::sleep(Duration::from_millis(150));
+                            }
+                            result => break result,
                         }
+                    };
+                    this.end_busy(&location, unmounted.is_ok());
+                    this.populate(app);
+                    match unmounted {
+                        Ok(()) => app.notify(
+                            NotifyLevel::Info,
+                            format!("“{}” can be removed", mount.label),
+                        ),
+                        // bibli let go of it: another program has it.
+                        Err(error) if bibli_platform::places::is_busy(&error) => app.notify(
+                            NotifyLevel::Error,
+                            format!(
+                                "“{}” was not unmounted: another program is using it",
+                                mount.label
+                            ),
+                        ),
                         Err(error) => app.notify(
                             NotifyLevel::Error,
                             format!("“{}” was not unmounted: {error:#}", mount.label),
@@ -933,15 +1089,16 @@ mod tests {
             eject: None,
             activate: None,
             unavailable: None,
+            busy: None,
             menu: Vec::new(),
             forget: None,
             reorder: None,
         };
         places.0.lock().lifetime = Some(CancelToken::new());
         places.0.lock().generation = 2;
-        places.publish(&app, 2, vec![place("new")], true);
+        places.publish(&app, 2, vec![place("new")], Some(Vec::new()));
         // A scan started before the latest one finishes last: ignored.
-        places.publish(&app, 1, vec![place("old")], true);
+        places.publish(&app, 1, vec![place("old")], Some(Vec::new()));
         let titles: Vec<String> = app
             .registry
             .places
@@ -951,7 +1108,7 @@ mod tests {
             .collect();
         assert_eq!(titles, ["new"]);
         places.0.lock().lifetime.take().unwrap().cancel();
-        places.publish(&app, 2, vec![place("late")], true);
+        places.publish(&app, 2, vec![place("late")], Some(Vec::new()));
         assert_eq!(app.registry.places.all()[0].title, "new");
     }
 
@@ -966,6 +1123,7 @@ mod tests {
             eject: None,
             activate: None,
             unavailable: None,
+            busy: None,
             menu: Vec::new(),
             forget: None,
             reorder: None,
@@ -996,6 +1154,154 @@ mod tests {
     }
 
     /// The next message the plugin sends, within a deadline.
+    /// A locked volume says it is being unlocked from the moment the
+    /// passphrase is given until the attempt ends, and the sidebar is right
+    /// at once when it does: a refused passphrase leaves it locked, an
+    /// accepted one takes it away, without waiting for `lsblk` to run
+    /// again. Between the unlock and the mount, a rescan (udev announces
+    /// the new device) lists the container as its cleartext volume, which
+    /// is still being attached. `lsblk` and `udisksctl` are fakes first on
+    /// PATH, never a real drive; udisks holds the unlock and the mount
+    /// until the test lets them answer.
+    #[test]
+    #[allow(unsafe_code)]
+    fn a_volume_says_it_is_unlocking_and_is_right_as_soon_as_it_ends() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("bin");
+        let mnt = tmp.path().join("mnt");
+        std::fs::create_dir(&bin).unwrap();
+        std::fs::create_dir(&mnt).unwrap();
+        let (gate, refuse, unlocked, mount_gate, mounted) = (
+            tmp.path().join("gate"),
+            tmp.path().join("refuse"),
+            tmp.path().join("unlocked"),
+            tmp.path().join("mount gate"),
+            tmp.path().join("mounted"),
+        );
+        let script = |name: &str, body: String| {
+            let path = bin.join(name);
+            std::fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        let container = r#"{"path":"/dev/sdz","label":null,"size":2000000000000,"fstype":"crypto_LUKS","mountpoint":null,"hotplug":true,"pkname":null}"#;
+        let cleartext = |mountpoint: &str| {
+            format!(
+                r#"{{"path":"/dev/dm-9","label":"Backup","size":1999000000000,"fstype":"ext4","mountpoint":{mountpoint},"hotplug":false,"pkname":"sdz"}}"#
+            )
+        };
+        let (unmounted, mounted_at) = (
+            cleartext("null"),
+            cleartext(&format!("\"{}\"", mnt.display())),
+        );
+        script(
+            "lsblk",
+            format!(
+                "if [ -e '{mounted}' ]; then echo '{{\"blockdevices\": [{container},{mounted_at}]}}'\n\
+                 elif [ -e '{unlocked}' ]; then echo '{{\"blockdevices\": [{container},{unmounted}]}}'\n\
+                 else echo '{{\"blockdevices\": [{container}]}}'; fi\n",
+                mounted = mounted.display(),
+                unlocked = unlocked.display(),
+            ),
+        );
+        script(
+            "udisksctl",
+            format!(
+                "case \"$1\" in\n\
+                 unlock) cat > /dev/null\n\
+                   while [ ! -e '{gate}' ]; do sleep 0.02; done\n\
+                   if [ -e '{refuse}' ]; then echo 'No key available with this passphrase' >&2; exit 1; fi\n\
+                   touch '{unlocked}'; echo 'Unlocked /dev/sdz as /dev/dm-9.';;\n\
+                 mount) while [ ! -e '{mount_gate}' ]; do sleep 0.02; done\n\
+                   touch '{mounted}'; echo 'Mounted /dev/dm-9 at {mnt}';;\n\
+                 *) exit 1;;\n\
+                 esac\n",
+                gate = gate.display(),
+                refuse = refuse.display(),
+                unlocked = unlocked.display(),
+                mount_gate = mount_gate.display(),
+                mounted = mounted.display(),
+                mnt = mnt.display(),
+            ),
+        );
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let mut paths = vec![bin.clone()];
+        paths.extend(std::env::split_paths(&path));
+        // SAFETY: one test per process under nextest, set before the app
+        // starts any thread.
+        unsafe { std::env::set_var("PATH", std::env::join_paths(paths).unwrap()) };
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(PlacesPlugin::default()), &app);
+        let place = |location: &str| {
+            app.registry
+                .places
+                .all()
+                .into_iter()
+                .find(|p| p.location.to_string() == location)
+        };
+        let volume = || place("device:/dev/sdz");
+        let opened = || place("device:/dev/dm-9");
+        let wait = |done: &dyn Fn() -> bool| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while !done() {
+                assert!(std::time::Instant::now() < deadline, "timed out");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        let unlock = || {
+            app.dispatch(&Invocation::with_args(
+                "places.unlock",
+                &serde_json::json!({ "device": "/dev/sdz", "passphrase": "example words" }),
+            ))
+            .unwrap();
+        };
+        wait(&|| volume().is_some());
+        assert_eq!(volume().unwrap().busy, None);
+
+        // Refused.
+        std::fs::write(&refuse, b"").unwrap();
+        unlock();
+        // At once, before the worker has asked udisks anything.
+        assert_eq!(volume().unwrap().busy.as_deref(), Some("Unlocking…"));
+        // A rescan meanwhile (a disk plugged) keeps saying so.
+        app.dispatch(&Invocation::new("places.refresh")).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(volume().unwrap().busy.as_deref(), Some("Unlocking…"));
+        std::fs::write(&gate, b"").unwrap();
+        let notice = next_notice(&app);
+        assert!(
+            notice.text.contains("passphrase was not accepted"),
+            "{}",
+            notice.text
+        );
+        assert_eq!(volume().expect("still locked").busy, None, "at once");
+
+        // Accepted. Unlocked and not yet mounted, a rescan lists the
+        // container as its cleartext volume: still being attached.
+        std::fs::remove_file(&refuse).unwrap();
+        unlock();
+        wait(&|| unlocked.exists());
+        app.dispatch(&Invocation::new("places.refresh")).unwrap();
+        wait(&|| opened().is_some());
+        assert!(volume().is_none(), "listed as its cleartext volume");
+        assert_eq!(
+            opened().unwrap().busy.as_deref(),
+            Some("Unlocking…"),
+            "not offered for mounting while it is being mounted"
+        );
+        // Mounted: neither is one to mount, at once and after `lsblk`
+        // has run again.
+        std::fs::write(&mount_gate, b"").unwrap();
+        let notice = next_notice(&app);
+        assert!(notice.text.starts_with("Mounted"), "{}", notice.text);
+        assert!(
+            volume().is_none() && opened().is_none(),
+            "not offered again while lsblk runs"
+        );
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(volume().is_none() && opened().is_none());
+    }
+
     fn next_notice(app: &App) -> bibli_core::app::Notification {
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
