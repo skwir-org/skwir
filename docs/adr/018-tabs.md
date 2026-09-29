@@ -196,7 +196,9 @@ The application toolbar, a row across the window, is gone. Each area
 owns its top: the sidebar's header holds the sidebar toggle and More,
 each pane's row holds what is about that pane (its views and View menu
 included), and Split and Preview end the row of the pane at the window's
-right (the top one when stacked). A sidebar not drawn leaves its toggle
+right (the top one when stacked), or the right end of the strip while it
+shows, or, while the preview panel is open at the right, its own bar,
+which mirrors the sidebar's header. A sidebar not drawn leaves its toggle
 and More at the start of the first pane's row. A window of one tab thus
 has one row of bars above its lists, split or not.
 

@@ -432,24 +432,20 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
     shell.sync_tab_labels();
     let shown = shell.shown_tab;
     let labels = shell.tab_labels.labels.clone();
-    if labels.len() < 2 && !shell.prefs.single_tab {
+    if !shell.strip_shown() {
         return None;
     }
     let theme = cx.global::<Theme>().clone();
     let mut strip = div()
         .id("tab-strip")
-        .flex_none()
-        .h(px(STRIP_HEIGHT))
-        .w_full()
+        .flex_1()
+        .h_full()
         .min_w_0()
         .overflow_hidden()
         .flex()
         .items_end()
         .gap(px(2.))
         .px(px(6.))
-        .bg(theme.surface)
-        .border_b_1()
-        .border_color(theme.border)
         // A double click beside the tabs opens one, as in a browser.
         .on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
             if event.click_count() == 2 {
@@ -495,7 +491,34 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
     let new = crate::toolbar::Button::new("tab-strip-new", "plus", "New tab", "tab.new")
         .render(shell, cx);
     strip = strip.child(div().flex_none().h_full().flex().items_center().child(new));
-    Some(strip.into_any_element())
+    // Split and Preview end the strip while the preview is not open at the
+    // right (`Shell::toggles_at`): beside the tabs, not in them, so a
+    // double click on one opens no tab.
+    let toggles = (shell.toggles_at() == crate::shell::TogglesAt::Strip).then(|| {
+        let [split, preview] = crate::address::panel_toggles(shell, cx);
+        div()
+            .flex_none()
+            .h_full()
+            .flex()
+            .items_center()
+            .gap(px(2.))
+            .px(px(6.))
+            .child(split)
+            .child(preview)
+    });
+    Some(
+        div()
+            .flex_none()
+            .h(px(STRIP_HEIGHT))
+            .w_full()
+            .flex()
+            .bg(theme.surface)
+            .border_b_1()
+            .border_color(theme.border)
+            .child(strip)
+            .children(toggles)
+            .into_any_element(),
+    )
 }
 
 fn tab(

@@ -438,10 +438,11 @@ fn more_panel(
 /// The window's own tools have no row of their own: each area owns its
 /// top. The sidebar's header holds its toggle and More; a sidebar not
 /// drawn leaves them at the start of the first pane's row
-/// (`Shell::corner_pane`). Split and Preview end the row of the pane at
-/// the window's right, or of the top one when the split is stacked
-/// (`Shell::toggles_pane`), in the order of what they open: the middle of
-/// the window, then its edge. Tabs, when there are two or more (or one
+/// (`Shell::corner_pane`). Split and Preview mirror them at the right, in
+/// the order of what they open (the middle of the window, then its edge):
+/// in the preview's own bar while it is open at the right, else at the end
+/// of the tab strip, else of the row of the pane at the window's right
+/// (`Shell::toggles_at`). Tabs, when there are two or more (or one
 /// asked for, `ui.single_tab`), are a strip above the panes (`tabs.rs`).
 /// So a window of one tab has one row above its lists, split or not.
 ///
@@ -463,8 +464,8 @@ fn corner(shell: &Shell, cx: &mut Context<Shell>) -> [AnyElement; 2] {
     ]
 }
 
-/// Split and Preview, at the end of the row that has them.
-fn panel_toggles(shell: &Shell, cx: &mut Context<Shell>) -> [AnyElement; 2] {
+/// Split and Preview, at the end of what has them (`Shell::toggles_at`).
+pub fn panel_toggles(shell: &Shell, cx: &mut Context<Shell>) -> [AnyElement; 2] {
     let (split_icon, split_tip) = shell.layout.split_button();
     [
         Button::new("split-toggle", split_icon, split_tip, "ui.split")
@@ -603,7 +604,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
                 .map(|menu| menu.what.clone()),
             ends: Ends {
                 corner: shell.corner_pane() == Some(shell.pane),
-                toggles: shell.toggles_pane() == Some(shell.pane),
+                toggles: shell.toggles_at() == crate::shell::TogglesAt::Pane(shell.pane),
             },
         }
     };

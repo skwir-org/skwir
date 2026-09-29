@@ -2951,6 +2951,27 @@ pub fn render_panel(
         .flex_col()
         .child(header(shell, &theme, cx))
         .child(body);
+    // At the right, the panel's own bar mirrors the sidebar's header: as
+    // tall as a pane's row, their edges meeting, with Split and Preview at
+    // the window's edge (`Shell::toggles_at`).
+    let bar = (!bottom).then(|| {
+        let [split, preview] = crate::address::panel_toggles(shell, cx);
+        div()
+            .id("preview-header")
+            .tab_group()
+            .flex_none()
+            .w_full()
+            .h(px(crate::address::PANE_ROW_HEIGHT))
+            .flex()
+            .items_center()
+            .gap(px(2.))
+            .px(px(6.))
+            .border_b_1()
+            .border_color(theme.border)
+            .child(div().flex_1())
+            .child(split)
+            .child(preview)
+    });
     let panel = div()
         .id("preview-panel")
         .relative()
@@ -2972,6 +2993,7 @@ pub fn render_panel(
     Some(
         panel
             .flex_col()
+            .children(bar)
             .child(content.flex_1().min_h_0().w_full())
             .children(crate::dock::render(shell, dock_limit, cx))
             .child(handle)

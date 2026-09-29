@@ -111,6 +111,14 @@ struct Reveal {
 
 /// The shell's switches read from the settings (`Shell::sync`, when their
 /// revision changes), never per frame.
+/// Where Split and Preview are (`Shell::toggles_at`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TogglesAt {
+    Preview,
+    Strip,
+    Pane(PaneId),
+}
+
 // Independent switches, one per setting, each read from its own key: not
 // states of one thing that an enum would name.
 #[allow(clippy::struct_excessive_bools)]
@@ -686,15 +694,30 @@ impl Shell {
             .flatten()
     }
 
-    /// The pane whose row ends with Split and Preview: the one at the
-    /// window's right, or the top one when the split is stacked.
-    pub fn toggles_pane(&self) -> Option<PaneId> {
+    /// Where Split and Preview are this frame, the sidebar's toggle and
+    /// More in mirror: the preview's own bar while it is open at the
+    /// right, else the right end of the tab strip while it shows, else the
+    /// end of the row of the pane at the window's right (the top one when
+    /// the split is stacked).
+    pub fn toggles_at(&self) -> TogglesAt {
+        if self.preview.open && !self.layout.bottom() {
+            return TogglesAt::Preview;
+        }
+        if self.strip_shown() {
+            return TogglesAt::Strip;
+        }
         let pane = if self.layout.stacked() {
             self.panes.first()
         } else {
             self.panes.last()
         };
-        pane.map(|p| p.id)
+        pane.map_or(TogglesAt::Strip, |p| TogglesAt::Pane(p.id))
+    }
+
+    /// Whether the tab strip shows: two tabs or more, or one asked for
+    /// (`ui.single_tab`).
+    pub fn strip_shown(&self) -> bool {
+        self.prefs.single_tab || self.app.workspace.read().tabs().len() > 1
     }
 
     /// The UI of pane `id`, wherever it is: drawn, held, or dormant.

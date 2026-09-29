@@ -102,9 +102,13 @@ current source before assuming a planned crate, command, or API exists.
   header (`address::sidebar_header`, a row's height) holds its toggle and
   More (everything without a button); a sidebar not drawn leaves them at
   the start of the first pane's row (`Shell::corner_pane`). Split and
-  Preview end the row of the pane at the window's right, or of the top
-  one when the split is stacked (`Shell::toggles_pane`), in the order of
-  what they open: the middle of the window, then its edge. Tabs are a
+  Preview mirror them at the right, in the order of what they open (the
+  middle of the window, then its edge): in the preview panel's own bar
+  while it is open at the right (a row's height, like the sidebar's
+  header), else at the right end of the tab strip, else at the end of the
+  row of the pane at the window's right, or of the top one when stacked.
+  One rule decides (`Shell::toggles_at`), so they are never in two places.
+  A preview at the bottom has no bar: its top is mid-window. Tabs are a
   strip above the panes, what a tab changes, when there are two or more,
   or one and `ui.single_tab` asks for it (`tabs.rs`); a second tab
   brings it and moves the panes down one row. More hangs from
