@@ -100,7 +100,8 @@ current source before assuming a planned crate, command, or API exists.
 - **Window row and pane row.** The window row (`address::render_window_row`)
   holds what is about the window: over the sidebar, as wide as it is drawn,
   the sidebar toggle and More (everything without a button); over the panes
-  the tabs, shown even when there is one, so a second costs no height; then
+  the tabs, so a second costs no height (a lone tab shows only with
+  `ui.single_tab`; hiding it moves nothing, the + stays); then
   the Split and Preview toggles (in the order of what they open: the middle
   of the window, then its edge). Everything about one pane is in that
   pane's own row (`render_address`): Back, Forward, the address (the

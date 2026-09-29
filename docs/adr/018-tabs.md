@@ -199,6 +199,10 @@ Split and Preview toggles; what the toolbar held about one pane (its views
 and View menu) went to that pane's own row. The tabs stand in that row
 whatever their number, so the second tab no longer adds a 36 px strip
 above the panes, and the one tab of a window shows the place it shows.
-The last tab has no × (the command does nothing on it). Everything else
+The last tab has no × (the command does nothing on it), and since
+2026-09-29 it is drawn only with "Show a lone tab" (`ui.single_tab`,
+Appearance, off by default): the row keeps its height and its tools
+either way, so the choice moves nothing, and the + stays to open a
+second tab. Everything else
 above holds: a tab is a drop target, is dragged to reorder, closes with a
 middle click, and the wheel over the tabs goes through them.

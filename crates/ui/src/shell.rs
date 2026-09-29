@@ -111,12 +111,17 @@ struct Reveal {
 
 /// The shell's switches read from the settings (`Shell::sync`, when their
 /// revision changes), never per frame.
+// Independent switches, one per setting, each read from its own key: not
+// states of one thing that an enum would name.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Copy, Debug)]
 pub struct Preferences {
     /// `ui.date_format`: Today 14:02 rather than an ISO date.
     pub friendly_dates: bool,
     /// `ui.grid_fill`: thumbnails cropped to their box.
     pub grid_fill: bool,
+    /// `ui.single_tab`: the tab of a window that has only one is drawn.
+    pub single_tab: bool,
     /// `ui.printed_pages`: a book's position counts its printed pages.
     pub printed_pages: bool,
     /// How audio and video play.
@@ -128,6 +133,7 @@ impl Default for Preferences {
         Self {
             friendly_dates: true,
             grid_fill: false,
+            single_tab: false,
             printed_pages: false,
             player: crate::player::PlayerPrefs::default(),
         }
@@ -1767,6 +1773,11 @@ impl Shell {
                 .app
                 .settings
                 .get::<bool>(crate::settings::GRID_FILL_KEY)
+                .unwrap_or(false);
+            self.prefs.single_tab = self
+                .app
+                .settings
+                .get::<bool>(crate::settings::SINGLE_TAB_KEY)
                 .unwrap_or(false);
             self.reading_measure = crate::markdown::measure(
                 &self

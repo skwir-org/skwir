@@ -15,8 +15,10 @@
 //! one finished frame to the next, with no blank or half-listed one.
 //!
 //! The tabs stand in the window row (`address::render_window_row`), over
-//! the panes, so a second tab costs no height; the one tab of a window
-//! shows too, without a × (the last tab stays). A tab is named like the
+//! the panes, so a second tab costs no height, and hiding the one tab of a
+//! window moves nothing either. That one shows only when asked
+//! (`ui.single_tab`), without a × (the last tab stays); the + that opens
+//! another is always there. A tab is named like the
 //! place it shows, is a drop target like a sidebar row, is dragged to
 //! reorder, and closes with its ×, a middle click or Ctrl+W.
 
@@ -467,6 +469,12 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
             }),
         );
     let count = labels.len();
+    // A lone tab only when asked: the row keeps its tools either way.
+    let labels = if count > 1 || shell.prefs.single_tab {
+        labels
+    } else {
+        Vec::new()
+    };
     for (index, label) in labels.into_iter().enumerate() {
         strip = strip.child(tab(
             shell,

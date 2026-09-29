@@ -47,6 +47,8 @@ pub const COLUMN_WIDTHS_KEY: &str = "ui.column_widths";
 pub const COLUMN_KEYS: [&str; 3] = ["ui.column_size", "ui.column_modified", "ui.column_type"];
 /// Whether the grid crops thumbnails to fill their box.
 pub const GRID_FILL_KEY: &str = "ui.grid_fill";
+/// Whether the window row shows the tab of a window that has only one.
+pub const SINGLE_TAB_KEY: &str = "ui.single_tab";
 /// How documents are read: one scrolling column, or a page at a time.
 pub const READER_CONTINUOUS_KEY: &str = "reading.continuous";
 /// How wide a reading column may grow (`markdown::measure`).
@@ -100,6 +102,15 @@ pub fn declare(app: &App) {
         "friendly",
         &[("friendly", "Friendly"), ("iso", "ISO 8601")],
     ));
+    app.settings.declare(
+        SettingSpec::toggle(
+            SINGLE_TAB_KEY,
+            "Show a lone tab",
+            "Show the tab of a window that has only one, named like the place it shows. Off leaves its room to the window's tools; the + beside it still opens another tab.",
+            false,
+        )
+        .section("Tabs"),
+    );
     app.settings.declare(
         SettingSpec::toggle(
             GRID_FILL_KEY,
