@@ -41,6 +41,7 @@ mod map_tiles;
 mod map_view;
 mod markdown;
 mod media;
+mod members;
 pub mod menu;
 pub mod modal;
 mod note_popover;

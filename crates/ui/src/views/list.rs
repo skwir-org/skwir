@@ -511,7 +511,7 @@ pub fn row(
 /// layout: nothing is measured, the header and every row agree by
 /// construction, and a pane of any width is laid out correctly in the frame
 /// it gets that width.
-fn line(name: Div, name_min: f32, height: f32) -> Div {
+pub(crate) fn line(name: Div, name_min: f32, height: f32) -> Div {
     div()
         .h(px(height - 2.))
         .flex_1()
@@ -532,7 +532,7 @@ fn line(name: Div, name_min: f32, height: f32) -> Div {
 }
 
 /// One detail column of `line`.
-fn column(width: f32, color: gpui::Hsla, height: f32) -> Div {
+pub(crate) fn column(width: f32, color: gpui::Hsla, height: f32) -> Div {
     div()
         .w(px(width))
         .flex_none()

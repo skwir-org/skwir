@@ -540,6 +540,14 @@ impl Shell {
         }
         self.layout.panes = session.panes;
         self.layout.preview = session.preview_at;
+        self.layout.member = session.member_at;
+        let dragged = |share: f32| (share > 0. && share < 1.).then_some(share);
+        if let Some(share) = dragged(session.members_height_share) {
+            self.preview.members_share.above = share;
+        }
+        if let Some(share) = dragged(session.members_width_share) {
+            self.preview.members_share.beside = share;
+        }
         self.layout.split = session.split_panes;
         if session.player_height > 0. {
             self.player.height = session.player_height;

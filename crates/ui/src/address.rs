@@ -359,15 +359,35 @@ fn layout_groups(shell: &Shell, everything: bool) -> Vec<(&'static str, Vec<Butt
         ("Layout", panels),
         ("Split direction", layout_items(shell, "panes")),
         ("Preview position", layout_items(shell, "preview")),
+        ("File in an archive", layout_items(shell, "member")),
     ]
 }
 
 /// The choices of one side of the window's arrangement (`ui.layout`), the
 /// current one checked. Automatic says what it means in this window.
 fn layout_items(shell: &Shell, what: &'static str) -> Vec<Button> {
-    use crate::layout::{Panes, Preview};
+    use crate::layout::{Member, Panes, Preview};
     let layout = &shell.layout;
-    let choices: [(&str, &str, bool); 3] = if what == "panes" {
+    let mut automatic = "Follow the window's shape: stacked when it is taller than wide";
+    let choices: [(&str, &str, bool); 3] = if what == "member" {
+        // Where a file of an archive, or an attachment, is previewed beside
+        // the rows it came from; Automatic follows the panel's shape.
+        automatic = "Follow the preview panel's shape: under the archive's files when it is \
+                     at the right, at their right when it is at the bottom";
+        [
+            (
+                "auto",
+                if layout.member.beside(layout.bottom()) {
+                    "Automatic (on the right)"
+                } else {
+                    "Automatic (at the bottom)"
+                },
+                layout.member == Member::Auto,
+            ),
+            ("right", "On the right", layout.member == Member::Right),
+            ("bottom", "At the bottom", layout.member == Member::Bottom),
+        ]
+    } else if what == "panes" {
         [
             (
                 "auto",
@@ -403,11 +423,7 @@ fn layout_items(shell: &Shell, what: &'static str) -> Vec<Button> {
     choices
         .into_iter()
         .map(|(value, label, current)| {
-            let tip = if value == "auto" {
-                "Follow the window's shape: stacked when it is taller than wide"
-            } else {
-                label
-            };
+            let tip = if value == "auto" { automatic } else { label };
             menu_item(
                 Button::new(
                     format!("layout-{what}-{value}"),

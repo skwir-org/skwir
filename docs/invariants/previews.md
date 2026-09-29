@@ -301,7 +301,10 @@ still to come are in `docs/preview-frame.md`.
   an archived picture zooms, an attached PDF opens in the reader, a JSON
   member folds. Sessions may hold the file open; it lives as long as the panel
   shows it (`preview::Nested`). The panel follows containers `NESTING` deep;
-  the header's trail and the Back button, first in every bar, lead out.
+  the header's trail and the Back button, first in every bar, lead out
+  (while the container's rows are kept beside the member, the trail is
+  only words: the card it sits in opens Details, and a click meant for
+  that must not leave the member).
   Directories live in the one deletable cache under the process id, are only
   ever removed on a worker, and what a killed process left is swept at the
   next start. The entry's own commands (open externally, copy the path) stay
@@ -310,6 +313,27 @@ still to come are in `docs/preview-frame.md`.
   shows them itself. A container that only names files that exist on their
   own (a playlist) returns them with `own_file`: nothing is written or
   removed, and a location that is not on this machine is refused.
+- **The rows a member came from stay beside it** (`members.rs`). A member
+  of an archive or a message (`inspector::kept_rows`) is shown beside its
+  container's rows as they were shown, with their folds, and the member
+  highlighted: under them or at their right, as More's Layout says
+  (`layout::Member`, in `ui.layout`), whose Automatic follows the room
+  (under them in a panel at the right edge, at their right at the bottom
+  and in peek). Their edge is dragged like a split's: it stores the rows'
+  share of the room, one for each way it runs (`members::Share`), part of
+  the window's shape, and each side keeps a minimum. Details stays right
+  under the card, above the rows and the member alike
+  (`preview::under_card`): it is about what the card names. The rows are the
+  container's inspection, shared, never copied or read again; a click or
+  Up and Down (`PreviewMembers`) opens another member through
+  `ui.inspect` (`sibling`, `sibling_step`), which goes up to the
+  container's depth and down again without previewing the container in
+  between. Opening a member gives these rows the keyboard. They are kept
+  per member (`PreviewState::members`, beside `nested`) and go with it
+  when the panel goes up; while a member is on its way they are the ones
+  it was asked from (`members_asked`). A playlist keeps the player's
+  Previous and Next instead. The panel's copy is drawn only while peek is
+  closed: one element holds their focus.
 - **Rows.** What the inspector works out about rows is pure and tested
   (`inspector_rows.rs`) and never computed while painting. A table's column
   widths come from its content, as an estimate from character counts made on

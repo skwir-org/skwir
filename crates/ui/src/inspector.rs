@@ -15,7 +15,7 @@ pub struct Display {
     /// The inspection's own picture, then one per block. Shared with every
     /// frame's list closure, never copied per frame.
     pub images: Arc<[Option<Arc<RenderImage>>]>,
-    row_icons: Arc<Vec<Option<Arc<std::path::Path>>>>,
+    pub(crate) row_icons: Arc<Vec<Option<Arc<std::path::Path>>>>,
     /// Case-folded search text per block, then per row, prepared on the
     /// worker so Find never lowercases a document on the UI thread.
     folded: Arc<Vec<String>>,
@@ -35,9 +35,11 @@ pub struct Display {
 }
 impl Display {
     pub fn new(mut data: Inspection, dark: bool) -> Self {
-        // Display conversion runs on a worker. Resolve themed archive icons here,
-        // never by inspecting archive member paths or doing I/O while drawing rows.
-        let row_icons = if data.kind == InspectionKind::Archive {
+        // Display conversion runs on a worker. Resolve themed icons for the
+        // files a container holds (an archive's members, a message's
+        // attachments) here, never by inspecting member paths or doing I/O
+        // while drawing rows.
+        let row_icons = if kept_rows(data.kind) {
             data.rows
                 .iter()
                 .map(|row| {
@@ -198,6 +200,40 @@ pub(crate) fn listed(data: &Inspection) -> &[bibli_core::inspection::Row] {
     } else {
         &data.rows
     }
+}
+
+/// Whether a container's rows stay beside the member opened from them
+/// (`members.rs`): the files it holds, an archive's or a message's.
+pub(crate) fn kept_rows(kind: InspectionKind) -> bool {
+    matches!(kind, InspectionKind::Archive | InspectionKind::Mail)
+}
+
+/// The rows shown, in the order shown: those under a folded row are
+/// hidden, and a table is ordered by the column chosen.
+pub(crate) fn visible_rows(
+    data: &Inspection,
+    collapsed: &BTreeSet<usize>,
+    sort: Option<(usize, bool)>,
+) -> Vec<usize> {
+    let mut hidden = None;
+    let mut visible: Vec<usize> = listed(data)
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| {
+            if hidden.is_some_and(|d| r.depth > d) {
+                return None;
+            }
+            hidden = None;
+            if collapsed.contains(&i) {
+                hidden = Some(r.depth);
+            }
+            Some(i)
+        })
+        .collect();
+    if let Some((column, ascending)) = sort.filter(|_| data.kind == InspectionKind::Table) {
+        crate::inspector_rows::sort(&data.rows, &mut visible, column, ascending);
+    }
+    visible
 }
 
 /// Bring a list item into view. `ListState::scroll_to_reveal_item` walks the
@@ -541,26 +577,7 @@ impl State {
                 .reset_with_uniform_height(self.visible.len() + 1, estimate);
             return;
         }
-        let mut hidden = None;
-        let mut visible: Vec<usize> = listed(data)
-            .iter()
-            .enumerate()
-            .filter_map(|(i, r)| {
-                if hidden.is_some_and(|d| r.depth > d) {
-                    return None;
-                }
-                hidden = None;
-                if self.collapsed.contains(&i) {
-                    hidden = Some(r.depth);
-                }
-                Some(i)
-            })
-            .collect();
-        if let Some((column, ascending)) = self.sort.filter(|_| data.kind == InspectionKind::Table)
-        {
-            crate::inspector_rows::sort(&data.rows, &mut visible, column, ascending);
-        }
-        self.visible = Arc::new(visible);
+        self.visible = Arc::new(visible_rows(data, &self.collapsed, self.sort));
         self.list
             .reset_with_uniform_height(data.blocks.len() + self.visible.len() + 1, estimate);
     }
@@ -594,6 +611,24 @@ impl Shell {
                 return cx.notify();
             }
             "section_edit" => return self.inspect_section_edit(window, cx),
+            // The rows kept beside a member (`members.rs`): the next or the
+            // previous of them, or a folder of them opened or closed.
+            "sibling_step" => {
+                let delta = args["delta"].as_i64().unwrap_or(1) as isize;
+                if let Some(target) = self.preview.members().and_then(|m| m.step(delta)) {
+                    let args = serde_json::json!({"action":"sibling","target":target});
+                    self.inspect_command(&args, window, cx);
+                }
+                return;
+            }
+            "sibling_fold" => {
+                if let (Some(members), Some(row)) =
+                    (self.preview.members_mut(), args["row"].as_u64())
+                {
+                    members.fold(row as usize);
+                }
+                return cx.notify();
+            }
             "section_cancel" => {
                 self.preview.inspection.section_input = None;
                 if let Some(focus) = &self.preview.inspection.focus {
@@ -950,6 +985,27 @@ impl Shell {
                     return;
                 }
                 self.preview.descend = args["target"].as_str().map(str::to_owned);
+                // An archive's or a message's rows stay beside the member.
+                self.preview.members_asked = match (&self.preview.content, &self.preview.descend) {
+                    (Some(PreviewContent::Inspection(display)), Some(target))
+                        if kept_rows(display.data.kind) =>
+                    {
+                        let state = &self.preview.inspection;
+                        Some(crate::members::Members::new(
+                            display,
+                            state.collapsed.clone(),
+                            state.visible.clone(),
+                            self.preview.nested.len(),
+                            target,
+                            cx,
+                        ))
+                    }
+                    _ => None,
+                };
+                // They are the rows just acted on: the arrows go on from them.
+                if let Some(members) = &self.preview.members_asked {
+                    window.focus(&members.focus);
+                }
                 // A playlist's rows, as shown, are what Previous and Next walk.
                 if kind == Some(InspectionKind::Table)
                     && let Some(PreviewContent::Inspection(display)) = &self.preview.content
@@ -980,6 +1036,19 @@ impl Shell {
                 self.preview.queue = queue;
                 self.preview.descend = args["target"].as_str().map(str::to_owned);
             }
+            // Another of the rows kept beside the member shown.
+            "sibling" => {
+                let Some(target) = args["target"].as_str() else {
+                    return;
+                };
+                let Some(mut members) = self.preview.take_members() else {
+                    return;
+                };
+                members.show(target);
+                self.preview_ascend(members.depth);
+                self.preview.members_asked = Some(members);
+                self.preview.descend = Some(target.to_owned());
+            }
             "back"
                 if !self.preview.nested.is_empty()
                     && self.preview.inspection.request.target.is_none() =>
@@ -994,6 +1063,7 @@ impl Shell {
             _ => {}
         }
         let nested = (action == "target" && container)
+            || action == "sibling"
             || action == "ascend"
             || action == "member"
             || (action == "back" && self.preview.inspection.request.target.is_none());

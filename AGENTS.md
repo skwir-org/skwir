@@ -110,7 +110,8 @@ current source before assuming a planned crate, command, or API exists.
   pane shows its folder (every view, sort, direction, hidden files, zoom, and in the
   grid Fill thumbnails); how the window is arranged is More's Layout
   groups (the sidebar, the timeline, the terminal, where the split and
-  the preview go). Split panes sit side by side or stacked,
+  the preview go, and where a file of an archive is previewed beside the
+  archive's rows). Split panes sit side by side or stacked,
   and the preview is at the right or the bottom (`layout.rs`): each a choice
   in More's Layout (`ui.layout`) whose default, Automatic, follows the
   window's shape, decided in `Shell::render` from the window's size like the
@@ -258,7 +259,8 @@ current source before assuming a planned crate, command, or API exists.
   that grew in a column needs a column — or it silently stops scrolling.
 - **What the window remembers.** The shape of the last window (view, split
   and its arrangement and share, sidebar width, preview with its place, width
-  and height, timeline, zoom) is application data, not preference:
+  and height, where a file of an archive goes beside its rows and their
+  shares, timeline, zoom) is application data, not preference:
   `session.rs` keeps it under one key, restores it at startup and writes it
   only when it changes, never per frame. A new pane opens in the view the
   current one shows. The preview panel is as wide as the user drags it, up to

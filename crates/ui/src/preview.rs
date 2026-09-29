@@ -273,6 +273,14 @@ pub struct PreviewState {
     pub nested: Vec<Arc<Nested>>,
     /// A member asked for and not extracted yet: the worker's next job.
     pub descend: Option<String>,
+    /// The rows each member was opened from, when they are kept beside it
+    /// (`members.rs`): one per member of `nested`, `None` for a container
+    /// whose rows are not kept.
+    members: Vec<Option<crate::members::Members>>,
+    /// The rows the member of `descend` is asked from, until it arrives.
+    pub(crate) members_asked: Option<crate::members::Members>,
+    /// Their share of the room beside the member, as their edge was dragged.
+    pub members_share: crate::members::Share,
     nested_tx: flume::Sender<(u64, Arc<Nested>)>,
     nested_rx: flume::Receiver<(u64, Arc<Nested>)>,
     /// Fields read on demand that Details shows (a picture's place,
@@ -341,6 +349,9 @@ impl Default for PreviewState {
             queue: None,
             autoplay: None,
             nested: Vec::new(),
+            members: Vec::new(),
+            members_asked: None,
+            members_share: crate::members::Share::default(),
             descend: None,
             nested_tx,
             nested_rx,
@@ -407,6 +418,34 @@ impl PreviewState {
             max_side: 0,
             text_size: None,
         })
+    }
+
+    /// The rows kept beside the member shown or asked for, if any.
+    pub fn members(&self) -> Option<&crate::members::Members> {
+        match &self.members_asked {
+            Some(asked) => Some(asked),
+            None => self.members.last()?.as_ref(),
+        }
+    }
+
+    pub(crate) fn members_mut(&mut self) -> Option<&mut crate::members::Members> {
+        match &mut self.members_asked {
+            Some(asked) => Some(asked),
+            None => self.members.last_mut()?.as_mut(),
+        }
+    }
+
+    /// Take the rows kept beside the member shown, to ask for another.
+    pub(crate) fn take_members(&mut self) -> Option<crate::members::Members> {
+        self.members_asked
+            .take()
+            .or_else(|| self.members.last_mut()?.take())
+    }
+
+    /// Whether the kept rows have the keyboard.
+    pub(crate) fn members_hold_focus(&self, window: &Window, cx: &gpui::App) -> bool {
+        self.members()
+            .is_some_and(|members| members.focus.contains_focused(window, cx))
     }
 
     /// Whether a preview result is for the track the player stepped to.
@@ -852,6 +891,8 @@ impl Shell {
         while let Ok((generation, member)) = self.preview.nested_rx.try_recv() {
             if generation == self.preview.generation && self.preview.nested.len() < NESTING {
                 self.preview.nested.push(member);
+                let members = self.preview.members_asked.take();
+                self.preview.members.push(members);
                 self.preview.descend = None;
             } else {
                 self.discard_nested(vec![member]);
@@ -1586,6 +1627,7 @@ impl Shell {
         let held = menu
             || self.preview.reader.holds_focus(window, cx)
             || self.preview.inspection.holds_focus(window, cx)
+            || self.preview.members_hold_focus(window, cx)
             || [&self.preview.media.focus, &self.preview.image_focus]
                 .into_iter()
                 .flatten()
@@ -1791,6 +1833,8 @@ impl Shell {
         }
         let left = self.preview.nested.split_off(depth);
         self.discard_nested(left);
+        self.preview.members.truncate(depth);
+        self.preview.members_asked = None;
         self.preview.descend = None;
     }
 
@@ -2114,7 +2158,44 @@ impl Shell {
     }
 }
 
-fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>) -> AnyElement {
+/// Everything under the header's card. A member of a container whose rows
+/// are kept is shown beside them (`members::split`), and Details, which the
+/// card opens, stays right under the card, above both: it is about what the
+/// card names. `wide` is whether the room is wider than tall.
+fn under_card(
+    shell: &Shell,
+    theme: &Theme,
+    interactive: bool,
+    wide: bool,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let kept = interactive && shell.preview.members().is_some();
+    if !kept {
+        return body(shell, theme, interactive, true, cx);
+    }
+    let details = Some(())
+        .filter(|()| !crate::details::alone(shell))
+        .and_then(|()| crate::details::render(shell, theme, cx));
+    let body = body(shell, theme, interactive, false, cx);
+    div()
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .children(details)
+        .child(crate::members::split(body, wide, shell, cx))
+        .into_any_element()
+}
+
+/// The toolbar and the content, under Details when `details` is set (and
+/// always when there is nothing else to show).
+fn body(
+    shell: &Shell,
+    theme: &Theme,
+    interactive: bool,
+    details: bool,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
     let document = matches!(
         &shell.preview.content,
         Some(PreviewContent::Image {
@@ -2134,7 +2215,7 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
     // failed), so neither ends up at the bottom.
     let alone = crate::details::alone(shell);
     let mut details = Some(())
-        .filter(|()| interactive || alone)
+        .filter(|()| (interactive && details) || alone)
         .and_then(|()| crate::details::render(shell, theme, cx));
     if !alone {
         frame = frame.children(details.take());
@@ -2425,7 +2506,10 @@ fn failure(error: &str, theme: &Theme) -> AnyElement {
 }
 
 /// The name of what is shown. Inside a container it is a trail,
-/// `bundle.zip › notes.md`, and every step before the last leads back to it.
+/// `bundle.zip › notes.md`, and every step before the last leads back to it,
+/// unless the container's rows are kept beside the member (`members.rs`):
+/// then the card is only what opens Details, and Back and the rows lead
+/// elsewhere, so a click meant for Details never leaves the member.
 fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
     let preview = &shell.preview;
     let mut line = div().min_w_0().flex_1().flex().items_center().gap_1();
@@ -2449,6 +2533,11 @@ fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
         }
         line = line.child(if depth == last {
             name(name_at).into_any_element()
+        } else if preview.members().is_some() {
+            name(name_at)
+                .flex_shrink()
+                .text_color(theme.text_muted)
+                .into_any_element()
         } else {
             div()
                 .id(("preview-trail", depth))
@@ -2853,11 +2942,15 @@ pub fn render_panel(
             .cursor(CursorStyle::ResizeLeftRight)
             .on_drag(ResizeHandle, |_, _, _, cx| cx.new(|_| NoDragView))
     };
+    // While peek shows the preview, the panel is only a picture of it: the
+    // kept rows, which take the keyboard, are drawn in peek alone.
+    let interactive = !shell.preview.peek;
+    let body = under_card(shell, &theme, interactive, bottom, cx);
     let content = div()
         .flex()
         .flex_col()
         .child(header(shell, &theme, cx))
-        .child(body(shell, &theme, !shell.preview.peek, cx));
+        .child(body);
     let panel = div()
         .id("preview-panel")
         .relative()
@@ -2925,7 +3018,7 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
                     .shadow_lg()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(header(shell, &theme, cx))
-                    .child(body(shell, &theme, true, cx))
+                    .child(under_card(shell, &theme, true, true, cx))
                     .child(
                         div()
                             .px_2()

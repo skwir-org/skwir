@@ -41,6 +41,8 @@ pub const TERMINAL: &str = "Terminal";
 /// clears, F-keys drive a file manager). `install` shadows them.
 const TERMINAL_PASSTHROUGH: [&str; 2] = ["ui.terminal", "ui.palette"];
 pub const BULK: &str = "BulkRename";
+/// The rows of a container kept beside the member previewed (`members.rs`).
+pub const MEMBERS: &str = "PreviewMembers";
 pub const MENU: &str = "ContextMenu";
 
 /// A binding as the palette shows it: keys and command name. Only the
@@ -312,6 +314,19 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         r#"{"action":"find_next"}"#,
         Some("InspectorFind"),
     ),
+    // The rows kept beside a member step through the others.
+    (
+        "up",
+        "ui.inspect",
+        r#"{"action":"sibling_step","delta":-1}"#,
+        Some("PreviewMembers"),
+    ),
+    (
+        "down",
+        "ui.inspect",
+        r#"{"action":"sibling_step","delta":1}"#,
+        Some("PreviewMembers"),
+    ),
     // A map moves under the arrows, as it does under a drag.
     (
         "left",
@@ -550,6 +565,7 @@ pub fn context_label(context: &str) -> String {
             "MediaPlayer" => place = "Media player",
             "Player" => place = "Pinned player",
             "Inspector" => place = "Structured previews",
+            "PreviewMembers" => place = "Files of an archive or a message",
             "ToolbarButton" | "ToolbarPopup" => place = "Toolbars",
             "ContextMenu" => place = "Context menu",
             "Shortcuts" => place = "Shortcut overview",

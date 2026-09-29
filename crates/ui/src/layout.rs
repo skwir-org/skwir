@@ -1,8 +1,9 @@
 //! How the window arranges its panes and the preview panel.
 //!
-//! Two choices, each with an automatic default: whether split panes sit side
-//! by side or one above the other, and whether the preview is at the right
-//! edge or at the bottom. Automatic follows the window's shape: a window
+//! Three choices, each with an automatic default: whether split panes sit
+//! side by side or one above the other, whether the preview is at the right
+//! edge or at the bottom, and whether a file of an archive is previewed at
+//! the right of the rows it came from or under them (`members.rs`). Automatic follows the window's shape: a window
 //! taller than it is wide (a portrait screen, half of a screen divided top
 //! and bottom) stacks its panes and puts the preview under them. The
 //! window's size is known before layout, so this is decided in
@@ -45,6 +46,40 @@ pub enum Panes {
     Column,
 }
 
+/// Where a member's preview goes beside the container's rows it was opened
+/// from: at their right, or under them. Automatic uses the panel's longer
+/// side: under them in a panel at the right edge, at their right in one at
+/// the bottom and in peek.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Member {
+    #[default]
+    Auto,
+    Right,
+    Bottom,
+}
+
+impl Member {
+    fn parse(s: &str) -> Option<Self> {
+        match s {
+            "auto" => Some(Self::Auto),
+            "right" => Some(Self::Right),
+            "bottom" => Some(Self::Bottom),
+            _ => None,
+        }
+    }
+
+    /// Whether the member is previewed at the right of the rows, where
+    /// Automatic would put it there when `wide`.
+    pub fn beside(self, wide: bool) -> bool {
+        match self {
+            Self::Auto => wide,
+            Self::Right => true,
+            Self::Bottom => false,
+        }
+    }
+}
+
 /// Where the preview panel goes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -82,6 +117,7 @@ impl Preview {
 pub struct Layout {
     pub panes: Panes,
     pub preview: Preview,
+    pub member: Member,
     /// The current split's own arrangement, when it was made the other way.
     pub split: Option<Panes>,
     /// Whether the window counts as tall; kept between the two thresholds
@@ -192,12 +228,13 @@ impl Shell {
         }
     }
 
-    /// `ui.layout { panes?, preview? }`: choose the arrangement. Choosing
-    /// the panes' arrangement also turns a split made the other way.
+    /// `ui.layout { panes?, preview?, member? }`: choose the arrangement.
+    /// Choosing the panes' arrangement also turns a split made the other way.
     pub fn layout_command(&mut self, args: &serde_json::Value, cx: &mut Context<Self>) {
         let arg = |key| args.get(key).and_then(serde_json::Value::as_str);
         let panes = arg("panes").map(|v| (v, Panes::parse(v)));
         let preview = arg("preview").map(|v| (v, Preview::parse(v)));
+        let member = arg("member").map(|v| (v, Member::parse(v)));
         if let Some((v, None)) = panes {
             self.set_status(format!("“{v}” is not a way to arrange panes"), true, cx);
             return;
@@ -206,12 +243,23 @@ impl Shell {
             self.set_status(format!("“{v}” is not a place for the preview"), true, cx);
             return;
         }
+        if let Some((v, None)) = member {
+            self.set_status(
+                format!("“{v}” is not a place for a file's preview in an archive"),
+                true,
+                cx,
+            );
+            return;
+        }
         if let Some((_, Some(panes))) = panes {
             self.layout.panes = panes;
             self.layout.split = None;
         }
         if let Some((_, Some(preview))) = preview {
             self.layout.preview = preview;
+        }
+        if let Some((_, Some(member))) = member {
+            self.layout.member = member;
         }
         self.remember_session();
         cx.notify();
@@ -262,6 +310,19 @@ mod tests {
         layout.observe(900., 1600.);
         assert!(!layout.stacked());
         assert!(layout.bottom());
+    }
+
+    #[test]
+    fn a_member_follows_the_panel_unless_placed() {
+        // At the right edge the panel is tall: the member goes under the rows.
+        assert!(!Member::Auto.beside(false));
+        assert!(Member::Auto.beside(true));
+        assert!(Member::Right.beside(false));
+        assert!(!Member::Bottom.beside(true));
+        assert_eq!(
+            serde_json::from_value::<Member>(serde_json::json!("right")).unwrap(),
+            Member::Right
+        );
     }
 
     #[test]

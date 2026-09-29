@@ -1,5 +1,11 @@
-//! Archive contents use the file list's density and column alignment.
-use crate::{format, icons, theme::Theme, views::list::ROW_HEIGHT};
+//! Archive contents use the file list's density and column alignment, and
+//! its way of giving way: the size drops whole when the name needs the room
+//! (`views::list::line`).
+use crate::{
+    format, icons,
+    theme::Theme,
+    views::list::{ROW_HEIGHT, column, line},
+};
 use bibli_core::inspection::Row;
 use gpui::{Div, div, prelude::*, px, svg};
 use std::path::Path;
@@ -7,14 +13,20 @@ use std::path::Path;
 const SIZE_WIDTH: f32 = 90.;
 const ICON_SIZE: f32 = 18.;
 const DISCLOSURE_SIZE: f32 = 12.;
+/// Narrower than this, a name gives up the size column beside it.
+const NAME_MIN: f32 = 120.;
+const HEADER_HEIGHT: f32 = 24.;
 
 pub fn header(theme: &Theme) -> Div {
+    let name = div()
+        .min_w_0()
+        .pl(px(DISCLOSURE_SIZE + ICON_SIZE + 8.))
+        .child("Name");
     div()
-        .h(px(24.))
+        .h(px(HEADER_HEIGHT))
         .flex_none()
         .flex()
         .items_center()
-        .gap_2()
         .px_2()
         .text_xs()
         .text_color(theme.text_muted)
@@ -22,18 +34,11 @@ pub fn header(theme: &Theme) -> Div {
         .border_b_1()
         .border_color(theme.border)
         .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .pl(px(DISCLOSURE_SIZE + ICON_SIZE + 8.))
-                .child("Name"),
-        )
-        .child(
-            div()
-                .w(px(SIZE_WIDTH))
-                .flex_none()
-                .text_right()
-                .child("Size"),
+            line(name, NAME_MIN, HEADER_HEIGHT).child(
+                column(SIZE_WIDTH, theme.text_muted, HEADER_HEIGHT)
+                    .text_right()
+                    .child("Size"),
+            ),
         )
 }
 
@@ -53,11 +58,8 @@ pub fn row(row: &Row, icon: Option<&Path>, collapsed: bool, selected: bool, them
         |path| icons::element(path, ICON_SIZE),
     );
     let mut name = div()
-        .flex_1()
         .min_w_0()
         .overflow_hidden()
-        .flex()
-        .items_center()
         .gap_1()
         // Indentation belongs to Name only; sizes must stay aligned at every depth.
         .pl(px(row.depth.min(32) as f32 * 14.))
@@ -100,27 +102,25 @@ pub fn row(row: &Row, icon: Option<&Path>, collapsed: bool, selected: bool, them
                 .child(status.clone()),
         );
     }
+    let size = column(
+        SIZE_WIDTH,
+        if selected {
+            theme.selection_text
+        } else {
+            theme.text
+        },
+        ROW_HEIGHT,
+    )
+    .text_right()
+    .child(row.bytes.map_or_else(|| "—".into(), format::size));
     div()
         .h(px(ROW_HEIGHT))
         .w_full()
         .flex()
         .items_center()
-        .gap_2()
         .px_2()
         .text_sm()
         .when(!selected, |d| d.hover(|d| d.bg(theme.hover)))
         .when(selected, |d| d.text_color(theme.selection_text))
-        .child(name)
-        .child(
-            div()
-                .w(px(SIZE_WIDTH))
-                .flex_none()
-                .text_right()
-                .text_color(if selected {
-                    theme.selection_text
-                } else {
-                    theme.text
-                })
-                .child(row.bytes.map_or_else(|| "—".into(), format::size)),
-        )
+        .child(line(name, NAME_MIN, ROW_HEIGHT).child(size))
 }

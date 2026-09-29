@@ -245,6 +245,21 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
         r#"{"preview":"bottom"}"#,
         "Preview: at the bottom",
     ),
+    (
+        "ui.layout",
+        r#"{"member":"auto"}"#,
+        "File in an archive: place automatically",
+    ),
+    (
+        "ui.layout",
+        r#"{"member":"right"}"#,
+        "File in an archive: on the right",
+    ),
+    (
+        "ui.layout",
+        r#"{"member":"bottom"}"#,
+        "File in an archive: at the bottom",
+    ),
     ("ui.focus_other_pane", "{}", "Focus other pane"),
     ("ui.shelf_open", "{}", "Open shelf"),
     ("ui.quit", "{}", "Quit"),

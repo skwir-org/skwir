@@ -41,6 +41,13 @@ pub struct Session {
     /// The preview at the right, at the bottom, or as the window's shape says.
     pub preview_at: crate::layout::Preview,
     pub preview_width: f32,
+    /// A file of an archive previewed at the right of the archive's rows,
+    /// under them, or as the panel's shape says.
+    pub member_at: crate::layout::Member,
+    /// The archive's rows' share of the room above a file of it, and at its
+    /// left, as their edge was dragged each way; 0 until then.
+    pub members_height_share: f32,
+    pub members_width_share: f32,
     /// How tall the preview is when it is at the bottom, once dragged; 0
     /// until then (the default makes room for a pinned player).
     pub preview_height: f32,
@@ -71,6 +78,9 @@ impl Shell {
             preview: self.preview.open,
             preview_at: self.layout.preview,
             preview_width: self.preview.width,
+            member_at: self.layout.member,
+            members_height_share: self.preview.members_share.above,
+            members_width_share: self.preview.members_share.beside,
             preview_height: self.preview.height.unwrap_or(0.),
             details: self.preview.details_open,
             timeline: self.timeline.open,
