@@ -1095,7 +1095,7 @@ impl Shell {
         use crate::views::list::{DEFAULT_ROW_ZOOM, ROW_ZOOMS};
         match self.ui().view_id {
             view::GRID => self.zoom = step(&ZOOMS, self.zoom, DEFAULT_ZOOM, dir),
-            view::LIST | view::COLUMNS => {
+            view::LIST | view::TREE | view::COLUMNS => {
                 self.row_zoom = step(&ROW_ZOOMS, self.row_zoom, DEFAULT_ROW_ZOOM, dir);
             }
             _ => return,
@@ -1277,7 +1277,7 @@ impl Shell {
                         if it.next().is_some() {
                             return None;
                         }
-                        p.listing.get(id).map(|e| e.name_str().into_owned())
+                        p.entry(id).map(|e| e.name_str().into_owned())
                     })
                 };
                 match single {
@@ -1655,7 +1655,7 @@ impl Shell {
         };
         let mut out: Vec<String> = Vec::new();
         for id in pane.selection.iter() {
-            if let Some(e) = pane.listing.get(id) {
+            if let Some(e) = pane.entry(id) {
                 for t in crate::views::list::tags_of(e) {
                     if !out.contains(&t) {
                         out.push(t);
@@ -1685,11 +1685,11 @@ impl Shell {
                 if it.next().is_some() {
                     return None;
                 }
-                let e = p.listing.get(id)?;
+                let e = p.entry(id)?;
                 if !e.is_dir() {
                     return None;
                 }
-                p.open.as_ref()?.path_of(id)
+                p.path_of(id)
             })
         };
         if let Some(path) = target {
@@ -1805,17 +1805,26 @@ impl Shell {
             // What the view shows beside the location (the columns of the
             // folders above) stays open; the rest, the folder just left
             // included when it is not among them, is let go.
-            let wanted = {
+            // Only a view that draws folders opened in place (the tree)
+            // keeps them: in any other, their entries would be selected
+            // and acted on unseen.
+            let (wanted, close) = {
                 let ws = app.workspace.read();
                 let Some(pane) = ws.pane(id) else { continue };
-                let wanted = self
-                    .ui()
-                    .views
-                    .get(self.ui().view_id)
+                let view = self.ui().views.get(self.ui().view_id);
+                let wanted = view
                     .map(|view| view.kept_locations(pane.location()))
                     .unwrap_or_default();
-                (!wanted.is_empty() || pane.keeps_any()).then_some(wanted)
+                let close =
+                    !pane.expanded().is_empty() && !view.is_some_and(|view| view.opens_in_place());
+                (
+                    (!wanted.is_empty() || pane.keeps_any()).then_some(wanted),
+                    close,
+                )
             };
+            if close {
+                app.collapse_all(id);
+            }
             if let Some(wanted) = wanted {
                 app.keep_locations(id, &wanted);
             }
@@ -1825,7 +1834,7 @@ impl Shell {
                 let location = pane.location().map(ToString::to_string).unwrap_or_default();
                 let list = &mut self.ui_mut().list;
                 let before = list.listing();
-                let resorted = list.sync(&pane.listing, pane.sort);
+                let resorted = list.sync(pane);
                 (location, resorted, list.listing() != before)
             };
             resorted_any |= resorted;

@@ -1,4 +1,4 @@
-//! Pane views: list, grid, columns. One trait, registered as `ViewSpec`s.
+//! Pane views: list, tree, grid, columns. One trait, registered as `ViewSpec`s.
 //!
 //! Rule: never derive layout from a measured size in `render`; size-dependent
 //! layout lives in an element's `prepaint`, where the bounds are real (see
@@ -85,6 +85,12 @@ pub trait PaneView {
     fn kept_locations(&self, _shown: Option<&Location>) -> Vec<Location> {
         Vec::new()
     }
+    /// Whether the view draws folders opened in place (`Pane::expanded`,
+    /// the core `expand` command): the tree does. The pane closes them
+    /// under any other view.
+    fn opens_in_place(&self) -> bool {
+        false
+    }
 }
 
 /// What a view's `ViewSpec::factory` holds: a constructor.
@@ -123,6 +129,7 @@ pub fn instantiate(spec: &ViewSpec) -> Option<Box<dyn PaneView>> {
 pub const LIST: &str = "list";
 pub const GRID: &str = "grid";
 pub const COLUMNS: &str = "columns";
+pub const TREE: &str = "tree";
 
 /// Reconcile by registration identity, including disable/re-enable between two frames.
 /// Returns removed/replaced ids so their associated pane state can be discarded.

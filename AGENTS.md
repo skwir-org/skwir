@@ -102,9 +102,10 @@ current source before assuming a planned crate, command, or API exists.
   Split and Preview toggles (in the order of what they open: the middle of
   the window, then its edge), and More (everything else, so the
   narrowest variant loses nothing). The view buttons are the views that
-  show the listing (`ViewRole::Listing`: list, grid, columns); a lens, a
-  view that gathers data of its own (`ViewRole::Lens`: Usage), has a
-  button only while it is shown, and the plugin states the role, never the
+  show the listing (`ViewRole::Listing`: list, grid, columns); a shape
+  chosen now and then (`ViewRole::Alternate`: the tree) and a lens, a
+  view that gathers data of its own (`ViewRole::Lens`: Usage), have a
+  button only while shown, and the view states its role, never the
   shell. View is only how the active
   pane shows its folder (every view, sort, direction, hidden files, zoom, and in the
   grid Fill thumbnails); how the window is arranged is More's Layout
@@ -197,6 +198,12 @@ current source before assuming a planned crate, command, or API exists.
   one; `pick` is yazi's mark; a sweep (`select_sweep`) holds a range while
   the cursor moves and the pane's key context says `sweep` meanwhile. The
   standard keys use none of these and behave as they always did.
+- **Folders opened in place are the pane's** (ADR-025): the tree view
+  opens folders under the one shown (`Pane::expanded`, the core `expand`
+  command), and their entries are selected and acted on like the shown
+  listing's. Read a pane's entries through `Pane::entry`, `Pane::path_of`
+  and `Pane::order`, never `pane.listing` alone. Only a view that says
+  `opens_in_place` keeps them; the shell closes them under any other.
 - **What waits for a paste is core data.** The clipboard's owner publishes
   it in `App::pending` (entry ids and whether a paste will move them); the
   shell snapshots it once per frame. Every view dims cut entries

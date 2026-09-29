@@ -386,18 +386,16 @@ fn plan_selection(
     let p = ws
         .pane(pane)
         .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-    let open = p
-        .open
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("pane has no open location"))?;
+    anyhow::ensure!(p.open.is_some(), "pane has no open location");
     let dir = p.location().and_then(bibli_core::Location::path);
     let mut items = Vec::new();
-    for id in p.listing.sorted(p.sort).iter().copied() {
+    // In the order shown, folders opened in place included.
+    for id in p.order().iter().copied() {
         if !p.selection.contains(id) {
             continue;
         }
-        let Some(e) = p.listing.get(id) else { continue };
-        let Some(path) = open.path_of(id) else {
+        let Some(e) = p.entry(id) else { continue };
+        let Some(path) = p.path_of(id) else {
             continue;
         };
         let mtime = e.metadata.value(keys::MODIFIED).and_then(Value::as_time);

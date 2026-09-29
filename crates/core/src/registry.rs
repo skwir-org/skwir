@@ -148,14 +148,18 @@ pub struct ViewSpec {
 
 /// What a view is for, which decides where it is offered. Every view is in
 /// the View menu, the palette and the keymap; the toolbar's view buttons
-/// hold the [`ViewRole::Listing`] views, and a [`ViewRole::Lens`] only while
-/// it is shown, so the pane says what it is in and one click leads back.
+/// hold the [`ViewRole::Listing`] views, and any other only while it is
+/// shown, so the pane says what it is in and one click leads back.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ViewRole {
     /// The folder's entries in a shape of their own (list, grid, columns):
     /// switched between all the time.
     #[default]
     Listing,
+    /// The folder's entries in a shape chosen now and then (the tree):
+    /// offered like a lens, so the toolbar keeps the shapes used all the
+    /// time.
+    Alternate,
     /// A question about the folder answered with data the view gathers
     /// itself (Usage's sizes): chosen now and then.
     Lens,
@@ -182,6 +186,13 @@ impl ViewSpec {
     #[must_use]
     pub fn lens(mut self) -> Self {
         self.role = ViewRole::Lens;
+        self
+    }
+
+    /// A view offered as a [`ViewRole::Alternate`].
+    #[must_use]
+    pub fn alternate(mut self) -> Self {
+        self.role = ViewRole::Alternate;
         self
     }
 }

@@ -246,10 +246,7 @@ fn selection_items(
     let p = ws
         .pane(pane)
         .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-    let open = p
-        .open
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("pane has no open location"))?;
+    anyhow::ensure!(p.open.is_some(), "pane has no open location");
     let chosen: Vec<EntryId> = if ids.is_empty() {
         p.selection.iter().collect()
     } else {
@@ -261,8 +258,8 @@ fn selection_items(
     Ok(chosen
         .into_iter()
         .filter_map(|id| {
-            let path = open.path_of(id)?;
-            let entry = p.listing.get(id).cloned();
+            let path = p.path_of(id)?;
+            let entry = p.entry(id).cloned();
             let name = entry
                 .as_ref()
                 .map(|e| e.name.as_os_str().to_owned())

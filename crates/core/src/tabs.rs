@@ -687,7 +687,7 @@ pub(crate) fn register(app: &App) {
                     anyhow::bail!("no such pane");
                 };
                 refs.into_iter()
-                    .filter(|r| p.listing.get(r.id).is_some_and(crate::Entry::is_dir))
+                    .filter(|r| p.entry(r.id).is_some_and(crate::Entry::is_dir))
                     .map(|r| Location::from_path(r.path))
                     .collect()
             };

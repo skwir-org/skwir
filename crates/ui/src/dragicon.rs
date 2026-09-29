@@ -207,7 +207,7 @@ impl Shell {
                 p.selection
                     .iter()
                     .next()
-                    .and_then(|id| p.listing.get(id).map(|e| (id, e)))
+                    .and_then(|id| p.entry(id).map(|e| (id, e)))
             });
             let count = pane.map_or(0, |p| p.selection.len());
             let mut thumb = None;
@@ -216,7 +216,7 @@ impl Shell {
                 is_dir = e.is_dir();
                 if !is_dir
                     && e.metadata.is_hydrated()
-                    && let Some(path) = p.open.as_ref().and_then(|o| o.path_of(id))
+                    && let Some(path) = p.path_of(id)
                 {
                     let req = ThumbRequest {
                         entry: EntryRef::new(id, path),

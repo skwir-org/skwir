@@ -18,6 +18,7 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "forward",
         "up",
         "list",
+        "tree",
         "grid",
         "columns",
         "preview",

@@ -64,8 +64,9 @@ fn view_button(shell: &Shell, spec: &ViewSpec, prefix: &str) -> Button {
     .active(shell.ui().view_id == &*spec.id)
 }
 
-/// The toolbar's view buttons: the views that show the listing, and a lens
-/// only while it is shown; the View menu offers them all. The narrowest
+/// The toolbar's view buttons: the views that show the listing, and an
+/// alternate shape or a lens only while it is shown; the View menu offers
+/// them all. The narrowest
 /// variant keeps the current view alone.
 fn toolbar_views(views: Vec<ViewSpec>, current: &str, narrowest: bool) -> Vec<ViewSpec> {
     views
@@ -274,6 +275,19 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
             )
             .active(shell.prefs.grid_fill),
             "Fill thumbnails",
+        ));
+    }
+    // The tree closes what it opened in one go.
+    if shell.ui().view_id == crate::view::TREE {
+        show.push(menu_item(
+            Button::new(
+                "menu-collapse-all",
+                "fold",
+                "Close every folder opened in place",
+                "expand",
+            )
+            .args(serde_json::json!({"mode": "collapse_all"})),
+            "Collapse all",
         ));
     }
     let mut size = Vec::new();
@@ -795,6 +809,7 @@ mod tests {
     fn shown(current: &str, narrowest: bool) -> Vec<String> {
         let views = vec![
             ViewSpec::named("list", "List", "list", Arc::default()),
+            ViewSpec::named("tree", "Tree", "tree", Arc::default()).alternate(),
             ViewSpec::named("grid", "Grid", "grid", Arc::default()),
             ViewSpec::named("usage", "Usage", "usage", Arc::default()).lens(),
         ];
@@ -805,9 +820,10 @@ mod tests {
     }
 
     #[test]
-    fn a_lens_has_a_button_only_while_it_is_shown() {
+    fn a_lens_or_an_alternate_has_a_button_only_while_it_is_shown() {
         assert_eq!(shown("grid", false), ["list", "grid"]);
         assert_eq!(shown("usage", false), ["list", "grid", "usage"]);
+        assert_eq!(shown("tree", false), ["list", "tree", "grid"]);
         assert_eq!(shown("grid", true), ["grid"]);
         assert_eq!(shown("usage", true), ["usage"]);
     }

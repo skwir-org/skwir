@@ -714,8 +714,8 @@ impl Shell {
         let current = {
             let ws = self.app.workspace.read();
             ws.pane(self.pane).and_then(|pane| {
-                let e = pane.listing.get(id)?;
-                let path = pane.open.as_ref()?.path_of(id)?;
+                let e = pane.entry(id)?;
+                let path = pane.path_of(id)?;
                 // What Details and the neighbouring tracks were collected
                 // for: the listing as it is, in the order shown (a new sort
                 // is a new order), and how much of it is selected.
@@ -723,6 +723,8 @@ impl Shell {
                 let seen = pane
                     .listing
                     .version()
+                    .wrapping_mul(31)
+                    .wrapping_add(pane.tree_version())
                     .wrapping_mul(31)
                     .wrapping_add(order)
                     .wrapping_mul(31)

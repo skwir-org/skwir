@@ -1,12 +1,14 @@
 //! Panes, selection, and focus: the state every view and command reads.
 
-use std::ffi::OsString;
+use std::collections::HashMap;
+use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use indexmap::IndexSet;
 
 use crate::cancel::CancelToken;
-use crate::entry::EntryId;
+use crate::entry::{Entry, EntryId};
 use crate::location::{Listing, Location, OpenLocation, SortSpec};
 
 /// Identifier of a pane within the workspace.
@@ -251,22 +253,27 @@ impl Selection {
 
     /// Drop ids that no longer exist in the listing.
     pub fn retain_in(&mut self, listing: &Listing) {
+        self.retain(|id| listing.get(id).is_some());
+    }
+
+    /// Drop the ids `holds` no longer knows: what the pane no longer shows.
+    pub fn retain(&mut self, holds: impl Fn(EntryId) -> bool) {
         let before = self.items.len();
-        self.items.retain(|id| listing.get(*id).is_some());
+        self.items.retain(|id| holds(*id));
         if self.items.len() != before {
             self.touch();
         }
-        if self.anchor.is_some_and(|a| listing.get(a).is_none()) {
+        if self.anchor.is_some_and(|a| !holds(a)) {
             self.anchor = self.items.first().copied();
         }
-        if self.cursor.is_some_and(|c| listing.get(c).is_none()) {
+        if self.cursor.is_some_and(|c| !holds(c)) {
             self.cursor = self.items.last().copied();
         }
         if let Some(sweep) = &mut self.sweep {
-            if listing.get(sweep.from).is_none() {
-                self.sweep = None;
+            if holds(sweep.from) {
+                sweep.base.retain(|id| holds(*id));
             } else {
-                sweep.base.retain(|id| listing.get(*id).is_some());
+                self.sweep = None;
             }
         }
         self.picked &= !self.items.is_empty();
@@ -278,6 +285,9 @@ impl Selection {
 /// above), and what going there again adopts instead of listing it anew.
 pub struct Kept {
     pub location: Location,
+    /// The folder it is, for a path location: how an opened folder finds
+    /// its listing.
+    path: Option<PathBuf>,
     /// Closed when the kept location goes, unless it was taken to be shown.
     open: Option<Arc<dyn OpenLocation>>,
     pub listing: Listing,
@@ -285,8 +295,10 @@ pub struct Kept {
 
 impl Kept {
     fn new(open: Arc<dyn OpenLocation>, listing: Listing) -> Self {
+        let location = open.location().clone();
         Kept {
-            location: open.location().clone(),
+            path: location.path(),
+            location,
             open: Some(open),
             listing,
         }
@@ -331,6 +343,34 @@ impl Drop for Released {
     }
 }
 
+/// The folders a pane opened in place, with their listings: a walk over
+/// them, shallowest first, never without their listing.
+fn opened<'a>(
+    kept: &'a [Kept],
+    expanded: &'a [PathBuf],
+) -> impl Iterator<Item = (&'a Path, &'a Kept)> + 'a {
+    expanded.iter().filter_map(move |path| {
+        let kept = kept.iter().find(|k| k.path.as_ref() == Some(path))?;
+        Some((path.as_path(), kept))
+    })
+}
+
+/// Whether entry `id` is one the pane shows: the shown listing's, or an
+/// opened folder's.
+fn holds(listing: &Listing, kept: &[Kept], expanded: &[PathBuf], id: EntryId) -> bool {
+    listing.get(id).is_some() || opened(kept, expanded).any(|(_, k)| k.listing.get(id).is_some())
+}
+
+/// The order last computed for a pane with folders opened in place, and
+/// what it was computed from: the orders of the listings it interleaves
+/// (compared by identity, as `Listing::sorted` keeps one until it changes)
+/// and the set of folders opened.
+struct OrderCache {
+    expanded: u64,
+    from: Vec<Arc<[EntryId]>>,
+    order: Arc<[EntryId]>,
+}
+
 /// One pane: an open location, its listing, selection, and history.
 pub struct Pane {
     pub id: PaneId,
@@ -353,6 +393,19 @@ pub struct Pane {
     /// The selection a dormant pane had, given back once its listing is
     /// complete again (see [`Pane::suspend`]).
     restore: Option<Selection>,
+    /// Folders opened in place under the one shown (the tree view), each
+    /// after its parent. Their listings are kept beside the shown one
+    /// (`App::open_expanded`, `keep_only`), and their entries are the
+    /// pane's as much as the shown listing's: in [`Pane::order`],
+    /// selectable, found by [`Pane::entry`] and [`Pane::path_of`].
+    /// Navigation closes them; dormancy keeps them, like the sort.
+    expanded: Vec<PathBuf>,
+    /// Changes with the set of folders opened.
+    expanded_version: u64,
+    /// Changes whenever what the opened folders show may have changed: the
+    /// set, or one of their listings.
+    tree_version: u64,
+    order_cache: parking_lot::Mutex<Option<OrderCache>>,
 }
 
 impl Pane {
@@ -370,6 +423,10 @@ impl Pane {
             history_pos: 0,
             reveal: None,
             restore: None,
+            expanded: Vec::new(),
+            expanded_version: 0,
+            tree_version: 0,
+            order_cache: parking_lot::Mutex::new(None),
         }
     }
 
@@ -402,6 +459,10 @@ impl Pane {
         self.selection = Selection::default();
         self.reveal = None;
         self.restore = None;
+        if !self.expanded.is_empty() {
+            self.expanded.clear();
+            self.expanded_changed();
+        }
     }
 
     /// Let go of what the pane shows while its tab is not shown (ADR-018):
@@ -500,7 +561,13 @@ impl Pane {
     /// Keep exactly the locations of `wanted` (the one shown aside): the
     /// one just left stays if it is wanted, the others go. Returns the
     /// wanted ones that are not open yet, for the caller to open.
+    /// The folders opened in place are always wanted.
     pub(crate) fn keep_only(&mut self, wanted: &[Location]) -> Vec<Location> {
+        let wanted: Vec<Location> = wanted
+            .iter()
+            .cloned()
+            .chain(self.expanded.iter().map(Location::from_path))
+            .collect();
         if let Some(left) = self.left.take()
             && wanted.contains(&left.location)
         {
@@ -509,9 +576,18 @@ impl Pane {
         self.kept.retain(|k| wanted.contains(&k.location));
         let shown = self.location().cloned();
         wanted
+            .into_iter()
+            .filter(|w| Some(w) != shown.as_ref() && !self.kept.iter().any(|k| &k.location == w))
+            .collect()
+    }
+
+    /// The folders opened in place whose listing is not kept yet, for the
+    /// caller to open.
+    pub(crate) fn unopened(&self) -> Vec<Location> {
+        self.expanded
             .iter()
-            .filter(|w| Some(*w) != shown.as_ref() && !self.kept.iter().any(|k| &k.location == *w))
-            .cloned()
+            .filter(|path| !self.kept.iter().any(|k| k.path.as_ref() == Some(*path)))
+            .map(Location::from_path)
             .collect()
     }
 
@@ -521,7 +597,7 @@ impl Pane {
 
     /// Whether anything is kept or waiting to be: `keep_only` has work.
     pub fn keeps_any(&self) -> bool {
-        !self.kept.is_empty() || self.left.is_some()
+        !self.kept.is_empty() || self.left.is_some() || !self.expanded.is_empty()
     }
 
     /// The listing of a location kept beside the one shown.
@@ -569,18 +645,231 @@ impl Pane {
     /// locations' too. Returns how many changed the shown listing;
     /// `backlog` says whether some are still waiting.
     pub fn pump(&mut self, budget: std::time::Duration) -> usize {
+        let mut opened = 0;
         for kept in &mut self.kept {
-            kept.pump(budget);
+            let n = kept.pump(budget);
+            if kept
+                .path
+                .as_ref()
+                .is_some_and(|p| self.expanded.contains(p))
+            {
+                opened += n;
+            }
+        }
+        if opened > 0 {
+            self.tree_version += 1;
         }
         let Some(open) = &self.open else { return 0 };
         let rx = open.events().clone();
         let n = self.listing.drain(&rx, budget);
+        if n + opened > 0 {
+            self.retain_shown();
+        }
         if n > 0 {
-            self.selection.retain_in(&self.listing);
             self.take_reveal();
         }
         self.take_restore();
-        n
+        n + opened
+    }
+
+    /// Drop from the selection what the pane no longer shows.
+    fn retain_shown(&mut self) {
+        let (listing, kept, expanded) = (&self.listing, &self.kept, &self.expanded);
+        self.selection
+            .retain(|id| holds(listing, kept, expanded, id));
+    }
+
+    fn expanded_changed(&mut self) {
+        self.expanded_version += 1;
+        self.tree_version += 1;
+    }
+
+    /// The folders opened in place under the one shown.
+    pub fn expanded(&self) -> &[PathBuf] {
+        &self.expanded
+    }
+
+    pub fn is_expanded(&self, path: &Path) -> bool {
+        self.expanded.iter().any(|p| p == path)
+    }
+
+    /// Changes whenever the entries or the order the opened folders add may
+    /// have: a view keys what it drew on it beside the listing's version.
+    pub fn tree_version(&self) -> u64 {
+        self.tree_version
+    }
+
+    /// Open folder `path` in place: a folder in the one shown, or in one
+    /// already opened. Returns whether it was not open. Its listing is
+    /// opened by the caller (`App::open_expanded`).
+    pub(crate) fn expand(&mut self, path: PathBuf) -> bool {
+        let Some(root) = self.location().and_then(Location::path) else {
+            return false;
+        };
+        let Some(parent) = path.parent() else {
+            return false;
+        };
+        if self.is_expanded(&path) || (parent != root && !self.is_expanded(parent)) {
+            return false;
+        }
+        self.expanded.push(path);
+        self.expanded_changed();
+        true
+    }
+
+    /// Close folder `path` and every folder opened inside it; what the
+    /// selection held there goes. Returns whether it was open.
+    pub(crate) fn collapse(&mut self, path: &Path) -> bool {
+        if !self.is_expanded(path) {
+            return false;
+        }
+        self.expanded.retain(|p| !p.starts_with(path));
+        self.expanded_changed();
+        self.retain_shown();
+        true
+    }
+
+    /// Close every folder opened in place.
+    pub fn collapse_all(&mut self) -> bool {
+        if self.expanded.is_empty() {
+            return false;
+        }
+        self.expanded.clear();
+        self.expanded_changed();
+        self.retain_shown();
+        true
+    }
+
+    /// An entry the pane shows: the shown listing's, or an opened folder's.
+    pub fn entry(&self, id: EntryId) -> Option<&Entry> {
+        self.listing
+            .get(id)
+            .or_else(|| opened(&self.kept, &self.expanded).find_map(|(_, k)| k.listing.get(id)))
+    }
+
+    /// Where an entry of an opened folder lives. `None` for the shown
+    /// listing's own entries, which only its location knows.
+    pub fn opened_path(&self, id: EntryId) -> Option<PathBuf> {
+        if self.expanded.is_empty() || self.listing.get(id).is_some() {
+            return None;
+        }
+        opened(&self.kept, &self.expanded)
+            .find_map(|(dir, k)| k.listing.get(id).map(|e| dir.join(&e.name)))
+    }
+
+    /// Where an entry the pane shows lives on disk. Asks the location for
+    /// its own entries: plugin code, called under the caller's lock.
+    pub fn path_of(&self, id: EntryId) -> Option<PathBuf> {
+        self.opened_path(id)
+            .or_else(|| self.open.as_ref()?.path_of(id))
+    }
+
+    /// How many opened folders deep entry `id` is: 0 for the shown
+    /// listing's own entries.
+    pub fn depth(&self, id: EntryId) -> usize {
+        if self.expanded.is_empty() || self.listing.get(id).is_some() {
+            return 0;
+        }
+        let Some(root) = self.location().and_then(Location::path) else {
+            return 0;
+        };
+        opened(&self.kept, &self.expanded)
+            .find(|(_, k)| k.listing.get(id).is_some())
+            .and_then(|(dir, _)| dir.strip_prefix(&root).ok())
+            .map_or(0, |rel| rel.components().count())
+    }
+
+    /// The open locations of the folders opened in place.
+    pub(crate) fn opened_locations(&self) -> Vec<Arc<dyn OpenLocation>> {
+        opened(&self.kept, &self.expanded)
+            .filter_map(|(_, k)| k.open.clone())
+            .collect()
+    }
+
+    /// `ids` by the location that lists them: the shown one, or an opened
+    /// folder's. For hydration, called outside the lock.
+    pub(crate) fn by_location(
+        &self,
+        ids: &[EntryId],
+    ) -> Vec<(Arc<dyn OpenLocation>, Vec<EntryId>)> {
+        let mut out: Vec<(Arc<dyn OpenLocation>, Vec<EntryId>)> = Vec::new();
+        for &id in ids {
+            let open = if self.listing.get(id).is_some() {
+                self.open.as_ref()
+            } else {
+                opened(&self.kept, &self.expanded)
+                    .find(|(_, k)| k.listing.get(id).is_some())
+                    .and_then(|(_, k)| k.open.as_ref())
+                    .or(self.open.as_ref())
+            };
+            let Some(open) = open else { continue };
+            match out.iter_mut().find(|(o, _)| Arc::ptr_eq(o, open)) {
+                Some((_, ids)) => ids.push(id),
+                None => out.push((Arc::clone(open), vec![id])),
+            }
+        }
+        out
+    }
+
+    /// The entries the pane shows, in the order shown: the listing sorted,
+    /// each opened folder's entries after it, sorted the same way. What
+    /// range selection, select all and the views follow.
+    pub fn order(&self) -> Arc<[EntryId]> {
+        let top = self.listing.sorted(self.sort);
+        if self.expanded.is_empty() {
+            return top;
+        }
+        let Some(root) = self.location().and_then(Location::path) else {
+            return top;
+        };
+        let opened: Vec<(&Path, &Listing, Arc<[EntryId]>)> = opened(&self.kept, &self.expanded)
+            .map(|(dir, k)| (dir, &k.listing, k.listing.sorted(self.sort)))
+            .collect();
+        let from: Vec<Arc<[EntryId]>> = std::iter::once(Arc::clone(&top))
+            .chain(opened.iter().map(|(_, _, ids)| Arc::clone(ids)))
+            .collect();
+        let mut cache = self.order_cache.lock();
+        if let Some(c) = cache.as_ref()
+            && c.expanded == self.expanded_version
+            && c.from.len() == from.len()
+            && c.from.iter().zip(&from).all(|(a, b)| Arc::ptr_eq(a, b))
+        {
+            return Arc::clone(&c.order);
+        }
+        // The folders opened in each folder, by name: a walk looks up only
+        // the folders that have some, and allocates nothing for the rest.
+        let mut inside: HashMap<&Path, Vec<(&OsStr, usize)>> = HashMap::new();
+        for (i, (dir, _, _)) in opened.iter().enumerate() {
+            if let (Some(parent), Some(name)) = (dir.parent(), dir.file_name()) {
+                inside.entry(parent).or_default().push((name, i));
+            }
+        }
+        let mut order = Vec::with_capacity(from.iter().map(|ids| ids.len()).sum());
+        let mut stack: Vec<(&Path, &Listing, &[EntryId])> = vec![(&root, &self.listing, &top[..])];
+        while let Some((dir, listing, ids)) = stack.pop() {
+            let here = inside.get(dir);
+            for (k, &id) in ids.iter().enumerate() {
+                order.push(id);
+                let Some(here) = here else { continue };
+                let Some(e) = listing.get(id).filter(|e| e.is_dir()) else {
+                    continue;
+                };
+                if let Some(&(_, i)) = here.iter().find(|(name, _)| *name == e.name.as_os_str()) {
+                    // The rest of this folder after the opened one.
+                    stack.push((dir, listing, &ids[k + 1..]));
+                    let (child, listing, ids) = &opened[i];
+                    stack.push((child, listing, &ids[..]));
+                    break;
+                }
+            }
+        }
+        let order: Arc<[EntryId]> = order.into();
+        *cache = Some(OrderCache {
+            expanded: self.expanded_version,
+            from,
+            order: Arc::clone(&order),
+        });
+        order
     }
 }
 

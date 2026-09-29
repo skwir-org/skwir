@@ -296,7 +296,7 @@ impl PaneView for ColumnsView {
                         rows.iter().filter(|r| !r.hydrated).map(|r| r.id).collect();
                     this.request_hydrate(need);
                     rows.iter()
-                        .map(|r| row(this, &theme, r, true, cx))
+                        .map(|r| row(this, &theme, r, true, false, cx))
                         .collect::<Vec<_>>()
                 })
             }),

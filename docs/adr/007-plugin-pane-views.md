@@ -112,3 +112,7 @@ shape of its own and has a toolbar button. A `Lens` (Usage, a future map)
 answers a question with data it gathers itself; it is chosen from the View
 menu, the palette or its key, and has a toolbar button only while shown.
 The toolbar stays the same width as lenses are added.
+
+Amended 2026-09-29: an `Alternate` view (the tree, ADR-025) shows the
+folder's entries in a shape chosen now and then; it is offered like a
+lens, so the toolbar keeps the shapes switched between all the time.

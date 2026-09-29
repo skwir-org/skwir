@@ -184,12 +184,12 @@ impl Shell {
         let pane = self.preview.pane()?;
         let ui = self.panes.iter().find(|ui| ui.id == pane)?;
         let ws = self.app.workspace.read();
-        let open = ws.pane(pane)?.open.as_ref()?;
+        let pane = ws.pane(pane)?;
         ui.list
             .sorted
             .iter()
             .copied()
-            .find(|id| open.path_of(*id).is_some_and(|there| there == path))
+            .find(|id| pane.path_of(*id).is_some_and(|there| there == path))
     }
 
     /// Whether there is a track before this one, and one after: in the

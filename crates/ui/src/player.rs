@@ -541,10 +541,10 @@ impl Shell {
         let queue: Vec<PathBuf> = sorted
             .iter()
             .filter_map(|id| {
-                let entry = pane.listing.get(*id)?;
+                let entry = pane.entry(*id)?;
                 let kind = if video { "video/" } else { "audio/" };
                 crate::media::is_track(entry, kind)
-                    .then(|| pane.open.as_ref()?.path_of(*id))
+                    .then(|| pane.path_of(*id))
                     .flatten()
             })
             .take(Self::QUEUE_TRACKS)

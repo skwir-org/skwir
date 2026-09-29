@@ -154,14 +154,11 @@ impl Shell {
     pub fn drag_paths(&self, pane: PaneId) -> Vec<PathBuf> {
         let ws = self.app.workspace.read();
         ws.pane(pane)
-            .and_then(|pane| {
-                let open = pane.open.as_ref()?;
-                Some(
-                    pane.selection
-                        .iter()
-                        .filter_map(|id| open.path_of(id))
-                        .collect(),
-                )
+            .map(|pane| {
+                pane.selection
+                    .iter()
+                    .filter_map(|id| pane.path_of(id))
+                    .collect()
             })
             .unwrap_or_default()
     }
@@ -174,7 +171,7 @@ impl Shell {
                 .selection
                 .iter()
                 .next()
-                .and_then(|id| pane.listing.get(id))
+                .and_then(|id| pane.entry(id))
                 .map(|e| e.name_str().into_owned())
                 .unwrap_or_default();
             (pane.selection.len(), label)

@@ -36,6 +36,20 @@ Poppler, GStreamer or libarchive. Open gate: idle PSS is about 118 to 120 MB aga
 been loosened. The per-change validation history that used to sit here is in
 `docs/STATUS-LOG.md`.
 
+Tree view (2026-09-29, ADR-025): a Tree view beside the List in the View
+menu (`ViewRole::Alternate`: a toolbar button only while shown), whose folders open in place under a triangle (Right
+and Left open, enter, close and go to the parent; Collapse all in the View
+menu). The folders opened are core pane data (`Pane::expanded`, the
+`expand` command) listed as kept locations, and their entries are the
+pane's: `Pane::order`, `Pane::entry` and `Pane::path_of` span them, so
+ranges, select all, every command, drags and the preview act on nested
+entries unchanged. Only the tree keeps them open; another view closes
+them. Deviations: no Ctrl+digit for the view (Usage and the map hold 4
+and 5); a nested selection is not restored after a tab sleeps. 876
+default tests pass; checked on an isolated X display: opening by the
+triangle and by keys, a rename of a nested file with its toast and the
+watcher's update, and switching back to the List closing the folders.
+
 Keys (2026-09-28, ADR-024): a `vim` plugin, off by default, binds yazi's
 keymap in the file list (hjkl, `g g`/`G`, Ctrl+U/D, Space to pick, `v`
 and `V` for a range, `y x p d D a r`, `/ ? n N`, `, m` and the other

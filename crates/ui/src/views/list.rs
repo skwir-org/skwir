@@ -1,5 +1,8 @@
 //! The list view: one row per entry with icon, name, size, modified;
-//! clickable, sortable headers.
+//! clickable, sortable headers. The tree view is the same list whose
+//! folders open in place (`Pane::expanded`, the core `expand` command):
+//! their entries follow them, indented, and are the pane's like any other,
+//! so selection, commands and drags need nothing of their own.
 
 use std::ops::Range;
 use std::path::PathBuf;
@@ -14,6 +17,7 @@ use gpui::{
 use crate::dnd;
 use crate::format;
 use crate::icons;
+use crate::list::Step;
 use crate::shell::Shell;
 use crate::theme::Theme;
 use crate::view::{Nav, PaneView};
@@ -36,6 +40,10 @@ pub fn icon_px(zoom: u32) -> f32 {
 }
 /// The name never gets narrower than this; detail columns give way first.
 const NAME_MIN: f32 = 150.0;
+/// The tree's disclosure triangle, and how far each level is indented: a
+/// child's triangle stands under its parent's icon.
+const DISCLOSURE: f32 = 12.0;
+const INDENT: f32 = DISCLOSURE + 4.0;
 /// How much of a cut entry remains visible until it is pasted.
 pub const CUT_OPACITY: f32 = 0.45;
 
@@ -168,6 +176,8 @@ pub struct ListView {
     /// The rows' height when last drawn, for the scroll anchor of a tab
     /// put away and shown again.
     height: f32,
+    /// The tree view: folders open in place.
+    tree: bool,
 }
 
 impl Default for ListView {
@@ -175,6 +185,16 @@ impl Default for ListView {
         ListView {
             scroll: UniformListScrollHandle::default(),
             height: ROW_HEIGHT,
+            tree: false,
+        }
+    }
+}
+
+impl ListView {
+    pub fn tree() -> Self {
+        ListView {
+            tree: true,
+            ..ListView::default()
         }
     }
 }
@@ -199,6 +219,10 @@ pub struct RowData {
     pub icon: Option<std::sync::Arc<std::path::Path>>,
     pub hydrated: bool,
     pub tags: Vec<String>,
+    /// How many opened folders deep it is (`Pane::depth`), and for a
+    /// folder whether it is open in place.
+    pub depth: usize,
+    pub expanded: bool,
 }
 
 /// Tags from the entry's `tags` metadata field (a list of text values).
@@ -230,7 +254,7 @@ impl Shell {
             let Some(&id) = self.ui().list.sorted.get(ix) else {
                 break;
             };
-            let Some(e) = pane.listing.get(id) else {
+            let Some(e) = pane.entry(id) else {
                 continue;
             };
             let mime = (!e.is_dir())
@@ -241,16 +265,15 @@ impl Shell {
             } else {
                 self.icons.for_mime(mime.as_ref(), icon_px)
             };
+            let path = if e.is_dir() { pane.path_of(id) } else { None };
             let mut row = RowData {
                 ix,
                 id,
                 name: e.name_str().into_owned(),
                 is_dir: e.is_dir(),
-                path: if e.is_dir() {
-                    pane.open.as_ref().and_then(|o| o.path_of(id))
-                } else {
-                    None
-                },
+                expanded: path.as_deref().is_some_and(|p| pane.is_expanded(p)),
+                depth: pane.depth(id),
+                path,
                 size: String::new(),
                 modified: String::new(),
                 modified_exact: String::new(),
@@ -305,12 +328,53 @@ impl Shell {
     }
 }
 
-/// A full-width row for the list view and the last column of the columns view.
+/// The triangle that opens or closes folder `r` in place, pointing right
+/// while it is closed. Pressing it does only that: the row is not selected.
+fn disclosure(r: &RowData, color: gpui::Hsla, cx: &mut Context<Shell>) -> Div {
+    let slot = div().w(px(DISCLOSURE)).flex_none().flex().items_center();
+    if !r.is_dir {
+        return slot;
+    }
+    let id = r.id;
+    slot.child(
+        div()
+            .id(("disclosure", r.ix))
+            .cursor_pointer()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    let pane = this.pane;
+                    this.run(
+                        "expand",
+                        serde_json::json!({ "ids": [id], "mode": "toggle", "pane": pane }),
+                        window,
+                        cx,
+                    );
+                }),
+            )
+            .child(
+                gpui::svg()
+                    .path(if r.expanded {
+                        "toolbar/chevron.svg"
+                    } else {
+                        "toolbar/right.svg"
+                    })
+                    .size(px(DISCLOSURE))
+                    .text_color(color),
+            ),
+    )
+}
+
+/// A full-width row for the list view, the tree view (`tree`: indented
+/// by depth after a disclosure triangle) and the last column of the
+/// columns view.
 pub fn row(
     shell: &Shell,
     theme: &Theme,
     r: &RowData,
     compact: bool,
+    tree: bool,
     cx: &mut Context<Shell>,
 ) -> Stateful<Div> {
     let ix = r.ix;
@@ -356,13 +420,24 @@ pub fn row(
         })
         .when(!r.selected, |d| d.hover(|s| s.bg(theme.hover)))
         .when(r.cut, |d| d.opacity(CUT_OPACITY))
-        .children(shell.menu_marker(pane, r.is_cursor))
-        .child(icon);
+        .children(shell.menu_marker(pane, r.is_cursor));
+    // In the tree the icon is part of the name, indented with it: the
+    // detail columns stay aligned at every depth and give way together.
+    let (el, icon) = if tree {
+        (el, Some(icon))
+    } else {
+        (el.child(icon), None)
+    };
     let el = crate::list::entry_mouse(el, pane, ix, cx);
     let name = div()
         .flex()
         .items_center()
         .gap_1()
+        .when_some(icon, |d, icon| {
+            d.pl(px(r.depth as f32 * INDENT))
+                .child(disclosure(r, muted, cx))
+                .child(div().flex_none().child(icon))
+        })
         .child(
             // A name keeps its end: the extension tells files apart.
             div()
@@ -487,7 +562,8 @@ fn header_cell(
         .child(format!("{label}{indicator}"))
 }
 
-fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Div {
+fn header(shell: &Shell, theme: &Theme, tree: bool, cx: &mut Context<Shell>) -> Div {
+    let icon = icon_px(shell.row_zoom);
     div()
         .h(px(24.))
         .w_full()
@@ -508,17 +584,21 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Div {
                 this.open_column_menu(ev.position, window, cx);
             }),
         )
-        .child(div().w(px(icon_px(shell.row_zoom))).flex_none())
+        .when(!tree, |d| d.child(div().w(px(icon)).flex_none()))
         .child(
             line(
-                div().child(header_cell(
-                    "h-name",
-                    "Name",
-                    SortKey::Name,
-                    shell,
-                    theme,
-                    cx,
-                )),
+                // In the tree, Name stands over the names, past the
+                // triangle and the icon a row begins with.
+                div()
+                    .when(tree, |d| d.pl(px(DISCLOSURE + icon + 8.)))
+                    .child(header_cell(
+                        "h-name",
+                        "Name",
+                        SortKey::Name,
+                        shell,
+                        theme,
+                        cx,
+                    )),
                 NAME_MIN,
                 ROW_HEIGHT,
             )
@@ -567,13 +647,22 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Div {
 
 impl PaneView for ListView {
     fn id(&self) -> &'static str {
-        crate::view::LIST
+        if self.tree {
+            crate::view::TREE
+        } else {
+            crate::view::LIST
+        }
+    }
+
+    fn opens_in_place(&self) -> bool {
+        self.tree
     }
 
     fn render(&mut self, shell: &mut Shell, _: &mut Window, cx: &mut Context<Shell>) -> AnyElement {
         let theme = cx.global::<Theme>().clone();
         let count = shell.ui().list.sorted.len();
         let pane = shell.pane;
+        let tree = self.tree;
         let height = row_height(shell.row_zoom);
         let icon_px = u16::try_from(shell.row_zoom).unwrap_or(u16::MAX);
         if (height - self.height).abs() > f32::EPSILON {
@@ -600,7 +689,7 @@ impl PaneView for ListView {
                         rows.iter().filter(|r| !r.hydrated).map(|r| r.id).collect();
                     this.request_hydrate(need);
                     rows.iter()
-                        .map(|r| row(this, &theme, r, false, cx))
+                        .map(|r| row(this, &theme, r, false, tree, cx))
                         .collect::<Vec<_>>()
                 })
             }),
@@ -619,7 +708,7 @@ impl PaneView for ListView {
             .size_full()
             .flex()
             .flex_col()
-            .child(header(shell, &theme, cx))
+            .child(header(shell, &theme, tree, cx))
             .child(
                 div()
                     .relative()
@@ -673,6 +762,59 @@ impl PaneView for ListView {
             Nav::HalfPageDown => Some(half),
             Nav::Left | Nav::Right | Nav::Home | Nav::End => None,
         }
+    }
+
+    /// In the tree, Right opens the folder under the cursor, or goes into
+    /// it when it is open; Left closes it, or goes to the folder it is in.
+    fn nav(
+        &mut self,
+        nav: Nav,
+        shell: &mut Shell,
+        window: &mut Window,
+        cx: &mut Context<Shell>,
+    ) -> bool {
+        if !self.tree || !matches!(nav, Nav::Left | Nav::Right) {
+            return false;
+        }
+        let Some(ix) = shell.cursor_index() else {
+            return false;
+        };
+        let sorted = shell.ui().list.sorted.clone();
+        let id = sorted[ix];
+        let (dir, open, parent) = {
+            let ws = shell.app.workspace.read();
+            let Some(p) = ws.pane(shell.pane) else {
+                return false;
+            };
+            let dir = p.entry(id).is_some_and(bibli_core::Entry::is_dir);
+            let open = dir && p.path_of(id).is_some_and(|path| p.is_expanded(&path));
+            let depth = p.depth(id);
+            let parent = (depth > 0)
+                .then(|| (0..ix).rev().find(|&j| p.depth(sorted[j]) < depth))
+                .flatten();
+            (dir, open, parent)
+        };
+        let expand =
+            |mode: &str, shell: &mut Shell, window: &mut Window, cx: &mut Context<Shell>| {
+                let pane = shell.pane;
+                shell.run(
+                    "expand",
+                    serde_json::json!({ "ids": [id], "mode": mode, "pane": pane }),
+                    window,
+                    cx,
+                );
+            };
+        match nav {
+            Nav::Right if open => shell.cursor_move(1, Step::Select, window, cx),
+            Nav::Right if dir => expand("expand", shell, window, cx),
+            Nav::Left if open => expand("collapse", shell, window, cx),
+            Nav::Left => match parent {
+                Some(parent) => shell.cursor_to(parent as isize, Step::Select, window, cx),
+                None => return false,
+            },
+            _ => return false,
+        }
+        true
     }
 
     fn reset(&mut self) {

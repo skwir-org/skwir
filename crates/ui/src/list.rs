@@ -76,7 +76,7 @@ pub fn find_matches(name: &str, pattern: &str) -> bool {
 pub struct ListState {
     /// Entry ids in display order, from the core's cached sort.
     pub sorted: std::sync::Arc<[EntryId]>,
-    sorted_at: Option<(u64, SortSpec)>,
+    sorted_at: Option<(u64, u64, SortSpec)>,
     /// Hydration requested and not yet answered. Kept for as long as the
     /// pane holds the same listing: an answer arrives as an update that
     /// hydrates the entry (or removes it), so nothing asked for needs asking
@@ -95,7 +95,7 @@ pub struct ListState {
     /// The selection summary and the (selection revision, listing version)
     /// it was computed for: read several times a frame, recomputed only
     /// when one of them moved.
-    selection: Cell<Option<((u64, u64), SelectionCtx)>>,
+    selection: Cell<Option<((u64, u64, u64), SelectionCtx)>>,
 }
 
 impl Default for ListState {
@@ -115,23 +115,26 @@ impl Default for ListState {
 }
 
 impl ListState {
-    /// Adopt the core's sorted order when the listing version or the spec changed.
-    pub fn sync(&mut self, listing: &bibli_core::Listing, spec: SortSpec) -> bool {
+    /// Adopt the pane's order (`Pane::order`: the listing sorted, and the
+    /// folders opened in place) when the listing's version, the opened
+    /// folders or the spec changed.
+    pub fn sync(&mut self, pane: &bibli_core::workspace::Pane) -> bool {
+        let listing = &pane.listing;
         if self.listing != Some(listing.id()) {
             self.reset();
             self.listing = Some(listing.id());
         }
-        let version = listing.version();
-        if self.sorted_at == Some((version, spec)) {
+        let at = (listing.version(), pane.tree_version(), pane.sort);
+        if self.sorted_at == Some(at) {
             return false;
         }
-        self.sorted = listing.sorted(spec);
-        self.sorted_at = Some((version, spec));
+        self.sorted = pane.order();
+        self.sorted_at = Some(at);
         true
     }
 
     pub fn version(&self) -> Option<u64> {
-        self.sorted_at.map(|(v, _)| v)
+        self.sorted_at.map(|(v, _, _)| v)
     }
 
     fn reset(&mut self) {
@@ -161,7 +164,7 @@ fn summarize(pane: &bibli_core::workspace::Pane) -> SelectionCtx {
         folder: false,
     };
     for id in pane.selection.iter() {
-        match pane.listing.get(id) {
+        match pane.entry(id) {
             Some(e) if e.is_dir() => ctx.all_files = false,
             Some(e) => {
                 ctx.all_dirs = false;
@@ -190,7 +193,11 @@ impl Shell {
         // Where the pane is, read every time: navigating replaces the
         // listing, whose version can then repeat the cached one.
         let folder = pane.location().is_some_and(bibli_core::Location::is_path);
-        let key = (pane.selection.revision(), pane.listing.version());
+        let key = (
+            pane.selection.revision(),
+            pane.listing.version(),
+            pane.tree_version(),
+        );
         let cache = &self.ui().list.selection;
         if let Some((at, ctx)) = cache.get()
             && at == key
@@ -212,7 +219,7 @@ impl Shell {
             };
             pane.selection
                 .iter()
-                .filter_map(|id| pane.listing.get(id))
+                .filter_map(|id| pane.entry(id))
                 .map(|e| (e.name.clone(), e.is_dir()))
                 .collect()
         };
@@ -443,8 +450,7 @@ impl Shell {
                 (None, true) => len - step,
             })
             .find(|ix| {
-                pane.listing
-                    .get(sorted[*ix])
+                pane.entry(sorted[*ix])
                     .is_some_and(|e| find_matches(&e.name_str(), pattern))
             })
     }
@@ -544,7 +550,7 @@ impl Shell {
             let mut ids: Vec<EntryId> = p
                 .selection
                 .iter()
-                .filter(|id| p.listing.get(*id).is_some_and(bibli_core::Entry::is_dir))
+                .filter(|id| p.entry(*id).is_some_and(bibli_core::Entry::is_dir))
                 .collect();
             // In the order the pane shows them, so the tabs line up the same.
             ids.sort_by_key(|id| sorted.iter().position(|s| s == id));
@@ -564,8 +570,8 @@ impl Shell {
         let folder = {
             let ws = self.app.workspace.read();
             ws.pane(self.pane).and_then(|p| {
-                p.listing.get(id).filter(|e| e.is_dir())?;
-                p.open.as_ref()?.path_of(id)
+                p.entry(id).filter(|e| e.is_dir())?;
+                p.path_of(id)
             })
         };
         if let Some(folder) = folder {
@@ -650,8 +656,7 @@ impl Shell {
             let ws = self.app.workspace.read();
             ws.pane(self.pane).and_then(|p| {
                 self.ui().list.sorted.iter().position(|id| {
-                    p.listing
-                        .get(*id)
+                    p.entry(*id)
                         .is_some_and(|e| e.name_str().to_lowercase().starts_with(&needle))
                 })
             })

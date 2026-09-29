@@ -462,13 +462,53 @@ impl App {
 
     /// Entry references for the current selection of a pane, in selection order.
     pub fn selected_refs(&self, pane: PaneId) -> Vec<EntryRef> {
-        let Some((open, ids)) = self.with_open(pane, |p| p.selection.iter().collect::<Vec<_>>())
-        else {
+        let Some((open, ids)) = self.with_open(pane, |p| {
+            p.selection
+                .iter()
+                .map(|id| (id, p.opened_path(id)))
+                .collect::<Vec<_>>()
+        }) else {
             return Vec::new();
         };
         ids.into_iter()
-            .filter_map(|id| open.path_of(id).map(|path| EntryRef::new(id, path)))
+            .filter_map(|(id, opened)| {
+                opened
+                    .or_else(|| open.path_of(id))
+                    .map(|path| EntryRef::new(id, path))
+            })
             .collect()
+    }
+
+    /// Open the listings of the folders `pane` opened in place that are not
+    /// open yet. Opening only enqueues, like `open_location`.
+    pub fn open_expanded(&self, pane: PaneId) {
+        let missing = match self.workspace.read().pane(pane) {
+            Some(p) => p.unopened(),
+            None => return,
+        };
+        for location in missing {
+            match self.open_location(&location) {
+                Ok(open) => {
+                    if let Some(p) = self.workspace.write().pane_mut(pane) {
+                        p.add_kept(open);
+                    }
+                }
+                Err(error) => tracing::warn!(%location, "cannot open in place: {error:#}"),
+            }
+        }
+    }
+
+    /// Close every folder `pane` opened in place: what a view that does not
+    /// draw them asks (only the tree does).
+    pub fn collapse_all(&self, pane: PaneId) {
+        let changed = self
+            .workspace
+            .write()
+            .pane_mut(pane)
+            .is_some_and(crate::workspace::Pane::collapse_all);
+        if changed {
+            self.wake();
+        }
     }
 
     /// `pane`, or the active pane when `None`: what a command's optional
@@ -611,6 +651,30 @@ pub struct SelectArgs {
     pub pane: Option<PaneId>,
 }
 
+/// What `expand` does to the folders it is given.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExpandMode {
+    /// Open the closed ones and close the open ones.
+    #[default]
+    Toggle,
+    Expand,
+    Collapse,
+    /// Close every folder opened in place; `ids` are ignored.
+    CollapseAll,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ExpandArgs {
+    /// Folders the pane shows; the selected ones when empty.
+    #[serde(default)]
+    pub ids: Vec<EntryId>,
+    #[serde(default)]
+    pub mode: ExpandMode,
+    #[serde(default)]
+    pub pane: Option<PaneId>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SweepArgs {
     /// Deselect what the range covers instead of selecting it.
@@ -724,8 +788,14 @@ mod builtin {
             "Re-list the pane's location",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
-                if let Some((open, ())) = app.with_open(pane, |_| ()) {
+                // The folders opened in place are shown too.
+                if let Some((open, opened)) =
+                    app.with_open(pane, crate::workspace::Pane::opened_locations)
+                {
                     open.refresh();
+                    for open in opened {
+                        open.refresh();
+                    }
                 }
                 Ok(Outcome::Done)
             },
@@ -802,7 +872,7 @@ mod builtin {
                         let Some(&target) = ids.last() else {
                             anyhow::bail!("a range needs a target id")
                         };
-                        let order = p.listing.sorted(p.sort);
+                        let order = p.order();
                         let anchor = p.selection.anchor.or(p.selection.cursor).unwrap_or(target);
                         let pos = |id: EntryId| order.iter().position(|x| *x == id);
                         match (pos(anchor), pos(target)) {
@@ -827,7 +897,7 @@ mod builtin {
                     }
                     SelectMode::Follow => {
                         if let Some(&target) = ids.last() {
-                            let order = p.listing.sorted(p.sort);
+                            let order = p.order();
                             p.selection.follow(target, &order);
                         }
                     }
@@ -893,7 +963,7 @@ mod builtin {
                     .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
                 // What the pane shows: hidden files it does not show are
                 // not selected, or a Delete would take them unseen.
-                let ids = p.listing.sorted(p.sort);
+                let ids = p.order();
                 let cursor = p.selection.cursor;
                 p.selection.set(ids.iter().copied());
                 p.selection.cursor = cursor.or(p.selection.cursor);
@@ -912,7 +982,7 @@ mod builtin {
                 let p = ws
                     .pane_mut(pane)
                     .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-                let order = p.listing.sorted(p.sort);
+                let order = p.order();
                 let inverted: Vec<EntryId> = order
                     .iter()
                     .copied()
@@ -950,7 +1020,7 @@ mod builtin {
                 let p = ws
                     .pane_mut(pane)
                     .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-                let order = p.listing.sorted(p.sort);
+                let order = p.order();
                 p.selection.sweep_start(a.unset, &order);
                 Ok(Outcome::Done)
             },
@@ -970,6 +1040,63 @@ mod builtin {
             },
         );
 
+        c.register::<ExpandArgs, _>(
+            "core",
+            "expand",
+            "Expand folder",
+            "Open folders in place under the one shown, as the tree view draws them, or close them",
+            |a, app| {
+                let pane = app.pane_or_active(a.pane);
+                if a.mode == ExpandMode::CollapseAll {
+                    app.collapse_all(pane);
+                    return Ok(Outcome::Done);
+                }
+                // Which of them are folders, and where: the shown
+                // location's own are asked outside the lock.
+                let Some((open, folders)) = app.with_open(pane, |p| {
+                    let ids: Vec<EntryId> = if a.ids.is_empty() {
+                        p.selection.iter().collect()
+                    } else {
+                        a.ids.clone()
+                    };
+                    ids.into_iter()
+                        .filter(|id| p.entry(*id).is_some_and(crate::Entry::is_dir))
+                        .map(|id| (id, p.opened_path(id)))
+                        .collect::<Vec<_>>()
+                }) else {
+                    anyhow::bail!("the pane shows nothing");
+                };
+                let paths: Vec<PathBuf> = folders
+                    .into_iter()
+                    .filter_map(|(id, opened)| opened.or_else(|| open.path_of(id)))
+                    .collect();
+                if paths.is_empty() {
+                    return Err(crate::command::NothingSelected.into());
+                }
+                {
+                    let mut ws = app.workspace.write();
+                    let p = ws
+                        .pane_mut(pane)
+                        .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                    for path in paths {
+                        let open = p.is_expanded(&path);
+                        match a.mode {
+                            ExpandMode::Expand | ExpandMode::Toggle if !open => {
+                                p.expand(path);
+                            }
+                            ExpandMode::Collapse | ExpandMode::Toggle if open => {
+                                p.collapse(&path);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                app.open_expanded(pane);
+                app.wake();
+                Ok(Outcome::Done)
+            },
+        );
+
         c.register::<HydrateArgs, _>(
             "core",
             "hydrate",
@@ -977,8 +1104,14 @@ mod builtin {
             "Request metadata for entries (views call this for visible rows)",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
-                if let Some((open, ())) = app.with_open(pane, |_| ()) {
-                    open.hydrate(&a.ids, Priority::Visible);
+                let groups = app
+                    .workspace
+                    .read()
+                    .pane(pane)
+                    .map(|p| p.by_location(&a.ids))
+                    .unwrap_or_default();
+                for (open, ids) in groups {
+                    open.hydrate(&ids, Priority::Visible);
                 }
                 Ok(Outcome::Done)
             },

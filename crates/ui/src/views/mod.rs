@@ -51,13 +51,17 @@ pub fn specs() -> Vec<ViewSpec> {
             0,
             || Box::new(list::ListView::default()),
         ),
+        // Beside the list it extends, in the View menu: a button only
+        // while shown. No Ctrl+digit: the others keep theirs, and Usage
+        // and the map have the next ones.
+        spec(view::TREE, "Tree", 1, || Box::new(list::ListView::tree())).alternate(),
         spec(
             view::GRID,
             "Grid",
-            1,
+            2,
             || Box::new(grid::GridView::default()),
         ),
-        spec(view::COLUMNS, "Columns", 2, || {
+        spec(view::COLUMNS, "Columns", 3, || {
             Box::new(columns::ColumnsView::default())
         }),
     ]

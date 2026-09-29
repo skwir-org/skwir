@@ -107,10 +107,7 @@ fn open(args: OpenArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
         let p = ws
             .pane(pane)
             .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-        let open = p
-            .open
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("pane has no location"))?;
+        anyhow::ensure!(p.open.is_some(), "pane has no location");
         let ids: Vec<EntryId> = if args.ids.is_empty() {
             p.selection.iter().collect()
         } else {
@@ -119,8 +116,8 @@ fn open(args: OpenArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
         let targets = ids
             .into_iter()
             .filter_map(|id| {
-                let kind = p.listing.get(id)?.kind;
-                let path = open.path_of(id)?;
+                let kind = p.entry(id)?.kind;
+                let path = p.path_of(id)?;
                 Some(Target { path, kind })
             })
             .collect();
@@ -219,10 +216,9 @@ fn target_dir(pane: PaneId, app: &App) -> anyhow::Result<std::path::PathBuf> {
         .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
     if p.selection.len() == 1
         && let Some(id) = p.selection.iter().next()
-        && let Some(e) = p.listing.get(id)
+        && let Some(e) = p.entry(id)
         && e.is_dir()
-        && let Some(open) = &p.open
-        && let Some(path) = open.path_of(id)
+        && let Some(path) = p.path_of(id)
     {
         return Ok(path);
     }
@@ -304,7 +300,7 @@ fn menu(pane: Option<PaneId>, cache: &Cached, app: &App) -> anyhow::Result<Outco
         };
         let mut names = Vec::with_capacity(p.selection.len());
         for id in p.selection.iter() {
-            match p.listing.get(id) {
+            match p.entry(id) {
                 Some(e) if matches!(e.kind, EntryKind::File | EntryKind::Symlink) => {
                     names.push(e.name.clone());
                 }
@@ -417,10 +413,7 @@ fn targets(args: TargetArgs, app: &App) -> anyhow::Result<(PaneId, Vec<EntryId>,
     let p = ws
         .pane(pane)
         .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-    let open = p
-        .open
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("pane has no location"))?;
+    anyhow::ensure!(p.open.is_some(), "pane has no location");
     let ids: Vec<EntryId> = if args.ids.is_empty() {
         p.selection.iter().collect()
     } else {
@@ -429,7 +422,7 @@ fn targets(args: TargetArgs, app: &App) -> anyhow::Result<(PaneId, Vec<EntryId>,
     let mut named = Vec::new();
     let mut targets = Vec::new();
     for id in ids {
-        let (Some(entry), Some(path)) = (p.listing.get(id), open.path_of(id)) else {
+        let (Some(entry), Some(path)) = (p.entry(id), p.path_of(id)) else {
             continue;
         };
         named.push(id);
