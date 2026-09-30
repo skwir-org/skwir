@@ -479,6 +479,33 @@ impl App {
             .collect()
     }
 
+    /// `selected_refs`, each with the name that says its type
+    /// (`Entry::type_name`: a link's target's), as the listings know it:
+    /// for a caller that may not touch the disk. A worker holding only a
+    /// path asks `fs::content_path`.
+    pub fn selected_typed(&self, pane: PaneId) -> Vec<(EntryRef, std::ffi::OsString)> {
+        let Some((open, ids)) = self.with_open(pane, |p| {
+            p.selection
+                .iter()
+                .map(|id| {
+                    let type_name = p.entry(id).map(|e| e.type_name().to_owned());
+                    (id, p.opened_path(id), type_name)
+                })
+                .collect::<Vec<_>>()
+        }) else {
+            return Vec::new();
+        };
+        ids.into_iter()
+            .filter_map(|(id, opened, type_name)| {
+                let path = opened.or_else(|| open.path_of(id))?;
+                let type_name = type_name
+                    .or_else(|| path.file_name().map(std::ffi::OsStr::to_os_string))
+                    .unwrap_or_default();
+                Some((EntryRef::new(id, path), type_name))
+            })
+            .collect()
+    }
+
     /// Open the listings of the folders `pane` opened in place that are not
     /// open yet. Opening only enqueues, like `open_location`.
     pub fn open_expanded(&self, pane: PaneId) {

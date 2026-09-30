@@ -922,6 +922,54 @@ mod tests {
     }
 
     #[test]
+    fn a_link_is_found_as_what_it_leads_to() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("t");
+        tree(&root);
+        let link = |target: &str, name: &str| {
+            std::os::unix::fs::symlink(target, root.join(name)).unwrap();
+        };
+        // No link's own name says what it leads to.
+        link("pics/cat.png", "a cat's link");
+        link("docs", "docs link");
+        link("docs/notes.txt", "notes link");
+        link("nowhere.png", "broken.png");
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+
+        // Type terms match what a link opens; a broken link is of no kind.
+        assert_eq!(
+            run(&app, "kind:image", &root),
+            set(&["pics/cat.png", "pics/dog.JPG", "a cat's link"])
+        );
+        assert_eq!(
+            run(&app, "mime:image/png", &root),
+            set(&["pics/cat.png", "a cat's link"])
+        );
+        assert_eq!(run(&app, "mime:inode/symlink", &root), set(&["broken.png"]));
+        // A link to a folder is one, and a link still; the search does
+        // not go down into it (no loops, no file found twice).
+        assert_eq!(
+            run(&app, "type:dir depth:1", &root),
+            set(&["docs", "pics", "docs link"])
+        );
+        assert_eq!(
+            run(&app, "type:symlink", &root),
+            set(&["a cat's link", "docs link", "notes link", "broken.png"])
+        );
+        // What reads a file reads it through the link.
+        assert_eq!(
+            run(&app, "content:needle", &root),
+            set(&["docs/notes.txt", "notes link"])
+        );
+        // Name terms keep the link's own name.
+        assert_eq!(
+            run(&app, "ext:png", &root),
+            set(&["pics/cat.png", "broken.png"])
+        );
+    }
+
+    #[test]
     fn hydrate_updates_and_removed_on_vanish() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("t");

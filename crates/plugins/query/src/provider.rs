@@ -280,7 +280,7 @@ fn full_match(q: &Query, entry: &Entry, path: &Path, late: Late<'_>) -> bool {
     let Some(expr) = &q.expr else {
         return true;
     };
-    let c = Candidate::new(&entry.name, entry.kind, path, Some(&entry.metadata)).with_late(late);
+    let c = Candidate::of_entry(entry, path).with_late(late);
     match expr.eval(&c, false) {
         Verdict::No => false,
         Verdict::Yes => true,

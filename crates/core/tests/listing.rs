@@ -636,6 +636,12 @@ fn a_link_is_listed_as_what_it_leads_to() {
     assert_eq!(kind(&file), Some(EntryKind::File));
     assert!(!file.is_dir());
     assert_eq!(file.type_name(), "a note's text.txt");
+    // What is read to show it is the file itself, named by its own
+    // identity: a reference to it resolves.
+    let note = dir.join("a note's text.txt").canonicalize().unwrap();
+    let content = file.content(&dir.join("a file link"));
+    assert_eq!(content.path, note);
+    assert_eq!(content.resolve().unwrap(), note);
     assert_eq!(
         find(&listing, "a link to a link").type_name(),
         "a note's text.txt"
@@ -643,6 +649,11 @@ fn a_link_is_listed_as_what_it_leads_to() {
     let broken = find(&listing, "a broken link");
     assert!(broken.is_broken_link());
     assert_eq!(broken.type_name(), "a broken link");
+    let own = dir.join("a broken link");
+    assert_eq!(
+        broken.content(&own),
+        bibli_core::op::EntryRef::new(broken.id, &own)
+    );
 
     // Folders sort first, and a link to one with them, from the first
     // listing: rows off screen are never hydrated.

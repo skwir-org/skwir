@@ -302,10 +302,14 @@ impl Scanner {
                 }
                 _ => Start::Fresh,
             };
-            let candidates: Vec<(EntryId, OsString)> = listing
+            // A link is read, and typed, as what it leads to.
+            let candidates: Vec<(EntryId, OsString, Option<PathBuf>)> = listing
                 .iter()
                 .filter(|entry| !entry.is_dir())
-                .map(|entry| (entry.id, entry.name.clone()))
+                .map(|entry| {
+                    let target = entry.target.as_ref().and_then(|t| t.path.clone());
+                    (entry.id, entry.name.clone(), target)
+                })
                 .collect();
             (
                 source,
@@ -390,7 +394,7 @@ impl Scanner {
         self: &Arc<Self>,
         pane: PaneId,
         generation: u64,
-        entries: Vec<(EntryId, OsString)>,
+        entries: Vec<(EntryId, OsString, Option<PathBuf>)>,
         skip: &HashSet<EntryId>,
         open: Option<&dyn OpenLocation>,
         dir: Option<&Path>,
@@ -398,12 +402,12 @@ impl Scanner {
     ) {
         let candidates: Vec<(Candidate, Kind)> = entries
             .into_iter()
-            .filter_map(|(id, name)| {
-                let kind = readable(&name)?;
-                let path = match &dir {
+            .filter_map(|(id, name, target)| {
+                let kind = readable(target.as_deref().and_then(Path::file_name).unwrap_or(&name))?;
+                let path = target.or_else(|| match &dir {
                     Some(dir) => Some(dir.join(&name)),
                     None => open.and_then(|o| o.path_of(id)),
-                };
+                });
                 Some((Candidate { id, path }, kind))
             })
             .collect();

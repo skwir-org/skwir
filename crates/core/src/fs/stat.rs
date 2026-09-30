@@ -1,7 +1,8 @@
 //! Lazy metadata via statx through a directory fd.
 
-use std::ffi::{OsStr, OsString};
-use std::path::Path;
+use std::borrow::Cow;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rustix::fd::AsFd;
@@ -27,30 +28,48 @@ fn kind_of(mode: u32) -> EntryKind {
 }
 
 /// What the link `name` in `dirfd` leads to, followed to the end: `None`
-/// when it leads nowhere. Only the type is asked of what is there.
+/// when it leads nowhere. Only the type and the identity are asked of
+/// what is there.
 pub fn follow(dirfd: &impl AsFd, name: &OsStr) -> Option<LinkTarget> {
-    let st = rustix::fs::statx(dirfd, name, AtFlags::empty(), StatxFlags::TYPE).ok()?;
+    let asked = StatxFlags::TYPE | StatxFlags::INO;
+    let st = rustix::fs::statx(dirfd, name, AtFlags::empty(), asked).ok()?;
     Some(target_of(dirfd, name, &st))
 }
 
 fn target_of(dirfd: &impl AsFd, name: &OsStr, st: &rustix::fs::Statx) -> LinkTarget {
     LinkTarget {
         kind: kind_of(u32::from(st.stx_mode)),
-        name: final_name(dirfd, name).unwrap_or_else(|| name.to_owned()),
+        id: EntryId {
+            dev: rustix::fs::makedev(st.stx_dev_major, st.stx_dev_minor),
+            ino: st.stx_ino,
+        },
+        path: resolved(dirfd, name),
     }
 }
 
-/// The name of what the link `name` finally leads to, through every link
-/// of a chain: the kernel resolves the directory's descriptor
-/// (`/proc/self/fd`), so no path is needed. What is at the root has no
-/// name: the link's own is kept.
-fn final_name(dirfd: &impl AsFd, name: &OsStr) -> Option<OsString> {
+/// Where the link `name` finally leads, through every link of a chain:
+/// the kernel resolves the directory's descriptor (`/proc/self/fd`), so
+/// the directory's own path is not needed.
+fn resolved(dirfd: &impl AsFd, name: &OsStr) -> Option<PathBuf> {
     use rustix::fd::AsRawFd;
     let link = Path::new("/proc/self/fd")
         .join(dirfd.as_fd().as_raw_fd().to_string())
         .join(name);
-    let target = std::fs::canonicalize(link).ok()?;
-    target.file_name().map(OsStr::to_os_string)
+    std::fs::canonicalize(link).ok()
+}
+
+/// The file read to show what is at `path`, for whoever holds a path (an
+/// `EntryRef`) rather than an entry: what it finally leads to when it is
+/// a link that leads somewhere, `path` itself otherwise
+/// (`Entry::content` for a path). Its name says the file's type:
+/// never type a path by its own `file_name()`, a link is typed as what it
+/// opens. Reads the disk (an lstat, and a link's chain): on a worker.
+pub fn content_path(path: &Path) -> Cow<'_, Path> {
+    let is_link = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
+    match is_link.then(|| std::fs::canonicalize(path).ok()).flatten() {
+        Some(target) => Cow::Owned(target),
+        None => Cow::Borrowed(path),
+    }
 }
 
 /// statx `name` relative to `dirfd`; fill `entry` in place. Returns false if

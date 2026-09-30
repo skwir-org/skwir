@@ -605,13 +605,23 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   a finished result can still be incomplete because of read errors. Automatic
   revalidation must not reintroduce unknown blocks or busy flashes. See ADR-007.
 - A link is an entry of its own (`kind: Symlink`, its identity the
-  link's) that knows what it leads to (`Entry::target`: its kind and its
-  name, followed to the end when listed or stat-ed). It is shown as what
-  it opens: `Entry::is_dir` is true for a link to a folder, its type is
-  read from `Entry::type_name` (the target's name, never `entry.name`),
-  and its size, times, owner and permissions are the target's (a broken
-  link keeps its own). What the entry is on disk, what an operation acts
-  on, is `kind`. Every view marks a link with `icons::with_link`.
+  link's) that knows what it leads to (`Entry::target`: its kind,
+  identity and resolved path, followed to the end when listed or
+  stat-ed). It is shown as what it opens: `Entry::is_dir` is true for a
+  link to a folder, its type is read from `Entry::type_name` (the
+  target's name, never `entry.name`), and its size, times, owner and
+  permissions are the target's (a broken link keeps its own). What the
+  entry is on disk, what an operation acts on, is `kind`, and a
+  selection's `EntryRef` names the link. Every view marks a link with
+  `icons::with_link`.
+- What is read to show an entry is `Entry::content`: a link's target,
+  with its own identity. Preview and thumbnail requests carry it, so a
+  provider may type a file by `req.entry.path` and read it. Code holding
+  only a path types it by `fs::content_path` (on a worker) or, where
+  nothing may be read, by `App::selected_typed`; never by the path's own
+  `file_name()`. A search matches type terms (`type:`, `kind:`,
+  `mime:`) and what reads a file on what a link opens, name terms on its
+  own name, and never descends through a link.
 - Entries arrive before metadata. Treat missing fields as unknown, request
   hydration in batches, and react to `Updated` events instead of stat-ing each
   row during rendering. A fact too costly for every listing (a picture's

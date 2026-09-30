@@ -580,12 +580,14 @@ impl Shell {
             self.app.lifetime().child(),
             move || {
                 let lifetime = CancelToken::new();
-                let session = EntryRef::from_path(&path)
+                // A link plays, and is typed as, what it leads to.
+                let content = bibli_core::fs::content_path(&path);
+                let session = EntryRef::from_path(&*content)
                     .ok_or_else(|| anyhow::anyhow!("{} is missing", path.display()))
                     .and_then(|entry| {
                         let request = PreviewRequest {
                             entry,
-                            mime: bibli_platform::mime::by_name(path.as_os_str())
+                            mime: bibli_platform::mime::by_name(content.as_os_str())
                                 .map(|mime| mime.to_string()),
                             page: 1,
                             seconds: None,
@@ -644,9 +646,10 @@ impl Shell {
             self.app.lifetime().child(),
             move || {
                 let cover = || -> Option<(PathBuf, bibli_core::thumbs::Image)> {
+                    let content = bibli_core::fs::content_path(&track);
                     let request = PreviewRequest {
-                        entry: EntryRef::from_path(&track)?,
-                        mime: bibli_platform::mime::by_name(track.as_os_str())
+                        entry: EntryRef::from_path(&*content)?,
+                        mime: bibli_platform::mime::by_name(content.as_os_str())
                             .map(|mime| mime.to_string()),
                         page: 1,
                         seconds: None,

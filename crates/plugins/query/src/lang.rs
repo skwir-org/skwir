@@ -33,6 +33,14 @@
 //! such as `music` or `photos` too), several separated by commas:
 //! `kind:image,video`. See [`bibli_platform::mime::Kind`].
 //!
+//! Links: a link is matched as what it opens, as it is shown. `type:`,
+//! `kind:`, `mime:`, the sizes and times, `content:` and the places are
+//! what it leads to (a link to a folder is `type:dir`, and `type:symlink`
+//! still), while `name:`, `ext:` and bare words match its own name. A link
+//! that leads nowhere is `mime:inode/symlink` and of no kind. A search
+//! does not go down into a folder through a link: no loops, and no file
+//! found twice.
+//!
 //! Quoting: a quote opens only at the start of a word, after a leading `-`,
 //! or right after one of the keys above (`name:"a b"`), so `don't` is an
 //! ordinary word. A quoted word is always literal: `"OR"`, `"-draft"` and
@@ -1309,7 +1317,6 @@ impl Query {
 
 // ---------------------------------------------------------------- matching
 
-/// What the matcher looks at. `metadata` is `None` before stat.
 /// What the late terms read with: the fields a file gives when asked
 /// (`near:`, `inside:`), on the search's worker, and the search's token.
 #[derive(Clone, Copy)]
@@ -1318,11 +1325,20 @@ pub struct Late<'a> {
     pub cancel: &'a bibli_core::CancelToken,
 }
 
+/// What the matcher looks at. `metadata` is `None` before stat.
 pub struct Candidate<'a> {
+    /// The entry's own name, which name terms (`name:`, `ext:`) match.
     pub name: &'a OsStr,
+    /// The entry's own kind: a link is `Symlink`.
     pub kind: EntryKind,
     pub path: &'a Path,
     pub metadata: Option<&'a Metadata>,
+    /// What it opens, which type terms (`type:`, `kind:`, `mime:`) and the
+    /// terms that read the file match: its kind and the name that says
+    /// its type. A link's is where it leads (`Entry::target`), and it
+    /// stays `Symlink` for a link that leads nowhere. `None` for a link
+    /// not yet stat-ed: those terms wait for the stat.
+    opens: Option<(EntryKind, &'a OsStr)>,
     /// Without it, a place term is never decided.
     late: Option<Late<'a>>,
     /// The name as text, and lowercased, computed once for all the terms.
@@ -1342,9 +1358,24 @@ impl<'a> Candidate<'a> {
             kind,
             path,
             metadata,
+            opens: (kind != EntryKind::Symlink).then_some((kind, name)),
             late: None,
             text: name.to_string_lossy(),
             lowered: OnceCell::new(),
+        }
+    }
+
+    /// A stat-ed entry: a link is matched as what it leads to.
+    pub fn of_entry(entry: &'a bibli_core::Entry, path: &'a Path) -> Self {
+        Candidate {
+            opens: Some((
+                entry
+                    .target
+                    .as_ref()
+                    .map_or(entry.kind, |target| target.kind),
+                entry.type_name(),
+            )),
+            ..Candidate::new(&entry.name, entry.kind, path, Some(&entry.metadata))
         }
     }
 
@@ -1362,6 +1393,17 @@ impl<'a> Candidate<'a> {
             .get(keys::POSITION, self.path, late.cancel)
             .as_ref()
             .and_then(bibli_core::geo::LatLon::from_value)
+    }
+
+    /// The verdict of a term that reads a file, for what is not one (or
+    /// not known yet to lead to one): `None` for a file, read through a
+    /// link.
+    fn unless_file(&self) -> Option<Verdict> {
+        match self.opens {
+            Some((EntryKind::File, _)) => None,
+            Some(_) => Some(Verdict::No),
+            None => Some(Verdict::Unknown),
+        }
     }
 
     fn lowered(&self) -> &str {
@@ -1401,28 +1443,34 @@ impl Term {
             Term::Ext(exts) => {
                 yes_no(ext_of(c.lowered()).is_some_and(|e| exts.iter().any(|x| x == e)))
             }
-            Term::Type(sel) => yes_no(match sel {
-                KindSel::File => c.kind == EntryKind::File,
-                KindSel::Dir => c.kind == EntryKind::Directory,
-                KindSel::Symlink => c.kind == EntryKind::Symlink,
-            }),
-            Term::Mime(g, _) => {
-                if c.kind == EntryKind::Directory {
-                    return yes_no(g.is_match("inode/directory"));
-                }
-                yes_no(
-                    bibli_platform::mime::by_name(c.name).is_some_and(|m| g.is_match(m.as_str())),
-                )
-            }
+            // A link is one whatever it leads to; a link to a folder is a
+            // folder too, as it is shown and opened.
+            Term::Type(sel) => match (sel, c.opens) {
+                (KindSel::Symlink, _) => yes_no(c.kind == EntryKind::Symlink),
+                (_, None) => Verdict::Unknown,
+                (KindSel::File, Some((kind, _))) => yes_no(kind == EntryKind::File),
+                (KindSel::Dir, Some((kind, _))) => yes_no(kind == EntryKind::Directory),
+            },
+            Term::Mime(g, _) => match c.opens {
+                None => Verdict::Unknown,
+                Some((EntryKind::Directory, _)) => yes_no(g.is_match("inode/directory")),
+                Some((EntryKind::Symlink, _)) => yes_no(g.is_match("inode/symlink")),
+                Some((_, name)) => yes_no(
+                    bibli_platform::mime::by_name(name).is_some_and(|m| g.is_match(m.as_str())),
+                ),
+            },
             Term::Kind(kinds) => {
                 use bibli_platform::mime::{Kind, is_kind};
-                if c.kind == EntryKind::Directory {
-                    return yes_no(kinds.contains(&Kind::Folder));
+                match c.opens {
+                    None => Verdict::Unknown,
+                    Some((EntryKind::Directory, _)) => yes_no(kinds.contains(&Kind::Folder)),
+                    // A link that leads nowhere is of no kind.
+                    Some((EntryKind::Symlink, _)) => Verdict::No,
+                    Some((_, name)) => yes_no(
+                        bibli_platform::mime::by_name(name)
+                            .is_some_and(|m| kinds.iter().any(|k| is_kind(&m, *k))),
+                    ),
                 }
-                yes_no(
-                    bibli_platform::mime::by_name(c.name)
-                        .is_some_and(|m| kinds.iter().any(|k| is_kind(&m, *k))),
-                )
             }
             Term::Size { min, max, .. } => {
                 let Some(m) = c.metadata else {
@@ -1460,8 +1508,8 @@ impl Term {
                 }))
             }
             Term::Content(p) => {
-                if c.kind != EntryKind::File {
-                    return Verdict::No;
+                if let Some(verdict) = c.unless_file() {
+                    return verdict;
                 }
                 if !content {
                     return Verdict::Unknown;
@@ -1469,8 +1517,8 @@ impl Term {
                 yes_no(content_matches(c.path, p))
             }
             Term::Near { .. } | Term::Inside { .. } => {
-                if c.kind != EntryKind::File {
-                    return Verdict::No;
+                if let Some(verdict) = c.unless_file() {
+                    return verdict;
                 }
                 if !content {
                     return Verdict::Unknown;

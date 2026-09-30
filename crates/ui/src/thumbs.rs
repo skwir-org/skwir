@@ -8,7 +8,6 @@ use std::time::SystemTime;
 use bibli_core::EntryId;
 use bibli_core::entry::keys;
 use bibli_core::lru::ByteLru;
-use bibli_core::op::EntryRef;
 use bibli_core::scheduler::Priority;
 use bibli_core::thumbs::{Image, ThumbRequest, ThumbSize, ThumbState};
 use gpui::{Context, RenderImage, Window};
@@ -108,7 +107,8 @@ impl Shell {
                 return ThumbView::Unavailable;
             };
             let req = ThumbRequest {
-                entry: EntryRef::new(id, path),
+                // A link's picture is its target's.
+                entry: e.content(&path),
                 mime: bibli_platform::mime::by_name(e.type_name()).map(|m| Arc::from(m.as_str())),
                 mtime,
                 size,

@@ -7,4 +7,4 @@ mod watch;
 
 pub use hydrate::hydrate_paths;
 pub use path_provider::PathProvider;
-pub use stat::{stat_entry, stat_path};
+pub use stat::{content_path, stat_entry, stat_path};

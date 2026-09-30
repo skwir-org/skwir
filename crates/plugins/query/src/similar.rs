@@ -35,6 +35,9 @@ pub enum By {
 #[derive(Clone, Debug, Default)]
 pub struct Sample<'a> {
     pub name: &'a OsStr,
+    /// The name that says its type, when it is not its own: a link's
+    /// target's (`Entry::type_name`).
+    pub type_name: Option<&'a OsStr>,
     pub dir: bool,
     pub size: Option<u64>,
     pub modified: Option<SystemTime>,
@@ -61,13 +64,14 @@ pub fn terms(s: &Sample<'_>, by: By, cal: &Calendar) -> Result<String, String> {
     match by {
         By::Kind if s.dir => Ok("kind:folder".into()),
         By::Kind => {
-            let mime = mime::by_name(s.name);
+            let typed = s.type_name.unwrap_or(s.name);
+            let mime = mime::by_name(typed);
             // The first kind is the one its generic icon gives, before text.
             if let Some(kind) = mime.as_ref().and_then(|m| mime::kinds(m).first().copied()) {
                 return Ok(format!("kind:{}", kind.name()));
             }
             // A type the desktop does not group: its extension.
-            let lowered = name.to_lowercase();
+            let lowered = typed.to_string_lossy().to_lowercase();
             match lowered.rsplit_once('.') {
                 Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() => {
                     Ok(format!("ext:{}", lang::quote(ext)))
@@ -172,6 +176,7 @@ pub fn start(
             }
             let sample = Sample {
                 name: &entry.name,
+                type_name: Some(entry.type_name()),
                 dir: entry.is_dir(),
                 size: entry.metadata.value(keys::SIZE).and_then(Value::as_u64),
                 modified: entry

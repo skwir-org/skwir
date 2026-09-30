@@ -2,7 +2,9 @@
 //! where it came from.
 
 use std::collections::BTreeMap;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
+
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -169,9 +171,13 @@ impl Metadata {
 pub struct LinkTarget {
     /// What is there.
     pub kind: EntryKind,
-    /// The name of what is there. It, not the link's own name, says what
-    /// type of file the link opens (`Entry::type_name`).
-    pub name: OsString,
+    /// Its own identity.
+    pub id: EntryId,
+    /// Where it is, absolute and through every link of a chain: what is
+    /// read to show the link (`Entry::content`), and whose name says its
+    /// type (`Entry::type_name`). `None` in the rare case the path could
+    /// not be resolved though what is there could be reached.
+    pub path: Option<PathBuf>,
 }
 
 /// One entry of a listing.
@@ -218,10 +224,28 @@ impl Entry {
 
     /// The name that says what type of file this is: a link's target's,
     /// since a link opens what it leads to; the entry's own otherwise.
-    pub fn type_name(&self) -> &std::ffi::OsStr {
+    /// Never type an entry by `name`.
+    pub fn type_name(&self) -> &OsStr {
         self.target
             .as_ref()
-            .map_or(&self.name, |target| &target.name)
+            .and_then(|target| target.path.as_deref()?.file_name())
+            .unwrap_or(&self.name)
+    }
+
+    /// What is read to show this entry, which is at `own`: what a link
+    /// leads to, with its own identity (a reference resolves only to the
+    /// file it names), the entry itself otherwise. A preview or a
+    /// thumbnail is asked of it; an operation acts on the entry at `own`,
+    /// the link.
+    pub fn content(&self, own: &Path) -> crate::op::EntryRef {
+        match &self.target {
+            Some(LinkTarget {
+                id,
+                path: Some(path),
+                ..
+            }) => crate::op::EntryRef::new(*id, path.clone()),
+            _ => crate::op::EntryRef::new(self.id, own),
+        }
     }
 
     /// Whether the entry is a link, resolved or not.

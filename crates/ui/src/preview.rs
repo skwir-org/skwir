@@ -176,6 +176,9 @@ struct PreviewKey {
     pane: PaneId,
     id: EntryId,
     path: PathBuf,
+    /// What is read to show it (`Entry::content`): a link's target, so a
+    /// link pointed elsewhere is another preview.
+    content: EntryRef,
     providers: u64,
 }
 
@@ -472,7 +475,7 @@ impl PreviewState {
         let (entry, mime) = match depth.checked_sub(1) {
             None => {
                 let key = self.key.as_ref()?;
-                (EntryRef::new(key.id, &key.path), self.info.mime.clone())
+                (key.content.clone(), self.info.mime.clone())
             }
             Some(index) => {
                 let member = self.nested.get(index)?;
@@ -842,6 +845,7 @@ impl Shell {
                     PreviewKey {
                         pane: self.pane,
                         id,
+                        content: e.content(&path),
                         path,
                         providers: self.app.previews.revision(),
                     },
@@ -1079,6 +1083,7 @@ impl Shell {
             PreviewKey {
                 pane,
                 id: entry.id,
+                content: entry.content(&path),
                 path,
                 providers: self.app.previews.revision(),
             },
@@ -1358,7 +1363,8 @@ impl Shell {
         self.preview.phase = PreviewPhase::Loading;
         let generation = self.preview.generation;
         let request = PreviewRequest {
-            entry: EntryRef::new(key.id, &key.path),
+            // What is read: a link's target, named by its own path.
+            entry: key.content.clone(),
             mime: self.preview.info.mime.clone(),
             page: self.preview.page,
             seconds: self.preview.seconds,
@@ -1396,7 +1402,11 @@ impl Shell {
             .pinned
             .as_ref()
             .map(|pinned| pinned.path.clone());
-        let (mut path, modified, dark) = (key.path.clone(), version.modified, version.dark);
+        // The pinned track is known by the path the pane shows (a link's);
+        // everything else reads what the request names.
+        let shown = key.path.clone();
+        let (mut path, modified, dark) =
+            (request.entry.path.clone(), version.modified, version.dark);
         // A desktop thumbnail represents the file, not the requested page or
         // timestamp. Only use it before this file has any preview content.
         let show_thumbnail = !is_dir && self.preview.content.is_none();
@@ -1554,7 +1564,7 @@ impl Shell {
                         }
                     }
                 }
-                if !is_dir && pinned.as_ref() == Some(&path) {
+                if !is_dir && pinned.as_ref() == Some(if own { &shown } else { &path }) {
                     return send(PreviewContent::Generic, true, None, Some(Media::Pinned));
                 }
                 // Provider registration owns media recognition, including container MIME types.
@@ -1785,7 +1795,7 @@ impl Shell {
         if entry.is_dir() {
             return;
         }
-        let shown = self.app.fields.shown_for(&entry.name);
+        let shown = self.app.fields.shown_for(entry.type_name());
         if shown.is_empty() {
             return;
         }
@@ -1793,6 +1803,7 @@ impl Shell {
         let tx = self.preview.fields_tx.clone();
         let fields = Arc::clone(&self.app.fields);
         let path = path.to_path_buf();
+        let name = entry.type_name().to_owned();
         let wake = self.app.waker_handle();
         let cancel = self.app.lifetime().child();
         self.app.scheduler.spawn(
@@ -1807,9 +1818,8 @@ impl Shell {
                             bibli_core::entry::Value::Text(text) => text.to_string(),
                             _ => return None,
                         };
-                        let name = path.file_name().unwrap_or_default();
                         Some(crate::details::Row {
-                            source: fields.credit(key, name).map(Into::into),
+                            source: fields.credit(key, &name).map(Into::into),
                             ..crate::details::Row::new(label, text)
                         })
                     })
@@ -2242,7 +2252,7 @@ impl Shell {
         };
         self.app.thumbnails.get(
             ThumbRequest {
-                entry: EntryRef::new(key.id, &key.path),
+                entry: key.content.clone(),
                 mime: self.preview.info.mime.clone().map(Into::into),
                 mtime: self.preview.version.as_ref().and_then(|v| v.modified),
                 size: ThumbSize::Large,

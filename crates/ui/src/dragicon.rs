@@ -8,7 +8,6 @@
 use std::sync::Arc;
 
 use bibli_core::entry::keys;
-use bibli_core::op::EntryRef;
 use bibli_core::scheduler::Priority;
 use bibli_core::thumbs::{ThumbRequest, ThumbSize, ThumbState};
 use gpui::ExternalDragIcon;
@@ -219,7 +218,7 @@ impl Shell {
                     && let Some(path) = p.path_of(id)
                 {
                     let req = ThumbRequest {
-                        entry: EntryRef::new(id, path),
+                        entry: e.content(&path),
                         mime: bibli_platform::mime::by_name(e.type_name())
                             .map(|m| Arc::from(m.as_str())),
                         mtime: e

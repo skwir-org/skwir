@@ -1029,12 +1029,16 @@ struct RemoveArgs {
 
 fn geotag(app: &App, args: &GeotagArgs) -> anyhow::Result<Outcome> {
     let pane = app.pane_or_active(args.pane);
-    let refs = app.selected_refs(pane);
-    // By name only here: which one is a track is read on the worker.
+    let typed = app.selected_typed(pane);
+    // By name only here (a link's target's): which one is a track is read
+    // on the worker.
     anyhow::ensure!(
-        refs.iter().any(|r| Format::of(&r.path).is_some()),
+        typed
+            .iter()
+            .any(|(_, name)| Format::of(Path::new(name)).is_some()),
         "Select a track and the pictures to place along it"
     );
+    let refs: Vec<EntryRef> = typed.into_iter().map(|(r, _)| r).collect();
     let offset_seconds = args.offset_seconds;
     let weak = app.weak();
     let cancel = app.lifetime().child();
@@ -1164,13 +1168,14 @@ pub(crate) fn plan_geotag(
     let mut candidates = Vec::new();
     for r in refs {
         anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
-        let path = &r.path;
-        if Format::detect(path).is_some() {
-            tracks.push(path.clone());
+        // A link is read, and typed, as what it leads to.
+        let path = bibli_core::fs::content_path(&r.path);
+        if Format::detect(&path).is_some() {
+            tracks.push(path.into_owned());
             continue;
         }
         let name = path.file_name().map(OsString::from).unwrap_or_default();
-        match mime::identify(&name, path) {
+        match mime::identify(&name, &path) {
             Some(m) if mime::is_kind(&m, Kind::Image) && is_raw(&m) => left.raw += 1,
             Some(m) if mime::is_kind(&m, Kind::Image) => candidates.push(r.clone()),
             _ => left.others += 1,
@@ -1276,15 +1281,15 @@ fn plan(title: String, notes: &[String], steps: Vec<SetPosition>) -> Plan {
 /// the plan runs.
 fn remove_location(app: &App, args: &RemoveArgs) -> anyhow::Result<Outcome> {
     let pane = app.pane_or_active(args.pane);
-    let refs = app.selected_refs(pane);
+    // Typed by the listings (a link as what it leads to): nothing is read.
+    let typed = app.selected_typed(pane);
     anyhow::ensure!(
-        !refs.is_empty(),
+        !typed.is_empty(),
         "Select the pictures whose location to remove"
     );
     let mut left = LeftOut::default();
     let mut steps = Vec::new();
-    for r in refs {
-        let name = r.path.file_name().map(OsString::from).unwrap_or_default();
+    for (r, name) in typed {
         match mime::by_name(&name) {
             Some(m) if mime::is_kind(&m, Kind::Image) && is_raw(&m) => left.raw += 1,
             Some(m) if mime::is_kind(&m, Kind::Image) => steps.push(SetPosition {

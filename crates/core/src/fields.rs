@@ -161,8 +161,9 @@ impl Fields {
     /// `None` when no provider answers it, the file says nothing, or it
     /// cannot be read.
     pub fn get(&self, key: &str, path: &Path, cancel: &CancelToken) -> Option<Value> {
-        let name = path.file_name()?;
-        let provider = self.provider(key, name)?;
+        // A link is asked as what it leads to, which is what is read.
+        let content = crate::fs::content_path(path);
+        let provider = self.provider(key, content.file_name()?)?;
         let meta = std::fs::metadata(path).ok()?;
         if !meta.is_file() {
             return None;
@@ -311,5 +312,35 @@ mod tests {
         fields.unregister_owner("test");
         assert!(!fields.knows("test.words"));
         assert!(fields.revision() > revision);
+    }
+
+    #[test]
+    fn a_link_is_asked_as_what_it_leads_to() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fields = Fields::new(crate::cache::Cache::new(tmp.path()).namespace("fields"));
+        let reads = Arc::new(AtomicUsize::new(0));
+        fields.register("test", Arc::new(Words(Arc::clone(&reads))));
+        std::fs::write(tmp.path().join("it's a note.txt"), "three short words").unwrap();
+        // Neither link's name says text: what they lead to does.
+        let link = tmp.path().join("a link");
+        std::os::unix::fs::symlink("it's a note.txt", &link).unwrap();
+        let chain = tmp.path().join("a link to a link");
+        std::os::unix::fs::symlink("a link", &chain).unwrap();
+        let cancel = CancelToken::new();
+        assert_eq!(
+            fields.get("test.words", &link, &cancel),
+            Some(Value::UInt(3))
+        );
+        assert_eq!(
+            fields.get("test.words", &chain, &cancel),
+            Some(Value::UInt(3))
+        );
+        // One file behind both links: read once.
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+        // A link that leads nowhere is typed by its own name.
+        let broken = tmp.path().join("broken.txt");
+        std::os::unix::fs::symlink("nowhere", &broken).unwrap();
+        assert_eq!(crate::fs::content_path(&broken), broken);
+        assert_eq!(fields.get("test.words", &broken, &cancel), None);
     }
 }

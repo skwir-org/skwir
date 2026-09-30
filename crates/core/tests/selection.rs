@@ -138,3 +138,34 @@ fn picks_and_sweeps_through_the_commands() {
     select_mode(&app, "d", "follow");
     assert_eq!(selected(&app), ["d"]);
 }
+
+#[test]
+fn the_selection_says_what_a_link_leads_to_without_reading() {
+    let tmp = home_tempdir();
+    let dir = tmp.path();
+    std::fs::write(dir.join("a café's photo.jpg"), "not a real picture").unwrap();
+    std::os::unix::fs::symlink("a café's photo.jpg", dir.join("holiday")).unwrap();
+    let app = app(dir);
+    navigate(&app, dir);
+    select(&app, &["holiday", "a café's photo.jpg"]);
+    let mut typed: Vec<(String, String)> = app
+        .selected_typed(active(&app))
+        .into_iter()
+        .map(|(r, name)| {
+            let own = r.path.file_name().unwrap().to_string_lossy().into_owned();
+            (own, name.to_string_lossy().into_owned())
+        })
+        .collect();
+    typed.sort();
+    assert_eq!(
+        typed,
+        [
+            (
+                "a café's photo.jpg".to_owned(),
+                "a café's photo.jpg".to_owned()
+            ),
+            // The reference is the link's, which operations act on.
+            ("holiday".to_owned(), "a café's photo.jpg".to_owned()),
+        ]
+    );
+}

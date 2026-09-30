@@ -301,8 +301,11 @@ fn menu(pane: Option<PaneId>, cache: &Cached, app: &App) -> anyhow::Result<Outco
         let mut names = Vec::with_capacity(p.selection.len());
         for id in p.selection.iter() {
             match p.entry(id) {
-                Some(e) if matches!(e.kind, EntryKind::File | EntryKind::Symlink) => {
-                    names.push(e.name.clone());
+                // A link opens what it leads to, typed by its name.
+                Some(e)
+                    if matches!(e.kind, EntryKind::File | EntryKind::Symlink) && !e.is_dir() =>
+                {
+                    names.push(e.type_name().to_owned());
                 }
                 _ => return nothing(),
             }
