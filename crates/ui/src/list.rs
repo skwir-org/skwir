@@ -218,7 +218,7 @@ impl Shell {
     /// menu's `kind:` and `has:` tokens. Walks the selection: when a menu
     /// opens, never per frame.
     pub fn selection_types(&self) -> crate::menu::SelectionTypes {
-        let entries: Vec<(std::ffi::OsString, bool)> = {
+        let entries: Vec<(std::ffi::OsString, Option<&'static str>)> = {
             let ws = self.app.workspace.read();
             let Some(pane) = ws.pane(self.pane) else {
                 return crate::menu::SelectionTypes::default();
@@ -226,10 +226,14 @@ impl Shell {
             pane.selection
                 .iter()
                 .filter_map(|id| pane.entry(id))
-                .map(|e| (e.type_name().to_owned(), e.is_dir()))
+                .map(|e| (e.type_name().to_owned(), e.inode_type()))
                 .collect()
         };
-        crate::menu::SelectionTypes::of(entries.iter().map(|(name, dir)| (name.as_os_str(), *dir)))
+        crate::menu::SelectionTypes::of(
+            entries
+                .iter()
+                .map(|(name, inode)| (name.as_os_str(), *inode)),
+        )
     }
 
     pub fn sort_spec(&self) -> SortSpec {

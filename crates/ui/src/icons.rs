@@ -132,13 +132,13 @@ impl IconCache {
         self.lookup(Want::Named(name.to_owned()), size)
     }
 
-    /// Icon path for an entry: the folder icon or the MIME type's icon (a
-    /// link's is what it leads to's).
+    /// Icon path for an entry: the folder icon or the icon of the type it
+    /// is shown as (`mime::of_entry`: a link's is what it leads to's).
     pub fn for_entry(&mut self, e: &Entry, size: u16) -> Option<Arc<Path>> {
         if e.is_dir() {
             return self.folder(size);
         }
-        self.for_name(e.type_name(), size)
+        self.for_mime(mime::of_entry(e).as_ref(), size)
     }
 
     pub fn folder(&mut self, size: u16) -> Option<Arc<Path>> {

@@ -162,7 +162,7 @@ impl Fields {
     /// cannot be read.
     pub fn get(&self, key: &str, path: &Path, cancel: &CancelToken) -> Option<Value> {
         // A link is asked as what it leads to, which is what is read.
-        let content = crate::fs::content_path(path);
+        let content = crate::fs::content_path(path)?;
         let provider = self.provider(key, content.file_name()?)?;
         let meta = std::fs::metadata(path).ok()?;
         if !meta.is_file() {
@@ -337,10 +337,23 @@ mod tests {
         );
         // One file behind both links: read once.
         assert_eq!(reads.load(Ordering::SeqCst), 1);
-        // A link that leads nowhere is typed by its own name.
+        // A link that leads nowhere has nothing to read.
         let broken = tmp.path().join("broken.txt");
         std::os::unix::fs::symlink("nowhere", &broken).unwrap();
-        assert_eq!(crate::fs::content_path(&broken), broken);
+        assert_eq!(crate::fs::content_path(&broken), None);
         assert_eq!(fields.get("test.words", &broken, &cancel), None);
+        // Nor does a pipe, whatever its name: it is never opened.
+        let pipe = tmp.path().join("a pipe.txt");
+        rustix::fs::mknodat(
+            rustix::fs::CWD,
+            &pipe,
+            rustix::fs::FileType::Fifo,
+            rustix::fs::Mode::from_raw_mode(0o600),
+            0,
+        )
+        .unwrap();
+        assert_eq!(crate::fs::content_path(&pipe), None);
+        assert_eq!(fields.get("test.words", &pipe, &cancel), None);
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
     }
 }

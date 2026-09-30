@@ -970,6 +970,39 @@ mod tests {
     }
 
     #[test]
+    fn a_pipe_is_found_as_what_it_is_and_never_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("t");
+        tree(&root);
+        // Named as a picture: the name says nothing of what it is.
+        rustix::fs::mknodat(
+            rustix::fs::CWD,
+            root.join("stream.png"),
+            rustix::fs::FileType::Fifo,
+            rustix::fs::Mode::from_raw_mode(0o600),
+            0,
+        )
+        .unwrap();
+        std::os::unix::fs::symlink("stream.png", root.join("a pipe's link")).unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+
+        assert_eq!(
+            run(&app, "kind:image", &root),
+            set(&["pics/cat.png", "pics/dog.JPG"])
+        );
+        assert_eq!(
+            run(&app, "mime:inode/fifo", &root),
+            set(&["stream.png", "a pipe's link"])
+        );
+        assert!(!run(&app, "type:file", &root).contains("stream.png"));
+        // A search that reads files skips it rather than wait for a writer.
+        assert_eq!(run(&app, "content:needle", &root), set(&["docs/notes.txt"]));
+        // Name terms keep its own name.
+        assert!(run(&app, "ext:png", &root).contains("stream.png"));
+    }
+
+    #[test]
     fn hydrate_updates_and_removed_on_vanish() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("t");

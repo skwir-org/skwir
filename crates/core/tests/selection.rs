@@ -145,15 +145,17 @@ fn the_selection_says_what_a_link_leads_to_without_reading() {
     let dir = tmp.path();
     std::fs::write(dir.join("a café's photo.jpg"), "not a real picture").unwrap();
     std::os::unix::fs::symlink("a café's photo.jpg", dir.join("holiday")).unwrap();
+    // A folder is one whatever its name says.
+    std::fs::create_dir(dir.join("an album.jpg")).unwrap();
     let app = app(dir);
     navigate(&app, dir);
-    select(&app, &["holiday", "a café's photo.jpg"]);
-    let mut typed: Vec<(String, String)> = app
+    select(&app, &["holiday", "a café's photo.jpg", "an album.jpg"]);
+    let mut typed: Vec<(String, Option<String>)> = app
         .selected_typed(active(&app))
         .into_iter()
         .map(|(r, name)| {
             let own = r.path.file_name().unwrap().to_string_lossy().into_owned();
-            (own, name.to_string_lossy().into_owned())
+            (own, name.map(|name| name.to_string_lossy().into_owned()))
         })
         .collect();
     typed.sort();
@@ -162,10 +164,11 @@ fn the_selection_says_what_a_link_leads_to_without_reading() {
         [
             (
                 "a café's photo.jpg".to_owned(),
-                "a café's photo.jpg".to_owned()
+                Some("a café's photo.jpg".to_owned())
             ),
+            ("an album.jpg".to_owned(), None),
             // The reference is the link's, which operations act on.
-            ("holiday".to_owned(), "a café's photo.jpg".to_owned()),
+            ("holiday".to_owned(), Some("a café's photo.jpg".to_owned())),
         ]
     );
 }

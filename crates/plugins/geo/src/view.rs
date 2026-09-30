@@ -302,10 +302,11 @@ impl Scanner {
                 }
                 _ => Start::Fresh,
             };
-            // A link is read, and typed, as what it leads to.
+            // A link is read, and typed, as what it leads to; a folder, a
+            // pipe, a device or a link that leads nowhere has nothing to read.
             let candidates: Vec<(EntryId, OsString, Option<PathBuf>)> = listing
                 .iter()
-                .filter(|entry| !entry.is_dir())
+                .filter(|entry| entry.inode_type().is_none())
                 .map(|entry| {
                     let target = entry.target.as_ref().and_then(|t| t.path.clone());
                     (entry.id, entry.name.clone(), target)

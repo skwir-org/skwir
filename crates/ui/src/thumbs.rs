@@ -106,10 +106,13 @@ impl Shell {
             let Some(path) = pane.open.as_ref().and_then(|o| o.path_of(id)) else {
                 return ThumbView::Unavailable;
             };
+            // A link's picture is its target's; a pipe or a device has none.
+            let Some(content) = e.content(&path) else {
+                return ThumbView::Unavailable;
+            };
             let req = ThumbRequest {
-                // A link's picture is its target's.
-                entry: e.content(&path),
-                mime: bibli_platform::mime::by_name(e.type_name()).map(|m| Arc::from(m.as_str())),
+                entry: content,
+                mime: bibli_platform::mime::of_entry(e).map(|m| Arc::from(m.as_str())),
                 mtime,
                 size,
             };

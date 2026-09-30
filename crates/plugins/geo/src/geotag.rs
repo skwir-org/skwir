@@ -1035,7 +1035,8 @@ fn geotag(app: &App, args: &GeotagArgs) -> anyhow::Result<Outcome> {
     anyhow::ensure!(
         typed
             .iter()
-            .any(|(_, name)| Format::of(Path::new(name)).is_some()),
+            .filter_map(|(_, name)| name.as_deref())
+            .any(|name| Format::of(Path::new(name)).is_some()),
         "Select a track and the pictures to place along it"
     );
     let refs: Vec<EntryRef> = typed.into_iter().map(|(r, _)| r).collect();
@@ -1168,8 +1169,12 @@ pub(crate) fn plan_geotag(
     let mut candidates = Vec::new();
     for r in refs {
         anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
-        // A link is read, and typed, as what it leads to.
-        let path = bibli_core::fs::content_path(&r.path);
+        // A link is read, and typed, as what it leads to; a pipe or a
+        // device is never read.
+        let Some(path) = bibli_core::fs::content_path(&r.path) else {
+            left.others += 1;
+            continue;
+        };
         if Format::detect(&path).is_some() {
             tracks.push(path.into_owned());
             continue;
@@ -1290,7 +1295,7 @@ fn remove_location(app: &App, args: &RemoveArgs) -> anyhow::Result<Outcome> {
     let mut left = LeftOut::default();
     let mut steps = Vec::new();
     for (r, name) in typed {
-        match mime::by_name(&name) {
+        match name.and_then(|name| mime::by_name(&name)) {
             Some(m) if mime::is_kind(&m, Kind::Image) && is_raw(&m) => left.raw += 1,
             Some(m) if mime::is_kind(&m, Kind::Image) => steps.push(SetPosition {
                 entry: r,

@@ -22,8 +22,11 @@ fn kind_of(mode: u32) -> EntryKind {
         FileType::RegularFile => EntryKind::File,
         FileType::Directory => EntryKind::Directory,
         FileType::Symlink => EntryKind::Symlink,
+        FileType::Fifo => EntryKind::Fifo,
+        FileType::Socket => EntryKind::Socket,
+        FileType::CharacterDevice => EntryKind::CharDevice,
+        FileType::BlockDevice => EntryKind::BlockDevice,
         FileType::Unknown => EntryKind::Unknown,
-        _ => EntryKind::Other,
     }
 }
 
@@ -60,16 +63,22 @@ fn resolved(dirfd: &impl AsFd, name: &OsStr) -> Option<PathBuf> {
 
 /// The file read to show what is at `path`, for whoever holds a path (an
 /// `EntryRef`) rather than an entry: what it finally leads to when it is
-/// a link that leads somewhere, `path` itself otherwise
-/// (`Entry::content` for a path). Its name says the file's type:
-/// never type a path by its own `file_name()`, a link is typed as what it
-/// opens. Reads the disk (an lstat, and a link's chain): on a worker.
-pub fn content_path(path: &Path) -> Cow<'_, Path> {
-    let is_link = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
-    match is_link.then(|| std::fs::canonicalize(path).ok()).flatten() {
-        Some(target) => Cow::Owned(target),
-        None => Cow::Borrowed(path),
-    }
+/// a link, `path` itself otherwise (`Entry::content` for a path). Its
+/// name says the file's type: never type a path by its own `file_name()`,
+/// a link is typed as what it opens. `None` when there is no file to
+/// read: a folder, a pipe, a socket, a device, nothing there, or a link
+/// to one of those. Reads the disk (an lstat, and a link's chain): on a
+/// worker.
+pub fn content_path(path: &Path) -> Option<Cow<'_, Path>> {
+    let own = std::fs::symlink_metadata(path).ok()?;
+    let (content, meta) = if own.file_type().is_symlink() {
+        let target = std::fs::canonicalize(path).ok()?;
+        let meta = std::fs::metadata(&target).ok()?;
+        (Cow::Owned(target), meta)
+    } else {
+        (Cow::Borrowed(path), own)
+    };
+    meta.is_file().then_some(content)
 }
 
 /// statx `name` relative to `dirfd`; fill `entry` in place. Returns false if

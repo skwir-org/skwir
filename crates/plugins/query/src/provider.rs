@@ -170,12 +170,16 @@ impl Drop for Deferred<'_> {
 }
 
 fn kind_of(ft: Option<std::fs::FileType>) -> EntryKind {
+    use std::os::unix::fs::FileTypeExt;
     match ft {
         Some(t) if t.is_dir() => EntryKind::Directory,
         Some(t) if t.is_file() => EntryKind::File,
         Some(t) if t.is_symlink() => EntryKind::Symlink,
-        Some(_) => EntryKind::Other,
-        None => EntryKind::Unknown,
+        Some(t) if t.is_fifo() => EntryKind::Fifo,
+        Some(t) if t.is_socket() => EntryKind::Socket,
+        Some(t) if t.is_char_device() => EntryKind::CharDevice,
+        Some(t) if t.is_block_device() => EntryKind::BlockDevice,
+        Some(_) | None => EntryKind::Unknown,
     }
 }
 

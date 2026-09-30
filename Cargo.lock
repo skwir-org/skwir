@@ -1058,6 +1058,7 @@ dependencies = [
  "ignore",
  "parking_lot",
  "proptest",
+ "rustix 1.1.5",
  "schemars",
  "serde",
  "serde_json",

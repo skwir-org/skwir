@@ -100,8 +100,9 @@ struct PreviewResult {
 #[derive(Clone, Default)]
 pub struct Info {
     pub name: String,
-    /// The name that says the type: a link's target's (`Entry::type_name`).
-    pub type_name: String,
+    /// What the type is called until the database's name arrives
+    /// (`typenames::fallback_of`).
+    pub type_fallback: String,
     pub mime: Option<String>,
     /// Whether `mime` is settled: the name alone decides it, or the bytes
     /// were read. A name several types claim (`*.ogg`) gives the most
@@ -177,8 +178,9 @@ struct PreviewKey {
     id: EntryId,
     path: PathBuf,
     /// What is read to show it (`Entry::content`): a link's target, so a
-    /// link pointed elsewhere is another preview.
-    content: EntryRef,
+    /// link pointed elsewhere is another preview. `None`: nothing is read
+    /// (a link that leads nowhere, a pipe, a socket, a device).
+    content: Option<EntryRef>,
     providers: u64,
 }
 
@@ -475,7 +477,7 @@ impl PreviewState {
         let (entry, mime) = match depth.checked_sub(1) {
             None => {
                 let key = self.key.as_ref()?;
-                (key.content.clone(), self.info.mime.clone())
+                (key.content.clone()?, self.info.mime.clone())
             }
             Some(index) => {
                 let member = self.nested.get(index)?;
@@ -768,7 +770,8 @@ fn compute(
 
 fn read_head(path: &Path) -> std::io::Result<Vec<u8>> {
     use std::io::Read;
-    let mut f = std::fs::File::open(path)?;
+    // Never a pipe's open, which waits for a writer.
+    let mut f = bibli_platform::file::open_regular(path)?;
     let mut buf = vec![0u8; TEXT_LIMIT];
     let mut n = 0;
     while n < TEXT_LIMIT {
@@ -898,26 +901,19 @@ impl Shell {
             self.cancel_preview(window, cx);
             self.preview.key = Some(key.clone());
             self.preview.phase = PreviewPhase::Queued;
-            let mime = if entry.is_dir() {
-                Some("inode/directory".into())
-            } else if entry.is_broken_link() {
-                Some("inode/symlink".into())
-            } else {
-                bibli_platform::mime::by_name(entry.type_name()).map(|m| {
-                    // Ask for the type's name now; the header reads it later.
-                    self.type_names.get(&m);
-                    m.to_string()
-                })
-            };
+            let mime = bibli_platform::mime::of_entry(&entry).map(|m| {
+                // Ask for the type's name now; the header reads it later.
+                self.type_names.get(&m);
+                m.to_string()
+            });
             self.preview.details_at = None;
             let app = Arc::clone(&self.app);
             self.type_names.request(&app);
-            let identified = entry.is_dir()
-                || entry.is_broken_link()
+            let identified = entry.inode_type().is_some()
                 || (mime.is_some() && !bibli_platform::mime::ambiguous(entry.type_name()));
             self.preview.info = Info {
                 name: entry.name_str().into_owned(),
-                type_name: entry.type_name().to_string_lossy().into_owned(),
+                type_fallback: crate::typenames::fallback_of(&entry),
                 mime,
                 identified,
                 size: None,
@@ -1362,9 +1358,31 @@ impl Shell {
         self.preview.cancel = Some(cancel.clone());
         self.preview.phase = PreviewPhase::Loading;
         let generation = self.preview.generation;
+        // What is read: a link's target, named by its own path.
+        let Some(content) = key.content.clone() else {
+            // Nothing is: a link that leads nowhere says so, not as the
+            // error opening its missing target gives; a pipe, a socket or a
+            // device is what the header and Details say, and never opened
+            // (a pipe waits for a writer, a device may act).
+            let content = if entry.is_broken_link() {
+                PreviewContent::Error("Nothing is at the link's target".into())
+            } else {
+                PreviewContent::Generic
+            };
+            let _ = self.preview.tx.send(PreviewResult {
+                generation,
+                content,
+                complete: true,
+                session: None,
+                media: None,
+                sniffed: None,
+                placeholder: false,
+            });
+            self.app.wake();
+            return;
+        };
         let request = PreviewRequest {
-            // What is read: a link's target, named by its own path.
-            entry: key.content.clone(),
+            entry: content,
             mime: self.preview.info.mime.clone(),
             page: self.preview.page,
             seconds: self.preview.seconds,
@@ -1380,9 +1398,6 @@ impl Shell {
         let previews = Arc::clone(&self.app.previews);
         let wake = self.app.waker_handle();
         let is_dir = entry.is_dir();
-        // A link that leads nowhere has nothing to read: said as such, not
-        // as the error opening its missing target gives.
-        let broken = entry.is_broken_link();
         // The file's own name, while its type is not settled: the worker
         // reads the bytes to settle it, once.
         let unsettled =
@@ -1447,9 +1462,6 @@ impl Shell {
                 let mut request = request;
                 // Whether the entry itself is shown, not a member of it.
                 let own = nested.is_none() && descend.is_none();
-                if broken && own {
-                    return fail(anyhow::anyhow!("Nothing is at the link's target"));
-                }
                 let source = |member: &Nested, request: &mut PreviewRequest, path: &mut PathBuf| {
                     request.entry = member.entry.clone();
                     request.mime.clone_from(&member.mime);
@@ -1792,7 +1804,8 @@ impl Shell {
     fn read_fields(&mut self, entry: &bibli_core::entry::Entry, path: &std::path::Path) {
         self.preview.fields_generation += 1;
         self.preview.fields.clear();
-        if entry.is_dir() {
+        // A folder, a pipe, a device: no file to read a field of.
+        if entry.inode_type().is_some() {
             return;
         }
         let shown = self.app.fields.shown_for(entry.type_name());
@@ -2247,12 +2260,17 @@ impl Shell {
 
     pub fn video_thumbnail(&self) -> bibli_core::thumbs::ThumbState {
         use bibli_core::thumbs::{ThumbRequest, ThumbSize, ThumbState};
-        let Some(key) = &self.preview.key else {
+        let Some(content) = self
+            .preview
+            .key
+            .as_ref()
+            .and_then(|key| key.content.clone())
+        else {
             return ThumbState::Unavailable;
         };
         self.app.thumbnails.get(
             ThumbRequest {
-                entry: key.content.clone(),
+                entry: content,
                 mime: self.preview.info.mime.clone().map(Into::into),
                 mtime: self.preview.version.as_ref().and_then(|v| v.modified),
                 size: ThumbSize::Large,
@@ -2910,10 +2928,12 @@ fn type_label(shell: &Shell, info: &Info) -> Option<String> {
     if mime == "inode/symlink" {
         return Some(crate::typenames::BROKEN_LINK.into());
     }
-    Some(shell.type_names.peek(mime).map_or_else(
-        || crate::typenames::fallback(&info.type_name),
-        |name| name.to_string(),
-    ))
+    Some(
+        shell
+            .type_names
+            .peek(mime)
+            .map_or_else(|| info.type_fallback.clone(), |name| name.to_string()),
+    )
 }
 
 /// The narrowest the panel gets, and the width a double click returns it to.

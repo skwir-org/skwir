@@ -622,6 +622,15 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   `file_name()`. A search matches type terms (`type:`, `kind:`,
   `mime:`) and what reads a file on what a link opens, name terms on its
   own name, and never descends through a link.
+- A pipe, a socket or a device (`EntryKind::is_special`), or a link to
+  one, is what it is whatever its name says (`inode/fifo`…), and is
+  never opened: opening a pipe waits for a writer, and a device may act.
+  `Entry::content` and `fs::content_path` are `None` for it (and for a
+  link that leads nowhere), so a preview, a thumbnail, a field or a
+  plugin is never asked to read it. Type an entry through
+  `mime::of_entry` (its `Entry::inode_type` first, then its type name).
+  Code that opens a file it was handed opens it with
+  `file::open_regular`.
 - Entries arrive before metadata. Treat missing fields as unknown, request
   hydration in batches, and react to `Updated` events instead of stat-ing each
   row during rendering. A fact too costly for every listing (a picture's

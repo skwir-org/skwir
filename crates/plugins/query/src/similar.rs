@@ -38,6 +38,9 @@ pub struct Sample<'a> {
     /// The name that says its type, when it is not its own: a link's
     /// target's (`Entry::type_name`).
     pub type_name: Option<&'a OsStr>,
+    /// The type it has whatever its name (`Entry::inode_type`): a pipe,
+    /// a device.
+    pub inode: Option<&'static str>,
     pub dir: bool,
     pub size: Option<u64>,
     pub modified: Option<SystemTime>,
@@ -63,6 +66,7 @@ pub fn terms(s: &Sample<'_>, by: By, cal: &Calendar) -> Result<String, String> {
     let name = s.name.to_string_lossy();
     match by {
         By::Kind if s.dir => Ok("kind:folder".into()),
+        By::Kind if let Some(inode) = s.inode => Ok(format!("mime:{}", lang::quote(inode))),
         By::Kind => {
             let typed = s.type_name.unwrap_or(s.name);
             let mime = mime::by_name(typed);
@@ -177,6 +181,7 @@ pub fn start(
             let sample = Sample {
                 name: &entry.name,
                 type_name: Some(entry.type_name()),
+                inode: entry.inode_type(),
                 dir: entry.is_dir(),
                 size: entry.metadata.value(keys::SIZE).and_then(Value::as_u64),
                 modified: entry
@@ -233,6 +238,12 @@ mod tests {
             ..sample("Photos")
         };
         assert_eq!(t(&folder, By::Kind).unwrap(), "kind:folder");
+        // A pipe is one whatever its name says.
+        let pipe = Sample {
+            inode: Some("inode/fifo"),
+            ..sample("stream.png")
+        };
+        assert_eq!(t(&pipe, By::Kind).unwrap(), "mime:inode/fifo");
 
         let day = Sample {
             modified: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(20_721 * 86_400 + 3_600)),

@@ -639,7 +639,7 @@ fn a_link_is_listed_as_what_it_leads_to() {
     // What is read to show it is the file itself, named by its own
     // identity: a reference to it resolves.
     let note = dir.join("a note's text.txt").canonicalize().unwrap();
-    let content = file.content(&dir.join("a file link"));
+    let content = file.content(&dir.join("a file link")).unwrap();
     assert_eq!(content.path, note);
     assert_eq!(content.resolve().unwrap(), note);
     assert_eq!(
@@ -649,10 +649,11 @@ fn a_link_is_listed_as_what_it_leads_to() {
     let broken = find(&listing, "a broken link");
     assert!(broken.is_broken_link());
     assert_eq!(broken.type_name(), "a broken link");
-    let own = dir.join("a broken link");
+    assert_eq!(broken.inode_type(), Some("inode/symlink"));
     assert_eq!(
-        broken.content(&own),
-        bibli_core::op::EntryRef::new(broken.id, &own)
+        broken.content(&dir.join("a broken link")),
+        None,
+        "nothing is read at a missing target"
     );
 
     // Folders sort first, and a link to one with them, from the first
@@ -694,4 +695,59 @@ fn a_link_is_listed_as_what_it_leads_to() {
     let broken = listing.get(broken.id).unwrap();
     assert_eq!(size(broken), Some("nowhere".len() as u64));
     assert!(broken.is_broken_link());
+}
+
+#[test]
+fn a_pipe_or_a_socket_is_listed_as_what_it_is_and_never_read() {
+    use bibli_core::entry::EntryKind;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("special");
+    std::fs::create_dir_all(&dir).unwrap();
+    // Named as pictures: the name says nothing of what they are.
+    rustix::fs::mknodat(
+        rustix::fs::CWD,
+        dir.join("a pipe.png"),
+        rustix::fs::FileType::Fifo,
+        rustix::fs::Mode::from_raw_mode(0o600),
+        0,
+    )
+    .unwrap();
+    let _socket = std::os::unix::net::UnixListener::bind(dir.join("a socket.jpg")).unwrap();
+    std::os::unix::fs::symlink("a pipe.png", dir.join("a link to a pipe")).unwrap();
+    let app = app(tmp.path());
+
+    let open = app.open_location(&Location::from_path(&dir)).unwrap();
+    let mut listing = bibli_core::Listing::default();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !listing.is_complete() {
+        listing.apply(open.events().recv_deadline(deadline).expect("listing"));
+    }
+    let find = |name: &str| {
+        listing
+            .iter()
+            .find(|e| e.name == name)
+            .unwrap_or_else(|| panic!("{name} listed"))
+            .clone()
+    };
+    let pipe = find("a pipe.png");
+    assert_eq!(pipe.kind, EntryKind::Fifo);
+    assert_eq!(pipe.inode_type(), Some("inode/fifo"));
+    assert_eq!(pipe.content(&dir.join("a pipe.png")), None);
+    let socket = find("a socket.jpg");
+    assert_eq!(socket.kind, EntryKind::Socket);
+    assert_eq!(socket.inode_type(), Some("inode/socket"));
+    assert_eq!(socket.content(&dir.join("a socket.jpg")), None);
+    // A link to a pipe is shown as one, and nothing is read through it.
+    let link = find("a link to a pipe");
+    assert_eq!(link.kind, EntryKind::Symlink);
+    assert_eq!(link.opens(), EntryKind::Fifo);
+    assert_eq!(link.inode_type(), Some("inode/fifo"));
+    assert_eq!(link.content(&dir.join("a link to a pipe")), None);
+    assert!(!link.is_dir() && !link.is_broken_link());
+
+    // A device, as a stat reads it.
+    let null = bibli_core::fs::stat_path(std::path::Path::new("/dev/null")).unwrap();
+    assert_eq!(null.kind, EntryKind::CharDevice);
+    assert_eq!(null.inode_type(), Some("inode/chardevice"));
+    assert_eq!(null.content(std::path::Path::new("/dev/null")), None);
 }

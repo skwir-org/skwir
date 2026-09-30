@@ -157,8 +157,11 @@ fn kind_of(t: FileType) -> EntryKind {
         FileType::RegularFile => EntryKind::File,
         FileType::Directory => EntryKind::Directory,
         FileType::Symlink => EntryKind::Symlink,
+        FileType::Fifo => EntryKind::Fifo,
+        FileType::Socket => EntryKind::Socket,
+        FileType::CharacterDevice => EntryKind::CharDevice,
+        FileType::BlockDevice => EntryKind::BlockDevice,
         FileType::Unknown => EntryKind::Unknown,
-        _ => EntryKind::Other,
     }
 }
 

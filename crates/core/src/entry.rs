@@ -39,9 +39,39 @@ pub enum EntryKind {
     File,
     Directory,
     Symlink,
-    Other,
+    /// A named pipe: opening it to read waits for a writer.
+    Fifo,
+    Socket,
+    CharDevice,
+    BlockDevice,
     /// The filesystem did not report a type; a stat will resolve it.
     Unknown,
+}
+
+impl EntryKind {
+    /// A pipe, a socket or a device: listed and acted on like any entry,
+    /// never read (a pipe waits for a writer, a device may act when
+    /// opened), so never previewed, thumbnailed or typed by its name.
+    pub fn is_special(self) -> bool {
+        matches!(
+            self,
+            EntryKind::Fifo | EntryKind::Socket | EntryKind::CharDevice | EntryKind::BlockDevice
+        )
+    }
+
+    /// The MIME type of what is of this kind whatever its name, as the
+    /// desktop's database names it; `None` for a file, typed by its name,
+    /// and for a link.
+    pub fn inode_type(self) -> Option<&'static str> {
+        match self {
+            EntryKind::Directory => Some("inode/directory"),
+            EntryKind::Fifo => Some("inode/fifo"),
+            EntryKind::Socket => Some("inode/socket"),
+            EntryKind::CharDevice => Some("inode/chardevice"),
+            EntryKind::BlockDevice => Some("inode/blockdevice"),
+            EntryKind::File | EntryKind::Symlink | EntryKind::Unknown => None,
+        }
+    }
 }
 
 /// Where a metadata value came from. Nothing AI-derived is authoritative on its own.
@@ -215,11 +245,24 @@ impl Entry {
     /// leads to one. Everything shown and navigated asks this; what the
     /// entry is on disk (what an operation acts on) is `kind`.
     pub fn is_dir(&self) -> bool {
-        self.kind == EntryKind::Directory
-            || self
-                .target
-                .as_ref()
-                .is_some_and(|target| target.kind == EntryKind::Directory)
+        self.opens() == EntryKind::Directory
+    }
+
+    /// What the entry opens as: a link's target's kind (`Symlink` for a
+    /// link that leads nowhere), the entry's own otherwise.
+    pub fn opens(&self) -> EntryKind {
+        self.target.as_ref().map_or(self.kind, |target| target.kind)
+    }
+
+    /// The MIME type the entry has whatever its name: a folder, a pipe,
+    /// a device (or a link to one), a link that leads nowhere
+    /// (`inode/symlink`). `None` for a file, whose name says its type
+    /// (`type_name`).
+    pub fn inode_type(&self) -> Option<&'static str> {
+        match self.opens() {
+            EntryKind::Symlink => Some("inode/symlink"),
+            kind => kind.inode_type(),
+        }
     }
 
     /// The name that says what type of file this is: a link's target's,
@@ -236,16 +279,21 @@ impl Entry {
     /// leads to, with its own identity (a reference resolves only to the
     /// file it names), the entry itself otherwise. A preview or a
     /// thumbnail is asked of it; an operation acts on the entry at `own`,
-    /// the link.
-    pub fn content(&self, own: &Path) -> crate::op::EntryRef {
-        match &self.target {
+    /// the link. `None` when there is nothing to read: a link that leads
+    /// nowhere, a pipe, a socket or a device (`EntryKind::is_special`).
+    pub fn content(&self, own: &Path) -> Option<crate::op::EntryRef> {
+        let opens = self.opens();
+        if opens == EntryKind::Symlink || opens.is_special() {
+            return None;
+        }
+        Some(match &self.target {
             Some(LinkTarget {
                 id,
                 path: Some(path),
                 ..
             }) => crate::op::EntryRef::new(*id, path.clone()),
             _ => crate::op::EntryRef::new(self.id, own),
-        }
+        })
     }
 
     /// Whether the entry is a link, resolved or not.

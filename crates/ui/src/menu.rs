@@ -109,16 +109,22 @@ struct EntryType {
 }
 
 impl SelectionTypes {
-    /// The types of entries given by name and whether each is a folder.
-    pub fn of<'a>(entries: impl IntoIterator<Item = (&'a OsStr, bool)>) -> Self {
-        let (dirs, files): (Vec<_>, Vec<_>) = entries.into_iter().partition(|(_, dir)| *dir);
+    /// The types of entries, each given by the name that says its type
+    /// (`Entry::type_name`) and the type it has whatever its name
+    /// (`Entry::inode_type`: a folder, a pipe, a device), which wins.
+    pub fn of<'a>(entries: impl IntoIterator<Item = (&'a OsStr, Option<&'a str>)>) -> Self {
+        let (inodes, files): (Vec<_>, Vec<_>) =
+            entries.into_iter().partition(|(_, inode)| inode.is_some());
         let mut types = Vec::new();
-        if !dirs.is_empty() {
-            types.push(EntryType {
-                dir: true,
-                lineage: vec![Mime("inode/directory".into())],
+        for inode in inodes.into_iter().filter_map(|(_, inode)| inode) {
+            let ty = EntryType {
+                dir: inode == "inode/directory",
+                lineage: vec![Mime(inode.to_owned())],
                 extension: String::new(),
-            });
+            };
+            if !types.contains(&ty) {
+                types.push(ty);
+            }
         }
         let names: Vec<&OsStr> = files.iter().map(|(name, _)| *name).collect();
         let mut lineages: HashMap<Mime, Vec<Mime>> = HashMap::new();
@@ -838,7 +844,11 @@ mod tests {
     }
 
     fn types(entries: &[(&str, bool)]) -> SelectionTypes {
-        SelectionTypes::of(entries.iter().map(|(name, dir)| (OsStr::new(*name), *dir)))
+        SelectionTypes::of(
+            entries
+                .iter()
+                .map(|(name, dir)| (OsStr::new(*name), dir.then_some("inode/directory"))),
+        )
     }
 
     #[test]

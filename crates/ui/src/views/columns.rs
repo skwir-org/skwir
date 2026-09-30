@@ -97,8 +97,7 @@ struct AncestorRow {
     name: std::ffi::OsString,
     label: gpui::SharedString,
     is_dir: bool,
-    /// The name that says the type: a link's target's.
-    type_name: std::ffi::OsString,
+    icon: Option<Arc<std::path::Path>>,
     link: icons::Link,
 }
 
@@ -132,7 +131,7 @@ fn ancestor_column(
                         label: e.name_str().into_owned().into(),
                         name: e.name.clone(),
                         is_dir: e.is_dir(),
-                        type_name: e.type_name().to_owned(),
+                        icon: this.icons.for_entry(e, icon_px),
                         link: icons::Link::of(e),
                     })
                     .collect()
@@ -141,12 +140,7 @@ fn ancestor_column(
             for (ix, row) in range.zip(rows) {
                 let target = path.join(&row.name);
                 let is_on_path = row.name == child;
-                let icon = if row.is_dir {
-                    this.icons.folder(icon_px)
-                } else {
-                    this.icons.for_name(&row.type_name, icon_px)
-                };
-                let icon: AnyElement = match icon {
+                let icon: AnyElement = match row.icon {
                     Some(p) => icons::element(&p, f32::from(icon_px)),
                     None => div()
                         .size(px(f32::from(icon_px)))

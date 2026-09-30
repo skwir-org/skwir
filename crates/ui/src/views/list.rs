@@ -259,7 +259,7 @@ impl Shell {
                 continue;
             };
             let mime = (!e.is_dir())
-                .then(|| bibli_platform::mime::by_name(e.type_name()))
+                .then(|| bibli_platform::mime::of_entry(e))
                 .flatten();
             let icon = if e.is_dir() {
                 self.icons.folder(icon_px)
@@ -319,9 +319,7 @@ impl Shell {
                     } else {
                         mime.as_ref()
                             .and_then(|mime| self.type_names.get(mime))
-                            .unwrap_or_else(|| {
-                                crate::typenames::fallback(&e.type_name().to_string_lossy()).into()
-                            })
+                            .unwrap_or_else(|| crate::typenames::fallback_of(e).into())
                     };
                 }
             }

@@ -216,11 +216,11 @@ impl Shell {
                 if !is_dir
                     && e.metadata.is_hydrated()
                     && let Some(path) = p.path_of(id)
+                    && let Some(content) = e.content(&path)
                 {
                     let req = ThumbRequest {
-                        entry: e.content(&path),
-                        mime: bibli_platform::mime::by_name(e.type_name())
-                            .map(|m| Arc::from(m.as_str())),
+                        entry: content,
+                        mime: bibli_platform::mime::of_entry(e).map(|m| Arc::from(m.as_str())),
                         mtime: e
                             .metadata
                             .value(keys::MODIFIED)

@@ -22,6 +22,20 @@ pub struct TypeNames {
 /// as what it leads to).
 pub const BROKEN_LINK: &str = "Broken link";
 
+/// What an entry is called until the database's name for its type
+/// arrives: a pipe or a device by its kind (never by its name, which says
+/// nothing of it), a file by its extension (`fallback`).
+pub fn fallback_of(entry: &bibli_core::Entry) -> String {
+    use bibli_core::EntryKind;
+    match entry.opens() {
+        EntryKind::Fifo => "Pipe".to_owned(),
+        EntryKind::Socket => "Socket".to_owned(),
+        EntryKind::CharDevice => "Character device".to_owned(),
+        EntryKind::BlockDevice => "Block device".to_owned(),
+        _ => fallback(&entry.type_name().to_string_lossy()),
+    }
+}
+
 /// `CSV file` for `budget.csv`, `File` without an extension.
 pub fn fallback(name: &str) -> String {
     match name.rsplit_once('.') {

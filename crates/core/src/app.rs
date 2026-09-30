@@ -481,14 +481,18 @@ impl App {
 
     /// `selected_refs`, each with the name that says its type
     /// (`Entry::type_name`: a link's target's), as the listings know it:
-    /// for a caller that may not touch the disk. A worker holding only a
-    /// path asks `fs::content_path`.
-    pub fn selected_typed(&self, pane: PaneId) -> Vec<(EntryRef, std::ffi::OsString)> {
+    /// for a caller that may not touch the disk. `None` for what its name
+    /// does not type (`Entry::inode_type`: a folder, a pipe, a device, a
+    /// link that leads nowhere). A worker holding only a path asks
+    /// `fs::content_path`.
+    pub fn selected_typed(&self, pane: PaneId) -> Vec<(EntryRef, Option<std::ffi::OsString>)> {
         let Some((open, ids)) = self.with_open(pane, |p| {
             p.selection
                 .iter()
                 .map(|id| {
-                    let type_name = p.entry(id).map(|e| e.type_name().to_owned());
+                    let type_name = p
+                        .entry(id)
+                        .map(|e| e.inode_type().is_none().then(|| e.type_name().to_owned()));
                     (id, p.opened_path(id), type_name)
                 })
                 .collect::<Vec<_>>()
@@ -499,8 +503,7 @@ impl App {
             .filter_map(|(id, opened, type_name)| {
                 let path = opened.or_else(|| open.path_of(id))?;
                 let type_name = type_name
-                    .or_else(|| path.file_name().map(std::ffi::OsStr::to_os_string))
-                    .unwrap_or_default();
+                    .unwrap_or_else(|| path.file_name().map(std::ffi::OsStr::to_os_string));
                 Some((EntryRef::new(id, path), type_name))
             })
             .collect()

@@ -54,6 +54,18 @@ pub fn by_name(name: &OsStr) -> Option<Mime> {
     imp::by_name(name)
 }
 
+/// The type an entry of a listing is shown as. No I/O. What it is whatever
+/// its name comes first (`Entry::inode_type`: a folder, a pipe, a device,
+/// a link that leads nowhere); a file, or a link to one, is typed by the
+/// name that says its type (`Entry::type_name`). Type an entry through
+/// this, never by `by_name` of a name of your choosing.
+pub fn of_entry(entry: &bibli_core::Entry) -> Option<Mime> {
+    match entry.inode_type() {
+        Some(mime) => Some(Mime(mime.to_owned())),
+        None => by_name(entry.type_name()),
+    }
+}
+
 /// Whether the name leaves the type to the bytes: several types claim it
 /// equally ([`by_name`]). No I/O.
 pub fn ambiguous(name: &OsStr) -> bool {

@@ -581,10 +581,10 @@ impl Shell {
             move || {
                 let lifetime = CancelToken::new();
                 // A link plays, and is typed as, what it leads to.
-                let content = bibli_core::fs::content_path(&path);
-                let session = EntryRef::from_path(&*content)
-                    .ok_or_else(|| anyhow::anyhow!("{} is missing", path.display()))
-                    .and_then(|entry| {
+                let session = bibli_core::fs::content_path(&path)
+                    .and_then(|content| Some((EntryRef::from_path(&*content)?, content)))
+                    .ok_or_else(|| anyhow::anyhow!("{} is no file to play", path.display()))
+                    .and_then(|(entry, content)| {
                         let request = PreviewRequest {
                             entry,
                             mime: bibli_platform::mime::by_name(content.as_os_str())
@@ -646,7 +646,7 @@ impl Shell {
             self.app.lifetime().child(),
             move || {
                 let cover = || -> Option<(PathBuf, bibli_core::thumbs::Image)> {
-                    let content = bibli_core::fs::content_path(&track);
+                    let content = bibli_core::fs::content_path(&track)?;
                     let request = PreviewRequest {
                         entry: EntryRef::from_path(&*content)?,
                         mime: bibli_platform::mime::by_name(content.as_os_str())

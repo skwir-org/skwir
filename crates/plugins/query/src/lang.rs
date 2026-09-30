@@ -37,7 +37,9 @@
 //! `kind:`, `mime:`, the sizes and times, `content:` and the places are
 //! what it leads to (a link to a folder is `type:dir`, and `type:symlink`
 //! still), while `name:`, `ext:` and bare words match its own name. A link
-//! that leads nowhere is `mime:inode/symlink` and of no kind. A search
+//! that leads nowhere is `mime:inode/symlink` and of no kind; a pipe, a
+//! socket or a device (or a link to one) is `mime:inode/fifo` and so on,
+//! of no kind and never read, whatever its name says. A search
 //! does not go down into a folder through a link: no loops, and no file
 //! found twice.
 //!
@@ -1368,13 +1370,7 @@ impl<'a> Candidate<'a> {
     /// A stat-ed entry: a link is matched as what it leads to.
     pub fn of_entry(entry: &'a bibli_core::Entry, path: &'a Path) -> Self {
         Candidate {
-            opens: Some((
-                entry
-                    .target
-                    .as_ref()
-                    .map_or(entry.kind, |target| target.kind),
-                entry.type_name(),
-            )),
+            opens: Some((entry.opens(), entry.type_name())),
             ..Candidate::new(&entry.name, entry.kind, path, Some(&entry.metadata))
         }
     }
@@ -1453,19 +1449,25 @@ impl Term {
             },
             Term::Mime(g, _) => match c.opens {
                 None => Verdict::Unknown,
-                Some((EntryKind::Directory, _)) => yes_no(g.is_match("inode/directory")),
                 Some((EntryKind::Symlink, _)) => yes_no(g.is_match("inode/symlink")),
-                Some((_, name)) => yes_no(
-                    bibli_platform::mime::by_name(name).is_some_and(|m| g.is_match(m.as_str())),
-                ),
+                // A folder, a pipe, a device: what it is, whatever its name.
+                Some((kind, name)) => yes_no(match kind.inode_type() {
+                    Some(inode) => g.is_match(inode),
+                    None => {
+                        bibli_platform::mime::by_name(name).is_some_and(|m| g.is_match(m.as_str()))
+                    }
+                }),
             },
             Term::Kind(kinds) => {
                 use bibli_platform::mime::{Kind, is_kind};
                 match c.opens {
                     None => Verdict::Unknown,
                     Some((EntryKind::Directory, _)) => yes_no(kinds.contains(&Kind::Folder)),
-                    // A link that leads nowhere is of no kind.
-                    Some((EntryKind::Symlink, _)) => Verdict::No,
+                    // A link that leads nowhere, a pipe or a device is of
+                    // no kind, whatever its name.
+                    Some((kind, _)) if kind == EntryKind::Symlink || kind.is_special() => {
+                        Verdict::No
+                    }
                     Some((_, name)) => yes_no(
                         bibli_platform::mime::by_name(name)
                             .is_some_and(|m| kinds.iter().any(|k| is_kind(&m, *k))),
