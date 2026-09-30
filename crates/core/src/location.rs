@@ -476,6 +476,17 @@ impl Listing {
         slot
     }
 
+    /// Whether companions are shown changed (`core.show_companions`):
+    /// what is shown may, so the order is made again and whoever keys on
+    /// the listing's versions sees it.
+    pub fn companions_changed(&mut self) {
+        if self.owners.is_empty() {
+            return;
+        }
+        self.order_version = stamp();
+        self.version = stamp();
+    }
+
     /// Whether companions are shown now (with hidden files).
     fn companions_shown(&self) -> bool {
         self.companions.as_ref().is_some_and(|c| c.shown())

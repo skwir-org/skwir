@@ -48,12 +48,20 @@ pub(crate) const ID: &str = "tags";
 /// The metadata field key.
 pub const FIELD: &str = keys::TAGS;
 
-/// Register the plugin's stores (ADR-027), the desktop's first: it is
-/// this platform's own.
-fn register_stores(stores: &NoteStores) {
-    stores.register(ID, Arc::new(xdg::XdgStore));
-    stores.register(ID, Arc::new(finder::FinderStore));
-    stores.register(ID, Arc::new(appledouble::AppleDoubleStore::default()));
+/// The plugin's stores (ADR-027), the desktop's first: it is this
+/// platform's own.
+fn stores() -> Vec<Arc<dyn bibli_core::notes::NotesStore>> {
+    vec![
+        Arc::new(xdg::XdgStore),
+        Arc::new(finder::FinderStore),
+        Arc::new(appledouble::AppleDoubleStore::default()),
+    ]
+}
+
+fn register_stores(registry: &NoteStores) {
+    for store in stores() {
+        registry.register(ID, store);
+    }
 }
 
 /// A file's notes as the plugin's stores keep them by default, read
@@ -471,7 +479,9 @@ impl Plugin for TagsPlugin {
                 index: Some(Arc::clone(&index)),
             }),
         );
-        register_stores(&app.notes);
+        for store in stores() {
+            app.register_notes_store(ID, store);
+        }
         app.companions
             .register(ID, Arc::new(appledouble::AsideCompanion));
         ops::register_legacy(app);
@@ -1489,6 +1499,77 @@ mod tests {
         app.executor.undo_blocking(app.lifetime()).unwrap();
         assert!(!stick.join("._plain.txt").exists());
         std::fs::remove_dir_all(&stick).unwrap();
+    }
+
+    #[test]
+    fn the_notes_page_says_which_stores_are_read_and_written() {
+        const FINDER: &str = "user.com.apple.metadata:_kMDItemUserTags";
+        let tmp = home_tempdir();
+        let dir = tmp.path().join("d");
+        std::fs::create_dir(&dir).unwrap();
+        let f = dir.join("it's both.txt");
+        std::fs::write(&f, b"x").unwrap();
+        write_tags(&f, &["ours".into()]).unwrap();
+        finder_tags(&f, FINDER, finder::Framing::Plain, &[("mac", 4)]);
+        let (app, _) = app_in(tmp.path(), &dir, &["it's both.txt"]);
+        let keys: Vec<String> = app
+            .settings
+            .schema()
+            .into_iter()
+            .map(|s| s.key)
+            .filter(|k| k.starts_with("notes."))
+            .collect();
+        assert!(keys.contains(&"notes.xdg.write".to_owned()), "{keys:?}");
+        assert!(keys.contains(&"notes.appledouble.write".to_owned()));
+        let set = |key: &str, value: toml::Value| {
+            app.settings.set(key, value);
+            app.apply_notes_settings();
+        };
+        let read = || app.notes.read_path(&f, &app.notes.policy()).tag_names();
+        assert_eq!(read(), ["ours", "mac"]);
+        // Not read: the desktop's tags are left out.
+        set("notes.xdg.read", toml::Value::Boolean(false));
+        assert_eq!(read(), ["mac"]);
+        set("notes.xdg.read", toml::Value::Boolean(true));
+        // Not written: an edit leaves the desktop's attribute as it was and
+        // goes to the Finder's.
+        set("notes.xdg.write", toml::Value::String("off".into()));
+        let add = plan(&app, "tags.add", &serde_json::json!({ "tags": ["new"] }));
+        assert!(
+            app.executor
+                .execute_blocking(&add, app.lifetime())
+                .error
+                .is_none()
+        );
+        assert_eq!(
+            xattr::get(&f, xdg::TAGS).unwrap().as_deref(),
+            Some(b"ours".as_slice())
+        );
+        assert_eq!(
+            finder_of(&f, FINDER, finder::Framing::Plain),
+            [("ours".into(), 0), ("mac".into(), 4), ("new".into(), 0)]
+        );
+        // Captured when the plan was made: a plan made now writes both.
+        set("notes.xdg.write", toml::Value::String("create".into()));
+        let add = plan(&app, "tags.add", &serde_json::json!({ "tags": ["more"] }));
+        assert!(
+            app.executor
+                .execute_blocking(&add, app.lifetime())
+                .error
+                .is_none()
+        );
+        assert_eq!(
+            xattr::get(&f, xdg::TAGS).unwrap().as_deref(),
+            Some(b"ours,mac,new,more".as_slice())
+        );
+        // Off with the plugin: no Notes page.
+        app.plugins.set_enabled("tags", false, &app);
+        assert!(
+            !app.settings
+                .schema()
+                .iter()
+                .any(|s| s.key.starts_with("notes."))
+        );
     }
 
     #[test]

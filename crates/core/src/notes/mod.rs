@@ -397,6 +397,22 @@ pub struct NoteStores {
     chosen: RwLock<Option<Policy>>,
     /// What bibli wrote last for each file it edited.
     snapshots: RwLock<Option<CacheSlot>>,
+    /// The settings declared for each owner's stores, withdrawn with them.
+    declared: RwLock<Vec<(Arc<str>, String)>>,
+}
+
+/// The settings page of the stores: `notes.<store>.read`,
+/// `notes.<store>.write`.
+pub const SETTINGS: &str = "notes";
+
+/// A store's read setting.
+pub fn read_key(store: &str) -> String {
+    format!("{SETTINGS}.{store}.read")
+}
+
+/// A store's write setting.
+pub fn write_key(store: &str) -> String {
+    format!("{SETTINGS}.{store}.write")
 }
 
 fn snapshot_key(id: EntryId) -> Vec<u8> {
@@ -410,6 +426,19 @@ impl NoteStores {
 
     pub fn unregister_owner(&self, owner: &str) {
         self.list.write().retain(|(o, _)| &**o != owner);
+    }
+
+    /// Record that `key` was declared for `owner`'s store.
+    pub(crate) fn declared(&self, owner: &str, key: String) {
+        self.declared.write().push((owner.into(), key));
+    }
+
+    /// The settings declared for `owner`'s stores, forgotten.
+    pub(crate) fn take_declared(&self, owner: &str) -> Vec<String> {
+        let mut declared = self.declared.write();
+        let (theirs, rest): (Vec<_>, Vec<_>) = declared.drain(..).partition(|(o, _)| &**o == owner);
+        *declared = rest;
+        theirs.into_iter().map(|(_, k)| k).collect()
     }
 
     pub fn stores(&self) -> Vec<Arc<dyn NotesStore>> {

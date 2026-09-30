@@ -735,7 +735,10 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   that plugin's, on its page, even when the shell reads it. One the shell
   applies to several plugins' content is a namespace of the shell's own,
   with a page of its own: `reading.*` (the reader and reading mode) is
-  shared by documents, books, comics and Markdown. `ui.*` is only how
+  shared by documents, books, comics and Markdown; `notes.*` (Notes, the
+  core's: each store's Read and Write, declared by
+  `App::register_notes_store`) is shared by the stores of several
+  plugins. `ui.*` is only how
   bibli looks (Appearance), `core.*` what it does with files (General).
 - Renaming or moving a key: call `Settings::rename(old, new)` before
   declaring it, so the value the user chose follows.

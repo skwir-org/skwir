@@ -530,7 +530,7 @@ pub(crate) fn register(app: &crate::App) {
         SettingSpec::toggle(
             PRESERVE_ATTRIBUTES_ON_COPY,
             "Keep tags and attributes when copying",
-            "Copies carry their source's tags, rating, comment and where it was downloaded from. If the destination cannot store them the copy fails; turn this off to copy without them.",
+            "Copies carry their source's tags, rating, comment and where it was downloaded from. Where the destination keeps no attributes they are kept beside the copy, as a Mac does; the copy fails only when nothing can keep them. Turn this off to copy without them.",
             true,
         )
         .section("Files"),
@@ -611,10 +611,19 @@ pub(crate) fn register(app: &crate::App) {
                             if keys.iter().any(|key| key == crate::tabs::SLEEP_KEY) {
                                 app.apply_tabs_sleep();
                             }
+                            if keys
+                                .iter()
+                                .any(|key| crate::settings::owner_of(key) == crate::notes::SETTINGS)
+                            {
+                                app.apply_notes_settings();
+                            }
                             if keys.iter().any(|key| key == crate::companions::SHOW) {
                                 app.companions.set_shown(
                                     app.settings.get(crate::companions::SHOW).unwrap_or(false),
                                 );
+                                for pane in app.workspace.write().panes_mut() {
+                                    pane.companions_changed();
+                                }
                                 app.wake();
                             }
                             app.plugins.settings_changed(&keys, &app);

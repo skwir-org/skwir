@@ -647,6 +647,14 @@ impl Pane {
             .collect()
     }
 
+    /// Every listing the pane holds: whether companions are shown changed.
+    pub(crate) fn companions_changed(&mut self) {
+        self.listing.companions_changed();
+        for kept in &mut self.kept {
+            kept.listing.companions_changed();
+        }
+    }
+
     pub(crate) fn add_kept(&mut self, open: Arc<dyn OpenLocation>, listing: Listing) {
         self.kept.push(Kept::new(open, listing));
     }

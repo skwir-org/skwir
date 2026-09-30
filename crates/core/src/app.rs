@@ -209,6 +209,81 @@ impl App {
         Ok(app)
     }
 
+    /// Register a place notes are kept (ADR-027) and its settings on the
+    /// Notes page: whether it is read, and how it is written.
+    pub fn register_notes_store(&self, owner: &str, store: Arc<dyn crate::notes::NotesStore>) {
+        use crate::notes::{Kept, Write};
+        let (id, title) = (store.id(), store.title());
+        let holds = store.holds();
+        let limits = if holds.limits.is_empty() {
+            String::new()
+        } else {
+            format!(" What it cannot hold: {}.", holds.limits)
+        };
+        let read = crate::notes::read_key(id);
+        self.settings.declare(
+            crate::settings::SettingSpec::toggle(
+                &read,
+                "Read",
+                &format!("Show the notes it keeps, merged with the others'.{limits}"),
+                true,
+            )
+            .section(title),
+        );
+        let mut choices: Vec<(&str, &str)> = vec![
+            ("off", Write::Off.title()),
+            ("update", Write::Update.title()),
+        ];
+        if store.kept() == Kept::Beside {
+            choices.push(("fallback", Write::Fallback.title()));
+        }
+        choices.push(("create", Write::Create.title()));
+        let default = match store.default_write() {
+            Write::Off => "off",
+            Write::Update => "update",
+            Write::Fallback => "fallback",
+            Write::Create => "create",
+        };
+        let write = crate::notes::write_key(id);
+        self.settings.declare(
+            crate::settings::SettingSpec::choice(
+                &write,
+                "Write",
+                "Never; only where a file already has notes here; also where a file's volume keeps no attributes; or for every file edited.",
+                default,
+                &choices,
+            )
+            .section(title),
+        );
+        self.notes.declared(owner, read);
+        self.notes.declared(owner, write);
+        self.notes.register(owner, store);
+        self.apply_notes_settings();
+    }
+
+    /// Bring the stores' policy in line with the Notes page.
+    pub fn apply_notes_settings(&self) {
+        use crate::notes::{Policy, Write};
+        let mut policy = Policy::default();
+        for id in self.notes.ids() {
+            if self
+                .settings
+                .get::<bool>(&crate::notes::read_key(id))
+                .unwrap_or(true)
+            {
+                policy.read.push(id.to_owned());
+            }
+            let write = self
+                .settings
+                .get::<String>(&crate::notes::write_key(id))
+                .and_then(|w| serde_json::from_value::<Write>(serde_json::json!(w)).ok());
+            if let Some(write) = write {
+                policy.write.push((id.to_owned(), write));
+            }
+        }
+        self.notes.choose(Some(policy));
+    }
+
     /// A token that fires when the app is dropped.
     pub fn lifetime(&self) -> &CancelToken {
         &self.lifetime
@@ -268,6 +343,9 @@ impl App {
         self.fields.unregister_owner(owner);
         self.hints.unregister_owner(owner);
         self.notes.unregister_owner(owner);
+        for key in self.notes.take_declared(owner) {
+            self.settings.undeclare(&key);
+        }
         self.companions.unregister_owner(owner);
         self.previews.unregister_owner(owner);
         self.pending.unregister_owner(owner);

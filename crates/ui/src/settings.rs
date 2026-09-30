@@ -37,6 +37,8 @@ use crate::keymap::KeyHint;
 pub const CORE_OWNER: &str = "core";
 pub const UI_OWNER: &str = "ui";
 pub const READING_OWNER: &str = "reading";
+/// The stores notes are kept in (ADR-027), shared by several plugins.
+pub const NOTES_OWNER: &str = bibli_core::notes::SETTINGS;
 
 pub const THEME_KEY: &str = "ui.theme";
 pub const DATES_KEY: &str = "ui.date_format";
@@ -270,6 +272,7 @@ pub enum Page {
     General,
     Appearance,
     Reading,
+    Notes,
     Plugins,
     Keyboard,
     Plugin(String),
@@ -282,6 +285,7 @@ impl Page {
             bibli_core::keymap::OWNER => Page::Keyboard,
             UI_OWNER => Page::Appearance,
             READING_OWNER => Page::Reading,
+            NOTES_OWNER => Page::Notes,
             other => Page::Plugin(other.to_owned()),
         }
     }
@@ -291,6 +295,7 @@ impl Page {
             "general" => Page::General,
             "appearance" => Page::Appearance,
             "reading" => Page::Reading,
+            "notes" => Page::Notes,
             "plugins" => Page::Plugins,
             "keyboard" => Page::Keyboard,
             other => Page::Plugin(other.to_owned()),
@@ -484,6 +489,7 @@ impl SettingsView {
             Page::General => "General".into(),
             Page::Appearance => "Appearance".into(),
             Page::Reading => "Reading".into(),
+            Page::Notes => "Notes".into(),
             Page::Plugins => "Plugins".into(),
             Page::Keyboard => "Keyboard".into(),
             Page::Plugin(id) => self.plugin_title(id),
@@ -492,13 +498,12 @@ impl SettingsView {
 
     /// Sidebar entries: the fixed pages, then every plugin that has settings.
     pub(crate) fn pages(&self) -> Vec<Page> {
-        let mut pages = vec![
-            Page::General,
-            Page::Appearance,
-            Page::Reading,
-            Page::Plugins,
-            Page::Keyboard,
-        ];
+        let mut pages = vec![Page::General, Page::Appearance, Page::Reading];
+        // Only while a plugin keeps notes somewhere.
+        if self.rows.iter().any(|row| row.page() == Page::Notes) {
+            pages.push(Page::Notes);
+        }
+        pages.extend([Page::Plugins, Page::Keyboard]);
         let mut owners: Vec<Page> = self
             .rows
             .iter()

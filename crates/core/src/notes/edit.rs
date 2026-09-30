@@ -189,6 +189,13 @@ impl SetNotes {
 
     fn words(&self) -> (String, String, &'static str) {
         let name = name_of(&self.entry.path);
+        if self.sync {
+            return (
+                format!("make the notes of “{name}” agree"),
+                format!("made the notes of “{name}” agree"),
+                keys::TAGS,
+            );
+        }
         if let Some(tags) = &self.tags {
             return if tags.is_empty() {
                 (

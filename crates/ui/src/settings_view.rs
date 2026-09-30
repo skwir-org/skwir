@@ -16,7 +16,7 @@ use crate::elements::popover::PopoverAnchor;
 use crate::input::TextInput;
 use crate::keymap::KeyHint;
 use crate::settings::{
-    CORE_OWNER, Page, READING_OWNER, Row, SettingsEvent, SettingsView, Stop, UI_OWNER,
+    CORE_OWNER, NOTES_OWNER, Page, READING_OWNER, Row, SettingsEvent, SettingsView, Stop, UI_OWNER,
 };
 use crate::theme::Theme;
 
@@ -148,6 +148,7 @@ impl SettingsView {
                 Page::General => "sliders",
                 Page::Appearance => "appearance",
                 Page::Reading => "reading",
+                Page::Notes => "tag",
                 Page::Plugins => "plugin",
                 Page::Keyboard => "keyboard",
                 Page::Plugin(_) => "",
@@ -1050,6 +1051,9 @@ impl Render for SettingsView {
                 Page::Reading => {
                     "How documents, books, comics and Markdown read in the preview. Which engine reads each is on its plugin's page."
                 }
+                Page::Notes => {
+                    "Where tags, ratings and comments are kept, so the desktop, a Mac and other applications see them too. Every place is read and merged; each is written as you choose: never, where the file already has notes there, also where a file's volume keeps no attributes (one place is started there, the one its folder already uses first), or for every file edited."
+                }
                 Page::Plugins => {
                     "Everything beyond the core is a plugin. Turning one off removes its commands, views and settings until it is turned on again."
                 }
@@ -1068,6 +1072,11 @@ impl Render for SettingsView {
                 Page::Reading => {
                     if self.owner_rows(READING_OWNER, &mut items, &theme, window, cx) == 0 {
                         Self::note(&mut items, "Nothing to adjust here yet.", &theme);
+                    }
+                }
+                Page::Notes => {
+                    if self.owner_rows(NOTES_OWNER, &mut items, &theme, window, cx) == 0 {
+                        Self::note(&mut items, "No plugin keeps notes now.", &theme);
                     }
                 }
                 Page::Plugins => {

@@ -36,6 +36,26 @@ Poppler, GStreamer or libarchive. Open gate: idle PSS is about 118 to 120 MB aga
 been loosened. The per-change validation history that used to sit here is in
 `docs/STATUS-LOG.md`.
 
+Notes stores, step D (2026-09-30): the Notes page. A plugin registers a
+store with `App::register_notes_store`, which declares
+`notes.<store>.read` (on by default) and `notes.<store>.write` (Off,
+Update existing, Where attributes are missing for a store beside the
+file, Create; the store's default) under the store's title, and withdraws
+them with the plugin; a save rebuilds the policy an edit captures
+(`App::apply_notes_settings`). Found in a window and fixed: turning
+companions on or off left the list as it was until something else changed
+it (the views key on the listing's versions: a change of the setting now
+moves them, `Listing::companions_changed`). The copy setting's
+description no longer says a copy fails where it now keeps attributes
+beside the file, and making the stores agree says so in its toast.
+Checked in a window on an isolated display: the Notes page and its two
+rows per store, the orphan listed and the companion hidden with hidden
+files, the View menu's Companion files both ways, Details' "Kept in",
+"Differs in" with Make them agree (the desktop's attribute rewritten, the
+row gone), "Beside it" and an orphan's "Beside … which is gone"; idle CPU
+0–1%. Deviation: the Notes page lists the stores by title, not the
+platform's own first.
+
 Notes stores, step C (2026-09-30, ADR-028): files beside a file are
 declared by name rules (`bibli_core::companions`), the tags plugin's `._`
 file the first, which also holds attributes. Listings mark them and hide
