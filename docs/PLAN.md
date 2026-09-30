@@ -36,6 +36,29 @@ Poppler, GStreamer or libarchive. Open gate: idle PSS is about 118 to 120 MB aga
 been loosened. The per-change validation history that used to sit here is in
 `docs/STATUS-LOG.md`.
 
+Notes stores, step G (2026-09-30), the last of "Notes everywhere": the
+name-tags plugin. Tags in names are two stores (`Kept::Name`): `TagSpaces`'
+`name[a b].ext`, read only in folders a `TagSpaces` location covers (a
+`.ts` folder there or above: yt-dlp names downloads `title [id].ext`), and
+filetags' `name -- a b.ext`, read only once turned on (a store now says
+whether it is read by default, `NotesStore::default_read`). An edit never
+writes a name and a name is never said to differ, so the Notes page has
+no Write row for them: "Tags into Name" (`names.tag`) is a plan of
+renames holding the tags the name can (the others named in its note), and
+"Tags out of Name" (`names.untag`) first has the other stores keep the
+name's tags (an edit reading the file without its name), then renames it,
+undone as one. Checked by the plugin's tests (both conventions split and
+joined, a `TagSpaces` name read inside a location and a download's
+`[id]` outside it, tags out of a name and back, into a name with one left
+out). Of "Done when": a round trip through an exFAT stick was checked on a
+FUSE mount that refuses attributes, not on exFAT with a Mac reading it;
+another application's later edit winning, undo byte for byte, and
+`tags_fill_us` within its budget are checked (the bench's app now runs
+every store: `flat100k` 227 ms against 550, `images10k` 41.5 against
+120, `tag:` over a million files 2.66 s, under a load average of 15). Windows and macOS's own
+stores wait for Phase 5. Three settings tests timed out once under a load
+average of 30 from other programs and passed when run again.
+
 Notes stores, step F (2026-09-30): the tagspaces plugin. `TagSpaces`'
 sidecars are a store and companions: `.ts/x.json` (and its thumbnail,
 `.ts/x.ext.jpg`, which follows it) and a folder's `.ts/tsm.json`, inside

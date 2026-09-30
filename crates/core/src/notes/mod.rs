@@ -218,8 +218,13 @@ pub trait NotesStore: Send + Sync {
     fn title(&self) -> &'static str;
     fn kept(&self) -> Kept;
     fn holds(&self) -> Holds;
-    /// How it is written unless the user chose otherwise.
+    /// How it is written unless the user chose otherwise. A store in names
+    /// is never written by an edit: its writing is a rename of its own.
     fn default_write(&self) -> Write;
+    /// Whether it is read unless the user chose otherwise.
+    fn default_read(&self) -> bool {
+        true
+    }
     /// Whether it keeps anything for files in `dir`: a volume check, asked
     /// once per folder.
     fn applies(&self, _dir: &Path) -> bool {
@@ -505,7 +510,7 @@ impl NoteStores {
         let mut policy = Policy::default();
         for s in &stores {
             let id = s.id();
-            let read = chosen.as_ref().is_none_or(|c| c.reads(id));
+            let read = chosen.as_ref().map_or(s.default_read(), |c| c.reads(id));
             if read {
                 policy.read.push(id.to_owned());
             }
@@ -579,9 +584,14 @@ impl NoteStores {
         for (_, notes) in &each {
             union.merge(notes.clone());
         }
+        // A name is not made to agree by an edit (its writing is a rename
+        // of its own): it is never said to differ.
         let differ_from = |notes: &Notes| -> Vec<&'static str> {
             each.iter()
-                .filter(|(store, now)| self.get(store).is_some_and(|s| !same(now, &s.fit(notes))))
+                .filter(|(store, now)| {
+                    self.get(store)
+                        .is_some_and(|s| s.kept() != Kept::Name && !same(now, &s.fit(notes)))
+                })
                 .map(|(store, _)| *store)
                 .collect()
         };

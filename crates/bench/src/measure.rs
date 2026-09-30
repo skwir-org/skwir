@@ -304,7 +304,8 @@ fn thumbs(root: &Path, dir: &Path, runs: usize) -> (Stat, Stat) {
     (Stat::of(cold), Stat::of(warm))
 }
 
-/// An app with the tags plugin, and the query plugin to search with it.
+/// An app with the tags plugin and every other notes store's (ADR-027),
+/// as the application runs them, and the query plugin to search with it.
 pub fn tags_app() -> std::sync::Arc<bibli_core::App> {
     let app = bibli_core::App::new(bibli_core::app::AppConfig::ephemeral(
         std::env::temp_dir().join("bibli-bench-tags"),
@@ -312,6 +313,16 @@ pub fn tags_app() -> std::sync::Arc<bibli_core::App> {
     .expect("app");
     app.plugins.add(
         std::sync::Arc::new(bibli_plugin_tags::TagsPlugin::default()),
+        &app,
+    );
+    app.plugins
+        .add(std::sync::Arc::new(bibli_plugin_xmp::XmpPlugin), &app);
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_tagspaces::TagSpacesPlugin),
+        &app,
+    );
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_name_tags::NameTagsPlugin),
         &app,
     );
     app.plugins.add(

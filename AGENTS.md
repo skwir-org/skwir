@@ -187,7 +187,12 @@ current source before assuming a planned crate, command, or API exists.
   stays, and XMP inside a file read for Details only; the tagspaces
   plugin's, `.ts/x.json` sidecars and a folder's `.ts/tsm.json` (a tag
   kept keeps its exact color, read as the nearest of the palette), and
-  a location's `.ts/tsi.json` as a search hint. A batch of one folder's
+  a location's `.ts/tsi.json` as a search hint; the name-tags plugin's,
+  tags in names (`TagSpaces`' `name[a b].ext`, read only where a `.ts`
+  folder shows `TagSpaces` is used; filetags' `name -- a b.ext`, off
+  until asked). A store in names is never written by an edit nor said
+  to differ: writing a name is a rename plan of its own (`names.tag`,
+  and `names.untag`, which first has the other stores keep the tags). A batch of one folder's
   files is read from every store with one `listxattr` per file for all of
   them (`NoteStores::read`), in the provider: a new store joins it, never
   a read of its own per row; a folder's `._` names are read once for its

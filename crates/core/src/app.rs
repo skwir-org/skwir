@@ -226,10 +226,17 @@ impl App {
                 &read,
                 "Read",
                 &format!("Show the notes it keeps, merged with the others'.{limits}"),
-                true,
+                store.default_read(),
             )
             .section(title),
         );
+        self.notes.declared(owner, read);
+        // A name is written by a rename of its own, never by an edit.
+        if store.kept() == Kept::Name {
+            self.notes.register(owner, store);
+            self.apply_notes_settings();
+            return;
+        }
         let mut choices: Vec<(&str, &str)> = vec![
             ("off", Write::Off.title()),
             ("update", Write::Update.title()),
@@ -255,7 +262,6 @@ impl App {
             )
             .section(title),
         );
-        self.notes.declared(owner, read);
         self.notes.declared(owner, write);
         self.notes.register(owner, store);
         self.apply_notes_settings();
@@ -266,10 +272,11 @@ impl App {
         use crate::notes::{Policy, Write};
         let mut policy = Policy::default();
         for id in self.notes.ids() {
+            let default = self.notes.get(id).is_none_or(|s| s.default_read());
             if self
                 .settings
                 .get::<bool>(&crate::notes::read_key(id))
-                .unwrap_or(true)
+                .unwrap_or(default)
             {
                 policy.read.push(id.to_owned());
             }

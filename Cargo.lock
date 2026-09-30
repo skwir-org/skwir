@@ -534,6 +534,7 @@ dependencies = [
  "bibli-plugin-jump",
  "bibli-plugin-map-tiles",
  "bibli-plugin-mpris",
+ "bibli-plugin-name-tags",
  "bibli-plugin-open-with",
  "bibli-plugin-ops-basic",
  "bibli-plugin-places",
@@ -599,8 +600,11 @@ dependencies = [
  "bibli-alloc",
  "bibli-core",
  "bibli-platform",
+ "bibli-plugin-name-tags",
  "bibli-plugin-query",
  "bibli-plugin-tags",
+ "bibli-plugin-tagspaces",
+ "bibli-plugin-xmp",
  "clap",
  "image",
  "rayon",
@@ -824,6 +828,20 @@ dependencies = [
  "parking_lot",
  "tracing",
  "zbus",
+]
+
+[[package]]
+name = "bibli-plugin-name-tags"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "bibli-core",
+ "dirs 7.0.0",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "xattr 1.6.1",
 ]
 
 [[package]]
