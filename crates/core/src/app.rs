@@ -114,6 +114,9 @@ pub struct App {
     pub fields: Arc<crate::fields::Fields>,
     /// Indexes a search asks where files may be first (ADR-026).
     pub hints: Arc<crate::hints::Hints>,
+    /// Where files' notes are kept, and how each place is read and
+    /// written (ADR-027).
+    pub notes: Arc<crate::notes::NoteStores>,
     pub previews: Arc<crate::preview::Previews>,
     /// Where map backgrounds come from (the map-tiles plugin, ADR-020).
     pub tiles: Arc<crate::tiles::Tiles>,
@@ -157,6 +160,7 @@ impl App {
             metadata: Arc::new(crate::metadata::MetadataProviders::default()),
             fields,
             hints: Arc::new(crate::hints::Hints::default()),
+            notes: Arc::new(crate::notes::NoteStores::default()),
             previews: Arc::new(crate::preview::Previews::default()),
             tiles: Arc::new(crate::tiles::Tiles::default()),
             proposals: parking_lot::Mutex::new(Vec::new()),
@@ -179,6 +183,15 @@ impl App {
         });
         app.register_provider("core", Arc::new(PathProvider));
         op::register_builtin(&app.ops);
+        {
+            let notes = Arc::clone(&app.notes);
+            app.ops.register_with("core", "set_notes", move |v| {
+                let edit: crate::notes::SetNotes = serde_json::from_value(v)?;
+                Ok(Box::new(edit.with_stores(Arc::clone(&notes))))
+            });
+            app.ops
+                .register::<crate::notes::RestoreNotes>("core", "restore_notes");
+        }
         builtin::register(&app);
         crate::tabs::register(&app);
         crate::keymap::declare(&app.settings);
@@ -246,6 +259,7 @@ impl App {
         self.metadata.unregister_owner(owner);
         self.fields.unregister_owner(owner);
         self.hints.unregister_owner(owner);
+        self.notes.unregister_owner(owner);
         self.previews.unregister_owner(owner);
         self.pending.unregister_owner(owner);
         self.player.unregister_owner(owner);

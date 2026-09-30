@@ -216,27 +216,6 @@ impl TagIndex {
     }
 }
 
-/// The index the plugin's operations tell what they wrote: an edit of a
-/// file no pane shows (a tag renamed everywhere) is not read again soon.
-/// One per process, as operations are rebuilt from their data by the
-/// core and carry no state of the plugin's.
-static WRITTEN: std::sync::RwLock<Option<Weak<TagIndex>>> = std::sync::RwLock::new(None);
-
-/// Tell `index` (none: nobody) what the operations write from now on.
-pub fn learn_writes(index: Option<&Arc<TagIndex>>) {
-    if let Ok(mut written) = WRITTEN.write() {
-        *written = index.map(Arc::downgrade);
-    }
-}
-
-/// An operation gave `path` these `tags`.
-pub fn wrote(path: &Path, tags: &[String]) {
-    let index = WRITTEN.read().ok().and_then(|w| w.as_ref()?.upgrade());
-    if let Some(index) = index {
-        index.learn(vec![(path.to_path_buf(), tags.to_vec())]);
-    }
-}
-
 /// The index as a hint provider.
 pub struct Learned(pub Arc<TagIndex>);
 

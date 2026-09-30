@@ -36,6 +36,26 @@ Poppler, GStreamer or libarchive. Open gate: idle PSS is about 118 to 120 MB aga
 been loosened. The per-change validation history that used to sit here is in
 `docs/STATUS-LOG.md`.
 
+Notes stores, step A (2026-09-30, ADR-027): the core holds the model
+of a file's notes (`bibli_core::notes`: tags with the color a file gives
+them, rating, comment, origin), the `NotesStore` trait and its registry
+(`App::notes`, owner-tagged), and the edit, a `set_notes` step that
+captures the stores' policy when the plan is made, writes every store
+the policy allows, the file's own attributes first and, where they are
+refused, the store its folder already uses (else AppleDouble, now
+created there), and whose inverse puts back each store's bytes exactly
+(`restore_notes`), refusing when another application changed them
+since. The tags plugin's code became three stores (the desktop's
+attributes, the Finder's, `._` files, which now also keep the desktop's
+attributes as `xdg.tags`), read in one batch per folder with one
+`listxattr` per file; `set_tags`, `set_rating` and `set_comment` data
+still load, as the edit they were. The index learns from applied
+changes (`Executor::observe`) instead of a hook of the plugin's. A test
+that counted tags right after an undo raced the folder's watcher under
+load and now waits for the listing to show them. Deviation: merging is
+still the union (step B brings the snapshot); the policy is each
+store's default until the Notes page (step D).
+
 Tags everywhere (2026-09-30): the sidebar has Tags, the tags on the most
 files the tags plugin's index knows under the home folder (`tags.sidebar`,
 10 by default), each a search of the home folder built by the query

@@ -19,6 +19,7 @@ mod hints;
 mod ops;
 mod sidebar;
 mod vocabulary;
+pub mod xdg;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -37,16 +38,64 @@ use bibli_core::settings::SettingSpec;
 use bibli_core::workspace::PaneId;
 use parking_lot::Mutex;
 
-pub use attrs::{
-    parse_tags, read_comment, read_file_tags, read_rating, read_tags, tags_of, write_tags,
-};
-pub use ops::{SetComment, SetRating, SetTags};
+pub use attrs::tags_of;
+pub use bibli_core::notes::parse_tags;
+use bibli_core::notes::{NoteStores, Notes};
 
 use vocabulary::Vocabulary;
 
 pub(crate) const ID: &str = "tags";
 /// The metadata field key.
 pub const FIELD: &str = keys::TAGS;
+
+/// Register the plugin's stores (ADR-027), the desktop's first: it is
+/// this platform's own.
+fn register_stores(stores: &NoteStores) {
+    stores.register(ID, Arc::new(xdg::XdgStore));
+    stores.register(ID, Arc::new(finder::FinderStore));
+    stores.register(ID, Arc::new(appledouble::AppleDoubleStore::default()));
+}
+
+/// A file's notes as the plugin's stores keep them by default, read
+/// without an app (tools and tests). Blocking.
+pub fn read_notes(path: &std::path::Path) -> Notes {
+    let stores = NoteStores::default();
+    register_stores(&stores);
+    stores.read_path(path, &stores.policy())
+}
+
+/// A file's tags, from every store. Blocking.
+pub fn read_tags(path: &std::path::Path) -> Vec<String> {
+    read_notes(path).tag_names()
+}
+
+pub fn read_rating(path: &std::path::Path) -> Option<u64> {
+    read_notes(path).rating
+}
+
+pub fn read_comment(path: &std::path::Path) -> Option<String> {
+    read_notes(path).comment
+}
+
+/// Write `tags` as the file's desktop tags (`user.xdg.tags`) alone, an
+/// empty list removing them: fixtures and tools, not edits, which go
+/// through the stores.
+///
+/// # Errors
+/// When the attribute cannot be written.
+pub fn write_tags(path: &std::path::Path, tags: &[String]) -> std::io::Result<()> {
+    let joined = tags.join(",");
+    xdg::write(
+        path,
+        xdg::TAGS,
+        (!tags.is_empty()).then_some(joined.as_str()),
+    )
+}
+
+/// A file's notes, as the app's stores keep them now. Blocking.
+fn notes_of(app: &App, path: &std::path::Path) -> Notes {
+    app.notes.read_path(path, &app.notes.policy())
+}
 
 /// At most this many files are read by `tags.list { read }`: enough for
 /// the tags a search found, bounded for one that found a disk.
@@ -226,13 +275,9 @@ fn edit_plan(app: &App, vocabulary: &Arc<Vocabulary>, a: EditArgs) -> anyhow::Re
         targets(app, a.pane, a.entries),
         edit_title(&add, &remove),
         |r| {
-            let current = read_tags(&r.path);
+            let current = notes_of(app, &r.path).tag_names();
             let tags = edited(&current, &add, &remove);
-            (tags != current).then_some(SetTags {
-                entry: r,
-                tags,
-                finder_colors: Vec::new(),
-            })
+            (tags != current).then(|| app.notes.edit(r).tags(tags))
         },
     )
 }
@@ -242,22 +287,17 @@ fn selected(app: &App, vocabulary: &Vocabulary, a: PaneArgs) -> serde_json::Valu
     let refs = targets(app, a.pane, a.entries);
     // Keyed by the lowercase form, in the order first met, with the color
     // a file gives the tag (a Finder tag's), if one does.
-    let mut counts: Vec<(String, usize, Option<&str>)> = Vec::new();
+    let mut counts: Vec<(String, usize, Option<String>)> = Vec::new();
     for r in &refs {
-        let file = read_file_tags(&r.path);
-        let colors = file.finder_colors();
-        for tag in file.tags {
-            let given = colors
-                .iter()
-                .find(|(t, _)| same_tag(t, &tag))
-                .and_then(|(_, digit)| finder::palette(*digit))
-                .map(|i| bibli_core::metadata::TAG_COLORS[i]);
-            match counts.iter_mut().find(|(t, _, _)| same_tag(t, &tag)) {
+        for tag in notes_of(app, &r.path).tags {
+            match counts.iter_mut().find(|(t, _, _)| same_tag(t, &tag.name)) {
                 Some((_, n, color)) => {
                     *n += 1;
-                    *color = color.or(given);
+                    if color.is_none() {
+                        *color = tag.color;
+                    }
                 }
-                None => counts.push((tag, 1, given)),
+                None => counts.push((tag.name, 1, tag.color)),
             }
         }
     }
@@ -396,7 +436,6 @@ impl Plugin for TagsPlugin {
         if let Some(lifetime) = self.lifetime.lock().take() {
             lifetime.cancel();
         }
-        hints::learn_writes(None);
         if let Some(state) = self.sidebar.lock().take() {
             state.shown.forget();
         }
@@ -427,11 +466,55 @@ impl Plugin for TagsPlugin {
         app.metadata.register(
             ID,
             Arc::new(attrs::AttributesProvider {
+                stores: Arc::clone(&app.notes),
                 vocabulary: Arc::clone(&vocabulary),
                 index: Some(Arc::clone(&index)),
-                aside: attrs::AsideNames::default(),
             }),
         );
+        register_stores(&app.notes);
+        ops::register_legacy(app);
+        // An edit applied is learned by the index at once: a file edited
+        // while no pane shows it (a tag renamed everywhere) is not read
+        // again soon.
+        {
+            let (weak, index, lifetime) = (app.weak(), Arc::clone(&index), lifetime.clone());
+            app.executor.observe(
+                ID,
+                Arc::new(move |changes| {
+                    let paths: Vec<std::path::PathBuf> = changes
+                        .iter()
+                        .filter_map(|c| match c {
+                            bibli_core::op::Change::Metadata { path, field, .. }
+                                if field == keys::TAGS =>
+                            {
+                                Some(path.clone())
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    let Some(app) = weak.upgrade().filter(|_| !paths.is_empty()) else {
+                        return;
+                    };
+                    let (index, weak) = (Arc::clone(&index), weak.clone());
+                    app.scheduler.spawn(
+                        Priority::Background,
+                        "tags.learn",
+                        lifetime.child(),
+                        move || {
+                            let Some(app) = weak.upgrade() else { return };
+                            let learned = paths
+                                .into_iter()
+                                .map(|p| {
+                                    let tags = notes_of(&app, &p).tag_names();
+                                    (p, tags)
+                                })
+                                .collect();
+                            index.learn(learned);
+                        },
+                    );
+                }),
+            );
+        }
         // The sidebar's tags, from the index: again whenever it changes,
         // and first on a worker, which reads it from the cache.
         let state = Sidebar {
@@ -439,7 +522,6 @@ impl Plugin for TagsPlugin {
             vocabulary: Arc::clone(&vocabulary),
             shown: Arc::new(sidebar::Shown::default()),
         };
-        hints::learn_writes(Some(&index));
         {
             let (weak, state) = (app.weak(), state.clone());
             index.on_change(Box::new(move |_| {
@@ -474,9 +556,6 @@ impl Plugin for TagsPlugin {
         // What a `tag:` search asks first (ADR-026).
         app.hints.register(ID, Arc::new(hints::Baloo::default()));
         app.hints.register(ID, Arc::new(hints::Learned(index)));
-        app.ops.register::<SetTags>(ID, "set_tags");
-        app.ops.register::<SetRating>(ID, "set_rating");
-        app.ops.register::<SetComment>(ID, "set_comment");
         app.settings.declare(SettingSpec::data(
             TAG_COLOR_SETTING,
             "Colors the user chose for tags, by tag in lowercase: { tag = color }",
@@ -498,12 +577,8 @@ impl Plugin for TagsPlugin {
                     format!("set tags {}", tags.join(", "))
                 };
                 per_entry(targets(app, a.pane, a.entries), title, |r| {
-                    let current = read_tags(&r.path);
-                    (current != tags).then(|| SetTags {
-                        entry: r,
-                        tags: tags.clone(),
-                        finder_colors: Vec::new(),
-                    })
+                    let current = notes_of(app, &r.path).tag_names();
+                    (current != tags).then(|| app.notes.edit(r).tags(tags.clone()))
                 })
             },
         );
@@ -567,7 +642,7 @@ impl Plugin for TagsPlugin {
                 let all = !refs.is_empty()
                     && refs
                         .iter()
-                        .all(|r| read_tags(&r.path).iter().any(|t| same_tag(t, &tag)));
+                        .all(|r| notes_of(app, &r.path).tag(&tag).is_some());
                 let (add, remove) = if all {
                     (Vec::new(), vec![tag])
                 } else {
@@ -603,10 +678,11 @@ impl Plugin for TagsPlugin {
                 let rating = (a.stars > 0).then_some(u64::from(a.stars) * 2);
                 let title = rating.map_or_else(
                     || "remove the rating".to_owned(),
-                    |r| format!("rate {}", ops::stars(r)),
+                    |r| format!("rate {}", bibli_core::notes::stars(r)),
                 );
                 per_entry(targets(app, a.pane, a.entries), title, |r| {
-                    (read_rating(&r.path) != rating).then_some(SetRating { entry: r, rating })
+                    (notes_of(app, &r.path).rating != rating)
+                        .then(|| app.notes.edit(r).rating(rating))
                 })
             },
         );
@@ -624,10 +700,8 @@ impl Plugin for TagsPlugin {
                     "remove the comment"
                 };
                 per_entry(targets(app, a.pane, a.entries), title.to_owned(), |r| {
-                    (read_comment(&r.path) != comment).then(|| SetComment {
-                        entry: r,
-                        comment: comment.clone(),
-                    })
+                    (notes_of(app, &r.path).comment != comment)
+                        .then(|| app.notes.edit(r).comment(comment.clone()))
                 })
             },
         );
@@ -725,7 +799,7 @@ impl Plugin for TagsPlugin {
                 if let Some(open) = open {
                     for id in unread {
                         if let Some(path) = open.path_of(id) {
-                            count(read_tags(&path));
+                            count(notes_of(app, &path).tag_names());
                         }
                     }
                 }
@@ -1115,6 +1189,8 @@ mod tests {
         );
         assert_eq!(written.get("com.apple.quarantine"), Some(quarantine));
         assert_eq!(written.get(finder::COMMENT), Some(comment.as_slice()));
+        // The desktop's tags ride along, named as a Mac names attributes.
+        assert_eq!(written.get("xdg.tags"), Some(b"Rouge,new".as_slice()));
         #[cfg(unix)]
         assert_eq!(mode(&file), 0o644, "the file replaced keeps its mode");
 
@@ -1134,6 +1210,48 @@ mod tests {
             .filter(|n| n.starts_with("._") && n != "._it's on the stick.pdf")
             .collect();
         assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    #[test]
+    fn a_plan_written_before_the_stores_is_read_as_the_edit_it_was() {
+        let tmp = home_tempdir();
+        let f = tmp.path().join("it's old.txt");
+        std::fs::write(&f, b"x").unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        app.plugins.add(Arc::new(TagsPlugin::default()), &app);
+        let entry = serde_json::to_value(EntryRef::from_path(&f).unwrap()).unwrap();
+        for (kind, args) in [
+            (
+                "set_tags",
+                serde_json::json!({ "entry": entry, "tags": ["old"], "finder_colors": [] }),
+            ),
+            (
+                "set_rating",
+                serde_json::json!({ "entry": entry, "rating": 6 }),
+            ),
+            (
+                "set_comment",
+                serde_json::json!({ "entry": entry, "comment": "kept" }),
+            ),
+        ] {
+            let op = app
+                .ops
+                .build(&bibli_core::op::OpData {
+                    kind: kind.into(),
+                    args,
+                })
+                .unwrap();
+            assert_eq!(op.kind(), "set_notes");
+            let mut plan = Plan::new(kind);
+            plan.steps.push(op);
+            let r = app.executor.execute_blocking(&plan, app.lifetime());
+            assert!(r.error.is_none(), "{kind}: {:?}", r.error);
+        }
+        let notes = read_notes(&f);
+        assert_eq!(
+            (notes.tag_names(), notes.rating, notes.comment.as_deref()),
+            (vec!["old".to_owned()], Some(6), Some("kept"))
+        );
     }
 
     #[test]
@@ -1243,8 +1361,26 @@ mod tests {
         app.executor.undo_blocking(app.lifetime()).unwrap();
         assert_eq!(read_tags(&f), ["old"]);
 
-        // tags.list counts what the listing knows (hydrate again to refresh).
-        hydrate_all(&app, pane);
+        // tags.list counts what the listing knows: once the folder's watcher
+        // brought the undone tags (an entry already hydrated is not waited
+        // for by hydrating again).
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            app.pump();
+            let shown = app
+                .workspace
+                .read()
+                .pane(pane)
+                .unwrap()
+                .listing
+                .find_by_name("doc.txt".as_ref())
+                .and_then(|e| tags_of(&e.metadata));
+            if shown.as_deref() == Some(&["old".to_owned()][..]) {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "{shown:?}");
+            std::thread::sleep(Duration::from_millis(2));
+        }
         let Outcome::Value(v) = app.dispatch(&Invocation::new("tags.list")).unwrap() else {
             panic!()
         };
@@ -1333,7 +1469,7 @@ mod tests {
         std::fs::create_dir(&dir).unwrap();
         let f = dir.join("pic.jpg");
         std::fs::write(&f, b"x").unwrap();
-        xattr::set(&f, attrs::ORIGIN, b"https://example.org/pic.jpg").unwrap();
+        xattr::set(&f, xdg::ORIGIN, b"https://example.org/pic.jpg").unwrap();
         let (app, pane) = app_in(tmp.path(), &dir, &["pic.jpg"]);
 
         let rate = plan(&app, "tags.rate", &serde_json::json!({ "stars": 4 }));
@@ -1346,7 +1482,7 @@ mod tests {
         app.executor.execute_blocking(&rate, app.lifetime());
         assert_eq!(read_rating(&f), Some(8));
         assert_eq!(
-            xattr::get(&f, attrs::RATING).unwrap().unwrap(),
+            xattr::get(&f, xdg::RATING).unwrap().unwrap(),
             b"8",
             "as Dolphin writes it"
         );
@@ -1404,7 +1540,7 @@ mod tests {
         assert_eq!(read_comment(&f), None);
         app.executor.undo_blocking(app.lifetime()).unwrap();
         assert_eq!(read_rating(&f), None);
-        assert!(xattr::get(&f, attrs::RATING).unwrap().is_none());
+        assert!(xattr::get(&f, xdg::RATING).unwrap().is_none());
         assert!(
             app.dispatch(&Invocation::with_args(
                 "tags.rate",

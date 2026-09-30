@@ -172,34 +172,43 @@ current source before assuming a planned crate, command, or API exists.
   (`Detail::with_action`, drawn as a link after the value, run through
   `Shell::run`): a position shows the file on the map. The row itself
   still copies its value; the link is the only thing that acts.
-- **Notes live on the file.** Tags, a rating and a comment are the user's
-  `user.*` extended attributes (the desktop's keys, so Dolphin and others
-  agree), read by the tags plugin's one provider with a single `listxattr`
-  per file: a new attribute joins that provider, never a read of its own
-  per row. An edit of several files applies what the user changed
+- **Notes live on the file.** Tags, a rating and a comment are kept where
+  the desktop and other applications keep them, never in a database of
+  ours (ADR-027): each place is a store (`bibli_core::notes::NotesStore`,
+  registered in `App::notes` by the plugin that knows it), and the one
+  model every store and surface share is `notes::Notes`, where a color
+  belongs to its tag. The tags plugin's stores: the desktop's `user.*`
+  attributes (`xdg.rs`, Dolphin's keys), a Mac's Finder attributes under
+  whichever name they reached Linux (`finder.rs`), and the `._` files a
+  Mac writes on volumes without attributes (`appledouble.rs`, which also
+  keeps the desktop's attributes, as `xdg.tags`). A batch of one folder's
+  files is read from every store with one `listxattr` per file for all of
+  them (`NoteStores::read`), in the provider: a new store joins it, never
+  a read of its own per row; a folder's `._` names are read once for its
+  listing. An edit is a core `set_notes` step, built with
+  `app.notes.edit(entry)` so the policy it writes with is captured when
+  the plan is made; it writes every store that policy allows (those
+  holding the file's notes, the ones set to create, and where the file's
+  own attributes are refused the store its folder already uses, else
+  AppleDouble), and its inverse (`restore_notes`) puts back each store's
+  bytes exactly, refusing if another application changed them since. A
+  `._` file is rewritten whole as macOS lays it out, keeping every other
+  attribute and its mode; one laid out otherwise is read, never written.
+  An edit of several files applies what the user changed
   (`tags.edit`: add these, remove those), never a list written over each
   file. Commands that act on entries take `entries` so a surface acts on
   what it showed (Details, the tag editor), not the selection at the time.
   A tag's color is the user's choice (`tags.colors`), else the one its
   file gives it (a Mac's Finder tag, `keys::TAG_COLORS`), else its name's
   (`metadata::tag_color`); copies keep every `user.*` attribute (ADR-006).
-  A Mac's tags (`finder.rs`, under whichever name the attribute reached
-  Linux) are read with ours and written with them when the file has
-  both, so an edit holds on the Mac. On a volume a Mac keeps them beside
-  the file (`bibli_platform::filesystem::apple_double`: FAT, exFAT,
-  NTFS, network and FUSE), they are in its `._` file (`appledouble.rs`):
-  a folder's `._` names are read once for its listing, never looked up
-  per file, and an edit rewrites that file whole as macOS lays it out,
-  keeping every other attribute and its mode; one laid out otherwise is
-  read, never written, and a file with neither says its volume keeps no
-  tags. A folder listing reads `x` again when `._x` changes. A search by tag asks the indexes
-  first (`bibli_core::hints`, ADR-026: Baloo when it runs, the tags
-  plugin's own, learned as the provider reads files and as its
-  operations write), checks every file
-  they name, and walks all the same: an index hints, the walk answers.
-  So a tag renamed or removed everywhere (`tags.rename`, `tags.delete`)
-  takes its files from the search, not the index, as a plan proposed
-  for review.
+  A folder listing reads `x` again when `._x` changes. A search by tag
+  asks the indexes first (`bibli_core::hints`, ADR-026: Baloo when it
+  runs, the tags plugin's own, learned as the provider reads files and
+  from each applied change, `Executor::observe`), checks every file they
+  name, and walks all the same: an index hints, the walk answers. So a
+  tag renamed or removed everywhere (`tags.rename`, `tags.delete`) takes
+  its files from the search, not the index, as a plan proposed for
+  review.
 - **Nothing to list is a state, not a blank.** `placeholder.rs` says why a
   pane is empty (empty folder, no results, empty shelf) or why it failed, in
   the user's words with the system's message as the detail, and offers the

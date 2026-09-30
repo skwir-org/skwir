@@ -16,8 +16,7 @@ use bibli_core::op::{EntryRef, Plan};
 use bibli_core::os_path::PathArg;
 use bibli_core::scheduler::Priority;
 
-use crate::attrs::{parse_tags, read_tags};
-use crate::ops::SetTags;
+use bibli_core::notes::parse_tags;
 
 /// `tags` with `from` renamed `to`, or taken away without one; a tag met
 /// twice (the file had both) is kept once, where it came first.
@@ -147,7 +146,10 @@ pub fn start(
             let mut plan = Plan::new(title);
             let mut merged = 0;
             for r in files {
-                let current = read_tags(&r.path);
+                let current = app
+                    .notes
+                    .read_path(&r.path, &app.notes.policy())
+                    .tag_names();
                 let tags = renamed(&current, &tag, to.as_deref());
                 if tags == current {
                     continue;
@@ -155,11 +157,7 @@ pub fn start(
                 if tags.len() < current.len() && to.is_some() {
                     merged += 1;
                 }
-                plan.push(SetTags {
-                    entry: r,
-                    tags,
-                    finder_colors: Vec::new(),
-                });
+                plan.push(app.notes.edit(r).tags(tags));
             }
             let n = plan.steps.len();
             if n == 0 {

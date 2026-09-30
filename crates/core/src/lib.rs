@@ -5,7 +5,8 @@
 //! - [`entry`]: entries with stable identity and provenance-tagged metadata.
 //! - [`location`]: locations, the `LocationProvider` trait, and streaming listings.
 //! - [`fs`]: the built-in path provider (getdents streaming, lazy stat, watching).
-//! - [`metadata`]: providers that fill entry fields during hydration.
+//! - [`metadata`]: providers that fill entry fields during hydration;
+//!   [`notes`]: a file's tags, rating and comment, and the stores that keep them.
 //! - [`command`]: commands as data, the registry, and dispatch.
 //! - [`op`]: operations with inverses, plans, the executor, and the undo journal.
 //! - [`registry`]: views, panels, places, menus, keymap, settings schema;
@@ -38,6 +39,7 @@ pub mod location;
 pub mod lru;
 pub mod media;
 pub mod metadata;
+pub mod notes;
 pub mod op;
 pub mod os_path;
 pub mod pending;

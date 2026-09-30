@@ -33,6 +33,10 @@
 
 use std::path::Path;
 
+use bibli_core::metadata::same_tag;
+use bibli_core::notes::raw::RawKey;
+use bibli_core::notes::{Holds, Kept, Notes, NotesStore, Probe, Tag as NoteTag, Write, Wrote};
+
 /// The attributes' names on a Mac.
 pub const TAGS: &str = "com.apple.metadata:_kMDItemUserTags";
 pub const COMMENT: &str = "com.apple.metadata:kMDItemFinderComment";
@@ -181,6 +185,241 @@ pub fn read(path: &Path, names: &[String]) -> Vec<(String, Framing, Vec<Tag>)> {
             Some((name.clone(), framing, parse(&value, framing)?))
         })
         .collect()
+}
+
+/// The Finder digit of a palette color: the one [`palette`] maps to it.
+pub fn digit(color: &str) -> Option<u8> {
+    (2..=7).find(|d| palette(*d).map(|i| bibli_core::metadata::TAG_COLORS[i]) == Some(color))
+}
+
+/// A Finder list of tags as the model's: a digit becomes a palette color.
+pub fn to_notes(tags: Vec<Tag>) -> Vec<NoteTag> {
+    tags.into_iter()
+        .map(|t| NoteTag {
+            color: palette(t.color).map(|i| bibli_core::metadata::TAG_COLORS[i].to_owned()),
+            name: t.name,
+        })
+        .collect()
+}
+
+/// `notes`' tags as a Finder list: a tag keeps the digit `theirs` gave it
+/// (gray, which has no color of ours, included) unless the notes give it
+/// another color.
+pub fn from_notes(notes: &Notes, theirs: &[Tag]) -> Vec<Tag> {
+    notes
+        .tags
+        .iter()
+        .map(|t| {
+            let had = theirs
+                .iter()
+                .find(|x| same_tag(&x.name, &t.name))
+                .map(|x| x.color);
+            let given = t.color.as_deref().and_then(digit);
+            let color = match (had, given) {
+                (Some(had), Some(given)) if palette(had).is_some() && had != given => given,
+                (Some(had), _) => had,
+                (None, given) => given.unwrap_or(0),
+            };
+            Tag {
+                name: t.name.clone(),
+                color,
+            }
+        })
+        .collect()
+}
+
+/// A Finder comment as the Mac writes it: a property list string.
+pub fn encode_comment(text: &str, framing: Framing) -> Vec<u8> {
+    let mut out = Vec::new();
+    plist::Value::String(text.to_owned())
+        .to_writer_binary(&mut out)
+        .expect("writing to memory");
+    if framing == Framing::Stream {
+        out.push(0);
+    }
+    out
+}
+
+/// What a Mac's attributes say, each given by its Mac name, value and
+/// framing; `None` when they say nothing.
+pub fn notes_from<'a>(
+    attributes: impl IntoIterator<Item = (&'a str, &'a [u8], Framing)>,
+) -> Option<Notes> {
+    let mut notes = Notes::default();
+    for (name, value, framing) in attributes {
+        match name {
+            TAGS => {
+                if let Some(tags) = parse(value, framing) {
+                    notes.merge(Notes {
+                        tags: to_notes(tags),
+                        ..Notes::default()
+                    });
+                }
+            }
+            COMMENT if notes.comment.is_none() => notes.comment = parse_comment(value, framing),
+            WHERE_FROMS if notes.origin.is_none() => {
+                let mut froms = parse_where_froms(value, framing).into_iter();
+                notes.origin = froms.next();
+                notes.referrer = froms.next();
+            }
+            _ => {}
+        }
+    }
+    (!notes.is_empty()).then_some(notes)
+}
+
+/// The name a Finder list of tags is created under on this system.
+#[cfg(target_os = "macos")]
+const CREATED: &str = TAGS;
+#[cfg(not(target_os = "macos"))]
+const CREATED: &str = "user.com.apple.metadata:_kMDItemUserTags";
+
+/// A Mac's Finder tags, comment and download addresses in the file's
+/// attributes, under whichever name they reached this system.
+pub struct FinderStore;
+
+impl FinderStore {
+    /// The Finder attributes among `names`: Linux's name, the Mac's, the
+    /// framing.
+    fn present(names: &[String]) -> Vec<(String, String, Framing)> {
+        names
+            .iter()
+            .filter_map(|n| {
+                let (mac, framing) = mac_name(n)?;
+                matches!(mac.as_str(), TAGS | COMMENT | WHERE_FROMS)
+                    .then(|| (n.clone(), mac, framing))
+            })
+            .collect()
+    }
+}
+
+impl NotesStore for FinderStore {
+    fn id(&self) -> &'static str {
+        "finder"
+    }
+    fn title(&self) -> &'static str {
+        "A Mac's Finder tags and comments"
+    }
+    fn kept(&self) -> Kept {
+        Kept::Attributes
+    }
+    fn holds(&self) -> Holds {
+        Holds {
+            tags: true,
+            tag_colors: true,
+            rating: false,
+            comment: true,
+            origin: true,
+            limits: "no rating; seven colors",
+        }
+    }
+    fn default_write(&self) -> Write {
+        if cfg!(target_os = "macos") {
+            Write::Create
+        } else {
+            Write::Update
+        }
+    }
+    fn read(&self, _dir: &Path, files: &[Probe<'_>]) -> Vec<Option<Notes>> {
+        files
+            .iter()
+            .map(|f| {
+                let present = Self::present(f.attributes);
+                if present.is_empty() {
+                    return None;
+                }
+                let values: Vec<(String, Vec<u8>, Framing)> = present
+                    .into_iter()
+                    .filter_map(|(linux, mac, framing)| {
+                        Some((mac, xattr::get_deref(f.path, &linux).ok()??, framing))
+                    })
+                    .collect();
+                notes_from(
+                    values
+                        .iter()
+                        .map(|(m, v, fr)| (m.as_str(), v.as_slice(), *fr)),
+                )
+            })
+            .collect()
+    }
+    fn keys(&self, file: &Probe<'_>, create: bool) -> Vec<RawKey> {
+        let present = Self::present(file.attributes);
+        let has_tags = present.iter().any(|(_, mac, _)| mac == TAGS);
+        let mut keys: Vec<RawKey> = present
+            .into_iter()
+            .filter(|(_, mac, _)| mac != WHERE_FROMS)
+            .map(|(name, _, _)| RawKey::Attribute { name })
+            .collect();
+        if create && !has_tags {
+            keys.push(RawKey::Attribute {
+                name: CREATED.to_owned(),
+            });
+        }
+        keys
+    }
+    fn write(&self, file: &Probe<'_>, notes: &Notes, create: bool) -> std::io::Result<Wrote> {
+        let present = Self::present(file.attributes);
+        let mut changed = false;
+        let mut kept = false;
+        let mut set = |name: &str, value: Option<Vec<u8>>| -> std::io::Result<()> {
+            let now = xattr::get_deref(file.path, name).ok().flatten();
+            if now == value {
+                return Ok(());
+            }
+            match value {
+                Some(value) => xattr::set_deref(file.path, name, &value)?,
+                None => match xattr::remove_deref(file.path, name) {
+                    Err(e)
+                        if rustix::io::Errno::from_io_error(&e)
+                            == Some(rustix::io::Errno::NODATA) => {}
+                    r => r?,
+                },
+            }
+            changed = true;
+            Ok(())
+        };
+        let mut has_tags = false;
+        for (linux, mac, framing) in &present {
+            kept = true;
+            match mac.as_str() {
+                TAGS => {
+                    has_tags = true;
+                    let theirs = xattr::get_deref(file.path, linux)
+                        .ok()
+                        .flatten()
+                        .and_then(|v| parse(&v, *framing))
+                        .unwrap_or_default();
+                    let value = (!notes.tags.is_empty())
+                        .then(|| encode(&from_notes(notes, &theirs), *framing));
+                    set(linux, value)?;
+                }
+                COMMENT => {
+                    let value = notes
+                        .comment
+                        .as_deref()
+                        .map(|c| encode_comment(c, *framing));
+                    set(linux, value)?;
+                }
+                _ => {}
+            }
+        }
+        if !has_tags && create && !notes.tags.is_empty() {
+            match set(
+                CREATED,
+                Some(encode(&from_notes(notes, &[]), Framing::Plain)),
+            ) {
+                Ok(()) => kept = true,
+                Err(e)
+                    if rustix::io::Errno::from_io_error(&e) == Some(rustix::io::Errno::NOTSUP) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(match (changed, kept) {
+            (true, _) => Wrote::Written,
+            (false, true) => Wrote::Unchanged,
+            (false, false) => Wrote::NotHere,
+        })
+    }
 }
 
 #[cfg(test)]

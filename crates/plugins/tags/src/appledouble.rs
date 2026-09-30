@@ -23,9 +23,18 @@
 //! laid out otherwise (other entries, an older writer) is read but never
 //! written: what we would write back could lose what we do not know.
 
+use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Write as _};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime};
+
+use bibli_core::notes::raw::RawKey;
+use bibli_core::notes::{Holds, Kept, Notes, NotesStore, Probe, Tag, Write, Wrote, parse_tags};
+use parking_lot::Mutex;
+
+use crate::xdg;
 
 pub const PREFIX: &str = "._";
 
@@ -185,6 +194,18 @@ impl AppleDouble {
         Some(ad)
     }
 
+    /// A sidecar with nothing in it yet, laid out as macOS writes one.
+    pub fn empty() -> AppleDouble {
+        AppleDouble {
+            finder_info: [0; FINDER_INFO_LEN],
+            debug_tag: 0,
+            flags: 0,
+            attributes: Vec::new(),
+            resource_fork: Some(Vec::new()),
+            writable: true,
+        }
+    }
+
     /// The value of the attribute the Mac names `name`.
     pub fn get(&self, name: &str) -> Option<&[u8]> {
         self.attributes
@@ -319,6 +340,222 @@ pub fn write(path: &Path, ad: &AppleDouble) -> io::Result<()> {
     Ok(())
 }
 
+/// The names of the `._` files in the folders batches were in (their
+/// files' names): a folder is read once for its listing, not once per
+/// file, and again when it changes.
+#[derive(Default)]
+pub struct AsideNames {
+    folders: Mutex<Vec<Seen>>,
+}
+
+struct Seen {
+    dir: PathBuf,
+    modified: Option<SystemTime>,
+    at: Instant,
+    names: Arc<HashSet<OsString>>,
+}
+
+/// Folders remembered at once: a search walks several in parallel.
+const FOLDERS: usize = 16;
+/// How long a folder's names are trusted while its time says it did not
+/// change: FAT stores times to two seconds.
+const FRESH: Duration = Duration::from_secs(5);
+
+#[cfg(unix)]
+fn os_from_bytes(bytes: &[u8]) -> OsString {
+    use std::os::unix::ffi::OsStrExt;
+    OsStr::from_bytes(bytes).to_owned()
+}
+
+#[cfg(not(unix))]
+fn os_from_bytes(bytes: &[u8]) -> OsString {
+    OsString::from(String::from_utf8_lossy(bytes).into_owned())
+}
+
+impl AsideNames {
+    /// The files of `dir` that have a `._` file (maybe none).
+    fn of(&self, dir: &Path) -> Arc<HashSet<OsString>> {
+        let modified = std::fs::metadata(dir).ok().and_then(|m| m.modified().ok());
+        let known = self
+            .folders
+            .lock()
+            .iter()
+            .find(|s| s.dir == dir && s.modified == modified && s.at.elapsed() < FRESH)
+            .map(|s| Arc::clone(&s.names));
+        if let Some(names) = known {
+            return names;
+        }
+        let names: HashSet<OsString> = std::fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .filter_map(|e| {
+                        let name = e.ok()?.file_name();
+                        let file = name.as_encoded_bytes().strip_prefix(PREFIX.as_bytes())?;
+                        Some(os_from_bytes(file))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let names = Arc::new(names);
+        let mut folders = self.folders.lock();
+        folders.retain(|s| s.dir != dir);
+        if folders.len() >= FOLDERS {
+            folders.remove(0);
+        }
+        folders.push(Seen {
+            dir: dir.to_path_buf(),
+            modified,
+            at: Instant::now(),
+            names: Arc::clone(&names),
+        });
+        names
+    }
+}
+
+/// The desktop's attributes, as named inside a sidecar: a Mac has no
+/// `user.` namespace, so `user.xdg.tags` is `xdg.tags` there, and a Mac
+/// copying the file home makes it an attribute of that name, which
+/// `rsync -X` brings back to Linux as `user.xdg.tags`.
+fn inside(linux: &str) -> &str {
+    linux.strip_prefix("user.").unwrap_or(linux)
+}
+
+/// What a sidecar says: its Finder tags (the Mac's own list, the one a
+/// Mac edits) or else the desktop's, the Finder's comment or the
+/// desktop's, the desktop's rating, where it was downloaded from.
+pub fn notes_of(ad: &AppleDouble) -> Option<Notes> {
+    let text = |linux: &str| {
+        ad.get(inside(linux))
+            .map(|v| String::from_utf8_lossy(v).trim().to_owned())
+            .filter(|t| !t.is_empty())
+    };
+    let mut notes = crate::finder::notes_from(ad.attributes.iter().map(|a| {
+        (
+            a.name.as_str(),
+            a.value.as_slice(),
+            crate::finder::Framing::Plain,
+        )
+    }))
+    .unwrap_or_default();
+    if ad.get(crate::finder::TAGS).is_none()
+        && let Some(tags) = text(xdg::TAGS)
+    {
+        notes.tags = parse_tags(&tags).into_iter().map(Tag::named).collect();
+    }
+    notes.comment = text(xdg::COMMENT).or(notes.comment);
+    notes.rating = text(xdg::RATING).as_deref().and_then(xdg::parse_rating);
+    notes.origin = text(xdg::ORIGIN).or(notes.origin);
+    notes.referrer = text(xdg::REFERRER).or(notes.referrer);
+    (!notes.is_empty()).then_some(notes)
+}
+
+/// A Mac's `._` files, on volumes where a Mac writes them: read, updated,
+/// and created where the file's own attributes cannot keep its notes. It
+/// holds the Mac's attributes and the desktop's alike.
+#[derive(Default)]
+pub struct AppleDoubleStore {
+    aside: AsideNames,
+}
+
+impl NotesStore for AppleDoubleStore {
+    fn id(&self) -> &'static str {
+        "appledouble"
+    }
+    fn title(&self) -> &'static str {
+        "A Mac's ._ files, beside files on volumes without attributes"
+    }
+    fn kept(&self) -> Kept {
+        Kept::Beside
+    }
+    fn holds(&self) -> Holds {
+        Holds {
+            tags: true,
+            tag_colors: true,
+            rating: true,
+            comment: true,
+            origin: true,
+            limits: "",
+        }
+    }
+    fn default_write(&self) -> Write {
+        Write::Fallback
+    }
+    fn applies(&self, dir: &Path) -> bool {
+        applies(dir)
+    }
+    fn in_use(&self, dir: &Path) -> bool {
+        !self.aside.of(dir).is_empty()
+    }
+    fn read(&self, dir: &Path, files: &[Probe<'_>]) -> Vec<Option<Notes>> {
+        let names = self.aside.of(dir);
+        files
+            .iter()
+            .map(|f| {
+                if names.is_empty() || is_sidecar(f.name) || !names.contains(f.name) {
+                    return None;
+                }
+                notes_of(&read(f.path)?)
+            })
+            .collect()
+    }
+    fn keys(&self, file: &Probe<'_>, create: bool) -> Vec<RawKey> {
+        let Some(aside) = sidecar(file.path) else {
+            return Vec::new();
+        };
+        if !create && !aside.exists() {
+            return Vec::new();
+        }
+        vec![RawKey::Beside {
+            path: aside.file_name().map(PathBuf::from).unwrap_or_default(),
+        }]
+    }
+    fn write(&self, file: &Probe<'_>, notes: &Notes, create: bool) -> io::Result<Wrote> {
+        let existing = read(file.path);
+        let has_notes = !notes.tags.is_empty() || notes.rating.is_some() || notes.comment.is_some();
+        let mut ad = match existing {
+            Some(ad) => ad,
+            None if create && has_notes => AppleDouble::empty(),
+            None => return Ok(Wrote::NotHere),
+        };
+        let before = ad.clone();
+        let theirs = ad
+            .get(crate::finder::TAGS)
+            .and_then(|v| crate::finder::parse(v, crate::finder::Framing::Plain))
+            .unwrap_or_default();
+        ad.set(
+            crate::finder::TAGS,
+            (!notes.tags.is_empty()).then(|| {
+                crate::finder::encode(
+                    &crate::finder::from_notes(notes, &theirs),
+                    crate::finder::Framing::Plain,
+                )
+            }),
+        );
+        let [tags, rating, comment] = xdg::written(notes);
+        for (linux, value) in [
+            (xdg::TAGS, tags),
+            (xdg::RATING, rating),
+            (xdg::COMMENT, comment),
+        ] {
+            ad.set(inside(linux), value.map(String::into_bytes));
+        }
+        if ad.get(crate::finder::COMMENT).is_some() {
+            ad.set(
+                crate::finder::COMMENT,
+                notes
+                    .comment
+                    .as_deref()
+                    .map(|c| crate::finder::encode_comment(c, crate::finder::Framing::Plain)),
+            );
+        }
+        if ad == before {
+            return Ok(Wrote::Unchanged);
+        }
+        write(file.path, &ad)?;
+        Ok(Wrote::Written)
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -441,6 +678,59 @@ pub(crate) mod tests {
         let mut long = bytes;
         long[130] = 255;
         assert!(AppleDouble::parse(&long[..200]).is_none());
+    }
+
+    #[test]
+    fn a_sidecar_started_for_a_file_is_one_a_mac_reads_and_holds_every_note() {
+        let base = dirs::home_dir().unwrap().join(".cache").join("bibli-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::Builder::new()
+            .prefix("appledouble-")
+            .tempdir_in(base)
+            .unwrap();
+        let file = tmp.path().join("it's new.pdf");
+        std::fs::write(&file, b"x").unwrap();
+        let store = AppleDoubleStore::default();
+        let probe = Probe {
+            path: &file,
+            name: file.file_name().unwrap(),
+            attributes: &[],
+        };
+        let notes = Notes {
+            tags: vec![
+                Tag {
+                    name: "Rouge".into(),
+                    color: Some("red".into()),
+                },
+                Tag::named("a, b"),
+            ],
+            rating: Some(7),
+            comment: Some("note".into()),
+            ..Notes::default()
+        };
+        assert_eq!(store.write(&probe, &notes, false).unwrap(), Wrote::NotHere);
+        assert!(store.keys(&probe, false).is_empty());
+        assert_eq!(store.write(&probe, &notes, true).unwrap(), Wrote::Written);
+        let bytes = std::fs::read(sidecar(&file).unwrap()).unwrap();
+        assert_eq!(&bytes[..4], &[0, 5, 22, 7]);
+        let ad = AppleDouble::parse(&bytes).unwrap();
+        assert!(ad.writable, "laid out as macOS writes it");
+        let read = notes_of(&ad).unwrap();
+        assert_eq!(
+            read.tag_names(),
+            ["Rouge", "a, b"],
+            "the Finder's list holds a comma"
+        );
+        assert_eq!(read.tag("rouge").unwrap().color.as_deref(), Some("red"));
+        assert_eq!(
+            (read.rating, read.comment.as_deref()),
+            (Some(7), Some("note"))
+        );
+        assert_eq!(ad.get("xdg.tags"), Some(b"Rouge".as_slice()));
+        assert_eq!(
+            store.write(&probe, &notes, false).unwrap(),
+            Wrote::Unchanged
+        );
     }
 
     #[test]

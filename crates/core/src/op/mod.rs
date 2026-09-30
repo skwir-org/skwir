@@ -281,6 +281,19 @@ impl OpRegistry {
         self.kinds.write().insert(kind, (owner.into(), d));
     }
 
+    /// Register `kind` with a builder of its own: for an operation that
+    /// needs what the plugin holds (a registry) besides its data.
+    pub fn register_with(
+        &self,
+        owner: &str,
+        kind: &'static str,
+        build: impl Fn(serde_json::Value) -> anyhow::Result<Box<dyn Operation>> + Send + Sync + 'static,
+    ) {
+        self.kinds
+            .write()
+            .insert(kind, (owner.into(), Arc::new(build)));
+    }
+
     /// The kinds registered, in registration order.
     pub fn kinds(&self) -> Vec<&'static str> {
         self.kinds.read().keys().copied().collect()
