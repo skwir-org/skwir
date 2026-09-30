@@ -148,6 +148,18 @@ pub mod keys {
     /// [`crate::metadata::TAGS_XATTR`]. Written by the tags plugin, read by
     /// search and the views.
     pub const TAGS: &str = "tags";
+    /// The user's rating, a `Value::UInt` from 1 to 10 (half stars: 10 is
+    /// five stars), stored in `user.baloo.rating` as KDE does; absent when
+    /// unrated. Written by the tags plugin, read by search, sort and views.
+    pub const RATING: &str = "rating";
+    /// The user's comment on a file, `Value::Text`, from `user.xdg.comment`.
+    pub const COMMENT: &str = "comment";
+    /// Where a downloaded file came from, `Value::Text` (a URL), from
+    /// `user.xdg.origin.url` as browsers, wget and curl record it.
+    pub const ORIGIN: &str = "origin";
+    /// The page that led to the download, `Value::Text` (a URL), from
+    /// `user.xdg.referrer.url`.
+    pub const REFERRER: &str = "referrer";
     /// Where the file says it was made: a picture's or a video's position,
     /// `Value::List` of two `Value::Float` (latitude, longitude, degrees).
     /// Read on demand (`crate::fields`), never at hydration (ADR-020).

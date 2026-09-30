@@ -202,7 +202,7 @@ fn disabled_plugins_cannot_be_edited_or_resurrected_by_a_settings_hook() {
     );
     assert_eq!(
         app.settings
-            .get::<bool>(bibli_core::settings::PRESERVE_TAGS_ON_COPY),
+            .get::<bool>(bibli_core::settings::PRESERVE_ATTRIBUTES_ON_COPY),
         Some(true)
     );
 }
@@ -253,7 +253,7 @@ fn queued_save_is_exclusive_and_revalidates_after_plugin_disable() {
     );
     assert_eq!(
         app.settings
-            .get::<bool>(bibli_core::settings::PRESERVE_TAGS_ON_COPY),
+            .get::<bool>(bibli_core::settings::PRESERVE_ATTRIBUTES_ON_COPY),
         Some(true)
     );
     assert_eq!(app.settings.get::<String>("sample.engine"), None);

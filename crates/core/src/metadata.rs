@@ -22,6 +22,32 @@ pub fn same_tag(a: &str, b: &str) -> bool {
         .eq(b.chars().flat_map(char::to_lowercase))
 }
 
+/// The setting where the tags plugin keeps the colors the user chose,
+/// `{ tag in lowercase = color }`; the UI reads it to draw tags.
+pub const TAG_COLOR_SETTING: &str = "tags.colors";
+
+/// The colors a tag can wear, by name: the tags plugin stores a user's
+/// choice under one of these (`tags.colors`), and the UI draws each with a
+/// token of its theme. A tag without a choice wears [`tag_color`]'s.
+pub const TAG_COLORS: [&str; 8] = [
+    "red", "orange", "yellow", "green", "teal", "blue", "purple", "pink",
+];
+
+/// The color a tag wears when the user chose none, as an index into
+/// [`TAG_COLORS`]: from its name, ignoring case, so every view, every
+/// session and every machine agrees without storing anything.
+pub fn tag_color(tag: &str) -> usize {
+    // FNV-1a: stable across releases, unlike std's hasher.
+    let mut hash: u32 = 0x811c_9dc5;
+    for c in tag.chars().flat_map(char::to_lowercase) {
+        let mut buf = [0; 4];
+        for b in c.encode_utf8(&mut buf).bytes() {
+            hash = (hash ^ u32::from(b)).wrapping_mul(0x0100_0193);
+        }
+    }
+    hash as usize % TAG_COLORS.len()
+}
+
 /// Fills fields on freshly stat-ed entries.
 pub trait MetadataProvider: Send + Sync {
     fn id(&self) -> &'static str;

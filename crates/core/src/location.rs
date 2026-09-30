@@ -240,6 +240,8 @@ pub enum SortKey {
     Name,
     Size,
     Modified,
+    /// The user's rating (`keys::RATING`); unrated sorts as none.
+    Rating,
 }
 
 /// A pane's sort and filter settings; the sorted order is cached in the listing.
@@ -329,6 +331,7 @@ struct Delta {
     order: bool,
     size: bool,
     modified: bool,
+    rating: bool,
 }
 
 impl Delta {
@@ -337,6 +340,7 @@ impl Delta {
         let name = old.name != new.name;
         let size = old.metadata.value(keys::SIZE) != new.metadata.value(keys::SIZE);
         let modified = old.metadata.value(keys::MODIFIED) != new.metadata.value(keys::MODIFIED);
+        let rating = old.metadata.value(keys::RATING) != new.metadata.value(keys::RATING);
         Delta {
             any: old != new,
             name,
@@ -344,6 +348,7 @@ impl Delta {
             order: name || old.is_dir() != new.is_dir(),
             size,
             modified,
+            rating,
         }
     }
 
@@ -355,6 +360,7 @@ impl Delta {
             order: true,
             size: true,
             modified: true,
+            rating: true,
         }
     }
 }
@@ -398,6 +404,7 @@ pub struct Listing {
     /// sorts by those keys depend on them.
     size_version: u64,
     modified_version: u64,
+    rating_version: u64,
     sort_cache: parking_lot::Mutex<Option<SortCache>>,
 }
 
@@ -414,6 +421,7 @@ impl Default for Listing {
             order_version: id,
             size_version: id,
             modified_version: id,
+            rating_version: id,
             sort_cache: parking_lot::Mutex::new(None),
         }
     }
@@ -464,6 +472,7 @@ impl Listing {
             (delta.order, &mut self.order_version),
             (delta.size, &mut self.size_version),
             (delta.modified, &mut self.modified_version),
+            (delta.rating, &mut self.rating_version),
             (delta.any, &mut self.version),
         ] {
             if moved {
@@ -499,6 +508,7 @@ impl Listing {
                 delta.order |= d.order;
                 delta.size |= d.size;
                 delta.modified |= d.modified;
+                delta.rating |= d.rating;
             }
             indexmap::map::Entry::Vacant(slot) => {
                 if insert {
@@ -551,6 +561,7 @@ impl Listing {
                 SortKey::Name => 0,
                 SortKey::Size => self.size_version,
                 SortKey::Modified => self.modified_version,
+                SortKey::Rating => self.rating_version,
             },
         );
         let mut cache = self.sort_cache.lock();
@@ -615,6 +626,11 @@ impl Listing {
                 .and_then(Value::as_time)
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map_or(0, |d| d.as_secs()),
+            SortKey::Rating => e
+                .metadata
+                .value(keys::RATING)
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
         };
         (!e.is_dir(), num, &*slot.key, e.id)
     }
@@ -889,6 +905,42 @@ mod tests {
         listing.apply(ListingEvent::Updated(vec![stat(file(2, "f2"), 9)]));
         let sizes: Vec<u64> = listing.sorted(by_size).iter().map(|id| id.ino).collect();
         assert_eq!(sizes, [3, 1, 4, 2]);
+    }
+
+    #[test]
+    fn a_rating_changed_on_disk_sorts_the_listing_again() {
+        use crate::entry::{Provenance, Value, keys};
+        let rated = |ino, name: &str, rating: Option<u64>| {
+            let mut e = stat(
+                Entry::new(EntryId { dev: 1, ino }, name, EntryKind::File),
+                1,
+            );
+            if let Some(r) = rating {
+                e.metadata
+                    .set(keys::RATING, Value::UInt(r), Provenance::User);
+            }
+            e
+        };
+        let mut listing = Listing::default();
+        listing.apply(ListingEvent::Added(vec![
+            rated(1, "a", Some(4)),
+            rated(2, "b", None),
+            rated(3, "c", Some(10)),
+        ]));
+        let best_first = SortSpec {
+            key: SortKey::Rating,
+            ascending: false,
+            ..SortSpec::default()
+        };
+        let order = |l: &Listing| {
+            l.sorted(best_first)
+                .iter()
+                .map(|id| id.ino)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(order(&listing), [3, 1, 2], "unrated last");
+        listing.apply(ListingEvent::Updated(vec![rated(2, "b", Some(6))]));
+        assert_eq!(order(&listing), [3, 2, 1]);
     }
 
     #[test]

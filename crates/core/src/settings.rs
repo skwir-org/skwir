@@ -10,7 +10,7 @@ use crate::os_path::PathArg;
 use serde::de::DeserializeOwned;
 use std::io::Write;
 
-pub const PRESERVE_TAGS_ON_COPY: &str = "core.preserve_tags_on_copy";
+pub const PRESERVE_ATTRIBUTES_ON_COPY: &str = "core.preserve_attributes_on_copy";
 /// `last` or `folder`.
 pub const STARTUP: &str = "core.startup";
 pub const STARTUP_FOLDER: &str = "core.startup_folder";
@@ -523,11 +523,14 @@ struct ApplyArgs {
 /// Register the nonblocking settings command. Validation is repeated on the
 /// worker in case a plugin was disabled after the command was queued.
 pub(crate) fn register(app: &crate::App) {
+    // Copies kept only tags before they kept every user attribute.
+    app.settings
+        .rename("core.preserve_tags_on_copy", PRESERVE_ATTRIBUTES_ON_COPY);
     app.settings.declare(
         SettingSpec::toggle(
-            PRESERVE_TAGS_ON_COPY,
-            "Keep tags when copying",
-            "Copies carry the tags of their source. If the destination cannot store tags the copy fails; turn this off to copy without them.",
+            PRESERVE_ATTRIBUTES_ON_COPY,
+            "Keep tags and attributes when copying",
+            "Copies carry their source's tags, rating, comment and where it was downloaded from. If the destination cannot store them the copy fails; turn this off to copy without them.",
             true,
         )
         .section("Files"),

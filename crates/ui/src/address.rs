@@ -167,12 +167,16 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
         })
         .collect();
     let spec = shell.sort_spec();
+    // Ratings are the tags plugin's: no sort by them while it is off.
+    let rated = shell.app.commands.get("tags.rate").is_some();
     let order: Vec<Button> = [
         ("name", "Name", SortKey::Name),
         ("size", "Size", SortKey::Size),
         ("modified", "Date modified", SortKey::Modified),
+        ("rating", "Rating", SortKey::Rating),
     ]
     .into_iter()
+    .filter(|(_, _, sort_key)| rated || *sort_key != SortKey::Rating)
     .map(|(key, label, sort_key)| {
         let current = spec.key == sort_key;
         // The current key again keeps its direction: the next group says it.
@@ -199,6 +203,7 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
         SortKey::Name => ("A to Z", "Z to A"),
         SortKey::Size => ("Smallest first", "Largest first"),
         SortKey::Modified => ("Oldest first", "Newest first"),
+        SortKey::Rating => ("Lowest first", "Highest first"),
     };
     let direction: Vec<Button> = [(true, up), (false, down)]
         .into_iter()

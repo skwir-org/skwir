@@ -133,7 +133,7 @@ fn make_plan(root: &Path, t: &Tree, steps: &[Step]) -> Plan {
                     entry: e,
                     dest_dir: root.join(format!("d{dir}")),
                     new_name: Some(format!("copy_of_f{file}").into()),
-                    preserve_tags: true,
+                    preserve_attributes: true,
                 }) as Box<dyn Operation>
             }),
             Step::Swap { a, b } if a != b => match (file_ref(root, *a), file_ref(root, *b)) {
@@ -402,7 +402,7 @@ fn undo_of_a_copy_puts_it_in_the_trash_and_redo_brings_it_back() {
         entry: src,
         dest_dir: root.join("dest"),
         new_name: None,
-        preserve_tags: true,
+        preserve_attributes: true,
     };
     apply(&app, &Plan::with_steps("copy", vec![Box::new(copy)]));
     let copied = root.join("dest/a.txt");
@@ -453,7 +453,7 @@ fn copying_onto_an_unrelated_folder_of_the_same_name_conflicts() {
         entry: EntryRef::from_path(root.join("Photos")).unwrap(),
         dest_dir: root.join("dest"),
         new_name: None,
-        preserve_tags: true,
+        preserve_attributes: true,
     };
     let ctx = StepContext::detached();
     assert!(matches!(copy.check(&ctx), StepStatus::Conflict { .. }));
@@ -486,7 +486,7 @@ fn a_named_pipe_is_copied_as_a_pipe_without_blocking() {
         entry: EntryRef::from_path(root.join("src")).unwrap(),
         dest_dir: root.join("dest"),
         new_name: None,
-        preserve_tags: true,
+        preserve_attributes: true,
     };
     copy.apply(&StepContext::detached()).unwrap();
     assert!(
@@ -508,7 +508,7 @@ fn a_cancelled_copy_stops_and_leaves_nothing_behind() {
         entry: EntryRef::from_path(root.join("src")).unwrap(),
         dest_dir: root.join("dest"),
         new_name: None,
-        preserve_tags: true,
+        preserve_attributes: true,
     };
     let cancel = bibli_core::cancel::CancelToken::new();
     cancel.cancel();
@@ -537,7 +537,7 @@ fn names_that_leave_the_directory_are_rejected() {
             entry: a.clone(),
             dest_dir: root.join("dest"),
             new_name: Some(bad.into()),
-            preserve_tags: true,
+            preserve_attributes: true,
         };
         assert!(
             matches!(copy.check(&ctx), StepStatus::Conflict { .. }),

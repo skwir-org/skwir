@@ -1,4 +1,5 @@
-//! Tag preservation through the user-facing copy commands and saved plans.
+//! Tags and other user attributes kept through the user-facing copy
+//! commands and saved plans.
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::Path;
 use std::sync::Arc;
@@ -8,7 +9,7 @@ use bibli_core::app::{App, AppConfig};
 use bibli_core::command::{Invocation, Outcome};
 use bibli_core::location::Location;
 use bibli_core::op::{Copy, EntryRef, Operation, Plan, StepContext};
-use bibli_core::settings::{PRESERVE_TAGS_ON_COPY, SaveState};
+use bibli_core::settings::{PRESERVE_ATTRIBUTES_ON_COPY, SaveState};
 use bibli_plugin_tags::{read_tags, write_tags};
 use serde_json::{Value, json};
 
@@ -35,7 +36,7 @@ fn preference(app: &App, enabled: bool) {
     dispatch(
         app,
         "settings.apply",
-        &json!({"changes": {PRESERVE_TAGS_ON_COPY: enabled.to_string()}}),
+        &json!({"changes": {PRESERVE_ATTRIBUTES_ON_COPY: enabled.to_string()}}),
     );
     let deadline = Instant::now() + Duration::from_secs(10);
     while app.settings.save_status().1 == SaveState::Saving {
@@ -46,7 +47,7 @@ fn preference(app: &App, enabled: bool) {
 }
 
 #[test]
-fn copy_commands_preserve_tags_and_capture_the_live_preference() {
+fn copy_commands_preserve_attributes_and_capture_the_live_preference() {
     for command in ["copy", "clipboard_paste", "shelf.copy_here"] {
         for preserve in [true, false] {
             let tmp = tempdir();
@@ -63,12 +64,15 @@ fn copy_commands_preserve_tags_and_capture_the_live_preference() {
             ] {
                 write_tags(path, &["review".into(), "été".into()]).unwrap();
             }
-            xattr::set(
-                source.join("nested/photo.txt"),
-                "user.unrelated",
-                b"leave behind",
-            )
-            .unwrap();
+            // Every user attribute travels with the tags: a rating, a
+            // comment, where the file was downloaded from.
+            for (name, value) in [
+                ("user.baloo.rating", &b"8"[..]),
+                ("user.xdg.comment", "from “the trip”".as_bytes()),
+                ("user.xdg.origin.url", b"https://example.org/photo.txt"),
+            ] {
+                xattr::set(source.join("nested/photo.txt"), name, value).unwrap();
+            }
             std::fs::set_permissions(
                 source.join("nested/photo.txt"),
                 std::fs::Permissions::from_mode(0o444),
@@ -84,7 +88,10 @@ fn copy_commands_preserve_tags_and_capture_the_live_preference() {
             );
             app.plugins
                 .add(Arc::new(bibli_plugin_shelf::ShelfPlugin::default()), &app);
-            assert_eq!(app.settings.get::<bool>(PRESERVE_TAGS_ON_COPY), Some(true));
+            assert_eq!(
+                app.settings.get::<bool>(PRESERVE_ATTRIBUTES_ON_COPY),
+                Some(true)
+            );
             if !preserve {
                 preference(&app, false);
             }
@@ -110,7 +117,7 @@ fn copy_commands_preserve_tags_and_capture_the_live_preference() {
             let Outcome::Plan(plan) = outcome else {
                 panic!("expected copy plan")
             };
-            assert_eq!(plan.steps[0].args()["preserve_tags"], preserve);
+            assert_eq!(plan.steps[0].args()["preserve_attributes"], preserve);
             let plan = Plan::from_data(&plan.to_data(), &app.ops).unwrap();
             // Settings changed after planning must not change apply or redo.
             preference(&app, !preserve);
@@ -140,10 +147,13 @@ fn copy_commands_preserve_tags_and_capture_the_live_preference() {
                     & 0o777,
                 0o444
             );
-            assert!(
-                xattr::get(copied.join("nested/photo.txt"), "user.unrelated")
-                    .unwrap()
-                    .is_none()
+            assert_eq!(
+                xattr::get(copied.join("nested/photo.txt"), "user.xdg.comment").unwrap(),
+                preserve.then(|| "from “the trip”".as_bytes().to_vec())
+            );
+            assert_eq!(
+                xattr::get(copied.join("nested/photo.txt"), "user.baloo.rating").unwrap(),
+                preserve.then(|| b"8".to_vec())
             );
             assert!(read_tags(&copied.join("untagged.txt")).is_empty());
             assert_eq!(
@@ -205,7 +215,7 @@ fn failed_copy_does_not_publish_a_partial_tree_or_touch_an_existing_target() {
 }
 
 #[test]
-fn old_serialized_copy_plans_default_to_preserving_tags() {
+fn old_serialized_copy_plans_default_to_preserving_attributes() {
     let tmp = tempdir();
     let source = tmp.path().join("source.txt");
     std::fs::write(&source, "synthetic").unwrap();
@@ -215,7 +225,15 @@ fn old_serialized_copy_plans_default_to_preserving_tags() {
         "new_name": "copy.txt"
     }))
     .unwrap();
-    assert!(copy.preserve_tags);
+    assert!(copy.preserve_attributes);
+    // A plan from when only tags were kept says so under the old name.
+    let copy: Copy = serde_json::from_value(json!({
+        "entry": EntryRef::from_path(tmp.path().join("source.txt")).unwrap(),
+        "dest_dir": tmp.path(),
+        "preserve_tags": false
+    }))
+    .unwrap();
+    assert!(!copy.preserve_attributes);
 }
 
 /// A tmpfs mount on another device that supports user xattrs, if any.
@@ -245,7 +263,7 @@ fn other_device(reference: &Path) -> Option<std::path::PathBuf> {
 }
 
 #[test]
-fn cross_device_move_keeps_tags_regardless_of_the_copy_preference() {
+fn cross_device_move_keeps_attributes_regardless_of_the_copy_preference() {
     let tmp = tempdir();
     let Some(remote) = other_device(tmp.path()) else {
         eprintln!("skipped: no second filesystem with user xattrs available");
@@ -257,6 +275,7 @@ fn cross_device_move_keeps_tags_regardless_of_the_copy_preference() {
     for path in [&source, &source.join("nested/track.txt")] {
         write_tags(path, &["keep".into()]).unwrap();
     }
+    xattr::set(source.join("nested/track.txt"), "user.xdg.comment", b"kept").unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins.add(
         Arc::new(bibli_plugin_ops_basic::OpsBasicPlugin::default()),
@@ -280,6 +299,10 @@ fn cross_device_move_keeps_tags_regardless_of_the_copy_preference() {
     assert!(!source.exists());
     assert_eq!(read_tags(&moved), ["keep"]);
     assert_eq!(read_tags(&moved.join("nested/track.txt")), ["keep"]);
+    assert_eq!(
+        xattr::get(moved.join("nested/track.txt"), "user.xdg.comment").unwrap(),
+        Some(b"kept".to_vec())
+    );
     assert_eq!(
         std::fs::read(moved.join("nested/track.txt")).unwrap(),
         b"synthetic content"

@@ -286,12 +286,16 @@ pub struct Copy {
     #[serde(default, with = "optional_name")]
     #[schemars(with = "Option<PathArg>")]
     pub new_name: Option<OsString>,
-    /// Captured when the plan is created, so redo does not consult live settings.
-    #[serde(default = "preserve_tags_default")]
-    pub preserve_tags: bool,
+    /// Whether the copy keeps the source's `user.*` extended attributes
+    /// (tags, rating, comment, where it was downloaded from). Captured when
+    /// the plan is created, so redo does not consult live settings; plans
+    /// written before attributes other than tags were kept say
+    /// `preserve_tags`, which means the same now.
+    #[serde(default = "preserve_attributes_default", alias = "preserve_tags")]
+    pub preserve_attributes: bool,
 }
 
-fn preserve_tags_default() -> bool {
+fn preserve_attributes_default() -> bool {
     true
 }
 
@@ -319,8 +323,8 @@ impl Copy {
             entry,
             dest_dir,
             new_name: None,
-            preserve_tags: settings
-                .get(crate::settings::PRESERVE_TAGS_ON_COPY)
+            preserve_attributes: settings
+                .get(crate::settings::PRESERVE_ATTRIBUTES_ON_COPY)
                 .unwrap_or(true),
         }
     }
@@ -383,7 +387,7 @@ impl Operation for Copy {
         }
         let src = self.entry.resolve()?;
         let target = self.target(&src);
-        copy_staged(&src, &target, &self.dest_dir, self.preserve_tags, ctx)?;
+        copy_staged(&src, &target, &self.dest_dir, self.preserve_attributes, ctx)?;
         let r = EntryRef::from_path(&target)
             .ok_or_else(|| anyhow::anyhow!("copy vanished: {}", target.display()))?;
         // Undo puts the copy in the trash rather than deleting it: it may
@@ -431,13 +435,13 @@ fn same_tree(src: &Path, copy: &Path, ctx: &StepContext) -> anyhow::Result<bool>
 
 /// Copy `src` to `target` through a private staging directory inside
 /// `dest_dir`, publishing with a no-replace rename only after content and
-/// tags are complete. A failed tag write must not leave a partial destination
+/// attributes are complete. A failed attribute write must not leave a partial destination
 /// that `check()` would call already done. Shared by Copy and cross-device Move.
 fn copy_staged(
     src: &Path,
     target: &Path,
     dest_dir: &Path,
-    preserve_tags: bool,
+    preserve_attributes: bool,
     ctx: &StepContext,
 ) -> anyhow::Result<()> {
     ctx.add_total(tree_size(src, ctx)?);
@@ -446,7 +450,7 @@ fn copy_staged(
         .permissions(std::fs::Permissions::from_mode(0o700))
         .tempdir_in(dest_dir)?;
     let staged = staging.path().join("entry");
-    let result = copy_recursive_with_tags(src, &staged, preserve_tags, ctx)
+    let result = copy_recursive_with_attributes(src, &staged, preserve_attributes, ctx)
         .and_then(|()| rename_noreplace(&staged, target));
     if let Err(error) = result {
         // Completed subdirectories may already have read-only permissions.
@@ -494,7 +498,12 @@ fn remove_staged_copy(path: &Path) -> std::io::Result<()> {
 /// second on a slow disk.
 const COPY_CHUNK: usize = 8 << 20;
 
-fn copy_file(src: &Path, dst: &Path, preserve_tags: bool, ctx: &StepContext) -> anyhow::Result<()> {
+fn copy_file(
+    src: &Path,
+    dst: &Path,
+    preserve_attributes: bool,
+    ctx: &StepContext,
+) -> anyhow::Result<()> {
     // Non-blocking, then checked: a file swapped for a FIFO since it was
     // listed must not block the executor in open(2).
     let mut sf = {
@@ -522,8 +531,8 @@ fn copy_file(src: &Path, dst: &Path, preserve_tags: bool, ctx: &StepContext) -> 
             .with_context(|| format!("copy {} -> {}", src.display(), dst.display()))?;
     }
     // Set attributes before restoring a read-only source's permissions.
-    if preserve_tags {
-        copy_tags(src, dst)?;
+    if preserve_attributes {
+        copy_attributes(src, dst)?;
     }
     df.set_permissions(m.permissions())?;
     let _ = df.set_modified(m.modified()?);
@@ -576,10 +585,10 @@ fn copy_contents(
     }
 }
 
-fn copy_recursive_with_tags(
+fn copy_recursive_with_attributes(
     src: &Path,
     dst: &Path,
-    preserve_tags: bool,
+    preserve_attributes: bool,
     ctx: &StepContext,
 ) -> anyhow::Result<()> {
     ctx.check_cancelled()?;
@@ -592,14 +601,19 @@ fn copy_recursive_with_tags(
         std::fs::create_dir(dst)?;
         for e in std::fs::read_dir(src)? {
             let e = e?;
-            copy_recursive_with_tags(&e.path(), &dst.join(e.file_name()), preserve_tags, ctx)?;
+            copy_recursive_with_attributes(
+                &e.path(),
+                &dst.join(e.file_name()),
+                preserve_attributes,
+                ctx,
+            )?;
         }
-        if preserve_tags {
-            copy_tags(src, dst)?;
+        if preserve_attributes {
+            copy_attributes(src, dst)?;
         }
         std::fs::set_permissions(dst, m.permissions())?;
     } else if kind.is_file() {
-        copy_file(src, dst, preserve_tags, ctx)?;
+        copy_file(src, dst, preserve_attributes, ctx)?;
     } else if kind.is_fifo() {
         // A named pipe has no content to copy; reading one would wait for a
         // writer forever. Make a new pipe, as `cp -R` does.
@@ -622,16 +636,26 @@ fn copy_recursive_with_tags(
     Ok(())
 }
 
-fn copy_tags(src: &Path, dst: &Path) -> anyhow::Result<()> {
-    let tags = match xattr::get(src, crate::metadata::TAGS_XATTR) {
-        Ok(tags) => tags,
-        // A source filesystem without user attributes cannot have bibli tags.
-        Err(error) if error.kind() == std::io::ErrorKind::Unsupported => None,
-        Err(error) => return Err(error).context("read source tags while copying"),
+/// Copy the user's extended attributes (`user.*`: tags, rating, comment,
+/// where a download came from), as `cp --preserve=xattr` does. The other
+/// namespaces are the system's (ACLs, security labels, capabilities) and
+/// stay as the destination makes them.
+fn copy_attributes(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    let names = match xattr::list(src) {
+        Ok(names) => names,
+        // A source filesystem without user attributes has none to keep.
+        Err(error) if error.kind() == std::io::ErrorKind::Unsupported => return Ok(()),
+        Err(error) => return Err(error).context("read source attributes while copying"),
     };
-    if let Some(tags) = tags {
-        xattr::set(dst, crate::metadata::TAGS_XATTR, &tags).context(
-            "preserve tags while copying; check destination xattr support and permissions, or disable core.preserve_tags_on_copy in Settings",
+    for name in names.filter(|n| n.as_encoded_bytes().starts_with(b"user.")) {
+        // One removed since it was listed is not there to keep.
+        let Some(value) =
+            xattr::get(src, &name).context("read a source attribute while copying")?
+        else {
+            continue;
+        };
+        xattr::set(dst, &name, &value).context(
+            "keep tags and other attributes while copying; check destination xattr support and permissions, or turn off “Keep tags and attributes when copying” in Settings",
         )?;
     }
     Ok(())

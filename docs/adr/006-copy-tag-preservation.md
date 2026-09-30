@@ -1,4 +1,4 @@
-# ADR-006: Copy tag preservation
+# ADR-006: Copy tag preservation (now: user attributes)
 
 Status: accepted, 2026-09-19
 
@@ -34,3 +34,24 @@ Copying tagged data to a filesystem without user xattrs requires an explicit
 opt-out; there is no silent metadata loss or sidecar fallback. No filesystem
 allowlist is maintained: actual xattr operations determine support. The staged
 copy avoids presenting a partial result as an already-applied operation.
+
+## Amendment: every user attribute (2026-09-30)
+
+Tags are no longer the only note a file carries: the tags plugin also reads
+and writes a rating (`user.baloo.rating`) and a comment (`user.xdg.comment`),
+and shows where a download came from (`user.xdg.origin.url`,
+`user.xdg.referrer.url`). Keeping only the tags lost the rest on every copy.
+
+A copy that preserves now keeps every attribute of the `user.*` namespace,
+as `cp --preserve=xattr` does, whoever wrote it; the other namespaces
+(ACLs, security labels, file capabilities) stay the system's and are left
+to the destination. The rules above are unchanged: a source filesystem
+without user attributes has none to keep, a destination that refuses one
+fails the copy, the staged copy is published only once they are written,
+and a cross-device move always keeps them.
+
+The preference became `core.preserve_attributes_on_copy` ("Keep tags and
+attributes when copying"); `Settings::rename` carries a choice made under
+`core.preserve_tags_on_copy`. The operation's field became
+`preserve_attributes`, and a plan serialized with `preserve_tags` reads as
+it, so a journal written before keeps its meaning.
