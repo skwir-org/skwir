@@ -343,12 +343,17 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
         .px_3()
         .pb_3()
         .text_xs();
+    // A group's title is a heading, not one more label: in the text's own
+    // color and weight where the labels are muted, and ruled off from the
+    // group above it.
     for (g, group) in groups.into_iter().enumerate() {
         list = list.child(
             div()
+                .when(g > 0, |d| d.mt_2().border_t_1().border_color(theme.border))
                 .pt_3()
                 .pb_1()
-                .text_color(theme.text_muted)
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(theme.text)
                 .child(group.title),
         );
         for (r, row) in group.rows.into_iter().enumerate() {
