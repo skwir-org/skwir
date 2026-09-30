@@ -53,9 +53,11 @@ fn replaced(name: &OsStr) -> Option<OsString> {
     Some(with_suffix(stem, ".xmp"))
 }
 
+/// Whether `name` ends in `.xmp` (any case). Compared as bytes: four
+/// bytes from the end of a name may fall inside a character (`crème`).
 fn is_sidecar(name: &OsStr) -> bool {
-    name.to_str()
-        .is_some_and(|n| n.len() > 4 && n[n.len() - 4..].eq_ignore_ascii_case(".xmp"))
+    let bytes = name.as_encoded_bytes();
+    bytes.len() > 4 && bytes[bytes.len() - 4..].eq_ignore_ascii_case(b".xmp")
 }
 
 /// Whether another file of `dir` than `path` has `path`'s stem: then
@@ -280,6 +282,7 @@ impl Companion for XmpCompanion {
         if !is_sidecar(name) {
             return None;
         }
+        // The last four bytes are `.xmp`: cutting them is cutting a name.
         let file = &s[..s.len() - 4];
         Path::new(file).extension()?;
         (!file.starts_with('.')).then(|| file.into())

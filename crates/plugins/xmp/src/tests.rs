@@ -141,3 +141,45 @@ fn xmp_inside_a_file_is_read_for_details() {
         .unwrap();
     assert_eq!(value.as_str(), Some("Keywords trip · 2 stars"));
 }
+
+/// A name whose fourth byte from the end falls inside a character: the
+/// batch of a folder holding one read without a panic.
+#[test]
+fn names_with_accents_are_read_as_names() {
+    let tmp = home_tempdir();
+    let dir = tmp.path().join("Crème brûlée");
+    std::fs::create_dir(&dir).unwrap();
+    // `abcèdef`: 8 bytes, the fourth from the end inside `è`.
+    let names = ["abcèdef", "Crème brûlée.jpg", "è.jpg.xmp", "Été.XMP", "ab"];
+    for name in names {
+        std::fs::write(dir.join(name), SIDECAR).unwrap();
+    }
+    std::fs::write(dir.join("è.jpg"), b"x").unwrap();
+    let store = XmpStore::default();
+    let paths: Vec<PathBuf> = names
+        .iter()
+        .chain(["è.jpg"].iter())
+        .map(|n| dir.join(n))
+        .collect();
+    let probes: Vec<Probe<'_>> = paths
+        .iter()
+        .map(|p| Probe {
+            path: p,
+            name: p.file_name().unwrap(),
+            attributes: &[],
+            folder: false,
+        })
+        .collect();
+    let read = store.read(&dir, &probes, None);
+    assert_eq!(
+        read[5].as_ref().map(Notes::tag_names),
+        Some(vec!["trip".to_owned()])
+    );
+    assert!(read[..5].iter().all(Option::is_none));
+    assert!(is_sidecar(OsStr::new("Été.XMP")) && !is_sidecar(OsStr::new("abcèdef")));
+    assert_eq!(
+        XmpCompanion.owner(OsStr::new("è.jpg.xmp")).as_deref(),
+        Some(OsStr::new("è.jpg"))
+    );
+    assert_eq!(XmpCompanion.owner(OsStr::new("abcèdef")), None);
+}
