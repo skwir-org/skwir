@@ -1,6 +1,6 @@
 [package]
 name = "bibli-plugin-tags"
-description = "bibli plugin: tags stored as xattrs (user.xdg.tags), no database"
+description = "bibli plugin: tags, ratings and comments stored as xattrs, no database"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,6 +14,9 @@ serde_json.workspace = true
 schemars.workspace = true
 xattr.workspace = true
 rustix.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
+toml.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

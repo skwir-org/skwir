@@ -1,28 +1,44 @@
-//! bibli plugin: tags. Tags live in the `user.xdg.tags` extended attribute
-//! (comma-separated, the freedesktop convention), so they travel with the
-//! file and need no database. A metadata provider surfaces them as the
-//! `tags` field; a `set_tags` operation writes them with a proper inverse.
+//! bibli plugin: tags and the other notes a file carries in its extended
+//! attributes, so they travel with the file and need no database: tags in
+//! `user.xdg.tags` (comma-separated, the freedesktop convention), a rating
+//! in `user.baloo.rating` and a comment in `user.xdg.comment`, as Dolphin
+//! writes them, and where a download came from in `user.xdg.origin.url`
+//! and `user.xdg.referrer.url`, as browsers and download tools record it.
+//!
+//! A metadata provider surfaces them as fields during hydration (one
+//! `listxattr` per file); operations write the first three with proper
+//! inverses. The tags the user has are remembered as suggestions in the
+//! cache (`vocabulary`), and the color a user chose for a tag is a setting
+//! (`tags.colors`); every other tag wears the color its name gives it.
+
+mod attrs;
+mod ops;
+mod vocabulary;
 
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::sync::Arc;
 
 use bibli_core::app::App;
+use bibli_core::cancel::CancelToken;
 use bibli_core::command::{Invocation, Outcome};
-use bibli_core::entry::{Entry, Metadata, Provenance, Value, keys};
-use bibli_core::metadata::{MetadataProvider, same_tag};
-use bibli_core::op::{Change, EntryRef, Operation, Plan, ResolveError, StepContext, StepStatus};
+use bibli_core::entry::keys;
+use bibli_core::metadata::{TAG_COLOR_SETTING, TAG_COLORS, same_tag};
+use bibli_core::op::{EntryRef, Plan};
 use bibli_core::plugin::Plugin;
-use bibli_core::registry::{KeyBinding, MenuItem};
+use bibli_core::registry::{KeyBinding, MenuItem, MenuSource};
+use bibli_core::scheduler::Priority;
+use bibli_core::settings::SettingSpec;
 use bibli_core::workspace::PaneId;
+use parking_lot::Mutex;
 
-const ID: &str = "tags";
+pub use attrs::{parse_tags, read_comment, read_rating, read_tags, tags_of, write_tags};
+pub use ops::{SetComment, SetRating, SetTags};
+
+use vocabulary::Vocabulary;
+
+pub(crate) const ID: &str = "tags";
 /// The metadata field key.
 pub const FIELD: &str = keys::TAGS;
-/// Read-only companion field from `user.xdg.comment`.
-pub const COMMENT_FIELD: &str = "comment";
-use bibli_core::metadata::TAGS_XATTR as XATTR_TAGS;
-const XATTR_COMMENT: &str = "user.xdg.comment";
 
 /// At most this many files are read by `tags.list { read }`: enough for
 /// the tags a search found, bounded for one that found a disk.
@@ -37,218 +53,244 @@ struct ListArgs {
     read: bool,
 }
 
-/// Tags of a path, from its xattr. Missing, unsupported, or unreadable → empty.
-pub fn read_tags(path: &Path) -> Vec<String> {
-    xattr::get(path, XATTR_TAGS)
-        .ok()
-        .flatten()
-        .map(|b| parse_tags(&String::from_utf8_lossy(&b)))
-        .unwrap_or_default()
-}
-
-/// Split a comma-separated tag list, trimming and dropping empties and
-/// duplicates (tags ignore case: [`same_tag`]; the first spelling stays).
-pub fn parse_tags(s: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for t in s.split(',') {
-        let t = t.trim();
-        if !t.is_empty() && !out.iter().any(|x| same_tag(x, t)) {
-            out.push(t.to_owned());
-        }
-    }
-    out
-}
-
-/// Write tags; an empty list removes the attribute.
-pub fn write_tags(path: &Path, tags: &[String]) -> std::io::Result<()> {
-    if tags.is_empty() {
-        match xattr::remove(path, XATTR_TAGS) {
-            // ENODATA: the attribute was not there, which is what we wanted.
-            Err(e)
-                if rustix::io::Errno::from_io_error(&e) == Some(rustix::io::Errno::NODATA)
-                    || e.kind() == std::io::ErrorKind::NotFound =>
-            {
-                Ok(())
-            }
-            r => r,
-        }
-    } else {
-        xattr::set(path, XATTR_TAGS, tags.join(",").as_bytes())
-    }
-}
-
-fn same_set(a: &[String], b: &[String]) -> bool {
-    let mut a: Vec<&String> = a.iter().collect();
-    let mut b: Vec<&String> = b.iter().collect();
-    a.sort();
-    b.sort();
-    a == b
-}
-
-fn tags_field(tags: &[String]) -> Value {
-    Value::List(
-        tags.iter()
-            .map(|t| Value::Text(Arc::from(t.as_str())))
-            .collect(),
-    )
-}
-
-/// Tags recorded in an entry's metadata, if the provider filled them.
-pub fn tags_of(metadata: &Metadata) -> Option<Vec<String>> {
-    match metadata.value(FIELD)? {
-        Value::List(items) => Some(
-            items
-                .iter()
-                .filter_map(|v| v.as_str().map(str::to_owned))
-                .collect(),
-        ),
-        _ => None,
-    }
-}
-
-// ---------------------------------------------------------------- provider
-
-/// Fills `tags` (and `comment`) from xattrs during hydration.
-#[derive(Debug, Default)]
-pub struct TagsProvider;
-
-impl MetadataProvider for TagsProvider {
-    fn id(&self) -> &'static str {
-        ID
-    }
-    fn fill(&self, dir: &Path, entries: &mut [Entry]) {
-        for e in entries {
-            let path = dir.join(&e.name);
-            let tags = read_tags(&path);
-            if !tags.is_empty() {
-                e.metadata.set(FIELD, tags_field(&tags), Provenance::User);
-            }
-            if let Ok(Some(c)) = xattr::get(&path, XATTR_COMMENT) {
-                let c = String::from_utf8_lossy(&c).trim().to_owned();
-                if !c.is_empty() {
-                    e.metadata
-                        .set(COMMENT_FIELD, Value::Text(c.into()), Provenance::User);
-                }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------- operation
-
-/// Set the full tag list of an entry.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetTags {
-    pub entry: EntryRef,
-    pub tags: Vec<String>,
-}
-
-impl Operation for SetTags {
-    fn kind(&self) -> &'static str {
-        "set_tags"
-    }
-    fn clone_box(&self) -> Box<dyn Operation> {
-        Box::new(self.clone())
-    }
-    fn args(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("serializable")
-    }
-    fn describe(&self) -> Change {
-        Change::Metadata {
-            path: self.entry.path.clone(),
-            field: FIELD.into(),
-            words: None,
-        }
-    }
-    fn check(&self, _ctx: &StepContext) -> StepStatus {
-        match self.entry.resolve() {
-            Ok(p) if same_set(&read_tags(&p), &self.tags) => StepStatus::AlreadyDone,
-            Ok(_) => StepStatus::Pending { reversible: true },
-            Err(ResolveError::Gone(p)) => StepStatus::Conflict {
-                reason: format!("{} no longer exists", p.display()),
-            },
-            Err(e) => StepStatus::Conflict {
-                reason: e.to_string(),
-            },
-        }
-    }
-    fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
-        let path = self.entry.resolve()?;
-        let previous = read_tags(&path);
-        write_tags(&path, &self.tags)
-            .map_err(|e| anyhow::anyhow!("set tags on {}: {e}", path.display()))?;
-        Ok(Some(Box::new(SetTags {
-            entry: EntryRef::new(self.entry.id, path),
-            tags: previous,
-        })))
-    }
-}
-
-// ---------------------------------------------------------------- commands
-
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct TagsArgs {
     #[serde(default)]
     tags: Vec<String>,
+    /// The entries to act on; the pane's selection when omitted.
+    #[serde(default)]
+    entries: Vec<EntryRef>,
     #[serde(default)]
     pane: Option<PaneId>,
 }
 
-/// Current tags of a selected entry, read from the xattr: the listing's
-/// field can be stale (a watcher re-stat replaces metadata without running
-/// providers) and one getxattr per selected entry is cheap.
-fn current_tags(r: &EntryRef) -> Vec<String> {
-    read_tags(&r.path)
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct EditArgs {
+    /// Tags to give every selected entry that lacks them.
+    #[serde(default)]
+    add: Vec<String>,
+    /// Tags to take from every selected entry that has them.
+    #[serde(default)]
+    remove: Vec<String>,
+    /// The entries to act on; the pane's selection when omitted.
+    #[serde(default)]
+    entries: Vec<EntryRef>,
+    #[serde(default)]
+    pane: Option<PaneId>,
 }
 
-#[derive(Clone, Copy)]
-enum Mode {
-    Set,
-    Add,
-    Remove,
+#[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
+struct PaneArgs {
+    /// The entries to act on; the pane's selection when omitted.
+    #[serde(default)]
+    entries: Vec<EntryRef>,
+    #[serde(default)]
+    pane: Option<PaneId>,
 }
 
-fn tag_plan(app: &App, a: &TagsArgs, mode: Mode) -> anyhow::Result<Outcome> {
-    let pane = app.pane_or_active(a.pane);
-    let refs = app.selected_refs(pane);
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct RateArgs {
+    /// From 1 to 5 stars; 0 removes the rating.
+    stars: u8,
+    /// The entries to act on; the pane's selection when omitted.
+    #[serde(default)]
+    entries: Vec<EntryRef>,
+    #[serde(default)]
+    pane: Option<PaneId>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct CommentArgs {
+    /// The comment; empty removes it.
+    #[serde(default)]
+    text: String,
+    /// The entries to act on; the pane's selection when omitted.
+    #[serde(default)]
+    entries: Vec<EntryRef>,
+    #[serde(default)]
+    pane: Option<PaneId>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct ColorArgs {
+    tag: String,
+    /// One of `red`, `orange`, `yellow`, `green`, `teal`, `blue`, `purple`,
+    /// `pink`; omitted, the tag wears the color its name gives it.
+    #[serde(default)]
+    color: Option<String>,
+}
+
+/// The entries a command acts on: those it names, or the pane's selection.
+fn targets(app: &App, pane: Option<PaneId>, entries: Vec<EntryRef>) -> Vec<EntryRef> {
+    if entries.is_empty() {
+        app.selected_refs(app.pane_or_active(pane))
+    } else {
+        entries
+    }
+}
+
+/// A plan of one step per target entry, built from what each entry holds
+/// now (read from the file: the listing's field can be stale), leaving out
+/// the entries it would not change.
+fn per_entry<T: bibli_core::op::Operation + 'static>(
+    refs: Vec<EntryRef>,
+    title: String,
+    step: impl Fn(EntryRef) -> Option<T>,
+) -> anyhow::Result<Outcome> {
     if refs.is_empty() {
         anyhow::bail!("nothing selected");
     }
-    let wanted = parse_tags(&a.tags.join(","));
-    let verb = match mode {
-        Mode::Set => "set tags",
-        Mode::Add => "add tags",
-        Mode::Remove => "remove tags",
-    };
-    let mut plan = Plan::new(format!("{verb} {}", wanted.join(", ")));
+    let mut plan = Plan::new(title);
     for r in refs {
-        let current = current_tags(&r);
-        let tags = match mode {
-            Mode::Set => wanted.clone(),
-            // A tag already there under another case is kept as spelled.
-            Mode::Add => {
-                let mut t = current.clone();
-                for w in &wanted {
-                    if !t.iter().any(|x| same_tag(x, w)) {
-                        t.push(w.clone());
-                    }
-                }
-                t
-            }
-            Mode::Remove => current
-                .iter()
-                .filter(|t| !wanted.iter().any(|w| same_tag(w, t)))
-                .cloned()
-                .collect(),
-        };
-        plan.push(SetTags { entry: r, tags });
+        if let Some(op) = step(r) {
+            plan.push(op);
+        }
     }
     Ok(Outcome::Plan(plan))
 }
 
+/// `tags` with `add` given and `remove` taken, as spelled where they were
+/// already (tags ignore case).
+fn edited(current: &[String], add: &[String], remove: &[String]) -> Vec<String> {
+    let mut tags: Vec<String> = current
+        .iter()
+        .filter(|t| !remove.iter().any(|r| same_tag(r, t)))
+        .cloned()
+        .collect();
+    for a in add {
+        if !tags.iter().any(|t| same_tag(t, a)) {
+            tags.push(a.clone());
+        }
+    }
+    tags
+}
+
+/// "add tag work", "remove tags a, b", "add tag x and remove tag y".
+fn edit_title(add: &[String], remove: &[String]) -> String {
+    let part = |verb: &str, tags: &[String]| {
+        let noun = if tags.len() == 1 { "tag" } else { "tags" };
+        format!("{verb} {noun} {}", tags.join(", "))
+    };
+    match (add.is_empty(), remove.is_empty()) {
+        (false, true) => part("add", add),
+        (true, false) => part("remove", remove),
+        (false, false) => format!("{} and {}", part("add", add), part("remove", remove)),
+        (true, true) => "change tags".into(),
+    }
+}
+
+fn edit_plan(app: &App, vocabulary: &Arc<Vocabulary>, a: EditArgs) -> anyhow::Result<Outcome> {
+    let add = parse_tags(&a.add.join(","));
+    let remove = parse_tags(&a.remove.join(","));
+    vocabulary.used(&add);
+    per_entry(
+        targets(app, a.pane, a.entries),
+        edit_title(&add, &remove),
+        |r| {
+            let current = read_tags(&r.path);
+            let tags = edited(&current, &add, &remove);
+            (tags != current).then_some(SetTags { entry: r, tags })
+        },
+    )
+}
+
+/// `tags.selected`: what the tag editor starts from.
+fn selected(app: &App, vocabulary: &Vocabulary, a: PaneArgs) -> serde_json::Value {
+    let refs = targets(app, a.pane, a.entries);
+    // Keyed by the lowercase form, in the order first met.
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    for r in &refs {
+        for tag in read_tags(&r.path) {
+            match counts.iter_mut().find(|(t, _)| same_tag(t, &tag)) {
+                Some((_, n)) => *n += 1,
+                None => counts.push((tag, 1)),
+            }
+        }
+    }
+    let tags: Vec<serde_json::Value> = counts
+        .into_iter()
+        .map(|(name, count)| serde_json::json!({ "name": name, "count": count }))
+        .collect();
+    serde_json::json!({
+        "items": refs.len(),
+        "tags": tags,
+        "known": vocabulary.known(),
+    })
+}
+
+/// The comment of the pane's one selected entry, from what hydration read.
+fn remembered_comment(app: &App, pane: PaneId) -> Option<String> {
+    let ws = app.workspace.read();
+    let p = ws.pane(pane)?;
+    let mut ids = p.selection.iter();
+    let id = ids.next()?;
+    if ids.next().is_some() {
+        return None;
+    }
+    let comment = p.entry(id)?.metadata.value(keys::COMMENT)?;
+    comment.as_str().map(str::to_owned)
+}
+
+fn ask_comment(text: Option<&str>) -> Invocation {
+    let mut args = serde_json::json!({
+        "title": "Comment",
+        "placeholder": "A comment on the selection (empty removes it)",
+        "command": "tags.comment",
+        "field": "text",
+    });
+    if let Some(text) = text {
+        args["text"] = text.into();
+    }
+    Invocation::with_args("ui.ask", &args)
+}
+
+fn menu_item(title: &str, command: Invocation, order: i32, icon: &str) -> MenuItem {
+    MenuItem {
+        menu: "context".into(),
+        title: title.into(),
+        command,
+        when: Some("selection".into()),
+        order,
+        icon: Some(icon.into()),
+        submenu: None,
+    }
+}
+
+/// Record a tag's color (`None`: the one its name gives it) in the
+/// settings, on a worker.
+fn set_color(app: &App, lifetime: &CancelToken, tag: &str, color: Option<&str>) {
+    let (tag, color, weak) = (tag.to_lowercase(), color.map(str::to_owned), app.weak());
+    app.scheduler.spawn(
+        Priority::Normal,
+        "tags.color",
+        lifetime.child(),
+        move || {
+            let Some(app) = weak.upgrade() else { return };
+            let mut colors: toml::Table = app.settings.get(TAG_COLOR_SETTING).unwrap_or_default();
+            match color {
+                Some(color) => colors.insert(tag, toml::Value::String(color)),
+                None => colors.remove(&tag),
+            };
+            app.settings
+                .set(TAG_COLOR_SETTING, toml::Value::Table(colors));
+            if let Err(error) = app.settings.save() {
+                app.notify(
+                    bibli_core::app::NotifyLevel::Error,
+                    format!("The tag's color was not saved: {error:#}"),
+                );
+            }
+            app.wake();
+        },
+    );
+}
+
 /// The tags plugin.
 #[derive(Debug, Default)]
-pub struct TagsPlugin;
+pub struct TagsPlugin {
+    /// Ends with the plugin's registration: the vocabulary's reads and
+    /// writes, a color being saved.
+    lifetime: Mutex<Option<CancelToken>>,
+}
 
 impl Plugin for TagsPlugin {
     fn id(&self) -> &'static str {
@@ -258,34 +300,192 @@ impl Plugin for TagsPlugin {
         "Tags"
     }
     fn description(&self) -> &'static str {
-        "Tags stored as extended attributes, no database"
+        "Tags, ratings and comments kept in the files' extended attributes, no database; where downloads came from"
     }
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Files
     }
+    fn on_disable(&self, _app: &App) {
+        if let Some(lifetime) = self.lifetime.lock().take() {
+            lifetime.cancel();
+        }
+    }
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one registration, read top to bottom"
+    )]
     fn register(&self, app: &App) {
-        app.metadata.register(ID, Arc::new(TagsProvider));
+        let lifetime = app.lifetime().child();
+        if let Some(previous) = self.lifetime.lock().replace(lifetime.clone()) {
+            previous.cancel();
+        }
+        let vocabulary = Vocabulary::new(Some(app.cache.namespace(ID)), app, lifetime.clone());
+        app.metadata.register(
+            ID,
+            Arc::new(attrs::AttributesProvider {
+                vocabulary: Arc::clone(&vocabulary),
+            }),
+        );
         app.ops.register::<SetTags>(ID, "set_tags");
+        app.ops.register::<SetRating>(ID, "set_rating");
+        app.ops.register::<SetComment>(ID, "set_comment");
+        app.settings.declare(SettingSpec::data(
+            TAG_COLOR_SETTING,
+            "Colors the user chose for tags, by tag in lowercase: { tag = color }",
+            toml::Value::Table(toml::Table::new()),
+        ));
+
+        let v = Arc::clone(&vocabulary);
         app.commands.register::<TagsArgs, _>(
             ID,
             "tags.set",
             "Set tags",
             "Replace the selection's tags (plan)",
-            |a, app| tag_plan(app, &a, Mode::Set),
+            move |a, app| {
+                let tags = parse_tags(&a.tags.join(","));
+                v.used(&tags);
+                let title = if tags.is_empty() {
+                    "remove tags".to_owned()
+                } else {
+                    format!("set tags {}", tags.join(", "))
+                };
+                per_entry(targets(app, a.pane, a.entries), title, |r| {
+                    let current = read_tags(&r.path);
+                    (current != tags).then(|| SetTags {
+                        entry: r,
+                        tags: tags.clone(),
+                    })
+                })
+            },
         );
+        let v = Arc::clone(&vocabulary);
         app.commands.register::<TagsArgs, _>(
             ID,
             "tags.add",
             "Add tags",
             "Add tags to the selection (plan)",
-            |a, app| tag_plan(app, &a, Mode::Add),
+            move |a, app| {
+                edit_plan(
+                    app,
+                    &v,
+                    EditArgs {
+                        add: a.tags,
+                        remove: Vec::new(),
+                        entries: a.entries,
+                        pane: a.pane,
+                    },
+                )
+            },
         );
+        let v = Arc::clone(&vocabulary);
         app.commands.register::<TagsArgs, _>(
             ID,
             "tags.remove",
             "Remove tags",
             "Remove tags from the selection (plan)",
-            |a, app| tag_plan(app, &a, Mode::Remove),
+            move |a, app| {
+                edit_plan(
+                    app,
+                    &v,
+                    EditArgs {
+                        add: Vec::new(),
+                        remove: a.tags,
+                        entries: a.entries,
+                        pane: a.pane,
+                    },
+                )
+            },
+        );
+        let v = Arc::clone(&vocabulary);
+        app.commands.register::<EditArgs, _>(
+            ID,
+            "tags.edit",
+            "Edit tags",
+            "Add some tags to the selection and remove others, as one plan: each entry keeps its other tags",
+            move |a, app| edit_plan(app, &v, a),
+        );
+        let v = Arc::clone(&vocabulary);
+        app.commands.register::<PaneArgs, _>(
+            ID,
+            "tags.selected",
+            "Tags of the selection",
+            "`{ items, tags: [{ name, count }], known }`: the selection's tags, read from its files, with how many carry each, and the tags known, the most recently used first (blocks: dispatch from a worker)",
+            move |a, app| Ok(Outcome::Value(selected(app, &v, a))),
+        );
+        app.commands.register::<RateArgs, _>(
+            ID,
+            "tags.rate",
+            "Rate",
+            "Rate the selection from 1 to 5 stars, or remove its rating with 0 (plan)",
+            |a, app| {
+                anyhow::ensure!(a.stars <= 5, "a rating is from 1 to 5 stars");
+                let rating = (a.stars > 0).then_some(u64::from(a.stars) * 2);
+                let title = rating.map_or_else(
+                    || "remove the rating".to_owned(),
+                    |r| format!("rate {}", ops::stars(r)),
+                );
+                per_entry(targets(app, a.pane, a.entries), title, |r| {
+                    (read_rating(&r.path) != rating).then_some(SetRating { entry: r, rating })
+                })
+            },
+        );
+        app.commands.register::<CommentArgs, _>(
+            ID,
+            "tags.comment",
+            "Comment",
+            "Set the selection's comment, or remove it with an empty text (plan)",
+            |a, app| {
+                let text = a.text.trim();
+                let comment = (!text.is_empty()).then(|| text.to_owned());
+                let title = if comment.is_some() {
+                    "set the comment"
+                } else {
+                    "remove the comment"
+                };
+                per_entry(targets(app, a.pane, a.entries), title.to_owned(), |r| {
+                    (read_comment(&r.path) != comment).then(|| SetComment {
+                        entry: r,
+                        comment: comment.clone(),
+                    })
+                })
+            },
+        );
+        let colors = lifetime.clone();
+        app.commands.register::<ColorArgs, _>(
+            ID,
+            "tags.color",
+            "Tag color",
+            "Choose the color a tag wears everywhere, or give it back the one its name gives it",
+            move |a, app| {
+                let tag = a.tag.trim();
+                anyhow::ensure!(!tag.is_empty(), "which tag?");
+                let color = a.color.as_deref().filter(|c| !c.is_empty());
+                if let Some(color) = color {
+                    anyhow::ensure!(
+                        TAG_COLORS.contains(&color),
+                        "a tag's color is one of {}",
+                        TAG_COLORS.join(", ")
+                    );
+                }
+                set_color(app, &colors, tag, color);
+                Ok(Outcome::Done)
+            },
+        );
+        app.commands.register::<PaneArgs, _>(
+            ID,
+            "tags.menu",
+            "Comment menu",
+            "The context menu's Comment…, holding the selected entry's comment",
+            |a, app| {
+                let pane = app.pane_or_active(a.pane);
+                let items = remembered_comment(app, pane).map(|comment| MenuItem {
+                    submenu: Some("Notes".into()),
+                    ..menu_item("Comment…", ask_comment(Some(&comment)), 160, "comment")
+                });
+                Ok(Outcome::Value(
+                    serde_json::json!({ "items": items.into_iter().collect::<Vec<_>>() }),
+                ))
+            },
         );
         app.commands.register::<ListArgs, _>(
             ID,
@@ -340,14 +540,43 @@ impl Plugin for TagsPlugin {
         );
         app.registry.menus.add(
             ID,
+            menu_item("Tags…", Invocation::new("ui.tags_prompt"), 150, "tag"),
+        );
+        // Rarely set from a menu: grouped, the menu expands them in place.
+        for stars in (0..=5u8).rev() {
+            let title = match stars {
+                0 => "No rating".to_owned(),
+                1 => "1 star".to_owned(),
+                n => format!("{n} stars"),
+            };
+            app.registry.menus.add(
+                ID,
+                MenuItem {
+                    submenu: Some("Notes".into()),
+                    ..menu_item(
+                        &title,
+                        Invocation::with_args("tags.rate", &serde_json::json!({ "stars": stars })),
+                        151 + i32::from(5 - stars),
+                        if stars == 0 { "minus" } else { "star" },
+                    )
+                },
+            );
+        }
+        app.registry.menus.add(
+            ID,
             MenuItem {
+                submenu: Some("Notes".into()),
+                ..menu_item("Comment…", ask_comment(None), 160, "comment")
+            },
+        );
+        // The comment already there, to edit rather than retype.
+        app.registry.menu_sources.add(
+            ID,
+            MenuSource {
                 menu: "context".into(),
-                title: "Tags…".into(),
-                command: Invocation::new("ui.tags_prompt"),
-                when: Some("selection".into()),
-                order: 150,
-                icon: Some("tag".into()),
-                submenu: None,
+                when: Some("selection single".into()),
+                command: Invocation::new("tags.menu"),
+                replaces: vec![ask_comment(None)],
             },
         );
     }
@@ -358,6 +587,7 @@ mod tests {
     use super::*;
     use bibli_core::app::AppConfig;
     use bibli_core::location::Location;
+    use std::path::Path;
     use std::time::Duration;
 
     fn home_tempdir() -> tempfile::TempDir {
@@ -402,10 +632,32 @@ mod tests {
         }
     }
 
+    fn plan(app: &App, name: &str, args: &serde_json::Value) -> Plan {
+        match app.dispatch(&Invocation::with_args(name, args)).unwrap() {
+            Outcome::Plan(plan) => plan,
+            _ => panic!("{name} gives a plan"),
+        }
+    }
+
+    /// An app with the plugin, showing `dir`, every entry hydrated, and
+    /// `names` selected.
+    fn app_in(tmp: &Path, dir: &Path, names: &[&str]) -> (Arc<App>, PaneId) {
+        let app = App::new(AppConfig::ephemeral(tmp)).unwrap();
+        app.plugins.add(Arc::new(TagsPlugin::default()), &app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(dir)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        hydrate_all(&app, pane);
+        app.dispatch(&Invocation::with_args(
+            "select",
+            &serde_json::json!({ "names": names }),
+        ))
+        .unwrap();
+        (app, pane)
+    }
+
     #[test]
-    fn parse_and_roundtrip() {
-        assert_eq!(parse_tags(" a, b ,a,,c "), ["a", "b", "c"]);
-        assert_eq!(parse_tags("Work, work,WORK, Été, été"), ["Work", "Été"]);
+    fn write_read_and_clear() {
         let tmp = home_tempdir();
         let f = tmp.path().join("f");
         std::fs::write(&f, b"x").unwrap();
@@ -425,13 +677,8 @@ mod tests {
         let f = dir.join("doc.txt");
         std::fs::write(&f, b"x").unwrap();
         write_tags(&f, &["old".into()]).unwrap();
-        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
-        app.plugins.add(Arc::new(TagsPlugin), &app);
+        let (app, pane) = app_in(tmp.path(), &dir, &["doc.txt"]);
         assert!(app.metadata.ids().contains(&"tags"));
-        let pane = app.workspace.read().active_id();
-        app.navigate(pane, &Location::from_path(&dir)).unwrap();
-        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
-        hydrate_all(&app, pane);
         {
             let ws = app.workspace.read();
             let e = ws
@@ -441,78 +688,39 @@ mod tests {
                 .find_by_name("doc.txt".as_ref())
                 .unwrap();
             assert_eq!(tags_of(&e.metadata).unwrap(), ["old"]);
-            assert_eq!(e.metadata.get(FIELD).unwrap().provenance, Provenance::User);
+            assert_eq!(
+                e.metadata.get(FIELD).unwrap().provenance,
+                bibli_core::entry::Provenance::User
+            );
         }
-        app.dispatch(&Invocation::with_args(
-            "select",
-            &serde_json::json!({ "names": ["doc.txt"] }),
-        ))
-        .unwrap();
 
-        let Outcome::Plan(plan) = app
-            .dispatch(&Invocation::with_args(
-                "tags.add",
-                &serde_json::json!({ "tags": ["new", "old"] }),
-            ))
-            .unwrap()
-        else {
-            panic!("plan")
-        };
-        let r = app.executor.execute_blocking(&plan, app.lifetime());
+        let add = plan(
+            &app,
+            "tags.add",
+            &serde_json::json!({ "tags": ["new", "old"] }),
+        );
+        let r = app.executor.execute_blocking(&add, app.lifetime());
         assert!(r.error.is_none());
         assert_eq!(read_tags(&f), ["old", "new"]);
         // Re-apply is a no-op.
-        let again = Plan::from_data(&plan.to_data(), &app.ops).unwrap();
+        let again = Plan::from_data(&add.to_data(), &app.ops).unwrap();
         let r2 = app.executor.execute_blocking(&again, app.lifetime());
         assert_eq!((r2.applied, r2.skipped), (0, 1));
 
-        let Outcome::Plan(plan) = app
-            .dispatch(&Invocation::with_args(
-                "tags.remove",
-                &serde_json::json!({ "tags": ["old"] }),
-            ))
-            .unwrap()
-        else {
-            panic!("plan")
-        };
-        app.executor.execute_blocking(&plan, app.lifetime());
+        let remove = plan(&app, "tags.remove", &serde_json::json!({ "tags": ["old"] }));
+        app.executor.execute_blocking(&remove, app.lifetime());
         assert_eq!(read_tags(&f), ["new"]);
-        // Tags ignore case: adding "NEW" keeps "new", removing "NEW" removes it.
-        let Outcome::Plan(plan) = app
-            .dispatch(&Invocation::with_args(
-                "tags.add",
-                &serde_json::json!({ "tags": ["NEW"] }),
-            ))
-            .unwrap()
-        else {
-            panic!("plan")
-        };
-        let r = app.executor.execute_blocking(&plan, app.lifetime());
-        assert_eq!((r.applied, r.skipped), (0, 1));
-        assert_eq!(read_tags(&f), ["new"]);
-        let Outcome::Plan(plan) = app
-            .dispatch(&Invocation::with_args(
-                "tags.remove",
-                &serde_json::json!({ "tags": ["NEW"] }),
-            ))
-            .unwrap()
-        else {
-            panic!("plan")
-        };
-        app.executor.execute_blocking(&plan, app.lifetime());
+        // Tags ignore case: adding "NEW" changes nothing, removing "NEW"
+        // removes it.
+        let add = plan(&app, "tags.add", &serde_json::json!({ "tags": ["NEW"] }));
+        assert!(add.steps.is_empty(), "nothing to change");
+        let remove = plan(&app, "tags.remove", &serde_json::json!({ "tags": ["NEW"] }));
+        app.executor.execute_blocking(&remove, app.lifetime());
         assert!(read_tags(&f).is_empty());
         app.executor.undo_blocking(app.lifetime()).unwrap();
         assert_eq!(read_tags(&f), ["new"]);
-        let Outcome::Plan(plan) = app
-            .dispatch(&Invocation::with_args(
-                "tags.set",
-                &serde_json::json!({ "tags": [] }),
-            ))
-            .unwrap()
-        else {
-            panic!("plan")
-        };
-        app.executor.execute_blocking(&plan, app.lifetime());
+        let set = plan(&app, "tags.set", &serde_json::json!({ "tags": [] }));
+        app.executor.execute_blocking(&set, app.lifetime());
         assert!(read_tags(&f).is_empty());
 
         // Undo walks back: set([]) -> ["new"], remove -> ["old","new"], add -> ["old"].
@@ -530,18 +738,220 @@ mod tests {
         };
         assert_eq!(v["old"], 1);
 
-        // Disabling withdraws the provider, the op kind, and the contributions.
+        // Disabling withdraws the provider, the op kinds, and the contributions.
         app.plugins.set_enabled("tags", false, &app);
         assert!(!app.metadata.ids().contains(&"tags"));
-        assert!(
-            app.ops
-                .build(&bibli_core::op::OpData {
-                    kind: "set_tags".into(),
-                    args: serde_json::json!({})
-                })
-                .is_err()
-        );
+        for kind in ["set_tags", "set_rating", "set_comment"] {
+            assert!(
+                app.ops
+                    .build(&bibli_core::op::OpData {
+                        kind: kind.into(),
+                        args: serde_json::json!({})
+                    })
+                    .is_err()
+            );
+        }
         assert!(app.commands.get("tags.set").is_none());
         assert!(app.registry.menus.all().iter().all(|m| m.title != "Tags…"));
+    }
+
+    /// The tag editor's edit: two files with different tags keep what the
+    /// other has to themselves; a tag on some of them stays on those.
+    #[test]
+    fn an_edit_adds_and_removes_without_spreading_the_others() {
+        let tmp = home_tempdir();
+        let dir = tmp.path().join("d");
+        std::fs::create_dir(&dir).unwrap();
+        let (a, b) = (dir.join("it's a.txt"), dir.join("b é.txt"));
+        std::fs::write(&a, b"a").unwrap();
+        std::fs::write(&b, b"b").unwrap();
+        write_tags(&a, &["Work".into(), "draft".into()]).unwrap();
+        write_tags(&b, &["home".into(), "draft".into()]).unwrap();
+        let (app, _) = app_in(tmp.path(), &dir, &["it's a.txt", "b é.txt"]);
+
+        let Outcome::Value(v) = app.dispatch(&Invocation::new("tags.selected")).unwrap() else {
+            panic!()
+        };
+        assert_eq!(v["items"], 2);
+        let count = |name: &str| {
+            v["tags"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t["name"] == name)
+                .map(|t| t["count"].as_u64().unwrap())
+        };
+        assert_eq!(
+            (count("Work"), count("draft"), count("home")),
+            (Some(1), Some(2), Some(1))
+        );
+
+        let edit = plan(
+            &app,
+            "tags.edit",
+            &serde_json::json!({ "add": ["urgent", "WORK"], "remove": ["Draft"] }),
+        );
+        assert_eq!(edit.title, "add tags urgent, WORK and remove tag Draft");
+        app.executor.execute_blocking(&edit, app.lifetime());
+        assert_eq!(read_tags(&a), ["Work", "urgent"], "spelling kept");
+        assert_eq!(read_tags(&b), ["home", "urgent", "WORK"]);
+        // One plan, one undo.
+        app.executor.undo_blocking(app.lifetime()).unwrap();
+        assert_eq!(read_tags(&a), ["Work", "draft"]);
+        assert_eq!(read_tags(&b), ["home", "draft"]);
+
+        let Outcome::Value(v) = app.dispatch(&Invocation::new("tags.selected")).unwrap() else {
+            panic!()
+        };
+        let known: Vec<&str> = v["known"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| t.as_str())
+            .collect();
+        let mut used_last = known[..2].to_vec();
+        used_last.sort_unstable();
+        assert_eq!(used_last, ["Work", "urgent"], "used first: {known:?}");
+    }
+
+    #[test]
+    fn ratings_and_comments_are_set_undone_and_read() {
+        let tmp = home_tempdir();
+        let dir = tmp.path().join("d");
+        std::fs::create_dir(&dir).unwrap();
+        let f = dir.join("pic.jpg");
+        std::fs::write(&f, b"x").unwrap();
+        xattr::set(&f, attrs::ORIGIN, b"https://example.org/pic.jpg").unwrap();
+        let (app, pane) = app_in(tmp.path(), &dir, &["pic.jpg"]);
+
+        let rate = plan(&app, "tags.rate", &serde_json::json!({ "stars": 4 }));
+        let changes: Vec<String> = rate
+            .steps
+            .iter()
+            .map(|s| s.describe().to_string())
+            .collect();
+        assert_eq!(changes, ["rate “pic.jpg” 4 stars"]);
+        app.executor.execute_blocking(&rate, app.lifetime());
+        assert_eq!(read_rating(&f), Some(8));
+        assert_eq!(
+            xattr::get(&f, attrs::RATING).unwrap().unwrap(),
+            b"8",
+            "as Dolphin writes it"
+        );
+        let comment = plan(
+            &app,
+            "tags.comment",
+            &serde_json::json!({ "text": "  from the “trip”, day 2  " }),
+        );
+        app.executor.execute_blocking(&comment, app.lifetime());
+        assert_eq!(read_comment(&f).as_deref(), Some("from the “trip”, day 2"));
+
+        // The watcher sees the attributes change, and the listing reads
+        // them again.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            app.pump();
+            let ws = app.workspace.read();
+            let e = ws
+                .pane(pane)
+                .unwrap()
+                .listing
+                .find_by_name("pic.jpg".as_ref())
+                .unwrap();
+            let m = &e.metadata;
+            if m.value(keys::COMMENT).is_none() {
+                assert!(std::time::Instant::now() < deadline, "the listing followed");
+                drop(ws);
+                std::thread::sleep(Duration::from_millis(5));
+                continue;
+            }
+            assert_eq!(
+                m.value(keys::RATING).and_then(bibli_core::Value::as_u64),
+                Some(8)
+            );
+            assert_eq!(
+                m.value(keys::COMMENT).and_then(bibli_core::Value::as_str),
+                Some("from the “trip”, day 2")
+            );
+            assert_eq!(
+                m.value(keys::ORIGIN).and_then(bibli_core::Value::as_str),
+                Some("https://example.org/pic.jpg")
+            );
+            break;
+        }
+        // The menu offers the comment there to edit.
+        let Outcome::Value(menu) = app.dispatch(&Invocation::new("tags.menu")).unwrap() else {
+            panic!()
+        };
+        assert_eq!(
+            menu["items"][0]["command"]["args"]["text"],
+            "from the “trip”, day 2"
+        );
+
+        app.executor.undo_blocking(app.lifetime()).unwrap();
+        assert_eq!(read_comment(&f), None);
+        app.executor.undo_blocking(app.lifetime()).unwrap();
+        assert_eq!(read_rating(&f), None);
+        assert!(xattr::get(&f, attrs::RATING).unwrap().is_none());
+        assert!(
+            app.dispatch(&Invocation::with_args(
+                "tags.rate",
+                &serde_json::json!({ "stars": 6 })
+            ))
+            .is_err()
+        );
+    }
+
+    /// A link carries what it leads to: the target's tags.
+    #[test]
+    fn a_link_is_tagged_through_to_what_it_leads_to() {
+        let tmp = home_tempdir();
+        let dir = tmp.path().join("d");
+        std::fs::create_dir(&dir).unwrap();
+        let target = dir.join("target.txt");
+        std::fs::write(&target, b"x").unwrap();
+        std::os::unix::fs::symlink(&target, dir.join("link")).unwrap();
+        let (app, _) = app_in(tmp.path(), &dir, &["link"]);
+        let add = plan(&app, "tags.add", &serde_json::json!({ "tags": ["linked"] }));
+        let r = app.executor.execute_blocking(&add, app.lifetime());
+        assert!(r.error.is_none(), "{:?}", r.error);
+        assert_eq!(read_tags(&target), ["linked"]);
+    }
+
+    #[test]
+    fn a_tag_color_is_one_of_the_palette() {
+        let tmp = home_tempdir();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(TagsPlugin::default()), &app);
+        let color = |tag: &str, color: Option<&str>| {
+            app.dispatch(&Invocation::with_args(
+                "tags.color",
+                &serde_json::json!({ "tag": tag, "color": color }),
+            ))
+        };
+        assert!(color("Work", Some("mauve")).is_err());
+        color("Work", Some("teal")).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let stored = || {
+            app.settings
+                .get::<toml::Table>(TAG_COLOR_SETTING)
+                .and_then(|t| t.get("work").and_then(|c| c.as_str().map(str::to_owned)))
+        };
+        while stored().is_none() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(stored().as_deref(), Some("teal"));
+    }
+
+    #[test]
+    fn edit_titles_say_what_changes() {
+        let t = |s: &[&str]| s.iter().map(|&x| x.to_owned()).collect::<Vec<_>>();
+        assert_eq!(edit_title(&t(&["a"]), &[]), "add tag a");
+        assert_eq!(edit_title(&[], &t(&["a", "b"])), "remove tags a, b");
+        assert_eq!(
+            edited(&t(&["A", "b"]), &t(&["a", "c"]), &t(&["B"])),
+            t(&["A", "c"])
+        );
     }
 }

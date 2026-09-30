@@ -65,7 +65,7 @@ fn the_tag_chip_offers_the_tags_found_and_find_similar_shares_them() {
     app.plugins
         .add(Arc::new(bibli_plugin_query::QueryPlugin::default()), &app);
     app.plugins
-        .add(Arc::new(bibli_plugin_tags::TagsPlugin), &app);
+        .add(Arc::new(bibli_plugin_tags::TagsPlugin::default()), &app);
     let pane = app.workspace.read().active_id();
     app.navigate(pane, &Location::from_path(&root)).unwrap();
     assert!(app.pump_until_complete(pane, Duration::from_secs(5)));

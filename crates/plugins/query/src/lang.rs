@@ -10,13 +10,17 @@
 //! unary   := "NOT" unary | "-" unary | "(" or_expr ")" | term
 //! term    := word | "name:" pat | "ext:" list | "type:" kind | "mime:" glob
 //!          | "kind:" kinds | "size" cmp | "modified" cmp | "created" cmp | "accessed" cmp
-//!          | "tag:" word | "content:" text | "content:/" regex "/" flags?
+//!          | "tag:" word | "comment:" text | "rating" cmp
+//!          | "content:" text | "content:/" regex "/" flags?
 //!          | "near:" lat "," lon ("~" distance)? | "inside:" south "," west "," north "," east
 //! options := "in:" path | "depth:" n | "hidden:" bool | "case:" ("sensitive"|"insensitive")
 //! ```
 //!
 //! `cmp` is `>`, `<`, `>=`, `<=`, `=`/`:` a value, or `:` `a..b`. Sizes take
-//! `k`, `M`, `G` (1024-based). Times take dates (`2026`, `2026-05`,
+//! `k`, `M`, `G` (1024-based). Ratings are stars, halves allowed
+//! (`rating>=4`, `rating:3.5`, `rating:2..4`); `rating:0` is unrated.
+//! `comment:` holds when the file's comment contains the text, whatever
+//! its case. Times take dates (`2026`, `2026-05`,
 //! `2026-05-01`), periods named from now (`today`, `yesterday`,
 //! `this-week`, `last-week`, `this-month`, `last-month`, `this-year`,
 //! `last-year`), or durations relative to now
@@ -230,6 +234,15 @@ pub enum Term {
         text: String,
     },
     Tag(String),
+    /// The comment contains this, whatever its case (held lowercase).
+    Comment(String),
+    /// A rating between these, inclusive, in half stars (`keys::RATING`);
+    /// 0 is unrated.
+    Rating {
+        min: u64,
+        max: u64,
+        text: String,
+    },
     Content(ContentPat),
     /// Within `radius` metres of `at`.
     Near {
@@ -262,9 +275,9 @@ impl std::error::Error for ParseError {}
 
 /// The keys a word can start with. Only these open a quote after their
 /// colon; any other word with a colon (`http://x`, `a:'b`) is a name.
-const KEYS: [&str; 17] = [
-    "name", "ext", "type", "mime", "kind", "tag", "content", "size", "modified", "created",
-    "accessed", "in", "depth", "hidden", "case", "near", "inside",
+const KEYS: [&str; 19] = [
+    "name", "ext", "type", "mime", "kind", "tag", "comment", "rating", "content", "size",
+    "modified", "created", "accessed", "in", "depth", "hidden", "case", "near", "inside",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -621,6 +634,11 @@ impl Parser<'_> {
                 {
                     return parse_size(rest);
                 }
+                if let Some(rest) = v.strip_prefix("rating")
+                    && rest.starts_with(['<', '>', '='])
+                {
+                    return parse_rating(rest);
+                }
                 for field in TimeField::ALL {
                     if let Some(rest) = v.strip_prefix(field.name())
                         && rest.starts_with(['<', '>', '='])
@@ -676,6 +694,8 @@ impl Parser<'_> {
                 Ok(Term::Kind(kinds))
             }
             "tag" => Ok(Term::Tag(v.to_owned())),
+            "comment" => Ok(Term::Comment(v.to_lowercase())),
+            "rating" => parse_rating(&format!(":{v}")),
             "content" => Ok(Term::Content(parse_content(v, w.quoted, cs)?)),
             "near" => parse_near(v),
             "inside" => parse_inside(v),
@@ -900,6 +920,49 @@ fn parse_size(rest: &str) -> Result<Term, ParseError> {
     })
 }
 
+/// A number of stars (`4`, `3.5`) in half stars.
+fn half_stars(v: &str) -> Result<u64, ParseError> {
+    let stars: f64 = v
+        .trim()
+        .parse()
+        .ok()
+        .filter(|s: &f64| (0.0..=5.0).contains(s) && (s * 2.).fract() == 0.)
+        .ok_or_else(|| {
+            ParseError(format!(
+                "rating expects stars from 0 to 5 (halves allowed), got `{v}`"
+            ))
+        })?;
+    Ok((stars * 2.) as u64)
+}
+
+/// `rest` is what follows `rating`: an operator and a number of stars.
+fn parse_rating(rest: &str) -> Result<Term, ParseError> {
+    const MAX: u64 = 10;
+    let (op, v) = split_cmp(rest)?;
+    let (min, max) = match op {
+        ">" => (half_stars(v)? + 1, MAX),
+        ">=" => (half_stars(v)?, MAX),
+        "<" => match half_stars(v)? {
+            0 => return Err(ParseError("rating<0 matches nothing".into())),
+            n => (0, n - 1),
+        },
+        "<=" => (0, half_stars(v)?),
+        _ => {
+            if let Some((a, b)) = v.split_once("..") {
+                (half_stars(a)?, half_stars(b)?)
+            } else {
+                let n = half_stars(v)?;
+                (n, n)
+            }
+        }
+    };
+    Ok(Term::Rating {
+        min,
+        max,
+        text: format!("rating{rest}"),
+    })
+}
+
 /// A calendar period `[start, end)` in civil days.
 type Days = (i64, i64);
 
@@ -1061,10 +1124,12 @@ impl fmt::Display for Term {
                 write!(f, "kind:{}", words.join(","))
             }
             Term::Size { text, .. }
+            | Term::Rating { text, .. }
             | Term::Time { text, .. }
             | Term::Near { text, .. }
             | Term::Inside { text, .. } => f.write_str(text),
             Term::Tag(t) => write!(f, "tag:{}", quote(t)),
+            Term::Comment(t) => write!(f, "comment:{}", quote(t)),
             Term::Content(p) if p.regex => {
                 // Escape a `/` the source left bare, so the regex ends where it should.
                 f.write_str("content:/")?;
@@ -1109,6 +1174,7 @@ fn is_plain(s: &str) -> bool {
             .iter()
             .any(|k| s.strip_prefix(k).is_some_and(|rest| rest.starts_with(':')))
         && !comparison("size")
+        && !comparison("rating")
         && !TimeField::ALL.iter().any(|f| comparison(f.name()))
 }
 
@@ -1289,9 +1355,9 @@ impl Query {
         self.any(&|t| matches!(t, Term::Size { .. } | Term::Time { .. }))
     }
 
-    /// Tag terms: metadata providers must run.
+    /// Tag, comment and rating terms: metadata providers must run.
     pub fn needs_metadata(&self) -> bool {
-        self.any(&|t| matches!(t, Term::Tag(_)))
+        self.any(&|t| matches!(t, Term::Tag(_) | Term::Comment(_) | Term::Rating { .. }))
     }
 
     /// Content terms: files must be read.
@@ -1508,6 +1574,23 @@ impl Term {
                     v.as_str()
                         .is_some_and(|s| bibli_core::metadata::same_tag(s, tag))
                 }))
+            }
+            Term::Comment(text) => {
+                let Some(m) = c.metadata else {
+                    return Verdict::Unknown;
+                };
+                yes_no(
+                    m.value(keys::COMMENT)
+                        .and_then(Value::as_str)
+                        .is_some_and(|comment| comment.to_lowercase().contains(text.as_str())),
+                )
+            }
+            Term::Rating { min, max, .. } => {
+                let Some(m) = c.metadata else {
+                    return Verdict::Unknown;
+                };
+                let rating = m.value(keys::RATING).and_then(Value::as_u64).unwrap_or(0);
+                yes_no((*min..=*max).contains(&rating))
             }
             Term::Content(p) => {
                 if let Some(verdict) = c.unless_file() {
@@ -1907,6 +1990,8 @@ mod tests {
             "modified>=last-month",
             "report in:/tmp/x depth:2 hidden:true case:sensitive",
             "name:\"two words\"",
+            "rating>=4 comment:\"from the trip\"",
+            "rating:2.5..4 NOT rating:0",
         ] {
             let parsed = q(s);
             let printed = parsed.to_string();
@@ -2181,6 +2266,48 @@ mod tests {
         assert_eq!(next("modified:2026-09 size>1M"), None);
         assert_eq!(next("modified<7d"), None);
         assert_eq!(next("NOT modified:this-month"), Some(hour(2026, 9, 30, 22)));
+    }
+
+    #[test]
+    fn ratings_and_comments_are_what_the_file_says() {
+        let rated = |rating: Option<u64>, comment: Option<&str>| {
+            let mut m = md(1, now(), &[]);
+            if let Some(r) = rating {
+                m.set(keys::RATING, Value::UInt(r), Provenance::User);
+            }
+            if let Some(c) = comment {
+                m.set(keys::COMMENT, Value::Text(c.into()), Provenance::User);
+            }
+            m
+        };
+        let holds = |expr: &str, m: &Metadata| {
+            q(expr)
+                .expr
+                .unwrap()
+                .eval(&cand("a.jpg", EntryKind::File, Some(m)), false)
+        };
+        let four = rated(Some(8), Some("From the Trip, day 2"));
+        let half = rated(Some(7), None);
+        let none = rated(None, None);
+        assert_eq!(holds("rating>=4", &four), Verdict::Yes);
+        assert_eq!(holds("rating>=4", &half), Verdict::No);
+        assert_eq!(holds("rating:3.5", &half), Verdict::Yes);
+        assert_eq!(holds("rating>3", &half), Verdict::Yes, "3½ is more than 3");
+        assert_eq!(holds("rating:3..4", &half), Verdict::Yes);
+        assert_eq!(holds("rating:0", &none), Verdict::Yes, "unrated");
+        assert_eq!(holds("rating<1", &four), Verdict::No);
+        assert_eq!(holds("comment:trip", &four), Verdict::Yes, "any case");
+        assert_eq!(holds("comment:\"day 3\"", &four), Verdict::No);
+        assert_eq!(holds("comment:trip", &none), Verdict::No);
+        for bad in ["rating:6", "rating>=x", "rating:2.2", "rating<0"] {
+            assert!(parse_at(bad, now()).is_err(), "{bad}");
+        }
+        assert!(q("rating>=4").needs_metadata() && q("comment:x").needs_metadata());
+        let unread = cand("a.jpg", EntryKind::File, None);
+        assert_eq!(
+            q("rating>=4").expr.unwrap().eval(&unread, false),
+            Verdict::Unknown
+        );
     }
 
     #[test]
