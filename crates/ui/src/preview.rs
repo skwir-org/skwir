@@ -2404,16 +2404,15 @@ fn body(
         .flex_col()
         .when(document && interactive, |d| d.key_context(keymap::READER));
     // Details opens right under the card that opened it, above the toolbar
-    // and the content. With nothing to preview it is the whole body instead,
-    // under the toolbar and whatever the content has to say (why the preview
-    // failed), so neither ends up at the bottom.
+    // and the content, whether a preview follows or not. With nothing to
+    // preview it is always open and as tall as what it says, so the toolbar
+    // and whatever the content has to say (why the preview failed) follow
+    // right under it, never at the bottom of the panel.
     let alone = crate::details::alone(shell);
-    let mut details = Some(())
+    let details = Some(())
         .filter(|()| (interactive && details) || alone)
         .and_then(|()| crate::details::render(shell, theme, cx));
-    if !alone {
-        frame = frame.children(details.take());
-    }
+    frame = frame.children(details);
     // A location named with nothing to preview (a search, the shelf, with
     // nothing selected) has no tools.
     if interactive && !shell.preview.info.name.is_empty() && shell.preview.key.is_some() {
@@ -2449,8 +2448,10 @@ fn body(
             div()
                 .flex()
                 .flex_col()
-                .when(!alone, gpui::Styled::flex_1)
-                .min_h_0()
+                .flex_1()
+                // With nothing to preview Details gives way first: what the
+                // content says (why the preview failed) keeps its height.
+                .when(!alone, gpui::Styled::min_h_0)
                 // What is read is on paper; a picture, a page or a film keeps
                 // the panel's own surface as its letterbox.
                 .when(on_paper(shell), |d| d.bg(theme.bg))
@@ -2471,7 +2472,6 @@ fn body(
                 )
                 .child(content(shell, theme, interactive, cx)),
         )
-        .children(details)
         .into_any_element()
 }
 

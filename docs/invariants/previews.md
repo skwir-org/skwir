@@ -285,8 +285,10 @@ still to come are in `docs/preview-frame.md`.
 - **Details** (`details.rs`) is a section of the frame, not a kind of
   preview: everything known about what the panel shows that the header does
   not say (no Name or Type row: the header has them). With nothing to
-  preview (a folder, an unknown file, an error) it is the whole body; under
-  a preview it opens right under the card, above the toolbar, up to half
+  preview (a folder, an unknown file, an error) it is always open, as tall
+  as what it says, with the toolbar and what the content says (why the
+  preview failed) right under it; under a preview it opens on demand in
+  the same place, right under the card, above the toolbar, up to half
   the panel (Ctrl+I; with the panel closed, Ctrl+I opens both). Whether it
   is open belongs to the window's shape (`session.rs`).
   Facts come from three places and none is read while painting: the entry's

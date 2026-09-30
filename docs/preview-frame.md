@@ -93,8 +93,9 @@ A section of the frame, not a preview kind.
 - **Placement (decided, revised):** the header is a card (icon, name, type ·
   size · date) and clicking it, or Ctrl+I, opens Details right under the
   card, up to half the panel; the bottom bar it first had repeated the
-  header. Details fills the body when there is no preview (including folders
-  and several entries selected). Its state belongs to `session.rs`.
+  header. When there is no preview (including folders and several entries
+  selected) Details is always open, above the toolbar as under a preview,
+  and as tall as its groups, so the toolbar and an error follow it. Its state belongs to `session.rs`.
 - **Groups:** General · Location (path, link target) · Permissions (owner,
   group, mode in words) · Times (modified, created, accessed) · Tags · then
   what the format knows.

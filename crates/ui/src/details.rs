@@ -297,9 +297,10 @@ pub fn alone(shell: &Shell) -> bool {
         }
 }
 
-/// The section: open on demand right under the header's card, above the
-/// toolbar, taking up to half the panel; the whole of the panel's body when
-/// `alone`. The header's card is what opens it, and holds the name, type,
+/// The section: right under the header's card, above the toolbar. Opened
+/// on demand under a preview, taking up to half the panel; always open when
+/// `alone`, as tall as what it says, scrolling only when the panel is too
+/// short. The header's card is what opens it, and holds the name, type,
 /// size and date, so the groups here repeat none of those.
 pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let preview = &shell.preview;
@@ -320,13 +321,10 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
         .flex_col()
         .min_h_0()
         .bg(theme.bg)
-        .when(alone, gpui::Styled::flex_1)
-        .when(!alone, |d| {
-            d.flex_none()
-                .max_h(gpui::relative(0.5))
-                .border_b_1()
-                .border_color(theme.border)
-        });
+        .border_b_1()
+        .border_color(theme.border)
+        .when(alone, gpui::Styled::flex_initial)
+        .when(!alone, |d| d.flex_none().max_h(gpui::relative(0.5)));
     let groups = preview
         .selection_summary
         .iter()
