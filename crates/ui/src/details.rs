@@ -525,12 +525,20 @@ pub fn alone(shell: &Shell) -> bool {
         }
 }
 
-/// The section: right under the header's card, above the toolbar. Opened
+/// The section: right under the header's card, above the toolbar
+/// (`preview::under_card` puts it there, and nothing else draws it). Opened
 /// on demand under a preview, taking up to half the panel; always open when
 /// `alone`, as tall as what it says, scrolling only when the panel is too
-/// short. The header's card is what opens it, and holds the name, type,
-/// size and date, so the groups here repeat none of those.
-pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
+/// short. Above a container's kept rows (`kept`) it takes up to half the
+/// panel either way: the rows are content too. The header's card is what
+/// opens it, and holds the name, type, size and date, so the groups here
+/// repeat none of those.
+pub fn render(
+    shell: &Shell,
+    theme: &Theme,
+    kept: bool,
+    cx: &mut Context<Shell>,
+) -> Option<AnyElement> {
     let preview = &shell.preview;
     // Nothing to say (a search named with nothing selected): no section,
     // not an empty one with its scrollbar.
@@ -551,8 +559,8 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
         .bg(theme.bg)
         .border_b_1()
         .border_color(theme.border)
-        .when(alone, gpui::Styled::flex_initial)
-        .when(!alone, |d| d.flex_none().max_h(gpui::relative(0.5)));
+        .when(alone && !kept, gpui::Styled::flex_initial)
+        .when(!alone || kept, |d| d.flex_none().max_h(gpui::relative(0.5)));
     let groups = preview
         .selection_summary
         .iter()

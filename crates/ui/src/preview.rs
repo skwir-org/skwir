@@ -2472,10 +2472,14 @@ impl Shell {
     }
 }
 
-/// Everything under the header's card. A member of a container whose rows
-/// are kept is shown beside them (`members::split`), and Details, which the
-/// card opens, stays right under the card, above both: it is about what the
-/// card names. `wide` is whether the room is wider than tall.
+/// Everything under the header's card: Details, then the toolbar and the
+/// content (`body`). This is the one place Details is put, for every kind
+/// of preview: right under the card that opens it, above the toolbar,
+/// whether a preview follows or not, and above the kept rows and the
+/// member alike when a member of a container is shown beside its rows
+/// (`members::split`), since it is about what the card names. `body`
+/// never draws it, so nothing a kind or the split does can come between
+/// the card and Details. `wide` is whether the room is wider than tall.
 fn under_card(
     shell: &Shell,
     theme: &Theme,
@@ -2484,32 +2488,32 @@ fn under_card(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let kept = interactive && shell.preview.members().is_some();
-    if !kept {
-        return body(shell, theme, interactive, true, cx);
-    }
+    // Opened on demand under a preview; always open with nothing to
+    // preview (a folder, an unknown file, an error), so the toolbar and
+    // what the content says (why the preview failed) follow right under
+    // it. While peek shows the preview, the panel behind it is only a
+    // picture and keeps Details only when it is all there is.
+    let alone = crate::details::alone(shell);
     let details = Some(())
-        .filter(|()| !crate::details::alone(shell))
-        .and_then(|()| crate::details::render(shell, theme, cx));
-    let body = body(shell, theme, interactive, false, cx);
+        .filter(|()| interactive || alone)
+        .and_then(|()| crate::details::render(shell, theme, kept, cx));
+    let body = body(shell, theme, interactive, cx);
     div()
         .flex_1()
         .min_h_0()
         .flex()
         .flex_col()
         .children(details)
-        .child(crate::members::split(body, wide, shell, cx))
+        .child(if kept {
+            crate::members::split(body, wide, shell, cx)
+        } else {
+            body
+        })
         .into_any_element()
 }
 
-/// The toolbar and the content, under Details when `details` is set (and
-/// always when there is nothing else to show).
-fn body(
-    shell: &Shell,
-    theme: &Theme,
-    interactive: bool,
-    details: bool,
-    cx: &mut Context<Shell>,
-) -> AnyElement {
+/// The toolbar and the content. Details is not its to draw (`under_card`).
+fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>) -> AnyElement {
     let document = matches!(
         &shell.preview.content,
         Some(PreviewContent::Image {
@@ -2517,22 +2521,15 @@ fn body(
             ..
         })
     );
+    // With nothing to preview Details gives way first: the toolbar and
+    // what the content says (why the preview failed) keep their height.
+    let alone = crate::details::alone(shell);
     let mut frame = div()
         .flex_1()
-        .min_h_0()
+        .when(!alone, gpui::Styled::min_h_0)
         .flex()
         .flex_col()
         .when(document && interactive, |d| d.key_context(keymap::READER));
-    // Details opens right under the card that opened it, above the toolbar
-    // and the content, whether a preview follows or not. With nothing to
-    // preview it is always open and as tall as what it says, so the toolbar
-    // and whatever the content has to say (why the preview failed) follow
-    // right under it, never at the bottom of the panel.
-    let alone = crate::details::alone(shell);
-    let details = Some(())
-        .filter(|()| (interactive && details) || alone)
-        .and_then(|()| crate::details::render(shell, theme, cx));
-    frame = frame.children(details);
     // A location named with nothing to preview (a search, the shelf, with
     // nothing selected) has no tools.
     if interactive && !shell.preview.info.name.is_empty() && shell.preview.key.is_some() {
@@ -2569,8 +2566,6 @@ fn body(
                 .flex()
                 .flex_col()
                 .flex_1()
-                // With nothing to preview Details gives way first: what the
-                // content says (why the preview failed) keeps its height.
                 .when(!alone, gpui::Styled::min_h_0)
                 // What is read is on paper; a picture, a page or a film keeps
                 // the panel's own surface as its letterbox.

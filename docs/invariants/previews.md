@@ -290,7 +290,11 @@ still to come are in `docs/preview-frame.md`.
   preview failed) right under it; under a preview it opens on demand in
   the same place, right under the card, above the toolbar, up to half
   the panel (Ctrl+I; with the panel closed, Ctrl+I opens both). Whether it
-  is open belongs to the window's shape (`session.rs`).
+  is open belongs to the window's shape (`session.rs`). One function puts
+  it there for every preview (`preview::under_card`): the toolbar and the
+  content (`preview::body`, what a container's split holds beside its
+  rows) never draw it, so neither a kind nor the split can come between
+  the card and Details.
   Facts come from three places and none is read while painting: the entry's
   metadata with its provenance, collected when the entry, its listing or the
   selection changes (`entry_groups`, pure and tested); what the preview
