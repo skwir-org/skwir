@@ -114,6 +114,10 @@ fn a_tag_is_renamed_on_every_file_after_review_and_the_sidebar_follows() {
         .unwrap();
     assert_eq!(&*job.location.scheme, "query");
     assert!(job.color.is_some());
+    // Files dropped on it get it.
+    let drop = job.drop.expect("a tag takes files dropped on it");
+    assert_eq!(&*drop.name, "tags.add");
+    assert_eq!(drop.args["tags"], serde_json::json!(["Job"]));
 
     app.executor.undo_blocking(app.lifetime()).unwrap();
     assert_eq!(at("a.txt"), ["Work", "x"]);

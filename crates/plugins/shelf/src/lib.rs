@@ -583,6 +583,7 @@ impl Plugin for ShelfPlugin {
                 forget: None,
                 reorder: None,
                 color: None,
+                drop: None,
             },
         );
         for (keys, command, when) in BINDINGS {

@@ -6,8 +6,9 @@
 //! opens the place's own menu (`Place::menu`: rename or remove a bookmark
 //! or a saved search), and a place its owner lets move (`Place::reorder`:
 //! bookmarks, saved searches) is put in order by dragging it among the
-//! others of its group. A place with a color (a tag's) shows a dot of it
-//! in place of an icon.
+//! others of its group. A place with a color (a tag's) is a pill of it,
+//! the pills of a group wrapping together, and a place with a `drop`
+//! command takes files dropped on it (a tag gives them itself).
 
 use std::collections::HashMap;
 
@@ -195,9 +196,12 @@ pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElem
 
     let mut last_group: Option<String> = None;
     let mut indices: HashMap<String, usize> = HashMap::new();
+    // A group's tags, drawn as pills that wrap together.
+    let mut pills: Vec<AnyElement> = Vec::new();
     for (i, place) in places.into_iter().enumerate() {
         let folded = shell.sidebar_folded.contains(&place.group);
         if last_group.as_deref() != Some(place.group.as_str()) {
+            column = wrap_pills(column, &mut pills);
             let group = place.group.clone();
             let hover = theme.hover;
             column = column.child(
@@ -235,6 +239,16 @@ pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElem
             continue;
         }
         let is_current = place.location.to_string() == current;
+        let color = place.color.as_deref().and_then(|c| {
+            bibli_core::metadata::TAG_COLORS
+                .iter()
+                .position(|x| *x == c)
+        });
+        if let Some(color) = color {
+            pills.push(pill(i, &place, color, is_current, &font, cx));
+            continue;
+        }
+        column = wrap_pills(column, &mut pills);
         // Present but not mounted: clicking mounts it (or asks to unlock it).
         let open = open_invocation(&place);
         let waiting = place.unavailable.is_some();
@@ -250,56 +264,33 @@ pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElem
                 .as_deref()
                 .and_then(|name| shell.icons.named(name, ICON_PX as u16))
         };
-        // A tag's row: a dot of its color.
-        let dot = place
-            .color
-            .as_deref()
-            .and_then(|c| {
-                bibli_core::metadata::TAG_COLORS
-                    .iter()
-                    .position(|x| *x == c)
-            })
-            .filter(|_| busy.is_none());
-        let icon: AnyElement = if let Some(color) = dot {
-            div()
+        let icon: AnyElement = match themed {
+            Some(path) => crate::icons::themed(
+                &path,
+                ICON_PX,
+                if is_current {
+                    theme.selection_text
+                } else {
+                    theme.text_muted
+                },
+            ),
+            None if busy.is_some() => controls::glyph(
+                "busy",
+                if is_current {
+                    theme.selection_text
+                } else {
+                    theme.accent
+                },
+                ICON_PX,
+            )
+            .into_any_element(),
+            None => div()
                 .size(px(10.))
                 .mx(px(3.))
-                .rounded_full()
+                .rounded_sm()
+                .bg(theme.text_muted)
                 .flex_none()
-                .bg(theme.tags[color % theme.tags.len()])
-                .when(is_current, |d| {
-                    d.border_1().border_color(theme.selection_text)
-                })
-                .into_any_element()
-        } else {
-            match themed {
-                Some(path) => crate::icons::themed(
-                    &path,
-                    ICON_PX,
-                    if is_current {
-                        theme.selection_text
-                    } else {
-                        theme.text_muted
-                    },
-                ),
-                None if busy.is_some() => controls::glyph(
-                    "busy",
-                    if is_current {
-                        theme.selection_text
-                    } else {
-                        theme.accent
-                    },
-                    ICON_PX,
-                )
                 .into_any_element(),
-                None => div()
-                    .size(px(10.))
-                    .mx(px(3.))
-                    .rounded_sm()
-                    .bg(theme.text_muted)
-                    .flex_none()
-                    .into_any_element(),
-            }
         };
         let mut texts = div()
             .flex_1()
@@ -440,6 +431,7 @@ pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElem
         }
         column = column.child(row);
     }
+    column = wrap_pills(column, &mut pills);
     // The bar is a sibling of the scrolling column, not a child: a child
     // would scroll away with the places.
     // Its right edge is dragged like the preview's left one; a double click
@@ -482,6 +474,119 @@ pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElem
         ))
         .child(edge)
         .into_any_element()
+}
+
+/// The pills gathered so far, as one line that wraps, left-aligned (a
+/// justified line would stretch the gaps of its last pills apart).
+fn wrap_pills(
+    column: gpui::Stateful<gpui::Div>,
+    pills: &mut Vec<AnyElement>,
+) -> gpui::Stateful<gpui::Div> {
+    if pills.is_empty() {
+        return column;
+    }
+    column.child(
+        div()
+            .flex_none()
+            .mx_1()
+            .px_1()
+            .py_1()
+            .flex()
+            .flex_wrap()
+            .gap(px(4.))
+            .children(pills.drain(..)),
+    )
+}
+
+/// A tag's place as a pill of its color: it opens as a row does (a click,
+/// a middle click for a tab behind, a right click for its menu), and files
+/// dropped on it get what its `drop` gives them (the tag).
+fn pill(
+    i: usize,
+    place: &Place,
+    color: usize,
+    is_current: bool,
+    font: &SharedString,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let theme = cx.global::<Theme>().clone();
+    let tone = theme.tags[color % theme.tags.len()];
+    let open = open_invocation(place);
+    let tab = open_in_tab(place);
+    let title: SharedString = place.title.clone().into();
+    let tip = title.clone();
+    let font = font.clone();
+    let mut pill = div()
+        .id(("place", i))
+        .flex_none()
+        .max_w_full()
+        .h(px(22.))
+        .px(px(9.))
+        .flex()
+        .items_center()
+        .rounded(px(11.))
+        .border_1()
+        .border_color(if is_current {
+            theme.accent
+        } else {
+            gpui::transparent_black()
+        })
+        .bg(if is_current {
+            tone.opacity(0.45)
+        } else {
+            theme.tag_fill(color)
+        })
+        .text_sm()
+        .text_color(theme.text)
+        .cursor_pointer()
+        .hover(move |s| s.border_color(tone))
+        .on_click(cx.listener(move |this, _, window, cx| {
+            this.run(&open.name, open.args.clone(), window, cx);
+        }))
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener({
+                let place = place.clone();
+                move |this, event: &gpui::MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.open_place_menu(&place, event.position, window, cx);
+                }
+            }),
+        )
+        .on_mouse_down(
+            MouseButton::Middle,
+            cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.run(&tab.name, tab.args.clone(), window, cx);
+            }),
+        )
+        .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), font.clone(), cx))
+        .child(div().truncate().child(title));
+    if let Some(drop) = place.drop.clone() {
+        let (tint, edge) = (theme.drop_target, theme.accent);
+        let from_paths = drop.clone();
+        pill = pill
+            .drag_over::<DragPayload>(move |s, _, _, _| s.bg(tint).border_color(edge))
+            .on_drop(cx.listener(move |this, payload: &DragPayload, window, cx| {
+                cx.stop_propagation();
+                let mut args = drop.args.clone();
+                args["pane"] = serde_json::json!(payload.pane);
+                this.run(&drop.name, args, window, cx);
+            }))
+            .drag_over::<ExternalPaths>(move |s, _, _, _| s.bg(tint).border_color(edge))
+            .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
+                cx.stop_propagation();
+                let entries: Vec<bibli_core::op::EntryRef> = paths
+                    .paths()
+                    .iter()
+                    .filter_map(bibli_core::op::EntryRef::from_path)
+                    .collect();
+                let mut args = from_paths.args.clone();
+                args["entries"] = serde_json::json!(entries);
+                this.run(&from_paths.name, args, window, cx);
+            }));
+    }
+    pill.into_any_element()
 }
 
 /// A movable place's row. It can be dragged, and while a place of its

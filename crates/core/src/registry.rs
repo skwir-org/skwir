@@ -239,8 +239,13 @@ pub struct Place {
     /// How the place is put in order among its group by dragging.
     pub reorder: Option<Reorder>,
     /// A color of the tags' palette ([`crate::metadata::TAG_COLORS`], by
-    /// name) the row shows in place of an icon: a tag's.
+    /// name): the place is a tag's, drawn as a pill of that color, the
+    /// pills of a group wrapping together.
     pub color: Option<String>,
+    /// What dropping files on the place does (a tag's: give them the
+    /// tag), run with the dropped entries: `pane` for a drag from a pane
+    /// (its selection), `entries` for files from another application.
+    pub drop: Option<Invocation>,
 }
 
 /// How a place moves among the places of its group that have one: `command`

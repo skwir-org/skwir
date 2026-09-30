@@ -19,7 +19,7 @@ use crate::vocabulary::Vocabulary;
 pub const GROUP: &str = "tags";
 /// How many tags the sidebar lists.
 pub const SETTING: &str = "tags.sidebar";
-pub const DEFAULT: i64 = 10;
+pub const DEFAULT: i64 = 20;
 
 /// What the sidebar was last given: each tag, its location and color.
 #[derive(Default)]
@@ -149,6 +149,10 @@ pub fn publish(app: &App, index: &Arc<TagIndex>, vocabulary: &Vocabulary, shown:
     }
     let places = rows.into_iter().map(|(tag, location, color)| Place {
         menu: menu(&tag),
+        drop: Some(Invocation::with_args(
+            "tags.add",
+            &serde_json::json!({ "tags": [&tag] }),
+        )),
         title: tag,
         location: Location::parse(&location),
         icon: None,

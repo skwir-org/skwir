@@ -36,6 +36,16 @@ Poppler, GStreamer or libarchive. Open gate: idle PSS is about 118 to 120 MB aga
 been loosened. The per-change validation history that used to sit here is in
 `docs/STATUS-LOG.md`.
 
+Sidebar tags as pills (2026-10-01): a place with a color is drawn as a
+pill of it, and a group's pills wrap together left-aligned (a justified
+line spreads its last pills to both edges), so twenty tags fit in ten
+short lines where they took twenty rows; the sidebar lists 20 by default
+(was 10). A place may carry a `drop` command (`Place::drop`), run with a
+pane's dragged selection or another application's files: a tag's is
+`tags.add` with itself. Checked in a window: twenty tags wrapping, a long
+one truncated with its name in a tooltip, the current search's pill
+marked, a file dragged from the list onto a pill tagged (with Undo).
+
 Notes stores, step G (2026-09-30), the last of "Notes everywhere": the
 name-tags plugin. Tags in names are two stores (`Kept::Name`): `TagSpaces`'
 `name[a b].ext`, read only in folders a `TagSpaces` location covers (a

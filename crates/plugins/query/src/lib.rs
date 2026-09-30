@@ -438,6 +438,7 @@ fn place(search: SavedQuery) -> Place {
             before: expr,
         }),
         color: None,
+        drop: None,
     }
 }
 

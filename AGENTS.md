@@ -276,10 +276,14 @@ current source before assuming a planned crate, command, or API exists.
   `forget`, which the button runs while the pane shows it, and `reorder`,
   which lets it be dragged within its group. A new kind of kept place
   registers a keeper and fills those two fields; the UI needs no branch.
-  A place with a `color` shows a dot of that tag color in place of an
-  icon: the tags plugin's Tags, the tags on the most files its index
+  A place with a `color` is a pill of that tag color, the pills of a
+  group wrapping together, left-aligned (`sidebar::wrap_pills`: layout
+  only): the tags plugin's Tags, the tags on the most files its index
   knows, each a search of the home folder (`query.location` builds it,
-  so no plugin writes another's syntax).
+  so no plugin writes another's syntax). A place with a `drop` command
+  runs it with what is dropped on it (`pane` for a pane's selection,
+  `entries` for another application's files): a tag's gives them the
+  tag.
   A plugin that needs a line of text from the user dispatches
   `ui.ask` with the command to complete, not a prompt kind of its own;
   one that needs a choice dispatches `ui.choose` with its choices or the
