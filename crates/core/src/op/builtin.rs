@@ -63,14 +63,105 @@ fn parking_name(dir: &Path, purpose: &str) -> PathBuf {
 }
 
 fn rename_noreplace(from: &Path, to: &Path) -> anyhow::Result<()> {
-    rustix::fs::renameat_with(
+    match rustix::fs::renameat_with(
         rustix::fs::CWD,
         from,
         rustix::fs::CWD,
         to,
         rustix::fs::RenameFlags::NOREPLACE,
-    )
+    ) {
+        // Many FUSE filesystems (sshfs, bindfs, exfat-fuse) and some
+        // network ones take no flags: look, then rename. What appears in
+        // between is replaced; nothing better is offered there.
+        Err(rustix::io::Errno::INVAL | rustix::io::Errno::NOSYS) if !exists(to) => {
+            // As an `Errno`, so a move still tells a cross-device rename.
+            std::fs::rename(from, to).map_err(|e| {
+                rustix::io::Errno::from_io_error(&e)
+                    .map_or_else(|| anyhow::Error::from(e), anyhow::Error::from)
+            })
+        }
+        Err(rustix::io::Errno::INVAL | rustix::io::Errno::NOSYS) => {
+            Err(anyhow::Error::from(rustix::io::Errno::EXIST))
+        }
+        r => r.map_err(anyhow::Error::from),
+    }
     .with_context(|| format!("rename {} -> {}", from.display(), to.display()))
+}
+
+// ------------------------------------------------------------------ companions
+
+/// A companion of a file (ADR-028) and where it goes with its file.
+struct Along {
+    from: PathBuf,
+    to: PathBuf,
+    /// It holds the file's attributes (a Mac's `._x`): a copy across
+    /// volumes converts it instead of copying it.
+    attributes: bool,
+}
+
+/// The companions of the file at `src` that go with it to `dest`.
+fn along(ctx: &StepContext, src: &Path, dest: &Path) -> Vec<Along> {
+    let rules = ctx.companions();
+    rules
+        .existing(src)
+        .into_iter()
+        .filter_map(|found| {
+            Some(Along {
+                to: rules.place(&found, dest)?,
+                attributes: rules.holds_attributes(&found),
+                from: found.path,
+            })
+        })
+        .filter(|a| a.from != a.to)
+        .collect()
+}
+
+/// The first companion whose place is taken: the step conflicts as it does
+/// when the file's own place is.
+fn along_conflict(along: &[Along]) -> Option<StepStatus> {
+    along
+        .iter()
+        .find(|a| exists(&a.to))
+        .map(|a| conflict(format!("{} already exists", a.to.display())))
+}
+
+/// Rename each companion to its place (making a companions' folder, `.ts`,
+/// where needed); on a failure, put back those moved and fail.
+fn rename_along(along: &[Along]) -> anyhow::Result<()> {
+    for (done, a) in along.iter().enumerate() {
+        let result =
+            a.to.parent()
+                .map_or(Ok(()), std::fs::create_dir_all)
+                .map_err(anyhow::Error::from)
+                .and_then(|()| rename_noreplace(&a.from, &a.to));
+        if let Err(e) = result {
+            for back in &along[..done] {
+                let _ = rename_noreplace(&back.to, &back.from);
+            }
+            return Err(e);
+        }
+    }
+    Ok(())
+}
+
+/// The file owning `name` in `dir`, when `name` is a companion that holds
+/// its attributes and the file is there: a copy carries it with the file.
+fn attributes_of_sibling(ctx: &StepContext, dir: &Path, name: &OsStr) -> bool {
+    let rules = ctx.companions();
+    let Some(owner) = rules.owner(name) else {
+        return false;
+    };
+    let owner = dir.join(owner);
+    exists(&owner)
+        && rules
+            .existing(&owner)
+            .iter()
+            .any(|f| rules.holds_attributes(f) && f.path == dir.join(name))
+}
+
+fn unsupported(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::Unsupported
+        || rustix::io::Errno::from_io_error(error) == Some(rustix::io::Errno::NOTSUP)
 }
 
 // ------------------------------------------------------------------ rename
@@ -144,7 +235,7 @@ impl Operation for Rename {
             to: self.target(),
         }
     }
-    fn check(&self, _ctx: &StepContext) -> StepStatus {
+    fn check(&self, ctx: &StepContext) -> StepStatus {
         if let Some(invalid) = invalid_name(&self.new_name) {
             return invalid;
         }
@@ -152,7 +243,9 @@ impl Operation for Rename {
         match self.entry.resolve() {
             Ok(src) if src == target => StepStatus::AlreadyDone,
             Ok(src) => match self.classify(&src, &target) {
-                RenameTarget::Free | RenameTarget::Respelled => pending(true),
+                RenameTarget::Free | RenameTarget::Respelled => {
+                    along_conflict(&along(ctx, &src, &target)).unwrap_or(pending(true))
+                }
                 RenameTarget::Spelled => StepStatus::AlreadyDone,
                 RenameTarget::Taken => conflict(format!("{} already exists", target.display())),
             },
@@ -160,10 +253,11 @@ impl Operation for Rename {
             Err(e) => conflict(e.to_string()),
         }
     }
-    fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+    fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         valid_file_name(&self.new_name)?;
         let src = self.entry.resolve()?;
         let target = self.target();
+        let along = along(ctx, &src, &target);
         match self.classify(&src, &target) {
             // rename(2) between two spellings of one file is a no-op on a
             // case-insensitive filesystem: go through a parked name.
@@ -177,6 +271,10 @@ impl Operation for Rename {
             }
             RenameTarget::Spelled => {}
             RenameTarget::Free | RenameTarget::Taken => rename_noreplace(&src, &target)?,
+        }
+        if let Err(e) = rename_along(&along) {
+            let _ = rename_noreplace(&target, &src);
+            return Err(e);
         }
         Ok(Some(Box::new(Rename {
             entry: EntryRef::new(self.entry.id, target),
@@ -218,7 +316,7 @@ impl Operation for Move {
             to: self.target(&self.entry.path),
         }
     }
-    fn check(&self, _ctx: &StepContext) -> StepStatus {
+    fn check(&self, ctx: &StepContext) -> StepStatus {
         if !self.dest_dir.is_dir() {
             return conflict(format!("{} is not a directory", self.dest_dir.display()));
         }
@@ -230,7 +328,9 @@ impl Operation for Move {
             Ok(src) if src.is_dir() && self.dest_dir.starts_with(&src) => {
                 conflict("cannot move a directory into itself")
             }
-            Ok(_) => pending(true),
+            Ok(src) => {
+                along_conflict(&along(ctx, &src, &self.target(&src))).unwrap_or(pending(true))
+            }
             Err(_) if id_of(&self.target(&self.entry.path)) == Some(self.entry.id) => {
                 StepStatus::AlreadyDone
             }
@@ -250,13 +350,25 @@ impl Operation for Move {
         let src = self.entry.resolve()?;
         let target = self.target(&src);
         let origin = src.parent().unwrap_or(Path::new("/")).to_path_buf();
+        let along = along(ctx, &src, &target);
         match rename_noreplace(&src, &target) {
-            Ok(()) => {}
+            Ok(()) => {
+                if let Err(e) = rename_along(&along) {
+                    let _ = rename_noreplace(&target, &src);
+                    return Err(e);
+                }
+            }
             Err(e) if is_cross_device(&e) => {
                 // A move must never lose metadata, whatever the copy preference
                 // says, and a failed transfer must not leave a partial target.
+                // The companion holding the file's attributes is converted
+                // with them (ADR-028); the others go as files.
                 copy_staged(&src, &target, &self.dest_dir, true, ctx)?;
+                copy_along(&along, ctx)?;
                 remove_recursive(&src)?;
+                for a in &along {
+                    let _ = remove_recursive(&a.from);
+                }
             }
             Err(e) => return Err(e),
         }
@@ -379,7 +491,7 @@ impl Operation for Copy {
         if src.is_dir() && target.starts_with(&src) {
             return conflict("cannot copy a directory into itself");
         }
-        pending(true)
+        along_conflict(&along(ctx, &src, &target)).unwrap_or(pending(true))
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         if let Some(name) = &self.new_name {
@@ -387,7 +499,9 @@ impl Operation for Copy {
         }
         let src = self.entry.resolve()?;
         let target = self.target(&src);
+        let along = along(ctx, &src, &target);
         copy_staged(&src, &target, &self.dest_dir, self.preserve_attributes, ctx)?;
+        copy_along(&along, ctx)?;
         let r = EntryRef::from_path(&target)
             .ok_or_else(|| anyhow::anyhow!("copy vanished: {}", target.display()))?;
         // Undo puts the copy in the trash rather than deleting it: it may
@@ -414,9 +528,11 @@ fn same_tree(src: &Path, copy: &Path, ctx: &StepContext) -> anyhow::Result<bool>
     if !a.is_dir() {
         return Ok(a.len() == b.len() && a.modified().ok() == b.modified().ok());
     }
+    // A companion holding its sibling's attributes may have become them.
     let names = |dir: &Path| -> std::io::Result<Vec<OsString>> {
         let mut names = std::fs::read_dir(dir)?
             .map(|e| e.map(|e| e.file_name()))
+            .filter(|n| !n.as_ref().is_ok_and(|n| attributes_of_sibling(ctx, dir, n)))
             .collect::<std::io::Result<Vec<_>>>()?;
         names.sort_unstable();
         Ok(names)
@@ -450,8 +566,14 @@ fn copy_staged(
         .permissions(std::fs::Permissions::from_mode(0o700))
         .tempdir_in(dest_dir)?;
     let staged = staging.path().join("entry");
-    let result = copy_recursive_with_attributes(src, &staged, preserve_attributes, ctx)
-        .and_then(|()| rename_noreplace(&staged, target));
+    // What the copy put beside the staged entry (the companion that holds
+    // its attributes, on a volume that refuses them) follows it out.
+    let result =
+        copy_recursive_with_attributes(src, &staged, preserve_attributes, ctx).and_then(|()| {
+            let beside = along(ctx, &staged, target);
+            rename_noreplace(&staged, target)?;
+            rename_along(&beside)
+        });
     if let Err(error) = result {
         // Completed subdirectories may already have read-only permissions.
         // Only relax permissions inside our private, newly-created staging tree.
@@ -532,7 +654,7 @@ fn copy_file(
     }
     // Set attributes before restoring a read-only source's permissions.
     if preserve_attributes {
-        copy_attributes(src, dst)?;
+        transfer_attributes(src, dst, ctx)?;
     }
     df.set_permissions(m.permissions())?;
     let _ = df.set_modified(m.modified()?);
@@ -601,6 +723,10 @@ fn copy_recursive_with_attributes(
         std::fs::create_dir(dst)?;
         for e in std::fs::read_dir(src)? {
             let e = e?;
+            // A companion holding its sibling's attributes goes with them.
+            if preserve_attributes && attributes_of_sibling(ctx, src, &e.file_name()) {
+                continue;
+            }
             copy_recursive_with_attributes(
                 &e.path(),
                 &dst.join(e.file_name()),
@@ -609,7 +735,7 @@ fn copy_recursive_with_attributes(
             )?;
         }
         if preserve_attributes {
-            copy_attributes(src, dst)?;
+            transfer_attributes(src, dst, ctx)?;
         }
         std::fs::set_permissions(dst, m.permissions())?;
     } else if kind.is_file() {
@@ -636,29 +762,90 @@ fn copy_recursive_with_attributes(
     Ok(())
 }
 
-/// Copy the user's extended attributes (`user.*`: tags, rating, comment,
-/// where a download came from), as `cp --preserve=xattr` does. The other
-/// namespaces are the system's (ACLs, security labels, capabilities) and
-/// stay as the destination makes them.
-fn copy_attributes(src: &Path, dst: &Path) -> anyhow::Result<()> {
-    let names = match xattr::list(src) {
+/// Copy companions (the ones not holding attributes: those are converted
+/// with the file's) beside the copy.
+fn copy_along(along: &[Along], ctx: &StepContext) -> anyhow::Result<()> {
+    for a in along.iter().filter(|a| !a.attributes) {
+        if let Some(dir) = a.to.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        copy_recursive_with_attributes(&a.from, &a.to, true, ctx)?;
+    }
+    Ok(())
+}
+
+/// Give `dst` the user's attributes of `src` (ADR-028): its own `user.*`
+/// and those a companion holds for it (a Mac's `._x`), as attributes where
+/// the destination keeps them; where it refuses them, beside it, as a Mac
+/// does: the companion copied whole (its resource fork and Finder info
+/// with it), or started from the attributes.
+fn transfer_attributes(src: &Path, dst: &Path, ctx: &StepContext) -> anyhow::Result<()> {
+    let own = user_attributes(src)?;
+    let rules = ctx.companions();
+    let aside: Vec<Along> = along(ctx, src, dst)
+        .into_iter()
+        .filter(|a| a.attributes)
+        .collect();
+    let beside = if aside.is_empty() {
+        Vec::new()
+    } else {
+        rules.attributes(src).unwrap_or_default()
+    };
+    let mut all = own.clone();
+    for (name, value) in beside {
+        if !all.iter().any(|(n, _)| *n == name) {
+            all.push((name, value));
+        }
+    }
+    let mut refused = false;
+    for (name, value) in &all {
+        match xattr::set(dst, name, value) {
+            Ok(()) => {}
+            Err(e) if unsupported(&e) => {
+                refused = true;
+                break;
+            }
+            Err(e) => {
+                return Err(e).context(
+                    "keep tags and other attributes while copying; check destination xattr support and permissions, or turn off “Keep tags and attributes when copying” in Settings",
+                );
+            }
+        }
+    }
+    if !refused {
+        return Ok(());
+    }
+    for a in &aside {
+        copy_recursive_with_attributes(&a.from, &a.to, false, ctx)?;
+    }
+    if (aside.is_empty() || !own.is_empty()) && !rules.keep_attributes(dst, &own)? {
+        anyhow::bail!(
+            "keep tags and other attributes while copying: {} keeps no attributes, and nothing is set to keep them beside it; turn off “Keep tags and attributes when copying” in Settings to copy without them",
+            dst.parent().unwrap_or(dst).display()
+        );
+    }
+    Ok(())
+}
+
+/// The user's extended attributes of `path` (`user.*`), none on a volume
+/// that keeps none.
+fn user_attributes(path: &Path) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
+    let names = match xattr::list(path) {
         Ok(names) => names,
-        // A source filesystem without user attributes has none to keep.
-        Err(error) if error.kind() == std::io::ErrorKind::Unsupported => return Ok(()),
+        Err(error) if unsupported(&error) => return Ok(Vec::new()),
         Err(error) => return Err(error).context("read source attributes while copying"),
     };
+    let mut out = Vec::new();
     for name in names.filter(|n| n.as_encoded_bytes().starts_with(b"user.")) {
         // One removed since it was listed is not there to keep.
         let Some(value) =
-            xattr::get(src, &name).context("read a source attribute while copying")?
+            xattr::get(path, &name).context("read a source attribute while copying")?
         else {
             continue;
         };
-        xattr::set(dst, &name, &value).context(
-            "keep tags and other attributes while copying; check destination xattr support and permissions, or turn off “Keep tags and attributes when copying” in Settings",
-        )?;
+        out.push((name.to_string_lossy().into_owned(), value));
     }
-    Ok(())
+    Ok(out)
 }
 
 fn remove_recursive(p: &Path) -> anyhow::Result<()> {
@@ -706,8 +893,18 @@ impl Operation for Swap {
             (Err(e), _) | (_, Err(e)) => conflict(e.to_string()),
         }
     }
-    fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+    fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let (pa, pb) = (self.a.resolve()?, self.b.resolve()?);
+        // Each one's companions take the other's place with it.
+        let mut pairs: Vec<(PathBuf, PathBuf)> = Vec::new();
+        for a in along(ctx, &pa, &pb).into_iter().chain(along(ctx, &pb, &pa)) {
+            if !pairs
+                .iter()
+                .any(|(x, y)| (*x == a.from && *y == a.to) || (*x == a.to && *y == a.from))
+            {
+                pairs.push((a.from, a.to));
+            }
+        }
         rustix::fs::renameat_with(
             rustix::fs::CWD,
             &pa,
@@ -716,6 +913,20 @@ impl Operation for Swap {
             rustix::fs::RenameFlags::EXCHANGE,
         )
         .with_context(|| format!("swap {} <-> {}", pa.display(), pb.display()))?;
+        for (from, to) in pairs {
+            if exists(&to) {
+                rustix::fs::renameat_with(
+                    rustix::fs::CWD,
+                    &from,
+                    rustix::fs::CWD,
+                    &to,
+                    rustix::fs::RenameFlags::EXCHANGE,
+                )
+                .with_context(|| format!("swap {} <-> {}", from.display(), to.display()))?;
+            } else {
+                rename_noreplace(&from, &to)?;
+            }
+        }
         Ok(Some(Box::new(Swap {
             a: EntryRef::new(self.a.id, pb),
             b: EntryRef::new(self.b.id, pa),
@@ -756,10 +967,23 @@ impl Operation for Trash {
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let src = self.entry.resolve()?;
         ctx.forget_trash();
+        let companions: Vec<PathBuf> = ctx
+            .companions()
+            .existing(&src)
+            .into_iter()
+            .map(|f| f.path)
+            .collect();
         trash::delete(&src).with_context(|| format!("trash {}", src.display()))?;
+        // Each an item of the trash of its own, restored with the file.
+        for companion in companions {
+            let _ = trash::delete(&companion);
+        }
         Ok(Some(Box::new(Restore { path: src })))
     }
 }
+
+/// How far apart, in seconds, a file and its companions are trashed.
+const COMPANION_TRASHED_WITHIN: i64 = 5;
 
 /// Restore the most recently trashed item that had this original path.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -812,8 +1036,43 @@ impl Operation for Restore {
             .with_trash(|items| self.find(items).map(|n| items.swap_remove(n)))
             .context("list trash")?
             .ok_or_else(|| anyhow::anyhow!("{} is not in the trash", self.path.display()))?;
+        let when = item.time_deleted;
         trash::os_limited::restore_all([item])
             .with_context(|| format!("restore {}", self.path.display()))?;
+        // The companions trashed with it: those trashed from their places
+        // as it was, then or just after.
+        if let (Some(dir), Some(name)) = (self.path.parent(), self.path.file_name()) {
+            let places: Vec<PathBuf> = ctx
+                .companions()
+                .of(name)
+                .into_iter()
+                .map(|p| dir.join(p))
+                .filter(|p| !exists(p))
+                .collect();
+            let found = ctx
+                .with_trash(|items| {
+                    let mut found = Vec::new();
+                    for place in &places {
+                        let at = items
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, i)| {
+                                i.original_path() == *place
+                                    && (i.time_deleted - when).abs() <= COMPANION_TRASHED_WITHIN
+                            })
+                            .max_by_key(|(_, i)| i.time_deleted)
+                            .map(|(n, _)| n);
+                        if let Some(n) = at {
+                            found.push(items.swap_remove(n));
+                        }
+                    }
+                    found
+                })
+                .unwrap_or_default();
+            if !found.is_empty() {
+                let _ = trash::os_limited::restore_all(found);
+            }
+        }
         let r = EntryRef::from_path(&self.path)
             .ok_or_else(|| anyhow::anyhow!("restored file missing: {}", self.path.display()))?;
         Ok(Some(Box::new(Trash { entry: r })))
@@ -850,9 +1109,13 @@ impl Operation for Delete {
             Err(e) => conflict(e.to_string()),
         }
     }
-    fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+    fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let src = self.entry.resolve()?;
+        let companions = ctx.companions().existing(&src);
         remove_recursive(&src)?;
+        for companion in companions {
+            let _ = remove_recursive(&companion.path);
+        }
         Ok(None)
     }
 }

@@ -58,7 +58,16 @@ pub trait MetadataProvider: Send + Sync {
     /// Fill what you know for each `(path, entry)`. Set fields with your own
     /// provenance (`Provenance::Plugin { name }`) and namespaced keys.
     fn fill(&self, dir: &Path, entries: &mut [Entry]);
+    /// `fill`, for a batch of a folder whose names are all known: `listed`
+    /// says whether a name is in it, so a provider that looks for files
+    /// beside a file (ADR-028) does not read the folder again.
+    fn fill_listed(&self, dir: &Path, _listed: &Listed<'_>, entries: &mut [Entry]) {
+        self.fill(dir, entries);
+    }
 }
+
+/// Whether a name is in a folder, as its listing knows.
+pub type Listed<'a> = dyn Fn(&std::ffi::OsStr) -> bool + 'a;
 
 /// The registered providers, in registration order.
 #[derive(Default)]
@@ -80,6 +89,23 @@ impl MetadataProviders {
     }
 
     /// Run every provider over `entries` (all children of `dir`).
+    /// Fill `entries` of `dir` from every provider, with `listed` when the
+    /// folder's names are all known.
+    pub fn fill_listed(&self, dir: &Path, listed: &Listed<'_>, entries: &mut [Entry]) {
+        if entries.is_empty() {
+            return;
+        }
+        let providers: Vec<Arc<dyn MetadataProvider>> = self
+            .list
+            .read()
+            .iter()
+            .map(|(_, p)| Arc::clone(p))
+            .collect();
+        for p in providers {
+            p.fill_listed(dir, listed, entries);
+        }
+    }
+
     pub fn fill(&self, dir: &Path, entries: &mut [Entry]) {
         if entries.is_empty() {
             return;

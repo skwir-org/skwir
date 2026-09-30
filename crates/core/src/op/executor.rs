@@ -168,6 +168,7 @@ pub struct Executor {
     /// byte progress.
     running: Mutex<Vec<(PlanId, CancelToken, Arc<Meter>)>>,
     observers: Contributions<ChangeObserver>,
+    companions: Mutex<Arc<crate::companions::Companions>>,
 }
 
 /// Removes a plan from `running` however `apply_plan` leaves.
@@ -202,7 +203,14 @@ impl Executor {
             waker: Mutex::new(None),
             running: Mutex::new(Vec::new()),
             observers: Contributions::default(),
+            companions: Mutex::new(Arc::default()),
         })
+    }
+
+    /// The companion rules every step carries files beside a file by
+    /// (ADR-028).
+    pub fn set_companions(&self, companions: Arc<crate::companions::Companions>) {
+        *self.companions.lock() = companions;
     }
 
     /// Wake the UI after each event.
@@ -543,7 +551,8 @@ impl Executor {
             .lock()
             .push((plan.id, cancel.clone(), Arc::clone(&meter)));
         let _running = Running(self, plan.id);
-        let ctx = StepContext::new(cancel.clone(), meter);
+        let ctx = StepContext::new(cancel.clone(), meter)
+            .with_companions(Arc::clone(&self.companions.lock()));
         self.emit(ExecEvent::Started {
             plan: plan.id,
             title: plan.title.clone(),

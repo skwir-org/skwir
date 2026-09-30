@@ -28,6 +28,7 @@ pub mod cache;
 pub mod cancel;
 pub mod collate;
 pub mod command;
+pub mod companions;
 pub mod document;
 pub mod entry;
 pub mod fields;

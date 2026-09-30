@@ -70,9 +70,49 @@ fn build(root: &Path, t: &Tree) {
     }
     for f in 0..t.files {
         std::fs::write(root.join(format!("f{f}")), format!("content {f}")).unwrap();
+        // Every other file has a companion beside it (ADR-028), which goes
+        // where it goes and comes back with it.
+        if f % 2 == 0 {
+            std::fs::write(root.join(format!("._f{f}")), format!("aside {f}")).unwrap();
+        }
         for d in 0..t.dirs {
             std::fs::write(root.join(format!("d{d}/f{f}")), format!("content {d}/{f}")).unwrap();
         }
+    }
+}
+
+/// `._x` beside `x`, holding its attributes when `holds`.
+struct Aside {
+    holds: bool,
+}
+
+impl bibli_core::companions::Companion for Aside {
+    fn id(&self) -> &'static str {
+        "aside"
+    }
+    fn of(&self, name: &std::ffi::OsStr) -> Vec<PathBuf> {
+        let mut aside = OsString::from("._");
+        aside.push(name);
+        vec![aside.into()]
+    }
+    fn owner(&self, name: &std::ffi::OsStr) -> Option<OsString> {
+        let s = name.to_str()?.strip_prefix("._")?;
+        (!s.is_empty()).then(|| s.into())
+    }
+    fn holds_attributes(&self) -> bool {
+        self.holds
+    }
+    /// One attribute per line, `name=value`.
+    fn attributes(&self, path: &Path) -> Option<Vec<(String, Vec<u8>)>> {
+        let mut aside = OsString::from("._");
+        aside.push(path.file_name()?);
+        let text = std::fs::read_to_string(path.with_file_name(aside)).ok()?;
+        Some(
+            text.lines()
+                .filter_map(|l| l.split_once('='))
+                .map(|(n, v)| (n.to_owned(), v.as_bytes().to_vec()))
+                .collect(),
+        )
     }
 }
 
@@ -162,6 +202,7 @@ proptest! {
         std::fs::create_dir(&root).unwrap();
         build(&root, &t);
         let app = app(tmp.path());
+        app.companions.register("test", std::sync::Arc::new(Aside { holds: false }));
         let before = snapshot(&root);
 
         let plan = make_plan(&root, &t, &steps);
@@ -777,4 +818,98 @@ fn a_new_file_never_replaces_what_is_there() {
         std::fs::read_to_string(root.join("taken")).unwrap(),
         "keep me"
     );
+}
+
+#[test]
+fn a_file_goes_with_its_companion_and_a_copy_takes_its_attributes_in() {
+    let tmp = Scratch::new();
+    let root = tmp.path().join("tree");
+    std::fs::create_dir_all(root.join("into")).unwrap();
+    let f = root.join("it's a.txt");
+    std::fs::write(&f, b"x").unwrap();
+    std::fs::write(root.join("._it's a.txt"), "user.xdg.tags=from the mac\n").unwrap();
+    let app = app(tmp.path());
+    app.companions
+        .register("test", std::sync::Arc::new(Aside { holds: true }));
+    let before = snapshot(&root);
+
+    // A copy onto a volume that keeps attributes takes them in: the copy
+    // has the tag, and no `._` file beside it.
+    let mut plan = Plan::new("copy");
+    plan.steps.push(Box::new(Copy {
+        entry: EntryRef::from_path(&f).unwrap(),
+        dest_dir: root.join("into"),
+        new_name: None,
+        preserve_attributes: true,
+    }));
+    let r = app.executor.execute_blocking(&plan, app.lifetime());
+    assert!(r.error.is_none(), "{:?}", r.error);
+    let copy = root.join("into/it's a.txt");
+    assert_eq!(
+        xattr::get(&copy, "user.xdg.tags").unwrap().as_deref(),
+        Some(b"from the mac".as_slice())
+    );
+    assert!(!root.join("into/._it's a.txt").exists());
+    // Re-applied, it is already done, the companion that became attributes
+    // not counted against it.
+    let again = Plan::from_data(&plan.to_data(), &app.ops).unwrap();
+    assert_eq!(
+        app.executor
+            .execute_blocking(&again, app.lifetime())
+            .applied,
+        0
+    );
+    app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert_eq!(snapshot(&root), before);
+
+    // Renamed, moved and trashed with its file, and back with each undo.
+    let mut plan = Plan::new("rename, move");
+    plan.steps.push(Box::new(Rename {
+        entry: EntryRef::from_path(&f).unwrap(),
+        new_name: "b.txt".into(),
+    }));
+    let r = app.executor.execute_blocking(&plan, app.lifetime());
+    assert!(r.error.is_none(), "{:?}", r.error);
+    assert!(root.join("._b.txt").exists() && !root.join("._it's a.txt").exists());
+    let mut plan = Plan::new("move");
+    plan.steps.push(Box::new(Move {
+        entry: EntryRef::from_path(root.join("b.txt")).unwrap(),
+        dest_dir: root.join("into"),
+    }));
+    assert!(
+        app.executor
+            .execute_blocking(&plan, app.lifetime())
+            .error
+            .is_none()
+    );
+    assert!(root.join("into/._b.txt").exists());
+    let mut plan = Plan::new("trash");
+    plan.steps.push(Box::new(Trash {
+        entry: EntryRef::from_path(root.join("into/b.txt")).unwrap(),
+    }));
+    assert!(
+        app.executor
+            .execute_blocking(&plan, app.lifetime())
+            .error
+            .is_none()
+    );
+    assert!(!root.join("into/._b.txt").exists());
+    for _ in 0..3 {
+        let u = app.executor.undo_blocking(app.lifetime()).unwrap();
+        assert!(u.error.is_none(), "{:?}", u.error);
+    }
+    assert_eq!(snapshot(&root), before);
+
+    // A companion's place taken: the rename conflicts, touching nothing.
+    std::fs::write(root.join("._c.txt"), b"someone else's").unwrap();
+    let rename = Rename {
+        entry: EntryRef::from_path(&f).unwrap(),
+        new_name: "c.txt".into(),
+    };
+    assert!(matches!(
+        rename.check(
+            &StepContext::detached().with_companions(std::sync::Arc::clone(&app.companions))
+        ),
+        StepStatus::Conflict { .. }
+    ));
 }

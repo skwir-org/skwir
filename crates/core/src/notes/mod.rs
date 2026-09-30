@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cache::CacheSlot;
 use crate::entry::EntryId;
-use crate::metadata::same_tag;
+use crate::metadata::{Listed, same_tag};
 pub use edit::{RestoreNotes, SetNotes};
 use raw::RawKey;
 
@@ -255,7 +255,14 @@ pub trait NotesStore: Send + Sync {
     /// The notes it keeps for each of `files`, in their order; `None` for
     /// a file it keeps nothing for. Blocking: called on a worker, with a
     /// batch of one folder's files.
-    fn read(&self, dir: &Path, files: &[Probe<'_>]) -> Vec<Option<Notes>>;
+    /// With `listed`, the folder's names as its listing knows them: a store
+    /// looking for files beside a file asks it rather than read the folder.
+    fn read(
+        &self,
+        dir: &Path,
+        files: &[Probe<'_>],
+        listed: Option<&Listed<'_>>,
+    ) -> Vec<Option<Notes>>;
     /// Where it keeps (or would start keeping, with `create`) `file`'s
     /// notes: what an edit may change, snapshot for its undo.
     fn keys(&self, file: &Probe<'_>, create: bool) -> Vec<RawKey>;
@@ -489,7 +496,13 @@ impl NoteStores {
 
     /// The notes of a batch of `dir`'s files, as every store `policy`
     /// reads keeps them, merged. Blocking: call on a worker.
-    pub fn read(&self, dir: &Path, files: &[Named<'_>], policy: &Policy) -> Vec<Read> {
+    pub fn read(
+        &self,
+        dir: &Path,
+        files: &[Named<'_>],
+        policy: &Policy,
+        listed: Option<&Listed<'_>>,
+    ) -> Vec<Read> {
         let paths: Vec<std::path::PathBuf> = files.iter().map(|(n, _)| dir.join(n)).collect();
         let attributes: Vec<Vec<String>> = if self.reads_attributes(policy) {
             paths.iter().map(|p| attribute_names(p)).collect()
@@ -513,7 +526,7 @@ impl NoteStores {
             .collect();
         let mut each: Vec<Vec<(&'static str, Notes)>> = vec![Vec::new(); probes.len()];
         for store in &stores {
-            for (i, found) in store.read(dir, &probes).into_iter().enumerate() {
+            for (i, found) in store.read(dir, &probes, listed).into_iter().enumerate() {
                 if let (Some(found), Some(list)) = (found, each.get_mut(i)) {
                     list.push((store.id(), found));
                 }
@@ -574,7 +587,7 @@ impl NoteStores {
             return Read::default();
         };
         let id = crate::op::EntryRef::from_path(path).map(|r| r.id);
-        self.read(dir, &[(name, id)], policy)
+        self.read(dir, &[(name, id)], policy, None)
             .pop()
             .unwrap_or_default()
     }

@@ -412,6 +412,87 @@ impl AsideNames {
     }
 }
 
+/// The attributes a Mac keeps outside its attribute list, named as
+/// `rsync -X` names them from a Mac: the Finder info and the resource
+/// fork.
+const FINDER_INFO_ATTRIBUTE: &str = "user.com.apple.FinderInfo";
+const RESOURCE_FORK_ATTRIBUTE: &str = "user.com.apple.ResourceFork";
+
+impl AppleDouble {
+    /// Every attribute it holds, named as on this system (`user.…`), the
+    /// Finder info and the resource fork included when they say anything.
+    pub fn as_attributes(&self) -> Vec<(String, Vec<u8>)> {
+        let mut out: Vec<(String, Vec<u8>)> = self
+            .attributes
+            .iter()
+            .map(|a| (format!("user.{}", a.name), a.value.clone()))
+            .collect();
+        if self.finder_info.iter().any(|b| *b != 0) {
+            out.push((FINDER_INFO_ATTRIBUTE.to_owned(), self.finder_info.to_vec()));
+        }
+        if let Some(fork) = self.resource_fork.as_ref().filter(|f| !is_blank_fork(f)) {
+            out.push((RESOURCE_FORK_ATTRIBUTE.to_owned(), fork.clone()));
+        }
+        out
+    }
+
+    /// Hold `attributes` (named as on this system) as well.
+    pub fn take_attributes(&mut self, attributes: &[(String, Vec<u8>)]) {
+        for (name, value) in attributes {
+            match name.as_str() {
+                FINDER_INFO_ATTRIBUTE => {
+                    if let Ok(info) = <[u8; FINDER_INFO_LEN]>::try_from(value.as_slice()) {
+                        self.finder_info = info;
+                    }
+                }
+                RESOURCE_FORK_ATTRIBUTE => self.resource_fork = Some(value.clone()),
+                _ => {
+                    self.set(inside(name), Some(value.clone()));
+                }
+            }
+        }
+    }
+}
+
+/// The resource fork macOS writes when there is none: empty, or its
+/// header with the words "This resource fork intentionally left blank".
+fn is_blank_fork(fork: &[u8]) -> bool {
+    fork.is_empty() || fork.windows(RF_BLANK.len()).any(|w| w == RF_BLANK) && fork.len() <= 512
+}
+
+const RF_BLANK: &[u8] = b"This resource fork intentionally left blank";
+
+/// A file's `._` file as its companion (ADR-028): it goes where the file
+/// goes, and it holds the file's attributes where its volume keeps none.
+pub struct AsideCompanion;
+
+impl bibli_core::companions::Companion for AsideCompanion {
+    fn id(&self) -> &'static str {
+        "appledouble"
+    }
+    fn of(&self, name: &OsStr) -> Vec<PathBuf> {
+        let mut aside = OsString::from(PREFIX);
+        aside.push(name);
+        vec![PathBuf::from(aside)]
+    }
+    fn owner(&self, name: &OsStr) -> Option<OsString> {
+        let file = name.as_encoded_bytes().strip_prefix(PREFIX.as_bytes())?;
+        (!file.is_empty()).then(|| os_from_bytes(file))
+    }
+    fn holds_attributes(&self) -> bool {
+        true
+    }
+    fn attributes(&self, path: &Path) -> Option<Vec<(String, Vec<u8>)>> {
+        Some(read(path)?.as_attributes())
+    }
+    fn keep_attributes(&self, path: &Path, attributes: &[(String, Vec<u8>)]) -> io::Result<bool> {
+        let mut ad = read(path).unwrap_or_else(AppleDouble::empty);
+        ad.take_attributes(attributes);
+        write(path, &ad)?;
+        Ok(true)
+    }
+}
+
 /// The desktop's attributes, as named inside a sidecar: a Mac has no
 /// `user.` namespace, so `user.xdg.tags` is `xdg.tags` there, and a Mac
 /// copying the file home makes it an attribute of that name, which
@@ -486,12 +567,31 @@ impl NotesStore for AppleDoubleStore {
     fn in_use(&self, dir: &Path) -> bool {
         !self.aside.of(dir).is_empty()
     }
-    fn read(&self, dir: &Path, files: &[Probe<'_>]) -> Vec<Option<Notes>> {
-        let names = self.aside.of(dir);
+    fn read(
+        &self,
+        dir: &Path,
+        files: &[Probe<'_>],
+        listed: Option<&bibli_core::metadata::Listed<'_>>,
+    ) -> Vec<Option<Notes>> {
+        // The folder's names from its listing when it knows them all, else
+        // one read of the folder for its batches.
+        let scanned = if listed.is_none() {
+            self.aside.of(dir)
+        } else {
+            Arc::default()
+        };
+        let has = |name: &OsStr| {
+            let mut aside = OsString::from(PREFIX);
+            aside.push(name);
+            match listed {
+                Some(listed) => listed(&aside),
+                None => scanned.contains(name),
+            }
+        };
         files
             .iter()
             .map(|f| {
-                if names.is_empty() || is_sidecar(f.name) || !names.contains(f.name) {
+                if is_sidecar(f.name) || !has(f.name) {
                     return None;
                 }
                 notes_of(&read(f.path)?)

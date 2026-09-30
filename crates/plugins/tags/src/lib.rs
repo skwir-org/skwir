@@ -472,6 +472,8 @@ impl Plugin for TagsPlugin {
             }),
         );
         register_stores(&app.notes);
+        app.companions
+            .register(ID, Arc::new(appledouble::AsideCompanion));
         ops::register_legacy(app);
         // An edit applied is learned by the index at once: a file edited
         // while no pane shows it (a tag renamed everywhere) is not read
@@ -1353,6 +1355,140 @@ mod tests {
             xattr::get(&f, xdg::TAGS).unwrap().as_deref(),
             Some(b"a,b,x".as_slice())
         );
+    }
+
+    #[test]
+    fn a_macs_file_keeps_its_notes_renamed_and_copied_to_a_disk() {
+        use crate::appledouble;
+        appledouble::EVERYWHERE.store(true, std::sync::atomic::Ordering::Relaxed);
+        let tmp = home_tempdir();
+        let stick = tmp.path().join("STICK");
+        let disk = tmp.path().join("disk");
+        std::fs::create_dir(&stick).unwrap();
+        std::fs::create_dir(&disk).unwrap();
+        let file = stick.join("it's a.pdf");
+        std::fs::write(&file, b"x").unwrap();
+        let tags = finder::encode(
+            &[finder::Tag {
+                name: "Rouge".into(),
+                color: 6,
+            }],
+            finder::Framing::Plain,
+        );
+        std::fs::write(
+            stick.join("._it's a.pdf"),
+            appledouble::tests::as_a_mac_writes(&[(finder::TAGS, &tags)]),
+        )
+        .unwrap();
+        let (app, _) = app_in(tmp.path(), &stick, &["it's a.pdf"]);
+        let run = |op: Box<dyn bibli_core::op::Operation>| {
+            let mut plan = Plan::new("op");
+            plan.steps.push(op);
+            let r = app.executor.execute_blocking(&plan, app.lifetime());
+            assert!(r.error.is_none(), "{:?}", r.error);
+        };
+        run(Box::new(bibli_core::op::Rename {
+            entry: EntryRef::from_path(&file).unwrap(),
+            new_name: "b.pdf".into(),
+        }));
+        let renamed = stick.join("b.pdf");
+        assert!(stick.join("._b.pdf").exists());
+        assert_eq!(read_tags(&renamed), ["Rouge"]);
+        // Copied to a disk, which keeps attributes: the Mac's become the
+        // file's own, color and all, and no `._` file follows.
+        run(Box::new(bibli_core::op::Copy {
+            entry: EntryRef::from_path(&renamed).unwrap(),
+            dest_dir: disk.clone(),
+            new_name: None,
+            preserve_attributes: true,
+        }));
+        let copy = disk.join("b.pdf");
+        assert!(!disk.join("._b.pdf").exists());
+        assert!(
+            xattr::get(&copy, "user.com.apple.metadata:_kMDItemUserTags")
+                .unwrap()
+                .is_some()
+        );
+        appledouble::EVERYWHERE.store(false, std::sync::atomic::Ordering::Relaxed);
+        let notes = read_notes(&copy);
+        assert_eq!(notes.tag_names(), ["Rouge"]);
+        assert_eq!(notes.tag("Rouge").unwrap().color.as_deref(), Some("red"));
+    }
+
+    /// Against a folder whose volume refuses attributes (a FUSE mount made
+    /// with `bindfs --xattr-none`, a FAT stick): a copy onto it keeps the
+    /// file's notes in a `._` file, which a copy back makes attributes
+    /// again, and an edit there starts one for a file that has none.
+    /// `BIBLI_NO_XATTR_DIR=<folder> cargo nextest run -p bibli-plugin-tags
+    /// --run-ignored only refusing`.
+    #[test]
+    #[ignore = "needs a folder on a volume without attributes"]
+    fn onto_a_volume_refusing_attributes_notes_go_beside_and_come_back() {
+        let refusing = std::path::PathBuf::from(
+            std::env::var_os("BIBLI_NO_XATTR_DIR").expect("BIBLI_NO_XATTR_DIR"),
+        );
+        let tmp = home_tempdir();
+        let home = tmp.path().join("home");
+        std::fs::create_dir(&home).unwrap();
+        let file = home.join("it's tagged.txt");
+        std::fs::write(&file, b"x").unwrap();
+        write_tags(&file, &["work".into(), "Été".into()]).unwrap();
+        xattr::set(&file, xdg::RATING, b"8").unwrap();
+        let stick = refusing.join(format!("bibli-refusing-{}", std::process::id()));
+        std::fs::create_dir(&stick).unwrap();
+        assert!(
+            xattr::set(&stick, "user.test", b"x").is_err(),
+            "attributes are refused"
+        );
+        let (app, _) = app_in(tmp.path(), &home, &["it's tagged.txt"]);
+        let run = |op: Box<dyn bibli_core::op::Operation>| {
+            let mut plan = Plan::new("op");
+            plan.steps.push(op);
+            let r = app.executor.execute_blocking(&plan, app.lifetime());
+            assert!(r.error.is_none(), "{:?}", r.error);
+        };
+        run(Box::new(bibli_core::op::Copy {
+            entry: EntryRef::from_path(&file).unwrap(),
+            dest_dir: stick.clone(),
+            new_name: None,
+            preserve_attributes: true,
+        }));
+        let copied = stick.join("it's tagged.txt");
+        assert!(stick.join("._it's tagged.txt").exists());
+        let notes = read_notes(&copied);
+        assert_eq!(
+            (notes.tag_names(), notes.rating),
+            (vec!["work".to_owned(), "Été".to_owned()], Some(8))
+        );
+        // Back to the disk: attributes again, no `._` file.
+        let back = home.join("back");
+        std::fs::create_dir(&back).unwrap();
+        run(Box::new(bibli_core::op::Copy {
+            entry: EntryRef::from_path(&copied).unwrap(),
+            dest_dir: back.clone(),
+            new_name: None,
+            preserve_attributes: true,
+        }));
+        assert!(!back.join("._it's tagged.txt").exists());
+        assert_eq!(
+            xattr::get(back.join("it's tagged.txt"), xdg::TAGS)
+                .unwrap()
+                .as_deref(),
+            Some("work,Été".as_bytes())
+        );
+        // A file of the stick without notes: tagging it starts its `._`.
+        let plain = stick.join("plain.txt");
+        std::fs::write(&plain, b"x").unwrap();
+        let edit = app
+            .notes
+            .edit(EntryRef::from_path(&plain).unwrap())
+            .tags(vec!["new".into()]);
+        run(Box::new(edit));
+        assert!(stick.join("._plain.txt").exists());
+        assert_eq!(read_tags(&plain), ["new"]);
+        app.executor.undo_blocking(app.lifetime()).unwrap();
+        assert!(!stick.join("._plain.txt").exists());
+        std::fs::remove_dir_all(&stick).unwrap();
     }
 
     #[test]

@@ -50,6 +50,8 @@ struct Shared {
     dirfd: OwnedFd,
     dev: u64,
     names: Mutex<Names>,
+    /// Every name of the folder is in `names`: a batch can ask them.
+    listed: std::sync::atomic::AtomicBool,
     tx: EventSink,
     ctx: OpenContext,
     _watcher: Mutex<Option<watch::WatchHandle>>,
@@ -219,6 +221,7 @@ impl PathLocation {
                         dirfd,
                         dev: st.st_dev,
                         names: Mutex::new(Names::default()),
+                        listed: std::sync::atomic::AtomicBool::new(false),
                         tx: tx.clone(),
                         ctx: ctx.clone(),
                         _watcher: Mutex::new(watcher),
@@ -363,6 +366,8 @@ impl Shared {
                 self.tx.send(ListingEvent::Removed(gone));
             }
         }
+        self.listed
+            .store(true, std::sync::atomic::Ordering::Release);
         self.tx.send(ListingEvent::Complete);
         if !stayed.is_empty() {
             let s = Arc::clone(self);
@@ -379,6 +384,17 @@ impl Shared {
                     }
                 },
             );
+        }
+    }
+
+    /// Run the metadata providers on a batch, with the folder's names once
+    /// they are all known.
+    fn fill(&self, dir: &Path, entries: &mut [Entry]) {
+        if self.listed.load(std::sync::atomic::Ordering::Acquire) {
+            let listed = |name: &std::ffi::OsStr| self.names.lock().by_name.contains_key(name);
+            self.ctx.metadata.fill_listed(dir, &listed, entries);
+        } else {
+            self.ctx.metadata.fill(dir, entries);
         }
     }
 
@@ -418,7 +434,7 @@ impl Shared {
         }
         let dir = self.dir();
         if !updated.is_empty() {
-            self.ctx.metadata.fill(&dir, &mut updated);
+            self.fill(&dir, &mut updated);
             self.tx.send(ListingEvent::Updated(updated));
         }
         gone.extend(stale);
@@ -426,7 +442,7 @@ impl Shared {
             self.tx.send(ListingEvent::Removed(gone));
         }
         if !rekeyed.is_empty() {
-            self.ctx.metadata.fill(&dir, &mut rekeyed);
+            self.fill(&dir, &mut rekeyed);
             self.tx.send(ListingEvent::Added(rekeyed));
         }
     }
@@ -484,19 +500,14 @@ impl Shared {
         }
         let mut added = Vec::new();
         let mut removed = Vec::new();
-        // A `._` file holds its file's attributes where a Mac writes them
-        // aside (AppleDouble, on a volume without them): when it changes,
-        // the file's notes did.
+        // A companion keeps its file's notes (ADR-028: a Mac's `._x`, a
+        // sidecar): when it changes, the file's notes did.
         let mut names = c.names;
-        let aside: Vec<std::ffi::OsString> = names
+        let owners: Vec<std::ffi::OsString> = names
             .iter()
-            .filter_map(|n| {
-                // The volumes where a Mac writes them name files in UTF-16.
-                let file = n.to_str()?.strip_prefix("._")?;
-                (!file.is_empty()).then(|| file.into())
-            })
+            .filter_map(|n| self.ctx.companions.owner(n))
             .collect();
-        names.extend(aside);
+        names.extend(owners);
         for name in names {
             if self.ctx.cancel.is_cancelled() {
                 return;
@@ -525,7 +536,7 @@ impl Shared {
         if !added.is_empty() {
             // Changed entries arrive stat-ed; give providers their turn so
             // fields such as tags survive the update.
-            self.ctx.metadata.fill(&self.dir(), &mut added);
+            self.fill(&self.dir(), &mut added);
             self.tx.send(ListingEvent::Added(added));
         }
     }

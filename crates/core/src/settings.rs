@@ -536,6 +536,17 @@ pub(crate) fn register(app: &crate::App) {
         .section("Files"),
     );
     app.settings.declare(
+        SettingSpec::toggle(
+            crate::companions::SHOW,
+            "Show companion files",
+            "With hidden files shown, also list the files that keep another file's notes beside it: a Mac's ._ files, XMP and TagSpaces sidecars. Details lists a file's companions either way.",
+            false,
+        )
+        .section("Files"),
+    );
+    app.companions
+        .set_shown(app.settings.get(crate::companions::SHOW).unwrap_or(false));
+    app.settings.declare(
         SettingSpec::choice(
             STARTUP,
             "Open at startup",
@@ -599,6 +610,12 @@ pub(crate) fn register(app: &crate::App) {
                         Ok(keys) => {
                             if keys.iter().any(|key| key == crate::tabs::SLEEP_KEY) {
                                 app.apply_tabs_sleep();
+                            }
+                            if keys.iter().any(|key| key == crate::companions::SHOW) {
+                                app.companions.set_shown(
+                                    app.settings.get(crate::companions::SHOW).unwrap_or(false),
+                                );
+                                app.wake();
                             }
                             app.plugins.settings_changed(&keys, &app);
                             SaveState::Saved

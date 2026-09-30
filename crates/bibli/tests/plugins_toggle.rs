@@ -28,6 +28,10 @@ struct Snapshot {
     fields: Vec<&'static str>,
     /// Indexes a search asks first (the tags plugin's, Baloo).
     hints: Vec<&'static str>,
+    /// Where notes are kept (ADR-027: the desktop's attributes, the Finder's).
+    notes: Vec<&'static str>,
+    /// Files beside a file (ADR-028: a Mac's `._` files).
+    companions: Vec<&'static str>,
     /// Operation kinds plans are made of (tags, positions).
     ops: Vec<&'static str>,
     previews: Vec<&'static str>,
@@ -70,6 +74,8 @@ fn snapshot(app: &App) -> Snapshot {
         metadata: app.metadata.ids(),
         fields: app.fields.ids(),
         hints: app.hints.ids(),
+        notes: app.notes.ids(),
+        companions: app.companions.ids(),
         ops: app.ops.kinds(),
         previews: app.previews.ids(),
         thumbs: app.thumbnails.provider_ids(),

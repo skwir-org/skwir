@@ -647,8 +647,8 @@ impl Pane {
             .collect()
     }
 
-    pub(crate) fn add_kept(&mut self, open: Arc<dyn OpenLocation>) {
-        self.kept.push(Kept::new(open, Listing::default()));
+    pub(crate) fn add_kept(&mut self, open: Arc<dyn OpenLocation>, listing: Listing) {
+        self.kept.push(Kept::new(open, listing));
     }
 
     /// Whether anything is kept or waiting to be: `keep_only` has work.

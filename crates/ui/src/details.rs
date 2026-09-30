@@ -564,6 +564,10 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
             if group.title.as_ref() == "Permissions" {
                 group.rows.extend(preview.access.iter().cloned());
             }
+            // The files beside it, or what a companion belongs to.
+            if group.title.as_ref() == "Location" {
+                group.rows.extend(preview.beside.iter().cloned());
+            }
             group
         })
         .collect::<Vec<_>>();

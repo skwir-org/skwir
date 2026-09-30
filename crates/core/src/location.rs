@@ -5,7 +5,7 @@
 //! [`OpenLocation`] that streams [`ListingEvent`]s over a channel. The UI
 //! applies them to a [`Listing`] (or its own model) and never waits.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -168,6 +168,9 @@ pub struct OpenContext {
     pub fields: Arc<crate::fields::Fields>,
     /// Indexes a search asks first (see [`crate::hints`]): a `tag:`.
     pub hints: Arc<crate::hints::Hints>,
+    /// Files beside a file (see [`crate::companions`]): a listing marks
+    /// them.
+    pub companions: Arc<crate::companions::Companions>,
 }
 
 impl OpenContext {
@@ -275,6 +278,8 @@ struct SortCache {
     stamp: (u64, u64),
     spec: SortSpec,
     ids: Arc<[EntryId]>,
+    /// Whether companions were shown when `ids` was made.
+    companions_shown: bool,
     /// How many entries the listing held when `ids` was made: the ones
     /// after, in insertion order, are arrivals it has not placed yet.
     seen: usize,
@@ -316,12 +321,22 @@ struct Slot {
     entry: Entry,
     /// [`crate::collate::sort_key`] of the name, computed once per name.
     key: Box<[u8]>,
+    /// The file it is a companion of (ADR-028), by its name, when it is
+    /// one; the empty name for a folder of companions (`.ts`).
+    beside: Option<OsString>,
 }
 
 impl Slot {
-    fn new(entry: Entry) -> Self {
+    fn new(entry: Entry, companions: Option<&crate::companions::Companions>) -> Self {
         let key = crate::collate::sort_key(&entry.name);
-        Slot { entry, key }
+        let beside = companions.and_then(|c| {
+            if c.is_folder(&entry.name) {
+                Some(OsString::new())
+            } else {
+                c.owner(&entry.name)
+            }
+        });
+        Slot { entry, key, beside }
     }
 }
 
@@ -414,6 +429,11 @@ pub struct Listing {
     /// Incremented when the location itself changed (`ListingEvent::Changed`).
     itself_version: u64,
     sort_cache: parking_lot::Mutex<Option<SortCache>>,
+    /// The rules of files beside a file, to hide them (ADR-028).
+    companions: Option<Arc<crate::companions::Companions>>,
+    /// The names companions listed belong to: one arriving re-sorts, so
+    /// its companion is hidden.
+    owners: std::collections::HashSet<OsString>,
 }
 
 impl Default for Listing {
@@ -432,11 +452,35 @@ impl Default for Listing {
             rating_version: id,
             itself_version: id,
             sort_cache: parking_lot::Mutex::new(None),
+            companions: None,
+            owners: std::collections::HashSet::new(),
         }
     }
 }
 
 impl Listing {
+    /// A listing that hides the files beside a file `companions` names,
+    /// while their file is listed (ADR-028).
+    pub fn with_companions(companions: Arc<crate::companions::Companions>) -> Self {
+        Listing {
+            companions: Some(companions),
+            ..Listing::default()
+        }
+    }
+
+    fn slot(&mut self, e: Entry) -> Slot {
+        let slot = Slot::new(e, self.companions.as_deref());
+        if let Some(owner) = &slot.beside {
+            self.owners.insert(owner.clone());
+        }
+        slot
+    }
+
+    /// Whether companions are shown now (with hidden files).
+    fn companions_shown(&self) -> bool {
+        self.companions.as_ref().is_some_and(|c| c.shown())
+    }
+
     /// Apply one event. Returns whether the listing changed.
     pub fn apply(&mut self, event: ListingEvent) -> bool {
         let mut delta = Delta::default();
@@ -512,7 +556,15 @@ impl Listing {
                     return;
                 }
                 if d.name {
-                    *slot.get_mut() = Slot::new(e);
+                    let replaced = Slot::new(e, self.companions.as_deref());
+                    if let Some(owner) = &replaced.beside {
+                        self.owners.insert(owner.clone());
+                        delta.order = true;
+                    }
+                    if self.owners.contains(&replaced.entry.name) {
+                        delta.order = true;
+                    }
+                    *slot.get_mut() = replaced;
                 } else {
                     slot.get_mut().entry = e;
                 }
@@ -523,9 +575,16 @@ impl Listing {
                 delta.modified |= d.modified;
                 delta.rating |= d.rating;
             }
-            indexmap::map::Entry::Vacant(slot) => {
+            indexmap::map::Entry::Vacant(_) => {
                 if insert {
-                    slot.insert(Slot::new(e));
+                    let new = self.slot(e);
+                    // A companion, or the file one belongs to: whether a
+                    // listed entry is shown changed, so the order is made
+                    // again (rare: a Mac's `._` files, sidecars).
+                    if new.beside.is_some() || self.owners.contains(&new.entry.name) {
+                        delta.order = true;
+                    }
+                    self.entries.insert(new.entry.id, new);
                     // A new name; nothing listed moved (see `order`).
                     delta.any = true;
                     delta.name = true;
@@ -583,10 +642,12 @@ impl Listing {
                 SortKey::Rating => self.rating_version,
             },
         );
+        let companions_shown = self.companions_shown();
         let mut cache = self.sort_cache.lock();
         if let Some(c) = cache.as_mut()
             && c.stamp == stamp
             && c.spec == spec
+            && c.companions_shown == companions_shown
             && (c.seen == self.entries.len()
                 || (c.seen < self.entries.len() && !c.ranks.is_empty()))
         {
@@ -617,6 +678,7 @@ impl Listing {
         *cache = Some(SortCache {
             stamp,
             spec,
+            companions_shown,
             ids: Arc::clone(&ids),
             seen: self.entries.len(),
             ranks,
@@ -663,16 +725,45 @@ impl Listing {
             .then_with(|| a.3.cmp(&b.3))
     }
 
-    fn shown(spec: SortSpec, slot: &Slot) -> bool {
+    /// Whether `slot` is shown under `spec`: a hidden file only with hidden
+    /// files; a companion whose file is listed (in `listed`) only with
+    /// hidden files and companions both; one whose file is gone, an
+    /// orphan, as any file.
+    fn shown(
+        spec: SortSpec,
+        slot: &Slot,
+        listed: Option<&std::collections::HashSet<&OsStr>>,
+        companions: bool,
+    ) -> bool {
+        let with_file = match (&slot.beside, listed) {
+            (Some(owner), _) if owner.is_empty() => true,
+            (Some(owner), Some(listed)) => listed.contains(owner.as_os_str()),
+            _ => false,
+        };
+        if with_file {
+            return spec.show_hidden && companions;
+        }
         spec.show_hidden || !slot.entry.name.as_encoded_bytes().starts_with(b".")
+    }
+
+    /// The names listed, when companions may hide: their files among them.
+    fn listed(&self) -> Option<std::collections::HashSet<&OsStr>> {
+        (!self.owners.is_empty()).then(|| {
+            self.entries
+                .values()
+                .map(|slot| slot.entry.name.as_os_str())
+                .collect()
+        })
     }
 
     /// The shown entries' sort keys, in order.
     fn keyed(&self, spec: SortSpec) -> Vec<SortKeyOf<'_>> {
+        let listed = self.listed();
+        let companions = self.companions_shown();
         let mut keyed: Vec<SortKeyOf<'_>> = self
             .entries
             .values()
-            .filter(|slot| Self::shown(spec, slot))
+            .filter(|slot| Self::shown(spec, slot, listed.as_ref(), companions))
             .map(|slot| Self::sort_key(spec, slot))
             .collect();
         keyed.sort_unstable_by(|a, b| Self::compare(spec, *a, *b));
@@ -713,9 +804,11 @@ impl Listing {
     /// the ranks in one pass, which the copy of the order costs anyway. Removals and moves never come here; they change
     /// `order_version`, and the order is made again.
     fn place_arrivals(&self, cache: &mut SortCache, spec: SortSpec) {
+        let listed = self.listed();
+        let companions = self.companions_shown();
         let mut arrivals: Vec<SortKeyOf<'_>> = self.entries.as_slice()[cache.seen..]
             .values()
-            .filter(|slot| Self::shown(spec, slot))
+            .filter(|slot| Self::shown(spec, slot, listed.as_ref(), companions))
             .map(|slot| Self::sort_key(spec, slot))
             .collect();
         arrivals.sort_unstable_by(|a, b| Self::compare(spec, *a, *b));

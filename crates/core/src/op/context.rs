@@ -63,6 +63,8 @@ pub struct StepContext {
     /// The trash listing, read once per plan: parsing every `.trashinfo`
     /// per restored item made undoing a large trash quadratic.
     trash: RefCell<Option<Vec<trash::TrashItem>>>,
+    /// The files beside a file that go where it goes (ADR-028).
+    companions: Arc<crate::companions::Companions>,
 }
 
 impl StepContext {
@@ -71,7 +73,20 @@ impl StepContext {
             cancel,
             meter,
             trash: RefCell::new(None),
+            companions: Arc::default(),
         }
+    }
+
+    /// The same context, carrying files beside a file by `companions`.
+    #[must_use]
+    pub fn with_companions(mut self, companions: Arc<crate::companions::Companions>) -> Self {
+        self.companions = companions;
+        self
+    }
+
+    /// The rules of the files beside a file.
+    pub fn companions(&self) -> &crate::companions::Companions {
+        &self.companions
     }
 
     /// A context for a dry run or a test: never cancelled, progress unread.

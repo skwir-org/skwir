@@ -213,6 +213,27 @@ current source before assuming a planned crate, command, or API exists.
   tag renamed or removed everywhere (`tags.rename`, `tags.delete`) takes
   its files from the search, not the index, as a plan proposed for
   review.
+- **Files beside a file go where it goes** (ADR-028). A companion (a
+  Mac's `._x`, an XMP sidecar, TagSpaces' `.ts/x.json`) is declared by
+  name rules (`bibli_core::companions::Companion`, registered in
+  `App::companions` by the plugin that uses it); the core agrees on them
+  in three places. The listing marks them (`Listing::with_companions`)
+  and hides one whose file is listed unless hidden files and
+  `core.show_companions` are both on (General, and the View menu under
+  Hidden files); an orphan is a file like any other. A change to one is
+  a change to its file's notes. The built-in operations (rename, move,
+  copy, swap, trash, restore, delete) carry them in the same step, their
+  inverses bringing them back; a companion's place taken is a conflict
+  as the file's own is. A copy takes a `._` file's attributes in where
+  the destination keeps attributes, and where it refuses them keeps the
+  file's beside it (the `._` copied whole, or started from them), so a
+  copy onto a stick keeps its tags; it fails only when nothing can keep
+  them. Details lists a file's companions, and what an orphan belonged
+  to. A batch of a folder whose names are all known is filled with them
+  (`MetadataProvider::fill_listed`), so a store looks for companions in
+  the listing, not the folder. Tests that need a volume refusing
+  attributes run against one named by `BIBLI_NO_XATTR_DIR` (a
+  `bindfs --xattr-none` mount).
 - **Nothing to list is a state, not a blank.** `placeholder.rs` says why a
   pane is empty (empty folder, no results, empty shelf) or why it failed, in
   the user's words with the system's message as the detail, and offers the

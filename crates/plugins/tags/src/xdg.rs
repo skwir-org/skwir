@@ -137,7 +137,12 @@ impl NotesStore for XdgStore {
             referrer: None,
         }
     }
-    fn read(&self, _dir: &Path, files: &[Probe<'_>]) -> Vec<Option<Notes>> {
+    fn read(
+        &self,
+        _dir: &Path,
+        files: &[Probe<'_>],
+        _: Option<&bibli_core::metadata::Listed<'_>>,
+    ) -> Vec<Option<Notes>> {
         files
             .iter()
             .map(|f| {

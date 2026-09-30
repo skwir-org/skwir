@@ -77,12 +77,31 @@ impl MetadataProvider for AttributesProvider {
         crate::ID
     }
     fn fill(&self, dir: &Path, entries: &mut [Entry]) {
+        self.fill_with(dir, None, entries);
+    }
+    fn fill_listed(
+        &self,
+        dir: &Path,
+        listed: &bibli_core::metadata::Listed<'_>,
+        entries: &mut [Entry],
+    ) {
+        self.fill_with(dir, Some(listed), entries);
+    }
+}
+
+impl AttributesProvider {
+    fn fill_with(
+        &self,
+        dir: &Path,
+        listed: Option<&bibli_core::metadata::Listed<'_>>,
+        entries: &mut [Entry],
+    ) {
         let policy = self.stores.policy();
         let files: Vec<bibli_core::notes::Named<'_>> = entries
             .iter()
             .map(|e| (e.name.as_os_str(), Some(e.id)))
             .collect();
-        let read = self.stores.read(dir, &files, &policy);
+        let read = self.stores.read(dir, &files, &policy, listed);
         let mut seen: Vec<String> = Vec::new();
         let mut given: Vec<(String, String)> = Vec::new();
         let mut learned: Vec<(std::path::PathBuf, Vec<String>)> = Vec::new();

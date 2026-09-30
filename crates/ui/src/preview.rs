@@ -214,9 +214,48 @@ pub(crate) enum PreviewPhase {
     Loading,
 }
 
-/// What the fields worker answers: rows about the content, and rows
-/// about access.
-type FieldRows = (Vec<crate::details::Row>, Vec<crate::details::Row>);
+/// What the fields worker answers: rows about the content, rows about
+/// access, and rows about the files beside it.
+type FieldRows = (
+    Vec<crate::details::Row>,
+    Vec<crate::details::Row>,
+    Vec<crate::details::Row>,
+);
+
+/// What Details says of files beside a file (ADR-028): those beside the
+/// file at `path`, or, for a companion whose file is gone, what it was.
+/// Looks at the disk: call on a worker.
+fn beside_rows(
+    companions: &bibli_core::companions::Companions,
+    path: &std::path::Path,
+) -> Vec<crate::details::Row> {
+    let mut rows = Vec::new();
+    let names: Vec<String> = companions
+        .existing(path)
+        .iter()
+        .filter_map(|f| {
+            let dir = path.parent()?;
+            Some(f.path.strip_prefix(dir).ok()?.display().to_string())
+        })
+        .collect();
+    if !names.is_empty() {
+        rows.push(crate::details::Row::new("Beside it", names.join(", ")));
+    }
+    if let (Some(dir), Some(name)) = (path.parent(), path.file_name())
+        && let Some(owner) = companions.owner(name)
+    {
+        let gone = std::fs::symlink_metadata(dir.join(&owner)).is_err();
+        rows.push(crate::details::Row::new(
+            "Beside",
+            if gone {
+                format!("“{}”, which is gone", owner.to_string_lossy())
+            } else {
+                format!("“{}”", owner.to_string_lossy())
+            },
+        ));
+    }
+    rows
+}
 
 // Independent switches of one panel, not a state machine in disguise.
 #[allow(clippy::struct_excessive_bools)]
@@ -303,6 +342,9 @@ pub struct PreviewState {
     /// What the system adds to the file's mode (ACLs, capabilities),
     /// read with `fields`, shown under Permissions.
     pub access: Vec<crate::details::Row>,
+    /// The files beside the entry (ADR-028), or the file an orphan belonged
+    /// to, read on the same worker.
+    pub beside: Vec<crate::details::Row>,
     fields_tx: flume::Sender<(u64, FieldRows)>,
     fields_rx: flume::Receiver<(u64, FieldRows)>,
     /// What the entry says about itself, collected when it or its listing
@@ -442,6 +484,7 @@ impl Default for PreviewState {
             fields: Vec::new(),
             fields_generation: 0,
             access: Vec::new(),
+            beside: Vec::new(),
             fields_tx,
             fields_rx,
             details: Vec::new(),
@@ -989,10 +1032,11 @@ impl Shell {
                 ],
             });
         }
-        while let Ok((generation, (rows, access))) = self.preview.fields_rx.try_recv() {
+        while let Ok((generation, (rows, access, beside))) = self.preview.fields_rx.try_recv() {
             if generation == self.preview.fields_generation {
                 self.preview.fields = rows;
                 self.preview.access = access;
+                self.preview.beside = beside;
                 cx.notify();
             }
         }
@@ -1829,6 +1873,7 @@ impl Shell {
         self.preview.fields_generation += 1;
         self.preview.fields.clear();
         self.preview.access.clear();
+        self.preview.beside.clear();
         // A folder, a pipe, a device: no file to read a field of. Their
         // access is read all the same: without opening anything.
         let shown = if entry.inode_type().is_some() {
@@ -1843,6 +1888,7 @@ impl Shell {
         let name = entry.type_name().to_owned();
         let wake = self.app.waker_handle();
         let cancel = self.app.lifetime().child();
+        let companions = Arc::clone(&self.app.companions);
         self.app.scheduler.spawn(
             bibli_core::scheduler::Priority::Visible,
             "detail-fields",
@@ -1865,8 +1911,9 @@ impl Shell {
                         })
                     })
                     .collect();
-                if (!rows.is_empty() || !access.is_empty())
-                    && tx.send((generation, (rows, access))).is_ok()
+                let beside = beside_rows(&companions, &path);
+                if (!rows.is_empty() || !access.is_empty() || !beside.is_empty())
+                    && tx.send((generation, (rows, access, beside))).is_ok()
                 {
                     wake();
                 }

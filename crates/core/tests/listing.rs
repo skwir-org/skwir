@@ -456,6 +456,7 @@ fn virtual_locations_hydrate_by_path_in_one_batch() {
         metadata: std::sync::Arc::clone(&app.metadata),
         fields: std::sync::Arc::clone(&app.fields),
         hints: std::sync::Arc::clone(&app.hints),
+        companions: std::sync::Arc::clone(&app.companions),
     };
     let (sink, rx) = ctx.channel();
     let id = |ino| bibli_core::EntryId { dev: 0, ino };
@@ -816,10 +817,28 @@ fn a_path_read_alone_is_filled_by_the_providers() {
     assert!(bibli_core::fs::hydrate_path(&dir.join("missing"), &app.metadata).is_none());
 }
 
-/// Where a Mac keeps a file's attributes in its `._` file, a change to
-/// that file is a change to the file's notes: the file is read again.
+/// `._x` as the companion of `x`.
+struct Aside;
+
+impl bibli_core::companions::Companion for Aside {
+    fn id(&self) -> &'static str {
+        "aside"
+    }
+    fn of(&self, name: &std::ffi::OsStr) -> Vec<std::path::PathBuf> {
+        let mut aside = std::ffi::OsString::from("._");
+        aside.push(name);
+        vec![aside.into()]
+    }
+    fn owner(&self, name: &std::ffi::OsStr) -> Option<std::ffi::OsString> {
+        let s = name.to_str()?.strip_prefix("._")?;
+        (!s.is_empty()).then(|| s.into())
+    }
+}
+
+/// A companion keeps its file's notes (a Mac's `._` file): a change to it
+/// is a change to the file's, and the file is read again.
 #[test]
-fn a_file_whose_apple_double_file_changes_is_read_again() {
+fn a_file_whose_companion_changes_is_read_again() {
     use bibli_core::entry::{Entry, Provenance, Value};
     use bibli_core::metadata::MetadataProvider;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -846,6 +865,7 @@ fn a_file_whose_apple_double_file_changes_is_read_again() {
     let app = app(tmp.path());
     app.metadata
         .register("count", std::sync::Arc::new(Count::default()));
+    app.companions.register("test", std::sync::Arc::new(Aside));
     let pane = active(&app);
     navigate(&app, &dir);
     let reads = |l: &bibli_core::Listing| {
@@ -870,4 +890,46 @@ fn a_file_whose_apple_double_file_changes_is_read_again() {
     let before = reads(&app.workspace.read().pane(pane).unwrap().listing);
     std::fs::write(dir.join("._it's a.txt"), b"other attributes").unwrap();
     wait(&app, pane, |l| hydrated(l) && reads(l) != before);
+}
+
+/// A companion whose file is listed is hidden, even with hidden files,
+/// until companions are asked for; one whose file is gone is a hidden file
+/// as any other.
+#[test]
+fn companions_hide_beside_their_file_and_orphans_do_not() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("STICK");
+    std::fs::create_dir(&dir).unwrap();
+    for name in ["it's a.txt", "._it's a.txt", "._gone.txt", ".hidden"] {
+        std::fs::write(dir.join(name), b"x").unwrap();
+    }
+    let app = app(tmp.path());
+    app.companions.register("test", std::sync::Arc::new(Aside));
+    let pane = active(&app);
+    navigate(&app, &dir);
+    wait(&app, pane, |l| l.len() == 4);
+    let shown = |hidden: bool| {
+        let mut ws = app.workspace.write();
+        let p = ws.pane_mut(pane).unwrap();
+        p.sort.show_hidden = hidden;
+        let mut names: Vec<String> = p
+            .order()
+            .iter()
+            .map(|id| p.entry(*id).unwrap().name_str().into_owned())
+            .collect();
+        names.sort();
+        names
+    };
+    assert_eq!(shown(false), ["it's a.txt"]);
+    assert_eq!(shown(true), ["._gone.txt", ".hidden", "it's a.txt"]);
+    app.companions.set_shown(true);
+    assert_eq!(
+        shown(true),
+        ["._gone.txt", "._it's a.txt", ".hidden", "it's a.txt"]
+    );
+    app.companions.set_shown(false);
+    // The file goes: its companion is an orphan, shown as a hidden file.
+    std::fs::remove_file(dir.join("it's a.txt")).unwrap();
+    wait(&app, pane, |l| l.len() == 3);
+    assert_eq!(shown(true), ["._gone.txt", "._it's a.txt", ".hidden"]);
 }

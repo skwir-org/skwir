@@ -36,6 +36,33 @@ Poppler, GStreamer or libarchive. Open gate: idle PSS is about 118 to 120 MB aga
 been loosened. The per-change validation history that used to sit here is in
 `docs/STATUS-LOG.md`.
 
+Notes stores, step C (2026-09-30, ADR-028): files beside a file are
+declared by name rules (`bibli_core::companions`), the tags plugin's `._`
+file the first, which also holds attributes. Listings mark them and hide
+one whose file is listed unless hidden files and `core.show_companions`
+(General, and the View menu under Hidden files) are both on; an orphan
+is listed as any file; a change to a companion re-reads its file (the
+watcher's `._` special case is now the rule). Rename, move, copy, swap,
+trash, restore and delete carry companions, their inverses bring them
+back, and a companion's place taken is a conflict (the operations'
+property test now runs with companions in its trees). A copy takes a
+`._` file's attributes in onto a volume keeping attributes and keeps
+the file's attributes beside it onto one refusing them, the resource
+fork and Finder info as `user.com.apple.*`; ADR-006 is amended. A
+no-replace rename refused by the filesystem (bindfs, sshfs, many FUSE
+ones: until now every copy onto them failed) looks, then renames.
+Details lists a file's companions (Location, "Beside it") and what an
+orphan belonged to. A batch of a folder whose listing is complete gets
+its names (`MetadataProvider::fill_listed`), so the `._` store asks the
+listing instead of reading the folder. Checked: the core's and the tags
+plugin's tests, and an ignored test run against a `bindfs --xattr-none`
+mount (`BIBLI_NO_XATTR_DIR`): a copy onto it keeps tags and rating in a
+`._` file, a copy back makes them attributes, and tagging a file there
+starts its `._` file, which undo removes. Deviations: a batch hydrated
+before its folder's listing completes still reads the folder once for
+`._` names; the View menu item and the hiding were checked by tests,
+not in a window yet.
+
 Notes stores, step B (2026-09-30): when the stores disagree about a
 file, the notes are merged against what bibli last wrote, kept in the
 cache (`notes` namespace, by the file's identity) with what each store

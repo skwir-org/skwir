@@ -368,7 +368,7 @@ impl Operation for SetNotes {
             .into_iter()
             .filter(|s| self.policy.reads(s.id()) && s.applies(dir))
             .filter_map(|s| {
-                let found = s.read(dir, std::slice::from_ref(&probe)).pop()??;
+                let found = s.read(dir, std::slice::from_ref(&probe), None).pop()??;
                 Some((s.id().to_owned(), found))
             })
             .collect();
@@ -545,7 +545,12 @@ mod tests {
         fn default_write(&self) -> Write {
             Write::Create
         }
-        fn read(&self, _: &Path, files: &[Probe<'_>]) -> Vec<Option<Notes>> {
+        fn read(
+            &self,
+            _: &Path,
+            files: &[Probe<'_>],
+            _: Option<&crate::metadata::Listed<'_>>,
+        ) -> Vec<Option<Notes>> {
             files.iter().map(|_| None).collect()
         }
         fn keys(&self, _: &Probe<'_>, _: bool) -> Vec<RawKey> {
@@ -596,7 +601,12 @@ mod tests {
                     .ends_with(&format!(".{}", self.0))
             })
         }
-        fn read(&self, _: &Path, files: &[Probe<'_>]) -> Vec<Option<Notes>> {
+        fn read(
+            &self,
+            _: &Path,
+            files: &[Probe<'_>],
+            _: Option<&crate::metadata::Listed<'_>>,
+        ) -> Vec<Option<Notes>> {
             files
                 .iter()
                 .map(|f| serde_json::from_slice(&std::fs::read(self.at(f.path)).ok()?).ok())

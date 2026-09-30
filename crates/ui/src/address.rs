@@ -236,6 +236,25 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
         .active(spec.show_hidden),
         "Hidden files",
     )];
+    // With hidden files, the files that keep another's notes beside it
+    // (ADR-028): the same setting as General's, where one looks for a file
+    // that seems missing.
+    if spec.show_hidden && !shell.app.companions.is_empty() {
+        let shown = shell.app.companions.shown();
+        show.push(menu_item(
+            Button::new(
+                "menu-companions",
+                "layers",
+                "Also list the files that keep another file's notes beside it (a Mac's ._ files, sidecars)",
+                "settings.apply",
+            )
+            .args(serde_json::json!({
+                "changes": { bibli_core::companions::SHOW: (!shown).to_string() }
+            }))
+            .active(shown),
+            "Companion files",
+        ));
+    }
     // Only the grid draws thumbnails in a box.
     if shell.ui().view_id == crate::view::GRID {
         show.push(menu_item(

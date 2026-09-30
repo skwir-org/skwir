@@ -55,3 +55,14 @@ attributes when copying"); `Settings::rename` carries a choice made under
 `core.preserve_tags_on_copy`. The operation's field became
 `preserve_attributes`, and a plan serialized with `preserve_tags` reads as
 it, so a journal written before keeps its meaning.
+
+## Amendment: attributes beside the file (ADR-028, 2026-09-30)
+
+A destination that refuses attributes no longer fails a copy that keeps
+them when something can keep them beside the file: the tags plugin's
+companion rule keeps them in a Mac's `._` file there (every `user.*`
+attribute, named as a Mac names them), and a copy from a `._` file onto
+a volume that keeps attributes makes them attributes again. The copy
+still fails, as before, when nothing can keep them and the preference is
+on. A no-replace rename that the filesystem refuses the flag of (many
+FUSE and network filesystems) looks, then renames.

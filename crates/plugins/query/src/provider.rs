@@ -771,6 +771,7 @@ mod tests {
             metadata: Arc::default(),
             fields: Arc::default(),
             hints: Arc::default(),
+            companions: Arc::default(),
         };
         let query = lang::parse(&location.rest).unwrap();
         let open = QueryLocation::open(location.clone(), query, &ctx, &CancelToken::new());

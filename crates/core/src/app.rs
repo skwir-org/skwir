@@ -117,6 +117,8 @@ pub struct App {
     /// Where files' notes are kept, and how each place is read and
     /// written (ADR-027).
     pub notes: Arc<crate::notes::NoteStores>,
+    /// Files beside a file, which go where it goes (ADR-028).
+    pub companions: Arc<crate::companions::Companions>,
     pub previews: Arc<crate::preview::Previews>,
     /// Where map backgrounds come from (the map-tiles plugin, ADR-020).
     pub tiles: Arc<crate::tiles::Tiles>,
@@ -161,6 +163,7 @@ impl App {
             fields,
             hints: Arc::new(crate::hints::Hints::default()),
             notes: Arc::new(crate::notes::NoteStores::default()),
+            companions: Arc::new(crate::companions::Companions::default()),
             previews: Arc::new(crate::preview::Previews::default()),
             tiles: Arc::new(crate::tiles::Tiles::default()),
             proposals: parking_lot::Mutex::new(Vec::new()),
@@ -195,6 +198,7 @@ impl App {
                 Ok(Box::new(undo.with_stores(Arc::clone(&notes))))
             });
             app.notes.keep_snapshots(app.cache.namespace("notes"));
+            app.executor.set_companions(Arc::clone(&app.companions));
         }
         builtin::register(&app);
         crate::tabs::register(&app);
@@ -264,6 +268,7 @@ impl App {
         self.fields.unregister_owner(owner);
         self.hints.unregister_owner(owner);
         self.notes.unregister_owner(owner);
+        self.companions.unregister_owner(owner);
         self.previews.unregister_owner(owner);
         self.pending.unregister_owner(owner);
         self.player.unregister_owner(owner);
@@ -296,6 +301,7 @@ impl App {
                 metadata: Arc::clone(&self.metadata),
                 fields: Arc::clone(&self.fields),
                 hints: Arc::clone(&self.hints),
+                companions: Arc::clone(&self.companions),
             },
         )
     }
@@ -328,7 +334,10 @@ impl App {
             .take_kept(location);
         let (open, listing) = match kept {
             Some(kept) => kept,
-            None => (self.open_location(location)?, crate::Listing::default()),
+            None => (
+                self.open_location(location)?,
+                crate::Listing::with_companions(Arc::clone(&self.companions)),
+            ),
         };
         let mut ws = self.workspace.write();
         let p = ws
@@ -358,7 +367,10 @@ impl App {
             match self.open_location(&location) {
                 Ok(open) => {
                     if let Some(p) = self.workspace.write().pane_mut(pane) {
-                        p.add_kept(open);
+                        p.add_kept(
+                            open,
+                            crate::Listing::with_companions(Arc::clone(&self.companions)),
+                        );
                     }
                 }
                 Err(error) => tracing::warn!(%location, "cannot keep: {error:#}"),
@@ -543,7 +555,10 @@ impl App {
             match self.open_location(&location) {
                 Ok(open) => {
                     if let Some(p) = self.workspace.write().pane_mut(pane) {
-                        p.add_kept(open);
+                        p.add_kept(
+                            open,
+                            crate::Listing::with_companions(Arc::clone(&self.companions)),
+                        );
                     }
                 }
                 Err(error) => tracing::warn!(%location, "cannot open in place: {error:#}"),
