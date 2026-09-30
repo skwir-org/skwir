@@ -12,6 +12,8 @@
 //! (`tags.colors`); every other tag wears the color its name gives it.
 
 mod attrs;
+pub mod finder;
+mod hints;
 mod ops;
 mod vocabulary;
 
@@ -31,7 +33,9 @@ use bibli_core::settings::SettingSpec;
 use bibli_core::workspace::PaneId;
 use parking_lot::Mutex;
 
-pub use attrs::{parse_tags, read_comment, read_rating, read_tags, tags_of, write_tags};
+pub use attrs::{
+    parse_tags, read_comment, read_file_tags, read_rating, read_tags, tags_of, write_tags,
+};
 pub use ops::{SetComment, SetRating, SetTags};
 
 use vocabulary::Vocabulary;
@@ -57,6 +61,17 @@ struct ListArgs {
 struct TagsArgs {
     #[serde(default)]
     tags: Vec<String>,
+    /// The entries to act on; the pane's selection when omitted.
+    #[serde(default)]
+    entries: Vec<EntryRef>,
+    #[serde(default)]
+    pane: Option<PaneId>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct ToggleArgs {
+    /// The tag to give or take.
+    tag: String,
     /// The entries to act on; the pane's selection when omitted.
     #[serde(default)]
     entries: Vec<EntryRef>,
@@ -189,7 +204,11 @@ fn edit_plan(app: &App, vocabulary: &Arc<Vocabulary>, a: EditArgs) -> anyhow::Re
         |r| {
             let current = read_tags(&r.path);
             let tags = edited(&current, &add, &remove);
-            (tags != current).then_some(SetTags { entry: r, tags })
+            (tags != current).then_some(SetTags {
+                entry: r,
+                tags,
+                finder_colors: Vec::new(),
+            })
         },
     )
 }
@@ -197,19 +216,36 @@ fn edit_plan(app: &App, vocabulary: &Arc<Vocabulary>, a: EditArgs) -> anyhow::Re
 /// `tags.selected`: what the tag editor starts from.
 fn selected(app: &App, vocabulary: &Vocabulary, a: PaneArgs) -> serde_json::Value {
     let refs = targets(app, a.pane, a.entries);
-    // Keyed by the lowercase form, in the order first met.
-    let mut counts: Vec<(String, usize)> = Vec::new();
+    // Keyed by the lowercase form, in the order first met, with the color
+    // a file gives the tag (a Finder tag's), if one does.
+    let mut counts: Vec<(String, usize, Option<&str>)> = Vec::new();
     for r in &refs {
-        for tag in read_tags(&r.path) {
-            match counts.iter_mut().find(|(t, _)| same_tag(t, &tag)) {
-                Some((_, n)) => *n += 1,
-                None => counts.push((tag, 1)),
+        let file = read_file_tags(&r.path);
+        let colors = file.finder_colors();
+        for tag in file.tags {
+            let given = colors
+                .iter()
+                .find(|(t, _)| same_tag(t, &tag))
+                .and_then(|(_, digit)| finder::palette(*digit))
+                .map(|i| bibli_core::metadata::TAG_COLORS[i]);
+            match counts.iter_mut().find(|(t, _, _)| same_tag(t, &tag)) {
+                Some((_, n, color)) => {
+                    *n += 1;
+                    *color = color.or(given);
+                }
+                None => counts.push((tag, 1, given)),
             }
         }
     }
     let tags: Vec<serde_json::Value> = counts
         .into_iter()
-        .map(|(name, count)| serde_json::json!({ "name": name, "count": count }))
+        .map(|(name, count, color)| {
+            let mut tag = serde_json::json!({ "name": name, "count": count });
+            if let Some(color) = color {
+                tag["color"] = color.into();
+            }
+            tag
+        })
         .collect();
     serde_json::json!({
         "items": refs.len(),
@@ -320,12 +356,17 @@ impl Plugin for TagsPlugin {
             previous.cancel();
         }
         let vocabulary = Vocabulary::new(Some(app.cache.namespace(ID)), app, lifetime.clone());
+        let index = hints::TagIndex::new(Some(app.cache.namespace(ID)), app, lifetime.clone());
         app.metadata.register(
             ID,
             Arc::new(attrs::AttributesProvider {
                 vocabulary: Arc::clone(&vocabulary),
+                index: Some(Arc::clone(&index)),
             }),
         );
+        // What a `tag:` search asks first (ADR-026).
+        app.hints.register(ID, Arc::new(hints::Baloo::default()));
+        app.hints.register(ID, Arc::new(hints::Learned(index)));
         app.ops.register::<SetTags>(ID, "set_tags");
         app.ops.register::<SetRating>(ID, "set_rating");
         app.ops.register::<SetComment>(ID, "set_comment");
@@ -354,6 +395,7 @@ impl Plugin for TagsPlugin {
                     (current != tags).then(|| SetTags {
                         entry: r,
                         tags: tags.clone(),
+                        finder_colors: Vec::new(),
                     })
                 })
             },
@@ -405,11 +447,43 @@ impl Plugin for TagsPlugin {
             move |a, app| edit_plan(app, &v, a),
         );
         let v = Arc::clone(&vocabulary);
+        app.commands.register::<ToggleArgs, _>(
+            ID,
+            "tags.toggle",
+            "Toggle a tag",
+            "Give the selection a tag, or take it from every entry when all of them have it: a command to bind to a key (plan)",
+            move |a, app| {
+                let Some(tag) = parse_tags(&a.tag).pop() else {
+                    anyhow::bail!("which tag?");
+                };
+                let refs = targets(app, a.pane, a.entries);
+                let all = !refs.is_empty()
+                    && refs
+                        .iter()
+                        .all(|r| read_tags(&r.path).iter().any(|t| same_tag(t, &tag)));
+                let (add, remove) = if all {
+                    (Vec::new(), vec![tag])
+                } else {
+                    (vec![tag], Vec::new())
+                };
+                edit_plan(
+                    app,
+                    &v,
+                    EditArgs {
+                        add,
+                        remove,
+                        entries: refs,
+                        pane: a.pane,
+                    },
+                )
+            },
+        );
+        let v = Arc::clone(&vocabulary);
         app.commands.register::<PaneArgs, _>(
             ID,
             "tags.selected",
             "Tags of the selection",
-            "`{ items, tags: [{ name, count }], known }`: the selection's tags, read from its files, with how many carry each, and the tags known, the most recently used first (blocks: dispatch from a worker)",
+            "`{ items, tags: [{ name, count, color? }], known }`: the selection's tags, read from its files, with how many carry each and the color a file gives one (a Finder tag's), and the tags known, the most recently used first (blocks: dispatch from a worker)",
             move |a, app| Ok(Outcome::Value(selected(app, &v, a))),
         );
         app.commands.register::<RateArgs, _>(
@@ -585,6 +659,7 @@ impl Plugin for TagsPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bibli_core::Value;
     use bibli_core::app::AppConfig;
     use bibli_core::location::Location;
     use std::path::Path;
@@ -654,6 +729,175 @@ mod tests {
         ))
         .unwrap();
         (app, pane)
+    }
+
+    /// A Mac's tags on `f` under the attribute `name`, framed as found.
+    fn finder_tags(f: &Path, name: &str, framing: finder::Framing, tags: &[(&str, u8)]) {
+        let tags: Vec<finder::Tag> = tags
+            .iter()
+            .map(|(name, color)| finder::Tag {
+                name: (*name).into(),
+                color: *color,
+            })
+            .collect();
+        xattr::set(f, name, &finder::encode(&tags, framing)).unwrap();
+    }
+
+    fn finder_of(f: &Path, name: &str, framing: finder::Framing) -> Vec<(String, u8)> {
+        let bytes = xattr::get(f, name).unwrap().expect("the Finder attribute");
+        finder::parse(&bytes, framing)
+            .unwrap()
+            .into_iter()
+            .map(|t| (t.name, t.color))
+            .collect()
+    }
+
+    #[test]
+    fn finder_tags_are_read_with_ours_and_edited_with_them() {
+        const PLAIN: &str = "user.com.apple.metadata:_kMDItemUserTags";
+        const SAMBA: &str = "user.DosStream.com.apple.metadata\u{F022}_kMDItemUserTags:$DATA";
+        let tmp = home_tempdir();
+        let dir = tmp.path().join("from a Mac");
+        std::fs::create_dir(&dir).unwrap();
+        let copied = dir.join("it's copied.txt");
+        let shared = dir.join("shared.txt");
+        std::fs::write(&copied, b"x").unwrap();
+        std::fs::write(&shared, b"x").unwrap();
+        write_tags(&copied, &["work".into(), "home".into()]).unwrap();
+        finder_tags(
+            &copied,
+            PLAIN,
+            finder::Framing::Plain,
+            &[("Rouge", 6), ("WORK", 0), ("Projet", 4)],
+        );
+        finder_tags(&shared, SAMBA, finder::Framing::Stream, &[("Gris", 1)]);
+        assert_eq!(read_tags(&copied), ["work", "home", "Rouge", "Projet"]);
+        assert_eq!(read_tags(&shared), ["Gris"]);
+
+        // The provider lists them as one, with the colors a Mac gave.
+        let (app, pane) = app_in(tmp.path(), &dir, &["it's copied.txt", "shared.txt"]);
+        {
+            let ws = app.workspace.read();
+            let listing = &ws.pane(pane).unwrap().listing;
+            let e = listing.find_by_name("it's copied.txt".as_ref()).unwrap();
+            assert_eq!(
+                tags_of(&e.metadata).unwrap(),
+                ["work", "home", "Rouge", "Projet"]
+            );
+            let text = |v: &Value| v.as_str().unwrap().to_owned();
+            let Some(Value::List(colors)) = e.metadata.value(keys::TAG_COLORS) else {
+                panic!("the Finder colors")
+            };
+            let colors: Vec<(String, String)> = colors
+                .iter()
+                .map(|pair| match pair {
+                    Value::List(p) => (text(&p[0]), text(&p[1])),
+                    _ => panic!(),
+                })
+                .collect();
+            assert_eq!(
+                colors,
+                [
+                    ("Rouge".into(), "red".into()),
+                    ("Projet".into(), "blue".into())
+                ]
+            );
+            let e = listing.find_by_name("shared.txt".as_ref()).unwrap();
+            assert_eq!(tags_of(&e.metadata).unwrap(), ["Gris"]);
+            assert!(
+                e.metadata.value(keys::TAG_COLORS).is_none(),
+                "gray has no color of ours"
+            );
+        }
+        let Outcome::Value(v) = app.dispatch(&Invocation::new("tags.selected")).unwrap() else {
+            panic!()
+        };
+        let rouge = v["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "Rouge")
+            .unwrap();
+        assert_eq!(rouge["color"], "red");
+
+        // An edit holds on the Mac too: both attributes say the same, a
+        // tag kept keeps its color, and Samba's framing is kept.
+        let edit = plan(
+            &app,
+            "tags.edit",
+            &serde_json::json!({ "add": ["new"], "remove": ["Rouge", "Gris"] }),
+        );
+        let r = app.executor.execute_blocking(&edit, app.lifetime());
+        assert!(r.error.is_none(), "{:?}", r.error);
+        assert_eq!(read_tags(&copied), ["work", "home", "Projet", "new"]);
+        assert_eq!(
+            finder_of(&copied, PLAIN, finder::Framing::Plain),
+            [
+                ("work".into(), 0),
+                ("home".into(), 0),
+                ("Projet".into(), 4),
+                ("new".into(), 0)
+            ]
+        );
+        assert_eq!(read_tags(&shared), ["new"]);
+        let raw = xattr::get(&shared, SAMBA).unwrap().unwrap();
+        assert_eq!(raw.last(), Some(&0), "Samba's NUL stays");
+        assert_eq!(
+            finder_of(&shared, SAMBA, finder::Framing::Stream),
+            [("new".into(), 0)]
+        );
+
+        // Undo gives the removed tags back with their colors.
+        app.executor.undo_blocking(app.lifetime()).unwrap();
+        assert_eq!(read_tags(&copied), ["work", "home", "Rouge", "Projet"]);
+        let colors: Vec<(String, u8)> = finder_of(&copied, PLAIN, finder::Framing::Plain)
+            .into_iter()
+            .filter(|(_, c)| *c != 0)
+            .collect();
+        assert_eq!(colors, [("Rouge".into(), 6), ("Projet".into(), 4)]);
+        assert_eq!(
+            finder_of(&shared, SAMBA, finder::Framing::Stream),
+            [("Gris".into(), 1)]
+        );
+
+        // Removing every tag removes the Mac's attribute too.
+        let clear = plan(&app, "tags.set", &serde_json::json!({ "tags": [] }));
+        app.executor.execute_blocking(&clear, app.lifetime());
+        assert!(read_tags(&copied).is_empty() && read_tags(&shared).is_empty());
+        assert!(xattr::get(&copied, PLAIN).unwrap().is_none());
+        assert!(xattr::get(&shared, SAMBA).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_toggle_gives_a_tag_to_all_or_takes_it_from_all() {
+        let tmp = home_tempdir();
+        let dir = tmp.path().join("d");
+        std::fs::create_dir(&dir).unwrap();
+        let (a, b) = (dir.join("a.txt"), dir.join("it's b.txt"));
+        std::fs::write(&a, b"x").unwrap();
+        std::fs::write(&b, b"x").unwrap();
+        write_tags(&a, &["Keep".into(), "todo".into()]).unwrap();
+        let (app, _) = app_in(tmp.path(), &dir, &["a.txt", "it's b.txt"]);
+        let toggle = || {
+            let p = plan(&app, "tags.toggle", &serde_json::json!({ "tag": "TODO" }));
+            let r = app.executor.execute_blocking(&p, app.lifetime());
+            assert!(r.error.is_none());
+        };
+        // One has it: both get it, in the spelling each already had.
+        toggle();
+        assert_eq!(read_tags(&a), ["Keep", "todo"]);
+        assert_eq!(read_tags(&b), ["TODO"]);
+        // Both have it: both lose it, and nothing else.
+        toggle();
+        assert_eq!(read_tags(&a), ["Keep"]);
+        assert!(read_tags(&b).is_empty());
+        assert!(
+            app.dispatch(&Invocation::with_args(
+                "tags.toggle",
+                &serde_json::json!({ "tag": " , " })
+            ))
+            .is_err()
+        );
     }
 
     #[test]

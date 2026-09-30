@@ -126,6 +126,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-segmentation = "1"
 jiff = "0.2"
+plist = { version = "1", default-features = false }
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 # bat's grammars over syntect's defaults (TypeScript, Nix, Dockerfile, TOML…),
 # built for the same pure-Rust regex engine.

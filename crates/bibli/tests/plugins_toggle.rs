@@ -26,6 +26,8 @@ struct Snapshot {
     metadata: Vec<&'static str>,
     /// Fields read on demand (a picture's position).
     fields: Vec<&'static str>,
+    /// Indexes a search asks first (the tags plugin's, Baloo).
+    hints: Vec<&'static str>,
     /// Operation kinds plans are made of (tags, positions).
     ops: Vec<&'static str>,
     previews: Vec<&'static str>,
@@ -67,6 +69,7 @@ fn snapshot(app: &App) -> Snapshot {
             .collect(),
         metadata: app.metadata.ids(),
         fields: app.fields.ids(),
+        hints: app.hints.ids(),
         ops: app.ops.kinds(),
         previews: app.previews.ids(),
         thumbs: app.thumbnails.provider_ids(),

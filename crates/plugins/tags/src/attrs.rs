@@ -5,6 +5,10 @@
 //! entry is (a user attribute cannot be set on the link itself), and a file
 //! is asked for its attribute names once: most files have none, so a
 //! listing costs one call per entry whatever the number of keys read.
+//!
+//! A file's tags are its own (`user.xdg.tags`) and those a Mac gave it
+//! (`finder`): read as one list, and written to both when the file has
+//! both, so an edit here holds on the Mac too.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -12,6 +16,7 @@ use std::sync::Arc;
 use bibli_core::entry::{Entry, Metadata, Provenance, Value, keys};
 use bibli_core::metadata::{MetadataProvider, TAGS_XATTR, same_tag};
 
+use crate::finder;
 use crate::vocabulary::Vocabulary;
 
 /// Tags: comma-separated, the freedesktop convention.
@@ -59,9 +64,62 @@ fn get(path: &Path, name: &str) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-/// Tags of a path, from its xattr.
+/// A file's tags as read: its own, then those only its Finder attributes
+/// hold, and the Finder attributes found, to be written again with them.
+#[derive(Debug, Default)]
+pub struct FileTags {
+    pub tags: Vec<String>,
+    pub finder: Vec<(String, finder::Framing, Vec<finder::Tag>)>,
+}
+
+impl FileTags {
+    fn merge(
+        mut tags: Vec<String>,
+        finder: Vec<(String, finder::Framing, Vec<finder::Tag>)>,
+    ) -> Self {
+        for (_, _, theirs) in &finder {
+            for t in theirs {
+                if !tags.iter().any(|x| same_tag(x, &t.name)) {
+                    tags.push(t.name.clone());
+                }
+            }
+        }
+        FileTags { tags, finder }
+    }
+
+    /// The Finder color digit of each tag that has one.
+    pub fn finder_colors(&self) -> Vec<(String, u8)> {
+        let mut out: Vec<(String, u8)> = Vec::new();
+        for t in self.finder.iter().flat_map(|(_, _, tags)| tags) {
+            if t.color != 0 && !out.iter().any(|(x, _)| same_tag(x, &t.name)) {
+                out.push((t.name.clone(), t.color));
+            }
+        }
+        out
+    }
+}
+
+/// The attribute names of `path`, through a link.
+fn names(path: &Path) -> Vec<String> {
+    xattr::list_deref(path)
+        .map(|names| names.filter_map(|n| n.into_string().ok()).collect())
+        .unwrap_or_default()
+}
+
+/// A file's tags, its own and a Mac's.
+pub fn read_file_tags(path: &Path) -> FileTags {
+    let names = names(path);
+    let own = if names.iter().any(|n| n == TAGS) {
+        get(path, TAGS).map(|t| parse_tags(&t)).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    FileTags::merge(own, finder::read(path, &names))
+}
+
+/// Tags of a path, its own and a Mac's.
 pub fn read_tags(path: &Path) -> Vec<String> {
-    get(path, TAGS).map(|t| parse_tags(&t)).unwrap_or_default()
+    read_file_tags(path).tags
 }
 
 pub fn read_comment(path: &Path) -> Option<String> {
@@ -92,8 +150,48 @@ pub fn write(path: &Path, name: &str, value: Option<&str>) -> std::io::Result<()
 
 /// Write tags; an empty list removes the attribute.
 pub fn write_tags(path: &Path, tags: &[String]) -> std::io::Result<()> {
+    write_file_tags(path, tags, &[])
+}
+
+/// Write `tags` as the file's: its own attribute, and each Finder attribute
+/// it carries, where a tag keeps the color Finder gave it (or the one
+/// `colors` gives, what an undo puts back). An empty list removes them.
+pub fn write_file_tags(
+    path: &Path,
+    tags: &[String],
+    colors: &[(String, u8)],
+) -> std::io::Result<()> {
+    let current = read_file_tags(path);
     let joined = tags.join(",");
-    write(path, TAGS, (!tags.is_empty()).then_some(joined.as_str()))
+    write(path, TAGS, (!tags.is_empty()).then_some(joined.as_str()))?;
+    for (name, framing, theirs) in &current.finder {
+        if tags.is_empty() {
+            write(path, name, None)?;
+            continue;
+        }
+        let given = |tag: &str| {
+            colors
+                .iter()
+                .find(|(t, _)| same_tag(t, tag))
+                .map(|(_, c)| *c)
+                .or_else(|| {
+                    theirs
+                        .iter()
+                        .find(|t| same_tag(&t.name, tag))
+                        .map(|t| t.color)
+                })
+                .unwrap_or(0)
+        };
+        let ours: Vec<finder::Tag> = tags
+            .iter()
+            .map(|t| finder::Tag {
+                name: t.clone(),
+                color: given(t),
+            })
+            .collect();
+        xattr::set_deref(path, name, &finder::encode(&ours, *framing))?;
+    }
+    Ok(())
 }
 
 pub fn tags_field(tags: &[String]) -> Value {
@@ -118,9 +216,11 @@ pub fn tags_of(metadata: &Metadata) -> Option<Vec<String>> {
 }
 
 /// Fills the tags, rating, comment, origin and referrer fields from the
-/// file's attributes, and tells the vocabulary the tags it saw.
+/// file's attributes, and tells the vocabulary the tags it saw and the
+/// index which files have tags (and which no longer have).
 pub struct AttributesProvider {
     pub vocabulary: Arc<Vocabulary>,
+    pub index: Option<Arc<crate::hints::TagIndex>>,
 }
 
 impl MetadataProvider for AttributesProvider {
@@ -129,14 +229,19 @@ impl MetadataProvider for AttributesProvider {
     }
     fn fill(&self, dir: &Path, entries: &mut [Entry]) {
         let mut seen: Vec<String> = Vec::new();
+        let mut read: Vec<(std::path::PathBuf, Vec<String>)> = Vec::new();
         for e in entries {
             let path = dir.join(&e.name);
-            let Ok(names) = xattr::list_deref(&path) else {
+            let names = names(&path);
+            if names.is_empty() {
+                if self.index.is_some() {
+                    read.push((path, Vec::new()));
+                }
                 continue;
-            };
-            for name in names {
-                let Some(name) = name.to_str() else { continue };
-                let (key, provenance) = match name {
+            }
+            let mut own = Vec::new();
+            for name in &names {
+                let (key, provenance) = match name.as_str() {
                     TAGS => (keys::TAGS, Provenance::User),
                     COMMENT => (keys::COMMENT, Provenance::User),
                     RATING => (keys::RATING, Provenance::User),
@@ -149,12 +254,8 @@ impl MetadataProvider for AttributesProvider {
                 };
                 let value = match key {
                     keys::TAGS => {
-                        let tags = parse_tags(&text);
-                        if tags.is_empty() {
-                            continue;
-                        }
-                        seen.extend(tags.iter().cloned());
-                        tags_field(&tags)
+                        own = parse_tags(&text);
+                        continue;
                     }
                     keys::RATING => match parse_rating(&text) {
                         Some(rating) => Value::UInt(rating),
@@ -164,9 +265,37 @@ impl MetadataProvider for AttributesProvider {
                 };
                 e.metadata.set(key, value, provenance);
             }
+            let file = FileTags::merge(own, finder::read(&path, &names));
+            if self.index.is_some() {
+                read.push((path, file.tags.clone()));
+            }
+            if file.tags.is_empty() {
+                continue;
+            }
+            e.metadata
+                .set(keys::TAGS, tags_field(&file.tags), Provenance::User);
+            let colors: Vec<Value> = file
+                .finder_colors()
+                .into_iter()
+                .filter_map(|(tag, digit)| {
+                    let color = bibli_core::metadata::TAG_COLORS[finder::palette(digit)?];
+                    Some(Value::List(vec![
+                        Value::Text(tag.into()),
+                        Value::Text(color.into()),
+                    ]))
+                })
+                .collect();
+            if !colors.is_empty() {
+                e.metadata
+                    .set(keys::TAG_COLORS, Value::List(colors), Provenance::User);
+            }
+            seen.extend(file.tags);
         }
         if !seen.is_empty() {
             self.vocabulary.saw(&seen);
+        }
+        if let Some(index) = &self.index {
+            index.learn(read);
         }
     }
 }

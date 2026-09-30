@@ -50,6 +50,11 @@ fn same_set(a: &[String], b: &[String]) -> bool {
 pub struct SetTags {
     pub entry: EntryRef,
     pub tags: Vec<String>,
+    /// Finder color digits for some of these tags, where the file has a
+    /// Finder attribute: what an undo gives back to a tag it restores.
+    /// Tags it does not name keep the color the file gives them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub finder_colors: Vec<(String, u8)>,
 }
 
 impl Operation for SetTags {
@@ -83,12 +88,13 @@ impl Operation for SetTags {
     }
     fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let path = self.entry.resolve()?;
-        let previous = attrs::read_tags(&path);
-        attrs::write_tags(&path, &self.tags)
+        let previous = attrs::read_file_tags(&path);
+        attrs::write_file_tags(&path, &self.tags, &self.finder_colors)
             .map_err(|e| anyhow::anyhow!("set tags on {}: {e}", path.display()))?;
         Ok(Some(Box::new(SetTags {
             entry: EntryRef::new(self.entry.id, path),
-            tags: previous,
+            finder_colors: previous.finder_colors(),
+            tags: previous.tags,
         })))
     }
 }
