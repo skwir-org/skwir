@@ -189,8 +189,12 @@ impl App {
                 let edit: crate::notes::SetNotes = serde_json::from_value(v)?;
                 Ok(Box::new(edit.with_stores(Arc::clone(&notes))))
             });
-            app.ops
-                .register::<crate::notes::RestoreNotes>("core", "restore_notes");
+            let notes = Arc::clone(&app.notes);
+            app.ops.register_with("core", "restore_notes", move |v| {
+                let undo: crate::notes::RestoreNotes = serde_json::from_value(v)?;
+                Ok(Box::new(undo.with_stores(Arc::clone(&notes))))
+            });
+            app.notes.keep_snapshots(app.cache.namespace("notes"));
         }
         builtin::register(&app);
         crate::tabs::register(&app);

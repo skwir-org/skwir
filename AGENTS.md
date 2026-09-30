@@ -191,7 +191,11 @@ current source before assuming a planned crate, command, or API exists.
   holding the file's notes, the ones set to create, and where the file's
   own attributes are refused the store its folder already uses, else
   AppleDouble), and its inverse (`restore_notes`) puts back each store's
-  bytes exactly, refusing if another application changed them since. A
+  bytes exactly, refusing if another application changed them since.
+  Stores that disagree are merged against what bibli last wrote (a
+  snapshot in the cache): another application's later edit wins, and a
+  store emptied is not an edit; Details says where notes are kept and
+  which stores differ, and `tags.agree` makes them agree. A
   `._` file is rewritten whole as macOS lays it out, keeping every other
   attribute and its mode; one laid out otherwise is read, never written.
   An edit of several files applies what the user changed

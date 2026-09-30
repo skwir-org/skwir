@@ -36,6 +36,23 @@ Poppler, GStreamer or libarchive. Open gate: idle PSS is about 118 to 120 MB aga
 been loosened. The per-change validation history that used to sit here is in
 `docs/STATUS-LOG.md`.
 
+Notes stores, step B (2026-09-30): when the stores disagree about a
+file, the notes are merged against what bibli last wrote, kept in the
+cache (`notes` namespace, by the file's identity) with what each store
+read back: a store that changed since was edited by another application
+and its edit wins (tags added and taken away, a rating or a comment
+changed; the first store's over a later one's); a store that holds
+nothing now is not an edit; without a snapshot, the union. Each store
+says what it can hold of some notes (`NotesStore::fit`: the desktop's
+attributes hold no tag with a comma, the Finder no rating), so a store
+is said to differ only when it could say the same and does not. The
+provider fills where the notes are kept and the stores that differ
+(`keys::NOTES_KEPT`, `keys::NOTES_DIFFER`); Details shows them under
+Notes, the second with "Make them agree" (`tags.agree`: a `set_notes`
+with `sync`, written to every store even where the merged notes already
+hold). Undo forgets the snapshot. Deviation: the Details rows were
+checked by tests, not yet in a window.
+
 Notes stores, step A (2026-09-30, ADR-027): the core holds the model
 of a file's notes (`bibli_core::notes`: tags with the color a file gives
 them, rating, comment, origin), the `NotesStore` trait and its registry

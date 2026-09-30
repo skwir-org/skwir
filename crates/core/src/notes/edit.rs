@@ -54,6 +54,10 @@ pub struct SetNotes {
     /// Empty removes the comment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
+    /// Write every store even where the notes already say this, so the
+    /// stores that differ agree again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sync: bool,
     /// How the stores were set to be read and written when the plan was
     /// made.
     #[serde(default)]
@@ -80,6 +84,7 @@ impl PartialEq for SetNotes {
             && self.tags == other.tags
             && self.rating == other.rating
             && self.comment == other.comment
+            && self.sync == other.sync
             && self.policy == other.policy
     }
 }
@@ -91,9 +96,17 @@ impl SetNotes {
             tags: None,
             rating: None,
             comment: None,
+            sync: false,
             policy,
             stores: Some(stores),
         }
+    }
+
+    /// Write every store, so those that differ agree.
+    #[must_use]
+    pub fn sync(mut self) -> Self {
+        self.sync = true;
+        self
     }
 
     /// The stores it writes with, given once it was read from data.
@@ -251,8 +264,16 @@ impl Operation for SetNotes {
             };
         };
         match self.entry.resolve() {
-            Ok(p) if self.holds_in(&stores.read_path(&p, &self.policy)) => StepStatus::AlreadyDone,
-            Ok(_) => StepStatus::Pending { reversible: true },
+            Ok(p) => {
+                let read = stores.read_one(&p, &self.policy);
+                // Asked to make the stores agree, it is done when they do.
+                let agreed = !self.sync || read.differ.is_empty();
+                if self.holds_in(&read.notes) && agreed {
+                    StepStatus::AlreadyDone
+                } else {
+                    StepStatus::Pending { reversible: true }
+                }
+            }
             Err(ResolveError::Gone(p)) => StepStatus::Conflict {
                 reason: format!("{} no longer exists", p.display()),
             },
@@ -334,19 +355,44 @@ impl Operation for SetNotes {
             );
         }
         let after = raw::snapshot(&path, &keys)?;
+        // What each store says now, as bibli left it: the next read tells
+        // another application's edit from this one by it.
+        let attributes = super::attribute_names(&path);
+        let probe = Probe {
+            path: &path,
+            name,
+            attributes: &attributes,
+        };
+        let each = stores
+            .stores()
+            .into_iter()
+            .filter(|s| self.policy.reads(s.id()) && s.applies(dir))
+            .filter_map(|s| {
+                let found = s.read(dir, std::slice::from_ref(&probe)).pop()??;
+                Some((s.id().to_owned(), found))
+            })
+            .collect();
+        stores.remember(
+            self.entry.id,
+            &super::Snapshot {
+                written: target,
+                each,
+            },
+        );
         let (_, _, field) = self.words();
         Ok(Some(Box::new(RestoreNotes {
             entry: EntryRef::new(self.entry.id, path),
             field: field.to_owned(),
             before,
             after,
+            stores: Some(stores),
         })))
     }
 }
 
 /// Put back what a file's stores kept before an edit, byte for byte: the
 /// inverse of [`SetNotes`], and of itself.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RestoreNotes {
     pub entry: EntryRef,
     /// The field the edit changed, for whoever follows changes.
@@ -356,9 +402,39 @@ pub struct RestoreNotes {
     /// What the edit left: if the stores hold something else now, another
     /// application changed them, and that is not overwritten.
     pub after: Vec<Raw>,
+    /// Whose snapshot of what bibli wrote is forgotten once the bytes are
+    /// back.
+    #[serde(skip)]
+    #[schemars(skip)]
+    stores: Option<Arc<NoteStores>>,
+}
+
+impl std::fmt::Debug for RestoreNotes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RestoreNotes")
+            .field("entry", &self.entry)
+            .field("field", &self.field)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for RestoreNotes {
+    fn eq(&self, other: &Self) -> bool {
+        self.entry == other.entry
+            && self.field == other.field
+            && self.before == other.before
+            && self.after == other.after
+    }
 }
 
 impl RestoreNotes {
+    /// The registry it forgets snapshots in, given once read from data.
+    #[must_use]
+    pub fn with_stores(mut self, stores: Arc<NoteStores>) -> Self {
+        self.stores = Some(stores);
+        self
+    }
+
     fn keys(&self) -> Vec<RawKey> {
         self.before.iter().map(|r| r.key.clone()).collect()
     }
@@ -423,11 +499,15 @@ impl Operation for RestoreNotes {
         );
         raw::restore(&path, &self.before)
             .map_err(|e| anyhow::anyhow!("put back the notes of {}: {e}", path.display()))?;
+        if let Some(stores) = &self.stores {
+            stores.forget(self.entry.id);
+        }
         Ok(Some(Box::new(RestoreNotes {
             entry: EntryRef::new(self.entry.id, path),
             field: self.field.clone(),
             before: now,
             after: self.before.clone(),
+            stores: self.stores.clone(),
         })))
     }
 }

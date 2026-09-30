@@ -138,7 +138,7 @@ fn label_of(key: &str) -> String {
 }
 
 /// The fields Details names itself; any other is shown under More.
-const CORE: [&str; 15] = [
+const CORE: [&str; 17] = [
     keys::SIZE,
     keys::MODIFIED,
     keys::CREATED,
@@ -154,6 +154,8 @@ const CORE: [&str; 15] = [
     keys::COMMENT,
     keys::ORIGIN,
     keys::REFERRER,
+    keys::NOTES_KEPT,
+    keys::NOTES_DIFFER,
 ];
 
 /// Who took a note, when it was not the user: notes are theirs, so only a
@@ -251,10 +253,27 @@ fn notes_groups(entry: &Entry, path: &std::path::Path) -> [Option<Group>; 2] {
     .into_iter()
     .flatten()
     .collect();
-    [
-        group("Notes", vec![tags_row, rating_row, comment_row]),
-        group("Source", source),
-    ]
+    let titles = |key| match meta.value(key) {
+        Some(Value::List(items)) => items
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+    let mut rows = vec![tags_row, rating_row, comment_row];
+    // Where the notes are, and the stores that say otherwise (ADR-027).
+    let kept = titles(keys::NOTES_KEPT);
+    if !kept.is_empty() {
+        rows.push(Row::new("Kept in", kept.join("; ")));
+    }
+    let differ = titles(keys::NOTES_DIFFER);
+    if !differ.is_empty() {
+        rows.push(Row::new("Differs in", differ.join("; ")).action(
+            "Make them agree",
+            Invocation::with_args("tags.agree", &serde_json::json!({ "entries": target })),
+        ));
+    }
+    [group("Notes", rows), group("Source", source)]
 }
 
 /// What the entry itself says; with `notes`, what the user noted on it

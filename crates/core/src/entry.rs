@@ -166,6 +166,12 @@ pub mod keys {
     /// The page that led to the download, `Value::Text` (a URL), from
     /// `user.xdg.referrer.url`.
     pub const REFERRER: &str = "referrer";
+    /// Where a file's notes are kept: the titles of the stores holding
+    /// them (ADR-027), a list of text.
+    pub const NOTES_KEPT: &str = "notes_kept";
+    /// The stores whose notes differ from the rest, a list of text: they
+    /// can be made to agree.
+    pub const NOTES_DIFFER: &str = "notes_differ";
     /// Where the file says it was made: a picture's or a video's position,
     /// `Value::List` of two `Value::Float` (latitude, longitude, degrees).
     /// Read on demand (`crate::fields`), never at hydration (ADR-020).

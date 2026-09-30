@@ -123,6 +123,20 @@ impl NotesStore for XdgStore {
     fn default_write(&self) -> Write {
         Write::Create
     }
+    fn fit(&self, notes: &Notes) -> Notes {
+        Notes {
+            tags: notes
+                .tags
+                .iter()
+                .filter(|t| !t.name.contains(','))
+                .map(|t| Tag::named(t.name.clone()))
+                .collect(),
+            rating: notes.rating,
+            comment: notes.comment.clone(),
+            origin: None,
+            referrer: None,
+        }
+    }
     fn read(&self, _dir: &Path, files: &[Probe<'_>]) -> Vec<Option<Notes>> {
         files
             .iter()

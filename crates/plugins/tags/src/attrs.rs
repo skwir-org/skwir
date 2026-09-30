@@ -78,12 +78,16 @@ impl MetadataProvider for AttributesProvider {
     }
     fn fill(&self, dir: &Path, entries: &mut [Entry]) {
         let policy = self.stores.policy();
-        let names: Vec<&std::ffi::OsStr> = entries.iter().map(|e| e.name.as_os_str()).collect();
-        let read = self.stores.read(dir, &names, &policy);
+        let files: Vec<bibli_core::notes::Named<'_>> = entries
+            .iter()
+            .map(|e| (e.name.as_os_str(), Some(e.id)))
+            .collect();
+        let read = self.stores.read(dir, &files, &policy);
         let mut seen: Vec<String> = Vec::new();
         let mut given: Vec<(String, String)> = Vec::new();
         let mut learned: Vec<(std::path::PathBuf, Vec<String>)> = Vec::new();
-        for (e, (notes, _)) in entries.iter_mut().zip(read) {
+        for (e, read) in entries.iter_mut().zip(read) {
+            let notes = read.notes;
             let tags = notes.tag_names();
             if self.index.is_some() {
                 learned.push((dir.join(&e.name), tags.clone()));
@@ -92,6 +96,25 @@ impl MetadataProvider for AttributesProvider {
                 continue;
             }
             fill_entry(&mut e.metadata, &notes);
+            let titles = |ids: &[&str]| {
+                Value::List(
+                    self.stores
+                        .titles(ids)
+                        .into_iter()
+                        .map(|t| Value::Text(Arc::from(t)))
+                        .collect(),
+                )
+            };
+            let kept: Vec<&str> = read.each.iter().map(|(id, _)| *id).collect();
+            e.metadata
+                .set(keys::NOTES_KEPT, titles(&kept), Provenance::Filesystem);
+            if !read.differ.is_empty() {
+                e.metadata.set(
+                    keys::NOTES_DIFFER,
+                    titles(&read.differ),
+                    Provenance::Filesystem,
+                );
+            }
             given.extend(
                 notes
                     .tags

@@ -21,6 +21,8 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
+use crate::cache::CacheSlot;
+use crate::entry::EntryId;
 use crate::metadata::same_tag;
 pub use edit::{RestoreNotes, SetNotes};
 use raw::RawKey;
@@ -226,6 +228,30 @@ pub trait NotesStore: Send + Sync {
     fn in_use(&self, _dir: &Path) -> bool {
         false
     }
+    /// What it can hold of `notes`: what it reads back after writing them.
+    /// Comparing a store with this, not with the notes, tells a store
+    /// that disagrees from one that cannot say as much.
+    fn fit(&self, notes: &Notes) -> Notes {
+        let holds = self.holds();
+        Notes {
+            tags: if holds.tags {
+                notes
+                    .tags
+                    .iter()
+                    .map(|t| Tag {
+                        name: t.name.clone(),
+                        color: t.color.clone().filter(|_| holds.tag_colors),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            rating: notes.rating.filter(|_| holds.rating),
+            comment: notes.comment.clone().filter(|_| holds.comment),
+            origin: None,
+            referrer: None,
+        }
+    }
     /// The notes it keeps for each of `files`, in their order; `None` for
     /// a file it keeps nothing for. Blocking: called on a worker, with a
     /// batch of one folder's files.
@@ -273,6 +299,87 @@ pub fn attribute_names(path: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Whether two stores' notes say the same: the same tags (case aside, in
+/// any order), rating and comment. Colors and origins are not the user's
+/// edits.
+pub fn same(a: &Notes, b: &Notes) -> bool {
+    a.tags.len() == b.tags.len()
+        && a.tags.iter().all(|t| b.tag(&t.name).is_some())
+        && a.rating == b.rating
+        && a.comment == b.comment
+}
+
+/// What bibli wrote for a file last (kept in the cache by its identity):
+/// the notes, and what each store read back right after.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Snapshot {
+    pub written: Notes,
+    pub each: Vec<(String, Notes)>,
+}
+
+/// The merge of each store's notes against what bibli last wrote
+/// (ADR-027): a store that changed since was edited by another
+/// application, and its edit wins, added and removed tags alike, a rating
+/// or a comment changed; a store that holds nothing now (a `._` file
+/// deleted, attributes a copy dropped) is not an edit. The first store's
+/// edit wins over a later one's.
+pub fn merged_since(snapshot: &Snapshot, each: &[(&'static str, Notes)]) -> Notes {
+    let mut out = snapshot.written.clone();
+    out.origin = None;
+    out.referrer = None;
+    for (id, now) in each.iter().rev() {
+        let before = snapshot
+            .each
+            .iter()
+            .find(|(s, _)| s == id)
+            .map(|(_, n)| n.clone())
+            .unwrap_or_default();
+        if same(now, &before) {
+            continue;
+        }
+        for tag in &before.tags {
+            if now.tag(&tag.name).is_none() {
+                out.tags.retain(|t| !same_tag(&t.name, &tag.name));
+            }
+        }
+        for tag in &now.tags {
+            if before.tag(&tag.name).is_none() && out.tag(&tag.name).is_none() {
+                out.tags.push(tag.clone());
+            }
+        }
+        if now.rating != before.rating {
+            out.rating = now.rating;
+        }
+        if now.comment != before.comment {
+            out.comment.clone_from(&now.comment);
+        }
+    }
+    // Colors and where a download came from: whatever a store says.
+    for (_, now) in each {
+        for tag in &mut out.tags {
+            if tag.color.is_none() {
+                tag.color = now.tag(&tag.name).and_then(|t| t.color.clone());
+            }
+        }
+        out.origin = out.origin.take().or_else(|| now.origin.clone());
+        out.referrer = out.referrer.take().or_else(|| now.referrer.clone());
+    }
+    out
+}
+
+/// A file's notes as read: merged, each store's, and the stores that do
+/// not say what the merge does.
+#[derive(Clone, Debug, Default)]
+pub struct Read {
+    pub notes: Notes,
+    pub each: Vec<(&'static str, Notes)>,
+    pub differ: Vec<&'static str>,
+}
+
+/// A file of a batch: its name, and its identity when known (what bibli
+/// last wrote for it is kept by it).
+pub type Named<'a> = (&'a OsStr, Option<EntryId>);
+
 /// The registered stores, in the order they are read: the platform's own
 /// first, as it decides what the others do not say.
 #[derive(Default)]
@@ -281,6 +388,12 @@ pub struct NoteStores {
     /// The user's choices, `None` until the settings are read: then each
     /// store's default.
     chosen: RwLock<Option<Policy>>,
+    /// What bibli wrote last for each file it edited.
+    snapshots: RwLock<Option<CacheSlot>>,
+}
+
+fn snapshot_key(id: EntryId) -> Vec<u8> {
+    format!("{}:{}", id.dev, id.ino).into_bytes()
 }
 
 impl NoteStores {
@@ -310,6 +423,34 @@ impl NoteStores {
             .iter()
             .find(|(_, s)| s.id() == id)
             .map(|(_, s)| Arc::clone(s))
+    }
+
+    /// Where the snapshots of what bibli wrote are kept.
+    pub fn keep_snapshots(&self, slot: CacheSlot) {
+        *self.snapshots.write() = Some(slot);
+    }
+
+    fn snapshot(&self, id: EntryId) -> Option<Snapshot> {
+        let bytes = self.snapshots.read().as_ref()?.get(&snapshot_key(id))?;
+        serde_json::from_slice(&bytes).ok()
+    }
+
+    /// Remember what bibli just wrote for the file `id`.
+    pub(crate) fn remember(&self, id: EntryId, snapshot: &Snapshot) {
+        let slot = self.snapshots.read().clone();
+        if let (Some(slot), Ok(bytes)) = (slot, serde_json::to_vec(snapshot))
+            && let Err(error) = slot.put(&snapshot_key(id), &bytes)
+        {
+            tracing::debug!(%error, "notes: the snapshot was not kept");
+        }
+    }
+
+    /// Forget what bibli wrote for the file `id` (an undo put back what
+    /// was there before).
+    pub(crate) fn forget(&self, id: EntryId) {
+        if let Some(slot) = self.snapshots.read().as_ref() {
+            let _ = slot.remove(&snapshot_key(id));
+        }
     }
 
     /// Replace the user's choices (the settings, `notes.*`).
@@ -346,15 +487,10 @@ impl NoteStores {
             .any(|s| s.kept() == Kept::Attributes && policy.reads(s.id()))
     }
 
-    /// The notes of a batch of `dir`'s files, each merged from every store
-    /// `policy` reads, and each store's own. Blocking: call on a worker.
-    pub fn read(
-        &self,
-        dir: &Path,
-        names: &[&OsStr],
-        policy: &Policy,
-    ) -> Vec<(Notes, Vec<(&'static str, Notes)>)> {
-        let paths: Vec<std::path::PathBuf> = names.iter().map(|n| dir.join(n)).collect();
+    /// The notes of a batch of `dir`'s files, as every store `policy`
+    /// reads keeps them, merged. Blocking: call on a worker.
+    pub fn read(&self, dir: &Path, files: &[Named<'_>], policy: &Policy) -> Vec<Read> {
+        let paths: Vec<std::path::PathBuf> = files.iter().map(|(n, _)| dir.join(n)).collect();
         let attributes: Vec<Vec<String>> = if self.reads_attributes(policy) {
             paths.iter().map(|p| attribute_names(p)).collect()
         } else {
@@ -362,44 +498,97 @@ impl NoteStores {
         };
         let probes: Vec<Probe<'_>> = paths
             .iter()
-            .zip(names)
+            .zip(files)
             .zip(&attributes)
-            .map(|((path, name), attributes)| Probe {
+            .map(|((path, (name, _)), attributes)| Probe {
                 path,
                 name,
                 attributes,
             })
             .collect();
-        let mut out: Vec<(Notes, Vec<(&'static str, Notes)>)> =
-            (0..probes.len()).map(|_| Default::default()).collect();
-        for store in self.stores() {
-            if !policy.reads(store.id()) || !store.applies(dir) {
-                continue;
-            }
+        let stores: Vec<Arc<dyn NotesStore>> = self
+            .stores()
+            .into_iter()
+            .filter(|s| policy.reads(s.id()) && s.applies(dir))
+            .collect();
+        let mut each: Vec<Vec<(&'static str, Notes)>> = vec![Vec::new(); probes.len()];
+        for store in &stores {
             for (i, found) in store.read(dir, &probes).into_iter().enumerate() {
-                if let (Some(found), Some((merged, each))) = (found, out.get_mut(i)) {
-                    merged.merge(found.clone());
-                    each.push((store.id(), found));
+                if let (Some(found), Some(list)) = (found, each.get_mut(i)) {
+                    list.push((store.id(), found));
                 }
             }
         }
-        out
+        each.into_iter()
+            .zip(files)
+            .map(|(each, (_, id))| self.merge(each, *id))
+            .collect()
+    }
+
+    /// Merge what each store says of one file: all together when they agree
+    /// (each saying what it can of the union), else against what bibli
+    /// wrote last, when it remembers.
+    fn merge(&self, each: Vec<(&'static str, Notes)>, id: Option<EntryId>) -> Read {
+        let mut union = Notes::default();
+        for (_, notes) in &each {
+            union.merge(notes.clone());
+        }
+        let differ_from = |notes: &Notes| -> Vec<&'static str> {
+            each.iter()
+                .filter(|(store, now)| self.get(store).is_some_and(|s| !same(now, &s.fit(notes))))
+                .map(|(store, _)| *store)
+                .collect()
+        };
+        let differ = differ_from(&union);
+        if differ.is_empty() {
+            return Read {
+                notes: union,
+                each,
+                differ,
+            };
+        }
+        let Some(snapshot) = id.and_then(|id| self.snapshot(id)) else {
+            return Read {
+                notes: union,
+                each,
+                differ,
+            };
+        };
+        let notes = merged_since(&snapshot, &each);
+        let differ = differ_from(&notes);
+        Read {
+            notes,
+            each,
+            differ,
+        }
     }
 
     /// The notes of one file, merged. Blocking: call on a worker.
     pub fn read_path(&self, path: &Path, policy: &Policy) -> Notes {
+        self.read_one(path, policy).notes
+    }
+
+    /// One file's notes as read. Blocking: call on a worker.
+    pub fn read_one(&self, path: &Path, policy: &Policy) -> Read {
         let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
-            return Notes::default();
+            return Read::default();
         };
-        self.read(dir, &[name], policy)
+        let id = crate::op::EntryRef::from_path(path).map(|r| r.id);
+        self.read(dir, &[(name, id)], policy)
             .pop()
-            .map(|(notes, _)| notes)
             .unwrap_or_default()
     }
 
     /// An edit of `entry`'s notes, written as the stores are now set to be.
     pub fn edit(self: &Arc<Self>, entry: crate::op::EntryRef) -> SetNotes {
         SetNotes::new(Arc::clone(self), entry, self.policy())
+    }
+
+    /// The titles of stores, by id, for the user.
+    pub fn titles(&self, ids: &[&str]) -> Vec<&'static str> {
+        ids.iter()
+            .filter_map(|id| self.get(id).map(|s| s.title()))
+            .collect()
     }
 }
 
@@ -430,6 +619,51 @@ mod tests {
         assert_eq!(notes.tag("work").unwrap().color.as_deref(), Some("red"));
         assert_eq!(notes.rating, Some(6), "the first store's");
         assert_eq!(notes.comment.as_deref(), Some("from the Mac"));
+    }
+
+    fn notes(tags: &[&str], rating: Option<u64>) -> Notes {
+        Notes {
+            tags: tags.iter().map(|t| Tag::named(*t)).collect(),
+            rating,
+            ..Notes::default()
+        }
+    }
+
+    #[test]
+    fn another_applications_edit_wins_over_what_bibli_wrote() {
+        let snapshot = Snapshot {
+            written: notes(&["a", "b", "x"], Some(6)),
+            each: vec![
+                ("xdg".into(), notes(&["a", "b", "x"], Some(6))),
+                ("finder".into(), notes(&["a", "b", "x"], None)),
+                ("aside".into(), notes(&["a", "b", "x"], Some(6))),
+            ],
+        };
+        // The Mac took `b` and `x` away and added `mac`; the `._` file was
+        // deleted; the desktop's attributes are as bibli left them.
+        let each = [
+            ("xdg", notes(&["a", "b", "x"], Some(6))),
+            ("finder", notes(&["a", "mac"], None)),
+        ];
+        let merged = merged_since(&snapshot, &each);
+        assert_eq!(merged.tag_names(), ["a", "mac"]);
+        assert_eq!(
+            merged.rating,
+            Some(6),
+            "the Finder holds no rating to change"
+        );
+        // Two stores changed the rating: the first one's wins.
+        let each = [
+            ("xdg", notes(&["a", "b", "x"], Some(10))),
+            ("aside", notes(&["a", "b", "x"], Some(2))),
+        ];
+        assert_eq!(merged_since(&snapshot, &each).rating, Some(10));
+        // A store bibli never wrote says what it has as new.
+        let each = [("tagspaces", notes(&["ts"], None))];
+        assert_eq!(
+            merged_since(&snapshot, &each).tag_names(),
+            ["a", "b", "x", "ts"]
+        );
     }
 
     #[test]

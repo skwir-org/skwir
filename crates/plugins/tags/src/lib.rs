@@ -705,6 +705,29 @@ impl Plugin for TagsPlugin {
                 })
             },
         );
+        app.commands.register::<PaneArgs, _>(
+            ID,
+            "tags.agree",
+            "Make notes agree",
+            "Write the selection's notes, as read from every store, to each store that keeps them, so the stores that differ agree again (plan)",
+            |a, app| {
+                per_entry(
+                    targets(app, a.pane, a.entries),
+                    "make the notes agree".to_owned(),
+                    |r| {
+                        let read = app.notes.read_one(&r.path, &app.notes.policy());
+                        (!read.differ.is_empty()).then(|| {
+                            app.notes
+                                .edit(r)
+                                .tags(read.notes.tag_names())
+                                .rating(read.notes.rating)
+                                .comment(read.notes.comment)
+                                .sync()
+                        })
+                    },
+                )
+            },
+        );
         let (v, everywhere) = (Arc::clone(&vocabulary), lifetime.clone());
         app.commands.register::<RenameArgs, _>(
             ID,
@@ -1251,6 +1274,84 @@ mod tests {
         assert_eq!(
             (notes.tag_names(), notes.rating, notes.comment.as_deref()),
             (vec!["old".to_owned()], Some(6), Some("kept"))
+        );
+    }
+
+    #[test]
+    fn a_macs_edit_after_bibli_wrote_wins_and_the_stores_are_made_to_agree() {
+        const FINDER: &str = "user.com.apple.metadata:_kMDItemUserTags";
+        let tmp = home_tempdir();
+        let dir = tmp.path().join("synced");
+        std::fs::create_dir(&dir).unwrap();
+        let f = dir.join("it's both.txt");
+        std::fs::write(&f, b"x").unwrap();
+        write_tags(&f, &["a".into(), "b".into()]).unwrap();
+        finder_tags(&f, FINDER, finder::Framing::Plain, &[("a", 0), ("b", 6)]);
+        let (app, pane) = app_in(tmp.path(), &dir, &["it's both.txt"]);
+        let add = plan(&app, "tags.add", &serde_json::json!({ "tags": ["x"] }));
+        assert!(
+            app.executor
+                .execute_blocking(&add, app.lifetime())
+                .error
+                .is_none()
+        );
+        let read = || app.notes.read_one(&f, &app.notes.policy());
+        assert_eq!(read().notes.tag_names(), ["a", "b", "x"]);
+        assert!(read().differ.is_empty());
+
+        // On the Mac, `b` and `x` are taken away and `mac` is given.
+        finder_tags(&f, FINDER, finder::Framing::Plain, &[("a", 0), ("mac", 4)]);
+        let now = read();
+        assert_eq!(now.notes.tag_names(), ["a", "mac"], "the Mac's edit wins");
+        assert_eq!(now.differ, ["xdg"]);
+        // Without what bibli wrote (another machine, a cache deleted): all.
+        assert_eq!(read_tags(&f), ["a", "b", "x", "mac"]);
+        // Details says where they are, and where they differ.
+        hydrate_all(&app, pane);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            app.pump();
+            let differ = app
+                .workspace
+                .read()
+                .pane(pane)
+                .unwrap()
+                .listing
+                .find_by_name("it's both.txt".as_ref())
+                .and_then(|e| e.metadata.value(keys::NOTES_DIFFER).cloned());
+            if let Some(Value::List(titles)) = differ {
+                assert_eq!(
+                    titles[0].as_str(),
+                    Some(bibli_core::notes::NotesStore::title(&xdg::XdgStore))
+                );
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+
+        let agree = plan(&app, "tags.agree", &serde_json::json!({}));
+        assert_eq!(agree.steps.len(), 1);
+        assert!(
+            app.executor
+                .execute_blocking(&agree, app.lifetime())
+                .error
+                .is_none()
+        );
+        assert_eq!(
+            xattr::get(&f, xdg::TAGS).unwrap().as_deref(),
+            Some(b"a,mac".as_slice())
+        );
+        assert!(read().differ.is_empty());
+        assert!(
+            plan(&app, "tags.agree", &serde_json::json!({}))
+                .steps
+                .is_empty()
+        );
+        app.executor.undo_blocking(app.lifetime()).unwrap();
+        assert_eq!(
+            xattr::get(&f, xdg::TAGS).unwrap().as_deref(),
+            Some(b"a,b,x".as_slice())
         );
     }
 
