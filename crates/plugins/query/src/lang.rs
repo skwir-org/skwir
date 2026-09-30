@@ -1369,6 +1369,21 @@ impl Query {
     /// exactly that: one substring, or an AND of them. This is what a
     /// locate database answers (it ANDs its patterns); an OR, a NOT, a
     /// glob or any other term needs the walk.
+    /// A tag every match has: the query is a `tag:` term, or an AND with
+    /// one. What an index of tags can answer first (ADR-026).
+    pub fn required_tag(&self) -> Option<&str> {
+        fn tag(e: &Expr) -> Option<&str> {
+            match e {
+                Expr::Term(Term::Tag(t)) => Some(t.as_str()),
+                _ => None,
+            }
+        }
+        match self.expr.as_ref()? {
+            Expr::And(items) => items.iter().find_map(tag),
+            e => tag(e),
+        }
+    }
+
     pub fn name_substrings(&self) -> Option<Vec<String>> {
         let substring = |e: &Expr| match e {
             Expr::Term(Term::Name(p)) if p.glob.is_none() && !p.text.is_empty() => {
@@ -2050,6 +2065,11 @@ mod tests {
         let p = q("size>10M");
         assert!(p.needs_stat() && !p.needs_metadata() && !p.needs_content());
         assert!(q("tag:x").needs_metadata());
+        assert_eq!(q("tag:x").required_tag(), Some("x"));
+        assert_eq!(q("ext:pdf tag:\"to do\"").required_tag(), Some("to do"));
+        assert_eq!(q("tag:x OR tag:y").required_tag(), None);
+        assert_eq!(q("-tag:x").required_tag(), None);
+        assert_eq!(q("ext:pdf").required_tag(), None);
         assert!(q("content:x").needs_content());
         assert_eq!(q("foo").name_substrings().unwrap(), ["foo"]);
         assert_eq!(q("foo bar").name_substrings().unwrap(), ["foo", "bar"]);

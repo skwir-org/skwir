@@ -18,25 +18,105 @@ fn marker(dir: &Path) -> PathBuf {
 /// Generate `profile` under `root` unless a completion marker already exists.
 pub fn generate(root: &Path, profile: Profile) -> Result<PathBuf> {
     let dir = root.join(profile.name());
-    if marker(&dir).exists() {
-        return Ok(dir);
+    if !marker(&dir).exists() {
+        create(&dir, profile)?;
     }
+    tag(&dir, profile)?;
+    Ok(dir)
+}
+
+fn create(dir: &Path, profile: Profile) -> Result<()> {
     eprintln!(
         "bench: generating {} ({} files)...",
         profile.name(),
         profile.file_count()
     );
     if dir.exists() {
-        fs::remove_dir_all(&dir)?;
+        fs::remove_dir_all(dir)?;
     }
-    fs::create_dir_all(&dir)?;
+    fs::create_dir_all(dir)?;
     match profile {
-        Profile::Flat100k => flat(&dir, 100_000)?,
-        Profile::Deep1m => deep(&dir)?,
-        Profile::Images10k => images(&dir, 10_000)?,
+        Profile::Flat100k => flat(dir, 100_000)?,
+        Profile::Deep1m => deep(dir)?,
+        Profile::Images10k => images(dir, 10_000)?,
     }
-    fs::write(marker(&dir), b"")?;
-    Ok(dir)
+    fs::write(marker(dir), b"")?;
+    Ok(())
+}
+
+/// The tag every tagged bench file carries, which the searches look for.
+pub const TAG: &str = "bench";
+
+/// Give some files notes, as a user's would have: every tenth image (tags,
+/// a rating and a comment) and one file in a thousand of the deep tree (a
+/// tag), so the provider and `tag:` are measured over files that mostly
+/// have none. Idempotent, with a marker of its own, so trees generated
+/// before it are tagged in place. A filesystem without user attributes
+/// leaves the trees as they are: the measurements that need them report
+/// nothing.
+fn tag(dir: &Path, profile: Profile) -> Result<()> {
+    let every = match profile {
+        Profile::Images10k => 10,
+        Profile::Deep1m => 1000,
+        Profile::Flat100k => return Ok(()),
+    };
+    let done = dir.join(".bibli-bench-tagged");
+    if done.exists() {
+        return Ok(());
+    }
+    let probe = dir.join(".bibli-bench-probe");
+    fs::write(&probe, b"")?;
+    let supported = xattr::set(&probe, "user.xdg.tags", TAG.as_bytes()).is_ok();
+    fs::remove_file(&probe)?;
+    if !supported {
+        eprintln!(
+            "bench: no user attributes under {}, left untagged",
+            dir.display()
+        );
+        return Ok(());
+    }
+    eprintln!("bench: tagging {}...", profile.name());
+    let files = files(dir);
+    files
+        .par_iter()
+        .enumerate()
+        .filter(|(i, _)| i % every == 0)
+        .try_for_each(|(i, path)| -> Result<()> {
+            let tags = if i % 20 == 0 {
+                format!("{TAG},even")
+            } else {
+                format!("{TAG},odd")
+            };
+            xattr::set(path, "user.xdg.tags", tags.as_bytes())?;
+            if profile == Profile::Images10k {
+                let rating = (i / every) % 10 + 1;
+                xattr::set(path, "user.baloo.rating", rating.to_string().as_bytes())?;
+                xattr::set(path, "user.xdg.comment", b"a synthetic comment")?;
+            }
+            Ok(())
+        })?;
+    fs::write(done, b"")?;
+    Ok(())
+}
+
+/// Every file of the tree, in a stable order.
+pub fn files(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut dirs = vec![dir.to_path_buf()];
+    while let Some(d) = dirs.pop() {
+        let Ok(rd) = fs::read_dir(&d) else { continue };
+        for e in rd.flatten() {
+            match e.file_type() {
+                Ok(t) if t.is_dir() => dirs.push(e.path()),
+                Ok(_) if !e.file_name().as_encoded_bytes().starts_with(b".") => {
+                    out.push(e.path());
+                }
+                _ => {}
+            }
+        }
+    }
+    out.sort();
+    out
 }
 
 fn flat(dir: &Path, n: u64) -> Result<()> {

@@ -32,6 +32,7 @@ pub mod entry;
 pub mod fields;
 pub mod fs;
 pub mod geo;
+pub mod hints;
 pub mod keymap;
 pub mod location;
 pub mod lru;

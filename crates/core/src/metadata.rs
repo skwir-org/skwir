@@ -35,8 +35,12 @@ pub const TAG_COLORS: [&str; 8] = [
 
 /// The color a tag wears when the user chose none, as an index into
 /// [`TAG_COLORS`]: from its name, ignoring case, so every view, every
-/// session and every machine agrees without storing anything.
+/// session and every machine agrees without storing anything. A tag named
+/// after a color wears it ("Red", as a Mac's first tags are named).
 pub fn tag_color(tag: &str) -> usize {
+    if let Some(named) = TAG_COLORS.iter().position(|c| same_tag(c, tag)) {
+        return named;
+    }
     // FNV-1a: stable across releases, unlike std's hasher.
     let mut hash: u32 = 0x811c_9dc5;
     for c in tag.chars().flat_map(char::to_lowercase) {
@@ -89,5 +93,20 @@ impl MetadataProviders {
         for p in providers {
             p.fill(dir, entries);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_tag_named_after_a_color_wears_it() {
+        for (i, name) in TAG_COLORS.iter().enumerate() {
+            assert_eq!(tag_color(name), i);
+            assert_eq!(tag_color(&name.to_uppercase()), i);
+        }
+        assert_eq!(tag_color("Work"), tag_color("work"), "case never matters");
+        assert!(tag_color("reddish") < TAG_COLORS.len());
     }
 }

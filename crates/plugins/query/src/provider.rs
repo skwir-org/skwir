@@ -2,7 +2,7 @@
 //! as a virtual listing. Entries are stat-ed only when the query needs it
 //! (and always once for their identity when they match).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -10,7 +10,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use bibli_core::cancel::CancelToken;
 use bibli_core::entry::{Entry, EntryId, EntryKind};
-use bibli_core::fs::stat::stat_path;
+use bibli_core::fs::Statter;
 use bibli_core::location::{
     EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
 };
@@ -119,6 +119,12 @@ impl Batcher<'_> {
         }
     }
 
+    /// Publish what waits, now.
+    fn flush(&self) {
+        let batch = std::mem::take(&mut self.pending.lock().0);
+        self.shared.publish(self.cancel, batch, false);
+    }
+
     fn finish(&self) {
         let batch = std::mem::take(&mut self.pending.lock().0);
         self.shared.publish(self.cancel, batch, true);
@@ -133,6 +139,8 @@ struct Deferred<'a> {
     query: &'a Query,
     batcher: &'a Batcher<'a>,
     by_dir: HashMap<PathBuf, Vec<Entry>>,
+    /// The walking thread's stats, through the folder it is in.
+    statter: Statter,
 }
 
 impl Deferred<'_> {
@@ -293,18 +301,25 @@ fn full_match(q: &Query, entry: &Entry, path: &Path, late: Late<'_>) -> bool {
 }
 
 /// Evaluate one path as far as the dirent and a stat allow.
-fn first(q: &Query, path: &Path, name: &OsStr, kind: EntryKind, late: Late<'_>) -> First {
+fn first(
+    q: &Query,
+    path: &Path,
+    name: &OsStr,
+    kind: EntryKind,
+    late: Late<'_>,
+    statter: &mut Statter,
+) -> First {
     let Some(expr) = &q.expr else {
-        return stat_path(path).map_or(First::No, First::Yes);
+        return statter.stat(path).map_or(First::No, First::Yes);
     };
     // 1. Cheap terms from the dirent.
     match expr.eval(&Candidate::new(name, kind, path, None), false) {
         Verdict::No => return First::No,
-        Verdict::Yes => return stat_path(path).map_or(First::No, First::Yes),
+        Verdict::Yes => return statter.stat(path).map_or(First::No, First::Yes),
         Verdict::Unknown => {}
     }
     // 2. Stat; metadata comes later, in batches.
-    let Some(entry) = stat_path(path) else {
+    let Some(entry) = statter.stat(path) else {
         return First::No;
     };
     if q.needs_metadata() {
@@ -325,7 +340,7 @@ fn consider(
     batcher: &Batcher<'_>,
     deferred: &mut Deferred<'_>,
 ) {
-    match first(q, path, name, kind, batcher.late()) {
+    match first(q, path, name, kind, batcher.late(), &mut deferred.statter) {
         First::No => {}
         First::Yes(entry) => batcher.push(entry, path.to_path_buf()),
         First::NeedsMetadata(entry) => {
@@ -391,12 +406,24 @@ impl Shared {
             query: q,
             batcher: &batcher,
             by_dir: HashMap::new(),
+            statter: Statter::default(),
+        };
+        // What an index says may match, considered first; the walk skips it.
+        let hinted = {
+            let mut deferred = deferred();
+            let hinted = self.hinted(q, cancel, &batcher, &mut deferred);
+            drop(deferred);
+            batcher.flush();
+            hinted
         };
         if let Some(paths) = crate::plocate::try_locate(q) {
             let mut deferred = deferred();
             for p in paths {
                 if cancel.is_cancelled() {
                     return;
+                }
+                if hinted.contains(&p) {
+                    continue;
                 }
                 let Some(name) = p.file_name() else { continue };
                 let kind = kind_of(std::fs::symlink_metadata(&p).ok().map(|m| m.file_type()));
@@ -413,6 +440,7 @@ impl Shared {
                 .parents(false)
                 .follow_links(false)
                 .max_depth(q.depth);
+            let hinted = &hinted;
             builder.build_parallel().run(|| {
                 // Dropped when this walker thread ends, which decides the rest.
                 let mut deferred = deferred();
@@ -431,6 +459,9 @@ impl Shared {
                     let Some(name) = path.file_name() else {
                         return ignore::WalkState::Continue;
                     };
+                    if hinted.contains(path) {
+                        return ignore::WalkState::Continue;
+                    }
                     let kind = kind_of(dent.file_type());
                     consider(q, path, name, kind, batcher, &mut deferred);
                     ignore::WalkState::Continue
@@ -438,6 +469,65 @@ impl Shared {
             });
         }
         batcher.finish();
+    }
+
+    /// Consider the files the indexes name for the query's tag (ADR-026),
+    /// as the walk would have (hidden files and depth as it would, never
+    /// through a link), and return them for the walk to skip.
+    fn hinted(
+        &self,
+        q: &Query,
+        cancel: &CancelToken,
+        batcher: &Batcher<'_>,
+        deferred: &mut Deferred<'_>,
+    ) -> HashSet<PathBuf> {
+        let mut hinted = HashSet::new();
+        let Some(tag) = q.required_tag() else {
+            return hinted;
+        };
+        // Indexes know real paths; the walk goes through the root as typed.
+        let Ok(real_root) = std::fs::canonicalize(&q.root) else {
+            return hinted;
+        };
+        let Some(paths) =
+            self.ctx
+                .hints
+                .candidates(bibli_core::entry::keys::TAGS, tag, &real_root, cancel)
+        else {
+            return hinted;
+        };
+        let started = Instant::now();
+        for real in paths {
+            if cancel.is_cancelled() {
+                break;
+            }
+            let Ok(relative) = real.strip_prefix(&real_root) else {
+                continue;
+            };
+            if !crate::plocate::visible(relative, q.hidden, q.depth) {
+                continue;
+            }
+            // A folder on the way that is a link: the walk would not go there.
+            let through_link = real
+                .parent()
+                .is_none_or(|parent| std::fs::canonicalize(parent).ok().as_deref() != Some(parent));
+            let Some(name) = real.file_name() else {
+                continue;
+            };
+            if through_link {
+                continue;
+            }
+            let path = q.root.join(relative);
+            let kind = kind_of(std::fs::symlink_metadata(&path).ok().map(|m| m.file_type()));
+            consider(q, &path, name, kind, batcher, deferred);
+            hinted.insert(path);
+        }
+        tracing::debug!(
+            hinted = hinted.len(),
+            took_us = started.elapsed().as_micros() as u64,
+            "search hints considered"
+        );
+        hinted
     }
 
     fn hydrate(&self, ids: &[EntryId], cancel: &CancelToken) {
@@ -513,6 +603,7 @@ mod tests {
             waker: None,
             metadata: Arc::default(),
             fields: Arc::default(),
+            hints: Arc::default(),
         };
         let query = lang::parse(&location.rest).unwrap();
         let open = QueryLocation::open(location.clone(), query, &ctx, &CancelToken::new());

@@ -145,9 +145,15 @@ pub mod keys {
     /// Symlink target, present for symlinks after stat.
     pub const LINK_TARGET: &str = "link_target";
     /// The user's tags, a `Value::List` of `Value::Text`, stored on disk in
-    /// [`crate::metadata::TAGS_XATTR`]. Written by the tags plugin, read by
+    /// [`crate::metadata::TAGS_XATTR`] (and in a Mac's Finder attribute
+    /// when the file has one). Written by the tags plugin, read by
     /// search and the views.
     pub const TAGS: &str = "tags";
+    /// The colors the file itself gives some of its tags (a Mac's Finder
+    /// tags carry one), a `Value::List` of `[tag, color]` pairs of
+    /// `Value::Text`, the color one of [`crate::metadata::TAG_COLORS`].
+    /// A color the user chose for the tag (`tags.colors`) wins over it.
+    pub const TAG_COLORS: &str = "tag_colors";
     /// The user's rating, a `Value::UInt` from 1 to 10 (half stars: 10 is
     /// five stars), stored in `user.baloo.rating` as KDE does; absent when
     /// unrated. Written by the tags plugin, read by search, sort and views.

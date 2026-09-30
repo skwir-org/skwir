@@ -112,6 +112,8 @@ pub struct App {
     pub metadata: Arc<crate::metadata::MetadataProviders>,
     /// Fields read when asked, not at hydration (ADR-023).
     pub fields: Arc<crate::fields::Fields>,
+    /// Indexes a search asks where files may be first (ADR-026).
+    pub hints: Arc<crate::hints::Hints>,
     pub previews: Arc<crate::preview::Previews>,
     /// Where map backgrounds come from (the map-tiles plugin, ADR-020).
     pub tiles: Arc<crate::tiles::Tiles>,
@@ -154,6 +156,7 @@ impl App {
             ),
             metadata: Arc::new(crate::metadata::MetadataProviders::default()),
             fields,
+            hints: Arc::new(crate::hints::Hints::default()),
             previews: Arc::new(crate::preview::Previews::default()),
             tiles: Arc::new(crate::tiles::Tiles::default()),
             proposals: parking_lot::Mutex::new(Vec::new()),
@@ -242,6 +245,7 @@ impl App {
         self.thumbnails.unregister_owner(owner);
         self.metadata.unregister_owner(owner);
         self.fields.unregister_owner(owner);
+        self.hints.unregister_owner(owner);
         self.previews.unregister_owner(owner);
         self.pending.unregister_owner(owner);
         self.player.unregister_owner(owner);
@@ -273,6 +277,7 @@ impl App {
                 waker: Some(self.waker_handle()),
                 metadata: Arc::clone(&self.metadata),
                 fields: Arc::clone(&self.fields),
+                hints: Arc::clone(&self.hints),
             },
         )
     }

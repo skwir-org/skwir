@@ -47,6 +47,13 @@ pub struct Report {
     pub thumbs_cold_per_image: Stat,
     /// Thumbnail pipeline, per image, served from the freedesktop cache written by the cold run.
     pub thumbs_warm_per_image: Stat,
+    /// The tags plugin's provider over every entry of the directory (tags,
+    /// rating, comment and origins from the user attributes), as hydration
+    /// and a search run it.
+    pub tags_fill: Stat,
+    /// A `tag:` search of the whole tree through the query plugin, until
+    /// `Complete`.
+    pub tag_search: Stat,
 }
 
 /// Budgets file: `[profile] metric_us = max`.
@@ -297,6 +304,114 @@ fn thumbs(root: &Path, dir: &Path, runs: usize) -> (Stat, Stat) {
     (Stat::of(cold), Stat::of(warm))
 }
 
+/// An app with the tags plugin, and the query plugin to search with it.
+pub fn tags_app() -> std::sync::Arc<bibli_core::App> {
+    let app = bibli_core::App::new(bibli_core::app::AppConfig::ephemeral(
+        std::env::temp_dir().join("bibli-bench-tags"),
+    ))
+    .expect("app");
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_tags::TagsPlugin::default()),
+        &app,
+    );
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_query::QueryPlugin::default()),
+        &app,
+    );
+    app
+}
+
+/// The metadata providers over every entry of `dir`: stat-ed once, then
+/// filled afresh each run.
+fn tags_fill(app: &bibli_core::App, dir: &Path, runs: usize) -> Stat {
+    let entries: Vec<bibli_core::Entry> = std::fs::read_dir(dir)
+        .expect("read dir")
+        .flatten()
+        .filter_map(|e| bibli_core::fs::stat_path(&e.path()))
+        .collect();
+    Stat::of(
+        (0..runs)
+            .map(|_| {
+                let mut batch = entries.clone();
+                let t = Instant::now();
+                app.metadata.fill(dir, &mut batch);
+                let took = t.elapsed();
+                std::hint::black_box(batch);
+                took
+            })
+            .collect(),
+    )
+}
+
+/// A search measured: until its first file, until `Complete`, and how
+/// many it found.
+pub struct Searched {
+    pub first: Option<Duration>,
+    pub complete: Duration,
+    pub found: usize,
+}
+
+/// Search `expr` under `root` through the query plugin.
+pub fn search(app: &bibli_core::App, expr: &str, root: &Path) -> Searched {
+    use bibli_core::location::ListingEvent;
+    let t = Instant::now();
+    let location = bibli_plugin_query::location_for(expr, Some(root));
+    let open = app.open_location(&location).expect("open search");
+    let mut found = 0;
+    let mut first = None;
+    loop {
+        let left = STREAM_DEADLINE.saturating_sub(t.elapsed());
+        match open
+            .events()
+            .recv_timeout(left)
+            .unwrap_or_else(|e| panic!("search {expr} did not complete: {e}"))
+        {
+            ListingEvent::Added(batch) => {
+                first.get_or_insert_with(|| t.elapsed());
+                found += batch.len();
+            }
+            ListingEvent::Complete => break,
+            ListingEvent::Error(e) => panic!("search error: {e}"),
+            _ => {}
+        }
+    }
+    let complete = t.elapsed();
+    open.close();
+    Searched {
+        first,
+        complete,
+        found,
+    }
+}
+
+/// `tag:` over the whole of `profile`'s tree, when the generator could tag
+/// it: only the deep tree, `NONE` otherwise. Measured once every other
+/// measurement is done: reading a million files' attributes leaves the
+/// kernel reclaiming for a moment, which would slow what comes next.
+pub fn tag_search(root: &Path, profile: Profile, runs: usize) -> Stat {
+    let dir = root.join(profile.name());
+    if profile != Profile::Deep1m || !tagged(&dir) {
+        return Stat::NONE;
+    }
+    let tags = tags_app();
+    let root = std::fs::canonicalize(&dir).expect("tree");
+    let expr = format!("tag:{}", crate::generate::TAG);
+    Stat::of(
+        (0..runs)
+            .map(|_| {
+                let searched = search(&tags, &expr, &root);
+                assert_eq!(searched.found, 1000, "one file in a thousand is tagged");
+                searched.complete
+            })
+            .collect(),
+    )
+}
+
+/// Whether the generator could tag `dir` (see `generate::tag`).
+fn tagged(dir: &Path) -> bool {
+    dir.join(".bibli-bench-tagged").exists()
+}
+
 /// Measure `profile` under `root`.
 pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
     let dir = root.join(profile.name());
@@ -325,6 +440,11 @@ pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
     } else {
         (Stat::NONE, Stat::NONE)
     };
+    let tags = tags_app();
+    let tags_fill = match profile {
+        Profile::Deep1m => Stat::NONE,
+        _ => tags_fill(&tags, &single, runs),
+    };
     Report {
         files: profile.file_count(),
         runs,
@@ -339,6 +459,9 @@ pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
         stream_complete: Stat::of(completes),
         thumbs_cold_per_image,
         thumbs_warm_per_image,
+        tags_fill,
+        // Measured after every profile (`tag_search`).
+        tag_search: Stat::NONE,
     }
 }
 
@@ -348,7 +471,7 @@ pub fn check(profile: Profile, report: &Report, budgets: &Budgets) -> bool {
         eprintln!("bench: {}: no budgets, skipped", profile.name());
         return true;
     };
-    let measured: [(&str, &Stat); 11] = [
+    let measured: [(&str, &Stat); 13] = [
         ("first_batch_us", &report.first_batch),
         ("list_getdents_us", &report.list_getdents),
         ("list_std_us", &report.list_std),
@@ -360,6 +483,8 @@ pub fn check(profile: Profile, report: &Report, budgets: &Budgets) -> bool {
         ("stream_complete_us", &report.stream_complete),
         ("thumbs_cold_per_image_us", &report.thumbs_cold_per_image),
         ("thumbs_warm_per_image_us", &report.thumbs_warm_per_image),
+        ("tags_fill_us", &report.tags_fill),
+        ("tag_search_us", &report.tag_search),
     ];
     let mut ok = true;
     for (key, stat) in measured {

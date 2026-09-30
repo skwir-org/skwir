@@ -165,6 +165,38 @@ pub fn stat_path(path: &Path) -> Option<Entry> {
     stat_entry(&dir, &mut e).then_some(e)
 }
 
+/// Stats paths one after another as [`stat_path`] does, keeping the last
+/// folder open: the files of one folder, as a walk visits them, cost a
+/// statx each instead of opening the folder, a statx and a close (a fifth
+/// of the time over a million files). One per walking thread.
+#[derive(Default)]
+pub struct Statter {
+    dir: Option<(PathBuf, rustix::fd::OwnedFd)>,
+}
+
+impl Statter {
+    pub fn stat(&mut self, path: &Path) -> Option<Entry> {
+        let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+            return stat_path(path);
+        };
+        if self.dir.as_ref().is_none_or(|(open, _)| open != parent) {
+            self.dir = None;
+            let fd = rustix::fs::open(
+                parent,
+                rustix::fs::OFlags::RDONLY
+                    | rustix::fs::OFlags::DIRECTORY
+                    | rustix::fs::OFlags::CLOEXEC,
+                rustix::fs::Mode::empty(),
+            )
+            .ok()?;
+            self.dir = Some((parent.to_path_buf(), fd));
+        }
+        let (_, dir) = self.dir.as_ref()?;
+        let mut e = Entry::new(EntryId { dev: 0, ino: 0 }, name, EntryKind::Unknown);
+        stat_entry(dir, &mut e).then_some(e)
+    }
+}
+
 /// The stable id of a path, without building an entry.
 ///
 /// This is what an [`EntryId`] means everywhere: statx's device and inode,
@@ -189,6 +221,33 @@ pub fn id_of(path: &Path) -> Option<EntryId> {
 mod tests {
     use super::{id_of, stat_path};
     use std::path::Path;
+
+    #[test]
+    fn a_statter_says_what_stat_path_says() {
+        let tmp = tempfile::tempdir().unwrap();
+        for dir in ["a", "b"] {
+            std::fs::create_dir(tmp.path().join(dir)).unwrap();
+            std::fs::write(tmp.path().join(dir).join("it's here.txt"), dir).unwrap();
+        }
+        let mut statter = super::Statter::default();
+        for path in [
+            tmp.path().join("a/it's here.txt"),
+            tmp.path().join("a"),
+            tmp.path().join("b/it's here.txt"),
+            tmp.path().join("a/it's here.txt"),
+            Path::new("/").to_path_buf(),
+        ] {
+            let alone = stat_path(&path).unwrap();
+            let kept = statter.stat(&path).unwrap();
+            assert_eq!(
+                (kept.id, &kept.name, kept.kind),
+                (alone.id, &alone.name, alone.kind)
+            );
+            assert_eq!(kept.metadata.value("size"), alone.metadata.value("size"));
+        }
+        assert!(statter.stat(&tmp.path().join("a/gone")).is_none());
+        assert!(statter.stat(&tmp.path().join("gone/x")).is_none());
+    }
 
     #[test]
     fn the_root_and_a_folder_are_stat_ed_by_their_path() {

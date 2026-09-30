@@ -455,6 +455,7 @@ fn virtual_locations_hydrate_by_path_in_one_batch() {
         waker: None,
         metadata: std::sync::Arc::clone(&app.metadata),
         fields: std::sync::Arc::clone(&app.fields),
+        hints: std::sync::Arc::clone(&app.hints),
     };
     let (sink, rx) = ctx.channel();
     let id = |ino| bibli_core::EntryId { dev: 0, ino };

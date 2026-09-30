@@ -30,8 +30,9 @@ pub fn try_locate(q: &Query) -> Option<Vec<PathBuf>> {
     )
 }
 
-/// Whether a walk of `/` with these options would reach `path`.
-fn visible(path: &Path, hidden: bool, depth: Option<usize>) -> bool {
+/// Whether a walk of `/` with these options would reach `path`: absolute,
+/// or relative to where the walk starts.
+pub(crate) fn visible(path: &Path, hidden: bool, depth: Option<usize>) -> bool {
     let mut names = 0;
     for c in path.components() {
         match c {

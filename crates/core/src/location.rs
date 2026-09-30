@@ -166,6 +166,8 @@ pub struct OpenContext {
     pub metadata: Arc<crate::metadata::MetadataProviders>,
     /// Fields read on demand (see [`crate::fields`]): a search's `near:`.
     pub fields: Arc<crate::fields::Fields>,
+    /// Indexes a search asks first (see [`crate::hints`]): a `tag:`.
+    pub hints: Arc<crate::hints::Hints>,
 }
 
 impl OpenContext {

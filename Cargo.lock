@@ -597,6 +597,8 @@ dependencies = [
  "bibli-alloc",
  "bibli-core",
  "bibli-platform",
+ "bibli-plugin-query",
+ "bibli-plugin-tags",
  "clap",
  "image",
  "rayon",
@@ -605,6 +607,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "toml 0.9.12+spec-1.1.0",
+ "xattr 1.6.1",
 ]
 
 [[package]]
@@ -722,6 +725,7 @@ dependencies = [
  "tempfile",
  "tracing",
  "ttf-parser 0.25.1",
+ "xattr 1.6.1",
  "xdg-mime",
 ]
 
@@ -1116,8 +1120,10 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "bibli-core",
+ "bibli-platform",
  "dirs 7.0.0",
  "parking_lot",
+ "plist",
  "rustix 1.1.5",
  "schemars",
  "serde",

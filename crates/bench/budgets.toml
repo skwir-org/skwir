@@ -13,6 +13,8 @@ walk_parallel_us = 90_000
 stream_open_us = 1_000
 stream_first_batch_us = 3_000
 stream_complete_us = 100_000
+# The tags plugin's provider over 100,000 files without attributes.
+tags_fill_us = 550_000
 
 [deep1m]
 first_batch_us = 500
@@ -24,6 +26,9 @@ walk_parallel_us = 200_000
 stream_open_us = 1_000
 stream_first_batch_us = 1_500
 stream_complete_us = 2_000
+# `tag:bench` over the whole tree, one file in a thousand tagged: bound by
+# reading each file's attribute names (btrfs: ~1.6 s per million, warm).
+tag_search_us = 7_500_000
 
 [images10k]
 first_batch_us = 1_500
@@ -38,3 +43,6 @@ stream_complete_us = 12_000
 # Thumbnail pipeline over 200 images on 8 workers, wall-clock per image.
 thumbs_cold_per_image_us = 250
 thumbs_warm_per_image_us = 100
+# The tags plugin's provider over 10,000 images, one in ten with tags, a
+# rating and a comment.
+tags_fill_us = 120_000

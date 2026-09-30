@@ -19,6 +19,8 @@ mimalloc = ["bibli-alloc/mimalloc"]
 bibli-alloc.workspace = true
 bibli-core.workspace = true
 bibli-platform.workspace = true
+bibli-plugin-query.workspace = true
+bibli-plugin-tags.workspace = true
 tempfile.workspace = true
 anyhow.workspace = true
 clap.workspace = true
@@ -28,6 +30,7 @@ toml.workspace = true
 rustix.workspace = true
 rayon.workspace = true
 image.workspace = true
+xattr.workspace = true
 
 [lints]
 workspace = true
