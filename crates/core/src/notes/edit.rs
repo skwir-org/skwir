@@ -307,6 +307,7 @@ impl Operation for SetNotes {
             path: &path,
             name,
             attributes: &attributes,
+            folder: path.is_dir(),
         };
         // The stores written: the file's own first, then those that start
         // keeping notes only where those could not (a volume without
@@ -369,6 +370,7 @@ impl Operation for SetNotes {
             path: &path,
             name,
             attributes: &attributes,
+            folder: path.is_dir(),
         };
         let each = stores
             .stores()

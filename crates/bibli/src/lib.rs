@@ -23,6 +23,7 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
         Arc::new(bibli_plugin_jump::JumpPlugin::default()),
         Arc::new(bibli_plugin_tags::TagsPlugin::default()),
         Arc::new(bibli_plugin_xmp::XmpPlugin),
+        Arc::new(bibli_plugin_tagspaces::TagSpacesPlugin),
         Arc::new(bibli_plugin_shell::ShellPlugin),
         Arc::new(bibli_plugin_terminal::TerminalPlugin::default()),
         Arc::new(bibli_plugin_usage::UsagePlugin::default()),

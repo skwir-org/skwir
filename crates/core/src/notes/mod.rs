@@ -206,6 +206,9 @@ pub struct Probe<'a> {
     pub path: &'a Path,
     pub name: &'a OsStr,
     pub attributes: &'a [String],
+    /// A folder: a store may keep its notes inside it (`TagSpaces`'
+    /// `.ts/tsm.json`).
+    pub folder: bool,
 }
 
 /// One place notes are kept.
@@ -383,9 +386,9 @@ pub struct Read {
     pub differ: Vec<&'static str>,
 }
 
-/// A file of a batch: its name, and its identity when known (what bibli
-/// last wrote for it is kept by it).
-pub type Named<'a> = (&'a OsStr, Option<EntryId>);
+/// A file of a batch: its name, its identity when known (what bibli last
+/// wrote for it is kept by it), and whether it is a folder.
+pub type Named<'a> = (&'a OsStr, Option<EntryId>, bool);
 
 /// The registered stores, in the order they are read: the platform's own
 /// first, as it decides what the others do not say.
@@ -532,7 +535,7 @@ impl NoteStores {
         policy: &Policy,
         listed: Option<&Listed<'_>>,
     ) -> Vec<Read> {
-        let paths: Vec<std::path::PathBuf> = files.iter().map(|(n, _)| dir.join(n)).collect();
+        let paths: Vec<std::path::PathBuf> = files.iter().map(|(n, _, _)| dir.join(n)).collect();
         let attributes: Vec<Vec<String>> = if self.reads_attributes(policy) {
             paths.iter().map(|p| attribute_names(p)).collect()
         } else {
@@ -542,10 +545,11 @@ impl NoteStores {
             .iter()
             .zip(files)
             .zip(&attributes)
-            .map(|((path, (name, _)), attributes)| Probe {
+            .map(|((path, (name, _, folder)), attributes)| Probe {
                 path,
                 name,
                 attributes,
+                folder: *folder,
             })
             .collect();
         let stores: Vec<Arc<dyn NotesStore>> = self
@@ -563,7 +567,7 @@ impl NoteStores {
         }
         each.into_iter()
             .zip(files)
-            .map(|(each, (_, id))| self.merge(each, *id))
+            .map(|(each, (_, id, _))| self.merge(each, *id))
             .collect()
     }
 
@@ -616,7 +620,7 @@ impl NoteStores {
             return Read::default();
         };
         let id = crate::op::EntryRef::from_path(path).map(|r| r.id);
-        self.read(dir, &[(name, id)], policy, None)
+        self.read(dir, &[(name, id, path.is_dir())], policy, None)
             .pop()
             .unwrap_or_default()
     }

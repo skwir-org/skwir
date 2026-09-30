@@ -184,7 +184,10 @@ current source before assuming a planned crate, command, or API exists.
   keeps the desktop's attributes, as `xdg.tags`); the xmp plugin's,
   XMP sidecars (`x.jpg.xmp`, and Adobe's `x.xmp` while its stem is its
   file's alone), edited in the text as it is so what bibli does not know
-  stays, and XMP inside a file read for Details only. A batch of one folder's
+  stays, and XMP inside a file read for Details only; the tagspaces
+  plugin's, `.ts/x.json` sidecars and a folder's `.ts/tsm.json` (a tag
+  kept keeps its exact color, read as the nearest of the palette), and
+  a location's `.ts/tsi.json` as a search hint. A batch of one folder's
   files is read from every store with one `listxattr` per file for all of
   them (`NoteStores::read`), in the provider: a new store joins it, never
   a read of its own per row; a folder's `._` names are read once for its

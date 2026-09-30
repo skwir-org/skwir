@@ -99,7 +99,7 @@ impl AttributesProvider {
         let policy = self.stores.policy();
         let files: Vec<bibli_core::notes::Named<'_>> = entries
             .iter()
-            .map(|e| (e.name.as_os_str(), Some(e.id)))
+            .map(|e| (e.name.as_os_str(), Some(e.id), e.is_dir()))
             .collect();
         let read = self.stores.read(dir, &files, &policy, listed);
         let mut seen: Vec<String> = Vec::new();

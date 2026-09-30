@@ -795,6 +795,7 @@ pub(crate) mod tests {
             path: &file,
             name: file.file_name().unwrap(),
             attributes: &[],
+            folder: false,
         };
         let notes = Notes {
             tags: vec![

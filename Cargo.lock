@@ -556,6 +556,7 @@ dependencies = [
  "bibli-plugin-shelf",
  "bibli-plugin-shell",
  "bibli-plugin-tags",
+ "bibli-plugin-tagspaces",
  "bibli-plugin-terminal",
  "bibli-plugin-thumbnails",
  "bibli-plugin-timeline",
@@ -1134,6 +1135,20 @@ dependencies = [
  "toml 0.9.12+spec-1.1.0",
  "tracing",
  "xattr 1.6.1",
+]
+
+[[package]]
+name = "bibli-plugin-tagspaces"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "bibli-core",
+ "dirs 7.0.0",
+ "parking_lot",
+ "serde_json",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
 ]
 
 [[package]]

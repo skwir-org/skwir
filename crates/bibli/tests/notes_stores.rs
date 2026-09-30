@@ -35,6 +35,8 @@ fn app(tmp: &Path) -> Arc<App> {
     app.plugins
         .add(Arc::new(bibli_plugin_tags::TagsPlugin::default()), &app);
     app.plugins.add(Arc::new(bibli_plugin_xmp::XmpPlugin), &app);
+    app.plugins
+        .add(Arc::new(bibli_plugin_tagspaces::TagSpacesPlugin), &app);
     app
 }
 
@@ -111,4 +113,56 @@ fn the_desktops_tags_and_a_sidecar_are_one_set_of_notes() {
         assert!(Instant::now() < deadline, "{names:?}");
         std::thread::sleep(Duration::from_millis(5));
     }
+}
+
+#[test]
+fn one_edit_reaches_every_store_that_keeps_the_files_notes() {
+    let tmp = home_tempdir();
+    let dir = tmp.path().join("docs");
+    std::fs::create_dir_all(dir.join(".ts")).unwrap();
+    let file = dir.join("it's a.jpg");
+    std::fs::write(&file, b"x").unwrap();
+    std::fs::write(dir.join("it's a.jpg.xmp"), SIDECAR).unwrap();
+    std::fs::write(
+        dir.join(".ts/it's a.jpg.json"),
+        r##"{"id":"1","tags":[{"title":"trip","color":"#43a047"}]}"##,
+    )
+    .unwrap();
+    let app = app(tmp.path());
+    let read = || app.notes.read_one(&file, &app.notes.policy());
+    assert_eq!(read().notes.tag_names(), ["trip"]);
+    assert_eq!(
+        read().notes.tag("trip").unwrap().color.as_deref(),
+        Some("green")
+    );
+    let edit = app
+        .notes
+        .edit(bibli_core::op::EntryRef::from_path(&file).unwrap())
+        .tags(vec!["trip".into(), "Été".into()])
+        .comment(Some("the lake".into()));
+    let mut plan = bibli_core::op::Plan::new("edit");
+    plan.steps.push(Box::new(edit));
+    assert!(
+        app.executor
+            .execute_blocking(&plan, app.lifetime())
+            .error
+            .is_none()
+    );
+    assert_eq!(
+        xattr::get(&file, "user.xdg.tags").unwrap().as_deref(),
+        Some("trip,Été".as_bytes())
+    );
+    let xmp = std::fs::read_to_string(dir.join("it's a.jpg.xmp")).unwrap();
+    assert!(xmp.contains("<rdf:li>Été</rdf:li>") && xmp.contains("the lake"));
+    let ts: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join(".ts/it's a.jpg.json")).unwrap()).unwrap();
+    assert_eq!(ts["tags"][1]["title"], "Été");
+    assert_eq!(ts["description"], "the lake");
+    assert!(read().differ.is_empty(), "{:?}", read().differ);
+    app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.join("it's a.jpg.xmp")).unwrap(),
+        SIDECAR
+    );
+    assert!(xattr::get(&file, "user.xdg.tags").unwrap().is_none());
 }

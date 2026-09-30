@@ -36,6 +36,26 @@ Poppler, GStreamer or libarchive. Open gate: idle PSS is about 118 to 120 MB aga
 been loosened. The per-change validation history that used to sit here is in
 `docs/STATUS-LOG.md`.
 
+Notes stores, step F (2026-09-30): the tagspaces plugin. `TagSpaces`'
+sidecars are a store and companions: `.ts/x.json` (and its thumbnail,
+`.ts/x.ext.jpg`, which follows it) and a folder's `.ts/tsm.json`, inside
+the folder (stores now know a batch's folders, `Probe::folder`); the
+`.ts` folder is hidden like companions. A tag is read with the palette
+color nearest its hex color (none for a gray), and a tag kept keeps its
+object, its exact color with it; a new tag given a color is written with
+the palette's hex. The description is the comment; `TagSpaces` has no
+rating. Every other key of a sidecar stays. A location's index
+(`.ts/tsi.json`, found at the search's root or above it) is a search hint
+(ADR-026), its paths absolute or relative to the location. Updated where
+present, created only when asked. Checked by the plugin's tests (the
+documented sidecar edited in place and undone byte for byte, a folder's
+own notes, a rename carrying sidecar and thumbnail, the index hinting)
+and a cross-plugin test (one edit reaching the desktop's attributes, an
+XMP sidecar and a `TagSpaces` one, none differing after, undone).
+Deviation: `tsi.json`'s layout was read from its documentation's
+description, not from an index `TagSpaces` wrote; entries are read
+tolerantly (an array, or an object's `entries`).
+
 Notes stores, step E (2026-09-30): the xmp plugin. XMP sidecars are a
 store and a companion: `x.jpg.xmp` (darktable, digiKam) and Adobe's
 `x.xmp`, which follows its file only while no other file shares its stem
