@@ -47,8 +47,8 @@ const INDENT: f32 = DISCLOSURE + 4.0;
 /// How much of a cut entry remains visible until it is pasted.
 pub const CUT_OPACITY: f32 = 0.45;
 
-/// Size, Modified, Type.
-pub const DEFAULT_WIDTHS: [f32; 3] = [80.0, 136.0, 150.0];
+/// Size, Modified, Type, Rating.
+pub const DEFAULT_WIDTHS: [f32; 4] = [80.0, 136.0, 150.0, 76.0];
 const DETAIL_GAP: f32 = 12.0;
 
 pub fn clamp_width(width: f32) -> f32 {
@@ -128,6 +128,14 @@ impl Shell {
         {
             self.set_status(format!("{error:#}"), true, cx);
         }
+    }
+
+    /// The detail columns drawn: those chosen, but Rating only while the
+    /// tags plugin, whose ratings they are, is on.
+    pub fn shown_columns(&self) -> [bool; 4] {
+        let [size, modified, kind, rating] = self.columns;
+        let rated = rating && self.app.commands.get("tags.rate").is_some();
+        [size, modified, kind, rated]
     }
 
     /// `ui.columns_reset`: back to the widths the view ships with.
@@ -218,7 +226,10 @@ pub struct RowData {
     pub is_cursor: bool,
     pub icon: Option<std::sync::Arc<std::path::Path>>,
     pub hydrated: bool,
-    pub tags: Vec<String>,
+    /// Each tag with its color (`tags::TagColors`).
+    pub tags: Vec<(String, usize)>,
+    /// Half stars, from 1 to 10.
+    pub rating: Option<u64>,
     pub link: icons::Link,
     /// How many opened folders deep it is (`Pane::depth`), and for a
     /// folder whether it is open in place.
@@ -244,7 +255,8 @@ impl Shell {
     pub fn rows(&mut self, range: Range<usize>, icon_px: u16, compact: bool) -> Vec<RowData> {
         let mut out = Vec::with_capacity(range.len());
         let friendly = self.prefs.friendly_dates;
-        let now = (!compact && friendly && self.columns[1]).then(jiff::Zoned::now);
+        let columns = self.shown_columns();
+        let now = (!compact && friendly && columns[1]).then(jiff::Zoned::now);
         let app = std::sync::Arc::clone(&self.app);
         let ws = app.workspace.read();
         let Some(pane) = ws.pane(self.pane) else {
@@ -284,11 +296,24 @@ impl Shell {
                 is_cursor: cursor == Some(id),
                 icon,
                 hydrated: e.metadata.is_hydrated(),
-                tags: tags_of(e),
+                tags: tags_of(e)
+                    .into_iter()
+                    .map(|t| {
+                        let color = self.tag_colors.of(&t);
+                        (t, color)
+                    })
+                    .collect(),
+                rating: None,
                 link: icons::Link::of(e),
             };
             if !compact {
-                let [size, modified, kind] = self.columns;
+                let [size, modified, kind, rating] = columns;
+                if rating {
+                    row.rating = e
+                        .metadata
+                        .value(keys::RATING)
+                        .and_then(bibli_core::Value::as_u64);
+                }
                 if size {
                     row.size = match e
                         .metadata
@@ -452,25 +477,33 @@ pub fn row(
                 .text_ellipsis_middle()
                 .child(r.name.clone()),
         )
-        .children(r.tags.iter().take(4).map(|t| {
-            div()
-                .flex_none()
-                .px_1()
-                .rounded_sm()
-                .text_xs()
-                .bg(theme.tag_bg)
-                .text_color(if r.selected {
-                    theme.selection_text
-                } else {
-                    theme.text
-                })
-                .child(t.clone())
-        }));
+        // The tags take only what the name leaves (no basis of their own)
+        // and wrap within one chip's height: the chips that do not fit drop
+        // whole, last first, and the name never gives way to them.
+        .when(!r.tags.is_empty(), |d| {
+            d.child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .h(px(crate::tags::CHIP_HEIGHT))
+                    .overflow_hidden()
+                    .flex()
+                    .flex_wrap()
+                    .gap_1()
+                    .children(r.tags.iter().map(|(tag, color)| {
+                        crate::tags::chip(tag, *color, theme).text_color(if r.selected {
+                            theme.selection_text
+                        } else {
+                            theme.text
+                        })
+                    })),
+            )
+        });
     let mut line = line(name, if compact { 0. } else { NAME_MIN }, height);
     if !compact {
         let font = shell.font.clone();
         let exact: gpui::SharedString = r.modified_exact.clone().into();
-        let [size, modified, kind] = shell.columns;
+        let [size, modified, kind, rating] = shell.shown_columns();
         line = line
             .when(size, |d| {
                 d.child(
@@ -497,6 +530,14 @@ pub fn row(
                     column(shell.column_widths[2], muted, height)
                         .truncate()
                         .child(gpui::SharedString::from(r.kind.clone())),
+                )
+            })
+            .when(rating, |d| {
+                d.child(
+                    column(shell.column_widths[3], muted, height)
+                        .flex()
+                        .items_center()
+                        .children(r.rating.map(|stars| crate::tags::stars(stars, 12., theme))),
                 )
             });
     }
@@ -569,6 +610,7 @@ fn header_cell(
 
 fn header(shell: &Shell, theme: &Theme, tree: bool, cx: &mut Context<Shell>) -> Div {
     let icon = icon_px(shell.row_zoom);
+    let columns = shell.shown_columns();
     div()
         .h(px(24.))
         .w_full()
@@ -607,7 +649,7 @@ fn header(shell: &Shell, theme: &Theme, tree: bool, cx: &mut Context<Shell>) -> 
                 NAME_MIN,
                 ROW_HEIGHT,
             )
-            .when(shell.columns[0], |d| {
+            .when(columns[0], |d| {
                 d.child(
                     column(shell.column_widths[0], theme.text_muted, ROW_HEIGHT)
                         .relative()
@@ -624,7 +666,7 @@ fn header(shell: &Shell, theme: &Theme, tree: bool, cx: &mut Context<Shell>) -> 
                         .child(resize_edge(0, cx)),
                 )
             })
-            .when(shell.columns[1], |d| {
+            .when(columns[1], |d| {
                 d.child(
                     column(shell.column_widths[1], theme.text_muted, ROW_HEIGHT)
                         .relative()
@@ -639,12 +681,27 @@ fn header(shell: &Shell, theme: &Theme, tree: bool, cx: &mut Context<Shell>) -> 
                         .child(resize_edge(1, cx)),
                 )
             })
-            .when(shell.columns[2], |d| {
+            .when(columns[2], |d| {
                 d.child(
                     column(shell.column_widths[2], theme.text_muted, ROW_HEIGHT)
                         .relative()
                         .child("Type")
                         .child(resize_edge(2, cx)),
+                )
+            })
+            .when(columns[3], |d| {
+                d.child(
+                    column(shell.column_widths[3], theme.text_muted, ROW_HEIGHT)
+                        .relative()
+                        .child(header_cell(
+                            "h-rating",
+                            "Rating",
+                            SortKey::Rating,
+                            shell,
+                            theme,
+                            cx,
+                        ))
+                        .child(resize_edge(3, cx)),
                 )
             }),
         )

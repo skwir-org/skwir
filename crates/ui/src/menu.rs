@@ -537,9 +537,12 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let rated = self.app.commands.get("tags.rate").is_some();
         let mut items: Vec<MenuItem> = crate::settings::COLUMN_KEYS
             .iter()
             .enumerate()
+            // Ratings are the tags plugin's: no column for them while it is off.
+            .filter(|(i, _)| *i != 3 || rated)
             .map(|(i, key)| {
                 let shown = self.columns[i];
                 MenuItem {

@@ -11,7 +11,9 @@
 //! itself told us (`Inspection::details`). Details never starts a scan.
 use std::time::SystemTime;
 
+use bibli_core::command::Invocation;
 use bibli_core::entry::{Entry, Provenance, Value, keys};
+use bibli_core::op::EntryRef;
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
 
 use crate::format;
@@ -19,14 +21,30 @@ use crate::preview::PreviewContent;
 use crate::shell::Shell;
 use crate::theme::Theme;
 
+/// How a row shows its value.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Show {
+    Text,
+    /// Tags, as chips in their colors; each searches for its tag.
+    Tags(Vec<String>),
+    /// Stars to click (half stars, from 1 to 10, or unrated), rating
+    /// `target`, the entry shown.
+    Rating {
+        rating: Option<u64>,
+        target: EntryRef,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
     pub label: SharedString,
+    /// What a click on the row copies, and what `Show::Text` shows.
     pub value: SharedString,
+    pub show: Show,
     /// Who says so, when it is not the filesystem: the user, a plugin, a model.
     pub source: Option<SharedString>,
-    /// A link after the value: its words and the command it runs.
-    pub action: Option<(SharedString, bibli_core::command::Invocation)>,
+    /// Links after the value: their words and the commands they run.
+    pub actions: Vec<(SharedString, Invocation)>,
 }
 
 impl Row {
@@ -34,18 +52,25 @@ impl Row {
         Row {
             label: label.into(),
             value: value.into(),
+            show: Show::Text,
             source: None,
-            action: None,
+            actions: Vec::new(),
         }
+    }
+
+    fn action(mut self, words: &'static str, command: Invocation) -> Self {
+        self.actions.push((words.into(), command));
+        self
     }
 
     /// A provider's fact, with its link.
     fn of(detail: &bibli_core::inspection::Detail) -> Self {
         Row {
-            action: detail
+            actions: detail
                 .action
-                .as_ref()
-                .map(|(words, action)| (words.clone().into(), action.clone())),
+                .iter()
+                .map(|(words, action)| (words.clone().into(), action.clone()))
+                .collect(),
             ..Row::new(detail.label.clone(), detail.value.clone())
         }
     }
@@ -109,7 +134,7 @@ fn label_of(key: &str) -> String {
 }
 
 /// The fields Details names itself; any other is shown under More.
-const CORE: [&str; 9] = [
+const CORE: [&str; 14] = [
     keys::SIZE,
     keys::MODIFIED,
     keys::CREATED,
@@ -119,10 +144,114 @@ const CORE: [&str; 9] = [
     keys::UID,
     keys::GID,
     keys::LINK_TARGET,
+    keys::TAGS,
+    keys::RATING,
+    keys::COMMENT,
+    keys::ORIGIN,
+    keys::REFERRER,
 ];
 
-/// What the entry itself says. Pure, so it is tested without a window.
-pub fn entry_groups(entry: &Entry, path: &std::path::Path) -> Vec<Group> {
+/// Who took a note, when it was not the user: notes are theirs, so only a
+/// suggestion (a model's, a plugin's) says so.
+fn note_source(provenance: &Provenance) -> Option<SharedString> {
+    match provenance {
+        Provenance::User => None,
+        other => source_of(other),
+    }
+}
+
+/// The user's notes on an entry (tags, rating, comment), each with the way
+/// to change it, and where a download came from, with the way back there.
+/// Only while the tags plugin, which reads and writes them, is on.
+fn notes_groups(entry: &Entry, path: &std::path::Path) -> [Option<Group>; 2] {
+    let meta = &entry.metadata;
+    let text = |key| meta.value(key).and_then(Value::as_str).map(str::to_owned);
+    let target = serde_json::json!([EntryRef::new(entry.id, path)]);
+    let tags = crate::views::list::tags_of(entry);
+    let mut tags_row = Row {
+        show: Show::Tags(tags.clone()),
+        source: meta
+            .get(keys::TAGS)
+            .and_then(|f| note_source(&f.provenance)),
+        ..Row::new("Tags", tags.join(", "))
+    };
+    tags_row = tags_row.action(
+        if tags.is_empty() { "Add…" } else { "Edit…" },
+        Invocation::with_args("ui.tags_prompt", &serde_json::json!({ "entries": target })),
+    );
+    let rating = meta.value(keys::RATING).and_then(Value::as_u64);
+    let rating_row = Row {
+        show: Show::Rating {
+            rating,
+            target: EntryRef::new(entry.id, path),
+        },
+        ..Row::new(
+            "Rating",
+            rating.map_or_else(String::new, crate::tags::stars_words),
+        )
+    };
+    let comment = text(keys::COMMENT);
+    let mut ask = serde_json::json!({
+        "title": "Comment",
+        "placeholder": "A comment on this item (empty removes it)",
+        "command": "tags.comment",
+        "field": "text",
+        "args": { "entries": target },
+    });
+    if let Some(comment) = &comment {
+        ask["text"] = comment.as_str().into();
+    }
+    let comment_row = Row {
+        source: comment
+            .as_ref()
+            .and(meta.get(keys::COMMENT))
+            .and_then(|f| note_source(&f.provenance)),
+        ..Row::new("Comment", comment.clone().unwrap_or_default())
+    }
+    .action(
+        if comment.is_some() {
+            "Edit…"
+        } else {
+            "Add…"
+        },
+        Invocation::with_args("ui.ask", &ask),
+    );
+    // A URL is opened only when asked, in the browser: bibli fetches
+    // nothing a file names (ADR-020).
+    let link = |label: &'static str, url: String| {
+        let row = Row::new(label, url.clone());
+        let row = if url.starts_with("https://") || url.starts_with("http://") {
+            row.action(
+                "Open",
+                Invocation::with_args("ui.open_url", &serde_json::json!({ "url": url })),
+            )
+        } else {
+            row
+        };
+        row.action(
+            "Copy",
+            Invocation::with_args(
+                "ui.copy_text",
+                &serde_json::json!({ "text": url, "what": label.to_lowercase() }),
+            ),
+        )
+    };
+    let source = [
+        text(keys::ORIGIN).map(|url| link("Downloaded from", url)),
+        text(keys::REFERRER).map(|url| link("Found on", url)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    [
+        group("Notes", vec![tags_row, rating_row, comment_row]),
+        group("Source", source),
+    ]
+}
+
+/// What the entry itself says; with `notes`, what the user noted on it
+/// (the tags plugin is on). Pure, so it is tested without a window.
+pub fn entry_groups(entry: &Entry, path: &std::path::Path, notes: bool) -> Vec<Group> {
     let meta = &entry.metadata;
     let uint = |key| meta.value(key).and_then(Value::as_u64);
     let time = |key| meta.value(key).and_then(Value::as_time);
@@ -190,16 +319,21 @@ pub fn entry_groups(entry: &Entry, path: &std::path::Path) -> Vec<Group> {
         .iter()
         .filter(|(key, _)| !CORE.contains(key))
         .map(|(key, field)| Row {
-            label: label_of(key).into(),
-            value: text_of(&field.value).into(),
             source: source_of(&field.provenance),
-            action: None,
+            ..Row::new(label_of(key), text_of(&field.value))
         })
         .filter(|row| !row.value.is_empty())
         .collect();
 
+    let [notes, source] = if notes {
+        notes_groups(entry, path)
+    } else {
+        [None, None]
+    };
     [
         group("General", general),
+        notes,
+        source,
         group("Location", location),
         group("Permissions", permissions),
         group("Times", times),
@@ -283,6 +417,72 @@ fn preview_group(shell: &Shell) -> Option<Group> {
     group("Content", rows)
 }
 
+/// Tags as chips in their colors: a click searches for the tag where the
+/// pane is (`query.refine`, which Back undoes).
+fn tag_chips(
+    shell: &Shell,
+    tags: &[String],
+    row: usize,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> gpui::Div {
+    let pane = shell.pane;
+    div()
+        .flex()
+        .flex_wrap()
+        .gap_1()
+        .children(tags.iter().enumerate().map(|(i, tag)| {
+            let search = tag.clone();
+            crate::tags::chip(tag, shell.tag_colors.of(tag), theme)
+                .id(("detail-tag", row * 64 + i))
+                .cursor_pointer()
+                .text_color(theme.text)
+                .hover(gpui::Styled::underline)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.run(
+                        "query.refine",
+                        serde_json::json!({ "facet": "tag", "value": search, "pane": pane }),
+                        window,
+                        cx,
+                    );
+                }))
+        }))
+}
+
+/// Five stars to click: the nth rates `target` n stars, and the one it has
+/// already takes its rating away.
+fn star_picker(
+    rating: Option<u64>,
+    target: &EntryRef,
+    row: usize,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> gpui::Div {
+    let current = rating.unwrap_or(0);
+    div()
+        .flex()
+        .items_center()
+        .gap(px(2.))
+        .children((1..=5u64).map(|n| {
+            let stars = if current == n * 2 { 0 } else { n };
+            let target = target.clone();
+            div()
+                .id(("detail-star", row * 8 + n as usize))
+                .cursor_pointer()
+                .child(crate::tags::star(n, current, 14., theme))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.run(
+                        "tags.rate",
+                        serde_json::json!({ "stars": stars, "entries": [target] }),
+                        window,
+                        cx,
+                    );
+                }))
+        }))
+}
+
 /// Whether there is nothing to show but the details. A preview still on
 /// its way is not nothing: Details waits for the answer rather than
 /// filling the body for the instant before a picture replaces it.
@@ -356,6 +556,16 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
         );
         for (r, row) in group.rows.into_iter().enumerate() {
             let (label, value) = (row.label.clone(), row.value.clone());
+            let id = g * 1000 + r;
+            let shown = match &row.show {
+                Show::Text => (!row.value.is_empty())
+                    .then(|| div().child(row.value.clone()).into_any_element()),
+                Show::Tags(tags) => (!tags.is_empty())
+                    .then(|| tag_chips(shell, tags, id, theme, cx).into_any_element()),
+                Show::Rating { rating, target } => {
+                    Some(star_picker(*rating, target, id, theme, cx).into_any_element())
+                }
+            };
             list = list.child(
                 div()
                     .id(("detail", g * 1000 + r))
@@ -381,22 +591,33 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
                         div()
                             .flex_1()
                             .min_w_0()
-                            .child(row.value)
+                            .children(shown)
                             .when_some(row.source, |d, source| {
                                 d.child(div().text_color(theme.text_muted).child(source))
                             })
-                            .when_some(row.action, |d, (words, action)| {
-                                d.child(
-                                    div()
-                                        .id(("detail-action", g * 1000 + r))
-                                        .text_color(theme.accent)
-                                        .hover(gpui::Styled::underline)
-                                        .child(words)
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            cx.stop_propagation();
-                                            this.run(&action.name, action.args.clone(), window, cx);
-                                        })),
-                                )
+                            .when(!row.actions.is_empty(), |d| {
+                                d.child(div().flex().flex_wrap().gap_x_3().children(
+                                    row.actions.into_iter().enumerate().map(
+                                        |(a, (words, action))| {
+                                            div()
+                                                .id(("detail-action", id * 8 + a))
+                                                .text_color(theme.accent)
+                                                .hover(gpui::Styled::underline)
+                                                .child(words)
+                                                .on_click(cx.listener(
+                                                    move |this, _, window, cx| {
+                                                        cx.stop_propagation();
+                                                        this.run(
+                                                            &action.name,
+                                                            action.args.clone(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    },
+                                                ))
+                                        },
+                                    ),
+                                ))
                             }),
                     ),
             );
@@ -446,6 +667,12 @@ mod tests {
             ]),
             Provenance::User,
         );
+        meta.set(keys::RATING, Value::UInt(7), Provenance::User);
+        meta.set(
+            keys::ORIGIN,
+            Value::Text("https://example.org/it's a café.txt".into()),
+            Provenance::Filesystem,
+        );
         meta.set(
             "vision.subject",
             Value::Text("a harbour".into()),
@@ -454,7 +681,8 @@ mod tests {
                 confidence: 0.82,
             },
         );
-        let groups = entry_groups(&entry, std::path::Path::new("/data/notes/it's a café.txt"));
+        let path = std::path::Path::new("/data/notes/it's a café.txt");
+        let groups = entry_groups(&entry, path, true);
         let find = |title: &str, label: &str| {
             groups
                 .iter()
@@ -484,10 +712,39 @@ mod tests {
             find("Permissions", "Hard links").is_none(),
             "one link is not news"
         );
-        let tags = find("More", "Tags").unwrap();
+        let tags = find("Notes", "Tags").unwrap();
         assert_eq!(
             (tags.value.as_ref(), tags.source.as_ref().map(AsRef::as_ref)),
-            ("work, draft", Some("set by you"))
+            ("work, draft", None),
+            "notes are the user's: no need to say so"
+        );
+        assert_eq!(tags.show, Show::Tags(vec!["work".into(), "draft".into()]));
+        let rating = find("Notes", "Rating").unwrap();
+        assert_eq!(rating.value.as_ref(), "3½ stars");
+        assert!(matches!(
+            rating.show,
+            Show::Rating {
+                rating: Some(7),
+                ..
+            }
+        ));
+        let comment = find("Notes", "Comment").unwrap();
+        assert!(comment.value.is_empty(), "none yet, but a way to add one");
+        assert_eq!(comment.actions[0].0.as_ref(), "Add…");
+        assert_eq!(
+            comment.actions[0].1.args["args"]["entries"][0]["id"]["ino"],
+            2
+        );
+        let origin = find("Source", "Downloaded from").unwrap();
+        let links: Vec<&str> = origin.actions.iter().map(|(w, _)| w.as_ref()).collect();
+        assert_eq!(links, ["Open", "Copy"]);
+        assert!(find("More", "Tags").is_none() && find("More", "Rating").is_none());
+        // With the tags plugin off, no notes to take and none to show.
+        let without = entry_groups(&entry, path, false);
+        assert!(
+            without
+                .iter()
+                .all(|g| g.title != "Notes" && g.title != "Source")
         );
         assert_eq!(
             find("More", "Subject")

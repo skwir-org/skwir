@@ -172,6 +172,16 @@ current source before assuming a planned crate, command, or API exists.
   (`Detail::with_action`, drawn as a link after the value, run through
   `Shell::run`): a position shows the file on the map. The row itself
   still copies its value; the link is the only thing that acts.
+- **Notes live on the file.** Tags, a rating and a comment are the user's
+  `user.*` extended attributes (the desktop's keys, so Dolphin and others
+  agree), read by the tags plugin's one provider with a single `listxattr`
+  per file: a new attribute joins that provider, never a read of its own
+  per row. An edit of several files applies what the user changed
+  (`tags.edit`: add these, remove those), never a list written over each
+  file. Commands that act on entries take `entries` so a surface acts on
+  what it showed (Details, the tag editor), not the selection at the time.
+  A tag's color is its name's (`metadata::tag_color`) unless the user chose
+  one (`tags.colors`); copies keep every `user.*` attribute (ADR-006).
 - **Nothing to list is a state, not a blank.** `placeholder.rs` says why a
   pane is empty (empty folder, no results, empty shelf) or why it failed, in
   the user's words with the system's message as the detail, and offers the

@@ -39,6 +39,7 @@ impl Shell {
         self.palette.is_some()
             || self.jump.is_some()
             || self.choose.is_some()
+            || self.tag_editor.is_some()
             || self.bulk.is_some()
             || self.prompt.is_some()
             || self.confirm.is_some()

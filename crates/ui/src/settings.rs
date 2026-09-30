@@ -44,7 +44,12 @@ pub const DATES_KEY: &str = "ui.date_format";
 pub const COLUMN_WIDTHS_KEY: &str = "ui.column_widths";
 /// Detail columns of the list view, in the order they give way when a pane
 /// gets narrow (the last one first).
-pub const COLUMN_KEYS: [&str; 3] = ["ui.column_size", "ui.column_modified", "ui.column_type"];
+pub const COLUMN_KEYS: [&str; 4] = [
+    "ui.column_size",
+    "ui.column_modified",
+    "ui.column_type",
+    "ui.column_rating",
+];
 /// Whether the grid crops thumbnails to fill their box.
 pub const GRID_FILL_KEY: &str = "ui.grid_fill";
 /// Whether the tab strip shows for a window that has only one tab.
@@ -160,7 +165,7 @@ pub fn declare(app: &App) {
     ));
     app.settings.declare(SettingSpec::data(
         COLUMN_WIDTHS_KEY,
-        "Widths of the Size, Modified and Type columns, in pixels",
+        "Widths of the Size, Modified, Type and Rating columns, in pixels",
         toml::Value::Array(
             crate::views::list::DEFAULT_WIDTHS
                 .iter()
@@ -168,21 +173,29 @@ pub fn declare(app: &App) {
                 .collect(),
         ),
     ));
-    for (key, title, description) in [
-        (COLUMN_KEYS[0], "Size", "Show the size of files."),
+    for (key, title, description, shown) in [
+        (COLUMN_KEYS[0], "Size", "Show the size of files.", true),
         (
             COLUMN_KEYS[1],
             "Modified",
             "Show when each item last changed.",
+            true,
         ),
         (
             COLUMN_KEYS[2],
             "Type",
-            "Show the kind of file, such as PDF document. It is the first column to give way in a narrow pane.",
+            "Show the kind of file, such as PDF document.",
+            true,
+        ),
+        (
+            COLUMN_KEYS[3],
+            "Rating",
+            "Show the stars each file was given, with the Tags plugin. It is the first column to give way in a narrow pane.",
+            false,
         ),
     ] {
         app.settings
-            .declare(SettingSpec::toggle(key, title, description, true).section("List columns"));
+            .declare(SettingSpec::toggle(key, title, description, shown).section("List columns"));
     }
 }
 

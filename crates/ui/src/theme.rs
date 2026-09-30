@@ -15,6 +15,7 @@
 //!   `map_*` draw a map: its graticule, a track, and a route with the
 //!   places and areas of a file; land, water and borders are the offline
 //!   background's.
+//!   `tags` are the colors a tag can wear, `rating` a rating's stars.
 //!   `terminal` is the sixteen ANSI colours a terminal's programs name; its
 //!   default text and background are `text` and `bg`.
 //!   Do not derive a hover from `border` or `surface` locally.
@@ -63,8 +64,12 @@ pub struct Theme {
     pub drop_target: Hsla,
     /// Text and glyphs on a saturated fill (`accent`, `error`, chart blocks).
     pub on_fill: Hsla,
-    /// Background of a tag chip.
-    pub tag_bg: Hsla,
+    /// The colors a tag wears, in the order of
+    /// `bibli_core::metadata::TAG_COLORS` (red, orange, yellow, green, teal,
+    /// blue, purple, pink): a tag's dot is one, its chip `tag_fill` of it.
+    pub tags: [Hsla; 8],
+    /// A rating's stars.
+    pub rating: Hsla,
     /// Where a picture will be once it is loaded.
     pub placeholder: Hsla,
     /// Bars of a chart; the one under the pointer is `accent`.
@@ -116,7 +121,11 @@ impl Theme {
             page_match: Hsla::from(rgb(0xffce33)).opacity(0.4),
             drop_target: Hsla::from(rgb(0xd6e4ff)).opacity(0.6),
             on_fill: gpui::white(),
-            tag_bg: Hsla::from(rgb(0x2f6feb)).opacity(0.18),
+            tags: [
+                0xd93025, 0xe8710a, 0xc49a00, 0x1e8e3e, 0x00897b, 0x2f6feb, 0x8e44d8, 0xd6336c,
+            ]
+            .map(|value| rgb(value).into()),
+            rating: rgb(0xe0a100).into(),
             placeholder: Hsla::from(rgb(0xd8d8d8)).opacity(0.6),
             chart: Hsla::from(rgb(0x2f6feb)).opacity(0.6),
             map_grid: rgb(0xe6e6e6).into(),
@@ -156,7 +165,11 @@ impl Theme {
             page_match: Hsla::from(rgb(0xffce33)).opacity(0.4),
             drop_target: Hsla::from(rgb(0x2c4f8a)).opacity(0.6),
             on_fill: gpui::white(),
-            tag_bg: Hsla::from(rgb(0x6ea8fe)).opacity(0.18),
+            tags: [
+                0xff7b72, 0xffa657, 0xe3c55b, 0x7ee787, 0x56d4c4, 0x6ea8fe, 0xc49cff, 0xff8fb3,
+            ]
+            .map(|value| rgb(value).into()),
+            rating: rgb(0xf2c14b).into(),
             placeholder: Hsla::from(rgb(0x3a3a3a)).opacity(0.6),
             chart: Hsla::from(rgb(0x6ea8fe)).opacity(0.6),
             map_grid: rgb(0x2c2c2c).into(),
@@ -183,6 +196,13 @@ impl Theme {
         color.l = if selected { 0.65 } else { 0.42 };
         color.a = 1.;
         color
+    }
+
+    /// The fill of a chip of a tag wearing color `index` (see `tags`),
+    /// under text in `text`.
+    pub fn tag_fill(&self, index: usize) -> Hsla {
+        let color = self.tags[index % self.tags.len()];
+        color.opacity(if self.is_dark { 0.3 } else { 0.18 })
     }
 
     /// The `ui.theme` preference, falling back to the desktop's appearance.

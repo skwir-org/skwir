@@ -1,4 +1,4 @@
-//! Single-line prompts (rename, new folder, search, tags) and the delete
+//! Single-line prompts (rename, new folder, search) and the delete
 //! confirmation modal.
 
 use bibli_core::Plan;
@@ -26,7 +26,6 @@ pub enum PromptKind {
         origin: Option<bibli_core::EntryId>,
         backward: bool,
     },
-    Tags,
     InspectJump {
         pane: bibli_core::workspace::PaneId,
         generation: u64,
@@ -80,7 +79,6 @@ impl Shell {
             PromptKind::Mkdir => "Folder name",
             PromptKind::NewFile => "File name, or a folder name ending in /",
             PromptKind::Find { .. } => "Part of a name (capitals: exact case)",
-            PromptKind::Tags => "tag1, tag2 (empty clears)",
             PromptKind::Ask => "",
         };
         self.open_prompt_with(kind, title, placeholder, initial, select, None, window, cx);
@@ -266,20 +264,6 @@ impl Shell {
             },
             PromptKind::Find { backward, .. } => {
                 self.last_find = (!text.is_empty()).then_some((text, backward));
-            }
-            PromptKind::Tags => {
-                let tags: Vec<String> = text
-                    .split(',')
-                    .map(|t| t.trim().to_owned())
-                    .filter(|t| !t.is_empty())
-                    .collect();
-                let pane = self.pane;
-                self.run(
-                    "tags.set",
-                    serde_json::json!({ "tags": tags, "pane": pane }),
-                    window,
-                    cx,
-                );
             }
             _ => {}
         }

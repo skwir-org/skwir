@@ -36,6 +36,33 @@ Poppler, GStreamer or libarchive. Open gate: idle PSS is about 118 to 120 MB aga
 been loosened. The per-change validation history that used to sit here is in
 `docs/STATUS-LOG.md`.
 
+Tags and notes (2026-09-30): the tags plugin reads everything it knows of
+a file with one `listxattr` (then only the attributes present): tags, a
+rating (`user.baloo.rating`, half stars, as Dolphin) and a comment
+(`user.xdg.comment`), which it writes with inverses (`set_rating`,
+`set_comment`), and where a download came from (`user.xdg.origin.url`,
+`user.xdg.referrer.url`, read only). A link's are its target's. The tag
+prompt, which set the union of the selection's tags on every file (and
+could drop tags it had not read yet), became a tag editor: it reads the
+selected files' tags on a worker, shows each as on all, on some ("on 1 of
+2") or none, then the tags used lately (a vocabulary in the cache, bounded,
+written on a worker), and applies only what moved (`tags.edit`, one
+undoable plan). A tag wears the color its name gives it or one the user
+chose from the editor (`tags.colors`), in every view. Details has a Notes
+group (tags as chips that search for the tag, stars to click, the comment
+with Edit) and a Source group (Open in the browser, Copy); the context
+menu a Notes group (ratings, Comment… holding the comment there); the list
+a Rating column, off by default, and a sort by rating, best first. Search
+has `rating>=4` (stars, halves allowed; `rating:0` is unrated) and
+`comment:`. The tag chips of a row take only what its name leaves and drop
+whole. Copies keep every `user.*` attribute (ADR-006 amendment). Checked
+in a window on an isolated display (the editor on two files tagged
+differently, a new tag, a color, stars, a comment from the menu, the
+links, the column and its sort, a search) and idle CPU back to about 0%.
+Deviations: the Finder's tag attribute (Phase 4, item 8) is still not
+read; tags have no index (a later ADR, once `tag:` over a home folder is
+measured); the grid shows no tags yet.
+
 Window row and pane rows (2026-09-29): the application toolbar became the
 window row, 38 px: over the sidebar its toggle and More, over the panes the
 tabs (ADR-018 addendum: shown even when there is one, so a second tab no

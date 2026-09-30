@@ -14,6 +14,10 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         }};
     }
     assets!(
+        "star",
+        "star-filled",
+        "star-half",
+        "comment",
         "back",
         "forward",
         "up",

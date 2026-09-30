@@ -212,8 +212,9 @@ pub struct Shell {
     pub(crate) unsaved: std::collections::BTreeMap<&'static str, String>,
     /// Sidebar groups the user folded, for this session.
     pub sidebar_folded: std::collections::HashSet<String>,
-    /// Size, Modified, Type: which detail columns the list shows.
-    pub columns: [bool; 3],
+    /// Size, Modified, Type, Rating: which detail columns the list shows
+    /// (`settings::COLUMN_KEYS`). Read through `shown_columns`.
+    pub columns: [bool; 4],
     /// `reading.width`: the reading column's widest, in ems, or `None`
     /// for the whole panel (`markdown::measure`).
     pub reading_measure: Option<f32>,
@@ -224,7 +225,7 @@ pub struct Shell {
     pub zoom_wheel: crate::reader_scroll::WheelTurn,
     /// The wheel over the tab strip, counted in notches like the zoom's.
     pub tab_wheel: crate::reader_scroll::WheelTurn,
-    pub column_widths: [f32; 3],
+    pub column_widths: [f32; 4],
     /// A header edge being dragged: column, pointer x and width at the start.
     pub column_drag: Option<(usize, f32, f32)>,
     pub preview: PreviewState,
@@ -234,6 +235,10 @@ pub struct Shell {
     pub jump: Option<JumpState>,
     /// `ui.choose`: a list to pick one from.
     pub choose: Option<ChooseState>,
+    /// `ui.tags_prompt`: the tags of the selection, to change.
+    pub tag_editor: Option<crate::tags::TagEditor>,
+    /// The colors the user chose for tags, read when the settings change.
+    pub tag_colors: crate::tags::TagColors,
     pub bulk: Option<BulkState>,
     pub prompt: Option<PromptState>,
     pub confirm: Option<ConfirmState>,
@@ -469,7 +474,7 @@ impl Shell {
             unsaved: std::collections::BTreeMap::new(),
             backlog: false,
             sidebar_folded: std::collections::HashSet::new(),
-            columns: [true; 3],
+            columns: [true, true, true, false],
             reading_measure: crate::markdown::measure("comfortable"),
             reading_width_before: None,
             zoom_wheel: crate::reader_scroll::WheelTurn::default(),
@@ -481,6 +486,8 @@ impl Shell {
             palette: None,
             jump: None,
             choose: None,
+            tag_editor: None,
+            tag_colors: crate::tags::TagColors::default(),
             bulk: None,
             prompt: None,
             confirm: None,
@@ -1433,15 +1440,30 @@ impl Shell {
                 self.omnibox_submit(everywhere, window, cx);
             }
             "tags_prompt" => {
-                let current = self.selection_tags().join(", ");
-                self.open_prompt(
-                    PromptKind::Tags,
-                    "Tags (comma-separated)",
-                    &current,
-                    None,
-                    window,
-                    cx,
-                );
+                let entries = args
+                    .get("entries")
+                    .and_then(|e| serde_json::from_value(e.clone()).ok());
+                self.open_tag_editor(entries, window, cx);
+            }
+            // A value to copy, from a link beside it (Details).
+            "copy_text" => {
+                if let Some(text) = arg("text") {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    let what = arg("what").unwrap_or_else(|| "text".into());
+                    self.set_status(format!("Copied {what}"), false, cx);
+                }
+            }
+            "tag_editor_up" => self.tag_editor_move(-1, cx),
+            "tag_editor_down" => self.tag_editor_move(1, cx),
+            "tag_editor_apply" => self.tag_editor_apply(window, cx),
+            // A link a file names (where it was downloaded from), opened
+            // in the browser when the user asks: bibli fetches nothing.
+            "open_url" => {
+                if let Some(url) =
+                    arg("url").filter(|u| u.starts_with("https://") || u.starts_with("http://"))
+                {
+                    cx.open_url(&url);
+                }
             }
             "jump" => self.open_jump(window, cx),
             "jump_up" => self.jump_move(-1, cx),
@@ -1524,6 +1546,7 @@ impl Shell {
                     None if ascending.is_some() => None,
                     Some("size") => Some(SortKey::Size),
                     Some("modified") => Some(SortKey::Modified),
+                    Some("rating") => Some(SortKey::Rating),
                     _ => Some(SortKey::Name),
                 };
                 self.sort(key, ascending, cx);
@@ -1722,25 +1745,6 @@ impl Shell {
         }
     }
 
-    /// Union of the selection's tags, from the `tags` metadata field.
-    pub fn selection_tags(&self) -> Vec<String> {
-        let ws = self.app.workspace.read();
-        let Some(pane) = ws.pane(self.pane) else {
-            return Vec::new();
-        };
-        let mut out: Vec<String> = Vec::new();
-        for id in pane.selection.iter() {
-            if let Some(e) = pane.entry(id) {
-                for t in crate::views::list::tags_of(e) {
-                    if !out.contains(&t) {
-                        out.push(t);
-                    }
-                }
-            }
-        }
-        out
-    }
-
     /// `open` through the open-with plugin, or the built-in fallback.
     pub fn open_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.app.commands.get("open").is_some() {
@@ -1818,6 +1822,7 @@ impl Shell {
         if revision != self.theme_revision {
             self.theme_revision = revision;
             cx.set_global(Theme::resolve(&self.app, window.appearance()));
+            self.tag_colors = crate::tags::TagColors::read(&self.app);
             self.prefs.friendly_dates = self
                 .app
                 .settings
@@ -1847,15 +1852,19 @@ impl Shell {
                 .unwrap_or(false);
             self.read_player_prefs();
             self.columns = crate::settings::COLUMN_KEYS
-                .map(|key| self.app.settings.get::<bool>(key).unwrap_or(true));
+                .map(|key| self.app.settings.get::<bool>(key).unwrap_or(false));
             if self.column_drag.is_none()
                 && let Some(widths) = self
                     .app
                     .settings
                     .get::<Vec<f32>>(crate::settings::COLUMN_WIDTHS_KEY)
-                    .and_then(|widths| <[f32; 3]>::try_from(widths).ok())
             {
-                self.column_widths = widths.map(crate::views::list::clamp_width);
+                // Widths saved before a column was added leave it its own.
+                let mut all = crate::views::list::DEFAULT_WIDTHS;
+                for (width, saved) in all.iter_mut().zip(widths) {
+                    *width = crate::views::list::clamp_width(saved);
+                }
+                self.column_widths = all;
             }
         }
         if self.type_names.absorb() | self.icons.absorb() {
@@ -2241,6 +2250,7 @@ impl Render for Shell {
             prompts::render_confirm(self, cx),
             jump::render(self, cx),
             crate::choose::render(self, cx),
+            crate::tags::render(self, cx),
             renamebulk::render(self, window, cx),
             palette::render(self, cx),
             preview::render_peek(self, cx),
