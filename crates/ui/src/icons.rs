@@ -249,7 +249,7 @@ impl Link {
 }
 
 /// `picture` (an icon or a thumbnail about `size` px) with a link's emblem
-/// on its bottom-left corner: a bent arrow on a badge, in the error color
+/// on its bottom-right corner: a bent arrow on a badge, in the error color
 /// for a link that leads nowhere. Every view marks a link this one way;
 /// what is not a link is returned as it is.
 pub fn with_link(
@@ -273,7 +273,7 @@ pub fn with_link(
         .child(
             div()
                 .absolute()
-                .left(px(-1.))
+                .right(px(-1.))
                 .bottom(px(-1.))
                 .size(px(badge))
                 .flex()
