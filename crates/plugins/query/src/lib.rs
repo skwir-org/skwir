@@ -806,7 +806,7 @@ mod tests {
                 }
                 ListingEvent::Complete => break,
                 ListingEvent::Error(e) => panic!("{expr}: {e}"),
-                ListingEvent::Removed(_) => {}
+                ListingEvent::Removed(_) | ListingEvent::Changed => {}
             }
         }
         names

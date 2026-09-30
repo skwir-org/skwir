@@ -324,9 +324,13 @@ pub struct PreviewState {
 /// disk blocks both), again when the pane shows another location or its
 /// listing completes a change.
 struct Here {
-    /// The pane, the location's text, and the listing's version once
-    /// complete (0 while it streams).
-    stamp: (PaneId, String, u64),
+    /// The pane, the location's text, the listing's version once
+    /// complete (0 while it streams), and its `itself_version`.
+    stamp: (PaneId, String, u64, u64),
+    /// Answers taken from the worker: what is shown of the folder is built
+    /// again from each, not only when the stamp moves (until the answer,
+    /// the entry is the one kept from before).
+    answers: u64,
     entry: Option<bibli_core::entry::Entry>,
     volume: Option<crate::details::Group>,
 }
@@ -1005,9 +1009,11 @@ impl Shell {
     }
 
     /// What the panel shows while nothing is selected in the active pane:
-    /// the folder it shows, once stat-ed on a worker with its volume
-    /// (`Here`), as a selected folder would be, with a Volume group in
-    /// Details. `None` for a location that is not a folder (a search, the
+    /// the folder it shows, once read on a worker with its volume (`Here`)
+    /// as a selected folder would be, its fields included (its tags, its
+    /// rating), with a Volume group in Details. It is read again when the
+    /// listing completes changed, or when the folder itself changes
+    /// (`Listing::itself_version`: its tags edited). `None` for a location that is not a folder (a search, the
     /// shelf), or until the worker answers.
     fn here(
         &mut self,
@@ -1016,7 +1022,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> Option<(u64, PreviewKey, Version, bibli_core::entry::Entry)> {
         let pane = self.pane;
-        let (location, path, stamp_version, listing_version) = {
+        let (location, path, stamp_version, listing_version, itself) = {
             let ws = self.app.workspace.read();
             let p = ws.pane(pane)?;
             let location = p.location()?;
@@ -1030,9 +1036,10 @@ impl Shell {
                     0
                 },
                 listing.version(),
+                listing.itself_version(),
             )
         };
-        let stamp = (pane, location, stamp_version);
+        let stamp = (pane, location, stamp_version, itself);
         if self.preview.here.as_ref().map(|h| &h.stamp) != Some(&stamp) {
             // What was shown for the stamp before stays until the answer:
             // a folder that changed does not blink.
@@ -1041,18 +1048,21 @@ impl Shell {
                 .here
                 .take()
                 .filter(|h| h.stamp.0 == stamp.0 && h.stamp.1 == stamp.1);
-            let (entry, volume) = kept.map_or((None, None), |h| (h.entry, h.volume));
+            let (entry, volume, answers) =
+                kept.map_or((None, None, 0), |h| (h.entry, h.volume, h.answers));
             self.preview.here = Some(Here {
                 stamp: stamp.clone(),
+                answers,
                 entry,
                 volume,
             });
             let asked = path.clone();
+            let app = std::sync::Arc::clone(&self.app);
             self.off_thread(
                 "preview-here",
                 move || {
                     (
-                        bibli_core::fs::stat::stat_path(&asked),
+                        bibli_core::fs::hydrate_path(&asked, &app.metadata),
                         VolumeFacts::of(&asked),
                     )
                 },
@@ -1061,6 +1071,7 @@ impl Shell {
                     if let Some(here) = shell.preview.here.as_mut().filter(|h| h.stamp == stamp) {
                         here.entry = entry;
                         here.volume = volume;
+                        here.answers += 1;
                         cx.notify();
                     }
                 },
@@ -1071,6 +1082,8 @@ impl Shell {
         let here = self.preview.here.as_ref()?;
         let entry = here.entry.clone()?;
         let seen = listing_version
+            .wrapping_mul(31)
+            .wrapping_add(here.answers)
             .wrapping_mul(31)
             .wrapping_add(u64::from(here.volume.is_some()))
             .wrapping_mul(2)

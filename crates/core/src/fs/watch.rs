@@ -15,11 +15,17 @@ use crossbeam_channel::Receiver;
 use crate::cancel::CancelToken;
 
 /// A coalesced change: the names in the watched directory that were touched.
+// Independent facts gathered over one window, any number of which hold at
+// once; a state machine would say less.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Default)]
 pub struct Changes {
     pub names: HashSet<OsString>,
     /// Something changed that we could not attribute to a name: relist.
     pub rescan: bool,
+    /// The watched directory's own attributes changed (its permissions,
+    /// times, extended attributes: its tags), not what it holds.
+    pub itself: bool,
     /// The watched directory itself moved elsewhere.
     pub moved: bool,
     /// The watched directory itself is gone (deleted, or its filesystem
@@ -154,6 +160,8 @@ mod imp {
                                 changes.deleted = true;
                             } else if let Some(name) = ev.name {
                                 changes.names.insert(name.to_os_string());
+                            } else if ev.mask.contains(EventMask::ATTRIB) {
+                                changes.itself = true;
                             }
                         }
                     }
@@ -268,7 +276,14 @@ mod imp {
             {
                 changes.names.insert(name.to_os_string());
             } else if p == dir {
-                changes.rescan = true;
+                if matches!(
+                    ev.kind,
+                    EventKind::Modify(notify::event::ModifyKind::Metadata(_))
+                ) {
+                    changes.itself = true;
+                } else {
+                    changes.rescan = true;
+                }
             }
         }
     }

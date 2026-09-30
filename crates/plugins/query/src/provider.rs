@@ -529,7 +529,7 @@ mod tests {
                 ListingEvent::Removed(ids) => removed += ids.len(),
                 ListingEvent::Complete => return (added, removed),
                 ListingEvent::Error(e) => panic!("{e}"),
-                ListingEvent::Updated(_) => {}
+                ListingEvent::Updated(_) | ListingEvent::Changed => {}
             }
         }
     }

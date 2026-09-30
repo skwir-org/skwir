@@ -474,6 +474,9 @@ impl Shared {
             self.lose_self();
             return;
         }
+        if c.itself {
+            self.tx.send(ListingEvent::Changed);
+        }
         if c.rescan {
             let prev = self.names.lock().ids();
             self.list(&self.ctx.cancel.child(), Some(prev));

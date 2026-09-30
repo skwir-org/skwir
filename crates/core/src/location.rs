@@ -144,6 +144,10 @@ pub enum ListingEvent {
     Complete,
     /// The listing failed or was interrupted.
     Error(String),
+    /// The location itself changed, not what it lists: the folder's
+    /// permissions, times or attributes (its tags). Whoever describes the
+    /// location reads it again (`Listing::itself_version`).
+    Changed,
 }
 
 /// Called after events are queued so a sleeping UI can wake and pump.
@@ -405,6 +409,8 @@ pub struct Listing {
     size_version: u64,
     modified_version: u64,
     rating_version: u64,
+    /// Incremented when the location itself changed (`ListingEvent::Changed`).
+    itself_version: u64,
     sort_cache: parking_lot::Mutex<Option<SortCache>>,
 }
 
@@ -422,6 +428,7 @@ impl Default for Listing {
             size_version: id,
             modified_version: id,
             rating_version: id,
+            itself_version: id,
             sort_cache: parking_lot::Mutex::new(None),
         }
     }
@@ -465,6 +472,10 @@ impl Listing {
             ListingEvent::Error(e) => {
                 delta.any = self.error.as_deref() != Some(e.as_str());
                 self.error = Some(e);
+            }
+            ListingEvent::Changed => {
+                self.itself_version = stamp();
+                delta.any = true;
             }
         }
         for (moved, version) in [
@@ -543,6 +554,12 @@ impl Listing {
     /// taken) looks again when it moves.
     pub fn modified_version(&self) -> u64 {
         self.modified_version
+    }
+
+    /// Changes to the location itself (its folder's attributes, its tags)
+    /// so far: what describes the folder shown reads it again when it moves.
+    pub fn itself_version(&self) -> u64 {
+        self.itself_version
     }
 
     /// The ids in `spec` order, directories first. Cached until something

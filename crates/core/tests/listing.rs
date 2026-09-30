@@ -751,3 +751,66 @@ fn a_pipe_or_a_socket_is_listed_as_what_it_is_and_never_read() {
     assert_eq!(null.inode_type(), Some("inode/chardevice"));
     assert_eq!(null.content(std::path::Path::new("/dev/null")), None);
 }
+
+/// A folder's own attributes changing (its tags, its permissions) is a
+/// change of the location, not of what it lists: the listing says so
+/// (`itself_version`) and its entries stay as they are.
+#[test]
+fn a_folder_whose_own_attributes_change_says_so() {
+    let tmp = home_tempdir();
+    let dir = tmp.path().join("Trip d'été");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("one"), b"1").unwrap();
+    let app = app(tmp.path());
+    let pane = active(&app);
+    navigate(&app, &dir);
+    let before = app
+        .workspace
+        .read()
+        .pane(pane)
+        .unwrap()
+        .listing
+        .itself_version();
+    xattr::set(&dir, "user.xdg.tags", b"holiday").unwrap();
+    wait(&app, pane, |l| l.itself_version() != before);
+    let ws = app.workspace.read();
+    let listing = &ws.pane(pane).unwrap().listing;
+    assert_eq!(listing.len(), 1, "what it lists is unchanged");
+}
+
+/// A path read alone is read as a listing reads its entries: stat-ed,
+/// then filled by the metadata providers, the root included.
+#[test]
+fn a_path_read_alone_is_filled_by_the_providers() {
+    use bibli_core::entry::{Entry, Provenance, Value};
+    use bibli_core::metadata::MetadataProvider;
+    struct Probe;
+    impl MetadataProvider for Probe {
+        fn id(&self) -> &'static str {
+            "probe"
+        }
+        fn fill(&self, dir: &std::path::Path, entries: &mut [Entry]) {
+            for e in entries {
+                let seen = dir.join(&e.name).exists();
+                e.metadata
+                    .set("probe.seen", Value::Bool(seen), Provenance::Filesystem);
+            }
+        }
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("it's a folder");
+    std::fs::create_dir(&dir).unwrap();
+    let app = app(tmp.path());
+    app.metadata.register("probe", std::sync::Arc::new(Probe));
+    for path in [dir.as_path(), std::path::Path::new("/")] {
+        let entry = bibli_core::fs::hydrate_path(path, &app.metadata).unwrap();
+        assert!(entry.is_dir() && entry.metadata.is_hydrated());
+        assert_eq!(
+            entry.metadata.value("probe.seen"),
+            Some(&Value::Bool(true)),
+            "{} filled at its own path",
+            path.display()
+        );
+    }
+    assert!(bibli_core::fs::hydrate_path(&dir.join("missing"), &app.metadata).is_none());
+}

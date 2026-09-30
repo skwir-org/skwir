@@ -162,7 +162,7 @@ pub fn start(
             let mut entry = match known {
                 Some(entry) if entry.metadata.value(keys::SIZE).is_some() => entry,
                 _ => {
-                    let Some(entry) = bibli_core::fs::stat::stat_path(&path) else {
+                    let Some(entry) = bibli_core::fs::hydrate_path(&path, &app.metadata) else {
                         app.notify(
                             NotifyLevel::Error,
                             format!("“{}” cannot be read", name(&path)),

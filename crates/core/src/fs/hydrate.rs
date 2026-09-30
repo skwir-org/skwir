@@ -11,7 +11,20 @@ use crate::entry::{Entry, EntryId, EntryKind};
 use crate::location::{EventSink, ListingEvent};
 use crate::metadata::MetadataProviders;
 
-use super::stat::stat_entry;
+use super::stat::{stat_entry, stat_path};
+
+/// One path read as a listing reads its entries: stat-ed, then filled by
+/// the metadata providers (its tags, its rating), so what describes a
+/// path alone (the folder a pane shows) knows what its row would.
+/// Worker-only: this is I/O.
+pub fn hydrate_path(path: &Path, metadata: &MetadataProviders) -> Option<Entry> {
+    let mut entry = stat_path(path)?;
+    // The root is named by its whole path, which joins onto anything as
+    // itself.
+    let dir = path.parent().unwrap_or(path);
+    metadata.fill(dir, std::slice::from_mut(&mut entry));
+    Some(entry)
+}
 
 /// Stat `items` and run the metadata providers over them, one folder at a
 /// time so each folder is opened once and providers get a batch. Sends one
