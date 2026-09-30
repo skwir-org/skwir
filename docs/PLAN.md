@@ -36,6 +36,29 @@ Poppler, GStreamer or libarchive. Open gate: idle PSS is about 118 to 120 MB aga
 been loosened. The per-change validation history that used to sit here is in
 `docs/STATUS-LOG.md`.
 
+Notes stores, step E (2026-09-30): the xmp plugin. XMP sidecars are a
+store and a companion: `x.jpg.xmp` (darktable, digiKam) and Adobe's
+`x.xmp`, which follows its file only while no other file shares its stem
+and is read for a file unless `photoshop:SidecarForExtension` says it is
+another's. Keywords are `dc:subject` (Lightroom's and digiKam's nested
+keywords read for their last part when it is empty, and kept in step
+when present), the rating `xmp:Rating` in whole stars (the store's `fit`
+rounds a half star, so it is not said to differ), the comment the
+default of `dc:description`, and Lightroom's `xmp:Label` a tag of its
+name and color, written back there while kept. An edit splices the
+changed properties into the text as it is (attribute or element,
+declaring a namespace where needed), so darktable's history and every
+property bibli does not know stay; a text it cannot edit is left alone.
+Sidecars are updated where present and created only when asked (Notes
+page). XMP inside pictures, videos and PDFs is read on demand for
+Details ("XMP in the file"), never written. Checked by the plugin's tests
+(a darktable-like sidecar edited and read back, a new one, a packet
+inside a JPEG, both names following renames) and a cross-plugin test
+(the desktop's tags and a sidecar edited as one, a photo application's
+later edit winning, the sidecar hidden beside its file). Deviations: the
+nested keywords are read for their last part; the model has no nesting
+yet, so a new tag is written at the top of the hierarchy.
+
 Notes stores, step D (2026-09-30): the Notes page. A plugin registers a
 store with `App::register_notes_store`, which declares
 `notes.<store>.read` (on by default) and `notes.<store>.write` (Off,

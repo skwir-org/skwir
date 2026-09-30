@@ -144,7 +144,8 @@ impl Companions {
         for (rule, r) in self.rules().iter().enumerate() {
             for (index, relative) in r.of(name).into_iter().enumerate() {
                 let at = dir.join(relative);
-                if std::fs::symlink_metadata(&at).is_ok() && r.follows(path, index) {
+                let known = out.iter().any(|f: &Found| f.path == at);
+                if !known && std::fs::symlink_metadata(&at).is_ok() && r.follows(path, index) {
                     out.push(Found {
                         rule,
                         index,

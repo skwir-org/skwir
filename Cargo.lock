@@ -561,6 +561,7 @@ dependencies = [
  "bibli-plugin-timeline",
  "bibli-plugin-usage",
  "bibli-plugin-vim",
+ "bibli-plugin-xmp",
  "bibli-ui",
  "dirs 7.0.0",
  "flate2",
@@ -1202,6 +1203,22 @@ dependencies = [
  "parking_lot",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "bibli-plugin-xmp"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "bibli-core",
+ "bibli-platform",
+ "dirs 7.0.0",
+ "parking_lot",
+ "roxmltree 0.21.1",
+ "serde_json",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
 ]
 
 [[package]]

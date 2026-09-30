@@ -26,6 +26,7 @@ bibli-plugin-timeline.workspace = true
 bibli-plugin-usage.workspace = true
 bibli-plugin-shell.workspace = true
 bibli-plugin-tags.workspace = true
+bibli-plugin-xmp.workspace = true
 bibli-plugin-jump.workspace = true
 bibli-plugin-edit-as-buffer.workspace = true
 bibli-plugin-rename-bulk.workspace = true

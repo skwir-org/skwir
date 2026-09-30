@@ -58,6 +58,7 @@ bibli-plugin-rename-bulk = { path = "crates/plugins/rename-bulk" }
 bibli-plugin-edit-as-buffer = { path = "crates/plugins/edit-as-buffer" }
 bibli-plugin-jump = { path = "crates/plugins/jump" }
 bibli-plugin-tags = { path = "crates/plugins/tags" }
+bibli-plugin-xmp = { path = "crates/plugins/xmp" }
 bibli-plugin-shell = { path = "crates/plugins/shell" }
 bibli-plugin-usage = { path = "crates/plugins/usage" }
 bibli-plugin-timeline = { path = "crates/plugins/timeline" }

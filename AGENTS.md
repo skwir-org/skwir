@@ -181,7 +181,10 @@ current source before assuming a planned crate, command, or API exists.
   attributes (`xdg.rs`, Dolphin's keys), a Mac's Finder attributes under
   whichever name they reached Linux (`finder.rs`), and the `._` files a
   Mac writes on volumes without attributes (`appledouble.rs`, which also
-  keeps the desktop's attributes, as `xdg.tags`). A batch of one folder's
+  keeps the desktop's attributes, as `xdg.tags`); the xmp plugin's,
+  XMP sidecars (`x.jpg.xmp`, and Adobe's `x.xmp` while its stem is its
+  file's alone), edited in the text as it is so what bibli does not know
+  stays, and XMP inside a file read for Details only. A batch of one folder's
   files is read from every store with one `listxattr` per file for all of
   them (`NoteStores::read`), in the provider: a new store joins it, never
   a read of its own per row; a folder's `._` names are read once for its
