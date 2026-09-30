@@ -1017,6 +1017,57 @@ no request leaves bibli until a network source is chosen; idle CPU returns to
 
 ---
 
+## Notes everywhere (planned, ADR-027, ADR-028)
+
+Goal: a file's tags, rating and comment on any system (Linux, macOS,
+Windows, USB drives) with nothing lost going back and forth; bibli reads
+every store it knows by default and writes the ones the user chooses. Each
+step ships on its own.
+
+- **A. Stores, no change in behavior.** Core `notes`: the model (tags with
+  a given color and a parent, rating, comment, origin), the `NotesStore`
+  registry (owner-tagged), `set_notes` with the replaced bytes of every
+  store as its inverse (`set_tags`, `set_rating`, `set_comment` still
+  read). The tags plugin's XDG, Finder and AppleDouble code becomes three
+  stores; the provider, index, vocabulary, sidebar and editor read the
+  merged notes. AppleDouble also keeps the XDG attributes.
+- **B. Merge against what bibli wrote.** The cache's snapshot per file;
+  another application's edit in one store wins; union without one. Details
+  lists where the notes are and offers to make disagreeing stores agree.
+- **C. Companions.** The core registry of name rules; the listing pairs,
+  hides (`core.show_companions`, off, also in the View menu under Hidden
+  Files) and re-reads; providers get the
+  folder's names (`AsideNames` and the `._` rule of `path_provider.rs`
+  go); rename, move, copy, swap, trash, restore and delete carry them;
+  a copy converts notes to what the destination keeps (ADR-006 amended).
+- **D. Settings.** A Notes page (`notes.*`, declared by the core with
+  the registry): each store read or not, written Off,
+  Update existing or Create; defaults per platform; on a volume without
+  attributes, the folder's convention, else AppleDouble.
+- **E. XMP.** Sidecars (`x.ext.xmp`, `x.xmp` with
+  `photoshop:SidecarForExtension`): keywords (`dc:subject`, the nested
+  forms), `xmp:Rating`, `dc:description`, `xmp:Label` as a tag; read,
+  updated where present, created on request. XMP inside files read on
+  demand for Details.
+- **F. TagSpaces.** `.ts/x.json` sidecars and `tsm.json` for folders
+  (hex colors to the nearest palette color, the exact value kept); its
+  `tsi.json` as a search hint (ADR-026).
+- **G. Names.** TagSpaces (`x[a b].ext`, where a `.ts` folder shows it is
+  used) and filetags (`x -- a b.ext`, on request); writing them is a
+  rename plan of its own.
+
+Tests use synthetic files built from each format's specification (not our
+own encoders) and, where an application can run headless, its output.
+Property tests of the operations cover trees with companions.
+
+**Done when:** a file tagged in bibli keeps its notes copied to an exFAT
+stick, read by a Mac's Finder there (checked on a Mac or with a `._` file a
+Mac wrote), and copied back to a Linux disk; an edit made in another
+application's store wins over bibli's older one; undo restores every
+store byte for byte; `tags_fill_us` holds its budget.
+
+---
+
 ## Phase 5 — Cross-platform (~6 weeks)
 
 Goal: macOS and Windows builds that feel native in the ways that matter.
