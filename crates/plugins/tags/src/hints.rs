@@ -14,20 +14,26 @@ use bibli_core::cache::CacheSlot;
 use bibli_core::cancel::CancelToken;
 use bibli_core::entry::keys;
 use bibli_core::hints::HintProvider;
+use bibli_core::metadata::same_tag;
 use bibli_core::scheduler::Priority;
 use parking_lot::{Mutex, MutexGuard};
 
 /// Tagged files remembered at most. Past it, new ones are not learned (a
 /// search still finds them by walking); those known are kept up to date.
 const AT_MOST: usize = 50_000;
-const KEY: &[u8] = b"index";
+/// The first index kept tags in lowercase; this one as spelled.
+const KEY: &[u8] = b"index.2";
 
 #[derive(Default)]
 struct State {
-    /// Each tagged file's tags, in lowercase: tags ignore case.
+    /// Each tagged file's tags, as spelled on it (tags ignore case when
+    /// compared: [`same_tag`]).
     tags: HashMap<PathBuf, Vec<String>>,
     loaded: bool,
 }
+
+/// What the index has to say when it changed: the sidebar's tags.
+pub type OnChange = Box<dyn Fn(&Arc<TagIndex>) + Send + Sync>;
 
 /// The tagged files bibli has seen: every file the provider reads tells
 /// it whether the file has tags (a folder shown, a search's walk, a file
@@ -40,6 +46,7 @@ pub struct TagIndex {
     app: Weak<App>,
     lifetime: CancelToken,
     writing: AtomicBool,
+    on_change: Mutex<Option<OnChange>>,
 }
 
 impl TagIndex {
@@ -50,7 +57,14 @@ impl TagIndex {
             app: app.weak(),
             lifetime,
             writing: AtomicBool::new(false),
+            on_change: Mutex::default(),
         })
+    }
+
+    /// Call `f` on a worker after the index changed, once for changes
+    /// close together.
+    pub fn on_change(&self, f: OnChange) {
+        *self.on_change.lock() = Some(f);
     }
 
     /// The index, read from the cache the first time it is needed: on the
@@ -84,7 +98,6 @@ impl TagIndex {
                     changed |= state.tags.remove(&path).is_some();
                     continue;
                 }
-                let tags: Vec<String> = tags.iter().map(|t| t.to_lowercase()).collect();
                 let full = state.tags.len() >= AT_MOST;
                 match state.tags.get_mut(&path) {
                     Some(known) if *known == tags => {}
@@ -109,12 +122,11 @@ impl TagIndex {
     /// The files under `root` known to have `tag`. Those gone since are
     /// forgotten on the way.
     pub fn files_with(self: &Arc<Self>, tag: &str, root: &Path) -> Vec<PathBuf> {
-        let tag = tag.to_lowercase();
         let found: Vec<PathBuf> = self
             .state()
             .tags
             .iter()
-            .filter(|(path, tags)| path.starts_with(root) && tags.contains(&tag))
+            .filter(|(path, tags)| path.starts_with(root) && tags.iter().any(|t| same_tag(t, tag)))
             .map(|(path, _)| path.clone())
             .collect();
         let (here, gone): (Vec<PathBuf>, Vec<PathBuf>) = found.into_iter().partition(|path| {
@@ -132,8 +144,38 @@ impl TagIndex {
         here
     }
 
+    /// The `at_most` tags on the most files under `root`, each with how
+    /// many, the most used first (then by name); each spelled as most of
+    /// its files spell it.
+    pub fn top(&self, at_most: usize, root: &Path) -> Vec<(String, usize)> {
+        // By lowercase form: the files, and each spelling's count.
+        let mut counts: HashMap<String, (usize, HashMap<&str, usize>)> = HashMap::new();
+        let state = self.state();
+        for (_, tags) in state.tags.iter().filter(|(path, _)| path.starts_with(root)) {
+            for tag in tags {
+                let (files, spellings) = counts.entry(tag.to_lowercase()).or_default();
+                *files += 1;
+                *spellings.entry(tag.as_str()).or_default() += 1;
+            }
+        }
+        let mut top: Vec<(String, usize)> = counts
+            .into_values()
+            .filter_map(|(files, spellings)| {
+                let spelled = spellings
+                    .into_iter()
+                    .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(a.0)))?
+                    .0;
+                Some((spelled.to_owned(), files))
+            })
+            .collect();
+        drop(state);
+        top.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        top.truncate(at_most);
+        top
+    }
+
     fn write_soon(self: &Arc<Self>) {
-        let Some(app) = self.app.upgrade().filter(|_| self.slot.is_some()) else {
+        let Some(app) = self.app.upgrade() else {
             return;
         };
         if self.writing.swap(true, Ordering::AcqRel) {
@@ -147,6 +189,9 @@ impl TagIndex {
             move || {
                 this.writing.store(false, Ordering::Release);
                 this.write();
+                if let Some(f) = &*this.on_change.lock() {
+                    f(&this);
+                }
             },
         );
     }
@@ -168,6 +213,27 @@ impl TagIndex {
         {
             tracing::debug!(%error, "tags: the index was not written");
         }
+    }
+}
+
+/// The index the plugin's operations tell what they wrote: an edit of a
+/// file no pane shows (a tag renamed everywhere) is not read again soon.
+/// One per process, as operations are rebuilt from their data by the
+/// core and carry no state of the plugin's.
+static WRITTEN: std::sync::RwLock<Option<Weak<TagIndex>>> = std::sync::RwLock::new(None);
+
+/// Tell `index` (none: nobody) what the operations write from now on.
+pub fn learn_writes(index: Option<&Arc<TagIndex>>) {
+    if let Ok(mut written) = WRITTEN.write() {
+        *written = index.map(Arc::downgrade);
+    }
+}
+
+/// An operation gave `path` these `tags`.
+pub fn wrote(path: &Path, tags: &[String]) {
+    let index = WRITTEN.read().ok().and_then(|w| w.as_ref()?.upgrade());
+    if let Some(index) = index {
+        index.learn(vec![(path.to_path_buf(), tags.to_vec())]);
     }
 }
 
@@ -301,7 +367,37 @@ mod tests {
             app: Weak::new(),
             lifetime: CancelToken::new(),
             writing: AtomicBool::new(false),
+            on_change: Mutex::default(),
         })
+    }
+
+    #[test]
+    fn the_most_used_tags_come_first_spelled_as_most_files_spell_them() {
+        let index = index();
+        let file = |i: usize| PathBuf::from(format!("/r/{i}"));
+        index.learn(vec![
+            (file(0), vec!["Work".into(), "home".into()]),
+            (file(1), vec!["work".into(), "Été".into()]),
+            (file(2), vec!["Work".into()]),
+            (file(3), vec!["été".into(), "zeta".into()]),
+            (file(4), vec!["alpha".into()]),
+        ]);
+        index.learn(vec![(PathBuf::from("/elsewhere/5"), vec!["zeta".into()])]);
+        assert_eq!(
+            index.top(4, Path::new("/r")),
+            [
+                ("Work".to_owned(), 3),
+                // Two files, one spelling each: the one sorting first.
+                ("Été".to_owned(), 2),
+                ("alpha".to_owned(), 1),
+                ("home".to_owned(), 1),
+            ]
+        );
+        assert!(index.top(0, Path::new("/r")).is_empty());
+        assert_eq!(
+            index.top(9, Path::new("/elsewhere")),
+            [("zeta".to_owned(), 1)]
+        );
     }
 
     #[test]

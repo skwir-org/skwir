@@ -11,10 +11,13 @@
 //! cache (`vocabulary`), and the color a user chose for a tag is a setting
 //! (`tags.colors`); every other tag wears the color its name gives it.
 
+mod appledouble;
 mod attrs;
+mod everywhere;
 pub mod finder;
 mod hints;
 mod ops;
+mod sidebar;
 mod vocabulary;
 
 use std::collections::BTreeMap;
@@ -26,6 +29,7 @@ use bibli_core::command::{Invocation, Outcome};
 use bibli_core::entry::keys;
 use bibli_core::metadata::{TAG_COLOR_SETTING, TAG_COLORS, same_tag};
 use bibli_core::op::{EntryRef, Plan};
+use bibli_core::os_path::PathArg;
 use bibli_core::plugin::Plugin;
 use bibli_core::registry::{KeyBinding, MenuItem, MenuSource};
 use bibli_core::scheduler::Priority;
@@ -124,6 +128,26 @@ struct CommentArgs {
     entries: Vec<EntryRef>,
     #[serde(default)]
     pane: Option<PaneId>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct RenameArgs {
+    /// The tag to rename.
+    tag: String,
+    /// Its new name; a tag of that name already on a file merges with it.
+    to: String,
+    /// Where the files are; the home folder when omitted.
+    #[serde(default)]
+    root: Option<PathArg>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct DeleteArgs {
+    /// The tag to take from every file.
+    tag: String,
+    /// Where the files are; the home folder when omitted.
+    #[serde(default)]
+    root: Option<PathArg>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -321,11 +345,38 @@ fn set_color(app: &App, lifetime: &CancelToken, tag: &str, color: Option<&str>) 
 }
 
 /// The tags plugin.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct TagsPlugin {
     /// Ends with the plugin's registration: the vocabulary's reads and
     /// writes, a color being saved.
     lifetime: Mutex<Option<CancelToken>>,
+    /// What the sidebar shows is made of, while registered.
+    sidebar: Mutex<Option<Sidebar>>,
+}
+
+impl std::fmt::Debug for TagsPlugin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TagsPlugin").finish_non_exhaustive()
+    }
+}
+
+/// The index, the vocabulary and what the sidebar shows of them.
+#[derive(Clone)]
+struct Sidebar {
+    index: Arc<hints::TagIndex>,
+    vocabulary: Arc<Vocabulary>,
+    shown: Arc<sidebar::Shown>,
+}
+
+impl Sidebar {
+    fn publish(&self, app: &App) {
+        sidebar::publish(app, &self.index, &self.vocabulary, &self.shown);
+    }
+}
+
+/// A command's root, as a path.
+fn root_of(root: Option<PathArg>) -> Option<std::path::PathBuf> {
+    root.map(std::path::PathBuf::from)
 }
 
 impl Plugin for TagsPlugin {
@@ -345,6 +396,22 @@ impl Plugin for TagsPlugin {
         if let Some(lifetime) = self.lifetime.lock().take() {
             lifetime.cancel();
         }
+        hints::learn_writes(None);
+        if let Some(state) = self.sidebar.lock().take() {
+            state.shown.forget();
+        }
+    }
+    fn on_settings_changed(&self, app: &App, keys: &[String]) {
+        if !keys
+            .iter()
+            .any(|k| k == sidebar::SETTING || k == TAG_COLOR_SETTING)
+        {
+            return;
+        }
+        let state = self.sidebar.lock().clone();
+        if let Some(state) = state {
+            state.publish(app);
+        }
     }
     #[allow(
         clippy::too_many_lines,
@@ -362,7 +429,47 @@ impl Plugin for TagsPlugin {
             Arc::new(attrs::AttributesProvider {
                 vocabulary: Arc::clone(&vocabulary),
                 index: Some(Arc::clone(&index)),
+                aside: attrs::AsideNames::default(),
             }),
+        );
+        // The sidebar's tags, from the index: again whenever it changes,
+        // and first on a worker, which reads it from the cache.
+        let state = Sidebar {
+            index: Arc::clone(&index),
+            vocabulary: Arc::clone(&vocabulary),
+            shown: Arc::new(sidebar::Shown::default()),
+        };
+        hints::learn_writes(Some(&index));
+        {
+            let (weak, state) = (app.weak(), state.clone());
+            index.on_change(Box::new(move |_| {
+                if let Some(app) = weak.upgrade() {
+                    state.publish(&app);
+                }
+            }));
+        }
+        {
+            let (weak, state) = (app.weak(), state.clone());
+            app.scheduler.spawn(
+                Priority::Background,
+                "tags.sidebar",
+                lifetime.child(),
+                move || {
+                    if let Some(app) = weak.upgrade() {
+                        state.publish(&app);
+                    }
+                },
+            );
+        }
+        *self.sidebar.lock() = Some(state);
+        app.settings.declare(
+            SettingSpec::integer(
+                sidebar::SETTING,
+                "Tags in the sidebar",
+                "How many tags the sidebar lists, those on the most files first, each opening a search of the home folder; 0 lists none",
+                sidebar::DEFAULT,
+                (0, 50),
+            ),
         );
         // What a `tag:` search asks first (ADR-026).
         app.hints.register(ID, Arc::new(hints::Baloo::default()));
@@ -522,6 +629,29 @@ impl Plugin for TagsPlugin {
                         comment: comment.clone(),
                     })
                 })
+            },
+        );
+        let (v, everywhere) = (Arc::clone(&vocabulary), lifetime.clone());
+        app.commands.register::<RenameArgs, _>(
+            ID,
+            "tags.rename",
+            "Rename tag everywhere",
+            "Rename a tag on every file under the home folder (or `root`) that has it, merging it with a tag of the new name where a file has both: the files are searched on a worker and the plan proposed for review",
+            move |a, app| {
+                everywhere::start(app, &everywhere, &a.tag, Some(&a.to), root_of(a.root))?;
+                v.used(&parse_tags(&a.to));
+                Ok(Outcome::Done)
+            },
+        );
+        let everywhere = lifetime.clone();
+        app.commands.register::<DeleteArgs, _>(
+            ID,
+            "tags.delete",
+            "Remove tag everywhere",
+            "Take a tag from every file under the home folder (or `root`) that has it: the files are searched on a worker and the plan proposed for review",
+            move |a, app| {
+                everywhere::start(app, &everywhere, &a.tag, None, root_of(a.root))?;
+                Ok(Outcome::Done)
             },
         );
         let colors = lifetime.clone();
@@ -866,6 +996,144 @@ mod tests {
         assert!(read_tags(&copied).is_empty() && read_tags(&shared).is_empty());
         assert!(xattr::get(&copied, PLAIN).unwrap().is_none());
         assert!(xattr::get(&shared, SAMBA).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_macs_notes_beside_a_file_on_a_stick_are_read_and_edited_there() {
+        use crate::appledouble::{self, AppleDouble};
+        // The test's disk takes attributes: say it is a stick.
+        appledouble::EVERYWHERE.store(true, std::sync::atomic::Ordering::Relaxed);
+        let plist = |value: plist::Value| {
+            let mut out = Vec::new();
+            value.to_writer_binary(&mut out).unwrap();
+            out
+        };
+        let tags = finder::encode(
+            &[
+                finder::Tag {
+                    name: "Rouge".into(),
+                    color: 6,
+                },
+                finder::Tag {
+                    name: "Été".into(),
+                    color: 0,
+                },
+            ],
+            finder::Framing::Plain,
+        );
+        let comment = plist(plist::Value::String("For the report".into()));
+        let froms = plist(plist::Value::Array(vec![
+            plist::Value::String("https://example.org/it.pdf".into()),
+            plist::Value::String("https://example.org/".into()),
+        ]));
+        let quarantine = b"0083;66e0f1a2;Safari;".as_slice();
+        let tmp = home_tempdir();
+        let dir = tmp.path().join("STICK");
+        std::fs::create_dir(&dir).unwrap();
+        let file = dir.join("it's on the stick.pdf");
+        std::fs::write(&file, b"x").unwrap();
+        std::fs::write(dir.join("plain.txt"), b"x").unwrap();
+        std::fs::write(
+            dir.join("._it's on the stick.pdf"),
+            appledouble::tests::as_a_mac_writes(&[
+                ("com.apple.quarantine", quarantine),
+                (finder::TAGS, &tags),
+                (finder::COMMENT, &comment),
+                (finder::WHERE_FROMS, &froms),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(read_tags(&file), ["Rouge", "Été"]);
+
+        let (app, pane) = app_in(tmp.path(), &dir, &["it's on the stick.pdf"]);
+        {
+            let ws = app.workspace.read();
+            let listing = &ws.pane(pane).unwrap().listing;
+            let e = listing
+                .find_by_name("it's on the stick.pdf".as_ref())
+                .unwrap();
+            assert_eq!(tags_of(&e.metadata).unwrap(), ["Rouge", "Été"]);
+            let text = |key| {
+                e.metadata
+                    .value(key)
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            };
+            assert_eq!(text(keys::COMMENT).as_deref(), Some("For the report"));
+            assert_eq!(
+                text(keys::ORIGIN).as_deref(),
+                Some("https://example.org/it.pdf")
+            );
+            assert_eq!(
+                text(keys::REFERRER).as_deref(),
+                Some("https://example.org/")
+            );
+            assert!(e.metadata.value(keys::TAG_COLORS).is_some(), "Rouge is red");
+            let plain = listing.find_by_name("plain.txt".as_ref()).unwrap();
+            assert!(tags_of(&plain.metadata).is_none());
+        }
+
+        // An edit is written where the Mac will read it, beside every
+        // other attribute, a kept tag keeping its color.
+        #[cfg(unix)]
+        let mode = |f: &Path| {
+            use std::os::unix::fs::PermissionsExt;
+            let aside = appledouble::sidecar(f).unwrap();
+            std::fs::metadata(aside).unwrap().permissions().mode() & 0o777
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let aside = appledouble::sidecar(&file).unwrap();
+            std::fs::set_permissions(aside, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        let aside = |f: &Path| {
+            AppleDouble::parse(&std::fs::read(appledouble::sidecar(f).unwrap()).unwrap()).unwrap()
+        };
+        let edit = plan(
+            &app,
+            "tags.edit",
+            &serde_json::json!({ "add": ["new"], "remove": ["Été"] }),
+        );
+        let r = app.executor.execute_blocking(&edit, app.lifetime());
+        assert!(r.error.is_none(), "{:?}", r.error);
+        assert_eq!(read_tags(&file), ["Rouge", "new"]);
+        let written = aside(&file);
+        let theirs = finder::parse(written.get(finder::TAGS).unwrap(), finder::Framing::Plain);
+        assert_eq!(
+            theirs.unwrap(),
+            [
+                finder::Tag {
+                    name: "Rouge".into(),
+                    color: 6
+                },
+                finder::Tag {
+                    name: "new".into(),
+                    color: 0
+                }
+            ]
+        );
+        assert_eq!(written.get("com.apple.quarantine"), Some(quarantine));
+        assert_eq!(written.get(finder::COMMENT), Some(comment.as_slice()));
+        #[cfg(unix)]
+        assert_eq!(mode(&file), 0o644, "the file replaced keeps its mode");
+
+        // Undone, and every tag removed: the attribute goes, the rest stays.
+        app.executor.undo_blocking(app.lifetime()).unwrap();
+        assert_eq!(read_tags(&file), ["Rouge", "Été"]);
+        let clear = plan(&app, "tags.set", &serde_json::json!({ "tags": [] }));
+        let r = app.executor.execute_blocking(&clear, app.lifetime());
+        assert!(r.error.is_none(), "{:?}", r.error);
+        assert!(read_tags(&file).is_empty());
+        let cleared = aside(&file);
+        assert_eq!(cleared.get(finder::TAGS), None);
+        assert_eq!(cleared.get("com.apple.quarantine"), Some(quarantine));
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.unwrap().file_name().into_string().ok())
+            .filter(|n| n.starts_with("._") && n != "._it's on the stick.pdf")
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
     }
 
     #[test]

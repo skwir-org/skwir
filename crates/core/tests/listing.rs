@@ -815,3 +815,59 @@ fn a_path_read_alone_is_filled_by_the_providers() {
     }
     assert!(bibli_core::fs::hydrate_path(&dir.join("missing"), &app.metadata).is_none());
 }
+
+/// Where a Mac keeps a file's attributes in its `._` file, a change to
+/// that file is a change to the file's notes: the file is read again.
+#[test]
+fn a_file_whose_apple_double_file_changes_is_read_again() {
+    use bibli_core::entry::{Entry, Provenance, Value};
+    use bibli_core::metadata::MetadataProvider;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    /// Counts how many times it read each file.
+    #[derive(Default)]
+    struct Count(AtomicU64);
+    impl MetadataProvider for Count {
+        fn id(&self) -> &'static str {
+            "count"
+        }
+        fn fill(&self, _: &std::path::Path, entries: &mut [Entry]) {
+            for e in entries {
+                let n = self.0.fetch_add(1, Ordering::Relaxed) + 1;
+                e.metadata
+                    .set("count.reads", Value::UInt(n), Provenance::Filesystem);
+            }
+        }
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("STICK");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("it's a.txt"), b"1").unwrap();
+    std::fs::write(dir.join("._it's a.txt"), b"attributes").unwrap();
+    let app = app(tmp.path());
+    app.metadata
+        .register("count", std::sync::Arc::new(Count::default()));
+    let pane = active(&app);
+    navigate(&app, &dir);
+    let reads = |l: &bibli_core::Listing| {
+        l.find_by_name("it's a.txt".as_ref())
+            .and_then(|e| e.metadata.value("count.reads").cloned())
+    };
+    let hydrated = |l: &bibli_core::Listing| reads(l).is_some();
+    let ids: Vec<_> = app
+        .workspace
+        .read()
+        .pane(pane)
+        .unwrap()
+        .listing
+        .ids()
+        .collect();
+    app.dispatch(&bibli_core::command::Invocation::with_args(
+        "hydrate",
+        &serde_json::json!({ "ids": ids, "pane": pane }),
+    ))
+    .unwrap();
+    wait(&app, pane, hydrated);
+    let before = reads(&app.workspace.read().pane(pane).unwrap().listing);
+    std::fs::write(dir.join("._it's a.txt"), b"other attributes").unwrap();
+    wait(&app, pane, |l| hydrated(l) && reads(l) != before);
+}

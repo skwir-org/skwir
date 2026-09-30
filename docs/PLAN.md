@@ -36,6 +36,48 @@ Poppler, GStreamer or libarchive. Open gate: idle PSS is about 118 to 120 MB aga
 been loosened. The per-change validation history that used to sit here is in
 `docs/STATUS-LOG.md`.
 
+Tags everywhere (2026-09-30): the sidebar has Tags, the tags on the most
+files the tags plugin's index knows under the home folder (`tags.sidebar`,
+10 by default), each a search of the home folder built by the query
+plugin (`query.location`, so the tags plugin writes no query syntax), a
+dot of the color it wears in place of an icon (`Place::color`: the
+user's choice, else the one a file gave it, which the vocabulary now
+remembers, else its name's), published when the index changes and only
+when what it shows did. The index keeps tags as spelled and learns what
+the plugin's operations write. A tag's row renames it or takes it from
+every file (`tags.rename`, merging with a tag of the new name;
+`tags.delete`): the files come from the search, walk included, never
+from the index, and the plan is proposed for review, then undone as
+one. Open searches now follow what bibli changes: after each plan the
+query plugin checks again the files it touched under each search's root
+and adds, updates or removes rows (before, a search stayed as walked
+until refreshed). A Mac's notes on a volume without attributes are read
+from the `._` files beside the files (`appledouble.rs`, the layout of
+Apple's `copyfile.c`), on FAT, exFAT, NTFS, network and FUSE volumes
+(`bibli_platform::filesystem`): tags with their colors, the Finder
+comment and where a download came from (also read from a Mac's
+attributes under `user.`/`osx.`), a folder's `._` names read once per
+listing (a per-file lookup measured at a third of a `listxattr`). A tag
+edit rewrites the `._` file whole, keeping every other attribute, the
+resource fork and its mode; one laid out otherwise is never written,
+and a file with neither says its volume keeps no tags. A change to `._x`
+makes the folder listing read `x` again. Checked in a window on an
+isolated display: the Tags group and its colors, a search from a row,
+rename through the review, the search emptying as it applied and
+filling again on Undo, and on a FUSE folder that refuses attributes
+(`bindfs --xattr-none`) a Mac's tags, comment and addresses read from
+`._` files, a tag added (the row refreshed from the `._` change) and a
+file without one refused; idle CPU 0–1%. `bench-check` passed on a
+quiet machine, the listing budgets that failed under load included
+(`flat100k` streams in 49.7 ms against 100, `images10k` in 10.7 against
+12; `tag:` over a million files 2.1 s). Deviations: no `._` file
+written by a Mac was read (the tests build Apple's layout by hand, from
+its source, not with our encoder); a `._` file is never created, so a
+file on a stick without one cannot be tagged (the sidecar decision is
+next); a tag's color the user chose does not follow a rename; the
+sidebar lists only tags the index has seen, not Baloo's; renaming
+leaves hidden files as they are, as the search does.
+
 Tags, continued (2026-09-30): the grid shows a tile's tags as dots over
 its picture's corner (three, then "+N", the names in a tooltip), so rows
 keep the height their names give them; a list row's chips are placed in

@@ -24,6 +24,7 @@ pub mod diagram;
 pub mod document;
 pub mod exif;
 pub mod file;
+pub mod filesystem;
 pub mod icons;
 mod line_channel;
 pub mod media;

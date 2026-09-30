@@ -271,6 +271,7 @@ impl Plugin for JumpPlugin {
                 menu: Vec::new(),
                 forget: None,
                 reorder: None,
+                color: None,
             },
         );
         app.registry.keymap.add(

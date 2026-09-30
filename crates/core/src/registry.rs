@@ -211,7 +211,7 @@ pub struct Place {
     pub title: String,
     pub location: Location,
     pub icon: Option<String>,
-    /// Sidebar section, e.g. `places`, `bookmarks`, `searches`, `devices`.
+    /// Sidebar section, e.g. `places`, `bookmarks`, `searches`, `tags`, `devices`.
     pub group: String,
     /// Free and total bytes, for volumes; filled in after a worker asked.
     pub space: Option<(u64, u64)>,
@@ -238,6 +238,9 @@ pub struct Place {
     pub forget: Option<Invocation>,
     /// How the place is put in order among its group by dragging.
     pub reorder: Option<Reorder>,
+    /// A color of the tags' palette ([`crate::metadata::TAG_COLORS`], by
+    /// name) the row shows in place of an icon: a tag's.
+    pub color: Option<String>,
 }
 
 /// How a place moves among the places of its group that have one: `command`

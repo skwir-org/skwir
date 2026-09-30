@@ -54,7 +54,8 @@ a requirement", in the deletable cache, and says the system's indexes
   every file its provider reads, in a folder shown or in a search's
   walk, says whether it has tags, so the index follows edits made here
   or elsewhere the next time the file is read. It is read from the cache
-  the first time a worker needs it, never at startup; files gone are
+  the first time a worker needs it, never on the way to the first frame
+  (the sidebar's Tags ask it at background priority); files gone are
   forgotten when it answers; it holds at most 50 000 files. Deleting it
   makes the next search's first answers slower, nothing else.
 - The walk is not skipped when an index claims to be complete: no index
@@ -71,8 +72,12 @@ a requirement", in the deletable cache, and says the system's indexes
   which runs `baloo_file` on a D-Bus session of its own).
 - `content:` can use the same hook when a full-text index lands
   (ADR-003); Tracker and Spotlight would be further providers.
-- What an index of tags makes possible and is not built yet: a Tags
-  group in the sidebar (the most used tags, each a `tag:` search of the
-  home folder) and renaming a tag everywhere, as a plan reviewed first.
+- What the index made possible (2026-09-30): the sidebar's Tags (the
+  tags on the most files it knows, each a `tag:` search of the home
+  folder), published when it changes. Its operations tell it what they
+  wrote, since a file edited while no pane shows it is not read again
+  soon. Renaming or removing a tag everywhere does not trust it: the
+  files come from the search, walk included, and the plan is proposed
+  for review.
 - `bibli-bench` measures the provider (`tags_fill_us`) and the search
   (`tag_search_us`); their budgets are in `budgets.toml`.

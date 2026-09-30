@@ -91,6 +91,7 @@ impl Operation for SetTags {
         let previous = attrs::read_file_tags(&path);
         attrs::write_file_tags(&path, &self.tags, &self.finder_colors)
             .map_err(|e| anyhow::anyhow!("set tags on {}: {e}", path.display()))?;
+        crate::hints::wrote(&path, &attrs::read_tags(&path));
         Ok(Some(Box::new(SetTags {
             entry: EntryRef::new(self.entry.id, path),
             finder_colors: previous.finder_colors(),

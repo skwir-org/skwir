@@ -484,7 +484,20 @@ impl Shared {
         }
         let mut added = Vec::new();
         let mut removed = Vec::new();
-        for name in c.names {
+        // A `._` file holds its file's attributes where a Mac writes them
+        // aside (AppleDouble, on a volume without them): when it changes,
+        // the file's notes did.
+        let mut names = c.names;
+        let aside: Vec<std::ffi::OsString> = names
+            .iter()
+            .filter_map(|n| {
+                // The volumes where a Mac writes them name files in UTF-16.
+                let file = n.to_str()?.strip_prefix("._")?;
+                (!file.is_empty()).then(|| file.into())
+            })
+            .collect();
+        names.extend(aside);
+        for name in names {
             if self.ctx.cancel.is_cancelled() {
                 return;
             }

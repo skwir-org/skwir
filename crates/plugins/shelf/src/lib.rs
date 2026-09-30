@@ -582,6 +582,7 @@ impl Plugin for ShelfPlugin {
                 menu: Vec::new(),
                 forget: None,
                 reorder: None,
+                color: None,
             },
         );
         for (keys, command, when) in BINDINGS {

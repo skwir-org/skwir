@@ -6,7 +6,8 @@
 //! opens the place's own menu (`Place::menu`: rename or remove a bookmark
 //! or a saved search), and a place its owner lets move (`Place::reorder`:
 //! bookmarks, saved searches) is put in order by dragging it among the
-//! others of its group.
+//! others of its group. A place with a color (a tag's) shows a dot of it
+//! in place of an icon.
 
 use std::collections::HashMap;
 
@@ -23,7 +24,7 @@ use crate::format;
 use crate::shell::Shell;
 use crate::theme::Theme;
 
-const GROUP_ORDER: [&str; 4] = ["places", "bookmarks", "searches", "devices"];
+const GROUP_ORDER: [&str; 5] = ["places", "bookmarks", "searches", "tags", "devices"];
 const ICON_PX: f32 = 16.;
 /// The sidebar's width until its edge is dragged, and after a double click
 /// on it; the narrowest it gets.
@@ -249,33 +250,56 @@ pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElem
                 .as_deref()
                 .and_then(|name| shell.icons.named(name, ICON_PX as u16))
         };
-        let icon: AnyElement = match themed {
-            Some(path) => crate::icons::themed(
-                &path,
-                ICON_PX,
-                if is_current {
-                    theme.selection_text
-                } else {
-                    theme.text_muted
-                },
-            ),
-            None if busy.is_some() => controls::glyph(
-                "busy",
-                if is_current {
-                    theme.selection_text
-                } else {
-                    theme.accent
-                },
-                ICON_PX,
-            )
-            .into_any_element(),
-            None => div()
+        // A tag's row: a dot of its color.
+        let dot = place
+            .color
+            .as_deref()
+            .and_then(|c| {
+                bibli_core::metadata::TAG_COLORS
+                    .iter()
+                    .position(|x| *x == c)
+            })
+            .filter(|_| busy.is_none());
+        let icon: AnyElement = if let Some(color) = dot {
+            div()
                 .size(px(10.))
                 .mx(px(3.))
-                .rounded_sm()
-                .bg(theme.text_muted)
+                .rounded_full()
                 .flex_none()
+                .bg(theme.tags[color % theme.tags.len()])
+                .when(is_current, |d| {
+                    d.border_1().border_color(theme.selection_text)
+                })
+                .into_any_element()
+        } else {
+            match themed {
+                Some(path) => crate::icons::themed(
+                    &path,
+                    ICON_PX,
+                    if is_current {
+                        theme.selection_text
+                    } else {
+                        theme.text_muted
+                    },
+                ),
+                None if busy.is_some() => controls::glyph(
+                    "busy",
+                    if is_current {
+                        theme.selection_text
+                    } else {
+                        theme.accent
+                    },
+                    ICON_PX,
+                )
                 .into_any_element(),
+                None => div()
+                    .size(px(10.))
+                    .mx(px(3.))
+                    .rounded_sm()
+                    .bg(theme.text_muted)
+                    .flex_none()
+                    .into_any_element(),
+            }
         };
         let mut texts = div()
             .flex_1()

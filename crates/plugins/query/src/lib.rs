@@ -135,6 +135,17 @@ struct DescribeArgs {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct LocationArgs {
+    /// A facet, as `query.refine` names them (`tag`, `kind`, `size`, …).
+    facet: String,
+    /// Its value (`work` for `tag`).
+    value: String,
+    /// Where it searches; the home folder when omitted.
+    #[serde(default)]
+    root: Option<PathArg>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct RefineArgs {
     /// A chip's id: `words`, `kind`, `modified`, `size`, `tag`, `content`,
     /// `where` or `advanced`.
@@ -426,6 +437,7 @@ fn place(search: SavedQuery) -> Place {
             command: Invocation::with_args("query.move", &serde_json::json!({ "expr": expr })),
             before: expr,
         }),
+        color: None,
     }
 }
 
@@ -470,7 +482,14 @@ impl Plugin for QueryPlugin {
         if let Some(previous) = self.lifetime.lock().replace(lifetime.clone()) {
             previous.cancel();
         }
-        app.register_provider(ID, Arc::new(QueryProvider::new(lifetime.clone())));
+        let searches = provider::Searches::default();
+        app.register_provider(
+            ID,
+            Arc::new(QueryProvider::new(lifetime.clone(), searches.clone())),
+        );
+        // What bibli changed, an open search sees at once.
+        app.executor
+            .observe(ID, Arc::new(move |changes| searches.changed(changes)));
         // The locale's first weekday is a process away: asked once, on a
         // worker, before anyone reads a week.
         app.scheduler.spawn(
@@ -697,6 +716,28 @@ impl Plugin for QueryPlugin {
                     .map_err(|e| anyhow::anyhow!("query: {e}"))?;
                 app.navigate(pane, &Location::new(SCHEME, refined))?;
                 Ok(Outcome::Done)
+            },
+        );
+        app.commands.register::<LocationArgs, _>(
+            ID,
+            "query.location",
+            "Search location",
+            "`{ location }`: the search for one facet's value (`tag` `work`) from `root` or the home folder, for whoever shows or runs a search without writing its syntax",
+            |a, _| {
+                let expr = facets::refine("", &a.facet, Some(&a.value))
+                    .map_err(|e| anyhow::anyhow!("query: {e}"))?;
+                let root = match a.root {
+                    Some(r) => Some(
+                        Location::parse_os(r.as_os_str())
+                            .path()
+                            .ok_or_else(|| anyhow::anyhow!("root must be a path"))?,
+                    ),
+                    None => None,
+                };
+                let location = location_for(&expr, root.as_deref());
+                Ok(Outcome::Value(
+                    serde_json::json!({ "location": location.to_string() }),
+                ))
             },
         );
         app.registry.keepers.add(
@@ -1362,6 +1403,40 @@ mod tests {
         assert_eq!(
             plocate::locate_with(&bin.join("empty"), &["x".into()], false),
             Some(Vec::new())
+        );
+    }
+
+    #[test]
+    fn a_facet_search_is_a_location_whoever_asks_needs_no_syntax() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+        let location = |args: serde_json::Value| {
+            let Outcome::Value(v) = app
+                .dispatch(&Invocation::with_args("query.location", &args))
+                .unwrap()
+            else {
+                panic!("a value")
+            };
+            Location::parse(v["location"].as_str().unwrap())
+        };
+        let home = location(serde_json::json!({ "facet": "tag", "value": "it's \"done\" now" }));
+        assert_eq!(&*home.scheme, SCHEME);
+        let q = lang::parse(&home.rest).unwrap();
+        assert_eq!(q.required_tag(), Some("it's \"done\" now"));
+        assert!(!q.root_given, "the home folder: {}", home.rest);
+        let root = Path::new("/two words/in:x");
+        let there = location(serde_json::json!({
+            "facet": "tag", "value": "work", "root": PathArg::from(root),
+        }));
+        let q = lang::parse(&there.rest).unwrap();
+        assert_eq!((q.required_tag(), q.root.as_path()), (Some("work"), root));
+        assert!(
+            app.dispatch(&Invocation::with_args(
+                "query.location",
+                &serde_json::json!({ "facet": "nothing", "value": "x" }),
+            ))
+            .is_err()
         );
     }
 

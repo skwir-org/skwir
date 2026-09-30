@@ -1121,6 +1121,7 @@ dependencies = [
  "anyhow",
  "bibli-core",
  "bibli-platform",
+ "crossbeam-channel",
  "dirs 7.0.0",
  "parking_lot",
  "plist",

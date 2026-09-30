@@ -31,6 +31,9 @@ struct Known {
     /// When a listing last showed it on a file, in seconds.
     #[serde(default)]
     seen: u64,
+    /// The color a file last gave it (a Mac's Finder tag's), by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    given: Option<String>,
 }
 
 impl Known {
@@ -95,6 +98,9 @@ impl Vocabulary {
             let known = entry.or_insert_with(|| k.clone());
             known.used = known.used.max(k.used);
             known.seen = known.seen.max(k.seen);
+            if known.given.is_none() {
+                known.given.clone_from(&k.given);
+            }
         }
         inner.loaded = true;
     }
@@ -126,6 +132,7 @@ impl Vocabulary {
                     name: tag.clone(),
                     used: 0,
                     seen: 0,
+                    given: None,
                 }
             });
             if used {
@@ -147,6 +154,37 @@ impl Vocabulary {
             }
         }
         new
+    }
+
+    /// The colors files gave tags as a listing showed them (a Mac's
+    /// Finder tags'), by color name. Writes only when one changed.
+    pub fn given(self: &Arc<Self>, colors: &[(String, &str)]) {
+        let changed = {
+            let mut inner = self.inner.lock();
+            let mut changed = false;
+            for (tag, color) in colors {
+                if let Some(known) = inner.known.get_mut(&tag.to_lowercase())
+                    && known.given.as_deref() != Some(*color)
+                {
+                    known.given = Some((*color).to_owned());
+                    changed = true;
+                }
+            }
+            changed
+        };
+        if changed {
+            self.write_soon();
+        }
+    }
+
+    /// The color a file last gave `tag`, if one did.
+    pub fn given_color(&self, tag: &str) -> Option<String> {
+        self.inner
+            .lock()
+            .known
+            .get(&tag.to_lowercase())?
+            .given
+            .clone()
     }
 
     /// The tags known, the most recently used first, then those seen.
@@ -226,6 +264,15 @@ mod tests {
         assert_eq!(v.known(), ["home", "Work"]);
         v.inner.lock().known.get_mut("work").unwrap().used = 9;
         assert_eq!(v.known(), ["Work", "home"], "first spelling kept");
+    }
+
+    #[test]
+    fn the_color_a_file_gave_a_tag_is_remembered_with_it() {
+        let v = Arc::new(vocabulary());
+        v.touch(&["Rouge".into()], false);
+        v.given(&[("ROUGE".into(), "red"), ("unknown".into(), "blue")]);
+        assert_eq!(v.given_color("rouge").as_deref(), Some("red"));
+        assert_eq!(v.given_color("unknown"), None, "only for a tag seen");
     }
 
     #[test]

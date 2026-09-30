@@ -185,10 +185,21 @@ current source before assuming a planned crate, command, or API exists.
   (`metadata::tag_color`); copies keep every `user.*` attribute (ADR-006).
   A Mac's tags (`finder.rs`, under whichever name the attribute reached
   Linux) are read with ours and written with them when the file has
-  both, so an edit holds on the Mac. A search by tag asks the indexes
+  both, so an edit holds on the Mac. On a volume a Mac keeps them beside
+  the file (`bibli_platform::filesystem::apple_double`: FAT, exFAT,
+  NTFS, network and FUSE), they are in its `._` file (`appledouble.rs`):
+  a folder's `._` names are read once for its listing, never looked up
+  per file, and an edit rewrites that file whole as macOS lays it out,
+  keeping every other attribute and its mode; one laid out otherwise is
+  read, never written, and a file with neither says its volume keeps no
+  tags. A folder listing reads `x` again when `._x` changes. A search by tag asks the indexes
   first (`bibli_core::hints`, ADR-026: Baloo when it runs, the tags
-  plugin's own, learned as the provider reads files), checks every file
+  plugin's own, learned as the provider reads files and as its
+  operations write), checks every file
   they name, and walks all the same: an index hints, the walk answers.
+  So a tag renamed or removed everywhere (`tags.rename`, `tags.delete`)
+  takes its files from the search, not the index, as a plan proposed
+  for review.
 - **Nothing to list is a state, not a blank.** `placeholder.rs` says why a
   pane is empty (empty folder, no results, empty shelf) or why it failed, in
   the user's words with the system's message as the detail, and offers the
@@ -220,6 +231,10 @@ current source before assuming a planned crate, command, or API exists.
   `forget`, which the button runs while the pane shows it, and `reorder`,
   which lets it be dragged within its group. A new kind of kept place
   registers a keeper and fills those two fields; the UI needs no branch.
+  A place with a `color` shows a dot of that tag color in place of an
+  icon: the tags plugin's Tags, the tags on the most files its index
+  knows, each a search of the home folder (`query.location` builds it,
+  so no plugin writes another's syntax).
   A plugin that needs a line of text from the user dispatches
   `ui.ask` with the command to complete, not a prompt kind of its own;
   one that needs a choice dispatches `ui.choose` with its choices or the
@@ -411,7 +426,12 @@ current source before assuming a planned crate, command, or API exists.
   affordance that goes with what it acts on (a pill's ×) takes no focus;
   the keyboard reaches the same through the pill's menu. A location is
   named in words by its provider (`LocationProvider::title`: a search as
-  what it looks for and where), for tabs and menus.
+  what it looks for and where), for tabs and menus. A search does not
+  watch the folders it walked, but what bibli changes it sees at once:
+  after each plan the query plugin (an executor observer,
+  `provider::Searches`) checks again the files the plan touched under
+  each open search's root, as the walk would, and adds, updates or
+  takes out rows, never listing again.
 - **The address field is where one types** (`omnibox.rs`): Ctrl+F
   (`ui.search`) starts a search with where it looks as a pill, Ctrl+L
   edits the path; a pane showing a search edits that search either way.

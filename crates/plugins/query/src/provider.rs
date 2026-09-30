@@ -14,6 +14,7 @@ use bibli_core::fs::Statter;
 use bibli_core::location::{
     EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
 };
+use bibli_core::op::Change;
 use bibli_core::scheduler::Priority;
 use crossbeam_channel::Receiver;
 use parking_lot::Mutex;
@@ -28,11 +29,51 @@ pub const SCHEME: &str = "query";
 #[derive(Debug)]
 pub struct QueryProvider {
     lifetime: CancelToken,
+    open: Searches,
+}
+
+/// The searches open now, to check again what a plan changed.
+#[derive(Clone, Default)]
+pub struct Searches(Arc<Mutex<Vec<(Location, std::sync::Weak<Shared>)>>>);
+
+impl std::fmt::Debug for Searches {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Searches").finish_non_exhaustive()
+    }
+}
+
+impl Searches {
+    /// What a finished plan changed (`Executor::observe`): each open
+    /// search checks again, on a worker, the files it changed under its
+    /// root, as the walk would have. A search does not watch the folders
+    /// it walked, but what bibli did it sees at once.
+    pub fn changed(&self, changes: &[Change]) {
+        let open: Vec<(Location, Arc<Shared>)> = {
+            let mut open = self.0.lock();
+            open.retain(|(_, s)| s.strong_count() > 0);
+            open.iter()
+                .filter_map(|(l, s)| Some((l.clone(), s.upgrade()?)))
+                .collect()
+        };
+        for (location, shared) in open {
+            let changes = changes.to_vec();
+            let cancel = shared.walk.lock().clone();
+            let s = Arc::clone(&shared);
+            shared.ctx.scheduler.spawn(
+                Priority::Normal,
+                "query.recheck",
+                cancel.clone(),
+                move || {
+                    s.recheck(&location, &changes, &cancel);
+                },
+            );
+        }
+    }
 }
 
 impl QueryProvider {
-    pub fn new(lifetime: CancelToken) -> Self {
-        QueryProvider { lifetime }
+    pub fn new(lifetime: CancelToken, open: Searches) -> Self {
+        QueryProvider { lifetime, open }
     }
 }
 
@@ -55,16 +96,16 @@ impl LocationProvider for QueryProvider {
             "query root {} is not an absolute path",
             query.root.display()
         );
-        Ok(QueryLocation::open(
-            location.clone(),
-            query,
-            &ctx,
-            &self.lifetime,
-        ))
+        let open = QueryLocation::open(location.clone(), query, &ctx, &self.lifetime);
+        self.open
+            .0
+            .lock()
+            .push((location.clone(), Arc::downgrade(&open.shared)));
+        Ok(open)
     }
 }
 
-struct Shared {
+pub struct Shared {
     ctx: OpenContext,
     tx: EventSink,
     paths: Mutex<HashMap<EntryId, PathBuf>>,
@@ -528,6 +569,132 @@ impl Shared {
             "search hints considered"
         );
         hinted
+    }
+
+    /// Check again, as the walk would, the files `changes` touched under
+    /// the search's root: a result changed is read again and kept or
+    /// taken out, one moved is followed, one gone is taken out, and a file
+    /// that matches now is added.
+    fn recheck(&self, location: &Location, changes: &[Change], cancel: &CancelToken) {
+        let Ok(q) = lang::parse(&location.rest) else {
+            return;
+        };
+        let mut removed: Vec<EntryId> = Vec::new();
+        // Paths to read again, with the result each was, if one.
+        let mut again: Vec<(PathBuf, Option<EntryId>)> = Vec::new();
+        {
+            let paths = self.paths.lock();
+            for (id, path) in paths.iter() {
+                let mut at = path.clone();
+                let mut gone = false;
+                let mut touched = false;
+                for change in changes {
+                    match change.follow(&at) {
+                        bibli_core::op::Followed::Same => {
+                            touched |=
+                                matches!(change, Change::Metadata { path, .. } if *path == at);
+                        }
+                        bibli_core::op::Followed::Moved(to) => {
+                            at = to;
+                            touched = true;
+                        }
+                        bibli_core::op::Followed::Gone => gone = true,
+                    }
+                }
+                if gone {
+                    removed.push(*id);
+                } else if touched {
+                    again.push((at, Some(*id)));
+                }
+            }
+        }
+        for change in changes {
+            let arrived = match change {
+                Change::Metadata { path, .. }
+                | Change::Create { path, .. }
+                | Change::Restore { path } => vec![path.clone()],
+                Change::Rename { to, .. } | Change::Move { to, .. } | Change::Copy { to, .. } => {
+                    vec![to.clone()]
+                }
+                Change::Swap { a, b } => vec![a.clone(), b.clone()],
+                Change::Trash { .. } | Change::Delete { .. } | Change::Remove { .. } => Vec::new(),
+            };
+            for path in arrived {
+                if !again.iter().any(|(p, _)| *p == path) {
+                    again.push((path, None));
+                }
+            }
+        }
+        let mut found: Vec<(Entry, PathBuf)> = Vec::new();
+        let mut statter = Statter::default();
+        let late = Late {
+            fields: &self.ctx.fields,
+            cancel,
+        };
+        for (path, was) in again {
+            if cancel.is_cancelled() {
+                return;
+            }
+            let matched = self.matches_now(&q, &path, late, &mut statter);
+            match (matched, was) {
+                (Some(entry), Some(id)) if entry.id != id => {
+                    removed.push(id);
+                    found.push((entry, path));
+                }
+                (Some(entry), _) => found.push((entry, path)),
+                (None, Some(id)) => removed.push(id),
+                (None, None) => {}
+            }
+        }
+        if !removed.is_empty() {
+            let _walk = self.walk.lock();
+            if cancel.is_cancelled() {
+                return;
+            }
+            let mut paths = self.paths.lock();
+            for id in &removed {
+                paths.remove(id);
+            }
+            drop(paths);
+            self.tx.send(ListingEvent::Removed(removed));
+        }
+        self.publish(cancel, found, false);
+    }
+
+    /// `path` as a result of `q`, if it is one now and the walk would
+    /// reach it (under the root, hidden files and depth as it would, never
+    /// through a link).
+    fn matches_now(
+        &self,
+        q: &Query,
+        path: &Path,
+        late: Late<'_>,
+        statter: &mut Statter,
+    ) -> Option<Entry> {
+        let relative = path.strip_prefix(&q.root).ok()?;
+        if relative.as_os_str().is_empty() || !crate::plocate::visible(relative, q.hidden, q.depth)
+        {
+            return None;
+        }
+        let dir = path.parent()?;
+        let real = std::fs::canonicalize(&q.root)
+            .ok()?
+            .join(relative.parent()?);
+        if std::fs::canonicalize(dir).ok()? != real {
+            return None;
+        }
+        let name = path.file_name()?;
+        let kind = kind_of(std::fs::symlink_metadata(path).ok().map(|m| m.file_type()));
+        match first(q, path, name, kind, late, statter) {
+            First::No => None,
+            First::Yes(entry) => Some(entry),
+            First::NeedsMetadata(entry) => {
+                let mut entries = [entry];
+                self.ctx.metadata.fill(dir, &mut entries);
+                let [entry] = entries;
+                full_match(q, &entry, path, late).then_some(entry)
+            }
+        }
     }
 
     fn hydrate(&self, ids: &[EntryId], cancel: &CancelToken) {
