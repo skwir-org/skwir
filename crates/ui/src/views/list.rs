@@ -219,6 +219,7 @@ pub struct RowData {
     pub icon: Option<std::sync::Arc<std::path::Path>>,
     pub hydrated: bool,
     pub tags: Vec<String>,
+    pub link: icons::Link,
     /// How many opened folders deep it is (`Pane::depth`), and for a
     /// folder whether it is open in place.
     pub depth: usize,
@@ -258,7 +259,7 @@ impl Shell {
                 continue;
             };
             let mime = (!e.is_dir())
-                .then(|| bibli_platform::mime::by_name(&e.name))
+                .then(|| bibli_platform::mime::by_name(e.type_name()))
                 .flatten();
             let icon = if e.is_dir() {
                 self.icons.folder(icon_px)
@@ -284,6 +285,7 @@ impl Shell {
                 icon,
                 hydrated: e.metadata.is_hydrated(),
                 tags: tags_of(e),
+                link: icons::Link::of(e),
             };
             if !compact {
                 let [size, modified, kind] = self.columns;
@@ -312,10 +314,14 @@ impl Shell {
                 if kind {
                     row.kind = if e.is_dir() {
                         "Folder".into()
+                    } else if e.is_broken_link() {
+                        crate::typenames::BROKEN_LINK.into()
                     } else {
                         mime.as_ref()
                             .and_then(|mime| self.type_names.get(mime))
-                            .unwrap_or_else(|| crate::typenames::fallback(&e.name_str()).into())
+                            .unwrap_or_else(|| {
+                                crate::typenames::fallback(&e.type_name().to_string_lossy()).into()
+                            })
                     };
                 }
             }
@@ -399,6 +405,7 @@ pub fn row(
             .flex_none()
             .into_any_element(),
     };
+    let icon = icons::with_link(icon, icon_px, r.link, theme);
     let el = div()
         .id(ix)
         .relative()

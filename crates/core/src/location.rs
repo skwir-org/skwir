@@ -340,7 +340,8 @@ impl Delta {
         Delta {
             any: old != new,
             name,
-            order: name || old.kind != new.kind,
+            // Folders sort first, and a link sorts as what it leads to.
+            order: name || old.is_dir() != new.is_dir(),
             size,
             modified,
         }
@@ -482,6 +483,7 @@ impl Listing {
                 if !e.metadata.is_hydrated() && old.metadata.is_hydrated() && old.name == e.name {
                     e.metadata = old.metadata.clone();
                     e.kind = old.kind;
+                    e.target.clone_from(&old.target);
                 }
                 let d = Delta::between(old, &e);
                 if !d.any {

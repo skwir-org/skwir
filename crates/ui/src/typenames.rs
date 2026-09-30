@@ -18,6 +18,10 @@ pub struct TypeNames {
     results: Arc<Mutex<Resolved>>,
 }
 
+/// The type of a link that leads nowhere (a link that resolves is named
+/// as what it leads to).
+pub const BROKEN_LINK: &str = "Broken link";
+
 /// `CSV file` for `budget.csv`, `File` without an extension.
 pub fn fallback(name: &str) -> String {
     match name.rsplit_once('.') {

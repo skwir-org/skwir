@@ -97,6 +97,9 @@ struct AncestorRow {
     name: std::ffi::OsString,
     label: gpui::SharedString,
     is_dir: bool,
+    /// The name that says the type: a link's target's.
+    type_name: std::ffi::OsString,
+    link: icons::Link,
 }
 
 fn ancestor_column(
@@ -119,28 +122,29 @@ fn ancestor_column(
             let icon_px = u16::try_from(this.row_zoom).unwrap_or(u16::MAX);
             let height = row_height(this.row_zoom);
             // Only the rows drawn are read from the kept listing.
-            let rows: Vec<(std::ffi::OsString, bool)> = {
+            let rows: Vec<AncestorRow> = {
                 let ws = this.app.workspace.read();
                 let listing = ws.pane(pane).and_then(|p| p.kept(&location));
                 ids[range.clone()]
                     .iter()
                     .filter_map(|id| listing?.get(*id))
-                    .map(|e| (e.name.clone(), e.is_dir()))
+                    .map(|e| AncestorRow {
+                        label: e.name_str().into_owned().into(),
+                        name: e.name.clone(),
+                        is_dir: e.is_dir(),
+                        type_name: e.type_name().to_owned(),
+                        link: icons::Link::of(e),
+                    })
                     .collect()
             };
             let mut out = Vec::with_capacity(rows.len());
-            for (ix, (name, is_dir)) in range.zip(rows) {
-                let row = AncestorRow {
-                    label: name.to_string_lossy().into_owned().into(),
-                    name,
-                    is_dir,
-                };
+            for (ix, row) in range.zip(rows) {
                 let target = path.join(&row.name);
                 let is_on_path = row.name == child;
                 let icon = if row.is_dir {
                     this.icons.folder(icon_px)
                 } else {
-                    this.icons.for_name(&row.name, icon_px)
+                    this.icons.for_name(&row.type_name, icon_px)
                 };
                 let icon: AnyElement = match icon {
                     Some(p) => icons::element(&p, f32::from(icon_px)),
@@ -150,6 +154,7 @@ fn ancestor_column(
                         .bg(theme.text_muted)
                         .into_any_element(),
                 };
+                let icon = icons::with_link(icon, f32::from(icon_px), row.link, &theme);
                 let dir_target = row.is_dir.then(|| target.clone());
                 let mut el = div()
                     .id(ix)

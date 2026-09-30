@@ -109,7 +109,7 @@ impl Shell {
             };
             let req = ThumbRequest {
                 entry: EntryRef::new(id, path),
-                mime: bibli_platform::mime::by_name(&e.name).map(|m| Arc::from(m.as_str())),
+                mime: bibli_platform::mime::by_name(e.type_name()).map(|m| Arc::from(m.as_str())),
                 mtime,
                 size,
             };

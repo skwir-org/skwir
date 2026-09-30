@@ -214,8 +214,9 @@ impl Shell {
         SelectionCtx { folder, ..ctx }
     }
 
-    /// What the selected entries are, by name, for a menu's `kind:` and
-    /// `has:` tokens. Walks the selection: when a menu opens, never per frame.
+    /// What the selected entries are, by name (a link's target's), for a
+    /// menu's `kind:` and `has:` tokens. Walks the selection: when a menu
+    /// opens, never per frame.
     pub fn selection_types(&self) -> crate::menu::SelectionTypes {
         let entries: Vec<(std::ffi::OsString, bool)> = {
             let ws = self.app.workspace.read();
@@ -225,7 +226,7 @@ impl Shell {
             pane.selection
                 .iter()
                 .filter_map(|id| pane.entry(id))
-                .map(|e| (e.name.clone(), e.is_dir()))
+                .map(|e| (e.type_name().to_owned(), e.is_dir()))
                 .collect()
         };
         crate::menu::SelectionTypes::of(entries.iter().map(|(name, dir)| (name.as_os_str(), *dir)))

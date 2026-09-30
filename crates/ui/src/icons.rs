@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use bibli_core::{App, Entry};
 use bibli_platform::{icons, mime};
-use gpui::{AnyElement, AssetSource, Hsla, SharedString, img, prelude::*, px, svg};
+use gpui::{AnyElement, AssetSource, Hsla, SharedString, div, img, prelude::*, px, svg};
 
 /// Serves any absolute path on disk. Icon themes live outside the binary.
 pub struct FsAssets;
@@ -132,12 +132,13 @@ impl IconCache {
         self.lookup(Want::Named(name.to_owned()), size)
     }
 
-    /// Icon path for an entry: the folder icon or the MIME type's icon.
+    /// Icon path for an entry: the folder icon or the MIME type's icon (a
+    /// link's is what it leads to's).
     pub fn for_entry(&mut self, e: &Entry, size: u16) -> Option<Arc<Path>> {
         if e.is_dir() {
             return self.folder(size);
         }
-        self.for_name(&e.name, size)
+        self.for_name(e.type_name(), size)
     }
 
     pub fn folder(&mut self, size: u16) -> Option<Arc<Path>> {
@@ -222,6 +223,68 @@ pub fn element(path: &Path, size: f32) -> AnyElement {
     img(path.to_path_buf())
         .size(px(size))
         .flex_none()
+        .into_any_element()
+}
+
+/// What an entry's picture says of a link: nothing, that it is one, or
+/// that it leads nowhere.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Link {
+    #[default]
+    None,
+    Leads,
+    Broken,
+}
+
+impl Link {
+    pub fn of(e: &Entry) -> Self {
+        if !e.is_link() {
+            Link::None
+        } else if e.is_broken_link() {
+            Link::Broken
+        } else {
+            Link::Leads
+        }
+    }
+}
+
+/// `picture` (an icon or a thumbnail about `size` px) with a link's emblem
+/// on its bottom-left corner: a bent arrow on a badge, in the error color
+/// for a link that leads nowhere. Every view marks a link this one way;
+/// what is not a link is returned as it is.
+pub fn with_link(
+    picture: AnyElement,
+    size: f32,
+    link: Link,
+    theme: &crate::theme::Theme,
+) -> AnyElement {
+    let color = match link {
+        Link::None => return picture,
+        Link::Leads => theme.text,
+        Link::Broken => theme.error,
+    };
+    // Large enough to read as an arrow on a list's 16 px icons, and
+    // growing slower than the picture: a corner, never a cover.
+    let badge = (size * 0.3 + 6.).round().clamp(11., 22.);
+    div()
+        .relative()
+        .flex_none()
+        .child(picture)
+        .child(
+            div()
+                .absolute()
+                .left(px(-1.))
+                .bottom(px(-1.))
+                .size(px(badge))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_sm()
+                .bg(theme.bg)
+                .border_1()
+                .border_color(theme.border)
+                .child(crate::controls::glyph("link", color, badge - 2.)),
+        )
         .into_any_element()
 }
 

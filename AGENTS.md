@@ -604,6 +604,14 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   retain that chart through subsequent refreshes and replace it atomically;
   a finished result can still be incomplete because of read errors. Automatic
   revalidation must not reintroduce unknown blocks or busy flashes. See ADR-007.
+- A link is an entry of its own (`kind: Symlink`, its identity the
+  link's) that knows what it leads to (`Entry::target`: its kind and its
+  name, followed to the end when listed or stat-ed). It is shown as what
+  it opens: `Entry::is_dir` is true for a link to a folder, its type is
+  read from `Entry::type_name` (the target's name, never `entry.name`),
+  and its size, times, owner and permissions are the target's (a broken
+  link keeps its own). What the entry is on disk, what an operation acts
+  on, is `kind`. Every view marks a link with `icons::with_link`.
 - Entries arrive before metadata. Treat missing fields as unknown, request
   hydration in batches, and react to `Updated` events instead of stat-ing each
   row during rendering. A fact too costly for every listing (a picture's

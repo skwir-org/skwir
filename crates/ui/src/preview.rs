@@ -100,6 +100,8 @@ struct PreviewResult {
 #[derive(Clone, Default)]
 pub struct Info {
     pub name: String,
+    /// The name that says the type: a link's target's (`Entry::type_name`).
+    pub type_name: String,
     pub mime: Option<String>,
     /// Whether `mime` is settled: the name alone decides it, or the bytes
     /// were read. A name several types claim (`*.ogg`) gives the most
@@ -109,6 +111,7 @@ pub struct Info {
     pub modified: Option<String>,
     pub is_dir: bool,
     pub icon: Option<Arc<Path>>,
+    pub link: icons::Link,
 }
 
 /// How deep the panel follows containers: a file in an archive in an archive.
@@ -893,8 +896,10 @@ impl Shell {
             self.preview.phase = PreviewPhase::Queued;
             let mime = if entry.is_dir() {
                 Some("inode/directory".into())
+            } else if entry.is_broken_link() {
+                Some("inode/symlink".into())
             } else {
-                bibli_platform::mime::by_name(&entry.name).map(|m| {
+                bibli_platform::mime::by_name(entry.type_name()).map(|m| {
                     // Ask for the type's name now; the header reads it later.
                     self.type_names.get(&m);
                     m.to_string()
@@ -903,16 +908,19 @@ impl Shell {
             self.preview.details_at = None;
             let app = Arc::clone(&self.app);
             self.type_names.request(&app);
-            let identified =
-                entry.is_dir() || (mime.is_some() && !bibli_platform::mime::ambiguous(&entry.name));
+            let identified = entry.is_dir()
+                || entry.is_broken_link()
+                || (mime.is_some() && !bibli_platform::mime::ambiguous(entry.type_name()));
             self.preview.info = Info {
                 name: entry.name_str().into_owned(),
+                type_name: entry.type_name().to_string_lossy().into_owned(),
                 mime,
                 identified,
                 size: None,
                 modified: None,
                 is_dir: entry.is_dir(),
                 icon: self.icons.for_entry(&entry, 48),
+                link: icons::Link::of(&entry),
             };
             // Where the pane is reads as the sidebar and the tabs name it.
             if here {
@@ -1366,9 +1374,13 @@ impl Shell {
         let previews = Arc::clone(&self.app.previews);
         let wake = self.app.waker_handle();
         let is_dir = entry.is_dir();
+        // A link that leads nowhere has nothing to read: said as such, not
+        // as the error opening its missing target gives.
+        let broken = entry.is_broken_link();
         // The file's own name, while its type is not settled: the worker
         // reads the bytes to settle it, once.
-        let unsettled = (!is_dir && !self.preview.info.identified).then(|| entry.name.clone());
+        let unsettled =
+            (!is_dir && !self.preview.info.identified).then(|| entry.type_name().to_owned());
         let session = self.preview.reader.session.clone();
         let picture_side = self.preview.picture_side;
         // A document's page is rendered at the side pages are shown at.
@@ -1425,6 +1437,9 @@ impl Shell {
                 let mut request = request;
                 // Whether the entry itself is shown, not a member of it.
                 let own = nested.is_none() && descend.is_none();
+                if broken && own {
+                    return fail(anyhow::anyhow!("Nothing is at the link's target"));
+                }
                 let source = |member: &Nested, request: &mut PreviewRequest, path: &mut PathBuf| {
                     request.entry = member.entry.clone();
                     request.mime.clone_from(&member.mime);
@@ -2810,7 +2825,7 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
         .children(
             info.icon
                 .as_ref()
-                .map(|icon| div().flex_none().child(icons::element(icon, ICON))),
+                .map(|icon| icons::with_link(icons::element(icon, ICON), ICON, info.link, theme)),
         )
         .child(
             div()
@@ -2880,8 +2895,13 @@ fn type_label(shell: &Shell, info: &Info) -> Option<String> {
         return Some("Folder".into());
     }
     let mime = info.mime.as_deref()?;
+    // The type given to a link that leads nowhere (a link that resolves is
+    // named as what it leads to).
+    if mime == "inode/symlink" {
+        return Some(crate::typenames::BROKEN_LINK.into());
+    }
     Some(shell.type_names.peek(mime).map_or_else(
-        || crate::typenames::fallback(&info.name),
+        || crate::typenames::fallback(&info.type_name),
         |name| name.to_string(),
     ))
 }

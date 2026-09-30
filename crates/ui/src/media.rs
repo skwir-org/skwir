@@ -845,7 +845,7 @@ pub fn surface(
 /// A file of the kind a player steps through (`audio/`, `video/`).
 pub(crate) fn is_track(entry: &bibli_core::Entry, kind: &str) -> bool {
     !entry.is_dir()
-        && bibli_platform::mime::by_name(&entry.name)
+        && bibli_platform::mime::by_name(entry.type_name())
             .is_some_and(|mime| mime.as_str().starts_with(kind))
 }
 

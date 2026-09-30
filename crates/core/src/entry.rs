@@ -164,12 +164,29 @@ impl Metadata {
     }
 }
 
+/// Where a link leads, followed to the end.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkTarget {
+    /// What is there.
+    pub kind: EntryKind,
+    /// The name of what is there. It, not the link's own name, says what
+    /// type of file the link opens (`Entry::type_name`).
+    pub name: OsString,
+}
+
 /// One entry of a listing.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Entry {
     pub id: EntryId,
     pub name: OsString,
+    /// What the entry is itself: a link is `Symlink`, whatever it leads to.
     pub kind: EntryKind,
+    /// What a link leads to, followed to the end: `None` for a link that
+    /// leads nowhere (its target missing, a loop, a folder we may not
+    /// enter) and for anything that is not a link. Read when the entry is
+    /// listed or stat-ed, so a link to a folder sorts, shows and opens as
+    /// one from its first row.
+    pub target: Option<LinkTarget>,
     pub metadata: Metadata,
 }
 
@@ -179,6 +196,7 @@ impl Entry {
             id,
             name: name.into(),
             kind,
+            target: None,
             metadata: Metadata::default(),
         }
     }
@@ -187,7 +205,32 @@ impl Entry {
         self.name.to_string_lossy()
     }
 
+    /// Whether the entry opens as a folder: a directory, or a link that
+    /// leads to one. Everything shown and navigated asks this; what the
+    /// entry is on disk (what an operation acts on) is `kind`.
     pub fn is_dir(&self) -> bool {
         self.kind == EntryKind::Directory
+            || self
+                .target
+                .as_ref()
+                .is_some_and(|target| target.kind == EntryKind::Directory)
+    }
+
+    /// The name that says what type of file this is: a link's target's,
+    /// since a link opens what it leads to; the entry's own otherwise.
+    pub fn type_name(&self) -> &std::ffi::OsStr {
+        self.target
+            .as_ref()
+            .map_or(&self.name, |target| &target.name)
+    }
+
+    /// Whether the entry is a link, resolved or not.
+    pub fn is_link(&self) -> bool {
+        self.kind == EntryKind::Symlink
+    }
+
+    /// A link whose target is missing (or cannot be reached).
+    pub fn is_broken_link(&self) -> bool {
+        self.is_link() && self.target.is_none()
     }
 }

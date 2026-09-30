@@ -594,3 +594,93 @@ fn a_filter_shows_only_names_holding_it_until_the_pane_shows_another_folder() {
     let ws = app.workspace.read();
     assert_eq!(ws.pane(pane).unwrap().filter(), None);
 }
+
+#[test]
+fn a_link_is_listed_as_what_it_leads_to() {
+    use bibli_core::entry::{EntryKind, Value, keys};
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("links");
+    std::fs::create_dir_all(dir.join("real folder")).unwrap();
+    std::fs::write(dir.join("a note's text.txt"), "hello, some words").unwrap();
+    let link = |target: &str, name: &str| std::os::unix::fs::symlink(target, dir.join(name));
+    link("real folder", "a folder link").unwrap();
+    link("a note's text.txt", "a file link").unwrap();
+    // A chain: the type is the last link's target's.
+    link("a file link", "a link to a link").unwrap();
+    link("nowhere", "a broken link").unwrap();
+    let app = app(tmp.path());
+
+    let open = app.open_location(&Location::from_path(&dir)).unwrap();
+    let mut listing = bibli_core::Listing::default();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !listing.is_complete() {
+        listing.apply(open.events().recv_deadline(deadline).expect("listing"));
+    }
+    let find = |listing: &bibli_core::Listing, name: &str| {
+        listing
+            .iter()
+            .find(|e| e.name == name)
+            .unwrap_or_else(|| panic!("{name} listed"))
+            .clone()
+    };
+    let kind = |e: &bibli_core::Entry| e.target.as_ref().map(|target| target.kind);
+    let folder = find(&listing, "a folder link");
+    assert_eq!(
+        folder.kind,
+        EntryKind::Symlink,
+        "the entry is the link itself"
+    );
+    assert_eq!(kind(&folder), Some(EntryKind::Directory));
+    assert!(folder.is_dir() && !folder.is_broken_link());
+    let file = find(&listing, "a file link");
+    assert_eq!(kind(&file), Some(EntryKind::File));
+    assert!(!file.is_dir());
+    assert_eq!(file.type_name(), "a note's text.txt");
+    assert_eq!(
+        find(&listing, "a link to a link").type_name(),
+        "a note's text.txt"
+    );
+    let broken = find(&listing, "a broken link");
+    assert!(broken.is_broken_link());
+    assert_eq!(broken.type_name(), "a broken link");
+
+    // Folders sort first, and a link to one with them, from the first
+    // listing: rows off screen are never hydrated.
+    let order: Vec<_> = listing
+        .sorted(bibli_core::location::SortSpec::default())
+        .iter()
+        .map(|id| {
+            listing
+                .get(*id)
+                .unwrap()
+                .name
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    assert_eq!(
+        order[..2],
+        ["a folder link".to_owned(), "real folder".to_owned()]
+    );
+
+    // A stat (hydration, a watcher) says the same, and what a link says of
+    // size is what it leads to; a broken link says its own.
+    let ids = [folder.id, file.id, broken.id];
+    open.hydrate(&ids, Priority::Visible);
+    while !ids
+        .iter()
+        .all(|id| listing.get(*id).unwrap().metadata.is_hydrated())
+    {
+        listing.apply(open.events().recv_deadline(deadline).expect("hydrated"));
+    }
+    let folder = listing.get(folder.id).unwrap();
+    assert_eq!(folder.kind, EntryKind::Symlink);
+    assert_eq!(kind(folder), Some(EntryKind::Directory));
+    let size = |e: &bibli_core::Entry| e.metadata.value(keys::SIZE).and_then(Value::as_u64);
+    let file = listing.get(file.id).unwrap();
+    assert_eq!(size(file), Some(17), "the text's size, not the link's");
+    assert_eq!(file.type_name(), "a note's text.txt");
+    let broken = listing.get(broken.id).unwrap();
+    assert_eq!(size(broken), Some("nowhere".len() as u64));
+    assert!(broken.is_broken_link());
+}

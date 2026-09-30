@@ -324,7 +324,14 @@ impl Shared {
                 id
             };
             seen.push(id);
-            batch.push(Entry::new(id, name, kind_of(ent.file_type())));
+            let mut entry = Entry::new(id, name, kind_of(ent.file_type()));
+            // A link is followed now, not at hydration: whether it leads to
+            // a folder decides where it sorts, and rows off screen are not
+            // hydrated.
+            if entry.is_link() {
+                entry.target = crate::fs::stat::follow(&self.dirfd, entry.name.as_os_str());
+            }
+            batch.push(entry);
             if batch.len() >= self.ctx.batch_size {
                 let full = std::mem::replace(&mut batch, Vec::with_capacity(self.ctx.batch_size));
                 if !self.tx.send(ListingEvent::Added(full)) {

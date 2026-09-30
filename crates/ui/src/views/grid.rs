@@ -182,7 +182,7 @@ fn cell(
 ) -> AnyElement {
     let zoom = shell.zoom;
     let pane = shell.pane;
-    let (name, is_dir, selected, is_cursor, icon, path) = {
+    let (name, is_dir, selected, is_cursor, icon, link, path) = {
         let ws = shell.app.workspace.read();
         let Some(pane) = ws.pane(shell.pane) else {
             return div().into_any_element();
@@ -196,6 +196,7 @@ fn cell(
             pane.selection.contains(id),
             pane.selection.cursor == Some(id),
             shell.icons.for_entry(e, GridView::icon(zoom).1),
+            icons::Link::of(e),
             if e.is_dir() {
                 pane.open.as_ref().and_then(|o| o.path_of(id))
             } else {
@@ -279,7 +280,7 @@ fn cell(
                 .flex()
                 .items_end()
                 .justify_center()
-                .child(picture),
+                .child(icons::with_link(picture, icon_px, link, theme)),
         )
         .child(
             div()
