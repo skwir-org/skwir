@@ -5,6 +5,7 @@
 //! builds everywhere and Phase 5 fills them in.
 //!
 //! - [`mime`]: type detection by name (no I/O) or by content.
+//! - [`access`]: what the system adds to a file's mode (access lists, capabilities, a security label).
 //! - [`calendar`]: the user's time zone and first weekday, for dates people read.
 //! - [`icons`]: XDG icon theme lookup with caching.
 //! - [`picture`]: picture files decoded and sized the way their EXIF Orientation turns them.
@@ -17,6 +18,7 @@
 //! - [`uri`]: `file://` URIs escaped as the desktop escapes them.
 //! - [`process`]: bounded tool runs, and children started without waiting on them.
 
+pub mod access;
 pub mod calendar;
 pub mod diagram;
 pub mod document;

@@ -1459,10 +1459,10 @@ impl Shell {
             // A link a file names (where it was downloaded from), opened
             // in the browser when the user asks: bibli fetches nothing.
             "open_url" => {
-                if let Some(url) =
-                    arg("url").filter(|u| u.starts_with("https://") || u.starts_with("http://"))
-                {
-                    cx.open_url(&url);
+                // One filter for every link a file names: the platform's.
+                let url = arg("url").unwrap_or_default();
+                if let Err(e) = bibli_platform::open::open_web_uri(&url) {
+                    self.set_status(format!("Could not open the link: {e}"), true, cx);
                 }
             }
             "jump" => self.open_jump(window, cx),

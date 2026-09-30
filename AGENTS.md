@@ -180,8 +180,15 @@ current source before assuming a planned crate, command, or API exists.
   (`tags.edit`: add these, remove those), never a list written over each
   file. Commands that act on entries take `entries` so a surface acts on
   what it showed (Details, the tag editor), not the selection at the time.
-  A tag's color is its name's (`metadata::tag_color`) unless the user chose
-  one (`tags.colors`); copies keep every `user.*` attribute (ADR-006).
+  A tag's color is the user's choice (`tags.colors`), else the one its
+  file gives it (a Mac's Finder tag, `keys::TAG_COLORS`), else its name's
+  (`metadata::tag_color`); copies keep every `user.*` attribute (ADR-006).
+  A Mac's tags (`finder.rs`, under whichever name the attribute reached
+  Linux) are read with ours and written with them when the file has
+  both, so an edit holds on the Mac. A search by tag asks the indexes
+  first (`bibli_core::hints`, ADR-026: Baloo when it runs, the tags
+  plugin's own, learned as the provider reads files), checks every file
+  they name, and walks all the same: an index hints, the walk answers.
 - **Nothing to list is a state, not a blank.** `placeholder.rs` says why a
   pane is empty (empty folder, no results, empty shelf) or why it failed, in
   the user's words with the system's message as the detail, and offers the
@@ -280,7 +287,9 @@ current source before assuming a planned crate, command, or API exists.
   when the names (`Listing::names_version`, which hydration leaves alone),
   their order or the zoom change, never per frame or per metadata batch, and
   the label is clamped to that count so a disagreement with the shaper costs
-  an ellipsis, not an overlap. A name too long keeps both ends
+  an ellipsis, not an overlap. What would change a tile's height stays
+  off it: tags are dots over the picture's corner (`tags::tile_dots`),
+  their names in its tooltip. A name too long keeps both ends
   (`text_ellipsis_middle`, vendored patch 0005): the extension tells files
   apart. "Fill thumbnails"
   (`ui.grid_fill`, in the View menu) crops pictures to the box. Ctrl+wheel
@@ -432,7 +441,9 @@ current source before assuming a planned crate, command, or API exists.
   sit in one wrapping flex line one row tall (`views/list.rs::line`), so the
   columns drop whole, last first, and the name — the only child that grows —
   takes what they leave instead of sitting at its minimum beside the blank of
-  a column that went. Header and rows share that one function. A name too
+  a column that went. A row's tag chips take what the name leaves and are
+  placed in prepaint (`elements/chips.rs`): those that do not fit drop
+  whole, and "+N" says how many. Header and rows share that one function. A name too
   long keeps both ends (`text_ellipsis_middle`) in every view: the extension
   tells files apart. Which columns show is
   chosen where they are — the header's own menu (`Shell::open_column_menu`),

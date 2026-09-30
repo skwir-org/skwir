@@ -2,9 +2,10 @@
 //! editor (`ui.tags_prompt`, Ctrl+Shift+G).
 //!
 //! A tag wears the color the user chose for it (`tags.colors`, the tags
-//! plugin's, read when the settings change) or the one its name gives it
-//! (`bibli_core::metadata::tag_color`), so every view agrees without
-//! storing anything per file.
+//! plugin's, read when the settings change), else the one its file gives
+//! it (a Mac's Finder tags carry one: `keys::TAG_COLORS`), else the one
+//! its name gives it (`bibli_core::metadata::tag_color`), so every view
+//! agrees without storing anything of ours per file.
 //!
 //! The editor acts on the entries selected when it opened, whatever the
 //! selection is by the time it applies. It reads their tags from the files
@@ -54,16 +55,62 @@ impl TagColors {
 
     /// The color `tag` wears, as an index into `Theme::tags`.
     pub fn of(&self, tag: &str) -> usize {
+        self.of_or(tag, None)
+    }
+
+    /// The color `tag` wears where its file gives it `given`.
+    pub fn of_or(&self, tag: &str, given: Option<usize>) -> usize {
         self.0
             .get(&tag.to_lowercase())
             .copied()
+            .or(given)
             .unwrap_or_else(|| tag_color(tag))
+    }
+
+    /// The color `tag` wears on a file that gives its tags `given`.
+    pub fn of_given(&self, tag: &str, given: &[(String, usize)]) -> usize {
+        let given = given
+            .iter()
+            .find(|(t, _)| same_tag(t, tag))
+            .map(|(_, c)| *c);
+        self.of_or(tag, given)
     }
 
     /// Whether the user chose `tag`'s color.
     fn chosen(&self, tag: &str) -> bool {
         self.0.contains_key(&tag.to_lowercase())
     }
+}
+
+/// The colors an entry's file gives its tags (`keys::TAG_COLORS`), as
+/// indices into `Theme::tags`.
+pub fn given_colors(e: &bibli_core::Entry) -> Vec<(String, usize)> {
+    use bibli_core::Value;
+    let Some(Value::List(pairs)) = e.metadata.value(bibli_core::entry::keys::TAG_COLORS) else {
+        return Vec::new();
+    };
+    pairs
+        .iter()
+        .filter_map(|pair| {
+            let Value::List(pair) = pair else { return None };
+            let tag = pair.first()?.as_str()?;
+            let color = pair.get(1)?.as_str()?;
+            let index = TAG_COLORS.iter().position(|c| *c == color)?;
+            Some((tag.to_owned(), index))
+        })
+        .collect()
+}
+
+/// An entry's tags, each with the color it wears.
+pub fn entry_tags(e: &bibli_core::Entry, colors: &TagColors) -> Vec<(String, usize)> {
+    let given = given_colors(e);
+    crate::views::list::tags_of(e)
+        .into_iter()
+        .map(|t| {
+            let color = colors.of_given(&t, &given);
+            (t, color)
+        })
+        .collect()
 }
 
 /// A chip's height: rows of chips are one chip tall (the list's wrap).
@@ -82,6 +129,90 @@ pub fn chip(tag: &str, color: usize, theme: &Theme) -> Div {
         .text_xs()
         .bg(theme.tag_fill(color))
         .child(tag.to_owned())
+}
+
+/// How many tags a line left out, as a chip without a color.
+pub fn more_chip(n: usize, color: gpui::Hsla) -> Div {
+    div()
+        .flex_none()
+        .h(px(CHIP_HEIGHT))
+        .flex()
+        .items_center()
+        .whitespace_nowrap()
+        .px(px(3.))
+        .text_xs()
+        .text_color(color)
+        .child(format!("+{n}"))
+}
+
+/// The most dots a grid tile shows before "+N".
+const TILE_DOTS: usize = 3;
+
+/// A tile's tags as dots over the top corner of its picture, as many as
+/// `TILE_DOTS` and then how many more, their names in the tooltip. Over
+/// the picture, not under the name: the tile keeps the height its name
+/// gives it (`GridView::measure`), tagged or not. `None` for no tags.
+pub fn tile_dots(
+    id: impl Into<gpui::ElementId>,
+    tags: &[(String, usize)],
+    zoom: f32,
+    theme: &Theme,
+    font: gpui::SharedString,
+) -> Option<AnyElement> {
+    if tags.is_empty() {
+        return None;
+    }
+    // Growing slower than the picture, like the link's badge.
+    let side = (zoom * 0.04 + 7.).round().clamp(10., 16.);
+    let ring = theme.bg;
+    let more = tags.len().saturating_sub(TILE_DOTS);
+    let tip: gpui::SharedString = tags
+        .iter()
+        .map(|(tag, _)| tag.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+        .into();
+    Some(
+        div()
+            .id(id)
+            .absolute()
+            .top(px(-3.))
+            .left(px(-3.))
+            .flex()
+            .items_center()
+            .children(
+                tags.iter()
+                    .take(TILE_DOTS)
+                    .enumerate()
+                    .map(|(i, (_, color))| {
+                        // Each overlaps the one before it by a third, ringed so
+                        // they part on any picture.
+                        div()
+                            .flex_none()
+                            .size(px(side))
+                            .when(i > 0, |d| d.ml(px(-side / 3.)))
+                            .rounded_full()
+                            .border_2()
+                            .border_color(ring)
+                            .bg(theme.tags[color % theme.tags.len()])
+                    }),
+            )
+            .when(more > 0, |d| {
+                d.child(
+                    div()
+                        .ml(px(2.))
+                        .px(px(3.))
+                        .rounded_sm()
+                        .bg(ring)
+                        .text_color(theme.text_muted)
+                        .text_size(px(10.))
+                        .line_height(px(side))
+                        .child(format!("+{more}")),
+                )
+            })
+            .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), font.clone(), cx))
+            .into_any_element(),
+    )
 }
 
 /// A tag's dot, in its color.
@@ -136,6 +267,8 @@ pub struct TagRow {
     /// On how many entries it was when the editor opened.
     pub count: usize,
     pub mark: Mark,
+    /// The color a file gives it (a Finder tag's).
+    pub given: Option<usize>,
 }
 
 impl TagRow {
@@ -232,6 +365,8 @@ struct Selected {
 struct Counted {
     name: String,
     count: usize,
+    #[serde(default)]
+    color: Option<String>,
 }
 
 /// The rows the editor opens with: the entries' tags, then the ones the
@@ -247,6 +382,10 @@ fn rows_of(selected: Selected) -> Vec<TagRow> {
             } else {
                 Mark::Some
             },
+            given: t
+                .color
+                .as_deref()
+                .and_then(|c| TAG_COLORS.iter().position(|x| *x == c)),
             name: t.name,
             count: t.count,
         })
@@ -257,6 +396,7 @@ fn rows_of(selected: Selected) -> Vec<TagRow> {
                 name,
                 count: 0,
                 mark: Mark::None,
+                given: None,
             });
         }
     }
@@ -469,6 +609,7 @@ impl Shell {
                             name: tag.clone(),
                             count: 0,
                             mark: Mark::All,
+                            given: None,
                         },
                     );
                 }
@@ -596,7 +737,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
             ),
             Shown::Row(i) => {
                 let tag = &e.rows[*i];
-                let color = colors.of(&tag.name);
+                let color = colors.of_or(&tag.name, tag.given);
                 let index = *i;
                 let detail = match (tag.mark, tag.was(e.items)) {
                     (Mark::Some, _) => format!("on {} of {}", tag.count, e.items),
@@ -631,7 +772,8 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
         if let Shown::Row(i) = shown
             && e.colors_of == Some(i)
         {
-            list = list.child(color_strip(&e.rows[i].name, &colors, &theme, cx));
+            let row = &e.rows[i];
+            list = list.child(color_strip(&row.name, row.given, &colors, &theme, cx));
         }
     }
     if e.loaded && e.shown.is_empty() {
@@ -723,8 +865,14 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
 
 /// The colors `tag` can wear, under its row: a click chooses one for it
 /// everywhere (`tags.color`), Automatic gives back its name's.
-fn color_strip(tag: &str, colors: &TagColors, theme: &Theme, cx: &mut Context<Shell>) -> Div {
-    let current = colors.of(tag);
+fn color_strip(
+    tag: &str,
+    given: Option<usize>,
+    colors: &TagColors,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> Div {
+    let current = colors.of_or(tag, given);
     let chosen = colors.chosen(tag);
     let mut strip = div()
         .pl(px(52.))
@@ -800,6 +948,7 @@ mod tests {
                 3 => Mark::All,
                 _ => Mark::Some,
             },
+            given: None,
         }
     }
 
@@ -865,14 +1014,17 @@ mod tests {
                 Counted {
                     name: "Work".into(),
                     count: 2,
+                    color: None,
                 },
                 Counted {
                     name: "draft".into(),
                     count: 1,
+                    color: Some("blue".into()),
                 },
             ],
             known: vec!["home".into(), "work".into()],
         });
+        assert_eq!(rows[1].given, TAG_COLORS.iter().position(|c| *c == "blue"));
         let marks: Vec<(&str, Mark)> = rows.iter().map(|r| (r.name.as_str(), r.mark)).collect();
         assert_eq!(
             marks,
@@ -891,5 +1043,11 @@ mod tests {
         colors.0.insert("work".into(), 4);
         assert_eq!(colors.of("WORK"), 4);
         assert!(colors.chosen("Work") && !colors.chosen("home"));
+        // A file's color (a Finder tag's) comes before the name's, never
+        // before the user's.
+        let given = [("Home".to_owned(), 6), ("work".to_owned(), 1)];
+        assert_eq!(colors.of_given("home", &given), 6);
+        assert_eq!(colors.of_given("Work", &given), 4);
+        assert_eq!(colors.of_given("other", &given), tag_color("other"));
     }
 }

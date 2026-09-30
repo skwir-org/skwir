@@ -6,11 +6,26 @@ use std::path::Path;
 /// Follow a user-activated web link; document actions never launch local files
 /// or executable URI schemes through this surface.
 pub fn open_web_uri(uri: &str) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        uri.starts_with("https://") || uri.starts_with("http://"),
-        "unsupported document link"
-    );
+    anyhow::ensure!(is_web_uri(uri), "not a web link");
     open::that_detached(uri).map_err(Into::into)
+}
+
+/// Whether `uri` is a web link this surface follows: `http` or `https`,
+/// with a host, and nothing a handler could take for another argument.
+/// What a file names (a download's origin) comes here, so nothing else
+/// reaches the desktop's handlers.
+pub fn is_web_uri(uri: &str) -> bool {
+    let lower = uri.get(..8).unwrap_or(uri).to_ascii_lowercase();
+    let rest = if lower.starts_with("https://") {
+        &uri[8..]
+    } else if lower.starts_with("http://") {
+        &uri[7..]
+    } else {
+        return false;
+    };
+    !rest.is_empty()
+        && !rest.starts_with('/')
+        && !uri.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
 /// Show a place in the desktop's maps application: a `geo:` URI (RFC 5870)
@@ -147,5 +162,37 @@ mod imp {
 
     pub fn terminal_with<S: AsRef<OsStr>>(_dir: &Path, _argv: &[S]) -> anyhow::Result<Command> {
         anyhow::bail!("open_terminal_with is not implemented on this platform yet")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_web_uri;
+
+    #[test]
+    fn only_web_links_reach_the_desktop() {
+        for ok in [
+            "https://example.org/pic.jpg",
+            "http://example.org",
+            "HTTPS://example.org/a?b=c#d",
+            "https://example.org/it%27s%20here",
+        ] {
+            assert!(is_web_uri(ok), "{ok}");
+        }
+        for refused in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "ftp://example.org",
+            "smb://server/share",
+            "https://",
+            "https:///local",
+            "https://example.org/a b",
+            "https://example.org/\n--new-window",
+            "--help",
+            "",
+            "héhé",
+        ] {
+            assert!(!is_web_uri(refused), "{refused}");
+        }
     }
 }

@@ -182,7 +182,7 @@ fn cell(
 ) -> AnyElement {
     let zoom = shell.zoom;
     let pane = shell.pane;
-    let (name, is_dir, selected, is_cursor, icon, link, path) = {
+    let (name, is_dir, selected, is_cursor, icon, link, path, tags) = {
         let ws = shell.app.workspace.read();
         let Some(pane) = ws.pane(shell.pane) else {
             return div().into_any_element();
@@ -202,6 +202,7 @@ fn cell(
             } else {
                 None
             },
+            crate::tags::entry_tags(e, &shell.tag_colors),
         )
     };
     // A filled box shows the short side of the thumbnail at full size.
@@ -280,7 +281,19 @@ fn cell(
                 .flex()
                 .items_end()
                 .justify_center()
-                .child(icons::with_link(picture, icon_px, link, theme)),
+                .child(
+                    div()
+                        .relative()
+                        .flex_none()
+                        .child(icons::with_link(picture, icon_px, link, theme))
+                        .children(crate::tags::tile_dots(
+                            ("tile-tags", ix),
+                            &tags,
+                            zoom as f32,
+                            theme,
+                            shell.font.clone(),
+                        )),
+                ),
         )
         .child(
             div()

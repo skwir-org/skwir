@@ -25,8 +25,12 @@ use crate::theme::Theme;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Show {
     Text,
-    /// Tags, as chips in their colors; each searches for its tag.
-    Tags(Vec<String>),
+    /// Tags, as chips in their colors (`given`: those the file gives
+    /// some, a Finder tag's); each searches for its tag.
+    Tags {
+        tags: Vec<String>,
+        given: Vec<(String, usize)>,
+    },
     /// Stars to click (half stars, from 1 to 10, or unrated), rating
     /// `target`, the entry shown.
     Rating {
@@ -134,7 +138,7 @@ fn label_of(key: &str) -> String {
 }
 
 /// The fields Details names itself; any other is shown under More.
-const CORE: [&str; 14] = [
+const CORE: [&str; 15] = [
     keys::SIZE,
     keys::MODIFIED,
     keys::CREATED,
@@ -145,6 +149,7 @@ const CORE: [&str; 14] = [
     keys::GID,
     keys::LINK_TARGET,
     keys::TAGS,
+    keys::TAG_COLORS,
     keys::RATING,
     keys::COMMENT,
     keys::ORIGIN,
@@ -169,7 +174,10 @@ fn notes_groups(entry: &Entry, path: &std::path::Path) -> [Option<Group>; 2] {
     let target = serde_json::json!([EntryRef::new(entry.id, path)]);
     let tags = crate::views::list::tags_of(entry);
     let mut tags_row = Row {
-        show: Show::Tags(tags.clone()),
+        show: Show::Tags {
+            tags: tags.clone(),
+            given: crate::tags::given_colors(entry),
+        },
         source: meta
             .get(keys::TAGS)
             .and_then(|f| note_source(&f.provenance)),
@@ -422,6 +430,7 @@ fn preview_group(shell: &Shell) -> Option<Group> {
 fn tag_chips(
     shell: &Shell,
     tags: &[String],
+    given: &[(String, usize)],
     row: usize,
     theme: &Theme,
     cx: &mut Context<Shell>,
@@ -433,7 +442,7 @@ fn tag_chips(
         .gap_1()
         .children(tags.iter().enumerate().map(|(i, tag)| {
             let search = tag.clone();
-            crate::tags::chip(tag, shell.tag_colors.of(tag), theme)
+            crate::tags::chip(tag, shell.tag_colors.of_given(tag, given), theme)
                 .id(("detail-tag", row * 64 + i))
                 .cursor_pointer()
                 .text_color(theme.text)
@@ -531,6 +540,13 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
         .chain(preview_group(shell).iter())
         .chain(preview.details.iter())
         .cloned()
+        .map(|mut group| {
+            // What the system adds to the mode, read after the rest.
+            if group.title.as_ref() == "Permissions" {
+                group.rows.extend(preview.access.iter().cloned());
+            }
+            group
+        })
         .collect::<Vec<_>>();
     let mut list = div()
         .id("details-list")
@@ -560,8 +576,8 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
             let shown = match &row.show {
                 Show::Text => (!row.value.is_empty())
                     .then(|| div().child(row.value.clone()).into_any_element()),
-                Show::Tags(tags) => (!tags.is_empty())
-                    .then(|| tag_chips(shell, tags, id, theme, cx).into_any_element()),
+                Show::Tags { tags, given } => (!tags.is_empty())
+                    .then(|| tag_chips(shell, tags, given, id, theme, cx).into_any_element()),
                 Show::Rating { rating, target } => {
                     Some(star_picker(*rating, target, id, theme, cx).into_any_element())
                 }
@@ -718,7 +734,13 @@ mod tests {
             ("work, draft", None),
             "notes are the user's: no need to say so"
         );
-        assert_eq!(tags.show, Show::Tags(vec!["work".into(), "draft".into()]));
+        assert_eq!(
+            tags.show,
+            Show::Tags {
+                tags: vec!["work".into(), "draft".into()],
+                given: Vec::new()
+            }
+        );
         let rating = find("Notes", "Rating").unwrap();
         assert_eq!(rating.value.as_ref(), "3½ stars");
         assert!(matches!(

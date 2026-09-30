@@ -36,6 +36,41 @@ Poppler, GStreamer or libarchive. Open gate: idle PSS is about 118 to 120 MB aga
 been loosened. The per-change validation history that used to sit here is in
 `docs/STATUS-LOG.md`.
 
+Tags, continued (2026-09-30): the grid shows a tile's tags as dots over
+its picture's corner (three, then "+N", the names in a tooltip), so rows
+keep the height their names give them; a list row's chips are placed in
+prepaint (`elements/chips.rs`) and "+N" says how many dropped. A Mac's
+Finder tags (`com.apple.metadata:_kMDItemUserTags`, a binary property
+list, under `user.`, `osx.` on an HFS+ volume, or as a Samba stream) are
+read with ours, wear the color the Mac gave them (`keys::TAG_COLORS`),
+and are rewritten with ours on an edit, an undo giving their colors back;
+a tag named after a color wears it. `tags.toggle` gives or takes one tag,
+to bind to a key. Details lists what the system adds to the mode (an
+access list, a default one, file capabilities, an SELinux label) under
+Permissions, read with the fields on a worker. `ui.open_url` goes through
+the platform's one link filter (`open::is_web_uri`), which refuses what
+is not an `http(s)` link with a host and says so. Measured
+(`bibli-bench`, new `tags_fill_us`, `tag_search_us` and a `search`
+command that prints each run): a search stat-ed every file by opening
+its folder again; through a folder kept open (`fs::Statter`) a stat-only
+search of a million files went from 2.2–2.8 s to 0.64–0.9 s. `tag:`
+stays bound by reading attributes (btrfs: about 1.6 s per million, not
+scaling past eight threads), so ADR-026 adds hints: a `tag:` search asks
+Baloo (when it indexes) and an index the tags plugin learns as it reads
+files, considers those files first, then walks; the first of 1 000 hits
+in a million files arrive after 0.10 s instead of seconds. Checked in a
+window on an isolated display (dots and their tooltip, "+N" at two
+widths, Finder colors, the access list, Open with a stand-in `xdg-open`)
+and idle CPU back to about 0%; Baloo against a private instance (an
+ignored test that starts `baloo_file` on its own D-Bus session).
+Deviations: no Finder attribute written by a Mac was read (the tests
+write Apple's format with the same encoder; an HFS+ image is the next
+check); the cold `tag:` time needs root to drop caches and is not
+measured; `bench-check` was run while other programs loaded the machine
+(load average 28 to 56), and the listing budgets of `flat100k` and
+`images10k` failed then, though `images10k` alone lists in 3.9–7.0 ms
+against 12.
+
 Tags and notes (2026-09-30): the tags plugin reads everything it knows of
 a file with one `listxattr` (then only the attributes present): tags, a
 rating (`user.baloo.rating`, half stars, as Dolphin) and a comment

@@ -214,6 +214,10 @@ pub(crate) enum PreviewPhase {
     Loading,
 }
 
+/// What the fields worker answers: rows about the content, and rows
+/// about access.
+type FieldRows = (Vec<crate::details::Row>, Vec<crate::details::Row>);
+
 // Independent switches of one panel, not a state machine in disguise.
 #[allow(clippy::struct_excessive_bools)]
 pub struct PreviewState {
@@ -296,8 +300,11 @@ pub struct PreviewState {
     /// worker, arriving with the generation they were asked at.
     pub fields: Vec<crate::details::Row>,
     fields_generation: u64,
-    fields_tx: flume::Sender<(u64, Vec<crate::details::Row>)>,
-    fields_rx: flume::Receiver<(u64, Vec<crate::details::Row>)>,
+    /// What the system adds to the file's mode (ACLs, capabilities),
+    /// read with `fields`, shown under Permissions.
+    pub access: Vec<crate::details::Row>,
+    fields_tx: flume::Sender<(u64, FieldRows)>,
+    fields_rx: flume::Receiver<(u64, FieldRows)>,
     /// What the entry says about itself, collected when it or its listing
     /// changes (`details_at`), never while painting.
     pub details: Vec<crate::details::Group>,
@@ -434,6 +441,7 @@ impl Default for PreviewState {
             nested_rx,
             fields: Vec::new(),
             fields_generation: 0,
+            access: Vec::new(),
             fields_tx,
             fields_rx,
             details: Vec::new(),
@@ -981,9 +989,10 @@ impl Shell {
                 ],
             });
         }
-        while let Ok((generation, rows)) = self.preview.fields_rx.try_recv() {
+        while let Ok((generation, (rows, access))) = self.preview.fields_rx.try_recv() {
             if generation == self.preview.fields_generation {
                 self.preview.fields = rows;
+                self.preview.access = access;
                 cx.notify();
             }
         }
@@ -1813,19 +1822,20 @@ impl Shell {
     }
 
     /// The fields Details shows for `entry` at `path` (a picture's place,
-    /// `bibli_core::fields`), read on a worker; what was shown for another
-    /// entry goes at once, and a late answer for it is dropped.
+    /// `bibli_core::fields`) and what the system adds to its mode
+    /// (`bibli_platform::access`), read on a worker; what was shown for
+    /// another entry goes at once, and a late answer for it is dropped.
     fn read_fields(&mut self, entry: &bibli_core::entry::Entry, path: &std::path::Path) {
         self.preview.fields_generation += 1;
         self.preview.fields.clear();
-        // A folder, a pipe, a device: no file to read a field of.
-        if entry.inode_type().is_some() {
-            return;
-        }
-        let shown = self.app.fields.shown_for(entry.type_name());
-        if shown.is_empty() {
-            return;
-        }
+        self.preview.access.clear();
+        // A folder, a pipe, a device: no file to read a field of. Their
+        // access is read all the same: without opening anything.
+        let shown = if entry.inode_type().is_some() {
+            Vec::new()
+        } else {
+            self.app.fields.shown_for(entry.type_name())
+        };
         let generation = self.preview.fields_generation;
         let tx = self.preview.fields_tx.clone();
         let fields = Arc::clone(&self.app.fields);
@@ -1838,6 +1848,10 @@ impl Shell {
             "detail-fields",
             cancel.clone(),
             move || {
+                let access: Vec<crate::details::Row> = bibli_platform::access::facts(&path)
+                    .into_iter()
+                    .map(|(label, value)| crate::details::Row::new(label, value))
+                    .collect();
                 let rows: Vec<crate::details::Row> = shown
                     .into_iter()
                     .filter_map(|(key, label)| {
@@ -1851,7 +1865,9 @@ impl Shell {
                         })
                     })
                     .collect();
-                if !rows.is_empty() && tx.send((generation, rows)).is_ok() {
+                if (!rows.is_empty() || !access.is_empty())
+                    && tx.send((generation, (rows, access))).is_ok()
+                {
                     wake();
                 }
             },

@@ -296,13 +296,7 @@ impl Shell {
                 is_cursor: cursor == Some(id),
                 icon,
                 hydrated: e.metadata.is_hydrated(),
-                tags: tags_of(e)
-                    .into_iter()
-                    .map(|t| {
-                        let color = self.tag_colors.of(&t);
-                        (t, color)
-                    })
-                    .collect(),
+                tags: crate::tags::entry_tags(e, &self.tag_colors),
                 rating: None,
                 link: icons::Link::of(e),
             };
@@ -477,27 +471,34 @@ pub fn row(
                 .text_ellipsis_middle()
                 .child(r.name.clone()),
         )
-        // The tags take only what the name leaves (no basis of their own)
-        // and wrap within one chip's height: the chips that do not fit drop
-        // whole, last first, and the name never gives way to them.
+        // The tags take only what the name leaves (no basis of their own):
+        // the chips that do not fit drop whole, last first, "+N" saying how
+        // many, and the name never gives way to them.
         .when(!r.tags.is_empty(), |d| {
-            d.child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .h(px(crate::tags::CHIP_HEIGHT))
-                    .overflow_hidden()
-                    .flex()
-                    .flex_wrap()
-                    .gap_1()
-                    .children(r.tags.iter().map(|(tag, color)| {
-                        crate::tags::chip(tag, *color, theme).text_color(if r.selected {
-                            theme.selection_text
-                        } else {
-                            theme.text
-                        })
-                    })),
-            )
+            let text = if r.selected {
+                theme.selection_text
+            } else {
+                theme.text
+            };
+            let muted = if r.selected {
+                theme.selection_text
+            } else {
+                theme.text_muted
+            };
+            d.child(crate::elements::chips::ChipLine {
+                chips: r
+                    .tags
+                    .iter()
+                    .map(|(tag, color)| {
+                        crate::tags::chip(tag, *color, theme)
+                            .text_color(text)
+                            .into_any_element()
+                    })
+                    .collect(),
+                more: Box::new(move |n| crate::tags::more_chip(n, muted).into_any_element()),
+                height: crate::tags::CHIP_HEIGHT,
+                gap: 4.,
+            })
         });
     let mut line = line(name, if compact { 0. } else { NAME_MIN }, height);
     if !compact {
