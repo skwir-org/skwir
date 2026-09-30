@@ -116,3 +116,14 @@ The toolbar stays the same width as lenses are added.
 Amended 2026-09-29: an `Alternate` view (the tree, ADR-025) shows the
 folder's entries in a shape chosen now and then; it is offered like a
 lens, so the toolbar keeps the shapes switched between all the time.
+
+Amended 2026-09-30: a file with several hard links is counted once in
+each folder that holds it, as `du` counts it: a folder weighs what it
+holds, and one holding two links to a file holds it once. Two sibling
+folders sharing a file each hold it, so a folder's blocks may add up to
+more than the folder. Each folder keeps the linked files whose other
+links may lie outside it (dropped once every link is found), so a total
+depends only on its own subtree and a cached folder composes into any
+parent. Progress snapshots subtract what the branch shares with the tree
+without merging, and stay lower bounds. Reflinked or deduplicated
+extents are still counted for each file: stat cannot see them.

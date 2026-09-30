@@ -26,7 +26,7 @@ use crossbeam_channel::{Receiver, Sender};
 use notify::{ErrorKind, EventKind, RecursiveMode, Watcher, event::ModifyKind};
 use parking_lot::Mutex;
 
-use super::{Message, Node, Request, Shared, SnapshotKind, Status};
+use super::{Linked, Links, Message, Node, Request, Shared, SnapshotKind, Status};
 
 const MAX_CHILDREN: usize = 64;
 const MAX_CACHE_BYTES: usize = 16 * 1024 * 1024;
@@ -64,6 +64,7 @@ fn cost(n: &Node) -> usize {
     std::mem::size_of::<Node>()
         + n.path.as_os_str().len() * 3
         + n.name.len()
+        + n.links.0.len() * 2 * std::mem::size_of::<(EntryId, Linked)>()
         + n.children.iter().map(cost).sum::<usize>()
 }
 impl Cache {
@@ -355,15 +356,90 @@ impl Progress {
         let mut tree = self.tree.clone();
         tree.incomplete = true;
         if let Some(branch) = &self.branch {
-            add_contents(&mut tree, branch);
+            // Read only: merging would copy the root's links every snapshot.
+            add_totals(&mut tree, branch);
+            let (size, alloc) = self.tree.links.overlap(&branch.links);
+            tree.size -= size;
+            tree.alloc -= alloc;
             replace_pending(&mut tree, branch.clone());
         }
+        // Shown, never cached: the links stay with the tree being counted.
+        tree.links = Arc::default();
         trim(&mut tree);
         tree
     }
 }
 
+impl Links {
+    /// One more link to `id` found under the folder; whether one was found
+    /// before, whose bytes the folder already counts.
+    fn found(&mut self, id: EntryId, linked: Linked) -> bool {
+        use std::collections::hash_map::Entry;
+        match self.0.entry(id) {
+            Entry::Occupied(mut known) => {
+                known.get_mut().found += linked.found;
+                if known.get().found >= known.get().nlink {
+                    known.remove();
+                }
+                true
+            }
+            Entry::Vacant(new) => {
+                if linked.found < linked.nlink {
+                    new.insert(linked);
+                }
+                false
+            }
+        }
+    }
+
+    /// What `other` holds that this counts too.
+    fn overlap(&self, other: &Links) -> (u64, u64) {
+        let (small, large) = if self.0.len() <= other.0.len() {
+            (self, other)
+        } else {
+            (other, self)
+        };
+        small
+            .0
+            .iter()
+            .filter(|(id, _)| large.0.contains_key(id))
+            .fold((0, 0), |(size, alloc), (_, l)| {
+                (size + l.size, alloc + l.alloc)
+            })
+    }
+}
+
+/// Add what `child` holds to the folder `total`, counting a file with
+/// several links once, as `du` does: a folder weighs what it holds, and a
+/// folder holding two links to one file holds it once. Each folder's
+/// total is its own (two folders sharing a file each hold it), so a total
+/// is the same whether its folder was counted now or kept from before.
 fn add_contents(total: &mut Node, child: &Node) {
+    add_totals(total, child);
+    let forget = |total: &mut Node, id: EntryId, linked: Linked| {
+        if Arc::make_mut(&mut total.links).found(id, linked) {
+            total.size -= linked.size;
+            total.alloc -= linked.alloc;
+        }
+    };
+    if child.is_dir {
+        for (id, linked) in &child.links.0 {
+            forget(total, *id, *linked);
+        }
+    } else if child.nlink > 1
+        && let Some(id) = child.id
+    {
+        let linked = Linked {
+            found: 1,
+            nlink: child.nlink,
+            size: child.size,
+            alloc: child.alloc,
+        };
+        forget(total, id, linked);
+    }
+}
+
+fn add_totals(total: &mut Node, child: &Node) {
     total.size += child.size;
     total.alloc += child.alloc;
     total.files += child.files;
@@ -371,6 +447,8 @@ fn add_contents(total: &mut Node, child: &Node) {
 }
 
 fn replace_pending(tree: &mut Node, mut child: Node) {
+    // Its links were added to the tree's; a row needs none.
+    child.links = Arc::default();
     if let Some(index) = tree.children.iter().position(|n| n.path == child.path) {
         tree.children.swap_remove(index);
     } else {
@@ -407,6 +485,7 @@ fn entry_node(entry: &std::fs::DirEntry, dev: u64) -> std::io::Result<(Node, boo
             size: if is_dir { 0 } else { metadata.len() },
             alloc: if is_dir { 0 } else { metadata.blocks() * 512 },
             files: u64::from(!is_dir),
+            nlink: if is_dir { 0 } else { metadata.nlink() },
             ..Node::default()
         },
         descend,
@@ -677,6 +756,7 @@ impl<'a> Scanner<'a> {
                     size: metadata.len(),
                     alloc: metadata.blocks() * 512,
                     files: 1,
+                    nlink: metadata.nlink(),
                     ..Node::default()
                 }
             } else if !descend(&path, &metadata, self.dev) {
@@ -711,11 +791,11 @@ impl<'a> Scanner<'a> {
             {
                 add_contents(branch, &child);
             }
-            node.size += child.size;
-            node.alloc += child.alloc;
-            node.files += child.files;
-            node.dirs += child.dirs + u64::from(child.is_dir);
+            add_contents(&mut node, &child);
+            node.dirs += u64::from(child.is_dir);
+            // Its links were added to the folder's; a row needs none.
             child.children.clear();
+            child.links = Arc::default();
             node.children.push(child);
             // Keep transient memory bounded even in directories with millions of entries.
             if node.children.len() > MAX_CHILDREN * 2 {
@@ -1710,6 +1790,63 @@ mod tests {
             self::revision(&shared),
             revision,
             "a cached root publishes no partial updates"
+        );
+    }
+
+    #[test]
+    fn a_file_with_several_links_is_counted_once_where_they_meet() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("photos/nested")).unwrap();
+        std::fs::create_dir(root.join("backup")).unwrap();
+        std::fs::write(root.join("photos/a.bin"), [7; 1000]).unwrap();
+        std::fs::hard_link(
+            root.join("photos/a.bin"),
+            root.join("photos/nested/again.bin"),
+        )
+        .unwrap();
+        std::fs::hard_link(root.join("photos/a.bin"), root.join("backup/a copy.bin")).unwrap();
+        std::fs::write(root.join("own.txt"), b"hello").unwrap();
+        let alloc = |path: &str| std::fs::metadata(root.join(path)).unwrap().blocks() * 512;
+
+        let request = request(0, root.into());
+        let (shared, updates) = observed(&request);
+        let mut cache = Cache::default();
+        let result = scanner(&mut cache, &request, &shared).root().unwrap();
+        let child = |name: &str| {
+            result
+                .children
+                .iter()
+                .find(|n| n.name == name)
+                .unwrap()
+                .clone()
+        };
+        // Each folder holds the file once, however many links it holds.
+        assert_eq!(child("photos").size, 1000);
+        assert_eq!(child("photos").alloc, alloc("photos/a.bin"));
+        assert_eq!(child("backup").size, 1000);
+        // Their parent holds it once too: the disk holds it once.
+        assert_eq!(result.size, 1005);
+        assert_eq!(result.alloc, alloc("photos/a.bin") + alloc("own.txt"));
+        assert_eq!(result.files, 4, "every name is an item");
+        // What was shown while counting never said more than there is.
+        while let Ok(update) = updates.try_recv() {
+            assert!(update.size <= result.size, "{} counted so far", update.size);
+        }
+        // The same kept or counted again, from the root or from a folder.
+        assert_eq!(
+            scanner(&mut cache, &request, &shared).root().unwrap().size,
+            1005
+        );
+        let photos = self::request(0, root.join("photos"));
+        assert_eq!(
+            scanner(&mut cache, &photos, &shared).root().unwrap().size,
+            1000
+        );
+        let mut cold = Cache::default();
+        assert_eq!(
+            scanner(&mut cold, &photos, &shared).root().unwrap().size,
+            1000
         );
     }
 

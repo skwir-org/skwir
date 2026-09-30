@@ -46,6 +46,29 @@ pub struct Node {
     pub other_count: u64,
     #[serde(default)]
     pub other_incomplete: u64,
+    /// A file's number of links (`st_nlink`): one with several is counted
+    /// once where they meet. 0 for a folder.
+    #[serde(skip)]
+    pub nlink: u64,
+    /// Of a folder: the files with several links found under it whose
+    /// other links may be outside it, so that a folder above holding
+    /// more of them counts each once (`worker::add_contents`). Not sent.
+    #[serde(skip)]
+    pub links: Arc<Links>,
+}
+
+/// Files with several links, by identity, each with how many of its links
+/// were found and what it weighs. A file whose links were all found is
+/// dropped: no folder above can find it again.
+#[derive(Clone, Debug, Default)]
+pub struct Links(pub(crate) HashMap<bibli_core::EntryId, Linked>);
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Linked {
+    pub(crate) found: u64,
+    pub(crate) nlink: u64,
+    pub(crate) size: u64,
+    pub(crate) alloc: u64,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
