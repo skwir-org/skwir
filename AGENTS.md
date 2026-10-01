@@ -527,7 +527,16 @@ current source before assuming a planned crate, command, or API exists.
   whoever edits it); the UI knows no query syntax and reads the chips once
   per location, never per frame. The text stays the one truth: a part no
   facet holds is a pill of its own, and a click beside the pills (or
-  Ctrl+L) edits its text, where it looks staying a pill. A choice navigates, so Back undoes it. An
+  Ctrl+L) edits its text, where it looks staying a pill. A choice navigates, so Back undoes it.
+  The tags a search requires are a set, each a chip of its own read as a
+  path (`Places › France`, a category going back up to it; "+" between
+  tags), and none is a NOT (`not_tag`). Over a search with a tag, a bar
+  offers where it can narrow to (`narrow.rs`): the tags within each of
+  its tags, the other tags its files have, their kinds and years, each
+  with how many files, counted from the results when the listing changes;
+  a click refines the search (a tag within one takes its place), Alt+click
+  leaves a tag out. The sidebar suggests the tags at the top: a category
+  stands for those within it. An
   affordance that goes with what it acts on (a pill's ×) takes no focus;
   the keyboard reaches the same through the pill's menu. A location is
   named in words by its provider (`LocationProvider::title`: a search as

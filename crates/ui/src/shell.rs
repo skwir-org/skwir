@@ -69,6 +69,8 @@ pub struct PaneUi {
     pub omni: Option<crate::omnibox::Omni>,
     /// What the files it shows weigh, for its footer (`weight.rs`).
     pub weight: crate::weight::Weight,
+    /// What its search of tags can be narrowed to.
+    pub narrow: crate::narrow::Narrow,
     /// The chips of the search it shows (`search_bar`).
     pub chips: crate::search_bar::Chips,
     /// The placeholder's button, kept so Tab can reach it.
@@ -679,6 +681,7 @@ impl Shell {
             last_search: String::new(),
             omni: None,
             weight: crate::weight::Weight::default(),
+            narrow: crate::narrow::Narrow::default(),
             chips: crate::search_bar::Chips::default(),
             placeholder_focus: cx.focus_handle(),
             returning: true,
@@ -2111,6 +2114,8 @@ impl Shell {
             }
         };
         let message = crate::loading::message(self, id);
+        self.sync_narrow();
+        let narrow = crate::narrow::render(self, cx);
         let file_area = self.pane_container(body, cx);
         let strip = if active {
             timeline::render(self, cx)
@@ -2157,6 +2162,7 @@ impl Shell {
                     .border_color(if active { theme.accent } else { theme.border })
             })
             .child(address_bar)
+            .children(narrow)
             .when_some(message, |d, message| {
                 d.child(
                     div()

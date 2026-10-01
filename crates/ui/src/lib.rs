@@ -44,6 +44,7 @@ mod media;
 mod members;
 pub mod menu;
 pub mod modal;
+pub mod narrow;
 mod nav_menu;
 mod note_popover;
 mod omnibox;

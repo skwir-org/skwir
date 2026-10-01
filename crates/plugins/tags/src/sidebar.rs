@@ -12,7 +12,9 @@ use bibli_core::app::App;
 use bibli_core::app::NotifyLevel;
 use bibli_core::command::{Invocation, Outcome};
 use bibli_core::location::Location;
-use bibli_core::metadata::{TAG_COLOR_SETTING, TAG_COLORS, same_tag, tag_color, tag_lineage};
+use bibli_core::metadata::{
+    TAG_COLOR_SETTING, TAG_COLORS, same_tag, tag_color, tag_lineage, tag_parent,
+};
 use bibli_core::registry::{MenuItem, Place, Reorder};
 use parking_lot::Mutex;
 
@@ -328,9 +330,14 @@ pub fn publish(app: &App, index: &Arc<TagIndex>, vocabulary: &Vocabulary, shown:
             .get::<i64>(SETTING)
             .unwrap_or(DEFAULT)
             .clamp(0, 50);
+        // The tags at the top: a category stands for those within it,
+        // which its search narrows to.
+        let at_most = usize::try_from(at_most).unwrap_or_default();
         let mut rows: Vec<Row> = index
-            .top(usize::try_from(at_most).unwrap_or_default(), &home)
+            .top(usize::MAX, &home)
             .into_iter()
+            .filter(|(tag, _)| tag_parent(tag).is_none())
+            .take(at_most)
             .filter_map(|(tag, _)| row(tag, false))
             .collect();
         // In the order of their names, so a pill stays put while counts

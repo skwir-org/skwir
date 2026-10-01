@@ -2,7 +2,15 @@
 //!
 //! A query's top-level terms (the ones it requires together) are sorted into
 //! facets: its words, the kinds of file, when they were modified, their
-//! size, a tag, what they contain, and where the search looks. What no
+//! size, the tags every match has and those none has, what they contain,
+//! and where the search looks.
+//!
+//! The tags are a set, each a category holding what is within it
+//! (`metadata::tag_within`): a tag within one already there narrows it
+//! (`Places/France` takes the place of `Places`), one holding one there
+//! adds nothing. Each is a chip of its own whose segments go up to its
+//! categories (`Places › France`: `Places` goes back to `Places`), so a
+//! search of tags reads, and walks, like a path. What no
 //! facet holds (an OR across terms, a NOT, another field, a second period)
 //! stays as text in a chip of its own, so nothing a person typed is lost.
 //!
@@ -13,6 +21,7 @@
 //! the language's own (`kind:image`, `modified:this-week`, `size>1G`).
 
 use bibli_core::command::Invocation;
+use bibli_core::metadata::{TAG_SEPARATOR, clean_tag, same_tag, tag_within};
 use bibli_platform::mime::Kind;
 use serde::Serialize;
 
@@ -56,6 +65,18 @@ pub struct Chip {
     pub choices: Vec<Choice>,
     /// Takes the facet out of the search, when it is set.
     pub clear: Option<Invocation>,
+    /// A tag's chip: its categories, each going up to it, then itself.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub segments: Vec<Segment>,
+}
+
+/// A part of a tag's chip.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct Segment {
+    pub label: String,
+    /// Up to this category; `None` for the tag itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<Invocation>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -86,7 +107,10 @@ struct Parts {
     kinds: Vec<Kind>,
     modified: Option<String>,
     size: Option<String>,
-    tag: Option<String>,
+    /// Every match has each, or one within it.
+    tags: Vec<String>,
+    /// No match has any.
+    not_tags: Vec<String>,
     content: Option<String>,
     advanced: Vec<String>,
 }
@@ -124,7 +148,12 @@ impl Parts {
                 Expr::Term(Term::Size { text, .. }) if p.size.is_none() => {
                     p.size = Some(text.clone());
                 }
-                Expr::Term(Term::Tag(t)) if p.tag.is_none() => p.tag = Some(t.clone()),
+                Expr::Term(Term::Tag(t)) => p.add_tag(t),
+                Expr::Not(inner) if matches!(&**inner, Expr::Term(Term::Tag(_))) => {
+                    if let Expr::Term(Term::Tag(t)) = &**inner {
+                        p.exclude_tag(t);
+                    }
+                }
                 Expr::Term(t @ Term::Content(_)) if p.content.is_none() => {
                     p.content = Some(t.to_string());
                 }
@@ -154,12 +183,36 @@ impl Parts {
                 _ => {}
             }
         }
-        match (&self.tag, other.tag) {
-            (None, tag) => self.tag = tag,
-            (Some(_), Some(tag)) => self.advanced.push(tag_term(&tag)),
-            (Some(_), None) => {}
+        for tag in other.tags {
+            self.add_tag(&tag);
+        }
+        for tag in other.not_tags {
+            self.exclude_tag(&tag);
         }
         self.advanced.extend(other.advanced);
+    }
+
+    /// One more tag every match has: one within it narrows a tag there
+    /// (`Places/France` replaces `Places`); one holding a tag there adds
+    /// nothing. No longer one none has.
+    fn add_tag(&mut self, tag: &str) {
+        let tag = clean_tag(tag);
+        if tag.is_empty() || self.tags.iter().any(|t| tag_within(t, &tag)) {
+            return;
+        }
+        self.tags.retain(|t| !tag_within(&tag, t));
+        self.not_tags.retain(|t| !same_tag(t, &tag));
+        self.tags.push(tag);
+    }
+
+    /// One more tag no match has; no longer one every match has.
+    fn exclude_tag(&mut self, tag: &str) {
+        let tag = clean_tag(tag);
+        if tag.is_empty() || self.not_tags.iter().any(|t| same_tag(t, &tag)) {
+            return;
+        }
+        self.tags.retain(|t| !same_tag(t, &tag));
+        self.not_tags.push(tag);
     }
 
     /// The query text: these parts, then `options`' `in:`, `depth:`,
@@ -171,7 +224,12 @@ impl Parts {
         }
         out.extend(self.modified.iter().cloned());
         out.extend(self.size.iter().cloned());
-        out.extend(self.tag.iter().map(|t| tag_term(t)));
+        out.extend(self.tags.iter().map(|t| tag_term(t)));
+        out.extend(
+            self.not_tags
+                .iter()
+                .map(|t| Expr::Not(Box::new(Expr::Term(Term::Tag(t.clone())))).to_string()),
+        );
         out.extend(self.content.iter().cloned());
         out.extend(self.advanced.iter().cloned());
         let options = Query {
@@ -257,37 +315,42 @@ pub fn refine(expr: &str, facet: &str, value: Option<&str>) -> Result<String, St
             check(&term, |t| matches!(t, Term::Size { .. }))?;
             p.size = Some(term);
         }
-        ("tag", value) => {
-            p.tag = value
-                .map(str::trim)
-                .filter(|t| !t.is_empty())
-                .map(str::to_owned);
-        }
+        // One more tag (the Tag chip's choice), or none.
+        ("tag", Some(v)) => p.add_tag(v),
+        ("tag", None) => p.tags.clear(),
         // One more tag every match has, or one less: the sidebar's
-        // Shift+click on a tag.
+        // Shift+click on a tag, a tag the search can be narrowed by.
         ("also_tag", Some(v)) => {
-            let v = v.trim();
-            let names = |part: &String| {
-                lang::parse(part)
-                    .ok()
-                    .and_then(|q| q.required_tag().map(str::to_owned))
-                    .is_some_and(|t| bibli_core::metadata::same_tag(&t, v))
-            };
-            if v.is_empty() {
-            } else if p
-                .tag
-                .as_deref()
-                .is_some_and(|t| bibli_core::metadata::same_tag(t, v))
-            {
-                p.tag = None;
-            } else if let Some(at) = p.advanced.iter().position(names) {
-                p.advanced.remove(at);
-            } else if p.tag.is_none() {
-                p.tag = Some(v.to_owned());
+            let v = clean_tag(v);
+            if p.tags.iter().any(|t| same_tag(t, &v)) {
+                p.tags.retain(|t| !same_tag(t, &v));
             } else {
-                p.advanced.push(tag_term(v));
+                p.add_tag(&v);
             }
         }
+        ("drop_tag", Some(v)) => p.tags.retain(|t| !same_tag(t, v.trim())),
+        // A tag's chip back up to one of its categories.
+        ("tag_up", Some(v)) => {
+            let v = clean_tag(v);
+            if let Some(at) = p.tags.iter().position(|t| tag_within(t, &v)) {
+                p.tags[at].clone_from(&v);
+                let mut kept = 0;
+                p.tags.retain(|t| {
+                    kept += 1;
+                    kept - 1 == at || !tag_within(t, &v)
+                });
+            }
+        }
+        // A tag no match has, or one less.
+        ("not_tag", Some(v)) => {
+            let v = clean_tag(v);
+            if p.not_tags.iter().any(|t| same_tag(t, &v)) {
+                p.not_tags.retain(|t| !same_tag(t, &v));
+            } else {
+                p.exclude_tag(&v);
+            }
+        }
+        ("not_tag", None) => p.not_tags.clear(),
         ("content", None) => p.content = None,
         ("content", Some(text)) => {
             p.content = Some(
@@ -409,6 +472,45 @@ fn preset_chip(
         icon: icon.to_owned(),
         choices,
         clear: term.map(|_| refine_invocation(id, None)),
+        segments: Vec::new(),
+    }
+}
+
+/// A tag's chip: its categories, each going back up to it, then itself;
+/// its menu goes up too, and takes it out.
+fn tag_chip(tag: &str) -> Chip {
+    let parts: Vec<&str> = tag.split(TAG_SEPARATOR).collect();
+    let mut segments = Vec::new();
+    let mut choices = Vec::new();
+    for (i, part) in parts.iter().enumerate() {
+        let up = parts[..=i].join("/");
+        let last = i + 1 == parts.len();
+        let command = (!last).then(|| refine_invocation("tag_up", Some(&up)));
+        if let Some(command) = &command {
+            choices.push(Choice {
+                label: format!("All of “{part}”"),
+                command: command.clone(),
+                active: false,
+            });
+        }
+        segments.push(Segment {
+            label: (*part).to_owned(),
+            command,
+        });
+    }
+    choices.push(Choice {
+        label: "Not tagged so instead".into(),
+        command: refine_invocation("not_tag", Some(tag)),
+        active: false,
+    });
+    Chip {
+        id: "tag".into(),
+        title: "Tag".into(),
+        value: Some(tag.to_owned()),
+        icon: "tag".into(),
+        choices,
+        clear: Some(refine_invocation("drop_tag", Some(tag))),
+        segments,
     }
 }
 
@@ -442,6 +544,7 @@ pub fn describe(expr: &str, tags_known: bool) -> Result<Description, String> {
             active: false,
         }],
         clear: (!words.is_empty()).then(|| refine_invocation("words", None)),
+        segments: Vec::new(),
     });
 
     chips.push(Chip {
@@ -464,6 +567,7 @@ pub fn describe(expr: &str, tags_known: bool) -> Result<Description, String> {
             })
             .collect(),
         clear: (!p.kinds.is_empty()).then(|| refine_invocation("kind", None)),
+        segments: Vec::new(),
     });
 
     chips.push(preset_chip(
@@ -486,11 +590,30 @@ pub fn describe(expr: &str, tags_known: bool) -> Result<Description, String> {
         ("Size", "A size or a range: >10M, 1M..5M, <500k"),
     ));
 
-    let tag = p.tag.clone().unwrap_or_default();
+    // Each tag a chip of its own, walking up to its categories; then the
+    // facet unset, for one more.
+    for tag in &p.tags {
+        chips.push(tag_chip(tag));
+    }
+    for tag in &p.not_tags {
+        chips.push(Chip {
+            id: "not_tag".into(),
+            title: "Not tagged".into(),
+            value: Some(tag.clone()),
+            icon: "tag".into(),
+            choices: vec![Choice {
+                label: "Tagged instead".into(),
+                command: refine_invocation("tag", Some(tag)),
+                active: false,
+            }],
+            clear: Some(refine_invocation("not_tag", Some(tag))),
+            segments: Vec::new(),
+        });
+    }
     chips.push(Chip {
         id: "tag".into(),
         title: "Tag".into(),
-        value: p.tag.clone(),
+        value: None,
         icon: "tag".into(),
         choices: vec![Choice {
             label: "Tagged…".into(),
@@ -504,11 +627,12 @@ pub fn describe(expr: &str, tags_known: bool) -> Result<Description, String> {
                     }),
                 )
             } else {
-                ask_tag(&tag)
+                ask_tag("")
             },
             active: false,
         }],
-        clear: p.tag.as_ref().map(|_| refine_invocation("tag", None)),
+        clear: None,
+        segments: Vec::new(),
     });
 
     let content = p
@@ -531,6 +655,7 @@ pub fn describe(expr: &str, tags_known: bool) -> Result<Description, String> {
             active: false,
         }],
         clear: content.map(|_| refine_invocation("content", None)),
+        segments: Vec::new(),
     });
 
     let folder = crate::place_name(&q.root);
@@ -564,30 +689,11 @@ pub fn describe(expr: &str, tags_known: bool) -> Result<Description, String> {
             },
         ],
         clear: None,
+        segments: Vec::new(),
     });
 
     for (i, text) in p.advanced.iter().enumerate() {
         let index = i.to_string();
-        // One more tag (a Shift+click on the sidebar's): a Tag chip too.
-        let tag = lang::parse(text)
-            .ok()
-            .filter(|q| matches!(q.expr, Some(Expr::Term(Term::Tag(_)))))
-            .and_then(|q| q.required_tag().map(str::to_owned));
-        if let Some(tag) = tag {
-            chips.push(Chip {
-                id: "advanced".into(),
-                title: "Tag".into(),
-                value: Some(tag),
-                icon: "tag".into(),
-                choices: vec![Choice {
-                    label: "Remove".into(),
-                    command: refine_invocation("advanced", Some(&index)),
-                    active: false,
-                }],
-                clear: Some(refine_invocation("advanced", Some(&index))),
-            });
-            continue;
-        }
         chips.push(Chip {
             id: "advanced".into(),
             title: String::new(),
@@ -599,6 +705,7 @@ pub fn describe(expr: &str, tags_known: bool) -> Result<Description, String> {
                 active: false,
             }],
             clear: Some(refine_invocation("advanced", Some(&index))),
+            segments: Vec::new(),
         });
     }
     // Written as `refine` writes a query back: names as typed.
@@ -649,12 +756,29 @@ mod tests {
             .map(|c| c.value.clone().unwrap())
             .collect();
         assert_eq!(advanced, ["(name:a OR name:b)", "NOT name:draft"]);
-        // A second tag is a Tag chip, which takes it out.
+        // Each tag is a chip of its own, which takes it out.
         let two = describe("tag:a tag:b", false).unwrap();
-        let more = two.chips.iter().find(|c| c.id == "advanced").unwrap();
+        let tags: Vec<_> = two
+            .chips
+            .iter()
+            .filter(|c| c.id == "tag" && c.value.is_some())
+            .map(|c| {
+                (
+                    c.value.clone().unwrap(),
+                    c.clear.clone().unwrap().args["facet"].clone(),
+                )
+            })
+            .collect();
         assert_eq!(
-            (more.title.as_str(), more.value.as_deref()),
-            ("Tag", Some("b"))
+            tags,
+            [
+                ("a".to_owned(), serde_json::json!("drop_tag")),
+                ("b".to_owned(), serde_json::json!("drop_tag"))
+            ]
+        );
+        assert!(
+            two.chips.iter().any(|c| c.id == "tag" && c.value.is_none()),
+            "and the facet, for one more"
         );
         // The search cut in two: where it looks, and the rest.
         assert_eq!(d.root, std::path::Path::new("/data"));
@@ -748,6 +872,69 @@ mod tests {
         assert!(refine(base, "size", Some("huge")).is_err());
         assert!(refine(base, "kind", Some("pdf")).is_err());
         assert!(refine(base, "nope", None).is_err());
+    }
+
+    #[test]
+    fn tags_narrow_into_their_categories_and_walk_back_up() {
+        let r = |q: &str, facet, value| refine(q, facet, Some(value)).unwrap();
+        // A tag within one there narrows it; one holding one adds nothing.
+        assert_eq!(
+            r("tag:Places in:/d", "also_tag", "places/France"),
+            "tag:places/France in:/d"
+        );
+        assert_eq!(
+            r("tag:Places/France in:/d", "tag", "Places"),
+            "tag:Places/France in:/d"
+        );
+        assert_eq!(
+            r("tag:Places/France in:/d", "also_tag", "2024"),
+            "tag:Places/France tag:2024 in:/d"
+        );
+        // Back up to a category, from the chip's segment.
+        assert_eq!(
+            r("tag:Places/France/Paris tag:2024 in:/d", "tag_up", "Places"),
+            "tag:Places tag:2024 in:/d",
+            "in its place"
+        );
+        assert_eq!(r("tag:a tag:b in:/d", "drop_tag", "A"), "tag:b in:/d");
+        // None has it: a tag to leave out, which a tag every match has
+        // stops being.
+        assert_eq!(
+            r("tag:Places in:/d", "not_tag", "2024"),
+            "tag:Places NOT tag:2024 in:/d"
+        );
+        assert_eq!(
+            r("tag:Places NOT tag:2024 in:/d", "not_tag", "2024"),
+            "tag:Places in:/d"
+        );
+        assert_eq!(r("tag:2024 in:/d", "not_tag", "2024"), "NOT tag:2024 in:/d");
+        assert_eq!(r("NOT tag:2024 in:/d", "tag", "2024"), "tag:2024 in:/d");
+        // The chip of a tag in categories: each goes up to its own.
+        let d = describe("tag:Places/France NOT tag:x in:/d", false).unwrap();
+        let chip = d
+            .chips
+            .iter()
+            .find(|c| c.value.as_deref() == Some("Places/France"))
+            .unwrap();
+        let segments: Vec<_> = chip
+            .segments
+            .iter()
+            .map(|s| {
+                (
+                    s.label.as_str(),
+                    s.command.as_ref().map(|c| c.args["value"].clone()),
+                )
+            })
+            .collect();
+        assert_eq!(
+            segments,
+            [
+                ("Places", Some(serde_json::json!("Places"))),
+                ("France", None)
+            ]
+        );
+        let not = d.chips.iter().find(|c| c.id == "not_tag").unwrap();
+        assert_eq!(not.value.as_deref(), Some("x"));
     }
 
     #[test]

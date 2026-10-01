@@ -8,6 +8,9 @@
 //! to the refined search, so Back undoes a choice. A set pill has a button
 //! that takes it out.
 //!
+//! A tag's pill reads as a path: its categories, each going back up to it
+//! (`Places › France`), and "+" between two tags every match has.
+//!
 //! The chips are read once per location a pane shows, never per frame, and
 //! the UI knows nothing of the query language: the text stays the one
 //! truth, which the address field edits as it is (Ctrl+L, or a click
@@ -32,6 +35,16 @@ pub struct Chip {
     pub icon: String,
     pub choices: Vec<Choice>,
     pub clear: Option<Invocation>,
+    /// A tag's: its categories, each going up to it, then itself.
+    #[serde(default)]
+    pub segments: Vec<Segment>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct Segment {
+    pub label: String,
+    #[serde(default)]
+    pub command: Option<Invocation>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -95,11 +108,28 @@ impl Chips {
         for chip in &self.chips {
             match (chip.id.as_str(), chip.value.as_deref()) {
                 (_, None) => {}
-                ("tag", Some(t)) => tag = Some(t),
+                ("tag", Some(t)) if tag.is_none() => tag = Some(t),
                 _ => return None,
             }
         }
         tag
+    }
+
+    /// The tags every match of the search has, and those none has.
+    pub fn tags(&self) -> (Vec<String>, Vec<String>) {
+        let of = |id: &str| {
+            self.chips
+                .iter()
+                .filter(|c| c.id == id)
+                .filter_map(|c| c.value.clone())
+                .collect()
+        };
+        (of("tag"), of("not_tag"))
+    }
+
+    /// Whether the facet `id` is set.
+    pub fn is_set(&self, id: &str) -> bool {
+        self.chips.iter().any(|c| c.id == id && c.value.is_some())
     }
 }
 
@@ -257,13 +287,26 @@ pub fn pills(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> 
         .items_center()
         .gap(px(4.))
         .px(px(3.));
+    let mut after_tag = false;
     for (i, chip) in order {
+        // Tags every match has, one after the other: "+" between them.
+        let is_tag = chip.id == "tag" && !chip.segments.is_empty();
+        if is_tag && after_tag {
+            line = line.child(
+                div()
+                    .flex_none()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child("+"),
+            );
+        }
+        after_tag = is_tag;
         let tip = if chip.title.is_empty() {
             "Part of the search no chip holds".to_owned()
         } else {
             chip.title.clone()
         };
-        let pill = Button::new(
+        let mut button = Button::new(
             SharedString::from(format!("chip-{i}")),
             if chip.is_scope() {
                 "folder".to_owned()
@@ -273,15 +316,25 @@ pub fn pills(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> 
             tip,
             "ui.search_chip",
         )
-        .args(serde_json::json!({ "pane": pane, "chip": i }))
-        .label(chip.label())
-        .active(!chip.is_scope())
-        .anchor_if(anchor, open == Some(Target::Chip(i)))
-        .render(shell, cx)
-        .h(px(22.))
-        .rounded_full()
-        .when(chip.is_scope(), |d| d.border_color(theme.border))
-        .when(chip.clear.is_some(), |d| d.pr(px(2.)));
+        .args(serde_json::json!({ "pane": pane, "chip": i }));
+        if !is_tag {
+            button = button.label(chip.label());
+        }
+        let pill = button
+            .active(!chip.is_scope())
+            .anchor_if(anchor, open == Some(Target::Chip(i)))
+            .render(shell, cx)
+            .h(px(22.))
+            .rounded_full()
+            .when(chip.is_scope(), |d| d.border_color(theme.border))
+            .when(chip.clear.is_some(), |d| d.pr(px(2.)));
+        // A tag's categories go back up to them; the tag itself opens the
+        // pill's choices, as the rest of it does.
+        let pill = if is_tag {
+            tag_segments(pill, i, &chip.segments, pane, shell, &theme, cx)
+        } else {
+            pill
+        };
         // A pointer's shortcut, not a focusable button: it goes with what
         // it removes, and a focused element that goes takes the keyboard
         // with it. The chip's own menu ends with Remove for the keyboard.
@@ -346,6 +399,55 @@ pub fn pills(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> 
             this.run("ui.focus_address", serde_json::json!({}), window, cx);
         }));
     Some(line.child(rest).into_any_element())
+}
+
+/// A tag's pill's segments: each category a link up to it, `›` between.
+fn tag_segments(
+    mut pill: gpui::Stateful<gpui::Div>,
+    chip: usize,
+    segments: &[Segment],
+    pane: PaneId,
+    shell: &Shell,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> gpui::Stateful<gpui::Div> {
+    let muted = theme.selection_text.opacity(0.7);
+    for (j, segment) in segments.iter().enumerate() {
+        if j > 0 {
+            pill = pill.child(div().flex_none().text_color(muted).child("›"));
+        }
+        pill = match segment.command.clone() {
+            Some(up) => {
+                let font = shell.font.clone();
+                let tip: SharedString = format!("All of “{}”", segment.label).into();
+                pill.child(
+                    div()
+                        .id(SharedString::from(format!("chip-{chip}-up-{j}")))
+                        .flex_none()
+                        .text_color(muted)
+                        .cursor_pointer()
+                        .hover(gpui::Styled::underline)
+                        .tooltip(move |_, cx| toolbar::tooltip(tip.clone(), font.clone(), cx))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.activate_pane(pane, cx);
+                            let mut args = up.args.clone();
+                            args["pane"] = serde_json::json!(pane);
+                            this.run(&up.name, args, window, cx);
+                        }))
+                        .child(segment.label.clone()),
+                )
+            }
+            None => pill.child(
+                div()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .child(segment.label.clone()),
+            ),
+        };
+    }
+    pill
 }
 
 /// The open popover of the pane being rendered's search: a chip's choices,
@@ -413,6 +515,7 @@ mod tests {
             icon: String::new(),
             choices: Vec::new(),
             clear: None,
+            segments: Vec::new(),
         }
     }
 
