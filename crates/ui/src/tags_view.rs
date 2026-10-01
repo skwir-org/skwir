@@ -312,22 +312,18 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let Some(first) = tags.first() else { return };
-        let root = self
-            .ui()
-            .tags
-            .root
-            .as_ref()
-            .map(|r| serde_json::json!(PathArg::from(r.as_path())));
-        let item =
-            |title: String, name: &str, args: serde_json::Value, order, icon: &str| MenuItem {
-                menu: "tags".into(),
-                title,
-                command: Invocation::with_args(name, &args),
-                when: None,
-                order,
-                icon: Some(icon.into()),
-                submenu: None,
-            };
+        let run = |title: String, command: Invocation, order, icon: &str| MenuItem {
+            menu: "tags".into(),
+            title,
+            command,
+            when: None,
+            order,
+            icon: Some(icon.into()),
+            submenu: None,
+        };
+        let item = |title: String, name: &str, args: serde_json::Value, order, icon: &str| {
+            run(title, Invocation::with_args(name, &args), order, icon)
+        };
         let one = tags.len() == 1;
         let mut items = Vec::new();
         if one {
@@ -367,57 +363,23 @@ impl Shell {
                 "pin",
             )
         });
-        let place = self.ui().tags.root.as_ref().map_or_else(String::new, |r| {
-            format!(
-                " under “{}”",
-                r.file_name().unwrap_or(r.as_os_str()).to_string_lossy()
-            )
-        });
-        let mut rename_args = serde_json::json!({ "tags": tags });
-        if let Some(root) = &root {
-            rename_args["root"] = root.clone();
-        }
-        items.push(item(
+        let (rename, remove) = self.tags_edits(tags);
+        items.push(run(
             if one {
                 "Rename Tag…"
             } else {
                 "Merge Tags…"
             }
             .into(),
-            "ui.ask",
-            serde_json::json!({
-                "title": if one {
-                    format!("Rename the tag “{first}” on every file{place}")
-                } else {
-                    format!("Merge {} into one tag on every file{place}", naming(tags))
-                },
-                "placeholder": if one {
-                    "New name (an existing tag's merges them)"
-                } else {
-                    "The tag they become"
-                },
-                "text": if one { first.clone() } else { String::new() },
-                "command": "tags.rename",
-                "args": rename_args,
-                "field": "to",
-            }),
+            rename,
             100,
             "rename",
         ));
-        let mut remove_args = serde_json::json!({ "tags": tags });
-        if let Some(root) = &root {
-            remove_args["root"] = root.clone();
-        }
-        items.push(item(
-            format!(
-                "Remove {} From Every File…",
-                if one { "Tag" } else { "Tags" }
-            ),
-            "tags.delete",
-            remove_args,
-            300,
-            "trash",
-        ));
+        let remove_title = format!(
+            "Remove {} From Every File…",
+            if one { "Tag" } else { "Tags" }
+        );
+        items.push(run(remove_title, remove, 300, "trash"));
         let mut color = |title: &str, color: Option<&str>, order| {
             items.push(MenuItem {
                 submenu: Some("Color".into()),
@@ -443,6 +405,45 @@ impl Shell {
         items.sort_by_key(|m| m.order);
         self.menu = Some(crate::menu::MenuState::open(position, items, window, cx));
         cx.notify();
+    }
+
+    /// What renames `tags` (merges them, when several) and what removes
+    /// them, on every file under the view's folder: the question that
+    /// asks for the new name, and the plan to review.
+    fn tags_edits(&self, tags: &[String]) -> (Invocation, Invocation) {
+        let root = self.ui().tags.root.as_ref();
+        let place = root.map_or_else(String::new, |r| {
+            format!(
+                " under “{}”",
+                r.file_name().unwrap_or(r.as_os_str()).to_string_lossy()
+            )
+        });
+        let mut args = serde_json::json!({ "tags": tags });
+        if let Some(root) = root {
+            args["root"] = serde_json::json!(PathArg::from(root.as_path()));
+        }
+        let first = tags.first().cloned().unwrap_or_default();
+        let one = tags.len() == 1;
+        let rename = Invocation::with_args(
+            "ui.ask",
+            &serde_json::json!({
+                "title": if one {
+                    format!("Rename the tag “{first}” on every file{place}")
+                } else {
+                    format!("Merge {} into one tag on every file{place}", naming(tags))
+                },
+                "placeholder": if one {
+                    "New name (an existing tag's merges them)"
+                } else {
+                    "The tag they become"
+                },
+                "text": if one { first } else { String::new() },
+                "command": "tags.rename",
+                "args": args.clone(),
+                "field": "to",
+            }),
+        );
+        (rename, Invocation::with_args("tags.delete", &args))
     }
 
     /// `ui.tags_color`: each of `tags` wears `color` (`tags.color`, one
@@ -541,14 +542,25 @@ impl PaneView for TagsView {
                 lens.selected = lens.rows().iter().map(|r| r.tag.clone()).collect();
                 true
             }
-            "ui.rename_prompt" | "trash" | "delete" | "ui.confirm_delete" | "ui.context_menu" => {
-                if selected.is_empty() {
-                    return true;
+            // F2 renames (merges several), Delete removes them from every
+            // file: each a plan to review before anything changes.
+            "ui.rename_prompt" | "trash" | "delete" | "ui.confirm_delete" => {
+                if !selected.is_empty() {
+                    let (rename, remove) = shell.tags_edits(&selected);
+                    let run = if name == "ui.rename_prompt" {
+                        rename
+                    } else {
+                        remove
+                    };
+                    shell.run(&run.name, run.args, window, cx);
                 }
-                // The menu, at the cursor's row: F2 and Delete choose there,
-                // a tag being renamed or removed on every file after review.
-                let position = window.mouse_position();
-                shell.open_tags_lens_menu(&selected, position, window, cx);
+                true
+            }
+            "ui.context_menu" => {
+                if !selected.is_empty() {
+                    let position = window.mouse_position();
+                    shell.open_tags_lens_menu(&selected, position, window, cx);
+                }
                 true
             }
             // What would act on hidden files does nothing here.

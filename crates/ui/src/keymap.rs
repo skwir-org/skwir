@@ -548,6 +548,7 @@ fn condition(flag: &str) -> String {
         "folder" => "in a folder",
         "sweep" => "selecting as the cursor moves",
         "filtered" => "filtered by name",
+        "tags" => "in the Tags view",
         other => other,
     }
     .to_owned()

@@ -374,6 +374,34 @@ pub fn takes_gifts<E: InteractiveElement>(
     )
 }
 
+/// Make a row of an entry that is not the pane's (a column of the folders
+/// above) take what a dragged place gives files, for that entry alone.
+pub fn takes_gift_for<E: InteractiveElement>(
+    el: E,
+    entry: bibli_core::op::EntryRef,
+    cx: &mut Context<Shell>,
+) -> E {
+    let theme = cx.global::<Theme>().clone();
+    let (tint, edge) = (theme.drop_target, theme.accent);
+    el.drag_over::<crate::sidebar::PlaceDrag>(move |s, drag, _, _| {
+        if drag.gives.is_some() {
+            s.bg(tint).border_color(edge)
+        } else {
+            s
+        }
+    })
+    .on_drop(
+        cx.listener(move |this, drag: &crate::sidebar::PlaceDrag, window, cx| {
+            if let Some(gives) = &drag.gives {
+                cx.stop_propagation();
+                let mut args = gives.args.clone();
+                args["entries"] = serde_json::json!([entry]);
+                this.run(&gives.name, args, window, cx);
+            }
+        }),
+    )
+}
+
 impl Shell {
     /// Run `gives` (a place's `drop`) for the entry at `ix` in the
     /// current pane, or for its selection when the entry is in it.

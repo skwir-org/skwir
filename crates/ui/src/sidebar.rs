@@ -992,7 +992,9 @@ impl Shell {
     }
 
     /// The menu of the sidebar's groups: for `group`'s header, folding,
-    /// moving and hiding it; everywhere, showing a group put away.
+    /// moving and hiding it; everywhere, every group with a check while
+    /// it is shown, to show or hide it, as the list header's menu does
+    /// for columns.
     pub fn open_sections_menu(
         &mut self,
         group: Option<&str>,
@@ -1000,26 +1002,29 @@ impl Shell {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        let item = |title: String, args: serde_json::Value, order: i32, icon: &str| {
+        let item = |title: String, args: serde_json::Value, order: i32, icon: Option<&str>| {
             bibli_core::registry::MenuItem {
                 menu: "sidebar".into(),
                 title,
                 command: Invocation::with_args("ui.sidebar_section", &args),
                 when: None,
                 order,
-                icon: Some(icon.into()),
+                icon: icon.map(str::to_owned),
                 submenu: None,
             }
         };
         let sections = &self.sidebar_sections;
-        let present = self.sidebar_groups();
-        let shown: Vec<String> = sections.arranged(
-            &present
-                .iter()
-                .filter(|g| !sections.hidden.contains(*g))
-                .cloned()
-                .collect::<Vec<_>>(),
-        );
+        let mut present = self.sidebar_groups();
+        for hidden in &sections.hidden {
+            if !present.contains(hidden) {
+                present.push(hidden.clone());
+            }
+        }
+        let all = sections.arranged(&present);
+        let shown: Vec<&String> = all
+            .iter()
+            .filter(|g| !sections.hidden.contains(*g))
+            .collect();
         let mut items = Vec::new();
         if let Some(group) = group {
             let folded = sections.folded.contains(group);
@@ -1027,15 +1032,15 @@ impl Shell {
                 if folded { "Unfold" } else { "Fold" }.into(),
                 serde_json::json!({ "group": group, "fold": !folded }),
                 0,
-                if folded { "unfold" } else { "fold" },
+                Some(if folded { "unfold" } else { "fold" }),
             ));
-            if let Some(at) = shown.iter().position(|g| g == group) {
+            if let Some(at) = shown.iter().position(|g| *g == group) {
                 if at > 0 {
                     items.push(item(
                         "Move Up".into(),
                         serde_json::json!({ "group": group, "before": shown[at - 1] }),
                         100,
-                        "up",
+                        Some("up"),
                     ));
                 }
                 if at + 1 < shown.len() {
@@ -1043,31 +1048,27 @@ impl Shell {
                         "Move Down".into(),
                         serde_json::json!({ "group": group, "before": shown.get(at + 2) }),
                         101,
-                        "down",
+                        Some("down"),
                     ));
                 }
             }
-            items.push(item(
-                format!("Hide {}", group_title(group)),
-                serde_json::json!({ "group": group, "hidden": true }),
-                300,
-                "eye-off",
-            ));
         }
-        for hidden in &sections.hidden {
+        // Every group, checked while shown.
+        for (i, g) in all.iter().enumerate() {
+            let hidden = sections.hidden.contains(g);
             items.push(item(
-                format!("Show {}", group_title(hidden)),
-                serde_json::json!({ "group": hidden, "hidden": false }),
-                400,
-                "eye",
+                group_title(g),
+                serde_json::json!({ "group": g, "hidden": !hidden }),
+                400 + i32::try_from(i).unwrap_or_default(),
+                (!hidden).then_some("check"),
             ));
         }
         if sections.arranged_by_user() {
             items.push(item(
                 "Reset Sections".into(),
                 serde_json::json!({ "reset": true }),
-                410,
-                "revert",
+                500,
+                Some("revert"),
             ));
         }
         if items.is_empty() {

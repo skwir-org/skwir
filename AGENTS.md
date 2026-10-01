@@ -223,13 +223,18 @@ current source before assuming a planned crate, command, or API exists.
   name, and walks all the same: an index hints, the walk answers. So a
   tag renamed or removed everywhere (`tags.rename`, `tags.delete`;
   several at once merge or go in one plan) takes its files from the
-  search, not the index, as a plan proposed for review. The Tags view (a
+  search, not the index, as a plan proposed for review; under the home
+  folder the tag's pin and color follow it, a step of the same plan
+  (`follow.rs`), so its undo puts them back. The Tags view (a
   lens: the plugin's `lens.rs` counts, the shell's `tags_view.rs` draws)
   lists the tags under the folder shown with how many files have each:
   the index's counts at once, then the search for any tag (`tag:*`)
-  replaces them, and what bibli applies is counted as it is applied.
-  Its own selection of tags is what its menu, Enter, F2 and Delete act
-  on.
+  replaces them, and what bibli applies (tags, moves, trash) is counted
+  as it is applied. A finished count is kept, the last few in memory,
+  so the folder or one inside it opens again without a walk; Count
+  again walks anew. Its own selection of tags is what its menu, Enter,
+  F2 and Delete act on, and what the pane's key context says is
+  selected.
 - **Files beside a file go where it goes** (ADR-028). A companion (a
   Mac's `._x`, an XMP sidecar, TagSpaces' `.ts/x.json`) is declared by
   name rules (`bibli_core::companions::Companion`, registered in
@@ -286,7 +291,9 @@ current source before assuming a planned crate, command, or API exists.
   group wrapping together, left-aligned (`sidebar::wrap_pills`: layout
   only): the tags plugin's Tags, those the user pinned (`tags.pin`,
   from a pill's or a Details chip's menu; dragged into order, unpinned
-  by the pane's keep button like any kept place) or, until one is, the
+  by the pane's keep button like any kept place; a tag's search from
+  the home folder is kept as its pin, by the button and Ctrl+D) or,
+  until one is, the
   tags on the most files its index knows, as suggestions
   (`Place::suggested`, an outline), each a search of the home folder
   (`query.location` builds it, so no plugin writes another's syntax),
@@ -297,10 +304,12 @@ current source before assuming a planned crate, command, or API exists.
   command runs it with what is dropped on it (`pane` for a pane's
   selection, `entries` for another application's files): a tag's gives
   them the tag. Dragged onto a file's row (`dnd::takes_gifts`), it gives
-  the same to that file, or to the selection when the row is in it.
+  the same to that file, or to the selection when the row is in it (a
+  column of the folders above, `takes_gift_for`: to that file).
   The groups are the user's to arrange (`sidebar::Sections`, part of
   the window's shape): a click on a header folds its group, a drag moves
-  it, and its menu hides it or shows one hidden (`ui.sidebar_section`).
+  it, and the sidebar's menu lists every group with a check while it is
+  shown, as the list header's does columns (`ui.sidebar_section`).
   A plugin names a place's group, never where the group goes.
   A plugin that needs a line of text from the user dispatches
   `ui.ask` with the command to complete, not a prompt kind of its own;

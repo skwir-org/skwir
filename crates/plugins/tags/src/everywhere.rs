@@ -111,6 +111,7 @@ fn listed(tags: &[String]) -> String {
 pub fn start(
     app: &App,
     lifetime: &CancelToken,
+    follows: &crate::follow::Ctx,
     tags: Vec<String>,
     to: Option<&str>,
     root: Option<PathBuf>,
@@ -146,6 +147,9 @@ pub fn start(
     );
     let weak = app.weak();
     let cancel = lifetime.child();
+    // On every file a tag names, its pin and color follow it.
+    let follow = crate::follow::everywhere(root.as_deref())
+        .map(|home| crate::follow::Follow::new(follows, tags.clone(), to.clone(), home));
     app.scheduler.spawn(
         Priority::Normal,
         "tags.everywhere",
@@ -208,6 +212,12 @@ pub fn start(
                 plan.push(app.notes.edit(r).tags(changed));
             }
             let n = plan.steps.len();
+            if n > 0
+                && let Some(follow) = follow
+                && follow.target(&app).is_some()
+            {
+                plan.steps.push(Box::new(follow));
+            }
             if n == 0 {
                 app.notify(
                     NotifyLevel::Info,

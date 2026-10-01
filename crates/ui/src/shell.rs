@@ -1257,6 +1257,25 @@ impl Shell {
         if self.presented.is_some() && !name.starts_with("tab.") {
             self.present(false, window, cx);
         }
+        // Ctrl+D on a tag's search pins the tag, as the button does.
+        if name == "keep"
+            && self.app.commands.get("tags.pin").is_some()
+            && let Some(shown) = self.app.pane_location(self.pane)
+            && let Some(tag) = self.ui().chips.only_tag(&shown.to_string())
+        {
+            let tag = tag.to_owned();
+            let pinned = self.app.registry.places.find(|p| {
+                p.color.is_some()
+                    && p.forget.is_some()
+                    && bibli_core::metadata::same_tag(&p.title, &tag)
+            });
+            if pinned.is_some() {
+                self.set_status(format!("The tag “{tag}” is already pinned"), false, cx);
+            } else {
+                self.run("tags.pin", serde_json::json!({ "tag": tag }), window, cx);
+            }
+            return;
+        }
         // A lens acts on what it shows, not on the files it hides.
         if self
             .with_view(|view, shell| view.command(name, &args, shell, window, cx))

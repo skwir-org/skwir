@@ -862,22 +862,40 @@ fn pane_row(
         let keeper = registry.keepers.find(|k| *k.scheme == *location.scheme);
         let kept = registry
             .places
-            .find(|p| p.forget.is_some() && crate::sidebar::same_place(&p.location, location))
-            .and_then(|p| p.forget);
-        let button = match (kept, keeper) {
-            (Some(forget), keeper) => Some(
+            .find(|p| p.forget.is_some() && crate::sidebar::same_place(&p.location, location));
+        // A tag's search from the home folder is kept as the tag's pin.
+        let tag = shell
+            .ui()
+            .chips
+            .only_tag(&location.to_string())
+            .filter(|_| shell.app.commands.get("tags.pin").is_some())
+            .map(str::to_owned);
+        let button = match (kept, keeper, tag) {
+            (Some(place), keeper, _) => {
+                let forget = place.forget.expect("kept");
+                let title = if place.color.is_some() {
+                    "Unpin this tag from the sidebar".into()
+                } else {
+                    keeper.map_or_else(|| "Remove from sidebar".into(), |k| k.forget_title)
+                };
+                Some(
+                    Button::new("keep", "bookmark-filled", title, forget.name.to_string())
+                        .args(forget.args),
+                )
+            }
+            (None, _, Some(tag)) => Some(
                 Button::new(
                     "keep",
-                    "bookmark-filled",
-                    keeper.map_or_else(|| "Remove from sidebar".into(), |k| k.forget_title),
-                    forget.name.to_string(),
+                    "bookmark",
+                    "Pin this tag to the sidebar",
+                    "tags.pin",
                 )
-                .args(forget.args),
+                .args(serde_json::json!({ "tag": tag })),
             ),
-            (None, Some(keeper)) => {
+            (None, Some(keeper), None) => {
                 Some(Button::new("keep", "bookmark", keeper.save_title, "keep"))
             }
-            (None, None) => None,
+            (None, None, None) => None,
         };
         if let Some(button) = button {
             field = field.child(

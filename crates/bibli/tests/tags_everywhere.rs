@@ -347,6 +347,44 @@ fn the_tags_view_counts_the_files_under_its_folder_and_what_is_applied() {
     );
     counted(&[("new", 1), ("Work", 2), ("x", 2)]);
 
+    // Renamed, a file keeps counting; trashed, it is gone.
+    let b = root.join("sub/b.txt");
+    let mut plan = Plan::new("rename");
+    plan.push(bibli_core::op::Rename {
+        entry: bibli_core::op::EntryRef::from_path(&b).unwrap(),
+        new_name: "it's b.txt".into(),
+    });
+    assert!(
+        app.executor
+            .execute_blocking(&plan, app.lifetime())
+            .error
+            .is_none()
+    );
+    let mut plan = Plan::new("trash");
+    plan.push(bibli_core::op::Trash {
+        entry: bibli_core::op::EntryRef::from_path(root.join("sub/it's b.txt")).unwrap(),
+    });
+    assert!(
+        app.executor
+            .execute_blocking(&plan, app.lifetime())
+            .error
+            .is_none()
+    );
+    counted(&[("new", 1), ("Work", 1), ("x", 2)]);
+
+    // Let go and opened again, the count is kept: no walk.
+    dispatch("tags.lens_release", serde_json::json!({ "pane": pane })).unwrap();
+    dispatch("tags.lens", serde_json::json!({ "pane": pane })).unwrap();
+    let Ok(bibli_core::command::Outcome::Value(v)) =
+        dispatch("tags.lens_status", serde_json::json!({ "pane": pane }))
+    else {
+        panic!("a value")
+    };
+    assert_eq!(
+        (v["walking"].as_bool(), v["tags"].as_array().map(Vec::len)),
+        (Some(false), Some(3))
+    );
+
     // Let go, it shows nothing.
     dispatch("tags.lens_release", serde_json::json!({ "pane": pane })).unwrap();
     let Ok(bibli_core::command::Outcome::Value(v)) =
@@ -355,6 +393,64 @@ fn the_tags_view_counts_the_files_under_its_folder_and_what_is_applied() {
         panic!("a value")
     };
     assert!(v["root"].is_null() && v["tags"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn a_tags_pin_and_color_follow_it_renamed_everywhere_and_come_back_with_undo() {
+    let tmp = home_tempdir();
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(bibli_plugin_query::QueryPlugin::default()), &app);
+    app.plugins
+        .add(Arc::new(bibli_plugin_tags::TagsPlugin::default()), &app);
+    app.settings.set(
+        "tags.pinned",
+        toml::Value::Array(
+            ["a", "trip", "b"]
+                .map(|t| toml::Value::String(t.into()))
+                .into(),
+        ),
+    );
+    let mut colors = toml::Table::new();
+    colors.insert("trip".into(), toml::Value::String("teal".into()));
+    app.settings.set("tags.colors", toml::Value::Table(colors));
+    // The step a rename on every file ends with, as a plan read back holds it.
+    let step = app
+        .ops
+        .build(&bibli_core::op::OpData {
+            kind: "tags_follow".into(),
+            args: serde_json::json!({ "from": ["Trip"], "to": "travel", "root": PathArg::from(tmp.path()) }),
+        })
+        .unwrap();
+    assert_eq!(
+        step.describe().to_string(),
+        "keep “travel” pinned and colored as “Trip” were"
+    );
+    let plan = Plan::with_steps("rename", vec![step]);
+    let r = app.executor.execute_blocking(&plan, app.lifetime());
+    assert!(r.error.is_none(), "{:?}", r.error);
+    let pins = || app.settings.get::<Vec<String>>("tags.pinned").unwrap();
+    let color = |t: &str| {
+        app.settings
+            .get::<toml::Table>("tags.colors")
+            .unwrap()
+            .get(t)
+            .and_then(|c| c.as_str().map(str::to_owned))
+    };
+    assert_eq!(pins(), ["a", "travel", "b"]);
+    assert_eq!(
+        (color("travel").as_deref(), color("trip")),
+        (Some("teal"), None)
+    );
+    until(&app, "the sidebar", || {
+        (sidebar(&app) == ["a", "travel", "b"]).then_some(())
+    });
+    app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert_eq!(pins(), ["a", "trip", "b"]);
+    assert_eq!(
+        (color("travel"), color("trip").as_deref()),
+        (None, Some("teal"))
+    );
 }
 
 #[test]

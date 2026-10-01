@@ -94,6 +94,7 @@ impl ColumnsView {
 
 /// One row of an ancestor column, read from its listing as it is drawn.
 struct AncestorRow {
+    id: EntryId,
     name: std::ffi::OsString,
     label: gpui::SharedString,
     is_dir: bool,
@@ -128,6 +129,7 @@ fn ancestor_column(
                     .iter()
                     .filter_map(|id| listing?.get(*id))
                     .map(|e| AncestorRow {
+                        id: e.id,
                         label: e.name_str().into_owned().into(),
                         name: e.name.clone(),
                         is_dir: e.is_dir(),
@@ -192,6 +194,13 @@ fn ancestor_column(
                     .when(row.is_dir, |d| {
                         d.child(div().text_color(theme.text_muted).child("›"))
                     });
+                // A tag dropped on it is its own: these are not the
+                // pane's entries, so never its selection.
+                el = dnd::takes_gift_for(
+                    el,
+                    bibli_core::op::EntryRef::new(row.id, target.clone()),
+                    cx,
+                );
                 if row.is_dir {
                     el = dnd::droppable_dir(el, target, cx);
                 }

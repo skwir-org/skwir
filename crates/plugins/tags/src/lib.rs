@@ -15,6 +15,7 @@ mod appledouble;
 mod attrs;
 mod everywhere;
 pub mod finder;
+mod follow;
 mod hints;
 mod lens;
 mod ops;
@@ -457,18 +458,18 @@ impl std::fmt::Debug for TagsPlugin {
 
 /// The index, the vocabulary and what the sidebar shows of them.
 #[derive(Clone)]
-struct Sidebar {
+pub(crate) struct Sidebar {
     index: Arc<hints::TagIndex>,
     vocabulary: Arc<Vocabulary>,
     shown: Arc<sidebar::Shown>,
     /// One edit of the pins at a time.
-    saving: Arc<Mutex<()>>,
+    pub(crate) saving: Arc<Mutex<()>>,
     /// The Tags views, which show the pins and colors too.
     lenses: Arc<lens::Lenses>,
 }
 
 impl Sidebar {
-    fn publish(&self, app: &App) {
+    pub(crate) fn publish(&self, app: &App) {
         sidebar::publish(app, &self.index, &self.vocabulary, &self.shown);
         self.lenses.touch(app);
     }
@@ -558,20 +559,38 @@ impl Plugin for TagsPlugin {
             app.executor.observe(
                 ID,
                 Arc::new(move |changes| {
-                    let paths: Vec<std::path::PathBuf> = changes
-                        .iter()
-                        .filter_map(|c| match c {
-                            bibli_core::op::Change::Metadata { path, field, .. }
-                                if field == keys::TAGS =>
-                            {
-                                Some(path.clone())
+                    use bibli_core::op::Change;
+                    // Files to read again (their tags changed, or they came
+                    // back or were copied), and files that moved.
+                    let mut paths: Vec<std::path::PathBuf> = Vec::new();
+                    let mut moves: Vec<lens::Seen> = Vec::new();
+                    for c in changes {
+                        match c {
+                            Change::Metadata { path, field, .. } if field == keys::TAGS => {
+                                paths.push(path.clone());
                             }
-                            _ => None,
-                        })
-                        .collect();
-                    let Some(app) = weak.upgrade().filter(|_| !paths.is_empty()) else {
+                            Change::Restore { path } | Change::Copy { to: path, .. } => {
+                                paths.push(path.clone());
+                            }
+                            Change::Rename { from, to } | Change::Move { from, to } => {
+                                moves.push(lens::Seen::Moved(from.clone(), Some(to.clone())));
+                            }
+                            Change::Trash { path }
+                            | Change::Delete { path }
+                            | Change::Remove { path } => {
+                                moves.push(lens::Seen::Moved(path.clone(), None));
+                            }
+                            Change::Swap { a, b } => paths.extend([a.clone(), b.clone()]),
+                            _ => {}
+                        }
+                    }
+                    let Some(app) = weak.upgrade() else { return };
+                    if !moves.is_empty() {
+                        lenses.observe(&app, &moves);
+                    }
+                    if paths.is_empty() {
                         return;
-                    };
+                    }
                     let (index, weak) = (Arc::clone(&index), weak.clone());
                     let lenses = Arc::clone(&lenses);
                     app.scheduler.spawn(
@@ -587,7 +606,11 @@ impl Plugin for TagsPlugin {
                                     (p, tags)
                                 })
                                 .collect();
-                            lenses.observe(&app, &learned);
+                            let seen: Vec<lens::Seen> = learned
+                                .iter()
+                                .map(|(p, t)| lens::Seen::Tags(p.clone(), t.clone()))
+                                .collect();
+                            lenses.observe(&app, &seen);
                             index.learn(learned);
                         },
                     );
@@ -899,7 +922,10 @@ impl Plugin for TagsPlugin {
                 )
             },
         );
-        let (v, everywhere) = (Arc::clone(&vocabulary), lifetime.clone());
+        // A tag's pin and color follow it renamed on every file.
+        let follows = follow::Ctx::new(app, sidebar.clone());
+        follow::register(app, &follows);
+        let (v, everywhere, f) = (Arc::clone(&vocabulary), lifetime.clone(), follows.clone());
         app.commands.register::<RenameArgs, _>(
             ID,
             "tags.rename",
@@ -907,12 +933,12 @@ impl Plugin for TagsPlugin {
             "Rename a tag (or merge `tags`) on every file under the home folder (or `root`) that has it, merging it with a tag of the new name where a file has both: the files are searched on a worker and the plan proposed for review",
             move |a, app| {
                 let from = everywhere::named(a.tag, a.tags);
-                everywhere::start(app, &everywhere, from, Some(&a.to), root_of(a.root))?;
+                everywhere::start(app, &everywhere, &f, from, Some(&a.to), root_of(a.root))?;
                 v.used(&parse_tags(&a.to));
                 Ok(Outcome::Done)
             },
         );
-        let everywhere = lifetime.clone();
+        let (everywhere, f) = (lifetime.clone(), follows);
         app.commands.register::<DeleteArgs, _>(
             ID,
             "tags.delete",
@@ -920,7 +946,7 @@ impl Plugin for TagsPlugin {
             "Take a tag (or `tags`) from every file under the home folder (or `root`) that has it: the files are searched on a worker and the plan proposed for review",
             move |a, app| {
                 let from = everywhere::named(a.tag, a.tags);
-                everywhere::start(app, &everywhere, from, None, root_of(a.root))?;
+                everywhere::start(app, &everywhere, &f, from, None, root_of(a.root))?;
                 Ok(Outcome::Done)
             },
         );

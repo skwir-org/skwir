@@ -38,7 +38,7 @@ const PUBLISH_EVERY: Duration = Duration::from_millis(250);
 struct Lens {
     root: PathBuf,
     /// The tagged files the walk found, with their tags.
-    files: HashMap<PathBuf, Vec<String>>,
+    files: Files,
     /// What the index knew, until the walk ends.
     hinted: Vec<(String, usize)>,
     walking: bool,
@@ -108,6 +108,61 @@ fn count(
     tags
 }
 
+/// How many completed counts are kept, the most recent first.
+const KEEP_COUNTED: usize = 4;
+
+/// The tagged files under a root and their tags.
+type Files = HashMap<PathBuf, Vec<String>>;
+
+/// `path` has `tags` now: whether that changed anything.
+fn set(files: &mut Files, path: &Path, tags: &[String]) -> bool {
+    match files.get(path) {
+        Some(had) if had == tags => false,
+        None if tags.is_empty() => false,
+        _ if tags.is_empty() => files.remove(path).is_some(),
+        _ => {
+            files.insert(path.to_path_buf(), tags.to_vec());
+            true
+        }
+    }
+}
+
+/// What a change does to the files' places: `from` (and what is under it)
+/// is now at `to`, or gone when `None`.
+fn moved(files: &mut Files, from: &Path, to: Option<&Path>) -> bool {
+    let under: Vec<PathBuf> = files
+        .keys()
+        .filter(|p| p.starts_with(from))
+        .cloned()
+        .collect();
+    for path in &under {
+        let tags = files.remove(path).unwrap_or_default();
+        if let Some(to) = to
+            && let Ok(rest) = path.strip_prefix(from)
+        {
+            files.insert(
+                if rest.as_os_str().is_empty() {
+                    to.to_path_buf()
+                } else {
+                    to.join(rest)
+                },
+                tags,
+            );
+        }
+    }
+    !under.is_empty()
+}
+
+/// What happened to files, as an applied plan says.
+#[derive(Clone, Debug)]
+pub enum Seen {
+    /// The file has these tags now.
+    Tags(PathBuf, Vec<String>),
+    /// The file, or a folder and what is in it, went from the first place
+    /// to the second, or away.
+    Moved(PathBuf, Option<PathBuf>),
+}
+
 /// A file's tags as its metadata holds them.
 fn tags_of(metadata: &Metadata) -> Vec<String> {
     match metadata.value(keys::TAGS) {
@@ -124,6 +179,10 @@ pub struct Lenses {
     /// The view's revision: raised, then the app woken, when one changes.
     pub revision: Arc<AtomicU64>,
     open: Mutex<HashMap<PaneId, Lens>>,
+    /// Completed counts, by root, the most recent first: a folder counted
+    /// is not walked again for a lens on it or under it, and what bibli
+    /// applies keeps them current. "Count again" walks anew.
+    counted: Mutex<Vec<(PathBuf, Files)>>,
     index: Arc<TagIndex>,
     lifetime: CancelToken,
     generations: AtomicU64,
@@ -134,6 +193,7 @@ impl Lenses {
         Arc::new(Self {
             revision,
             open: Mutex::new(HashMap::new()),
+            counted: Mutex::new(Vec::new()),
             index,
             lifetime,
             generations: AtomicU64::new(0),
@@ -183,18 +243,41 @@ impl Lenses {
             if let Some(old) = open.remove(&pane) {
                 old.cancel.cancel();
             }
+            // Counted already, there or above: no walk.
+            let known = if again {
+                self.counted.lock().retain(|(r, _)| !root.starts_with(r));
+                None
+            } else {
+                self.counted
+                    .lock()
+                    .iter()
+                    .find(|(r, _)| root.starts_with(r))
+                    .map(|(_, files)| {
+                        files
+                            .iter()
+                            .filter(|(p, _)| p.starts_with(&root))
+                            .map(|(p, t)| (p.clone(), t.clone()))
+                            .collect::<Files>()
+                    })
+            };
+            let walking = known.is_none();
             open.insert(
                 pane,
                 Lens {
                     root: root.clone(),
-                    files: HashMap::new(),
+                    files: known.unwrap_or_default(),
                     hinted: Vec::new(),
-                    walking: true,
+                    walking,
                     error: None,
                     cancel: cancel.clone(),
                     generation,
                 },
             );
+            if !walking {
+                drop(open);
+                self.changed(app);
+                return Ok(());
+            }
         }
         let (this, weak) = (Arc::clone(self), app.weak());
         app.scheduler
@@ -228,13 +311,21 @@ impl Lenses {
         if cancel.is_cancelled() {
             return;
         }
+        let mut done = None;
         live(&mut |lens| {
             lens.walking = false;
             lens.error = result.as_ref().err().map(|e| format!("{e:#}"));
             if lens.error.is_none() {
                 lens.hinted.clear();
+                done = Some(lens.files.clone());
             }
         });
+        if let Some(files) = done {
+            let mut counted = self.counted.lock();
+            counted.retain(|(r, _)| !r.starts_with(root));
+            counted.insert(0, (root.to_path_buf(), files));
+            counted.truncate(KEEP_COUNTED);
+        }
         self.changed(app);
     }
 
@@ -321,27 +412,39 @@ impl Lenses {
         }
     }
 
-    /// Files whose tags bibli changed, with their tags now: each lens they
-    /// are under counts them again.
-    pub fn observe(&self, app: &App, read: &[(PathBuf, Vec<String>)]) {
+    /// What bibli applied: each lens, and each count kept, under the
+    /// files it names counts them again.
+    pub fn observe(&self, app: &App, seen: &[Seen]) {
+        let apply = |root: &Path, files: &mut Files, hinted: Option<&mut Vec<(String, usize)>>| {
+            let mut changed = false;
+            let mut retagged: Vec<&String> = Vec::new();
+            for s in seen {
+                match s {
+                    Seen::Tags(path, tags) if path.starts_with(root) => {
+                        if set(files, path, tags) {
+                            changed = true;
+                            retagged.extend(tags);
+                        }
+                    }
+                    Seen::Moved(from, to) => {
+                        let to = to.as_deref().filter(|t| t.starts_with(root));
+                        changed |= moved(files, from, to);
+                    }
+                    Seen::Tags(..) => {}
+                }
+            }
+            // The index's counts no longer hold for a tag counted here.
+            if let Some(hinted) = hinted {
+                hinted.retain(|(h, _)| !retagged.iter().any(|t| same_tag(h, t)));
+            }
+            changed
+        };
         let mut changed = false;
         for lens in self.open.lock().values_mut() {
-            for (path, tags) in read.iter().filter(|(p, _)| p.starts_with(&lens.root)) {
-                let had = lens.files.get(path);
-                if had.is_some_and(|had| had == tags) || (had.is_none() && tags.is_empty()) {
-                    continue;
-                }
-                if tags.is_empty() {
-                    lens.files.remove(path);
-                } else {
-                    lens.files.insert(path.clone(), tags.clone());
-                }
-                // The index's counts no longer hold for this tag.
-                for t in tags {
-                    lens.hinted.retain(|(h, _)| !same_tag(h, t));
-                }
-                changed = true;
-            }
+            changed |= apply(&lens.root.clone(), &mut lens.files, Some(&mut lens.hinted));
+        }
+        for (root, files) in self.counted.lock().iter_mut() {
+            apply(&root.clone(), files, None);
         }
         if changed {
             self.changed(app);
@@ -351,7 +454,7 @@ impl Lenses {
 
 #[cfg(test)]
 mod tests {
-    use super::count;
+    use super::{count, moved, set};
     use std::collections::HashMap;
     use std::path::PathBuf;
 
@@ -381,5 +484,35 @@ mod tests {
             count(&files, Some(&hinted)),
             owned(&[("old", 2), ("work", 9), ("x", 1), ("Été", 1)])
         );
+    }
+
+    #[test]
+    fn files_moved_or_gone_take_their_tags_along() {
+        let mut files: HashMap<PathBuf, Vec<String>> = HashMap::new();
+        let t = |v: &[&str]| v.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+        assert!(set(
+            &mut files,
+            PathBuf::from("/r/d/a").as_path(),
+            &t(&["x"])
+        ));
+        assert!(set(&mut files, PathBuf::from("/r/b").as_path(), &t(&["y"])));
+        assert!(!set(
+            &mut files,
+            PathBuf::from("/r/b").as_path(),
+            &t(&["y"])
+        ));
+        assert!(!set(&mut files, PathBuf::from("/r/c").as_path(), &[]));
+        // A folder renamed carries what is in it.
+        assert!(moved(
+            &mut files,
+            PathBuf::from("/r/d").as_path(),
+            Some(PathBuf::from("/r/e").as_path())
+        ));
+        assert_eq!(files.get(&PathBuf::from("/r/e/a")), Some(&t(&["x"])));
+        // A file trashed is gone.
+        assert!(moved(&mut files, PathBuf::from("/r/b").as_path(), None));
+        assert_eq!(files.len(), 1);
+        assert!(set(&mut files, PathBuf::from("/r/e/a").as_path(), &[]));
+        assert!(files.is_empty());
     }
 }

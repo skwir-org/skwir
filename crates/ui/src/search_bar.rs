@@ -83,6 +83,26 @@ pub struct Chips {
     pub text: String,
 }
 
+impl Chips {
+    /// The tag `shown` (a search's location) looks for, when that is all
+    /// it does and it looks from the home folder: the search a tag's pill
+    /// opens, which is kept by pinning the tag.
+    pub fn only_tag(&self, shown: &str) -> Option<&str> {
+        if self.location != shown || std::env::home_dir().as_deref() != Some(self.root.as_path()) {
+            return None;
+        }
+        let mut tag = None;
+        for chip in &self.chips {
+            match (chip.id.as_str(), chip.value.as_deref()) {
+                (_, None) => {}
+                ("tag", Some(t)) => tag = Some(t),
+                _ => return None,
+            }
+        }
+        tag
+    }
+}
+
 /// What a pane's search popover shows: one chip's choices, or the facets
 /// not set ("+ Filter").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -379,4 +399,44 @@ pub fn popup(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> 
         }
     }
     Some(anchor.popup(panel))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Chip, Chips};
+
+    fn chip(id: &str, value: Option<&str>) -> Chip {
+        Chip {
+            id: id.into(),
+            title: String::new(),
+            value: value.map(str::to_owned),
+            icon: String::new(),
+            choices: Vec::new(),
+            clear: None,
+        }
+    }
+
+    #[test]
+    fn a_tags_search_from_home_is_one_to_pin() {
+        let Some(home) = std::env::home_dir() else {
+            return;
+        };
+        let mut chips = Chips {
+            location: "query:tag:a".into(),
+            chips: vec![
+                chip("words", None),
+                chip("tag", Some("a")),
+                chip("where", None),
+            ],
+            root: home.clone(),
+            text: "tag:a".into(),
+        };
+        assert_eq!(chips.only_tag("query:tag:a"), Some("a"));
+        assert_eq!(chips.only_tag("query:tag:b"), None, "read for another");
+        chips.chips.push(chip("kind", Some("Images")));
+        assert_eq!(chips.only_tag("query:tag:a"), None, "more than a tag");
+        chips.chips.pop();
+        chips.root = home.join("sub");
+        assert_eq!(chips.only_tag("query:tag:a"), None, "not from home");
+    }
 }
