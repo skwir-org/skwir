@@ -216,7 +216,7 @@ pub fn tile_dots(
 }
 
 /// A tag's dot, in its color.
-fn dot(color: usize, theme: &Theme) -> Div {
+pub(crate) fn dot(color: usize, theme: &Theme) -> Div {
     div()
         .flex_none()
         .size(px(10.))

@@ -85,6 +85,19 @@ pub trait PaneView {
     fn kept_locations(&self, _shown: Option<&Location>) -> Vec<Location> {
         Vec::new()
     }
+    /// A chance to run a command the view's own way, for a view whose
+    /// items are not the pane's entries (a lens): Enter, Delete or F2
+    /// act on what it shows instead of on files it hides. True if handled.
+    fn command(
+        &mut self,
+        _name: &str,
+        _args: &serde_json::Value,
+        _shell: &mut Shell,
+        _window: &mut Window,
+        _cx: &mut Context<Shell>,
+    ) -> bool {
+        false
+    }
     /// Whether the view draws folders opened in place (`Pane::expanded`,
     /// the core `expand` command): the tree does. The pane closes them
     /// under any other view.

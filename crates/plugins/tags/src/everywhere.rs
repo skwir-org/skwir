@@ -84,18 +84,38 @@ fn tagged(
     outcome
 }
 
-/// Start renaming `tag` to `to` (taking it away when `None`) on every file
-/// under `root`: checks what it can now, finds the files on a worker, and
-/// proposes the plan.
+/// The tags a command names: `tag` and `tags`, trimmed, each once.
+pub fn named(tag: String, tags: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for t in std::iter::once(tag).chain(tags) {
+        let t = t.trim();
+        if !t.is_empty() && !out.iter().any(|o| same_tag(o, t)) {
+            out.push(t.to_owned());
+        }
+    }
+    out
+}
+
+/// “a”, “b” and “c”.
+fn listed(tags: &[String]) -> String {
+    let quoted: Vec<String> = tags.iter().map(|t| format!("“{t}”")).collect();
+    match quoted.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+        _ => quoted.concat(),
+    }
+}
+
+/// Start renaming `tags` to `to` (merging them into it when several;
+/// taking them away when `None`) on every file under `root`: checks what
+/// it can now, finds the files on a worker, and proposes the plan.
 pub fn start(
     app: &App,
     lifetime: &CancelToken,
-    tag: &str,
+    tags: Vec<String>,
     to: Option<&str>,
     root: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    let tag = tag.trim().to_owned();
-    anyhow::ensure!(!tag.is_empty(), "which tag?");
+    anyhow::ensure!(!tags.is_empty(), "which tag?");
     let to = match to {
         Some(to) => {
             let mut names = parse_tags(to);
@@ -103,7 +123,10 @@ pub fn start(
             let to = names
                 .pop()
                 .ok_or_else(|| anyhow::anyhow!("what new name?"))?;
-            anyhow::ensure!(to != tag, "the tag is already called “{to}”");
+            anyhow::ensure!(
+                tags.len() > 1 || to != tags[0],
+                "the tag is already called “{to}”"
+            );
             Some(to)
         }
         None => None,
@@ -116,9 +139,10 @@ pub fn start(
         || "the home folder".to_owned(),
         |r| format!("“{}”", r.display()),
     );
+    let names = listed(&tags);
     app.notify(
         NotifyLevel::Info,
-        format!("Looking for the files tagged “{tag}” in {place}…"),
+        format!("Looking for the files tagged {names} in {place}…"),
     );
     let weak = app.weak();
     let cancel = lifetime.child();
@@ -128,20 +152,31 @@ pub fn start(
         cancel.clone(),
         move || {
             let Some(app) = weak.upgrade() else { return };
-            let files = match tagged(&app, &tag, root.as_ref(), &cancel) {
-                Ok(files) => files,
-                Err(_) if cancel.is_cancelled() => return,
-                Err(error) => {
-                    app.notify(
-                        NotifyLevel::Error,
-                        format!("The files tagged “{tag}” were not found: {error:#}"),
-                    );
-                    return;
+            let mut files: Vec<EntryRef> = Vec::new();
+            for tag in &tags {
+                match tagged(&app, tag, root.as_ref(), &cancel) {
+                    Ok(found) => {
+                        for r in found {
+                            if !files.iter().any(|f| f.path == r.path) {
+                                files.push(r);
+                            }
+                        }
+                    }
+                    Err(_) if cancel.is_cancelled() => return,
+                    Err(error) => {
+                        app.notify(
+                            NotifyLevel::Error,
+                            format!("The files tagged “{tag}” were not found: {error:#}"),
+                        );
+                        return;
+                    }
                 }
-            };
-            let title = match &to {
-                Some(to) => format!("rename the tag “{tag}” to “{to}”"),
-                None => format!("remove the tag “{tag}” from every file"),
+            }
+            let title = match (&to, tags.as_slice()) {
+                (Some(to), [tag]) => format!("rename the tag “{tag}” to “{to}”"),
+                (Some(to), _) => format!("merge the tags {names} into “{to}”"),
+                (None, [tag]) => format!("remove the tag “{tag}” from every file"),
+                (None, _) => format!("remove the tags {names} from every file"),
             };
             let mut plan = Plan::new(title);
             let mut merged = 0;
@@ -150,20 +185,33 @@ pub fn start(
                     .notes
                     .read_path(&r.path, &app.notes.policy())
                     .tag_names();
-                let tags = renamed(&current, &tag, to.as_deref());
-                if tags == current {
+                let mut changed = current.clone();
+                for tag in &tags {
+                    changed = renamed(&changed, tag, to.as_deref());
+                }
+                if changed == current {
                     continue;
                 }
-                if tags.len() < current.len() && to.is_some() {
+                if to.is_some()
+                    && current
+                        .iter()
+                        .filter(|t| tags.iter().any(|f| same_tag(f, t)))
+                        .count()
+                        + usize::from(
+                            to.as_deref()
+                                .is_some_and(|to| current.iter().any(|t| t == to)),
+                        )
+                        > 1
+                {
                     merged += 1;
                 }
-                plan.push(app.notes.edit(r).tags(tags));
+                plan.push(app.notes.edit(r).tags(changed));
             }
             let n = plan.steps.len();
             if n == 0 {
                 app.notify(
                     NotifyLevel::Info,
-                    format!("No file in {place} is tagged “{tag}”"),
+                    format!("No file in {place} is tagged {names}"),
                 );
                 return;
             }
@@ -174,7 +222,7 @@ pub fn start(
             };
             let merged = match &to {
                 Some(to) if merged > 0 => {
-                    format!(" {merged} already had “{to}”: they keep it once.")
+                    format!(" {merged} already had “{to}” or several of them: they keep it once.")
                 }
                 _ => String::new(),
             };
@@ -202,5 +250,12 @@ mod tests {
         assert_eq!(renamed(&file, "work", Some("B")), ["a", "B"]);
         assert_eq!(renamed(&file, "work", None), ["a", "b"]);
         assert_eq!(renamed(&file, "other", Some("x")), file);
+    }
+
+    #[test]
+    fn tags_named_once_and_listed_in_words() {
+        assert_eq!(named(" a ".into(), tags(&["A", "b", ""])), ["a", "b"]);
+        assert_eq!(listed(&tags(&["a"])), "“a”");
+        assert_eq!(listed(&tags(&["a", "b", "c"])), "“a”, “b” and “c”");
     }
 }

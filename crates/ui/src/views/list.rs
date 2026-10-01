@@ -544,6 +544,7 @@ pub fn row(
     }
     let mut el = el.child(line);
     el = dnd::draggable(el, pane, cx);
+    el = dnd::takes_gifts(el, pane, ix, cx);
     if let Some(p) = &r.path {
         el = dnd::droppable_dir(el, p.clone(), cx);
     }

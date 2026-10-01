@@ -16,6 +16,7 @@ mod attrs;
 mod everywhere;
 pub mod finder;
 mod hints;
+mod lens;
 mod ops;
 mod sidebar;
 mod vocabulary;
@@ -190,7 +191,11 @@ struct CommentArgs {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct RenameArgs {
     /// The tag to rename.
+    #[serde(default)]
     tag: String,
+    /// More tags to rename with it: all merge into `to`.
+    #[serde(default)]
+    tags: Vec<String>,
     /// Its new name; a tag of that name already on a file merges with it.
     to: String,
     /// Where the files are; the home folder when omitted.
@@ -201,15 +206,31 @@ struct RenameArgs {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct DeleteArgs {
     /// The tag to take from every file.
+    #[serde(default)]
     tag: String,
+    /// More tags to take with it.
+    #[serde(default)]
+    tags: Vec<String>,
     /// Where the files are; the home folder when omitted.
     #[serde(default)]
     root: Option<PathArg>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct LensArgs {
+    #[serde(default)]
+    pane: Option<PaneId>,
+    /// Count anew, though counted already.
+    #[serde(default)]
+    again: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct PinArgs {
+    #[serde(default)]
     tag: String,
+    #[serde(default)]
+    tags: Vec<String>,
     /// The pinned tag it goes before; last when omitted.
     #[serde(default)]
     before: Option<String>,
@@ -430,11 +451,14 @@ struct Sidebar {
     shown: Arc<sidebar::Shown>,
     /// One edit of the pins at a time.
     saving: Arc<Mutex<()>>,
+    /// The Tags views, which show the pins and colors too.
+    lenses: Arc<lens::Lenses>,
 }
 
 impl Sidebar {
     fn publish(&self, app: &App) {
         sidebar::publish(app, &self.index, &self.vocabulary, &self.shown);
+        self.lenses.touch(app);
     }
 }
 
@@ -501,11 +525,24 @@ impl Plugin for TagsPlugin {
         app.companions
             .register(ID, Arc::new(appledouble::AsideCompanion));
         ops::register_legacy(app);
+        // The Tags view: the tags under a pane's folder (`lens.rs`).
+        let lenses = lens::Lenses::new(Arc::clone(&index), Arc::default(), lifetime.clone());
+        app.registry.views.add(
+            ID,
+            bibli_core::registry::ViewSpec::named(
+                lens::VIEW,
+                "Tags",
+                "tag",
+                Arc::clone(&lenses.revision),
+            )
+            .lens(),
+        );
         // An edit applied is learned by the index at once: a file edited
         // while no pane shows it (a tag renamed everywhere) is not read
-        // again soon.
+        // again soon. The Tags views count it too.
         {
             let (weak, index, lifetime) = (app.weak(), Arc::clone(&index), lifetime.clone());
+            let lenses = Arc::clone(&lenses);
             app.executor.observe(
                 ID,
                 Arc::new(move |changes| {
@@ -524,19 +561,21 @@ impl Plugin for TagsPlugin {
                         return;
                     };
                     let (index, weak) = (Arc::clone(&index), weak.clone());
+                    let lenses = Arc::clone(&lenses);
                     app.scheduler.spawn(
                         Priority::Background,
                         "tags.learn",
                         lifetime.child(),
                         move || {
                             let Some(app) = weak.upgrade() else { return };
-                            let learned = paths
+                            let learned: Vec<(std::path::PathBuf, Vec<String>)> = paths
                                 .into_iter()
                                 .map(|p| {
                                     let tags = notes_of(&app, &p).tag_names();
                                     (p, tags)
                                 })
                                 .collect();
+                            lenses.observe(&app, &learned);
                             index.learn(learned);
                         },
                     );
@@ -550,6 +589,7 @@ impl Plugin for TagsPlugin {
             vocabulary: Arc::clone(&vocabulary),
             shown: Arc::new(sidebar::Shown::default()),
             saving: Arc::new(Mutex::new(())),
+            lenses: Arc::clone(&lenses),
         };
         {
             let (weak, state) = (app.weak(), state.clone());
@@ -588,32 +628,35 @@ impl Plugin for TagsPlugin {
             "The tags pinned to the sidebar, in their order",
             toml::Value::Array(Vec::new()),
         ));
-        for (name, title, description, unpin) in [
+        for (name, title, description) in [
             (
                 "tags.pin",
-                "Pin tag",
-                "Keep a tag in the sidebar, before the pinned tag `before` or last; moves one pinned",
-                false,
+                "Pin tags",
+                "Keep tags (`tag`, `tags`) in the sidebar, before the pinned tag `before` or last; moves those pinned",
             ),
             (
                 "tags.unpin",
-                "Unpin tag",
-                "Take a tag out of the sidebar; its files keep it",
-                true,
+                "Unpin tags",
+                "Take tags (`tag`, `tags`) out of the sidebar; their files keep them",
+            ),
+            (
+                "tags.pins",
+                "Set pinned tags",
+                "Pin exactly `tags`, in their order: what an Undo of a pin runs",
             ),
         ] {
             let (pins, lifetime) = (sidebar.clone(), lifetime.clone());
             app.commands
                 .register::<PinArgs, _>(ID, name, title, description, move |a, app| {
-                    let tag = a.tag.trim().to_owned();
-                    anyhow::ensure!(!tag.is_empty(), "which tag?");
-                    let edit = if unpin {
-                        sidebar::Pin::Unpin { tag }
-                    } else {
-                        sidebar::Pin::Pin {
-                            tag,
+                    let tags = everywhere::named(a.tag, a.tags);
+                    let edit = match name {
+                        "tags.pins" => sidebar::Pin::Set(tags),
+                        _ if tags.is_empty() => anyhow::bail!("which tag?"),
+                        "tags.unpin" => sidebar::Pin::Unpin { tags },
+                        _ => sidebar::Pin::Put {
+                            tags,
                             before: a.before,
-                        }
+                        },
                     };
                     let publish = pins.clone();
                     sidebar::edit(app, &pins.saving, edit, a.undo, &lifetime, move |app| {
@@ -621,6 +664,53 @@ impl Plugin for TagsPlugin {
                     });
                     Ok(Outcome::Done)
                 });
+        }
+        {
+            let lenses = Arc::clone(&lenses);
+            app.commands.register::<LensArgs, _>(
+                ID,
+                "tags.lens",
+                "Count tags",
+                "Count the tags of the files under the folder the pane shows, for its Tags view (`again`: count anew)",
+                move |a, app| {
+                    lenses.open(app, app.pane_or_active(a.pane), a.again)?;
+                    Ok(Outcome::Done)
+                },
+            );
+        }
+        {
+            let (lenses, vocabulary) = (Arc::clone(&lenses), Arc::clone(&vocabulary));
+            app.commands.register::<LensArgs, _>(
+                ID,
+                "tags.lens_status",
+                "Tags counted",
+                "`{ root, tags: [{ tag, files, color, pinned }], files, walking, error }`: the tags the pane's Tags view counted",
+                move |a, app| {
+                    let (colors, pins) = (sidebar::Colors::of(app), sidebar::pinned(app));
+                    let status = lenses.status(app.pane_or_active(a.pane), |tag, files| {
+                        lens::Row {
+                            color: colors.of_tag(&vocabulary, &tag),
+                            pinned: pins.iter().any(|p| same_tag(p, &tag)),
+                            tag,
+                            files,
+                        }
+                    });
+                    Ok(Outcome::Value(serde_json::to_value(status)?))
+                },
+            );
+        }
+        {
+            let lenses = Arc::clone(&lenses);
+            app.commands.register::<LensArgs, _>(
+                ID,
+                "tags.lens_release",
+                "Stop counting tags",
+                "Let go of the pane's Tags view",
+                move |a, app| {
+                    lenses.release(app, app.pane_or_active(a.pane));
+                    Ok(Outcome::Done)
+                },
+            );
         }
         // What a `tag:` search asks first (ADR-026).
         app.hints.register(ID, Arc::new(hints::Baloo::default()));
@@ -802,9 +892,10 @@ impl Plugin for TagsPlugin {
             ID,
             "tags.rename",
             "Rename tag everywhere",
-            "Rename a tag on every file under the home folder (or `root`) that has it, merging it with a tag of the new name where a file has both: the files are searched on a worker and the plan proposed for review",
+            "Rename a tag (or merge `tags`) on every file under the home folder (or `root`) that has it, merging it with a tag of the new name where a file has both: the files are searched on a worker and the plan proposed for review",
             move |a, app| {
-                everywhere::start(app, &everywhere, &a.tag, Some(&a.to), root_of(a.root))?;
+                let from = everywhere::named(a.tag, a.tags);
+                everywhere::start(app, &everywhere, from, Some(&a.to), root_of(a.root))?;
                 v.used(&parse_tags(&a.to));
                 Ok(Outcome::Done)
             },
@@ -814,9 +905,10 @@ impl Plugin for TagsPlugin {
             ID,
             "tags.delete",
             "Remove tag everywhere",
-            "Take a tag from every file under the home folder (or `root`) that has it: the files are searched on a worker and the plan proposed for review",
+            "Take a tag (or `tags`) from every file under the home folder (or `root`) that has it: the files are searched on a worker and the plan proposed for review",
             move |a, app| {
-                everywhere::start(app, &everywhere, &a.tag, None, root_of(a.root))?;
+                let from = everywhere::named(a.tag, a.tags);
+                everywhere::start(app, &everywhere, from, None, root_of(a.root))?;
                 Ok(Outcome::Done)
             },
         );

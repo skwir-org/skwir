@@ -10,7 +10,7 @@
 //! unary   := "NOT" unary | "-" unary | "(" or_expr ")" | term
 //! term    := word | "name:" pat | "ext:" list | "type:" kind | "mime:" glob
 //!          | "kind:" kinds | "size" cmp | "modified" cmp | "created" cmp | "accessed" cmp
-//!          | "tag:" word | "comment:" text | "rating" cmp
+//!          | "tag:" word | "tag:*" (any tag) | "comment:" text | "rating" cmp
 //!          | "content:" text | "content:/" regex "/" flags?
 //!          | "near:" lat "," lon ("~" distance)? | "inside:" south "," west "," north "," east
 //! options := "in:" path | "depth:" n | "hidden:" bool | "case:" ("sensitive"|"insensitive")
@@ -234,6 +234,8 @@ pub enum Term {
         text: String,
     },
     Tag(String),
+    /// Any tag: `tag:*`, the star unquoted (`tag:"*"` is a tag named so).
+    AnyTag,
     /// The comment contains this, whatever its case (held lowercase).
     Comment(String),
     /// A rating between these, inclusive, in half stars (`keys::RATING`);
@@ -693,6 +695,7 @@ impl Parser<'_> {
                 }
                 Ok(Term::Kind(kinds))
             }
+            "tag" if v == "*" && !w.quoted => Ok(Term::AnyTag),
             "tag" => Ok(Term::Tag(v.to_owned())),
             "comment" => Ok(Term::Comment(v.to_lowercase())),
             "rating" => parse_rating(&format!(":{v}")),
@@ -1128,7 +1131,9 @@ impl fmt::Display for Term {
             | Term::Time { text, .. }
             | Term::Near { text, .. }
             | Term::Inside { text, .. } => f.write_str(text),
+            Term::Tag(t) if t == "*" => f.write_str("tag:\"*\""),
             Term::Tag(t) => write!(f, "tag:{}", quote(t)),
+            Term::AnyTag => f.write_str("tag:*"),
             Term::Comment(t) => write!(f, "comment:{}", quote(t)),
             Term::Content(p) if p.regex => {
                 // Escape a `/` the source left bare, so the regex ends where it should.
@@ -1357,7 +1362,12 @@ impl Query {
 
     /// Tag, comment and rating terms: metadata providers must run.
     pub fn needs_metadata(&self) -> bool {
-        self.any(&|t| matches!(t, Term::Tag(_) | Term::Comment(_) | Term::Rating { .. }))
+        self.any(&|t| {
+            matches!(
+                t,
+                Term::Tag(_) | Term::AnyTag | Term::Comment(_) | Term::Rating { .. }
+            )
+        })
     }
 
     /// Content terms: files must be read.
@@ -1577,6 +1587,12 @@ impl Term {
                     return Verdict::No;
                 };
                 yes_no(after.is_none_or(|a| t >= a) && before.is_none_or(|b| t < b))
+            }
+            Term::AnyTag => {
+                let Some(m) = c.metadata else {
+                    return Verdict::Unknown;
+                };
+                yes_no(matches!(m.value(keys::TAGS), Some(Value::List(tags)) if !tags.is_empty()))
             }
             Term::Tag(tag) => {
                 let Some(m) = c.metadata else {
@@ -2066,6 +2082,12 @@ mod tests {
         assert!(p.needs_stat() && !p.needs_metadata() && !p.needs_content());
         assert!(q("tag:x").needs_metadata());
         assert_eq!(q("tag:x").required_tag(), Some("x"));
+        // Any tag, and a tag named so, each written back as it reads.
+        assert!(q("tag:*").needs_metadata());
+        assert_eq!(q("tag:*").required_tag(), None);
+        assert_eq!(q("tag:*").expr.unwrap().to_string(), "tag:*");
+        assert_eq!(q("tag:\"*\"").required_tag(), Some("*"));
+        assert_eq!(q("tag:\"*\"").expr.unwrap().to_string(), "tag:\"*\"");
         assert_eq!(q("ext:pdf tag:\"to do\"").required_tag(), Some("to do"));
         assert_eq!(q("tag:x OR tag:y").required_tag(), None);
         assert_eq!(q("-tag:x").required_tag(), None);
@@ -2340,6 +2362,10 @@ mod tests {
         assert_eq!(e.eval(&f, false), Verdict::Yes);
         assert_eq!(q("size<1k").expr.unwrap().eval(&f, false), Verdict::No);
         assert_eq!(q("size:2k").expr.unwrap().eval(&f, false), Verdict::Yes);
+        assert_eq!(q("tag:*").expr.unwrap().eval(&f, false), Verdict::Yes);
+        let untagged = md(2048, now(), &[]);
+        let u = cand("b.txt", EntryKind::File, Some(&untagged));
+        assert_eq!(q("tag:*").expr.unwrap().eval(&u, false), Verdict::No);
         assert_eq!(q("size:1k..3k").expr.unwrap().eval(&f, false), Verdict::Yes);
         assert_eq!(q("modified<7d").expr.unwrap().eval(&f, false), Verdict::Yes);
         assert_eq!(q("modified>7d").expr.unwrap().eval(&f, false), Verdict::No);

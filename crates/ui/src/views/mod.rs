@@ -72,6 +72,7 @@ pub fn specs() -> Vec<ViewSpec> {
 pub fn named_renderer(id: &str) -> Option<Box<dyn crate::view::PaneView>> {
     match id {
         "usage" => Some(Box::new(crate::usage::UsageView)),
+        crate::tags_view::ID => Some(Box::new(crate::tags_view::TagsView)),
         crate::map_view::ID => Some(Box::new(crate::map_view::MapView::default())),
         _ => None,
     }

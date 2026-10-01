@@ -308,6 +308,7 @@ fn cell(
         );
     el = crate::list::entry_mouse(el, pane, ix, cx);
     el = dnd::draggable(el, pane, cx);
+    el = dnd::takes_gifts(el, pane, ix, cx);
     if let Some(p) = path {
         el = dnd::droppable_dir(el, p, cx);
     }

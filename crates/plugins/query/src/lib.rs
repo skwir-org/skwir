@@ -138,8 +138,9 @@ struct DescribeArgs {
 struct LocationArgs {
     /// A facet, as `query.refine` names them (`tag`, `kind`, `size`, …).
     facet: String,
-    /// Its value (`work` for `tag`).
-    value: String,
+    /// Its value (`work` for `tag`); omitted for `tag`, any tag.
+    #[serde(default)]
+    value: Option<String>,
     /// Where it searches; the home folder when omitted.
     #[serde(default)]
     root: Option<PathArg>,
@@ -724,10 +725,14 @@ impl Plugin for QueryPlugin {
             ID,
             "query.location",
             "Search location",
-            "`{ location }`: the search for one facet's value (`tag` `work`) from `root` or the home folder, for whoever shows or runs a search without writing its syntax",
+            "`{ location }`: the search for one facet's value (`tag` `work`, or `tag` alone for any tag) from `root` or the home folder, for whoever shows or runs a search without writing its syntax",
             |a, _| {
-                let expr = facets::refine("", &a.facet, Some(&a.value))
-                    .map_err(|e| anyhow::anyhow!("query: {e}"))?;
+                let expr = match (a.facet.as_str(), a.value) {
+                    ("tag", None) => lang::Term::AnyTag.to_string(),
+                    (_, None) => anyhow::bail!("query: `{}` needs a value", a.facet),
+                    (facet, Some(value)) => facets::refine("", facet, Some(&value))
+                        .map_err(|e| anyhow::anyhow!("query: {e}"))?,
+                };
                 let root = match a.root {
                     Some(r) => Some(
                         Location::parse_os(r.as_os_str())
@@ -1433,13 +1438,18 @@ mod tests {
         }));
         let q = lang::parse(&there.rest).unwrap();
         assert_eq!((q.required_tag(), q.root.as_path()), (Some("work"), root));
-        assert!(
-            app.dispatch(&Invocation::with_args(
-                "query.location",
-                &serde_json::json!({ "facet": "nothing", "value": "x" }),
-            ))
-            .is_err()
-        );
+        let any = location(serde_json::json!({ "facet": "tag", "root": PathArg::from(root) }));
+        let q = lang::parse(&any.rest).unwrap();
+        assert_eq!(q.expr.unwrap().to_string(), "tag:*");
+        for args in [
+            serde_json::json!({ "facet": "nothing", "value": "x" }),
+            serde_json::json!({ "facet": "kind" }),
+        ] {
+            assert!(
+                app.dispatch(&Invocation::with_args("query.location", &args))
+                    .is_err()
+            );
+        }
     }
 
     #[test]

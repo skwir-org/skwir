@@ -346,6 +346,67 @@ pub fn droppable_dir<E: InteractiveElement>(el: E, dir: PathBuf, cx: &mut Contex
         }))
 }
 
+/// Make an entry's row take what a dragged place gives files (a tag's
+/// pill gives its tag): the row's entry, or the pane's selection when the
+/// row is in it, as a drop of files acts on the selection.
+pub fn takes_gifts<E: InteractiveElement>(
+    el: E,
+    pane: PaneId,
+    ix: usize,
+    cx: &mut Context<Shell>,
+) -> E {
+    let theme = cx.global::<Theme>().clone();
+    let (tint, edge) = (theme.drop_target, theme.accent);
+    el.drag_over::<crate::sidebar::PlaceDrag>(move |s, drag, _, _| {
+        if drag.gives.is_some() {
+            s.bg(tint).border_color(edge)
+        } else {
+            s
+        }
+    })
+    .on_drop(
+        cx.listener(move |this, drag: &crate::sidebar::PlaceDrag, window, cx| {
+            if let Some(gives) = &drag.gives {
+                cx.stop_propagation();
+                this.with_pane(pane, |this| this.give(gives, ix, window, cx));
+            }
+        }),
+    )
+}
+
+impl Shell {
+    /// Run `gives` (a place's `drop`) for the entry at `ix` in the
+    /// current pane, or for its selection when the entry is in it.
+    fn give(
+        &mut self,
+        gives: &bibli_core::command::Invocation,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Shell>,
+    ) {
+        let Some(&id) = self.ui().list.sorted.get(ix) else {
+            return;
+        };
+        let pane = self.pane;
+        let target = {
+            let ws = self.app.workspace.read();
+            let Some(p) = ws.pane(pane) else { return };
+            if p.selection.contains(id) {
+                None
+            } else {
+                p.path_of(id)
+                    .map(|path| bibli_core::op::EntryRef::new(id, path))
+            }
+        };
+        let mut args = gives.args.clone();
+        match target {
+            Some(entry) => args["entries"] = serde_json::json!([entry]),
+            None => args["pane"] = serde_json::json!(pane),
+        }
+        self.run(&gives.name, args, window, cx);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

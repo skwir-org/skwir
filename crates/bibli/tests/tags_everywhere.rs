@@ -51,7 +51,7 @@ fn sidebar(app: &App) -> Vec<String> {
         .places
         .all()
         .into_iter()
-        .filter(|p| p.group == "tags")
+        .filter(|p| p.group == "tags" && p.color.is_some())
         .map(|p| p.title)
         .collect()
 }
@@ -123,6 +123,21 @@ fn a_tag_is_renamed_on_every_file_after_review_and_the_sidebar_follows() {
     assert_eq!(at("a.txt"), ["Work", "x"]);
     assert_eq!(at("it's b.txt"), ["work", "Job"]);
 
+    // Several merged into one: one plan.
+    dispatch(
+        "tags.rename",
+        serde_json::json!({ "tags": ["x", "other"], "to": "misc", "root": root_arg }),
+    )
+    .unwrap();
+    let plan = proposal(&app);
+    assert_eq!(plan.title, "merge the tags “x” and “other” into “misc”");
+    assert_eq!(plan.steps.len(), 2, "a and c");
+    app.executor.execute_blocking(&plan, app.lifetime());
+    assert_eq!(at("a.txt"), ["Work", "misc"]);
+    assert_eq!(at("c.txt"), ["misc"]);
+    app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert_eq!(at("c.txt"), ["other"]);
+
     // Removed from every file.
     dispatch(
         "tags.delete",
@@ -162,7 +177,7 @@ fn pins(app: &App) -> Vec<(String, bool)> {
         .places
         .all()
         .into_iter()
-        .filter(|p| p.group == "tags")
+        .filter(|p| p.group == "tags" && p.color.is_some())
         .map(|p| {
             (
                 p.title,
@@ -208,6 +223,17 @@ fn pinned_tags_replace_the_suggestions_in_the_order_put() {
         until(&app, "the sidebar", || (pins(&app) == want).then_some(()));
     };
     until_sidebar(&[("Work", false), ("x", false), ("Été", false)]);
+    // Then every tag, the home folder's Tags view.
+    let all = app
+        .registry
+        .places
+        .find(|p| p.group == "tags" && p.color.is_none())
+        .expect("All Tags");
+    let open = all.activate.unwrap();
+    assert_eq!(
+        (&*open.name, &open.args["id"]),
+        ("ui.view", &serde_json::json!("tags"))
+    );
 
     // Pinned, the suggestions go; a pin goes last, or before another.
     dispatch("tags.pin", serde_json::json!({ "tag": "x" })).unwrap();
@@ -248,6 +274,87 @@ fn pinned_tags_replace_the_suggestions_in_the_order_put() {
     dispatch("tags.unpin", serde_json::json!({ "tag": "X" })).unwrap();
     until_sidebar(&[("Work", false), ("x", false), ("Été", false)]);
     assert!(dispatch("tags.pin", serde_json::json!({ "tag": " " })).is_err());
+}
+
+#[test]
+fn the_tags_view_counts_the_files_under_its_folder_and_what_is_applied() {
+    let tmp = home_tempdir();
+    let root = tmp.path().join("it's home");
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    std::fs::create_dir_all(tmp.path().join("elsewhere")).unwrap();
+    for (name, t) in [
+        ("a.txt", &["Work", "x"][..]),
+        ("sub/b.txt", &["work"][..]),
+        ("c.txt", &[][..]),
+    ] {
+        std::fs::write(root.join(name), b"x").unwrap();
+        write_tags(&root.join(name), &tags(t)).unwrap();
+    }
+    let outside = tmp.path().join("elsewhere/d.txt");
+    std::fs::write(&outside, b"x").unwrap();
+    write_tags(&outside, &tags(&["away"])).unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(bibli_plugin_query::QueryPlugin::default()), &app);
+    app.plugins
+        .add(Arc::new(bibli_plugin_tags::TagsPlugin::default()), &app);
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &Location::from_path(&root)).unwrap();
+    let dispatch =
+        |name: &str, args: serde_json::Value| app.dispatch(&Invocation::with_args(name, &args));
+    dispatch("tags.lens", serde_json::json!({ "pane": pane })).unwrap();
+    let counted = |want: &[(&str, u64)]| {
+        until(&app, "the counts", || {
+            let Ok(bibli_core::command::Outcome::Value(v)) =
+                dispatch("tags.lens_status", serde_json::json!({ "pane": pane }))
+            else {
+                panic!("a value")
+            };
+            let have: Vec<(String, u64)> = v["tags"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| {
+                    (
+                        r["tag"].as_str().unwrap().to_owned(),
+                        r["files"].as_u64().unwrap(),
+                    )
+                })
+                .collect();
+            let want: Vec<(String, u64)> =
+                want.iter().map(|(t, n)| ((*t).to_owned(), *n)).collect();
+            (v["walking"] == false && have == want).then_some(v)
+        })
+    };
+    let v = counted(&[("Work", 2), ("x", 1)]);
+    assert_eq!(v["files"], 2);
+    assert_eq!(v["tags"][0]["pinned"], false);
+    assert!(v["tags"][0]["color"].is_string());
+
+    // What is applied is counted as it is, without walking again.
+    let entry = bibli_core::op::EntryRef::from_path(root.join("c.txt")).unwrap();
+    let Ok(bibli_core::command::Outcome::Plan(plan)) = dispatch(
+        "tags.add",
+        serde_json::json!({ "tags": ["x", "new"], "entries": [entry] }),
+    ) else {
+        panic!("a plan")
+    };
+    assert!(
+        app.executor
+            .execute_blocking(&plan, app.lifetime())
+            .error
+            .is_none()
+    );
+    counted(&[("new", 1), ("Work", 2), ("x", 2)]);
+
+    // Let go, it shows nothing.
+    dispatch("tags.lens_release", serde_json::json!({ "pane": pane })).unwrap();
+    let Ok(bibli_core::command::Outcome::Value(v)) =
+        dispatch("tags.lens_status", serde_json::json!({ "pane": pane }))
+    else {
+        panic!("a value")
+    };
+    assert!(v["root"].is_null() && v["tags"].as_array().unwrap().is_empty());
 }
 
 #[test]

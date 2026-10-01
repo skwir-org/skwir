@@ -120,26 +120,30 @@ fn group_title(group: &str) -> String {
     })
 }
 
-/// A place being dragged to another position in its group.
+/// A place being dragged: to another position in its group, if it moves
+/// (`reorder`), or onto files, if it gives them something (`gives`, a
+/// tag: `dnd::takes_gifts`).
 #[derive(Clone, Debug)]
 pub struct PlaceDrag {
     pub group: String,
     /// Its position among the group's movable places when the drag started.
     pub index: usize,
-    pub reorder: Reorder,
+    pub reorder: Option<Reorder>,
+    /// What dropping it on files runs, with the files (`Place::drop`).
+    pub gives: Option<Invocation>,
 }
 
 impl PlaceDrag {
     /// The command that moves it before the place whose `before` is given,
     /// or last.
-    fn command(&self, before: Option<serde_json::Value>) -> Invocation {
-        let mut command = self.reorder.command.clone();
+    fn command(&self, before: Option<serde_json::Value>) -> Option<Invocation> {
+        let mut command = self.reorder.as_ref()?.command.clone();
         if let Some(before) = before
             && let Some(args) = command.args.as_object_mut()
         {
             args.insert("before".into(), before);
         }
-        command
+        Some(command)
     }
 }
 
@@ -251,8 +255,9 @@ pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElem
         }))
         // A place dropped below the rows goes last in its group.
         .on_drop(cx.listener(|this, drag: &PlaceDrag, window, cx| {
-            let command = drag.command(None);
-            this.run(&command.name, command.args, window, cx);
+            if let Some(command) = drag.command(None) {
+                this.run(&command.name, command.args, window, cx);
+            }
         }))
         // Beside the rows, the menu of the groups: those put away.
         .on_mouse_down(
@@ -284,20 +289,21 @@ pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElem
                 .position(|x| *x == c)
         });
         // Its position among its group's movable places, if it moves.
-        let drag = place.reorder.as_ref().map(|reorder| {
+        let index = place.reorder.as_ref().map(|_| {
             let index = indices.entry(place.group.clone()).or_default();
-            let drag = PlaceDrag {
-                group: place.group.clone(),
-                index: *index,
-                reorder: reorder.clone(),
-            };
             *index += 1;
-            drag
+            *index - 1
         });
+        let drag = PlaceDrag {
+            group: place.group.clone(),
+            index: index.unwrap_or_default(),
+            reorder: place.reorder.clone(),
+            gives: place.drop.clone(),
+        };
         let order = orders.get(&place.group).map_or(&[][..], Vec::as_slice);
         if let Some(color) = color {
             let mut pill = pill(i, &place, color, is_current, &font, cx);
-            if let Some(drag) = drag {
+            if drag.reorder.is_some() || drag.gives.is_some() {
                 pill = movable_pill(pill, place.title.clone(), drag, order, cx);
             }
             pills.push(pill.into_any_element());
@@ -470,7 +476,7 @@ pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElem
                     .child(controls::glyph("eject", theme.text_muted, 13.)),
             );
         }
-        if let Some(drag) = drag {
+        if drag.reorder.is_some() {
             row = movable_row(row, place.title.clone(), drag, order, cx);
         }
         if let Some(path) = place.location.path() {
@@ -757,8 +763,9 @@ fn pill(
     pill
 }
 
-/// A movable pill: dragged among its group's like a movable row, a line
-/// on its left or right edge marking where the dragged one lands.
+/// A pill dragged: onto files, which it gives what it gives (its tag),
+/// and, if it moves, among its group's like a movable row, a line on its
+/// left or right edge marking where the dragged one lands.
 fn movable_pill(
     pill: gpui::Stateful<gpui::Div>,
     label: String,
@@ -766,13 +773,16 @@ fn movable_pill(
     order: &[serde_json::Value],
     cx: &mut Context<Shell>,
 ) -> gpui::Stateful<gpui::Div> {
-    let (group, index) = (drag.group.clone(), drag.index);
-    pill.relative()
-        .on_drag(drag, move |_, position, _, cx| {
-            cx.new(|_| crate::dnd::DragPreview::named(label.clone(), position))
-        })
-        .child(gap(order, &group, index, Edge::Left, cx))
-        .child(gap(order, &group, index + 1, Edge::Right, cx))
+    let (group, index, moves) = (drag.group.clone(), drag.index, drag.reorder.is_some());
+    let pill = pill.relative().on_drag(drag, move |_, position, _, cx| {
+        cx.new(|_| crate::dnd::DragPreview::named(label.clone(), position))
+    });
+    if moves {
+        pill.child(gap(order, &group, index, Edge::Left, cx))
+            .child(gap(order, &group, index + 1, Edge::Right, cx))
+    } else {
+        pill
+    }
 }
 
 /// Which edge of a movable place a gap's line is drawn on.
@@ -827,7 +837,11 @@ fn gap(
         Edge::Right => zone.top_0().bottom_0().w(gpui::relative(0.5)).right_0(),
     };
     zone.drag_over::<PlaceDrag>(move |s, drag, _, _| {
-        if drag.group != shown || drag.index == before || drag.index + 1 == before {
+        if drag.reorder.is_none()
+            || drag.group != shown
+            || drag.index == before
+            || drag.index + 1 == before
+        {
             return s;
         }
         let s = s.border_color(edge);
@@ -845,8 +859,9 @@ fn gap(
         if drag.group != dropped {
             return;
         }
-        if let Some(before) = drop_target(&order, drag.index, before) {
-            let command = drag.command(before);
+        if let Some(before) = drop_target(&order, drag.index, before)
+            && let Some(command) = drag.command(before)
+        {
             this.run(&command.name, command.args, window, cx);
         }
     }))

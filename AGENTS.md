@@ -221,9 +221,15 @@ current source before assuming a planned crate, command, or API exists.
   runs, the tags plugin's own, learned as the provider reads files and
   from each applied change, `Executor::observe`), checks every file they
   name, and walks all the same: an index hints, the walk answers. So a
-  tag renamed or removed everywhere (`tags.rename`, `tags.delete`) takes
-  its files from the search, not the index, as a plan proposed for
-  review.
+  tag renamed or removed everywhere (`tags.rename`, `tags.delete`;
+  several at once merge or go in one plan) takes its files from the
+  search, not the index, as a plan proposed for review. The Tags view (a
+  lens: the plugin's `lens.rs` counts, the shell's `tags_view.rs` draws)
+  lists the tags under the folder shown with how many files have each:
+  the index's counts at once, then the search for any tag (`tag:*`)
+  replaces them, and what bibli applies is counted as it is applied.
+  Its own selection of tags is what its menu, Enter, F2 and Delete act
+  on.
 - **Files beside a file go where it goes** (ADR-028). A companion (a
   Mac's `._x`, an XMP sidecar, TagSpaces' `.ts/x.json`) is declared by
   name rules (`bibli_core::companions::Companion`, registered in
@@ -283,10 +289,12 @@ current source before assuming a planned crate, command, or API exists.
   by the pane's keep button like any kept place) or, until one is, the
   tags on the most files its index knows, as suggestions
   (`Place::suggested`, an outline), each a search of the home folder
-  (`query.location` builds it, so no plugin writes another's syntax). A place with a `drop` command
-  runs it with what is dropped on it (`pane` for a pane's selection,
-  `entries` for another application's files): a tag's gives them the
-  tag.
+  (`query.location` builds it, so no plugin writes another's syntax),
+  and last All Tags, the home folder's Tags view. A place with a `drop`
+  command runs it with what is dropped on it (`pane` for a pane's
+  selection, `entries` for another application's files): a tag's gives
+  them the tag. Dragged onto a file's row (`dnd::takes_gifts`), it gives
+  the same to that file, or to the selection when the row is in it.
   The groups are the user's to arrange (`sidebar::Sections`, part of
   the window's shape): a click on a header folds its group, a drag moves
   it, and its menu hides it or shows one hidden (`ui.sidebar_section`).
@@ -625,7 +633,9 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   in `crates/ui/src/views/`, not separate plugin crates.
 - Plugin views register owner-tagged `ViewSpec::named` descriptors; their GPUI
   renderers implement `PaneView` in `bibli-ui` and are resolved in
-  `views::named_renderer`. Do not hard-code plugin views into the toolbar or
+  `views::named_renderer`. A view whose items are not the pane's entries
+  (the Tags view) takes the commands that would act on the files it
+  hides (`PaneView::command`): Enter, Delete and F2 act on what it shows. Do not hard-code plugin views into the toolbar or
   palette. Reconcile registration identity, including disable/re-enable between
   frames, and fall back to List when the active view disappears. Publish data,
   advance the descriptor revision, then wake the app; never query plugin data

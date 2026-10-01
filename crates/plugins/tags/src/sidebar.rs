@@ -141,6 +141,27 @@ fn location(app: &App, tag: &str) -> Option<String> {
     }
 }
 
+/// The colors the user chose for tags, read once for many.
+pub struct Colors(toml::Table);
+
+impl Colors {
+    pub fn of(app: &App) -> Self {
+        Colors(app.settings.get(TAG_COLOR_SETTING).unwrap_or_default())
+    }
+
+    /// The color `tag` wears: the user's choice, else a file's, else its
+    /// name's.
+    pub fn of_tag(&self, vocabulary: &Vocabulary, tag: &str) -> String {
+        self.0
+            .get(&tag.to_lowercase())
+            .and_then(toml::Value::as_str)
+            .filter(|c| TAG_COLORS.contains(c))
+            .map(str::to_owned)
+            .or_else(|| vocabulary.given_color(tag))
+            .unwrap_or_else(|| TAG_COLORS[tag_color(tag)].to_owned())
+    }
+}
+
 /// The tags pinned, in their order, each once.
 pub fn pinned(app: &App) -> Vec<String> {
     let mut tags: Vec<String> = Vec::new();
@@ -153,85 +174,81 @@ pub fn pinned(app: &App) -> Vec<String> {
     tags
 }
 
-/// An edit of the pins, and what undoes it.
+/// An edit of the pins. Its undo is the pins as they were (`Set`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Pin {
-    /// Pin `tag` before `before`, or last; moves it if pinned.
-    Pin {
-        tag: String,
+    /// Pin `tags` before `before`, or last; moves those pinned.
+    Put {
+        tags: Vec<String>,
         before: Option<String>,
     },
     Unpin {
-        tag: String,
+        tags: Vec<String>,
     },
+    /// The pins as listed: an undo or a redo.
+    Set(Vec<String>),
 }
 
 impl Pin {
-    /// Apply to `list`: the edit that reverts it, `None` when nothing
-    /// changed.
-    pub fn apply(&self, list: &mut Vec<String>) -> Option<Pin> {
-        let at = |list: &[String], tag: &str| list.iter().position(|t| same_tag(t, tag));
-        match self {
-            Pin::Pin { tag, before } => {
-                let was = at(list, tag);
-                // Before itself: where it is.
-                if was.is_some() && before.as_deref().is_some_and(|b| same_tag(b, tag)) {
-                    return None;
-                }
-                let back = match was {
-                    Some(i) => Pin::Pin {
-                        tag: list[i].clone(),
-                        before: list.get(i + 1).cloned(),
-                    },
-                    None => Pin::Unpin { tag: tag.clone() },
-                };
-                let mut moved = list.clone();
-                if let Some(i) = was {
-                    moved.remove(i);
-                }
-                let to = before
-                    .as_deref()
-                    .and_then(|b| at(&moved, b))
-                    .unwrap_or(moved.len());
-                moved.insert(to, tag.clone());
-                (moved != *list).then(|| {
-                    *list = moved;
-                    back
-                })
+    /// Apply to `list`: whether it changed.
+    pub fn apply(&self, list: &mut Vec<String>) -> bool {
+        let named = |tags: &[String], t: &str| tags.iter().any(|x| same_tag(x, t));
+        let mut out: Vec<String> = match self {
+            Pin::Put { tags, before } => {
+                // Before one of those it moves: before the next that stays,
+                // so a tag pinned before itself stays where it is.
+                let before = before.as_deref().and_then(|b| {
+                    if !named(tags, b) {
+                        return Some(b.to_owned());
+                    }
+                    let at = list.iter().position(|t| same_tag(t, b))?;
+                    list[at..].iter().find(|t| !named(tags, t)).cloned()
+                });
+                let mut out: Vec<String> =
+                    list.iter().filter(|t| !named(tags, t)).cloned().collect();
+                let at = before
+                    .and_then(|b| out.iter().position(|t| same_tag(t, &b)))
+                    .unwrap_or(out.len());
+                let pinned = tags.iter().map(|t| {
+                    // A tag pinned keeps the spelling it was pinned with.
+                    list.iter().find(|x| same_tag(x, t)).unwrap_or(t).clone()
+                });
+                out.splice(at..at, pinned);
+                out
             }
-            Pin::Unpin { tag } => {
-                let i = at(list, tag)?;
-                let back = Pin::Pin {
-                    tag: list.remove(i),
-                    before: list.get(i).cloned(),
-                };
-                Some(back)
-            }
-        }
+            Pin::Unpin { tags } => list.iter().filter(|t| !named(tags, t)).cloned().collect(),
+            Pin::Set(tags) => tags.clone(),
+        };
+        out.dedup_by(|a, b| same_tag(a, b));
+        let changed = out != *list;
+        *list = out;
+        changed
     }
 
-    /// The command that applies this edit, from a toast's button.
-    pub fn invocation(&self, undo: bool) -> Invocation {
+    /// What it did, in a sentence: `was` the pins before.
+    fn words(&self, was: &[String]) -> String {
+        let pinned = |t: &str| was.iter().any(|x| same_tag(x, t));
         match self {
-            Pin::Pin { tag, before } => Invocation::with_args(
-                "tags.pin",
-                &serde_json::json!({ "tag": tag, "before": before, "undo": undo }),
-            ),
-            Pin::Unpin { tag } => Invocation::with_args(
-                "tags.unpin",
-                &serde_json::json!({ "tag": tag, "undo": undo }),
-            ),
+            Pin::Put { tags, .. } => match tags.as_slice() {
+                [tag] if pinned(tag) => format!("Moved the tag “{tag}”"),
+                [tag] => format!("Pinned the tag “{tag}” to the sidebar"),
+                _ => format!("Pinned {} tags to the sidebar", tags.len()),
+            },
+            Pin::Unpin { tags } => match tags.as_slice() {
+                [tag] => format!("Unpinned the tag “{tag}”"),
+                _ => format!("Unpinned {} tags", tags.len()),
+            },
+            Pin::Set(_) => "Put the pinned tags back as they were".to_owned(),
         }
     }
+}
 
-    /// What it did, in a sentence.
-    fn words(&self, was_pinned: bool) -> String {
-        match self {
-            Pin::Pin { tag, .. } if was_pinned => format!("Moved the tag “{tag}”"),
-            Pin::Pin { tag, .. } => format!("Pinned the tag “{tag}” to the sidebar"),
-            Pin::Unpin { tag } => format!("Unpinned the tag “{tag}”"),
-        }
-    }
+/// The command that puts the pins back as `pins`, from a toast's button.
+fn set_invocation(pins: &[String], undo: bool) -> Invocation {
+    Invocation::with_args(
+        "tags.pins",
+        &serde_json::json!({ "tags": pins, "undo": undo }),
+    )
 }
 
 /// Apply `edit` to the pins and save them, on a worker; a toast says what
@@ -252,13 +269,11 @@ pub fn edit(
         move || {
             let Some(app) = weak.upgrade() else { return };
             let _saving = saving.lock();
-            let mut list = pinned(&app);
-            let was_pinned = match &edit {
-                Pin::Pin { tag, .. } | Pin::Unpin { tag } => list.iter().any(|t| same_tag(t, tag)),
-            };
-            let Some(inverse) = edit.apply(&mut list) else {
+            let was = pinned(&app);
+            let mut list = was.clone();
+            if !edit.apply(&mut list) {
                 return;
-            };
+            }
             app.settings.set(
                 PINNED,
                 toml::Value::Array(list.into_iter().map(toml::Value::String).collect()),
@@ -271,9 +286,9 @@ pub fn edit(
             } else {
                 app.notify_with_action(
                     NotifyLevel::Info,
-                    edit.words(was_pinned),
+                    edit.words(&was),
                     if undo { "Redo" } else { "Undo" },
-                    inverse.invocation(!undo),
+                    set_invocation(&was, !undo),
                 );
             }
             then(&app);
@@ -288,16 +303,10 @@ pub fn publish(app: &App, index: &Arc<TagIndex>, vocabulary: &Vocabulary, shown:
     let Some(home) = std::env::home_dir() else {
         return;
     };
-    let colors: toml::Table = app.settings.get(TAG_COLOR_SETTING).unwrap_or_default();
+    let colors = Colors::of(app);
     let row = |tag: String, pinned: bool| {
         let location = location(app, &tag)?;
-        let color = colors
-            .get(&tag.to_lowercase())
-            .and_then(toml::Value::as_str)
-            .filter(|c| TAG_COLORS.contains(c))
-            .map(str::to_owned)
-            .or_else(|| vocabulary.given_color(&tag))
-            .unwrap_or_else(|| TAG_COLORS[tag_color(&tag)].to_owned());
+        let color = colors.of_tag(vocabulary, &tag);
         Some(Row {
             tag,
             location,
@@ -357,6 +366,33 @@ pub fn publish(app: &App, index: &Arc<TagIndex>, vocabulary: &Vocabulary, shown:
             color: Some(r.color),
         }
     });
+    // Last, every tag: the home folder's Tags view, where they are managed.
+    let all = location(app, "x")
+        .and(std::env::home_dir())
+        .map(|home| Place {
+            title: "All Tags".into(),
+            location: Location::new("tags", ""),
+            icon: Some("tag".into()),
+            group: GROUP.into(),
+            space: None,
+            eject: None,
+            activate: Some(Invocation::with_args(
+                "ui.view",
+                &serde_json::json!({
+                    "id": crate::lens::VIEW,
+                    "location": bibli_core::os_path::PathArg::from(home.as_path()),
+                }),
+            )),
+            unavailable: None,
+            busy: None,
+            menu: Vec::new(),
+            forget: None,
+            reorder: None,
+            color: None,
+            drop: None,
+            suggested: false,
+        });
+    let places = places.chain(all);
     if app.registry.places.replace_owner(crate::ID, places) {
         app.wake();
     }
@@ -371,35 +407,34 @@ mod tests {
     }
 
     #[test]
-    fn pins_move_and_come_undone_where_they_were() {
+    fn pins_go_where_they_are_put_and_come_back_as_they_were() {
         let mut pins = list(&["a", "b", "c"]);
-        let pin = |tag: &str, before: Option<&str>| Pin::Pin {
-            tag: tag.into(),
+        let pin = |tags: &[&str], before: Option<&str>| Pin::Put {
+            tags: list(tags),
             before: before.map(str::to_owned),
         };
-        // A new pin, before b; undone, it is gone.
-        let back = pin("Été", Some("b")).apply(&mut pins).unwrap();
+        let was = pins.clone();
+        assert!(pin(&["Été"], Some("b")).apply(&mut pins));
         assert_eq!(pins, list(&["a", "Été", "b", "c"]));
-        assert_eq!(
-            back,
-            Pin::Unpin {
-                tag: "Été".into()
-            }
-        );
-        back.apply(&mut pins).unwrap();
+        assert!(Pin::Set(was).apply(&mut pins));
         assert_eq!(pins, list(&["a", "b", "c"]));
-        // Moved last, and back before c.
-        let back = pin("A", None).apply(&mut pins).unwrap();
-        assert_eq!(pins, list(&["b", "c", "A"]));
-        assert_eq!(back, pin("a", Some("b")));
-        // Unpinned, and back where it was.
-        let back = Pin::Unpin { tag: "c".into() }.apply(&mut pins).unwrap();
-        assert_eq!(pins, list(&["b", "A"]));
-        back.apply(&mut pins).unwrap();
-        assert_eq!(pins, list(&["b", "c", "A"]));
+        // Moved last, keeping how it was spelled.
+        assert!(pin(&["A"], None).apply(&mut pins));
+        assert_eq!(pins, list(&["b", "c", "a"]));
+        // Several at once, new and pinned, before another.
+        assert!(pin(&["x", "a"], Some("c")).apply(&mut pins));
+        assert_eq!(pins, list(&["b", "x", "a", "c"]));
+        assert!(
+            Pin::Unpin {
+                tags: list(&["X", "c"])
+            }
+            .apply(&mut pins)
+        );
+        assert_eq!(pins, list(&["b", "a"]));
         // Nothing moves where it already is.
-        assert!(pin("c", Some("A")).apply(&mut pins).is_none());
-        assert!(pin("b", Some("b")).apply(&mut pins).is_none());
-        assert!(Pin::Unpin { tag: "z".into() }.apply(&mut pins).is_none());
+        assert!(!pin(&["a"], None).apply(&mut pins));
+        assert!(!pin(&["b"], Some("b")).apply(&mut pins));
+        assert!(!pin(&["b"], Some("a")).apply(&mut pins));
+        assert!(!Pin::Unpin { tags: list(&["z"]) }.apply(&mut pins));
     }
 }

@@ -71,6 +71,7 @@ pub mod sidebar;
 pub mod status;
 pub mod tabs;
 pub mod tags;
+pub mod tags_view;
 pub mod terminal;
 pub mod theme;
 pub mod thumbs;
