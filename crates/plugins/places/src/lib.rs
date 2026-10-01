@@ -87,6 +87,10 @@ struct Cleartext {
 
 struct Busy {
     location: Location,
+    /// The volume's device, which a rescan lists in its stead once the
+    /// mount is gone: the kernel takes a mount out of the list when the
+    /// unmount begins, before it has written what it still had to.
+    device: Option<Location>,
     what: &'static str,
 }
 
@@ -106,7 +110,10 @@ fn mark_busy(places: &mut [Place], busy: &[Busy], cleartext: &[Cleartext]) {
     for place in places {
         place.busy = busy
             .iter()
-            .find(|b| is_place(&place.location, &b.location, cleartext))
+            .find(|b| {
+                is_place(&place.location, &b.location, cleartext)
+                    || b.device.as_ref() == Some(&place.location)
+            })
             .map(|b| b.what.to_owned());
     }
 }
@@ -384,6 +391,18 @@ impl Places {
     /// the work runs on a worker and can take a while (udisks asks the
     /// kernel to open a container, a drive to spin up).
     fn start_busy(&self, app: &App, location: Location, what: &'static str) {
+        self.start_busy_as(app, location, None, what);
+    }
+
+    /// [`Self::start_busy`], said also on the place of the volume's
+    /// `device` while it is listed as one.
+    fn start_busy_as(
+        &self,
+        app: &App,
+        location: Location,
+        device: Option<Location>,
+        what: &'static str,
+    ) {
         let mut publisher = self.0.lock();
         if publisher
             .lifetime
@@ -393,7 +412,11 @@ impl Places {
             return;
         }
         publisher.busy.retain(|b| b.location != location);
-        publisher.busy.push(Busy { location, what });
+        publisher.busy.push(Busy {
+            location,
+            device,
+            what,
+        });
         let mut places = std::mem::take(&mut publisher.shown);
         mark_busy(&mut places, &publisher.busy, &publisher.cleartext);
         publisher.shown.clone_from(&places);
@@ -953,7 +976,12 @@ impl Plugin for PlacesPlugin {
                     .ok_or_else(|| anyhow::anyhow!("not a removable volume"))?;
                 let this = places.clone();
                 let location = Location::from_path(&mount.path);
-                places.start_busy(app, location.clone(), "Unmounting…");
+                places.start_busy_as(
+                    app,
+                    location.clone(),
+                    Some(device_location(&mount.source)),
+                    "Unmounting…",
+                );
                 // Nothing of bibli's may hold the volume: a pane showing it
                 // goes home, the folders kept there close.
                 let home = bibli_platform::places::home().unwrap_or_else(|| PathBuf::from("/"));
@@ -961,6 +989,21 @@ impl Plugin for PlacesPlugin {
                 let lifetime = places.lifetime();
                 places.spawn(app, "places-unmount", move |app| {
                     use bibli_core::app::NotifyLevel;
+                    // Written first, while still mounted: the row stays busy
+                    // until the drive has it all, and a write that fails is
+                    // reported instead of lost.
+                    if let Err(error) = bibli_platform::places::flush(&mount.path) {
+                        this.end_busy(&location, false);
+                        this.populate(app);
+                        app.notify(
+                            NotifyLevel::Error,
+                            format!(
+                                "“{}” was not unmounted: not everything could be written to it ({error:#})",
+                                mount.label
+                            ),
+                        );
+                        return;
+                    }
                     let deadline = std::time::Instant::now() + RELEASE;
                     let unmounted = loop {
                         match bibli_platform::places::unmount(&mount.source) {
@@ -1063,6 +1106,35 @@ impl Plugin for PlacesPlugin {
 mod tests {
     use super::*;
     use bibli_core::app::AppConfig;
+
+    /// The kernel takes a mount out of the list as its unmount begins and
+    /// only then writes what it had to: the volume, listed by its device in
+    /// the meantime, still says it is being unmounted.
+    #[test]
+    fn a_volume_being_unmounted_stays_busy_once_its_mount_is_gone() {
+        let busy = [Busy {
+            location: Location::from_path(Path::new("/run/media/example/STICK")),
+            device: Some(device_location("/dev/sdz1")),
+            what: "Unmounting…",
+        }];
+        let volume = bibli_platform::places::Volume {
+            device: "/dev/sdz1".into(),
+            label: "STICK".into(),
+            size: 16 << 20,
+            locked: false,
+            hotplug: true,
+            container: None,
+        };
+        let mut places = vec![volume_place(&volume)];
+        mark_busy(&mut places, &busy, &[]);
+        assert_eq!(places[0].busy.as_deref(), Some("Unmounting…"));
+        let mut other = vec![volume_place(&bibli_platform::places::Volume {
+            device: "/dev/sdy1".into(),
+            ..volume
+        })];
+        mark_busy(&mut other, &busy, &[]);
+        assert_eq!(other[0].busy, None);
+    }
 
     #[test]
     fn registers_places_and_withdraws_them() {

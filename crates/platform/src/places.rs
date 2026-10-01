@@ -280,8 +280,6 @@ pub fn unlock(device: &str, passphrase: &str) -> anyhow::Result<String> {
         .ok_or_else(|| anyhow::anyhow!("udisksctl did not name the unlocked device"))
 }
 
-/// Unmount, then lock the container under it if there is one, so the volume
-/// is safe to unplug and asks for its passphrase next time. Blocks: worker only.
 /// Whether udisks refused because something still uses the volume
 /// (`DeviceBusy`, "target is busy").
 pub fn is_busy(error: &anyhow::Error) -> bool {
@@ -289,6 +287,26 @@ pub fn is_busy(error: &anyhow::Error) -> bool {
     text.contains("DeviceBusy") || text.contains("target is busy")
 }
 
+/// Write to the drive what the filesystem mounted at `path` still holds in
+/// memory, and say what could not be. Unmounting writes it too, but the
+/// kernel takes the mount out of the list as the unmount begins, before
+/// those writes, so the volume would look unmounted while the drive is
+/// still being written, and a write lost then is not reported. Blocks for
+/// as long as the drive takes: worker only.
+pub fn flush(path: &Path) -> anyhow::Result<()> {
+    use rustix::fs::{Mode, OFlags};
+    // Closed before the unmount, which this would otherwise hold up.
+    let dir = rustix::fs::open(
+        path,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?;
+    rustix::fs::syncfs(&dir)?;
+    Ok(())
+}
+
+/// Unmount, then lock the container under it if there is one, so the volume
+/// is safe to unplug and asks for its passphrase next time. Blocks: worker only.
 pub fn unmount(source: &str) -> anyhow::Result<()> {
     let container = lsblk().and_then(|json| container_of(&json, source));
     udisks("unmount", source, &[], None)?;

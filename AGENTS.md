@@ -487,7 +487,16 @@ current source before assuming a planned crate, command, or API exists.
   argument struct has no `Debug`. Before unmounting, `App::release` lets
   go of everything under the mount point (an open listing holds its
   folder, and the kernel refuses to unmount a volume anything holds): a
-  pane showing it goes home, folders kept or opened there close. The end
+  pane showing it goes home, folders kept or opened there close. Then it
+  writes the volume out (`places::flush`, `syncfs`) while still mounted:
+  the kernel takes a mount out of mountinfo as its unmount begins, before
+  writing what it held, so the row would look unmounted while the drive
+  is written and a lost write would go unsaid; the row stays busy under
+  the volume's device too (`Busy::device`). A copy or a move onto a drive
+  the user can unplug (`fs::volume::is_removable`: removable, or on USB,
+  FireWire or an SD card, through LUKS or RAID) is written through
+  (`op::builtin::Pace`): every chunk's worth of bytes waits for the drive,
+  so progress is the drive's and the step ends with the copy on it. The end
   of a mount or an unmount corrects the volumes the last `lsblk` saw
   (`end_busy`), rather than waiting for it to run again. An unlocked
   container is listed as its cleartext volume (`Volume::container`):

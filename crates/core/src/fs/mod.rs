@@ -3,6 +3,7 @@
 mod hydrate;
 mod path_provider;
 pub mod stat;
+pub mod volume;
 mod watch;
 
 pub use hydrate::{hydrate_path, hydrate_paths};

@@ -363,8 +363,7 @@ impl Operation for Move {
                 // says, and a failed transfer must not leave a partial target.
                 // The companion holding the file's attributes is converted
                 // with them (ADR-028); the others go as files.
-                copy_staged(&src, &target, &self.dest_dir, true, ctx)?;
-                copy_along(&along, ctx)?;
+                copy_entry(&src, &target, &self.dest_dir, true, &along, ctx)?;
                 remove_recursive(&src)?;
                 for a in &along {
                     let _ = remove_recursive(&a.from);
@@ -500,8 +499,14 @@ impl Operation for Copy {
         let src = self.entry.resolve()?;
         let target = self.target(&src);
         let along = along(ctx, &src, &target);
-        copy_staged(&src, &target, &self.dest_dir, self.preserve_attributes, ctx)?;
-        copy_along(&along, ctx)?;
+        copy_entry(
+            &src,
+            &target,
+            &self.dest_dir,
+            self.preserve_attributes,
+            &along,
+            ctx,
+        )?;
         let r = EntryRef::from_path(&target)
             .ok_or_else(|| anyhow::anyhow!("copy vanished: {}", target.display()))?;
         // Undo puts the copy in the trash rather than deleting it: it may
@@ -549,6 +554,31 @@ fn same_tree(src: &Path, copy: &Path, ctx: &StepContext) -> anyhow::Result<bool>
     Ok(true)
 }
 
+/// Copy `src` to `target`, and its companions (`along`) beside it. On a
+/// drive the user can unplug (`fs::volume::is_removable`) the copy is
+/// written through ([`Pace`]): progress and Cancel follow the drive however
+/// slow it is, and the whole copy, names included, is on it when the step
+/// ends. Written only when unmounted, it could be unplugged, or reset
+/// itself (a device taking its firmware), before the writes end, and lose
+/// them.
+fn copy_entry(
+    src: &Path,
+    target: &Path,
+    dest_dir: &Path,
+    preserve_attributes: bool,
+    along: &[Along],
+    ctx: &StepContext,
+) -> anyhow::Result<()> {
+    let pace = if crate::fs::volume::is_removable(dest_dir) {
+        Pace::through(dest_dir)?
+    } else {
+        Pace::at_once()
+    };
+    copy_staged(src, target, dest_dir, preserve_attributes, &pace, ctx)?;
+    copy_along(along, &pace, ctx)?;
+    pace.settle(ctx)
+}
+
 /// Copy `src` to `target` through a private staging directory inside
 /// `dest_dir`, publishing with a no-replace rename only after content and
 /// attributes are complete. A failed attribute write must not leave a partial destination
@@ -558,6 +588,7 @@ fn copy_staged(
     target: &Path,
     dest_dir: &Path,
     preserve_attributes: bool,
+    pace: &Pace,
     ctx: &StepContext,
 ) -> anyhow::Result<()> {
     ctx.add_total(tree_size(src, ctx)?);
@@ -568,8 +599,8 @@ fn copy_staged(
     let staged = staging.path().join("entry");
     // What the copy put beside the staged entry (the companion that holds
     // its attributes, on a volume that refuses them) follows it out.
-    let result =
-        copy_recursive_with_attributes(src, &staged, preserve_attributes, ctx).and_then(|()| {
+    let result = copy_recursive_with_attributes(src, &staged, preserve_attributes, pace, ctx)
+        .and_then(|()| {
             let beside = along(ctx, &staged, target);
             rename_noreplace(&staged, target)?;
             rename_along(&beside)
@@ -620,10 +651,105 @@ fn remove_staged_copy(path: &Path) -> std::io::Result<()> {
 /// second on a slow disk.
 const COPY_CHUNK: usize = 8 << 20;
 
+/// Written through, the first chunk, and the least: a chunk then takes
+/// about `THROUGH_STEP` on the drive, so a slow one still shows progress
+/// and answers Cancel, and a fast one is not stalled by a wait every few
+/// bytes. Measured on the drive as it writes, never assumed of one.
+const THROUGH_FIRST: u64 = 1 << 20;
+const THROUGH_MIN: u64 = 128 << 10;
+const THROUGH_STEP: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// How a step's copy counts what it wrote: at once, or, written through,
+/// once it is on the drive. Through, every chunk's worth of bytes, whatever
+/// files they belong to, waits for the drive to have everything written
+/// (`syncfs`): a folder of small files waits once per chunk, not once per
+/// file.
+struct Pace {
+    /// The destination's filesystem, written through.
+    drive: Option<rustix::fd::OwnedFd>,
+    /// Bytes to write before the next wait.
+    chunk: std::cell::Cell<u64>,
+    /// Bytes written since the last wait, not yet counted.
+    unsaid: std::cell::Cell<u64>,
+    since: std::cell::Cell<std::time::Instant>,
+}
+
+impl Pace {
+    fn at_once() -> Self {
+        Self {
+            drive: None,
+            chunk: std::cell::Cell::new(COPY_CHUNK as u64),
+            unsaid: std::cell::Cell::new(0),
+            since: std::cell::Cell::new(std::time::Instant::now()),
+        }
+    }
+
+    fn through(dir: &Path) -> anyhow::Result<Self> {
+        use rustix::fs::{Mode, OFlags};
+        // Opened before anything is written: `syncfs` reports the errors
+        // since.
+        let drive = rustix::fs::open(
+            dir,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?;
+        Ok(Self {
+            drive: Some(drive),
+            chunk: std::cell::Cell::new(THROUGH_FIRST),
+            ..Self::at_once()
+        })
+    }
+
+    /// How much to write at once.
+    fn chunk(&self) -> usize {
+        usize::try_from(self.chunk.get()).unwrap_or(COPY_CHUNK)
+    }
+
+    /// `n` more bytes were written.
+    fn wrote(&self, n: u64, ctx: &StepContext) -> anyhow::Result<()> {
+        if self.drive.is_none() {
+            ctx.advance(n);
+            return Ok(());
+        }
+        self.unsaid.set(self.unsaid.get() + n);
+        if self.unsaid.get() >= self.chunk.get() {
+            self.settle(ctx)?;
+        }
+        Ok(())
+    }
+
+    /// Written through, wait until the drive has everything written so far
+    /// (names, folders and allocation tables with the bytes), count it, and
+    /// size the next chunk by how long it took.
+    fn settle(&self, ctx: &StepContext) -> anyhow::Result<()> {
+        let Some(drive) = &self.drive else {
+            return Ok(());
+        };
+        rustix::fs::syncfs(drive).context("write the copy to the drive")?;
+        let n = self.unsaid.take();
+        ctx.advance(n);
+        if n > 0 {
+            self.chunk.set(next_chunk(n, self.since.get().elapsed()));
+        }
+        self.since.set(std::time::Instant::now());
+        Ok(())
+    }
+}
+
+/// The chunk that takes about `THROUGH_STEP` on a drive that wrote `n`
+/// bytes in `took`.
+fn next_chunk(n: u64, took: std::time::Duration) -> u64 {
+    let next = u128::from(n) * THROUGH_STEP.as_micros() / took.as_micros().max(1);
+    u64::try_from(next)
+        .unwrap_or(u64::MAX)
+        .clamp(THROUGH_MIN, COPY_CHUNK as u64)
+}
+
 fn copy_file(
     src: &Path,
     dst: &Path,
     preserve_attributes: bool,
+    pace: &Pace,
     ctx: &StepContext,
 ) -> anyhow::Result<()> {
     // Non-blocking, then checked: a file swapped for a FIFO since it was
@@ -649,7 +775,7 @@ fn copy_file(
     if rustix::fs::ioctl_ficlone(&df, &sf).is_ok() {
         ctx.advance(m.len());
     } else {
-        copy_contents(&mut sf, &mut df, ctx)
+        copy_contents(&mut sf, &mut df, pace, ctx)
             .with_context(|| format!("copy {} -> {}", src.display(), dst.display()))?;
     }
     // Set attributes before restoring a read-only source's permissions.
@@ -662,21 +788,22 @@ fn copy_file(
 }
 
 /// Copy the bytes in chunks, checking for Cancel and reporting progress
-/// between them: in the kernel where it can (`copy_file_range`), through a
-/// buffer where it cannot.
+/// between them (as `pace` counts it): in the kernel where it can
+/// (`copy_file_range`), through a buffer where it cannot.
 fn copy_contents(
     sf: &mut std::fs::File,
     df: &mut std::fs::File,
+    pace: &Pace,
     ctx: &StepContext,
 ) -> anyhow::Result<()> {
     let mut copied = 0u64;
     loop {
         ctx.check_cancelled()?;
-        match rustix::fs::copy_file_range(&*sf, None, &*df, None, COPY_CHUNK) {
+        match rustix::fs::copy_file_range(&*sf, None, &*df, None, pace.chunk()) {
             Ok(0) if copied > 0 => return Ok(()),
             Ok(n @ 1..) => {
                 copied += n as u64;
-                ctx.advance(n as u64);
+                pace.wrote(n as u64, ctx)?;
             }
             // Some filesystems (procfs, a few FUSE) report 0 before the end,
             // so a first 0 is not trusted; others cannot copy in the kernel.
@@ -703,7 +830,7 @@ fn copy_contents(
             Err(e) => return Err(e.into()),
         };
         df.write_all(&buf[..n])?;
-        ctx.advance(n as u64);
+        pace.wrote(n as u64, ctx)?;
     }
 }
 
@@ -711,6 +838,7 @@ fn copy_recursive_with_attributes(
     src: &Path,
     dst: &Path,
     preserve_attributes: bool,
+    pace: &Pace,
     ctx: &StepContext,
 ) -> anyhow::Result<()> {
     ctx.check_cancelled()?;
@@ -731,6 +859,7 @@ fn copy_recursive_with_attributes(
                 &e.path(),
                 &dst.join(e.file_name()),
                 preserve_attributes,
+                pace,
                 ctx,
             )?;
         }
@@ -739,7 +868,7 @@ fn copy_recursive_with_attributes(
         }
         std::fs::set_permissions(dst, m.permissions())?;
     } else if kind.is_file() {
-        copy_file(src, dst, preserve_attributes, ctx)?;
+        copy_file(src, dst, preserve_attributes, pace, ctx)?;
     } else if kind.is_fifo() {
         // A named pipe has no content to copy; reading one would wait for a
         // writer forever. Make a new pipe, as `cp -R` does.
@@ -764,12 +893,12 @@ fn copy_recursive_with_attributes(
 
 /// Copy companions (the ones not holding attributes: those are converted
 /// with the file's) beside the copy.
-fn copy_along(along: &[Along], ctx: &StepContext) -> anyhow::Result<()> {
+fn copy_along(along: &[Along], pace: &Pace, ctx: &StepContext) -> anyhow::Result<()> {
     for a in along.iter().filter(|a| !a.attributes) {
         if let Some(dir) = a.to.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        copy_recursive_with_attributes(&a.from, &a.to, true, ctx)?;
+        copy_recursive_with_attributes(&a.from, &a.to, true, pace, ctx)?;
     }
     Ok(())
 }
@@ -816,7 +945,8 @@ fn transfer_attributes(src: &Path, dst: &Path, ctx: &StepContext) -> anyhow::Res
         return Ok(());
     }
     for a in &aside {
-        copy_recursive_with_attributes(&a.from, &a.to, false, ctx)?;
+        // Small: the step settles it with the rest (`copy_entry`).
+        copy_recursive_with_attributes(&a.from, &a.to, false, &Pace::at_once(), ctx)?;
     }
     if (aside.is_empty() || !own.is_empty()) && !rules.keep_attributes(dst, &own)? {
         anyhow::bail!(
@@ -1329,4 +1459,58 @@ pub fn register_builtin(reg: &OpRegistry) {
     reg.register::<Rmdir>("core", "rmdir");
     reg.register::<NewFile>("core", "new_file");
     reg.register::<RemoveEmptyFile>("core", "remove_empty_file");
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn a_chunk_written_through_takes_about_a_step() {
+        // 1 MiB in a second: a quarter of it next.
+        assert_eq!(next_chunk(1 << 20, Duration::from_secs(1)), 256 << 10);
+        // A very slow drive still writes the least chunk at a time.
+        assert_eq!(next_chunk(1 << 20, Duration::from_secs(60)), THROUGH_MIN);
+        // A fast one, no more than an unsynced copy would.
+        assert_eq!(next_chunk(1 << 20, Duration::ZERO), COPY_CHUNK as u64);
+    }
+
+    /// The wait written through syncs a whole filesystem: the tests' own
+    /// would make every test writing to it wait. procfs has nothing to
+    /// write; this checks the bytes and what is counted, not the drive.
+    const NOTHING_TO_WRITE: &str = "/proc";
+
+    #[test]
+    fn a_copy_written_through_is_whole() {
+        let base = dirs::home_dir().unwrap().join(".cache/bibli-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let dir = tempfile::tempdir_in(base).unwrap();
+        let (src, dst) = (dir.path().join("firmware.bin"), dir.path().join("copy.bin"));
+        // Several chunks, and an end that is not a whole one.
+        let bytes: Vec<u8> = (0..(3 << 20) + 12_345u32)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8)
+            .collect();
+        std::fs::write(&src, &bytes).unwrap();
+        let ctx = StepContext::detached();
+        for through in [true, false] {
+            let pace = if through {
+                Pace::through(Path::new(NOTHING_TO_WRITE)).unwrap()
+            } else {
+                Pace::at_once()
+            };
+            let _ = std::fs::remove_file(&dst);
+            copy_file(&src, &dst, false, &pace, &ctx).unwrap();
+            pace.settle(&ctx).unwrap();
+            assert_eq!(std::fs::read(&dst).unwrap(), bytes, "through: {through}");
+            assert_eq!(pace.unsaid.get(), 0, "everything counted");
+        }
+        std::fs::write(&src, b"").unwrap();
+        std::fs::remove_file(&dst).unwrap();
+        let pace = Pace::through(Path::new(NOTHING_TO_WRITE)).unwrap();
+        copy_file(&src, &dst, false, &pace, &ctx).unwrap();
+        pace.settle(&ctx).unwrap();
+        assert!(std::fs::read(&dst).unwrap().is_empty());
+    }
 }
