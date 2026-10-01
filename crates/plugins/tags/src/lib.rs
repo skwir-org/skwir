@@ -208,6 +208,17 @@ struct DeleteArgs {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct PinArgs {
+    tag: String,
+    /// The pinned tag it goes before; last when omitted.
+    #[serde(default)]
+    before: Option<String>,
+    /// Set by the toast's Undo, so the next toast offers Redo.
+    #[serde(default)]
+    undo: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct ColorArgs {
     tag: String,
     /// One of `red`, `orange`, `yellow`, `green`, `teal`, `blue`, `purple`,
@@ -366,8 +377,9 @@ fn menu_item(title: &str, command: Invocation, order: i32, icon: &str) -> MenuIt
 
 /// Record a tag's color (`None`: the one its name gives it) in the
 /// settings, on a worker.
-fn set_color(app: &App, lifetime: &CancelToken, tag: &str, color: Option<&str>) {
+fn set_color(app: &App, lifetime: &CancelToken, sidebar: &Sidebar, tag: &str, color: Option<&str>) {
     let (tag, color, weak) = (tag.to_lowercase(), color.map(str::to_owned), app.weak());
+    let sidebar = sidebar.clone();
     app.scheduler.spawn(
         Priority::Normal,
         "tags.color",
@@ -387,6 +399,8 @@ fn set_color(app: &App, lifetime: &CancelToken, tag: &str, color: Option<&str>) 
                     format!("The tag's color was not saved: {error:#}"),
                 );
             }
+            // The sidebar's pill wears it at once.
+            sidebar.publish(&app);
             app.wake();
         },
     );
@@ -414,6 +428,8 @@ struct Sidebar {
     index: Arc<hints::TagIndex>,
     vocabulary: Arc<Vocabulary>,
     shown: Arc<sidebar::Shown>,
+    /// One edit of the pins at a time.
+    saving: Arc<Mutex<()>>,
 }
 
 impl Sidebar {
@@ -451,7 +467,7 @@ impl Plugin for TagsPlugin {
     fn on_settings_changed(&self, app: &App, keys: &[String]) {
         if !keys
             .iter()
-            .any(|k| k == sidebar::SETTING || k == TAG_COLOR_SETTING)
+            .any(|k| k == sidebar::SETTING || k == sidebar::PINNED || k == TAG_COLOR_SETTING)
         {
             return;
         }
@@ -533,6 +549,7 @@ impl Plugin for TagsPlugin {
             index: Arc::clone(&index),
             vocabulary: Arc::clone(&vocabulary),
             shown: Arc::new(sidebar::Shown::default()),
+            saving: Arc::new(Mutex::new(())),
         };
         {
             let (weak, state) = (app.weak(), state.clone());
@@ -555,16 +572,56 @@ impl Plugin for TagsPlugin {
                 },
             );
         }
-        *self.sidebar.lock() = Some(state);
+        *self.sidebar.lock() = Some(state.clone());
+        let sidebar = state;
         app.settings.declare(
             SettingSpec::integer(
                 sidebar::SETTING,
-                "Tags in the sidebar",
-                "How many tags the sidebar lists, those on the most files first, each opening a search of the home folder; 0 lists none",
+                "Tags suggested in the sidebar",
+                "Until a tag is pinned, how many the sidebar suggests, those on the most files first; 0 suggests none",
                 sidebar::DEFAULT,
                 (0, 50),
             ),
         );
+        app.settings.declare(SettingSpec::data(
+            sidebar::PINNED,
+            "The tags pinned to the sidebar, in their order",
+            toml::Value::Array(Vec::new()),
+        ));
+        for (name, title, description, unpin) in [
+            (
+                "tags.pin",
+                "Pin tag",
+                "Keep a tag in the sidebar, before the pinned tag `before` or last; moves one pinned",
+                false,
+            ),
+            (
+                "tags.unpin",
+                "Unpin tag",
+                "Take a tag out of the sidebar; its files keep it",
+                true,
+            ),
+        ] {
+            let (pins, lifetime) = (sidebar.clone(), lifetime.clone());
+            app.commands
+                .register::<PinArgs, _>(ID, name, title, description, move |a, app| {
+                    let tag = a.tag.trim().to_owned();
+                    anyhow::ensure!(!tag.is_empty(), "which tag?");
+                    let edit = if unpin {
+                        sidebar::Pin::Unpin { tag }
+                    } else {
+                        sidebar::Pin::Pin {
+                            tag,
+                            before: a.before,
+                        }
+                    };
+                    let publish = pins.clone();
+                    sidebar::edit(app, &pins.saving, edit, a.undo, &lifetime, move |app| {
+                        publish.publish(app);
+                    });
+                    Ok(Outcome::Done)
+                });
+        }
         // What a `tag:` search asks first (ADR-026).
         app.hints.register(ID, Arc::new(hints::Baloo::default()));
         app.hints.register(ID, Arc::new(hints::Learned(index)));
@@ -763,7 +820,7 @@ impl Plugin for TagsPlugin {
                 Ok(Outcome::Done)
             },
         );
-        let colors = lifetime.clone();
+        let (colors, color_sidebar) = (lifetime.clone(), sidebar.clone());
         app.commands.register::<ColorArgs, _>(
             ID,
             "tags.color",
@@ -780,7 +837,7 @@ impl Plugin for TagsPlugin {
                         TAG_COLORS.join(", ")
                     );
                 }
-                set_color(app, &colors, tag, color);
+                set_color(app, &colors, &color_sidebar, tag, color);
                 Ok(Outcome::Done)
             },
         );

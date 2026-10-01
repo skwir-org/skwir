@@ -283,8 +283,24 @@ pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElem
                 .iter()
                 .position(|x| *x == c)
         });
+        // Its position among its group's movable places, if it moves.
+        let drag = place.reorder.as_ref().map(|reorder| {
+            let index = indices.entry(place.group.clone()).or_default();
+            let drag = PlaceDrag {
+                group: place.group.clone(),
+                index: *index,
+                reorder: reorder.clone(),
+            };
+            *index += 1;
+            drag
+        });
+        let order = orders.get(&place.group).map_or(&[][..], Vec::as_slice);
         if let Some(color) = color {
-            pills.push(pill(i, &place, color, is_current, &font, cx));
+            let mut pill = pill(i, &place, color, is_current, &font, cx);
+            if let Some(drag) = drag {
+                pill = movable_pill(pill, place.title.clone(), drag, order, cx);
+            }
+            pills.push(pill.into_any_element());
             continue;
         }
         column = wrap_pills(column, &mut pills);
@@ -454,15 +470,7 @@ pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElem
                     .child(controls::glyph("eject", theme.text_muted, 13.)),
             );
         }
-        if let Some(reorder) = &place.reorder {
-            let index = indices.entry(place.group.clone()).or_default();
-            let drag = PlaceDrag {
-                group: place.group.clone(),
-                index: *index,
-                reorder: reorder.clone(),
-            };
-            *index += 1;
-            let order = orders.get(&place.group).map_or(&[][..], Vec::as_slice);
+        if let Some(drag) = drag {
             row = movable_row(row, place.title.clone(), drag, order, cx);
         }
         if let Some(path) = place.location.path() {
@@ -651,7 +659,8 @@ fn wrap_pills(
 
 /// A tag's place as a pill of its color: it opens as a row does (a click,
 /// a middle click for a tab behind, a right click for its menu), and files
-/// dropped on it get what its `drop` gives them (the tag).
+/// dropped on it get what its `drop` gives them (the tag). One its owner
+/// suggests is an outline of its color, the pills kept filled.
 fn pill(
     i: usize,
     place: &Place,
@@ -659,7 +668,7 @@ fn pill(
     is_current: bool,
     font: &SharedString,
     cx: &mut Context<Shell>,
-) -> AnyElement {
+) -> gpui::Stateful<gpui::Div> {
     let theme = cx.global::<Theme>().clone();
     let tone = theme.tags[color % theme.tags.len()];
     let open = open_invocation(place);
@@ -679,16 +688,24 @@ fn pill(
         .border_1()
         .border_color(if is_current {
             theme.accent
+        } else if place.suggested {
+            tone.opacity(0.6)
         } else {
             gpui::transparent_black()
         })
         .bg(if is_current {
             tone.opacity(0.45)
+        } else if place.suggested {
+            gpui::transparent_black()
         } else {
             theme.tag_fill(color)
         })
         .text_sm()
-        .text_color(theme.text)
+        .text_color(if place.suggested && !is_current {
+            theme.text_muted
+        } else {
+            theme.text
+        })
         .cursor_pointer()
         .hover(move |s| s.border_color(tone))
         .on_click(cx.listener(move |this, _, window, cx| {
@@ -737,7 +754,34 @@ fn pill(
                 this.run(&from_paths.name, args, window, cx);
             }));
     }
-    pill.into_any_element()
+    pill
+}
+
+/// A movable pill: dragged among its group's like a movable row, a line
+/// on its left or right edge marking where the dragged one lands.
+fn movable_pill(
+    pill: gpui::Stateful<gpui::Div>,
+    label: String,
+    drag: PlaceDrag,
+    order: &[serde_json::Value],
+    cx: &mut Context<Shell>,
+) -> gpui::Stateful<gpui::Div> {
+    let (group, index) = (drag.group.clone(), drag.index);
+    pill.relative()
+        .on_drag(drag, move |_, position, _, cx| {
+            cx.new(|_| crate::dnd::DragPreview::named(label.clone(), position))
+        })
+        .child(gap(order, &group, index, Edge::Left, cx))
+        .child(gap(order, &group, index + 1, Edge::Right, cx))
+}
+
+/// Which edge of a movable place a gap's line is drawn on.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Edge {
+    Top,
+    Bottom,
+    Left,
+    Right,
 }
 
 /// A movable place's row. It can be dragged, and while a place of its
@@ -757,32 +801,41 @@ fn movable_row(
         .on_drag(drag, move |_, position, _, cx| {
             cx.new(|_| crate::dnd::DragPreview::named(label.clone(), position))
         })
-        .child(gap(order, &group, index, true, cx))
-        .child(gap(order, &group, index + 1, false, cx))
+        .child(gap(order, &group, index, Edge::Top, cx))
+        .child(gap(order, &group, index + 1, Edge::Bottom, cx))
 }
 
-/// Half of a movable place's row, over it: the drop zone of the gap before
-/// the place at `before` in `group`, drawn as a line on the row's top or
-/// bottom edge. Its hitbox does not block the row's own clicks.
+/// Half of a movable place, over it: the drop zone of the gap before the
+/// place at `before` in `group`, drawn as a line on `side` (a row's top or
+/// bottom, a pill's left or right). Its hitbox does not block the place's
+/// own clicks.
 fn gap(
     order: &[serde_json::Value],
     group: &str,
     before: usize,
-    top: bool,
+    side: Edge,
     cx: &mut Context<Shell>,
 ) -> gpui::Div {
     let edge = cx.global::<Theme>().accent;
     let order = order.to_vec();
     let (shown, dropped) = (group.to_owned(), group.to_owned());
-    let zone = div().absolute().left_0().right_0().h(gpui::relative(0.5));
-    let zone = if top { zone.top_0() } else { zone.bottom_0() };
+    let zone = div().absolute();
+    let zone = match side {
+        Edge::Top => zone.left_0().right_0().h(gpui::relative(0.5)).top_0(),
+        Edge::Bottom => zone.left_0().right_0().h(gpui::relative(0.5)).bottom_0(),
+        Edge::Left => zone.top_0().bottom_0().w(gpui::relative(0.5)).left_0(),
+        Edge::Right => zone.top_0().bottom_0().w(gpui::relative(0.5)).right_0(),
+    };
     zone.drag_over::<PlaceDrag>(move |s, drag, _, _| {
         if drag.group != shown || drag.index == before || drag.index + 1 == before {
-            s
-        } else if top {
-            s.border_t_2().border_color(edge)
-        } else {
-            s.border_b_2().border_color(edge)
+            return s;
+        }
+        let s = s.border_color(edge);
+        match side {
+            Edge::Top => s.border_t_2(),
+            Edge::Bottom => s.border_b_2(),
+            Edge::Left => s.border_l_2(),
+            Edge::Right => s.border_r_2(),
         }
     })
     .on_drop(cx.listener(move |this, drag: &PlaceDrag, window, cx| {

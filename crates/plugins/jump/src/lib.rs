@@ -273,6 +273,7 @@ impl Plugin for JumpPlugin {
                 reorder: None,
                 color: None,
                 drop: None,
+                suggested: false,
             },
         );
         app.registry.keymap.add(

@@ -445,7 +445,8 @@ fn preview_group(shell: &Shell) -> Option<Group> {
 }
 
 /// Tags as chips in their colors: a click searches for the tag where the
-/// pane is (`query.refine`, which Back undoes).
+/// pane is (`query.refine`, which Back undoes); a right click opens the
+/// tag's menu (`Shell::open_tag_menu`).
 fn tag_chips(
     shell: &Shell,
     tags: &[String],
@@ -466,6 +467,16 @@ fn tag_chips(
                 .cursor_pointer()
                 .text_color(theme.text)
                 .hover(gpui::Styled::underline)
+                .on_mouse_down(
+                    gpui::MouseButton::Right,
+                    cx.listener({
+                        let tag = tag.clone();
+                        move |this, event: &gpui::MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            this.open_tag_menu(&tag, event.position, window, cx);
+                        }
+                    }),
+                )
                 .on_click(cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();
                     this.run(

@@ -246,6 +246,9 @@ pub struct Place {
     /// tag), run with the dropped entries: `pane` for a drag from a pane
     /// (its selection), `entries` for files from another application.
     pub drop: Option<Invocation>,
+    /// Offered by its owner rather than kept by the user (a tag used
+    /// often, while none is pinned): drawn fainter than the places kept.
+    pub suggested: bool,
 }
 
 /// How a place moves among the places of its group that have one: `command`

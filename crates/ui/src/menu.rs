@@ -528,6 +528,54 @@ impl Shell {
         cx.notify();
     }
 
+    /// A tag's menu where a file shows it (Details): search for it where
+    /// the pane is, and pin it to the sidebar or unpin it. Whether it is
+    /// pinned is what the sidebar shows: a tag's place the user kept
+    /// carries `forget`.
+    pub fn open_tag_menu(
+        &mut self,
+        tag: &str,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let item = |title: &str, name: &str, args: serde_json::Value, order, icon: &str| MenuItem {
+            menu: "tag".into(),
+            title: title.into(),
+            command: bibli_core::command::Invocation::with_args(name, &args),
+            when: None,
+            order,
+            icon: Some(icon.into()),
+            submenu: None,
+        };
+        let mut items = vec![item(
+            "Search Here",
+            "query.refine",
+            serde_json::json!({ "facet": "tag", "value": tag, "pane": self.pane }),
+            0,
+            "search",
+        )];
+        let pinned = self.app.registry.places.all().iter().any(|p| {
+            p.color.is_some() && p.forget.is_some() && bibli_core::metadata::same_tag(&p.title, tag)
+        });
+        let pin = if pinned {
+            ("Unpin From Sidebar", "tags.unpin")
+        } else {
+            ("Pin to Sidebar", "tags.pin")
+        };
+        if self.app.commands.get(pin.1).is_some() {
+            items.push(item(
+                pin.0,
+                pin.1,
+                serde_json::json!({ "tag": tag }),
+                50,
+                "pin",
+            ));
+        }
+        self.menu = Some(MenuState::open(position, items, window, cx));
+        cx.notify();
+    }
+
     /// The list header's own menu: which detail columns it shows. Choosing
     /// columns belongs where they are, not three clicks away in Settings, so
     /// the header answers a right-click with this instead of the dialog.

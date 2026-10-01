@@ -202,6 +202,7 @@ fn volume_place(volume: &bibli_platform::places::Volume) -> Place {
         reorder: None,
         color: None,
         drop: None,
+        suggested: false,
     }
 }
 
@@ -291,6 +292,7 @@ pub fn scan() -> Vec<Place> {
         reorder: None,
         color: None,
         drop: None,
+        suggested: false,
     };
     let mut out = Vec::new();
     if let Some(home) = bibli_platform::places::home() {
@@ -1099,6 +1101,7 @@ mod tests {
             reorder: None,
             color: None,
             drop: None,
+            suggested: false,
         };
         places.0.lock().lifetime = Some(CancelToken::new());
         places.0.lock().generation = 2;
@@ -1135,6 +1138,7 @@ mod tests {
             reorder: None,
             color: None,
             drop: None,
+            suggested: false,
         };
         let mut disk = place("devices", "/run/media/example/disk");
         disk.space = Some((1, 2));

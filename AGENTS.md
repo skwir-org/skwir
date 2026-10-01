@@ -278,9 +278,12 @@ current source before assuming a planned crate, command, or API exists.
   registers a keeper and fills those two fields; the UI needs no branch.
   A place with a `color` is a pill of that tag color, the pills of a
   group wrapping together, left-aligned (`sidebar::wrap_pills`: layout
-  only): the tags plugin's Tags, the tags on the most files its index
-  knows, each a search of the home folder (`query.location` builds it,
-  so no plugin writes another's syntax). A place with a `drop` command
+  only): the tags plugin's Tags, those the user pinned (`tags.pin`,
+  from a pill's or a Details chip's menu; dragged into order, unpinned
+  by the pane's keep button like any kept place) or, until one is, the
+  tags on the most files its index knows, as suggestions
+  (`Place::suggested`, an outline), each a search of the home folder
+  (`query.location` builds it, so no plugin writes another's syntax). A place with a `drop` command
   runs it with what is dropped on it (`pane` for a pane's selection,
   `entries` for another application's files): a tag's gives them the
   tag.

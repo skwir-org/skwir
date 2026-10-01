@@ -156,6 +156,100 @@ fn a_tag_is_renamed_on_every_file_after_review_and_the_sidebar_follows() {
     assert!(app.take_proposals().is_empty());
 }
 
+/// The sidebar's tags with whether each was pinned.
+fn pins(app: &App) -> Vec<(String, bool)> {
+    app.registry
+        .places
+        .all()
+        .into_iter()
+        .filter(|p| p.group == "tags")
+        .map(|p| {
+            (
+                p.title,
+                !p.suggested && p.forget.is_some() && p.reorder.is_some(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn pinned_tags_replace_the_suggestions_in_the_order_put() {
+    let tmp = home_tempdir();
+    let root = tmp.path().join("it's home");
+    std::fs::create_dir_all(&root).unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(bibli_plugin_query::QueryPlugin::default()), &app);
+    app.plugins
+        .add(Arc::new(bibli_plugin_tags::TagsPlugin::default()), &app);
+    let dispatch =
+        |name: &str, args: serde_json::Value| app.dispatch(&Invocation::with_args(name, &args));
+    // Tagged here, so the index learns them from the edits applied.
+    for (name, t) in [("a.txt", &["Work", "x"][..]), ("b.txt", &["Été"][..])] {
+        std::fs::write(root.join(name), b"x").unwrap();
+        let entry = bibli_core::op::EntryRef::from_path(root.join(name)).unwrap();
+        let Ok(bibli_core::command::Outcome::Plan(plan)) = dispatch(
+            "tags.add",
+            serde_json::json!({ "tags": t, "entries": [entry] }),
+        ) else {
+            panic!("a plan")
+        };
+        assert!(
+            app.executor
+                .execute_blocking(&plan, app.lifetime())
+                .error
+                .is_none()
+        );
+        assert_eq!(read_tags(&root.join(name)), t);
+    }
+
+    let until_sidebar = |want: &[(&str, bool)]| {
+        let want: Vec<(String, bool)> = want.iter().map(|(t, p)| ((*t).to_owned(), *p)).collect();
+        until(&app, "the sidebar", || (pins(&app) == want).then_some(()));
+    };
+    until_sidebar(&[("Work", false), ("x", false), ("Été", false)]);
+
+    // Pinned, the suggestions go; a pin goes last, or before another.
+    dispatch("tags.pin", serde_json::json!({ "tag": "x" })).unwrap();
+    until_sidebar(&[("x", true)]);
+    dispatch(
+        "tags.pin",
+        serde_json::json!({ "tag": "Été", "before": "x" }),
+    )
+    .unwrap();
+    until_sidebar(&[("Été", true), ("x", true)]);
+    // Moved as the sidebar moves it: its reorder command, before another.
+    let x = app.registry.places.find(|p| p.title == "x").unwrap();
+    let mut moved = x.reorder.unwrap().command;
+    moved.args["before"] = serde_json::json!("Été");
+    app.dispatch(&moved).unwrap();
+    until_sidebar(&[("x", true), ("Été", true)]);
+    // Undone from the toast: back where it was.
+    let undo = until(&app, "the toast", || {
+        app.take_notifications()
+            .into_iter()
+            .rev()
+            .find(|n| n.text == "Moved the tag “x”")
+    });
+    let undo = undo.action.expect("an Undo").command;
+    app.dispatch(&undo).unwrap();
+    until_sidebar(&[("Été", true), ("x", true)]);
+
+    // Unpinned, both: the suggestions come back.
+    let forget = app
+        .registry
+        .places
+        .find(|p| p.title == "Été")
+        .unwrap()
+        .forget
+        .unwrap();
+    app.dispatch(&forget).unwrap();
+    until_sidebar(&[("x", true)]);
+    dispatch("tags.unpin", serde_json::json!({ "tag": "X" })).unwrap();
+    until_sidebar(&[("Work", false), ("x", false), ("Été", false)]);
+    assert!(dispatch("tags.pin", serde_json::json!({ "tag": " " })).is_err());
+}
+
 #[test]
 fn without_the_search_there_is_neither_a_tags_group_nor_a_rename() {
     let tmp = home_tempdir();
