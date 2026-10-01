@@ -360,6 +360,25 @@ fn split(text: &str) -> Vec<String> {
     bibli_core::notes::parse_tags(text)
 }
 
+/// A tag of a field (a category holding one tag at a time, `fields`)
+/// given: the field's other values are taken, as the edit will.
+fn choose_one(rows: &mut [TagRow], picked: usize, fields: &[String]) {
+    use bibli_core::metadata::exclusive_category;
+    let Some(row) = rows.get(picked).filter(|r| r.mark == Mark::All) else {
+        return;
+    };
+    let Some(field) = exclusive_category(&row.name, fields).map(str::to_owned) else {
+        return;
+    };
+    for (i, other) in rows.iter_mut().enumerate() {
+        if i != picked
+            && exclusive_category(&other.name, fields).is_some_and(|f| same_tag(f, &field))
+        {
+            other.mark = Mark::None;
+        }
+    }
+}
+
 /// What to give every entry and what to take from every entry: the rows
 /// whose mark moved.
 pub fn changes(rows: &[TagRow], items: usize) -> (Vec<String>, Vec<String>) {
@@ -449,11 +468,13 @@ pub struct TagEditor {
 }
 
 impl Shell {
-    /// `ui.tags_prompt { entries? }`: edit the tags of `entries` (Details
-    /// names the entry it shows), or of what is selected.
+    /// `ui.tags_prompt { entries?, text? }`: edit the tags of `entries`
+    /// (Details names the entry it shows), or of what is selected, `text`
+    /// typed already (`Status/`: a field's values).
     pub fn open_tag_editor(
         &mut self,
         entries: Option<Vec<EntryRef>>,
+        text: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -496,7 +517,12 @@ impl Shell {
                 }
             },
         );
-        input.update(cx, |i, _| i.focus(window));
+        input.update(cx, |i, cx| {
+            if let Some(text) = text {
+                i.set_text(text, cx);
+            }
+            i.focus(window);
+        });
         let request = REQUESTS.fetch_add(1, Ordering::Relaxed);
         let items = entries.len();
         self.tag_editor = Some(TagEditor {
@@ -610,12 +636,14 @@ impl Shell {
         if !e.loaded {
             return;
         }
+        let fields = self.tag_fields.clone();
         match shown {
             Shown::Row(i) => {
                 let items = e.items;
                 if let Some(row) = e.rows.get_mut(*i) {
                     row.toggle(items);
                 }
+                choose_one(&mut e.rows, *i, &fields);
             }
             Shown::New(tags) => {
                 // After the entries' own tags, before those only used.
@@ -634,6 +662,7 @@ impl Shell {
                             given: None,
                         },
                     );
+                    choose_one(&mut e.rows, at + n, &fields);
                 }
             }
         }
@@ -1029,6 +1058,26 @@ mod tests {
         );
         rows[1].toggle(3);
         assert_eq!(changes(&rows, 3).0, ["draft", "home"]);
+    }
+
+    #[test]
+    fn a_field_takes_one_of_its_tags() {
+        let mut rows = vec![
+            row("Status/Draft", 1),
+            row("Status/Final", 0),
+            row("work", 1),
+        ];
+        rows[0].mark = Mark::All;
+        rows[1].mark = Mark::All;
+        choose_one(&mut rows, 1, &["status".to_owned()]);
+        assert_eq!(
+            rows.iter().map(|r| r.mark).collect::<Vec<_>>(),
+            [Mark::None, Mark::All, Mark::Some]
+        );
+        // Not a field: several stay.
+        rows[0].mark = Mark::All;
+        choose_one(&mut rows, 0, &[]);
+        assert_eq!(rows[1].mark, Mark::All);
     }
 
     #[test]

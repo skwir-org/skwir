@@ -15,6 +15,7 @@ mod appledouble;
 mod attrs;
 mod count;
 mod everywhere;
+mod fields;
 pub mod finder;
 mod follow;
 mod hints;
@@ -131,6 +132,17 @@ struct TagsArgs {
     entries: Vec<EntryRef>,
     #[serde(default)]
     pane: Option<PaneId>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct ExclusiveArgs {
+    /// The category (`Status`).
+    tag: String,
+    /// One tag of it at a time; several again when false.
+    on: bool,
+    /// Set by the toast's Undo, so the next toast offers Redo.
+    #[serde(default)]
+    undo: bool,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -298,17 +310,21 @@ fn per_entry<T: bibli_core::op::Operation + 'static>(
 }
 
 /// `tags` with `add` given and `remove` taken, as spelled where they were
-/// already (tags ignore case).
-fn edited(current: &[String], add: &[String], remove: &[String]) -> Vec<String> {
+/// already (tags ignore case); one given in a category holding one tag at
+/// a time (`exclusive`) takes the place of the one there was.
+fn edited(
+    current: &[String],
+    add: &[String],
+    remove: &[String],
+    exclusive: &[String],
+) -> Vec<String> {
     let mut tags: Vec<String> = current
         .iter()
         .filter(|t| !remove.iter().any(|r| same_tag(r, t)))
         .cloned()
         .collect();
     for a in add {
-        if !tags.iter().any(|t| same_tag(t, a)) {
-            tags.push(a.clone());
-        }
+        tags = bibli_core::metadata::with_exclusive(&tags, a, exclusive);
     }
     tags
 }
@@ -330,13 +346,14 @@ fn edit_title(add: &[String], remove: &[String]) -> String {
 fn edit_plan(app: &App, vocabulary: &Arc<Vocabulary>, a: EditArgs) -> anyhow::Result<Outcome> {
     let add = parse_tags(&a.add.join(","));
     let remove = parse_tags(&a.remove.join(","));
+    let exclusive = fields::exclusive(app);
     vocabulary.used(&add);
     per_entry(
         targets(app, a.pane, a.entries),
         edit_title(&add, &remove),
         |r| {
             let current = notes_of(app, &r.path).tag_names();
-            let tags = edited(&current, &add, &remove);
+            let tags = edited(&current, &add, &remove, &exclusive);
             (tags != current).then(|| app.notes.edit(r).tags(tags))
         },
     )
@@ -700,6 +717,26 @@ impl Plugin for TagsPlugin {
             "The tags pinned to the sidebar, in their order",
             toml::Value::Array(Vec::new()),
         ));
+        app.settings.declare(SettingSpec::data(
+            bibli_core::metadata::TAG_EXCLUSIVE_SETTING,
+            "The categories a file has one tag of at a time: fields, whose values are the tags within them",
+            toml::Value::Array(Vec::new()),
+        ));
+        {
+            let fields = sidebar.clone();
+            app.commands.register::<ExclusiveArgs, _>(
+                ID,
+                "tags.exclusive",
+                "One tag of a category at a time",
+                "Make a category (`tag`) hold one tag per file at a time, a field whose values are its tags (`on`), or several again",
+                move |a, app| {
+                    let tag = bibli_core::metadata::clean_tag(&a.tag);
+                    anyhow::ensure!(!tag.is_empty(), "which category?");
+                    fields::set(app, &fields.saving, &tag, a.on, a.undo);
+                    Ok(Outcome::Done)
+                },
+            );
+        }
         for (name, title, description) in [
             (
                 "tags.pin",
@@ -2159,8 +2196,18 @@ mod tests {
         assert_eq!(edit_title(&t(&["a"]), &[]), "add tag a");
         assert_eq!(edit_title(&[], &t(&["a", "b"])), "remove tags a, b");
         assert_eq!(
-            edited(&t(&["A", "b"]), &t(&["a", "c"]), &t(&["B"])),
+            edited(&t(&["A", "b"]), &t(&["a", "c"]), &t(&["B"]), &[]),
             t(&["A", "c"])
+        );
+        // One tag of a field at a time.
+        assert_eq!(
+            edited(
+                &t(&["Status/Draft", "b"]),
+                &t(&["status/Final"]),
+                &[],
+                &t(&["Status"])
+            ),
+            t(&["b", "status/Final"])
         );
     }
 }

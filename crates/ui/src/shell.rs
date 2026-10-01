@@ -246,6 +246,9 @@ pub struct Shell {
     pub tag_editor: Option<crate::tags::TagEditor>,
     /// The colors the user chose for tags, read when the settings change.
     pub tag_colors: crate::tags::TagColors,
+    /// The categories a file has one tag of at a time: fields
+    /// (`metadata::TAG_EXCLUSIVE_SETTING`), read when the settings change.
+    pub tag_fields: Vec<String>,
     pub bulk: Option<BulkState>,
     pub prompt: Option<PromptState>,
     pub confirm: Option<ConfirmState>,
@@ -495,6 +498,7 @@ impl Shell {
             choose: None,
             tag_editor: None,
             tag_colors: crate::tags::TagColors::default(),
+            tag_fields: Vec::new(),
             bulk: None,
             prompt: None,
             confirm: None,
@@ -1090,7 +1094,7 @@ impl Shell {
         }
     }
 
-    fn set_view(&mut self, id: &str, cx: &mut Context<Self>) {
+    pub(crate) fn set_view(&mut self, id: &str, cx: &mut Context<Self>) {
         self.sync_views();
         let known = self.ui().views.keys().find(|k| **k == id).copied();
         match known {
@@ -1494,7 +1498,8 @@ impl Shell {
                 let entries = args
                     .get("entries")
                     .and_then(|e| serde_json::from_value(e.clone()).ok());
-                self.open_tag_editor(entries, window, cx);
+                let text = arg("text");
+                self.open_tag_editor(entries, text, window, cx);
             }
             // A value to copy, from a link beside it (Details).
             "copy_text" => {
@@ -1896,6 +1901,11 @@ impl Shell {
             self.theme_revision = revision;
             cx.set_global(Theme::resolve(&self.app, window.appearance()));
             self.tag_colors = crate::tags::TagColors::read(&self.app);
+            self.tag_fields = self
+                .app
+                .settings
+                .get(bibli_core::metadata::TAG_EXCLUSIVE_SETTING)
+                .unwrap_or_default();
             self.prefs.friendly_dates = self
                 .app
                 .settings

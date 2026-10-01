@@ -77,6 +77,41 @@ pub fn tag_within(tag: &str, category: &str) -> bool {
     tag_under(tag, category).is_some()
 }
 
+/// The setting where the tags plugin keeps the categories that hold one
+/// tag at a time (`Status`: `Status/Draft` or `Status/Final`): a field of
+/// the file, whose value is the tag within it. The UI reads it to show
+/// them as fields and to choose among their tags.
+pub const TAG_EXCLUSIVE_SETTING: &str = "tags.exclusive";
+
+/// The category among `exclusive` that `tag` is within (not the category
+/// itself), the nearest: the field `tag` is a value of.
+pub fn exclusive_category<'a>(tag: &str, exclusive: &'a [String]) -> Option<&'a str> {
+    tag_lineage(tag)
+        .skip(1)
+        .find_map(|c| exclusive.iter().find(|e| same_tag(e, c)))
+        .map(String::as_str)
+}
+
+/// `tags` with `added` given, a tag in a category holding one at a time
+/// taking the place of the one there was (`exclusive`).
+pub fn with_exclusive(tags: &[String], added: &str, exclusive: &[String]) -> Vec<String> {
+    let field = exclusive_category(added, exclusive);
+    let mut out: Vec<String> = tags
+        .iter()
+        .filter(|t| {
+            !field.is_some_and(|f| {
+                exclusive_category(t, exclusive).is_some_and(|g| same_tag(f, g))
+                    && !same_tag(t, added)
+            })
+        })
+        .cloned()
+        .collect();
+    if !out.iter().any(|t| same_tag(t, added)) {
+        out.push(added.to_owned());
+    }
+    out
+}
+
 /// The setting where the tags plugin keeps the colors the user chose,
 /// `{ tag in lowercase = color }`; the UI reads it to draw tags.
 pub const TAG_COLOR_SETTING: &str = "tags.colors";
@@ -216,6 +251,35 @@ mod tests {
             tag_color("Places/France"),
             tag_color("places"),
             "the category's"
+        );
+    }
+
+    #[test]
+    fn a_category_of_one_tag_at_a_time_is_a_field() {
+        let exclusive = vec!["status".to_owned()];
+        assert_eq!(
+            exclusive_category("Status/Draft", &exclusive),
+            Some("status")
+        );
+        assert_eq!(
+            exclusive_category("Status", &exclusive),
+            None,
+            "the field itself"
+        );
+        assert_eq!(exclusive_category("work", &exclusive), None);
+        let tags: Vec<String> = ["work", "Status/Draft"].map(str::to_owned).into();
+        assert_eq!(
+            with_exclusive(&tags, "Status/Final", &exclusive),
+            ["work", "Status/Final"]
+        );
+        assert_eq!(
+            with_exclusive(&tags, "Places/x", &exclusive),
+            ["work", "Status/Draft", "Places/x"]
+        );
+        assert_eq!(
+            with_exclusive(&tags, "status/draft", &exclusive),
+            tags,
+            "there already"
         );
     }
 

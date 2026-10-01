@@ -1014,7 +1014,11 @@ impl Shell {
         if self.preview.details_at != Some(seen) {
             self.preview.details_at = Some(seen);
             let notes = self.app.commands.get("tags.rate").is_some();
-            self.preview.details = crate::details::entry_groups(&entry, &key.path, notes);
+            self.preview.details = crate::details::entry_groups(
+                &entry,
+                &key.path,
+                notes.then_some(self.tag_fields.as_slice()),
+            );
             if here && let Some(volume) = self.preview.here.as_ref().and_then(|h| h.volume.clone())
             {
                 self.preview.details.push(volume);

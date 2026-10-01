@@ -41,6 +41,9 @@ pub struct Settings {
     pub pins: Vec<String>,
     /// By tag in lowercase; `None` for the color its name gives it.
     pub colors: BTreeMap<String, Option<String>>,
+    /// The categories holding one tag at a time, when they change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclusive: Option<Vec<String>>,
 }
 
 /// The pins and colors `from` renamed `to` (`None`: removed) leaves:
@@ -50,6 +53,7 @@ pub struct Settings {
 pub fn followed(
     pins: &[String],
     colors: &toml::Table,
+    exclusive: &[String],
     from: &[String],
     to: Option<&str>,
 ) -> Option<Settings> {
@@ -62,7 +66,23 @@ pub fn followed(
     let mut out = Settings {
         pins: Vec::new(),
         colors: BTreeMap::new(),
+        exclusive: None,
     };
+    // A category holding one tag at a time keeps that renamed.
+    let mut fields: Vec<String> = Vec::new();
+    for field in exclusive {
+        let field = match moved(field) {
+            None => field.clone(),
+            Some(None) => continue,
+            Some(Some(new)) => new,
+        };
+        if !fields.iter().any(|f| same_tag(f, &field)) {
+            fields.push(field);
+        }
+    }
+    if fields != exclusive {
+        out.exclusive = Some(fields);
+    }
     for pin in pins {
         let pin = match moved(pin) {
             None => pin.clone(),
@@ -95,7 +115,7 @@ pub fn followed(
             }
         }
     }
-    (out.pins != pins || !out.colors.is_empty()).then_some(out)
+    (out.pins != pins || !out.colors.is_empty() || out.exclusive.is_some()).then_some(out)
 }
 
 /// The settings as they are, for the keys `changing` names: what puts
@@ -104,6 +124,10 @@ fn current(app: &App, changing: &Settings) -> Settings {
     let colors: toml::Table = app.settings.get(TAG_COLOR_SETTING).unwrap_or_default();
     Settings {
         pins: sidebar::pinned(app),
+        exclusive: changing
+            .exclusive
+            .as_ref()
+            .map(|_| crate::fields::exclusive(app)),
         colors: changing
             .colors
             .keys()
@@ -137,6 +161,12 @@ fn write(app: &App, ctx: &Ctx, to: &Settings) -> anyhow::Result<Settings> {
         PINNED,
         toml::Value::Array(to.pins.iter().cloned().map(toml::Value::String).collect()),
     );
+    if let Some(fields) = &to.exclusive {
+        app.settings.set(
+            bibli_core::metadata::TAG_EXCLUSIVE_SETTING,
+            toml::Value::Array(fields.iter().cloned().map(toml::Value::String).collect()),
+        );
+    }
     app.settings
         .save()
         .map_err(|e| anyhow::anyhow!("the pinned tags were not saved: {e:#}"))?;
@@ -215,6 +245,7 @@ impl Follow {
         followed(
             &sidebar::pinned(app),
             &colors,
+            &crate::fields::exclusive(app),
             &self.from,
             self.to.as_deref(),
         )
@@ -402,6 +433,7 @@ mod tests {
         let s = followed(
             &list(&["a", "Trip", "b"]),
             &colors,
+            &[],
             &list(&["trip"]),
             Some("travel"),
         )
@@ -414,6 +446,7 @@ mod tests {
         let s = followed(
             &list(&["trip", "a", "b"]),
             &colors,
+            &[],
             &list(&["trip", "a"]),
             Some("b"),
         )
@@ -421,11 +454,11 @@ mod tests {
         assert_eq!(s.pins, list(&["b"]));
         assert_eq!(s.colors.get("b"), None, "b keeps red");
         // Removed: unpinned, colors left alone.
-        let s = followed(&list(&["a", "trip"]), &colors, &list(&["trip"]), None).unwrap();
+        let s = followed(&list(&["a", "trip"]), &colors, &[], &list(&["trip"]), None).unwrap();
         assert_eq!(s.pins, list(&["a"]));
         assert!(s.colors.is_empty());
         // Nothing of theirs: nothing to do.
-        assert!(followed(&list(&["a"]), &colors, &list(&["zz"]), Some("y")).is_none());
+        assert!(followed(&list(&["a"]), &colors, &[], &list(&["zz"]), Some("y")).is_none());
     }
 
     #[test]
@@ -435,10 +468,16 @@ mod tests {
         let s = followed(
             &list(&["Places/France", "work", "Placesque"]),
             &colors,
+            &list(&["Places/Status"]),
             &list(&["places"]),
             Some("Lieux"),
         )
         .unwrap();
+        assert_eq!(
+            s.exclusive,
+            Some(list(&["Lieux/Status"])),
+            "a field follows"
+        );
         assert_eq!(s.pins, list(&["Lieux/France", "work", "Placesque"]));
         assert_eq!(s.colors.get("lieux/france"), Some(&Some("blue".into())));
         assert_eq!(s.colors.get("places/france"), Some(&None));
@@ -446,6 +485,7 @@ mod tests {
         let s = followed(
             &list(&["Paris"]),
             &colors,
+            &[],
             &list(&["Paris"]),
             Some("Places/Paris"),
         )
@@ -455,6 +495,7 @@ mod tests {
         let s = followed(
             &list(&["Places/France", "a"]),
             &colors,
+            &[],
             &list(&["Places"]),
             None,
         )

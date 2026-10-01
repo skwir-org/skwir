@@ -13,6 +13,10 @@
 //! row go into it as their category, dropped beside the rows out of theirs
 //! (`tags.move`, a plan to review).
 //!
+//! Below them, the searches the user kept: tags of a kind, a query rather
+//! than a word on the file (`Invoices this year`), each opening as a tag
+//! does.
+//!
 //! Tags are not entries, so the pane's own selection stays out of it: the
 //! keys that would act on files act on the tags (`PaneView::command`).
 
@@ -340,6 +344,14 @@ impl Shell {
             }
         }
         if dir.is_none() {
+            // The view counts a folder's tags: a location that is none (a
+            // search a tag's pill opened) is shown as the pane listed
+            // before.
+            let elsewhere = self.app.pane_location(self.pane).is_some();
+            if elsewhere {
+                let listing = self.ui().listing_view;
+                self.set_view(listing, cx);
+            }
             return;
         }
         if self.ui().tags.source.is_none() {
@@ -515,6 +527,28 @@ impl Shell {
                 "move",
             ));
         }
+        // A category can be a field: one of its tags at a time.
+        let is_category = |tag: &str| {
+            self.ui()
+                .tags
+                .status
+                .iter()
+                .flat_map(|s| s.tags.iter())
+                .any(|r| tag_parent(&r.tag).is_some_and(|p| same_tag(p, tag)))
+        };
+        if one && is_category(first) {
+            let on = self.tag_fields.iter().any(|f| same_tag(f, first));
+            items.push(MenuItem {
+                icon: on.then(|| "check".into()),
+                ..item(
+                    "One Tag at a Time".into(),
+                    "tags.exclusive",
+                    serde_json::json!({ "tag": first, "on": !on }),
+                    120,
+                    "",
+                )
+            });
+        }
         let remove_title = format!(
             "Remove {} From Every File…",
             if one { "Tag" } else { "Tags" }
@@ -660,6 +694,26 @@ impl Shell {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// Open a search the user kept, in the listing the pane showed before
+    /// (`tab`: in a tab behind).
+    fn open_kept(
+        &mut self,
+        place: &bibli_core::registry::Place,
+        tab: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if tab {
+            let run = crate::sidebar::open_in_tab(place);
+            self.run(&run.name, run.args, window, cx);
+            return;
+        }
+        let run = crate::sidebar::open_invocation(place);
+        let listing = self.ui().listing_view;
+        self.run(&run.name, run.args, window, cx);
+        self.run("ui.view", serde_json::json!({ "id": listing }), window, cx);
     }
 
     /// What the selection's tags give files dropped on them.
@@ -872,6 +926,7 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
             .render(shell, cx),
         );
 
+    let fields = shell.tag_fields.clone();
     let lens = &shell.ui().tags;
     let lines: Vec<(Row, usize, bool, bool)> = lens
         .tree()
@@ -927,6 +982,7 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
                 depth: *depth,
                 category: *category,
                 open: *open,
+                field: fields.iter().any(|f| same_tag(f, &row.tag)),
             },
             is_selected,
             at_cursor,
@@ -935,6 +991,71 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
             &theme,
             cx,
         ));
+    }
+    // The searches the user kept: places of searches that are no tag's.
+    let kept: Vec<bibli_core::registry::Place> = shell
+        .app
+        .registry
+        .places
+        .all()
+        .into_iter()
+        .filter(|p| &*p.location.scheme == "query" && p.color.is_none() && p.forget.is_some())
+        .collect();
+    if !kept.is_empty() {
+        list = list.child(
+            div()
+                .flex_none()
+                .mt_3()
+                .mx_1()
+                .px_2()
+                .h(px(24.))
+                .flex()
+                .items_center()
+                .text_xs()
+                .text_color(theme.text_muted)
+                .child("Saved searches"),
+        );
+        for (i, place) in kept.into_iter().enumerate() {
+            let hover = theme.hover;
+            let (open, tab) = (place.clone(), place.clone());
+            list = list.child(
+                div()
+                    .id(("tags-kept", i))
+                    .flex_none()
+                    .h(px(ROW_HEIGHT))
+                    .mx_1()
+                    .px_2()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .rounded_md()
+                    .text_color(theme.text)
+                    .hover(move |s| s.bg(hover))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.activate_pane(pane, cx);
+                        this.open_kept(&open, false, window, cx);
+                    }))
+                    .on_mouse_down(
+                        MouseButton::Middle,
+                        cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.open_kept(&tab, true, window, cx);
+                        }),
+                    )
+                    .child(div().flex_none().w(px(14.)))
+                    .child(crate::controls::glyph("search", theme.text_muted, 12.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_sm()
+                            .child(place.title.clone()),
+                    ),
+            );
+        }
     }
     div()
         .size_full()
@@ -957,6 +1078,8 @@ struct Tree {
     depth: usize,
     category: bool,
     open: bool,
+    /// A category of one tag at a time: a field.
+    field: bool,
 }
 
 #[allow(
@@ -1137,6 +1260,15 @@ fn tag_row(
                 .text_sm()
                 .child(SharedString::from(tag_leaf(&row.tag).to_owned())),
         )
+        .when(tree.field, |d| {
+            d.child(
+                div()
+                    .flex_none()
+                    .text_xs()
+                    .text_color(muted)
+                    .child("one at a time"),
+            )
+        })
         .when(row.pinned, |d| {
             d.child(crate::controls::glyph(
                 "pin",

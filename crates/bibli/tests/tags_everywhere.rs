@@ -732,3 +732,59 @@ fn a_category_carries_its_tags_and_tags_move_into_one() {
         assert!(dispatch("tags.move", args.clone()).is_err(), "{args}");
     }
 }
+
+/// A category marked as holding one tag at a time is a field: a value
+/// given takes the place of the one there was, and the mark follows the
+/// category renamed.
+#[test]
+fn a_field_holds_one_value_and_follows_its_category() {
+    let tmp = home_tempdir();
+    let root = tmp.path().join("home");
+    std::fs::create_dir_all(&root).unwrap();
+    let file = root.join("report.pdf");
+    std::fs::write(&file, b"x").unwrap();
+    write_tags(&file, &tags(&["Status/Draft", "work"])).unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(bibli_plugin_query::QueryPlugin::default()), &app);
+    app.plugins
+        .add(Arc::new(bibli_plugin_tags::TagsPlugin::default()), &app);
+    let dispatch =
+        |name: &str, args: serde_json::Value| app.dispatch(&Invocation::with_args(name, &args));
+    let fields = || {
+        app.settings
+            .get::<Vec<String>>("tags.exclusive")
+            .unwrap_or_default()
+    };
+    dispatch(
+        "tags.exclusive",
+        serde_json::json!({ "tag": "Status", "on": true }),
+    )
+    .unwrap();
+    until(&app, "the field", || (fields() == ["Status"]).then_some(()));
+    let entry = bibli_core::op::EntryRef::from_path(&file).unwrap();
+    let plan = match dispatch(
+        "tags.add",
+        serde_json::json!({ "tags": ["Status/Final"], "entries": [entry] }),
+    )
+    .unwrap()
+    {
+        bibli_core::command::Outcome::Plan(plan) => plan,
+        other => panic!("a plan, not {other:?}"),
+    };
+    app.executor.execute_blocking(&plan, app.lifetime());
+    assert_eq!(read_tags(&file), ["work", "Status/Final"]);
+
+    dispatch(
+        "tags.rename",
+        serde_json::json!({ "tag": "Status", "to": "State", "root": PathArg::from(root.as_path()) }),
+    )
+    .unwrap();
+    let plan = proposal(&app);
+    assert!(plan.note.is_some());
+    // Under a folder other than the home folder the mark stays: the
+    // category still names files elsewhere.
+    app.executor.execute_blocking(&plan, app.lifetime());
+    assert_eq!(read_tags(&file), ["work", "State/Final"]);
+    assert_eq!(fields(), ["Status"]);
+}

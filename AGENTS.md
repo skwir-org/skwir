@@ -226,7 +226,13 @@ current source before assuming a planned crate, command, or API exists.
   the categories onto the file; a row's chip says the tag's own name
   (`metadata::tag_leaf`), Details its categories too. `tags.move` puts
   tags into a category, keeping their names. A store in names holds no
-  tag in a category.
+  tag in a category. A category the user marks as holding one tag at a
+  time (`tags.exclusive`, `metadata::TAG_EXCLUSIVE_SETTING`) is a field:
+  a value given takes the place of the one there was
+  (`metadata::with_exclusive`, in every edit), the tag editor takes one
+  of its tags, Details shows it as a row of its own (`Status: Draft`),
+  and the mark follows the category renamed. This is what `key:value`
+  is in bibli: no syntax of its own, a category of tags.
   A folder listing reads `x` again when `._x` changes. A search by tag
   asks the indexes first (`bibli_core::hints`, ADR-026: Baloo when it
   runs, the tags plugin's own (`index.rs`: in pieces by folder, read when
@@ -242,7 +248,10 @@ current source before assuming a planned crate, command, or API exists.
   the tags under the folder shown with how many files have each, as the
   index tallies them, as a tree: a category's tags fold under it (Left
   and Right, its arrow), and tags dragged onto a row go into it
-  (`tags.move`), dropped beside the rows out of theirs. A count
+  (`tags.move`), dropped beside the rows out of theirs; the searches the
+  user kept follow the tree. The view counts a folder: shown a location
+  that is none (a tag's pill clicked), the pane returns to its listing
+  view. A count
   (`count.rs`) teaches the index every
   tagged file under the folder and makes it cover the folder as of when
   it began; opened again, even after a restart, the view shows those

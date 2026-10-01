@@ -170,11 +170,35 @@ fn note_source(provenance: &Provenance) -> Option<SharedString> {
 /// The user's notes on an entry (tags, rating, comment), each with the way
 /// to change it, and where a download came from, with the way back there.
 /// Only while the tags plugin, which reads and writes them, is on.
-fn notes_groups(entry: &Entry, path: &std::path::Path) -> [Option<Group>; 2] {
+/// A category holding one tag at a time (`fields`) is a field of its own,
+/// whose value is the tag within it (`Status: Draft`).
+fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Option<Group>; 2] {
     let meta = &entry.metadata;
     let text = |key| meta.value(key).and_then(Value::as_str).map(str::to_owned);
     let target = serde_json::json!([EntryRef::new(entry.id, path)]);
-    let tags = crate::views::list::tags_of(entry);
+    let (valued, tags): (Vec<String>, Vec<String>) = crate::views::list::tags_of(entry)
+        .into_iter()
+        .partition(|t| bibli_core::metadata::exclusive_category(t, fields).is_some());
+    let field_rows: Vec<Row> = valued
+        .iter()
+        .filter_map(|t| {
+            let field = bibli_core::metadata::exclusive_category(t, fields)?;
+            let value = bibli_core::metadata::tag_under(t, field)?.trim_start_matches('/');
+            Some(
+                Row::new(
+                    bibli_core::metadata::tag_leaf(field).to_owned(),
+                    value.to_owned(),
+                )
+                .action(
+                    "Change…",
+                    Invocation::with_args(
+                        "ui.tags_prompt",
+                        &serde_json::json!({ "entries": target, "text": format!("{field}/") }),
+                    ),
+                ),
+            )
+        })
+        .collect();
     let mut tags_row = Row {
         show: Show::Tags {
             tags: tags.clone(),
@@ -260,7 +284,9 @@ fn notes_groups(entry: &Entry, path: &std::path::Path) -> [Option<Group>; 2] {
             .collect::<Vec<_>>(),
         _ => Vec::new(),
     };
-    let mut rows = vec![tags_row, rating_row, comment_row];
+    let mut rows = vec![tags_row];
+    rows.extend(field_rows);
+    rows.extend([rating_row, comment_row]);
     // Where the notes are, and the stores that say otherwise (ADR-027).
     let kept = titles(keys::NOTES_KEPT);
     if !kept.is_empty() {
@@ -277,8 +303,9 @@ fn notes_groups(entry: &Entry, path: &std::path::Path) -> [Option<Group>; 2] {
 }
 
 /// What the entry itself says; with `notes`, what the user noted on it
-/// (the tags plugin is on). Pure, so it is tested without a window.
-pub fn entry_groups(entry: &Entry, path: &std::path::Path, notes: bool) -> Vec<Group> {
+/// (the tags plugin is on), the categories it holds one tag at a time of
+/// as fields. Pure, so it is tested without a window.
+pub fn entry_groups(entry: &Entry, path: &std::path::Path, notes: Option<&[String]>) -> Vec<Group> {
     let meta = &entry.metadata;
     let uint = |key| meta.value(key).and_then(Value::as_u64);
     let time = |key| meta.value(key).and_then(Value::as_time);
@@ -352,10 +379,9 @@ pub fn entry_groups(entry: &Entry, path: &std::path::Path, notes: bool) -> Vec<G
         .filter(|row| !row.value.is_empty())
         .collect();
 
-    let [notes, source] = if notes {
-        notes_groups(entry, path)
-    } else {
-        [None, None]
+    let [notes, source] = match notes {
+        Some(fields) => notes_groups(entry, path, fields),
+        None => [None, None],
     };
     [
         group("General", general),
@@ -740,7 +766,7 @@ mod tests {
             },
         );
         let path = std::path::Path::new("/data/notes/it's a café.txt");
-        let groups = entry_groups(&entry, path, true);
+        let groups = entry_groups(&entry, path, Some(&[]));
         let find = |title: &str, label: &str| {
             groups
                 .iter()
@@ -803,8 +829,30 @@ mod tests {
         let links: Vec<&str> = origin.actions.iter().map(|(w, _)| w.as_ref()).collect();
         assert_eq!(links, ["Open", "Copy"]);
         assert!(find("More", "Tags").is_none() && find("More", "Rating").is_none());
+        // A category of one tag at a time is a field of its own.
+        let fields = ["Status".to_owned()];
+        let mut tagged = entry.clone();
+        tagged.metadata.set(
+            keys::TAGS,
+            Value::List(vec![
+                Value::Text("work".into()),
+                Value::Text("Status/In review".into()),
+            ]),
+            Provenance::User,
+        );
+        let with_field = entry_groups(&tagged, path, Some(&fields));
+        let notes = with_field.iter().find(|g| g.title == "Notes").unwrap();
+        let status = notes.rows.iter().find(|r| r.label == "Status").unwrap();
+        assert_eq!(status.value.as_ref(), "In review");
+        assert_eq!(status.actions[0].1.args["text"], "Status/");
+        let tags = notes.rows.iter().find(|r| r.label == "Tags").unwrap();
+        assert_eq!(
+            tags.value.as_ref(),
+            "work",
+            "the field's value is not a tag twice"
+        );
         // With the tags plugin off, no notes to take and none to show.
-        let without = entry_groups(&entry, path, false);
+        let without = entry_groups(&entry, path, None);
         assert!(
             without
                 .iter()
