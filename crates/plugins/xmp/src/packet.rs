@@ -6,8 +6,13 @@
 //!
 //! Keywords are `dc:subject`, a bag; Lightroom's and digiKam's nested
 //! keywords (`lr:hierarchicalSubject`, `digiKam:TagsList`, `a|b|c` and
-//! `a/b/c`) are read for their last part when `dc:subject` says nothing,
-//! and kept in step when present. A rating is `xmp:Rating`, 1 to 5 whole
+//! `a/b/c`) are tags in categories (`a/b/c`, `metadata::TAG_SEPARATOR`),
+//! each while `dc:subject` still has its last part (an application that
+//! knows only `dc:subject` took it away there), and the flat keywords that
+//! are one of their parts are theirs, as Lightroom writes every part. A
+//! tag in a category is written so: every part in `dc:subject`, the path
+//! in each nested list the file has, `lr:hierarchicalSubject` begun if it
+//! has none. A rating is `xmp:Rating`, 1 to 5 whole
 //! stars (−1 is rejected, 0 none), as an attribute of `rdf:Description` or
 //! an element; `dc:description` is an alternative of languages, whose
 //! default is read and written. `xmp:Label` is Lightroom's color label:
@@ -17,7 +22,7 @@
 use std::fmt::Write as _;
 use std::ops::Range;
 
-use bibli_core::metadata::same_tag;
+use bibli_core::metadata::{TAG_SEPARATOR, clean_tag, same_tag, tag_leaf};
 use bibli_core::notes::{Notes, Tag};
 
 const RDF: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
@@ -27,6 +32,42 @@ const LR: &str = "http://ns.adobe.com/lightroom/1.0/";
 const DIGIKAM: &str = "http://www.digikam.org/ns/1.0/";
 const PHOTOSHOP: &str = "http://ns.adobe.com/photoshop/1.0/";
 const XML: &str = "http://www.w3.org/XML/1998/namespace";
+
+/// The nested keyword lists, with the separator each writes.
+const NESTED: [(&str, &str, char); 2] =
+    [(LR, "hierarchicalSubject", '|'), (DIGIKAM, "TagsList", '/')];
+
+/// The tags a document's keywords are: its nested keywords as tags in
+/// categories, while `dc:subject` has their last part, then the flat ones
+/// no nested keyword has as a part.
+fn keywords_of(descriptions: &[Node<'_, '_>]) -> Vec<String> {
+    let flat = element(descriptions, DC, "subject")
+        .map(items)
+        .unwrap_or_default();
+    let mut out: Vec<String> = Vec::new();
+    for (ns, name, separator) in NESTED {
+        let Some(nested) = element(descriptions, ns, name) else {
+            continue;
+        };
+        for path in items(nested) {
+            let tag = clean_tag(&path.split(separator).collect::<Vec<_>>().join("/"));
+            let kept = flat.is_empty() || flat.iter().any(|k| same_tag(k, tag_leaf(&tag)));
+            if !tag.is_empty() && kept && !out.iter().any(|t| same_tag(t, &tag)) {
+                out.push(tag);
+            }
+        }
+    }
+    let nested = out.clone();
+    for k in flat {
+        let part = nested
+            .iter()
+            .any(|t| t.split(TAG_SEPARATOR).any(|p| same_tag(p, &k)));
+        if !part && !out.iter().any(|t| same_tag(t, &k)) {
+            out.push(k);
+        }
+    }
+    out
+}
 
 /// Lightroom's color labels, by the palette color they wear.
 const LABELS: [(&str, &str); 5] = [
@@ -106,21 +147,7 @@ pub fn notes_of(text: &str) -> Option<Notes> {
     if descriptions.is_empty() {
         return None;
     }
-    let mut names = element(&descriptions, DC, "subject")
-        .map(items)
-        .unwrap_or_default();
-    if names.is_empty() {
-        for (ns, name, separator) in [(LR, "hierarchicalSubject", '|'), (DIGIKAM, "TagsList", '/')]
-        {
-            if let Some(nested) = element(&descriptions, ns, name) {
-                names.extend(items(nested).into_iter().filter_map(|path| {
-                    path.rsplit(separator)
-                        .next()
-                        .map(|leaf| leaf.trim().to_owned())
-                }));
-            }
-        }
-    }
+    let names = keywords_of(&descriptions);
     let mut notes = Notes::default();
     for name in names {
         if notes.tag(&name).is_none() {
@@ -235,36 +262,39 @@ pub fn edit(text: &str, notes: &Notes) -> Option<String> {
         .filter(|t| keep_label.is_none_or(|l| !same_tag(l, t)))
         .collect();
     let mut wanted: Vec<(&str, &str, Value)> = Vec::new();
-    let old_keywords = element(&descriptions, DC, "subject")
-        .map(items)
-        .unwrap_or_default();
+    let old_keywords = keywords_of(&descriptions);
     let same_keywords = old_keywords.len() == keywords.len()
         && old_keywords
             .iter()
             .all(|k| keywords.iter().any(|x| same_tag(x, k)));
     if !same_keywords {
-        wanted.push((DC, "subject", Value::Bag(keywords.clone())));
-    }
-    // Nested keywords, where present: those whose last part is kept, and
-    // the new tags at the top.
-    for (ns, name, separator) in [(LR, "hierarchicalSubject", '|'), (DIGIKAM, "TagsList", '/')] {
-        let Some(nested) = element(&descriptions, ns, name) else {
-            continue;
-        };
-        let paths = items(nested);
-        let leaf = |p: &str| p.rsplit(separator).next().unwrap_or(p).trim().to_owned();
-        let mut kept: Vec<String> = paths
-            .iter()
-            .filter(|p| keywords.iter().any(|k| same_tag(k, &leaf(p))))
-            .cloned()
-            .collect();
-        for k in &keywords {
-            if !kept.iter().any(|p| same_tag(&leaf(p), k)) {
-                kept.push(k.clone());
+        // Every part of every tag, as Lightroom writes them.
+        let mut flat: Vec<String> = Vec::new();
+        for part in keywords.iter().flat_map(|k| k.split(TAG_SEPARATOR)) {
+            if !flat.iter().any(|f| same_tag(f, part)) {
+                flat.push(part.to_owned());
             }
         }
-        if kept != paths {
-            wanted.push((ns, name, Value::Bag(kept)));
+        wanted.push((DC, "subject", Value::Bag(flat)));
+        // The paths, in each nested list the file has; Lightroom's begun
+        // for a tag in a category where it has none.
+        let has_nested = NESTED
+            .iter()
+            .any(|(ns, name, _)| element(&descriptions, ns, name).is_some());
+        let in_category = keywords.iter().any(|k| k.contains(TAG_SEPARATOR));
+        for (ns, name, separator) in NESTED {
+            let present = element(&descriptions, ns, name).is_some();
+            if present || (ns == LR && in_category && !has_nested) {
+                let paths = keywords
+                    .iter()
+                    .map(|k| {
+                        k.split(TAG_SEPARATOR)
+                            .collect::<Vec<_>>()
+                            .join(&separator.to_string())
+                    })
+                    .collect();
+                wanted.push((ns, name, Value::Bag(paths)));
+            }
         }
     }
     // In whole stars: a half star that rounds to what is there is no
@@ -458,7 +488,11 @@ mod tests {
     #[test]
     fn a_sidecar_reads_as_notes_its_label_a_tag_of_its_color() {
         let notes = notes_of(DARKTABLE).unwrap();
-        assert_eq!(notes.tag_names(), ["Holidays", "it's & more", "Red"]);
+        assert_eq!(
+            notes.tag_names(),
+            ["Places/Alps/Holidays", "it's & more", "Red"],
+            "the nested keyword in its categories"
+        );
         assert_eq!(notes.tag("red").unwrap().color.as_deref(), Some("red"));
         assert_eq!(notes.rating, Some(6));
         assert_eq!(notes.comment, None);
@@ -467,7 +501,7 @@ mod tests {
     #[test]
     fn an_edit_changes_what_it_says_and_keeps_everything_else() {
         let mut notes = notes_of(DARKTABLE).unwrap();
-        notes.tags.retain(|t| t.name != "Holidays");
+        notes.tags.retain(|t| t.name != "Places/Alps/Holidays");
         notes.tags.push(Tag::named("Été <new>"));
         notes.rating = Some(7);
         notes.comment = Some("from the \"trip\"".into());
@@ -478,8 +512,8 @@ mod tests {
         assert_eq!(read.tag_names(), ["it's & more", "Été <new>", "Red"]);
         assert_eq!(read.rating, Some(8), "3½ stars written as 4");
         assert_eq!(read.comment.as_deref(), Some("from the \"trip\""));
-        // The nested keyword whose last part went is gone; the new one is
-        // at the top.
+        // The nested keyword taken away is gone from both lists; the new
+        // one is at the top.
         assert!(!text.contains("Places|Alps|Holidays"));
         assert!(text.contains("<rdf:li>Été &lt;new&gt;</rdf:li>"));
         // The label's tag taken away takes the label.
@@ -511,6 +545,51 @@ mod tests {
         let text = edit(bare, &notes).unwrap();
         assert_eq!(notes_of(&text).unwrap().tag_names(), ["a", "b, c"]);
         assert_eq!(edit("not xml", &notes), None);
+    }
+
+    #[test]
+    fn a_tag_in_a_category_is_written_as_lightroom_and_digikam_read_it() {
+        let notes = Notes {
+            tags: vec![Tag::named("Places/France/Paris"), Tag::named("work")],
+            ..Notes::default()
+        };
+        let text = new_document(&notes);
+        for part in ["Places", "France", "Paris", "work"] {
+            assert!(text.contains(&format!("<rdf:li>{part}</rdf:li>")), "{text}");
+        }
+        assert!(
+            text.contains("<rdf:li>Places|France|Paris</rdf:li>"),
+            "{text}"
+        );
+        assert_eq!(
+            notes_of(&text).unwrap().tag_names(),
+            ["Places/France/Paris", "work"]
+        );
+        // digiKam's list, where the file has it, is kept in step.
+        let digikam = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:digiKam="http://www.digikam.org/ns/1.0/"><dc:subject><rdf:Bag><rdf:li>Paris</rdf:li><rdf:li>Lyon</rdf:li></rdf:Bag></dc:subject><digiKam:TagsList><rdf:Seq><rdf:li>Places/France/Paris</rdf:li><rdf:li>Places/France/Lyon</rdf:li></rdf:Seq></digiKam:TagsList></rdf:Description></rdf:RDF></x:xmpmeta>"#;
+        let mut read = notes_of(digikam).unwrap();
+        assert_eq!(
+            read.tag_names(),
+            ["Places/France/Paris", "Places/France/Lyon"]
+        );
+        read.tags.retain(|t| t.name.ends_with("Lyon"));
+        let text = edit(digikam, &read).unwrap();
+        assert!(
+            text.contains("<rdf:li>Places/France/Lyon</rdf:li>"),
+            "{text}"
+        );
+        assert!(!text.contains("Paris"), "{text}");
+        assert!(
+            !text.contains("hierarchicalSubject"),
+            "a list of its own only"
+        );
+        // A nested keyword whose last part another application took out of
+        // `dc:subject` is no tag of the file's.
+        let stale = digikam.replace("<rdf:li>Paris</rdf:li>", "");
+        assert_eq!(
+            notes_of(&stale).unwrap().tag_names(),
+            ["Places/France/Lyon"]
+        );
     }
 
     #[test]

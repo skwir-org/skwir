@@ -207,6 +207,23 @@ struct RenameArgs {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct MoveArgs {
+    /// The tag to move.
+    #[serde(default)]
+    tag: String,
+    /// More tags to move with it.
+    #[serde(default)]
+    tags: Vec<String>,
+    /// The category they go into (`Places/France`); out of their category,
+    /// to the top, when omitted.
+    #[serde(default)]
+    into: Option<String>,
+    /// Where the files are; the home folder when omitted.
+    #[serde(default)]
+    root: Option<PathArg>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct DeleteArgs {
     /// The tag to take from every file.
     #[serde(default)]
@@ -947,6 +964,25 @@ impl Plugin for TagsPlugin {
                 let from = everywhere::named(a.tag, a.tags);
                 everywhere::start(app, &everywhere, &f, from, Some(&a.to), root_of(a.root))?;
                 v.used(&parse_tags(&a.to));
+                Ok(Outcome::Done)
+            },
+        );
+        let (everywhere, f) = (lifetime.clone(), follows.clone());
+        app.commands.register::<MoveArgs, _>(
+            ID,
+            "tags.move",
+            "Move tag into category",
+            "Put a tag (or `tags`) into the category `into`, keeping its own name (`Paris` into `Places/France` is `Places/France/Paris`), or out of its category without `into`, on every file under the home folder (or `root`): the files are searched on a worker and the plan proposed for review",
+            move |a, app| {
+                let tags = everywhere::named(a.tag, a.tags);
+                everywhere::move_into(
+                    app,
+                    &everywhere,
+                    &f,
+                    tags,
+                    a.into.as_deref(),
+                    root_of(a.root),
+                )?;
                 Ok(Outcome::Done)
             },
         );

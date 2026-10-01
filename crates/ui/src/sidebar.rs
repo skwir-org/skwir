@@ -679,9 +679,15 @@ fn pill(
     let tone = theme.tags[color % theme.tags.len()];
     let open = open_invocation(place);
     let tab = open_in_tab(place);
-    let title: SharedString = place.title.clone().into();
-    let tip: SharedString =
-        format!("{title} · Shift+click: also in this search · Alt+click: in this folder").into();
+    // A tag in a category says its own name; the tooltip says where it is.
+    let title: SharedString = bibli_core::metadata::tag_leaf(&place.title)
+        .to_owned()
+        .into();
+    let tip: SharedString = format!(
+        "{} · Shift+click: also in this search · Alt+click: in this folder",
+        place.title
+    )
+    .into();
     let font = font.clone();
     let mut pill = div()
         .id(("place", i))

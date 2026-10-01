@@ -106,12 +106,14 @@ impl Notes {
     }
 }
 
-/// Split a comma-separated tag list, trimming and dropping empties and
-/// duplicates (tags ignore case: the first spelling stays).
+/// Split a comma-separated tag list, each made one
+/// ([`crate::metadata::clean_tag`]), dropping empties and duplicates
+/// (tags ignore case: the first spelling stays).
 pub fn parse_tags(s: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for t in s.split(',') {
-        let t = t.trim();
+        let t = crate::metadata::clean_tag(t);
+        let t = t.as_str();
         if !t.is_empty() && !out.iter().any(|x| same_tag(x, t)) {
             out.push(t.to_owned());
         }

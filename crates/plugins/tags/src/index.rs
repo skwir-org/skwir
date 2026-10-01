@@ -10,7 +10,10 @@
 //! folder of it is needed and written alone when it changed, and let go
 //! of after a few minutes unused; the folders it holds and the tags of the
 //! files under the home folder stay known in between, for the sidebar and
-//! for knowing which pieces a question needs. How much room it may take
+//! for knowing which pieces a question needs. A category counts the files
+//! with any tag within it once each (`Places` those tagged
+//! `Places/France/Paris`), as a search for it finds them: each tag knows
+//! its category, which is a tag of the index too. How much room it may take
 //! is the user's (`tags.index_mb`): past it, it learns no new file (those
 //! known stay current) and covers no folder, and the Tags view says its
 //! counts leave some out.
@@ -26,7 +29,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use bibli_core::app::App;
 use bibli_core::cache::CacheSlot;
 use bibli_core::cancel::CancelToken;
-use bibli_core::metadata::same_tag;
+use bibli_core::metadata::{tag_parent, tag_within};
 use parking_lot::{Mutex, MutexGuard};
 
 /// The setting: how much room the index may take, in megabytes.
@@ -173,10 +176,13 @@ impl Folder {
             .binary_search_by(|f| f.name().as_bytes().cmp(name.as_bytes()))
     }
 
-    fn count(&mut self, name: &OsStr, tags: &[u32], add: bool) {
+    /// Count `name`'s `tags` in, or out, with the categories they are in
+    /// (`parents`, by tag number), each once.
+    fn count(&mut self, name: &OsStr, tags: &[u32], parents: &[Option<u32>], add: bool) {
         if hidden(name) {
             return;
         }
+        let tags = &with_categories(tags, parents);
         if add {
             self.visible += 1;
         } else {
@@ -194,7 +200,7 @@ impl Folder {
     }
 
     /// `name` has `tags` now (none: it is forgotten): what it had.
-    fn set(&mut self, name: &OsStr, tags: &[u32]) -> Option<Vec<u32>> {
+    fn set(&mut self, name: &OsStr, tags: &[u32], parents: &[Option<u32>]) -> Option<Vec<u32>> {
         match self.find(name) {
             Ok(at) => {
                 let old = self.files[at].tags();
@@ -203,20 +209,36 @@ impl Folder {
                 } else {
                     self.files[at] = File::new(name, tags);
                 }
-                self.count(name, &old, false);
+                self.count(name, &old, parents, false);
                 if !tags.is_empty() {
-                    self.count(name, tags, true);
+                    self.count(name, tags, parents, true);
                 }
                 Some(old)
             }
             Err(_) if tags.is_empty() => None,
             Err(at) => {
-                self.count(name, tags, true);
+                self.count(name, tags, parents, true);
                 self.files.insert(at, File::new(name, tags));
                 None
             }
         }
     }
+}
+
+/// `tags` and the categories they are in, each once.
+fn with_categories(tags: &[u32], parents: &[Option<u32>]) -> Vec<u32> {
+    let mut out: Vec<u32> = Vec::with_capacity(tags.len());
+    for tag in tags {
+        let mut at = Some(*tag);
+        while let Some(t) = at {
+            if out.contains(&t) {
+                break;
+            }
+            out.push(t);
+            at = parents.get(t as usize).copied().flatten();
+        }
+    }
+    out
 }
 
 /// One piece: the folders whose path falls in it.
@@ -242,6 +264,10 @@ struct Meta {
     home_counts: Vec<(u32, u64)>,
     /// A file was not learned for want of room.
     refused: bool,
+    /// `home_counts` count each category once per file within it: those
+    /// of an index from before are made again.
+    #[serde(default)]
+    nested: bool,
 }
 
 #[derive(Default)]
@@ -253,6 +279,8 @@ struct State {
     read: bool,
     tags: Vec<String>,
     ids: HashMap<String, u32>,
+    /// Each tag's category, by number.
+    parents: Vec<Option<u32>>,
     covered: Vec<Covered>,
     pieces: Vec<Piece>,
     bytes: Vec<u64>,
@@ -275,11 +303,28 @@ impl State {
         if let Some(id) = self.ids.get(tag) {
             return *id;
         }
+        let parent = tag_parent(tag).map(|p| self.id(p));
         let id = u32::try_from(self.tags.len()).unwrap_or(u32::MAX);
         self.tags.push(tag.to_owned());
+        self.parents.push(parent);
         self.ids.insert(tag.to_owned(), id);
         self.meta_dirty = true;
         id
+    }
+
+    /// Each tag's category, the categories missing given a number (an
+    /// index from before had only the tags files carry).
+    fn link_categories(&mut self) {
+        self.parents.clear();
+        let mut at = 0;
+        while at < self.tags.len() {
+            let tag = self.tags[at].clone();
+            let parent = tag_parent(&tag).map(|p| self.id(p));
+            // `id` may have pushed the category's own entry meanwhile.
+            self.parents.resize(self.tags.len(), None);
+            self.parents[at] = parent;
+            at += 1;
+        }
     }
 
     /// The folders under `root` (itself included), each with its piece.
@@ -296,7 +341,7 @@ impl State {
         if !path.starts_with(home) {
             return;
         }
-        for tag in tags {
+        for tag in &with_categories(tags, &self.parents) {
             let n = self.home_counts.entry(*tag).or_default();
             *n = if add { *n + 1 } else { n.saturating_sub(1) };
         }
@@ -355,7 +400,8 @@ fn encode_piece(piece: &Piece) -> Vec<u8> {
     out
 }
 
-fn decode_piece(bytes: &[u8], tags: usize) -> Option<HashMap<PathBuf, Folder>> {
+fn decode_piece(bytes: &[u8], parents: &[Option<u32>]) -> Option<HashMap<PathBuf, Folder>> {
+    let tags = parents.len();
     let mut r = Reader {
         bytes: bytes.strip_prefix(PIECE_MAGIC)?,
     };
@@ -368,7 +414,7 @@ fn decode_piece(bytes: &[u8], tags: usize) -> Option<HashMap<PathBuf, Folder>> {
             let n = r.u32()?;
             let ids: Option<Vec<u32>> = (0..n).map(|_| r.u32()).collect();
             let ids: Vec<u32> = ids?.into_iter().filter(|t| (*t as usize) < tags).collect();
-            folder.set(name, &ids);
+            folder.set(name, &ids, parents);
         }
         folders.insert(path, folder);
     }
@@ -521,6 +567,7 @@ impl TagIndex {
             .map(|(i, t)| (t.clone(), u32::try_from(i).unwrap_or(u32::MAX)))
             .collect();
         state.tags = meta.tags;
+        state.link_categories();
         state.covered = meta.covered;
         if meta.bytes.len() == BUCKETS {
             state.bytes = meta.bytes;
@@ -530,11 +577,12 @@ impl TagIndex {
             .and_then(|s| s.get(FOLDERS))
             .map(|b| decode_folders(&b))
             .unwrap_or_default();
-        if meta.home == home {
+        if meta.home == home && meta.nested {
             state.home_counts = meta.home_counts.into_iter().collect();
             state.home = home;
         } else {
-            // Another home: its counts are made again from every piece.
+            // Another home, or counts from before categories: made again
+            // from every piece.
             state.home = home;
             self.load_all(state);
             state.home_counts.clear();
@@ -543,8 +591,10 @@ impl TagIndex {
             if let Some(home) = home {
                 for (path, folder) in state.pieces.iter().flat_map(|p| p.folders.iter()) {
                     if path.starts_with(&home) {
-                        for tag in folder.files.iter().flat_map(File::tags) {
-                            *counts.entry(tag).or_default() += 1;
+                        for file in &folder.files {
+                            for tag in with_categories(&file.tags(), &state.parents) {
+                                *counts.entry(tag).or_default() += 1;
+                            }
                         }
                     }
                 }
@@ -556,7 +606,7 @@ impl TagIndex {
 
     /// Read piece `at`, if it is not.
     fn load(&self, state: &mut State, at: usize) {
-        let tags = state.tags.len();
+        let parents = &state.parents;
         let piece = &mut state.pieces[at];
         piece.used = Some(Instant::now());
         if piece.loaded {
@@ -567,7 +617,7 @@ impl TagIndex {
             .slot
             .as_ref()
             .and_then(|s| s.get(&piece_key(at)))
-            .and_then(|b| decode_piece(&b, tags))
+            .and_then(|b| decode_piece(&b, parents))
             .unwrap_or_default();
         if self.slot.is_some() {
             self.work();
@@ -698,7 +748,7 @@ impl TagIndex {
                 .entry(dir.to_path_buf())
                 .or_default();
             let new_len = ids.len();
-            let old = folder.set(name, &ids);
+            let old = folder.set(name, &ids, &state.parents);
             if old.as_deref() == Some(ids.as_slice()) {
                 continue;
             }
@@ -958,7 +1008,8 @@ impl TagIndex {
                 .tags
                 .iter()
                 .enumerate()
-                .filter(|(_, t)| same_tag(t, tag))
+                // A category's files: those of the tags within it.
+                .filter(|(_, t)| tag_within(t, tag))
                 .map(|(i, _)| u32::try_from(i).unwrap_or(u32::MAX))
                 .collect();
             if ids.is_empty() {
@@ -1044,6 +1095,7 @@ impl TagIndex {
                     home: state.home.clone(),
                     home_counts: state.home_counts.iter().map(|(t, n)| (*t, *n)).collect(),
                     refused: state.refused,
+                    nested: true,
                 })
             });
             (pieces, folders, meta)

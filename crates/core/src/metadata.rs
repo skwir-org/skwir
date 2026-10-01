@@ -22,6 +22,61 @@ pub fn same_tag(a: &str, b: &str) -> bool {
         .eq(b.chars().flat_map(char::to_lowercase))
 }
 
+/// What separates a category from what is in it: `Places/France/Paris` is
+/// the tag `Paris` in the category `France`, itself in `Places`, as
+/// digiKam writes nested keywords (Lightroom's `|` is read as this). A
+/// category is a tag too: every file tagged within it has it, so a search
+/// for `Places` finds `Places/France/Paris`, as a folder holds its
+/// subfolders; nothing writes the categories onto the file.
+pub const TAG_SEPARATOR: char = '/';
+
+/// A tag as typed, made one: each part trimmed, empty parts left out
+/// (`" Places / France/ "` is `Places/France`). Empty when nothing is left.
+pub fn clean_tag(typed: &str) -> String {
+    typed
+        .split(TAG_SEPARATOR)
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// The tag's own name, without its categories: `Paris`.
+pub fn tag_leaf(tag: &str) -> &str {
+    tag.rsplit_once(TAG_SEPARATOR).map_or(tag, |(_, leaf)| leaf)
+}
+
+/// The category the tag is in: `Places/France`; `None` at the top.
+pub fn tag_parent(tag: &str) -> Option<&str> {
+    tag.rsplit_once(TAG_SEPARATOR).map(|(parent, _)| parent)
+}
+
+/// The tag, then each category it is in, the nearest first:
+/// `Places/France/Paris`, `Places/France`, `Places`.
+pub fn tag_lineage(tag: &str) -> impl Iterator<Item = &str> {
+    std::iter::successors(Some(tag), |t| tag_parent(t))
+}
+
+/// What follows `category` in `tag` when the tag is within it (ignoring
+/// case, as [`same_tag`]): `""` for the category itself, `/France/Paris`
+/// for `Places/France/Paris` within `Places`; `None` when it is not.
+pub fn tag_under<'a>(tag: &'a str, category: &str) -> Option<&'a str> {
+    if category.is_empty() {
+        return None;
+    }
+    tag.char_indices()
+        .map(|(i, _)| i)
+        .chain(std::iter::once(tag.len()))
+        .filter(|&i| i == tag.len() || tag[i..].starts_with(TAG_SEPARATOR))
+        .find(|&i| same_tag(&tag[..i], category))
+        .map(|i| &tag[i..])
+}
+
+/// Whether `tag` is `category` or within it.
+pub fn tag_within(tag: &str, category: &str) -> bool {
+    tag_under(tag, category).is_some()
+}
+
 /// The setting where the tags plugin keeps the colors the user chose,
 /// `{ tag in lowercase = color }`; the UI reads it to draw tags.
 pub const TAG_COLOR_SETTING: &str = "tags.colors";
@@ -36,8 +91,11 @@ pub const TAG_COLORS: [&str; 8] = [
 /// The color a tag wears when the user chose none, as an index into
 /// [`TAG_COLORS`]: from its name, ignoring case, so every view, every
 /// session and every machine agrees without storing anything. A tag named
-/// after a color wears it ("Red", as a Mac's first tags are named).
+/// after a color wears it ("Red", as a Mac's first tags are named). A tag
+/// in a category wears the category's at the top, so a category's tags
+/// read as one group.
 pub fn tag_color(tag: &str) -> usize {
+    let tag = tag_lineage(tag).last().unwrap_or(tag);
     if let Some(named) = TAG_COLORS.iter().position(|c| same_tag(c, tag)) {
         return named;
     }
@@ -125,6 +183,41 @@ impl MetadataProviders {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tag_is_within_its_categories() {
+        assert_eq!(
+            clean_tag(" Places / France/ /Paris "),
+            "Places/France/Paris"
+        );
+        assert_eq!(clean_tag(" / "), "");
+        assert_eq!(tag_leaf("Places/France/Paris"), "Paris");
+        assert_eq!(tag_leaf("Work"), "Work");
+        assert_eq!(tag_parent("Places/France/Paris"), Some("Places/France"));
+        assert_eq!(tag_parent("Work"), None);
+        assert_eq!(
+            tag_lineage("a/b/c").collect::<Vec<_>>(),
+            ["a/b/c", "a/b", "a"]
+        );
+        assert_eq!(
+            tag_under("Places/France/Paris", "places"),
+            Some("/France/Paris")
+        );
+        assert_eq!(tag_under("Places/France", "PLACES/france"), Some(""));
+        assert_eq!(
+            tag_under("Placesque", "Places"),
+            None,
+            "a name that only begins so"
+        );
+        assert_eq!(tag_under("Places", "Places/France"), None);
+        assert_eq!(tag_under("Été/Août", "été"), Some("/Août"));
+        assert!(tag_within("a/b", "a") && !tag_within("a", "a/b") && !tag_within("a", ""));
+        assert_eq!(
+            tag_color("Places/France"),
+            tag_color("places"),
+            "the category's"
+        );
+    }
 
     #[test]
     fn a_tag_named_after_a_color_wears_it() {

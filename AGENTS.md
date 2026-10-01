@@ -214,8 +214,19 @@ current source before assuming a planned crate, command, or API exists.
   file. Commands that act on entries take `entries` so a surface acts on
   what it showed (Details, the tag editor), not the selection at the time.
   A tag's color is the user's choice (`tags.colors`), else the one its
-  file gives it (a Mac's Finder tag, `keys::TAG_COLORS`), else its name's
-  (`metadata::tag_color`); copies keep every `user.*` attribute (ADR-006).
+  file gives it (a Mac's Finder tag, `keys::TAG_COLORS`), else the user's
+  choice for its nearest category, else its name's
+  (`metadata::tag_color`, a category's at the top); copies keep every
+  `user.*` attribute (ADR-006). A tag is in a category by its name
+  (`Places/France/Paris`, `metadata::TAG_SEPARATOR`, as digiKam writes
+  them; Lightroom's `a|b` is read as `a/b`), and a category holds what is
+  within it everywhere (`metadata::tag_within`): a search, the index's
+  counts (each file once), a rename (`Places` renamed takes
+  `Places/France` along, and its pin and color), a removal. Nothing writes
+  the categories onto the file; a row's chip says the tag's own name
+  (`metadata::tag_leaf`), Details its categories too. `tags.move` puts
+  tags into a category, keeping their names. A store in names holds no
+  tag in a category.
   A folder listing reads `x` again when `._x` changes. A search by tag
   asks the indexes first (`bibli_core::hints`, ADR-026: Baloo when it
   runs, the tags plugin's own (`index.rs`: in pieces by folder, read when

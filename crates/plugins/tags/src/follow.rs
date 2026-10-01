@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Weak;
 
 use bibli_core::app::App;
-use bibli_core::metadata::{TAG_COLOR_SETTING, same_tag};
+use bibli_core::metadata::{TAG_COLOR_SETTING, same_tag, tag_under};
 use bibli_core::op::{Change, Operation, StepContext, StepStatus, Words};
 
 use crate::Sidebar;
@@ -44,45 +44,55 @@ pub struct Settings {
 }
 
 /// The pins and colors `from` renamed `to` (`None`: removed) leaves:
-/// `None` when nothing changes. `colors` is the user's choices.
+/// `None` when nothing changes. `colors` is the user's choices. A
+/// category takes what is within it along: `Places/France` pinned
+/// follows `Places` renamed `Lieux` as `Lieux/France`.
 pub fn followed(
     pins: &[String],
     colors: &toml::Table,
     from: &[String],
     to: Option<&str>,
 ) -> Option<Settings> {
-    let named = |t: &str| from.iter().any(|f| same_tag(f, t));
+    // What `t` becomes: `None` when no `from` holds it, `Some(None)` gone.
+    let moved = |t: &str| -> Option<Option<String>> {
+        from.iter()
+            .find_map(|f| tag_under(t, f))
+            .map(|rest| to.map(|to| format!("{to}{rest}")))
+    };
     let mut out = Settings {
         pins: Vec::new(),
         colors: BTreeMap::new(),
     };
-    let mut placed = to.is_some_and(|to| pins.iter().any(|p| same_tag(p, to) && !named(p)));
     for pin in pins {
-        if !named(pin) {
-            out.pins.push(pin.clone());
-        } else if let Some(to) = to
-            && !placed
-        {
-            // Where the first of them was.
-            out.pins.push(to.to_owned());
-            placed = true;
+        let pin = match moved(pin) {
+            None => pin.clone(),
+            Some(None) => continue,
+            Some(Some(new)) => new,
+        };
+        // Merged into a tag pinned already: where the first of them was.
+        if !out.pins.iter().any(|p| same_tag(p, &pin)) {
+            out.pins.push(pin);
         }
     }
-    if let Some(to) = to {
-        let to_key = to.to_lowercase();
-        let given = from
-            .iter()
-            .find_map(|f| colors.get(&f.to_lowercase()).and_then(toml::Value::as_str));
+    if to.is_some() {
         for f in from {
-            let key = f.to_lowercase();
-            if key != to_key && colors.contains_key(&key) {
-                out.colors.insert(key, None);
+            for (key, color) in colors {
+                let (Some(Some(new)), Some(color)) = (
+                    tag_under(key, f).map(|rest| to.map(|to| format!("{to}{rest}"))),
+                    color.as_str(),
+                ) else {
+                    continue;
+                };
+                let new = new.to_lowercase();
+                if new == *key {
+                    continue;
+                }
+                out.colors.entry(key.clone()).or_insert(None);
+                if !colors.contains_key(&new) && !out.colors.get(&new).is_some_and(Option::is_some)
+                {
+                    out.colors.insert(new, Some(color.to_owned()));
+                }
             }
-        }
-        if !colors.contains_key(&to_key)
-            && let Some(color) = given
-        {
-            out.colors.insert(to_key, Some(color.to_owned()));
         }
     }
     (out.pins != pins || !out.colors.is_empty()).then_some(out)
@@ -416,5 +426,39 @@ mod tests {
         assert!(s.colors.is_empty());
         // Nothing of theirs: nothing to do.
         assert!(followed(&list(&["a"]), &colors, &list(&["zz"]), Some("y")).is_none());
+    }
+
+    #[test]
+    fn what_is_within_a_category_follows_it() {
+        let mut colors = toml::Table::new();
+        colors.insert("places/france".into(), toml::Value::String("blue".into()));
+        let s = followed(
+            &list(&["Places/France", "work", "Placesque"]),
+            &colors,
+            &list(&["places"]),
+            Some("Lieux"),
+        )
+        .unwrap();
+        assert_eq!(s.pins, list(&["Lieux/France", "work", "Placesque"]));
+        assert_eq!(s.colors.get("lieux/france"), Some(&Some("blue".into())));
+        assert_eq!(s.colors.get("places/france"), Some(&None));
+        // Moved into a category.
+        let s = followed(
+            &list(&["Paris"]),
+            &colors,
+            &list(&["Paris"]),
+            Some("Places/Paris"),
+        )
+        .unwrap();
+        assert_eq!(s.pins, list(&["Places/Paris"]));
+        // A category removed takes its pins.
+        let s = followed(
+            &list(&["Places/France", "a"]),
+            &colors,
+            &list(&["Places"]),
+            None,
+        )
+        .unwrap();
+        assert_eq!(s.pins, list(&["a"]));
     }
 }

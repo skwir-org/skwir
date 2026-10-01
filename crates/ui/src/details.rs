@@ -462,7 +462,7 @@ fn tag_chips(
         .gap_1()
         .children(tags.iter().enumerate().map(|(i, tag)| {
             let search = tag.clone();
-            crate::tags::chip(tag, shell.tag_colors.of_given(tag, given), theme)
+            crate::tags::chip_in_full(tag, shell.tag_colors.of_given(tag, given), theme)
                 .id(("detail-tag", row * 64 + i))
                 .cursor_pointer()
                 .text_color(theme.text)

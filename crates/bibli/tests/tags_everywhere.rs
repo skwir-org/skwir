@@ -652,3 +652,83 @@ fn an_open_search_sees_at_once_what_a_plan_changed() {
         (!job.drain().contains("c.txt")).then_some(())
     });
 }
+
+/// A category renamed takes the tags within it; tags moved into one keep
+/// their own names; their pins follow.
+#[test]
+fn a_category_carries_its_tags_and_tags_move_into_one() {
+    let tmp = home_tempdir();
+    let root = tmp.path().join("home");
+    std::fs::create_dir_all(&root).unwrap();
+    for (name, t) in [
+        ("a.jpg", &["Places/France/Paris", "work"][..]),
+        ("b.jpg", &["Places/Japan"][..]),
+        ("c.jpg", &["Paris", "Placesque"][..]),
+    ] {
+        std::fs::write(root.join(name), b"x").unwrap();
+        write_tags(&root.join(name), &tags(t)).unwrap();
+    }
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(bibli_plugin_query::QueryPlugin::default()), &app);
+    app.plugins
+        .add(Arc::new(bibli_plugin_tags::TagsPlugin::default()), &app);
+    let at = |name: &str| read_tags(&root.join(name));
+    let dispatch =
+        |name: &str, args: serde_json::Value| app.dispatch(&Invocation::with_args(name, &args));
+    let root_arg = serde_json::json!(PathArg::from(root.as_path()));
+
+    dispatch(
+        "tags.rename",
+        serde_json::json!({ "tag": "places", "to": "Lieux", "root": root_arg }),
+    )
+    .unwrap();
+    let plan = proposal(&app);
+    assert_eq!(plan.steps.len(), 2, "a and b; not Placesque");
+    app.executor.execute_blocking(&plan, app.lifetime());
+    assert_eq!(at("a.jpg"), ["Lieux/France/Paris", "work"]);
+    assert_eq!(at("b.jpg"), ["Lieux/Japan"]);
+    assert_eq!(at("c.jpg"), ["Paris", "Placesque"]);
+
+    dispatch(
+        "tags.move",
+        serde_json::json!({ "tags": ["Paris", "work"], "into": " Lieux / France ", "root": root_arg }),
+    )
+    .unwrap();
+    let plan = proposal(&app);
+    assert_eq!(
+        plan.title,
+        "move the tags “Paris” and “work” into “Lieux/France”"
+    );
+    app.executor.execute_blocking(&plan, app.lifetime());
+    assert_eq!(at("a.jpg"), ["Lieux/France/Paris", "Lieux/France/work"]);
+    assert_eq!(at("c.jpg"), ["Lieux/France/Paris", "Placesque"]);
+
+    // Out of its category, to the top.
+    dispatch(
+        "tags.move",
+        serde_json::json!({ "tag": "Lieux/Japan", "root": root_arg }),
+    )
+    .unwrap();
+    let plan = proposal(&app);
+    app.executor.execute_blocking(&plan, app.lifetime());
+    assert_eq!(at("b.jpg"), ["Japan"]);
+
+    // Removed, a category takes its tags with it.
+    dispatch(
+        "tags.delete",
+        serde_json::json!({ "tag": "Lieux", "root": root_arg }),
+    )
+    .unwrap();
+    let plan = proposal(&app);
+    app.executor.execute_blocking(&plan, app.lifetime());
+    assert!(at("a.jpg").is_empty());
+    assert_eq!(at("c.jpg"), ["Placesque"]);
+
+    for args in [
+        serde_json::json!({ "tag": "Placesque", "into": "Placesque/x" }),
+        serde_json::json!({ "tag": "Japan" }),
+    ] {
+        assert!(dispatch("tags.move", args.clone()).is_err(), "{args}");
+    }
+}

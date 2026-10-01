@@ -1601,9 +1601,10 @@ impl Term {
                 let Some(Value::List(tags)) = m.value(keys::TAGS) else {
                     return Verdict::No;
                 };
+                // A category holds the tags within it.
                 yes_no(tags.iter().any(|v| {
                     v.as_str()
-                        .is_some_and(|s| bibli_core::metadata::same_tag(s, tag))
+                        .is_some_and(|s| bibli_core::metadata::tag_within(s, tag))
                 }))
             }
             Term::Comment(text) => {
@@ -2366,6 +2367,19 @@ mod tests {
         let untagged = md(2048, now(), &[]);
         let u = cand("b.txt", EntryKind::File, Some(&untagged));
         assert_eq!(q("tag:*").expr.unwrap().eval(&u, false), Verdict::No);
+        // A category holds the tags within it, not the other way.
+        let nested = md(2048, now(), &["Places/France/Paris"]);
+        let n = cand("c.jpg", EntryKind::File, Some(&nested));
+        for (query, verdict) in [
+            ("tag:places", Verdict::Yes),
+            ("tag:Places/France", Verdict::Yes),
+            ("tag:Places/France/Paris", Verdict::Yes),
+            ("tag:Paris", Verdict::No),
+            ("tag:Place", Verdict::No),
+            ("tag:Places/France/Paris/Louvre", Verdict::No),
+        ] {
+            assert_eq!(q(query).expr.unwrap().eval(&n, false), verdict, "{query}");
+        }
         assert_eq!(q("size:1k..3k").expr.unwrap().eval(&f, false), Verdict::Yes);
         assert_eq!(q("modified<7d").expr.unwrap().eval(&f, false), Verdict::Yes);
         assert_eq!(q("modified>7d").expr.unwrap().eval(&f, false), Verdict::No);

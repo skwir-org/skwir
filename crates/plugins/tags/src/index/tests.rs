@@ -274,3 +274,49 @@ fn scale_probe() {
         pieces >> 20,
     );
 }
+
+#[test]
+fn a_category_counts_each_file_within_it_once() {
+    let tmp = home_tempdir();
+    let file = |name: &str| {
+        let path = tmp.path().join(name);
+        std::fs::write(&path, b"x").unwrap();
+        path
+    };
+    let (a, b, c) = (file("a"), file("b"), file("c"));
+    let index = index(None, 64);
+    index.learn(vec![
+        (a.clone(), tags(&["Places/France/Paris", "Places/Japan"])),
+        (b.clone(), tags(&["Places/France", "work"])),
+        (c.clone(), tags(&["work"])),
+    ]);
+    let (counts, files) = index.tally(tmp.path());
+    assert_eq!(files, 3);
+    assert_eq!(
+        counts,
+        [
+            ("Places".to_owned(), 2),
+            ("Places/France".to_owned(), 2),
+            ("Places/France/Paris".to_owned(), 1),
+            ("Places/Japan".to_owned(), 1),
+            ("work".to_owned(), 2),
+        ],
+        "a with two tags in Places counts once there"
+    );
+    let mut found = index.files_with("places", tmp.path());
+    found.sort();
+    assert_eq!(found, [a.clone(), b.clone()]);
+    assert_eq!(
+        index.files_with("Places/Japan", tmp.path()),
+        std::slice::from_ref(&a)
+    );
+    // Taken out of the category, the file leaves its count.
+    index.learn(vec![(a.clone(), tags(&["Places/Japan"]))]);
+    let (counts, _) = index.tally(tmp.path());
+    assert!(
+        counts.contains(&("Places/France".to_owned(), 1)),
+        "{counts:?}"
+    );
+    assert!(!counts.iter().any(|(t, _)| t == "Places/France/Paris"));
+    assert!(counts.contains(&("Places".to_owned(), 2)));
+}

@@ -136,8 +136,10 @@ impl NotesStore for NameStore {
         Holds {
             tags: true,
             limits: match self.0 {
-                Convention::Tagspaces => "tags without spaces or brackets, no rating, no comment",
-                Convention::Filetags => "tags without spaces, no rating, no comment",
+                Convention::Tagspaces => {
+                    "tags without spaces, brackets or categories, no rating, no comment"
+                }
+                Convention::Filetags => "tags without spaces or categories, no rating, no comment",
             },
             ..Holds::default()
         }

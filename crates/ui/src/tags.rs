@@ -21,7 +21,9 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use bibli_core::command::Outcome;
-use bibli_core::metadata::{TAG_COLOR_SETTING, TAG_COLORS, same_tag, tag_color};
+use bibli_core::metadata::{
+    TAG_COLOR_SETTING, TAG_COLORS, same_tag, tag_color, tag_leaf, tag_lineage, tag_parent,
+};
 use bibli_core::op::EntryRef;
 use bibli_core::workspace::PaneId;
 use gpui::{
@@ -58,12 +60,14 @@ impl TagColors {
         self.of_or(tag, None)
     }
 
-    /// The color `tag` wears where its file gives it `given`.
+    /// The color `tag` wears where its file gives it `given`: the user's
+    /// choice, else the file's, else the one the user chose for its
+    /// nearest category, else its name's.
     pub fn of_or(&self, tag: &str, given: Option<usize>) -> usize {
-        self.0
-            .get(&tag.to_lowercase())
-            .copied()
+        let chosen = |t: &str| self.0.get(&t.to_lowercase()).copied();
+        chosen(tag)
             .or(given)
+            .or_else(|| tag_lineage(tag).skip(1).find_map(chosen))
             .unwrap_or_else(|| tag_color(tag))
     }
 
@@ -116,8 +120,24 @@ pub fn entry_tags(e: &bibli_core::Entry, colors: &TagColors) -> Vec<(String, usi
 /// A chip's height: rows of chips are one chip tall (the list's wrap).
 pub const CHIP_HEIGHT: f32 = 18.;
 
-/// A tag as a chip, in its color.
+/// A tag as a chip, in its color: its own name (`Paris` for
+/// `Places/France/Paris`), as a row has room for.
 pub fn chip(tag: &str, color: usize, theme: &Theme) -> Div {
+    chip_frame(color, theme).child(tag_leaf(tag).to_owned())
+}
+
+/// A tag as a chip with its categories before its name, dimmed, where
+/// there is room for them (Details).
+pub fn chip_in_full(tag: &str, color: usize, theme: &Theme) -> Div {
+    match tag_parent(tag) {
+        Some(categories) => chip_frame(color, theme)
+            .child(div().opacity(0.6).child(format!("{categories}/")))
+            .child(tag_leaf(tag).to_owned()),
+        None => chip(tag, color, theme),
+    }
+}
+
+fn chip_frame(color: usize, theme: &Theme) -> Div {
     div()
         .flex_none()
         .h(px(CHIP_HEIGHT))
@@ -128,7 +148,6 @@ pub fn chip(tag: &str, color: usize, theme: &Theme) -> Div {
         .rounded_sm()
         .text_xs()
         .bg(theme.tag_fill(color))
-        .child(tag.to_owned())
 }
 
 /// How many tags a line left out, as a chip without a color.
@@ -301,7 +320,15 @@ pub enum Shown {
 /// as typed first; before them, giving what was typed when some of it is
 /// no row yet.
 pub fn shown(rows: &[TagRow], query: &str) -> Vec<Shown> {
-    let typed = split(query);
+    // `Places/` asks what is in the category: nothing to add yet.
+    let typed = if query
+        .trim_end()
+        .ends_with(bibli_core::metadata::TAG_SEPARATOR)
+    {
+        Vec::new()
+    } else {
+        split(query)
+    };
     let needle = query.trim().to_lowercase();
     let mut out = Vec::new();
     let new: Vec<String> = typed
@@ -327,15 +354,10 @@ pub fn shown(rows: &[TagRow], query: &str) -> Vec<Shown> {
     out
 }
 
-/// Tags typed, separated by commas.
+/// Tags typed, separated by commas, each made one (`Places / France` is
+/// `Places/France`).
 fn split(text: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for t in text.split(',').map(str::trim).filter(|t| !t.is_empty()) {
-        if !out.iter().any(|o| same_tag(o, t)) {
-            out.push(t.to_owned());
-        }
-    }
-    out
+    bibli_core::notes::parse_tags(text)
 }
 
 /// What to give every entry and what to take from every entry: the rows
@@ -764,7 +786,32 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                             }))
                             .child(dot(color, &theme)),
                     )
-                    .child(div().flex_1().min_w_0().truncate().child(tag.name.clone()))
+                    // Its own name, then the category it is in.
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .items_baseline()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .max_w_full()
+                                    .truncate()
+                                    .child(tag_leaf(&tag.name).to_owned()),
+                            )
+                            .when_some(tag_parent(&tag.name), |d, category| {
+                                d.child(
+                                    div()
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_xs()
+                                        .text_color(muted)
+                                        .child(category.to_owned()),
+                                )
+                            }),
+                    )
                     .child(div().flex_none().text_xs().text_color(muted).child(detail))
             }
         };
@@ -1003,6 +1050,17 @@ mod tests {
         assert_eq!(
             shown(&rows, "draft, urgent, Urgent"),
             [Shown::New(vec!["urgent".into()])]
+        );
+        // A category typed lists what is in it; a tag in one is made one.
+        let rows = vec![row("Places/France", 1), row("work", 0)];
+        assert_eq!(shown(&rows, "Places/"), [Shown::Row(0)]);
+        assert_eq!(
+            shown(&rows, "places / Italy"),
+            [Shown::New(vec!["places/Italy".into()])]
+        );
+        assert_eq!(
+            shown(&rows, "fra"),
+            [Shown::New(vec!["fra".into()]), Shown::Row(0)]
         );
     }
 

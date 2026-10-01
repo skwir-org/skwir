@@ -12,7 +12,7 @@ use bibli_core::app::App;
 use bibli_core::app::NotifyLevel;
 use bibli_core::command::{Invocation, Outcome};
 use bibli_core::location::Location;
-use bibli_core::metadata::{TAG_COLOR_SETTING, TAG_COLORS, same_tag, tag_color};
+use bibli_core::metadata::{TAG_COLOR_SETTING, TAG_COLORS, same_tag, tag_color, tag_lineage};
 use bibli_core::registry::{MenuItem, Place, Reorder};
 use parking_lot::Mutex;
 
@@ -149,15 +149,19 @@ impl Colors {
         Colors(app.settings.get(TAG_COLOR_SETTING).unwrap_or_default())
     }
 
-    /// The color `tag` wears: the user's choice, else a file's, else its
-    /// name's.
+    /// The color `tag` wears: the user's choice, else a file's, else the
+    /// one the user chose for its nearest category, else its name's.
     pub fn of_tag(&self, vocabulary: &Vocabulary, tag: &str) -> String {
-        self.0
-            .get(&tag.to_lowercase())
-            .and_then(toml::Value::as_str)
-            .filter(|c| TAG_COLORS.contains(c))
-            .map(str::to_owned)
+        let chosen = |t: &str| {
+            self.0
+                .get(&t.to_lowercase())
+                .and_then(toml::Value::as_str)
+                .filter(|c| TAG_COLORS.contains(c))
+                .map(str::to_owned)
+        };
+        chosen(tag)
             .or_else(|| vocabulary.given_color(tag))
+            .or_else(|| tag_lineage(tag).skip(1).find_map(chosen))
             .unwrap_or_else(|| TAG_COLORS[tag_color(tag)].to_owned())
     }
 }
@@ -303,6 +307,9 @@ pub fn publish(app: &App, index: &Arc<TagIndex>, vocabulary: &Vocabulary, shown:
     let Some(home) = std::env::home_dir() else {
         return;
     };
+    // One at a time: a publish from the pins as they were (the index's
+    // news) must not land after one from the pins as they are.
+    let mut last = shown.0.lock();
     let colors = Colors::of(app);
     let row = |tag: String, pinned: bool| {
         let location = location(app, &tag)?;
@@ -333,13 +340,10 @@ pub fn publish(app: &App, index: &Arc<TagIndex>, vocabulary: &Vocabulary, shown:
     } else {
         pins.into_iter().filter_map(|tag| row(tag, true)).collect()
     };
-    {
-        let mut last = shown.0.lock();
-        if last.as_ref() == Some(&rows) {
-            return;
-        }
-        *last = Some(rows.clone());
+    if last.as_ref() == Some(&rows) {
+        return;
     }
+    *last = Some(rows.clone());
     let places = rows.into_iter().map(|r| {
         let one = serde_json::json!({ "tag": &r.tag });
         Place {
