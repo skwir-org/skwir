@@ -29,6 +29,10 @@ stream_complete_us = 2_000
 # `tag:bench` over the whole tree, one file in a thousand tagged: bound by
 # reading each file's attribute names (btrfs: ~1.6 s per million, warm).
 tag_search_us = 7_500_000
+# The Tags view opened again on the whole tree after a full count, nothing
+# changed since: a check stats each file and reads none (`count.rs`;
+# 1.29 s per million, warm).
+tags_check_us = 4_000_000
 
 [images10k]
 first_batch_us = 1_500

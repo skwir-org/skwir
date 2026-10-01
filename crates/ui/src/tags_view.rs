@@ -51,6 +51,15 @@ pub struct Status {
     pub tags: Vec<Row>,
     pub files: usize,
     pub walking: bool,
+    /// Checking what changed since `counted`.
+    #[serde(default)]
+    pub checking: bool,
+    /// When the counts held whole, in seconds since the epoch.
+    #[serde(default)]
+    pub counted: Option<u64>,
+    /// More tagged files than the index keeps: some are left out.
+    #[serde(default)]
+    pub partial: bool,
     pub error: Option<String>,
 }
 
@@ -593,10 +602,29 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
             } else {
                 format!("{} files", format::thousands(s.files))
             };
-            match (&s.error, s.walking) {
-                (Some(e), _) => format!("{tags} the index knows; the files were not all read: {e}"),
-                (None, true) => format!("{tags} so far · counting…"),
-                (None, false) => format!("{tags} on {files}; hidden files and folders left out"),
+            let when = s.counted.map(|secs| {
+                format::friendly_time(
+                    std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs),
+                    &jiff::Zoned::now(),
+                )
+            });
+            let said = match (&s.error, s.walking, s.checking, when) {
+                (Some(e), ..) => {
+                    format!("{tags} bibli knows; the files were not all read: {e}")
+                }
+                (None, true, ..) => format!("{tags} so far · counting…"),
+                (None, false, true, Some(when)) => {
+                    format!("{tags} on {files} as counted {when} · checking what changed…")
+                }
+                (None, false, true, None) => format!("{tags} so far · checking…"),
+                (None, false, false, _) => {
+                    format!("{tags} on {files}; hidden files and folders left out")
+                }
+            };
+            if s.partial {
+                format!("{said} · more tagged files than bibli keeps: some are not counted")
+            } else {
+                said
             }
         }
     };
@@ -642,7 +670,7 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
     let targets: Vec<Vec<String>> = rows.iter().map(|r| lens.targets(&r.tag)).collect();
     let cursor = lens.cursor.clone();
     let scroll = lens.scroll.clone();
-    let empty = rows.is_empty() && status.is_some_and(|s| !s.walking);
+    let empty = rows.is_empty() && status.is_some_and(|s| !s.walking && !s.checking);
     let mut list = div()
         .id(("tags-rows", pane.0 as usize))
         .size_full()

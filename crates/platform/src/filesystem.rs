@@ -47,9 +47,51 @@ pub fn apple_double(dir: &Path) -> bool {
     }
 }
 
+/// Filesystems that change a file's change time (`ctime`) whenever an
+/// attribute is set on it, as Linux's local ones do.
+const EXT: u32 = 0xef53;
+const BTRFS: u32 = 0x9123_683e;
+const XFS: u32 = 0x5846_5342;
+const F2FS: u32 = 0xf2f5_2010;
+const TMPFS: u32 = 0x0102_1994;
+const ZFS: u32 = 0x2fc1_2fc1;
+const BCACHEFS: u32 = 0xca45_1a4e;
+
+/// Whether the change times of files in `dir` tell when their notes
+/// changed: on the local filesystems above; not on a network or FUSE one,
+/// where they may not move when an attribute is set. False when it cannot
+/// be told. One `statfs`: ask it once per filesystem, not per file.
+pub fn change_times_tell(dir: &Path) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(fs) = rustix::fs::statfs(dir) else {
+            return false;
+        };
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a filesystem's magic number is 32 bits in a wider field"
+        )]
+        let magic = fs.f_type as u32;
+        matches!(magic, EXT | BTRFS | XFS | F2FS | TMPFS | ZFS | BCACHEFS)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = dir;
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_home_folders_change_times_tell() {
+        // The tests run on the developer's or CI's disk (ext4, btrfs).
+        assert!(change_times_tell(&dirs::home_dir().unwrap()));
+        assert!(!change_times_tell(Path::new("/no/such/folder")));
+    }
 
     #[test]
     fn a_home_folder_is_not_where_a_mac_writes_its_attributes_aside() {

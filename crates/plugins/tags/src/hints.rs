@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bibli_core::app::App;
 use bibli_core::cache::CacheSlot;
@@ -21,15 +21,74 @@ use parking_lot::{Mutex, MutexGuard};
 /// Tagged files remembered at most. Past it, new ones are not learned (a
 /// search still finds them by walking); those known are kept up to date.
 const AT_MOST: usize = 50_000;
-/// The first index kept tags in lowercase; this one as spelled.
-const KEY: &[u8] = b"index.2";
+/// The first index kept tags in lowercase; the second as spelled; this one
+/// with the folders it covers.
+const KEY: &[u8] = b"index.3";
+const KEY_2: &[u8] = b"index.2";
+
+/// A folder whose every tagged file, outside hidden folders, the index
+/// holds as of a time: a count of it ended then (`count.rs`), and what was
+/// learned since keeps it so.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Covered {
+    pub root: PathBuf,
+    /// Seconds and nanoseconds since the epoch.
+    pub since: (u64, u32),
+}
+
+impl Covered {
+    pub fn since(&self) -> SystemTime {
+        UNIX_EPOCH + Duration::new(self.since.0, self.since.1)
+    }
+}
+
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct Stored {
+    tags: Vec<(String, Vec<String>)>,
+    #[serde(default)]
+    covered: Vec<Covered>,
+}
 
 #[derive(Default)]
 struct State {
     /// Each tagged file's tags, as spelled on it (tags ignore case when
     /// compared: [`same_tag`]).
     tags: HashMap<PathBuf, Vec<String>>,
+    covered: Vec<Covered>,
     loaded: bool,
+}
+
+/// A path's 64-bit FNV-1a hash: the same in every build, so what was
+/// stored with one is read by the next.
+pub fn stable_hash(parts: &[&[u8]]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for part in parts {
+        for byte in *part {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x0100_0000_01b3);
+        }
+        hash ^= 0xff;
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    hash
+}
+
+/// Where the folders seen by a count of `root` are kept.
+fn dirs_key(root: &Path) -> Vec<u8> {
+    format!(
+        "dirs.{:016x}",
+        stable_hash(&[root.as_os_str().as_encoded_bytes()])
+    )
+    .into_bytes()
+}
+
+/// Whether `path`, under `root`, is inside a hidden folder or hidden
+/// itself: left out of the counts as a search leaves it out.
+fn hidden_under(path: &Path, root: &Path) -> bool {
+    path.strip_prefix(root).is_ok_and(|rest| {
+        rest.components()
+            .any(|c| c.as_os_str().as_encoded_bytes().first() == Some(&b'.'))
+    })
 }
 
 /// What the index has to say when it changed: the sidebar's tags.
@@ -73,16 +132,27 @@ impl TagIndex {
         let mut state = self.state.lock();
         if !state.loaded {
             state.loaded = true;
-            let stored: Vec<(String, Vec<String>)> = self
-                .slot
-                .as_ref()
+            let slot = self.slot.as_ref();
+            let stored: Stored = slot
                 .and_then(|slot| slot.get(KEY))
                 .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+                .or_else(|| {
+                    // The index before it covered folders: its files.
+                    let tags = slot
+                        .and_then(|slot| slot.get(KEY_2))
+                        .and_then(|bytes| serde_json::from_slice(&bytes).ok())?;
+                    Some(Stored {
+                        tags,
+                        covered: Vec::new(),
+                    })
+                })
                 .unwrap_or_default();
             state.tags = stored
+                .tags
                 .into_iter()
                 .map(|(path, tags)| (PathBuf::from(path), tags))
                 .collect();
+            state.covered = stored.covered;
         }
         state
     }
@@ -109,7 +179,11 @@ impl TagIndex {
                         state.tags.insert(path, tags);
                         changed = true;
                     }
-                    None => {}
+                    // A tagged file it cannot hold: no folder is covered.
+                    None => {
+                        changed |= !state.covered.is_empty();
+                        state.covered.clear();
+                    }
                 }
             }
             changed
@@ -117,6 +191,147 @@ impl TagIndex {
         if changed {
             self.write_soon();
         }
+    }
+
+    /// Whether it cannot learn another tagged file.
+    pub fn is_full(&self) -> bool {
+        self.state().tags.len() >= AT_MOST
+    }
+
+    /// The coverage of `root`: a folder covered that holds it, if any.
+    pub fn covering(&self, root: &Path) -> Option<Covered> {
+        self.state()
+            .covered
+            .iter()
+            .find(|c| root.starts_with(&c.root))
+            .cloned()
+    }
+
+    /// `root` is covered as of `since`, a count having seen `dirs` (the
+    /// folders' [`stable_hash`]es), which the next check compares with.
+    pub fn cover(self: &Arc<Self>, root: &Path, since: SystemTime, dirs: &[u64]) {
+        let Ok(since) = since.duration_since(UNIX_EPOCH) else {
+            return;
+        };
+        if self.is_full() {
+            return;
+        }
+        if let Some(slot) = &self.slot {
+            let bytes: Vec<u8> = dirs.iter().flat_map(|d| d.to_le_bytes()).collect();
+            if let Err(error) = slot.put(&dirs_key(root), &bytes) {
+                tracing::debug!(%error, "tags: the folders counted were not written");
+                return;
+            }
+        }
+        {
+            let mut state = self.state();
+            state.covered.retain(|c| !c.root.starts_with(root));
+            state.covered.push(Covered {
+                root: root.to_path_buf(),
+                since: (since.as_secs(), since.subsec_nanos()),
+            });
+        }
+        self.write_soon();
+    }
+
+    /// The folders the count of `root` saw, as [`cover`](Self::cover) kept
+    /// them.
+    pub fn dirs(&self, root: &Path) -> std::collections::HashSet<u64> {
+        self.slot
+            .as_ref()
+            .and_then(|slot| slot.get(&dirs_key(root)))
+            .map(|bytes| {
+                bytes
+                    .as_chunks::<8>()
+                    .0
+                    .iter()
+                    .map(|c| u64::from_le_bytes(*c))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The tagged files under `root` it knows, by their folder.
+    pub fn by_folder(&self, root: &Path) -> HashMap<PathBuf, Vec<PathBuf>> {
+        let mut out: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+        for path in self.state().tags.keys().filter(|p| p.starts_with(root)) {
+            if let Some(parent) = path.parent() {
+                out.entry(parent.to_path_buf())
+                    .or_default()
+                    .push(path.clone());
+            }
+        }
+        out
+    }
+
+    /// What bibli applied moved files: `from` (and what is under it) is
+    /// at `to`, or gone. A folder covered that moved is no longer.
+    pub fn moved(self: &Arc<Self>, moves: &[(PathBuf, Option<PathBuf>)]) {
+        let changed = {
+            let mut state = self.state();
+            let mut changed = false;
+            for (from, to) in moves {
+                let under: Vec<PathBuf> = state
+                    .tags
+                    .keys()
+                    .filter(|p| p.starts_with(from))
+                    .cloned()
+                    .collect();
+                for path in under {
+                    let tags = state.tags.remove(&path).unwrap_or_default();
+                    if let Some(to) = to
+                        && let Ok(rest) = path.strip_prefix(from)
+                    {
+                        let at = if rest.as_os_str().is_empty() {
+                            to.clone()
+                        } else {
+                            to.join(rest)
+                        };
+                        state.tags.insert(at, tags);
+                    }
+                    changed = true;
+                }
+                let before = state.covered.len();
+                state.covered.retain(|c| !c.root.starts_with(from));
+                changed |= state.covered.len() != before;
+            }
+            changed
+        };
+        if changed {
+            self.write_soon();
+        }
+    }
+
+    /// The tags of the files under `root` outside hidden folders, each
+    /// with how many files have it (spelled as most of them spell it, in
+    /// the order of their names), and how many files have a tag.
+    pub fn tally(&self, root: &Path) -> (Vec<(String, usize)>, usize) {
+        let mut counts: HashMap<String, (usize, HashMap<&str, usize>)> = HashMap::new();
+        let mut files = 0;
+        let state = self.state();
+        for (_, tags) in state.tags.iter().filter(|(path, _)| {
+            *path != root && path.starts_with(root) && !hidden_under(path, root)
+        }) {
+            files += 1;
+            for tag in tags {
+                let (n, spellings) = counts.entry(tag.to_lowercase()).or_default();
+                *n += 1;
+                *spellings.entry(tag.as_str()).or_default() += 1;
+            }
+        }
+        let mut out: Vec<(String, usize)> = counts
+            .into_values()
+            .filter_map(|(n, spellings)| {
+                let spelled = spellings
+                    .into_iter()
+                    .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(a.0)))?
+                    .0;
+                Some((spelled.to_owned(), n))
+            })
+            .collect();
+        drop(state);
+        out.sort_by_key(|(t, _)| t.to_lowercase());
+        (out, files)
     }
 
     /// The files under `root` known to have `tag`. Those gone since are
@@ -200,12 +415,27 @@ impl TagIndex {
         let Some(slot) = &self.slot else { return };
         let bytes = {
             let state = self.state();
-            // A path that is not text stays out: a walk finds it.
-            let stored: Vec<(&str, &Vec<String>)> = state
-                .tags
-                .iter()
-                .filter_map(|(path, tags)| Some((path.to_str()?, tags)))
-                .collect();
+            // A path that is not text stays out: a walk finds it. A folder
+            // covered whose name is not text cannot be stored either.
+            let stored = Stored {
+                tags: state
+                    .tags
+                    .iter()
+                    .filter_map(|(path, tags)| Some((path.to_str()?.to_owned(), tags.clone())))
+                    .collect(),
+                covered: state
+                    .covered
+                    .iter()
+                    .filter(|c| c.root.to_str().is_some())
+                    .filter(|c| {
+                        !state
+                            .tags
+                            .keys()
+                            .any(|p| p.starts_with(&c.root) && p.to_str().is_none())
+                    })
+                    .cloned()
+                    .collect(),
+            };
             serde_json::to_vec(&stored)
         };
         if let Ok(bytes) = bytes
@@ -340,6 +570,7 @@ mod tests {
         Arc::new(TagIndex {
             state: Mutex::new(State {
                 tags: HashMap::new(),
+                covered: Vec::new(),
                 loaded: true,
             }),
             slot: None,
@@ -377,6 +608,70 @@ mod tests {
             index.top(9, Path::new("/elsewhere")),
             [("zeta".to_owned(), 1)]
         );
+    }
+
+    #[test]
+    fn a_folder_covered_is_remembered_and_moves_carry_tags_along() {
+        let tmp = tempfile::Builder::new()
+            .prefix("tags-index-")
+            .tempdir_in({
+                let base = dirs::home_dir().unwrap().join(".cache/bibli-tests");
+                std::fs::create_dir_all(&base).unwrap();
+                base
+            })
+            .unwrap();
+        let slot = || Some(bibli_core::cache::Cache::new(tmp.path()).namespace("tags"));
+        let made = |slot| {
+            Arc::new(TagIndex {
+                state: Mutex::default(),
+                slot,
+                app: Weak::new(),
+                lifetime: CancelToken::new(),
+                writing: AtomicBool::new(false),
+                on_change: Mutex::default(),
+            })
+        };
+        let index = made(slot());
+        index.learn(vec![
+            (PathBuf::from("/r/a"), vec!["x".into()]),
+            (PathBuf::from("/r/.hidden/b"), vec!["x".into()]),
+            (PathBuf::from("/r/d/c"), vec!["X".into(), "y".into()]),
+        ]);
+        // Hidden folders are not counted, as a search leaves them out; a
+        // tie between spellings goes to the first in order.
+        assert_eq!(
+            index.tally(Path::new("/r")),
+            (vec![("X".into(), 2), ("y".into(), 1)], 2)
+        );
+        let since = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        index.cover(Path::new("/r"), since, &[7, 9]);
+        index.write();
+        // Read again, as the next run reads it: what it covers and the
+        // folders the count saw.
+        let again = made(slot());
+        let covered = again.covering(Path::new("/r/d")).unwrap();
+        assert_eq!(
+            (covered.root.as_path(), covered.since()),
+            (Path::new("/r"), since)
+        );
+        assert_eq!(again.dirs(Path::new("/r")), [7, 9].into());
+        assert!(again.covering(Path::new("/s")).is_none());
+        // A folder moved carries its files' tags; one gone, its files.
+        again.moved(&[
+            (PathBuf::from("/r/d"), Some(PathBuf::from("/r/e"))),
+            (PathBuf::from("/r/a"), None),
+        ]);
+        assert_eq!(
+            again
+                .by_folder(Path::new("/r"))
+                .get(Path::new("/r/e"))
+                .map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(again.tally(Path::new("/r")).1, 1);
+        // A covered folder moved away is no longer covered.
+        again.moved(&[(PathBuf::from("/r"), Some(PathBuf::from("/q")))]);
+        assert!(again.covering(Path::new("/r")).is_none());
     }
 
     #[test]

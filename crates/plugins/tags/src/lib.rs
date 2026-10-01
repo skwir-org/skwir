@@ -13,6 +13,7 @@
 
 mod appledouble;
 mod attrs;
+mod count;
 mod everywhere;
 pub mod finder;
 mod follow;
@@ -539,7 +540,12 @@ impl Plugin for TagsPlugin {
             .register(ID, Arc::new(appledouble::AsideCompanion));
         ops::register_legacy(app);
         // The Tags view: the tags under a pane's folder (`lens.rs`).
-        let lenses = lens::Lenses::new(Arc::clone(&index), Arc::default(), lifetime.clone());
+        let lenses = lens::Lenses::new(
+            Arc::clone(&index),
+            Arc::clone(&vocabulary),
+            Arc::default(),
+            lifetime.clone(),
+        );
         app.registry.views.add(
             ID,
             bibli_core::registry::ViewSpec::named(
@@ -552,10 +558,10 @@ impl Plugin for TagsPlugin {
         );
         // An edit applied is learned by the index at once: a file edited
         // while no pane shows it (a tag renamed everywhere) is not read
-        // again soon. The Tags views count it too.
+        // again soon; a file moved, renamed or trashed takes its tags along
+        // in it. The Tags views follow the index.
         {
             let (weak, index, lifetime) = (app.weak(), Arc::clone(&index), lifetime.clone());
-            let lenses = Arc::clone(&lenses);
             app.executor.observe(
                 ID,
                 Arc::new(move |changes| {
@@ -563,7 +569,8 @@ impl Plugin for TagsPlugin {
                     // Files to read again (their tags changed, or they came
                     // back or were copied), and files that moved.
                     let mut paths: Vec<std::path::PathBuf> = Vec::new();
-                    let mut moves: Vec<lens::Seen> = Vec::new();
+                    let mut moves: Vec<(std::path::PathBuf, Option<std::path::PathBuf>)> =
+                        Vec::new();
                     for c in changes {
                         match c {
                             Change::Metadata { path, field, .. } if field == keys::TAGS => {
@@ -573,44 +580,35 @@ impl Plugin for TagsPlugin {
                                 paths.push(path.clone());
                             }
                             Change::Rename { from, to } | Change::Move { from, to } => {
-                                moves.push(lens::Seen::Moved(from.clone(), Some(to.clone())));
+                                moves.push((from.clone(), Some(to.clone())));
                             }
                             Change::Trash { path }
                             | Change::Delete { path }
-                            | Change::Remove { path } => {
-                                moves.push(lens::Seen::Moved(path.clone(), None));
-                            }
+                            | Change::Remove { path } => moves.push((path.clone(), None)),
                             Change::Swap { a, b } => paths.extend([a.clone(), b.clone()]),
                             _ => {}
                         }
                     }
-                    let Some(app) = weak.upgrade() else { return };
                     if !moves.is_empty() {
-                        lenses.observe(&app, &moves);
+                        index.moved(&moves);
                     }
-                    if paths.is_empty() {
+                    let Some(app) = weak.upgrade().filter(|_| !paths.is_empty()) else {
                         return;
-                    }
+                    };
                     let (index, weak) = (Arc::clone(&index), weak.clone());
-                    let lenses = Arc::clone(&lenses);
                     app.scheduler.spawn(
                         Priority::Background,
                         "tags.learn",
                         lifetime.child(),
                         move || {
                             let Some(app) = weak.upgrade() else { return };
-                            let learned: Vec<(std::path::PathBuf, Vec<String>)> = paths
+                            let learned = paths
                                 .into_iter()
                                 .map(|p| {
                                     let tags = notes_of(&app, &p).tag_names();
                                     (p, tags)
                                 })
                                 .collect();
-                            let seen: Vec<lens::Seen> = learned
-                                .iter()
-                                .map(|(p, t)| lens::Seen::Tags(p.clone(), t.clone()))
-                                .collect();
-                            lenses.observe(&app, &seen);
                             index.learn(learned);
                         },
                     );
@@ -706,7 +704,7 @@ impl Plugin for TagsPlugin {
                 ID,
                 "tags.lens",
                 "Count tags",
-                "Count the tags of the files under the folder the pane shows, for its Tags view (`again`: count anew)",
+                "Count the tags of the files under the folder the pane shows, for its Tags view: what changed since the last count, or every file (`again`)",
                 move |a, app| {
                     lenses.open(app, app.pane_or_active(a.pane), a.again)?;
                     Ok(Outcome::Done)
@@ -714,23 +712,15 @@ impl Plugin for TagsPlugin {
             );
         }
         {
-            let (lenses, vocabulary) = (Arc::clone(&lenses), Arc::clone(&vocabulary));
+            let lenses = Arc::clone(&lenses);
             app.commands.register::<LensArgs, _>(
                 ID,
                 "tags.lens_status",
                 "Tags counted",
-                "`{ root, tags: [{ tag, files, color, pinned }], files, walking, error }`: the tags the pane's Tags view counted",
+                "`{ root, tags: [{ tag, files, color, pinned }], files, walking, checking, counted, partial, error }`: the tags the pane's Tags view counted (`counted`: as of when, in seconds since the epoch)",
                 move |a, app| {
-                    let (colors, pins) = (sidebar::Colors::of(app), sidebar::pinned(app));
-                    let status = lenses.status(app.pane_or_active(a.pane), |tag, files| {
-                        lens::Row {
-                            color: colors.of_tag(&vocabulary, &tag),
-                            pinned: pins.iter().any(|p| same_tag(p, &tag)),
-                            tag,
-                            files,
-                        }
-                    });
-                    Ok(Outcome::Value(serde_json::to_value(status)?))
+                    let status = lenses.status(app.pane_or_active(a.pane));
+                    Ok(Outcome::Value(serde_json::to_value(&*status)?))
                 },
             );
         }

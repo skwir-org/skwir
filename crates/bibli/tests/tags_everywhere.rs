@@ -323,7 +323,7 @@ fn the_tags_view_counts_the_files_under_its_folder_and_what_is_applied() {
                 .collect();
             let want: Vec<(String, u64)> =
                 want.iter().map(|(t, n)| ((*t).to_owned(), *n)).collect();
-            (v["walking"] == false && have == want).then_some(v)
+            (v["walking"] == false && v["checking"] == false && have == want).then_some(v)
         })
     };
     let v = counted(&[("Work", 2), ("x", 1)]);
@@ -372,18 +372,12 @@ fn the_tags_view_counts_the_files_under_its_folder_and_what_is_applied() {
     );
     counted(&[("new", 1), ("Work", 1), ("x", 2)]);
 
-    // Let go and opened again, the count is kept: no walk.
+    // Let go and opened again, the folder is covered: the counts are those
+    // of the count, as of when it began, and a check finds nothing new.
     dispatch("tags.lens_release", serde_json::json!({ "pane": pane })).unwrap();
     dispatch("tags.lens", serde_json::json!({ "pane": pane })).unwrap();
-    let Ok(bibli_core::command::Outcome::Value(v)) =
-        dispatch("tags.lens_status", serde_json::json!({ "pane": pane }))
-    else {
-        panic!("a value")
-    };
-    assert_eq!(
-        (v["walking"].as_bool(), v["tags"].as_array().map(Vec::len)),
-        (Some(false), Some(3))
-    );
+    let v = counted(&[("new", 1), ("Work", 1), ("x", 2)]);
+    assert!(v["counted"].is_u64(), "{v}");
 
     // Let go, it shows nothing.
     dispatch("tags.lens_release", serde_json::json!({ "pane": pane })).unwrap();
@@ -451,6 +445,87 @@ fn a_tags_pin_and_color_follow_it_renamed_everywhere_and_come_back_with_undo() {
         (color("travel"), color("trip").as_deref()),
         (None, Some("teal"))
     );
+}
+
+/// The Tags view's counts for `pane`, once neither counting nor checking.
+fn settled(
+    app: &App,
+    pane: bibli_core::workspace::PaneId,
+) -> (Vec<(String, u64)>, serde_json::Value) {
+    until(app, "the counts", || {
+        let Ok(bibli_core::command::Outcome::Value(v)) = app.dispatch(&Invocation::with_args(
+            "tags.lens_status",
+            &serde_json::json!({ "pane": pane }),
+        )) else {
+            panic!("a value")
+        };
+        (v["root"].is_string() && v["walking"] == false && v["checking"] == false).then(|| {
+            let have = v["tags"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| {
+                    (
+                        r["tag"].as_str().unwrap().to_owned(),
+                        r["files"].as_u64().unwrap(),
+                    )
+                })
+                .collect();
+            (have, v)
+        })
+    })
+}
+
+#[test]
+fn a_folder_counted_is_checked_after_a_restart_for_what_others_changed() {
+    let tmp = home_tempdir();
+    let root = tmp.path().join("it's home");
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    for (name, t) in [("a.txt", &["work"][..]), ("sub/b.txt", &["work", "x"][..])] {
+        std::fs::write(root.join(name), b"x").unwrap();
+        write_tags(&root.join(name), &tags(t)).unwrap();
+    }
+    let start = || {
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        app.plugins
+            .add(Arc::new(bibli_plugin_query::QueryPlugin::default()), &app);
+        app.plugins
+            .add(Arc::new(bibli_plugin_tags::TagsPlugin::default()), &app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&root)).unwrap();
+        app.dispatch(&Invocation::with_args(
+            "tags.lens",
+            &serde_json::json!({ "pane": pane }),
+        ))
+        .unwrap();
+        (app, pane)
+    };
+    let owned = |v: &[(&str, u64)]| {
+        v.iter()
+            .map(|(t, n)| ((*t).to_owned(), *n))
+            .collect::<Vec<_>>()
+    };
+    {
+        let (app, pane) = start();
+        assert_eq!(settled(&app, pane).0, owned(&[("work", 2), ("x", 1)]));
+        // The index, covering the folder, is written for the next run.
+        let slot = bibli_core::cache::Cache::new(tmp.path().join("state/cache")).namespace("tags");
+        until(&app, "the index written", || {
+            slot.get(b"index.3")
+                .filter(|b| String::from_utf8_lossy(b).contains("it's home"))
+                .filter(|b| String::from_utf8_lossy(b).contains("\"covered\":[{"))
+        });
+    }
+    // Closed, another application tags, untags, and adds a file.
+    std::thread::sleep(Duration::from_millis(20));
+    write_tags(&root.join("a.txt"), &tags(&["work", "late"])).unwrap();
+    write_tags(&root.join("sub/b.txt"), &[]).unwrap();
+    std::fs::write(root.join("sub/c.txt"), b"x").unwrap();
+    write_tags(&root.join("sub/c.txt"), &tags(&["x"])).unwrap();
+    let (app, pane) = start();
+    let (counts, v) = settled(&app, pane);
+    assert_eq!(counts, owned(&[("late", 1), ("work", 1), ("x", 1)]));
+    assert!(v["counted"].is_u64());
 }
 
 #[test]

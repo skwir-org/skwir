@@ -81,3 +81,17 @@ a requirement", in the deletable cache, and says the system's indexes
   for review.
 - `bibli-bench` measures the provider (`tags_fill_us`) and the search
   (`tag_search_us`); their budgets are in `budgets.toml`.
+- Amended (2026-10-01): the index also covers folders. The Tags view's
+  count (`count.rs`) teaches it every tagged file under a folder, outside
+  hidden folders, and records the folder as covered as of when the count
+  began, with the folders it saw (each by device, inode and path). A
+  later count only checks: files whose change time moved since are read
+  (setting an attribute or renaming moves it; a companion's time stands
+  for its file's), folders not seen there are read whole (new, or moved
+  in with their old times), and so are folders on a filesystem whose
+  change times do not tell (network, FUSE: `statfs`). This is the one
+  place the index is trusted as complete, and only for counting: a
+  `tag:` search still walks, as above. The cover ends when the index is
+  full, or when bibli moves the folder. `tags_check_us` measures a check
+  that finds nothing changed on the million-file tree (1.3 s, against
+  3.0 s for the search).

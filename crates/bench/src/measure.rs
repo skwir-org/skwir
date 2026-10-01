@@ -54,6 +54,9 @@ pub struct Report {
     /// A `tag:` search of the whole tree through the query plugin, until
     /// `Complete`.
     pub tag_search: Stat,
+    /// The Tags view opened again on the whole tree, counted before and
+    /// unchanged since: the check of what changed, until it settles.
+    pub tags_check: Stat,
 }
 
 /// Budgets file: `[profile] metric_us = max`.
@@ -418,6 +421,55 @@ pub fn tag_search(root: &Path, profile: Profile, runs: usize) -> Stat {
     )
 }
 
+/// The Tags view on the whole tree: counted once in full, then opened
+/// again `runs` times, each a check that finds nothing changed, timed
+/// until its status settles.
+pub fn tags_check(root: &Path, profile: Profile, runs: usize) -> Stat {
+    use bibli_core::command::{Invocation, Outcome};
+    let dir = root.join(profile.name());
+    if profile != Profile::Deep1m || !tagged(&dir) {
+        return Stat::NONE;
+    }
+    let app = tags_app();
+    let root = std::fs::canonicalize(&dir).expect("tree");
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &bibli_core::Location::from_path(&root))
+        .expect("navigate");
+    let call = |name: &str, args: serde_json::Value| {
+        app.dispatch(&Invocation::with_args(name, &args))
+            .expect(name)
+    };
+    let settle = || loop {
+        app.pump();
+        if let Outcome::Value(v) = call("tags.lens_status", serde_json::json!({ "pane": pane }))
+            && v["root"].is_string()
+            && v["walking"] == false
+            && v["checking"] == false
+        {
+            assert!(v["error"].is_null(), "{v}");
+            return v;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    call(
+        "tags.lens",
+        serde_json::json!({ "pane": pane, "again": true }),
+    );
+    let counted = settle();
+    assert!(counted["counted"].is_u64(), "a full count covers the tree");
+    Stat::of(
+        (0..runs)
+            .map(|_| {
+                call("tags.lens_release", serde_json::json!({ "pane": pane }));
+                let t = Instant::now();
+                call("tags.lens", serde_json::json!({ "pane": pane }));
+                settle();
+                t.elapsed()
+            })
+            .collect(),
+    )
+}
+
 /// Whether the generator could tag `dir` (see `generate::tag`).
 fn tagged(dir: &Path) -> bool {
     dir.join(".bibli-bench-tagged").exists()
@@ -471,8 +523,9 @@ pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
         thumbs_cold_per_image,
         thumbs_warm_per_image,
         tags_fill,
-        // Measured after every profile (`tag_search`).
+        // Measured after every profile (`tag_search`, `tags_check`).
         tag_search: Stat::NONE,
+        tags_check: Stat::NONE,
     }
 }
 
@@ -482,7 +535,7 @@ pub fn check(profile: Profile, report: &Report, budgets: &Budgets) -> bool {
         eprintln!("bench: {}: no budgets, skipped", profile.name());
         return true;
     };
-    let measured: [(&str, &Stat); 13] = [
+    let measured: [(&str, &Stat); 14] = [
         ("first_batch_us", &report.first_batch),
         ("list_getdents_us", &report.list_getdents),
         ("list_std_us", &report.list_std),
@@ -496,6 +549,7 @@ pub fn check(profile: Profile, report: &Report, budgets: &Budgets) -> bool {
         ("thumbs_warm_per_image_us", &report.thumbs_warm_per_image),
         ("tags_fill_us", &report.tags_fill),
         ("tag_search_us", &report.tag_search),
+        ("tags_check_us", &report.tags_check),
     ];
     let mut ok = true;
     for (key, stat) in measured {

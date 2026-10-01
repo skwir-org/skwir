@@ -226,13 +226,18 @@ current source before assuming a planned crate, command, or API exists.
   search, not the index, as a plan proposed for review; under the home
   folder the tag's pin and color follow it, a step of the same plan
   (`follow.rs`), so its undo puts them back. The Tags view (a
-  lens: the plugin's `lens.rs` counts, the shell's `tags_view.rs` draws)
-  lists the tags under the folder shown with how many files have each:
-  the index's counts at once, then the search for any tag (`tag:*`)
-  replaces them, and what bibli applies (tags, moves, trash) is counted
-  as it is applied. A finished count is kept, the last few in memory,
-  so the folder or one inside it opens again without a walk; Count
-  again walks anew. Its own selection of tags is what its menu, Enter,
+  lens: the plugin's `lens.rs`, the shell's `tags_view.rs` draws) lists
+  the tags under the folder shown with how many files have each, as the
+  index tallies them. A count (`count.rs`) teaches the index every
+  tagged file under the folder and makes it cover the folder as of when
+  it began; opened again, even after a restart, the view shows those
+  counts at once and checks: it reads only the files (and companions)
+  whose change time moved since, and whole the folders it did not see
+  there (by device, inode and path: new or moved in) and those on a
+  filesystem whose change times do not tell (`filesystem::
+  change_times_tell`: network, FUSE). Between, the index follows what
+  panes list and what bibli applies (tags, moves, trash). Count again
+  reads every file. Its own selection of tags is what its menu, Enter,
   F2 and Delete act on, and what the pane's key context says is
   selected.
 - **Files beside a file go where it goes** (ADR-028). A companion (a
