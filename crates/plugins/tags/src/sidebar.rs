@@ -16,7 +16,7 @@ use bibli_core::metadata::{TAG_COLOR_SETTING, TAG_COLORS, same_tag, tag_color};
 use bibli_core::registry::{MenuItem, Place, Reorder};
 use parking_lot::Mutex;
 
-use crate::hints::TagIndex;
+use crate::index::TagIndex;
 use crate::vocabulary::Vocabulary;
 
 pub const GROUP: &str = "tags";

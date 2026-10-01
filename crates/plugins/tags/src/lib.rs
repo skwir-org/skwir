@@ -18,6 +18,7 @@ mod everywhere;
 pub mod finder;
 mod follow;
 mod hints;
+pub mod index;
 mod lens;
 mod ops;
 mod sidebar;
@@ -460,7 +461,7 @@ impl std::fmt::Debug for TagsPlugin {
 /// The index, the vocabulary and what the sidebar shows of them.
 #[derive(Clone)]
 pub(crate) struct Sidebar {
-    index: Arc<hints::TagIndex>,
+    index: Arc<index::TagIndex>,
     vocabulary: Arc<Vocabulary>,
     shown: Arc<sidebar::Shown>,
     /// One edit of the pins at a time.
@@ -503,6 +504,17 @@ impl Plugin for TagsPlugin {
         }
     }
     fn on_settings_changed(&self, app: &App, keys: &[String]) {
+        if keys.iter().any(|k| k == index::LIMIT_SETTING) {
+            let state = self.sidebar.lock().clone();
+            if let Some(state) = state {
+                state.index.set_limit(
+                    app.settings
+                        .get::<i64>(index::LIMIT_SETTING)
+                        .unwrap_or(index::LIMIT_DEFAULT),
+                );
+                state.publish(app);
+            }
+        }
         if !keys
             .iter()
             .any(|k| k == sidebar::SETTING || k == sidebar::PINNED || k == TAG_COLOR_SETTING)
@@ -524,7 +536,17 @@ impl Plugin for TagsPlugin {
             previous.cancel();
         }
         let vocabulary = Vocabulary::new(Some(app.cache.namespace(ID)), app, lifetime.clone());
-        let index = hints::TagIndex::new(Some(app.cache.namespace(ID)), app, lifetime.clone());
+        app.settings.declare(
+            SettingSpec::integer(
+                index::LIMIT_SETTING,
+                "Room for tagged files",
+                "How much memory bibli may give what it knows of tagged files, about sixteen thousand files a megabyte, for the Tags view, the sidebar's suggestions and quicker tag searches. Past it, new tagged files are left out of the counts, and the Tags view says so",
+                index::LIMIT_DEFAULT,
+                (8, 4096),
+            )
+            .unit("MB"),
+        );
+        let index = index::TagIndex::new(Some(app.cache.namespace(ID)), app, lifetime.clone());
         app.metadata.register(
             ID,
             Arc::new(attrs::AttributesProvider {

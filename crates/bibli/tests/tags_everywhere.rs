@@ -511,7 +511,7 @@ fn a_folder_counted_is_checked_after_a_restart_for_what_others_changed() {
         // The index, covering the folder, is written for the next run.
         let slot = bibli_core::cache::Cache::new(tmp.path().join("state/cache")).namespace("tags");
         until(&app, "the index written", || {
-            slot.get(b"index.3")
+            slot.get(b"index.4")
                 .filter(|b| String::from_utf8_lossy(b).contains("it's home"))
                 .filter(|b| String::from_utf8_lossy(b).contains("\"covered\":[{"))
         });

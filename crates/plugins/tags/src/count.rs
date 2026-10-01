@@ -1,5 +1,5 @@
 //! The count behind the Tags view: every tagged file under a folder,
-//! outside hidden folders, learned by the index (`hints::TagIndex`), which
+//! outside hidden folders, learned by the index (`index::TagIndex`), which
 //! then covers the folder as of the time the count began.
 //!
 //! A first count reads every file's notes. A later one, the folder covered,
@@ -26,7 +26,7 @@ use bibli_core::app::App;
 use bibli_core::cancel::CancelToken;
 use bibli_core::entry::EntryId;
 
-use crate::hints::{TagIndex, stable_hash};
+use crate::index::{TagIndex, stable_hash};
 
 /// Taken off the time a count begins, for clocks that disagree a little
 /// and a change landing in the same instant.
@@ -270,9 +270,9 @@ mod tests {
         let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
         app.plugins
             .add(Arc::new(crate::TagsPlugin::default()), &app);
-        let index = crate::hints::TagIndex::new(None, &app, CancelToken::new());
+        let index = crate::index::TagIndex::new(None, &app, CancelToken::new());
         let cancel = CancelToken::new();
-        let tally = |index: &Arc<crate::hints::TagIndex>| index.tally(&root).0;
+        let tally = |index: &Arc<crate::index::TagIndex>| index.tally(&root).0;
         let owned = |v: &[(&str, usize)]| {
             v.iter()
                 .map(|(t, n)| ((*t).to_owned(), *n))
@@ -293,7 +293,7 @@ mod tests {
 
         // Nothing changed since: nothing is read.
         let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
-        let check = |index: &Arc<crate::hints::TagIndex>| {
+        let check = |index: &Arc<crate::index::TagIndex>| {
             super::run_with(&app, index, &root, Some((later, &known)), &cancel)
                 .unwrap()
                 .unwrap()

@@ -57,6 +57,13 @@ pub struct Report {
     /// The Tags view opened again on the whole tree, counted before and
     /// unchanged since: the check of what changed, until it settles.
     pub tags_check: Stat,
+    /// The tags index (`bibli_plugin_tags::index`) learning 500 000
+    /// tagged files, in batches as a count teaches it.
+    pub tags_index_learn: Stat,
+    /// Then the counts under the home folder, as the Tags view asks.
+    pub tags_index_tally: Stat,
+    /// Then one file retagged and the index written, as after an edit.
+    pub tags_index_change: Stat,
 }
 
 /// Budgets file: `[profile] metric_us = max`.
@@ -470,6 +477,57 @@ pub fn tags_check(root: &Path, profile: Profile, runs: usize) -> Stat {
     )
 }
 
+/// The tags index at the scale of a large library: 500 000 tagged files
+/// in 20 000 folders under a home folder, learned, counted, changed. The
+/// index writes to a cache of its own, emptied first.
+pub fn tags_index(profile: Profile, runs: usize) -> (Stat, Stat, Stat) {
+    use bibli_plugin_tags::index::TagIndex;
+    if profile != Profile::Deep1m {
+        return (Stat::NONE, Stat::NONE, Stat::NONE);
+    }
+    let app = tags_app();
+    let home = std::env::home_dir().expect("home");
+    let words = [
+        "vacation", "alps", "work", "family", "2024", "todo", "receipts", "kids",
+    ];
+    let file = |i: usize| {
+        home.join(format!(
+            "Pictures/{}/{}/IMG_{i:06}.jpg",
+            2000 + i % 25,
+            i % 800
+        ))
+    };
+    let tags = |i: usize| -> Vec<String> {
+        (0..=(i % 3))
+            .map(|k| words[(i + k * 3) % 8].to_owned())
+            .collect()
+    };
+    let (mut learn, mut tally, mut change) = (Vec::new(), Vec::new(), Vec::new());
+    for run in 0..runs {
+        // A cache of its own each run: the last run's index may still be
+        // writing to its own.
+        let cache = std::env::temp_dir().join(format!("bibli-bench-tags-index-{run}"));
+        let _ = std::fs::remove_dir_all(&cache);
+        let slot = bibli_core::cache::Cache::new(&cache).namespace("tags");
+        let index = TagIndex::new(Some(slot), &app, bibli_core::CancelToken::new());
+        let t = Instant::now();
+        for batch in (0..500_000).collect::<Vec<usize>>().chunks(2_000) {
+            index.learn(batch.iter().map(|&i| (file(i), tags(i))).collect());
+        }
+        learn.push(t.elapsed());
+        let t = Instant::now();
+        let (counted, files) = index.tally(&home);
+        tally.push(t.elapsed());
+        assert_eq!((counted.len(), files), (8, 500_000));
+        index.write_now();
+        let t = Instant::now();
+        index.learn(vec![(file(run), vec!["changed".into()])]);
+        index.write_now();
+        change.push(t.elapsed());
+    }
+    (Stat::of(learn), Stat::of(tally), Stat::of(change))
+}
+
 /// Whether the generator could tag `dir` (see `generate::tag`).
 fn tagged(dir: &Path) -> bool {
     dir.join(".bibli-bench-tagged").exists()
@@ -526,6 +584,9 @@ pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
         // Measured after every profile (`tag_search`, `tags_check`).
         tag_search: Stat::NONE,
         tags_check: Stat::NONE,
+        tags_index_learn: Stat::NONE,
+        tags_index_tally: Stat::NONE,
+        tags_index_change: Stat::NONE,
     }
 }
 
@@ -535,7 +596,7 @@ pub fn check(profile: Profile, report: &Report, budgets: &Budgets) -> bool {
         eprintln!("bench: {}: no budgets, skipped", profile.name());
         return true;
     };
-    let measured: [(&str, &Stat); 14] = [
+    let measured: [(&str, &Stat); 17] = [
         ("first_batch_us", &report.first_batch),
         ("list_getdents_us", &report.list_getdents),
         ("list_std_us", &report.list_std),
@@ -550,6 +611,9 @@ pub fn check(profile: Profile, report: &Report, budgets: &Budgets) -> bool {
         ("tags_fill_us", &report.tags_fill),
         ("tag_search_us", &report.tag_search),
         ("tags_check_us", &report.tags_check),
+        ("tags_index_learn_us", &report.tags_index_learn),
+        ("tags_index_tally_us", &report.tags_index_tally),
+        ("tags_index_change_us", &report.tags_index_change),
     ];
     let mut ok = true;
     for (key, stat) in measured {

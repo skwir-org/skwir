@@ -218,8 +218,9 @@ current source before assuming a planned crate, command, or API exists.
   (`metadata::tag_color`); copies keep every `user.*` attribute (ADR-006).
   A folder listing reads `x` again when `._x` changes. A search by tag
   asks the indexes first (`bibli_core::hints`, ADR-026: Baloo when it
-  runs, the tags plugin's own, learned as the provider reads files and
-  from each applied change, `Executor::observe`), checks every file they
+  runs, the tags plugin's own (`index.rs`: in pieces by folder, read when
+  needed, as much room as `tags.index_mb` gives it), learned as the
+  provider reads files and from each applied change, `Executor::observe`), checks every file they
   name, and walks all the same: an index hints, the walk answers. So a
   tag renamed or removed everywhere (`tags.rename`, `tags.delete`;
   several at once merge or go in one plan) takes its files from the

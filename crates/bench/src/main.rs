@@ -74,6 +74,8 @@ fn measure_all(
     for (p, r) in &mut reports {
         r.tag_search = measure::tag_search(root, *p, usize::from(runs));
         r.tags_check = measure::tags_check(root, *p, usize::from(runs));
+        (r.tags_index_learn, r.tags_index_tally, r.tags_index_change) =
+            measure::tags_index(*p, usize::from(runs));
     }
     Ok(reports)
 }

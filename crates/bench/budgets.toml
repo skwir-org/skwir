@@ -33,6 +33,13 @@ tag_search_us = 7_500_000
 # changed since: a check stats each file and reads none (`count.rs`;
 # 1.29 s per million, warm).
 tags_check_us = 4_000_000
+# The tags index with 500 000 tagged files (`bibli_plugin_tags::index`):
+# learning them (0.65 s), counting them under the home folder by folder
+# (0.4 ms), and one change written: one piece of 256, and what is known
+# between them (0.5 ms).
+tags_index_learn_us = 2_000_000
+tags_index_tally_us = 1_500
+tags_index_change_us = 3_000
 
 [images10k]
 first_batch_us = 1_500

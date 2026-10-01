@@ -56,7 +56,8 @@ a requirement", in the deletable cache, and says the system's indexes
   or elsewhere the next time the file is read. It is read from the cache
   the first time a worker needs it, never on the way to the first frame
   (the sidebar's Tags ask it at background priority); files gone are
-  forgotten when it answers; it holds at most 50 000 files. Deleting it
+  forgotten when it answers; it holds at most 50 000 files (amended below:
+  the room the user gives it). Deleting it
   makes the next search's first answers slower, nothing else.
 - The walk is not skipped when an index claims to be complete: no index
   here knows every file the walk reaches (Baloo excludes folders and
@@ -95,3 +96,20 @@ a requirement", in the deletable cache, and says the system's indexes
   full, or when bibli moves the folder. `tags_check_us` measures a check
   that finds nothing changed on the million-file tree (1.3 s, against
   3.0 s for the search).
+- Amended (2026-10-01): the index has no count of files for a bound, but
+  room, the user's (`tags.index_mb`, 64 MB by default: about a million
+  tagged files). It keeps each tag's name once, by number, and files by
+  folder (each folder's path once, each file one allocation: its tags'
+  numbers and its name), with how many of each folder's files carry each
+  tag, so a count sums folders. It is stored in 256 pieces by folder, each
+  read when a question needs a folder of it and let go of after three
+  minutes unused; what is known between pieces (tag names, folders
+  covered, the folders held, the tags of the files under the home folder
+  for the sidebar) stays read. Changes are written at most every two
+  seconds by the index's own thread, and when the plugin or the app ends.
+  Measured with 500 000 tagged files: 30 MB read whole (the index of
+  50 000 took 12 MB before), 14 MB stored; a count of the home folder
+  takes 0.4 ms (345 ms before), a change written 0.5 ms (a 34 MB file
+  rewritten before). `tags_index_learn_us`, `tags_index_tally_us` and
+  `tags_index_change_us` keep it so. Past its room it learns no new file,
+  covers no folder, and the Tags view says so with a way to the setting.

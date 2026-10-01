@@ -69,7 +69,7 @@ fn fill_entry(metadata: &mut Metadata, notes: &Notes) {
 pub struct AttributesProvider {
     pub stores: Arc<NoteStores>,
     pub vocabulary: Arc<Vocabulary>,
-    pub index: Option<Arc<crate::hints::TagIndex>>,
+    pub index: Option<Arc<crate::index::TagIndex>>,
 }
 
 impl MetadataProvider for AttributesProvider {

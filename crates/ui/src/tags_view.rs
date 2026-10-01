@@ -622,12 +622,24 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
                 }
             };
             if s.partial {
-                format!("{said} · more tagged files than bibli keeps: some are not counted")
+                format!("{said} · more tagged files than bibli has room for: some are not counted")
             } else {
                 said
             }
         }
     };
+    let partial = status.is_some_and(|s| s.partial);
+    let room = partial.then(|| {
+        Button::new(
+            format!("tags-room-{}", pane.0),
+            "settings",
+            "Give bibli more room for tagged files",
+            "ui.settings",
+        )
+        .args(serde_json::json!({ "key": "tags.index_mb" }))
+        .render(shell, cx)
+    });
+    let lens = &shell.ui().tags;
     let header = toolbar::row(&theme)
         .id(("tags-tools", pane.0 as usize))
         .text_color(theme.text)
@@ -640,6 +652,7 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
                 .truncate()
                 .child(summary),
         )
+        .children(room)
         .child(
             Button::new(
                 format!("tags-sort-{}", pane.0),

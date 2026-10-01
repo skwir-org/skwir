@@ -2,7 +2,7 @@
 //! a pane shows, with how many files have each, for the shell's view to
 //! list and act on (pin, rename, merge, color, remove).
 //!
-//! The counts are the index's (`hints::TagIndex::tally`): what it knows at
+//! The counts are the index's (`index::TagIndex::tally`): what it knows at
 //! once, then what a count teaches it (`count.rs`). A folder counted before,
 //! or one inside it, is covered: its counts are shown as of that count, even
 //! after a restart, while a check reads what changed since. Without, the
@@ -24,7 +24,7 @@ use bibli_core::scheduler::Priority;
 use bibli_core::workspace::PaneId;
 use parking_lot::Mutex;
 
-use crate::hints::TagIndex;
+use crate::index::TagIndex;
 use crate::sidebar;
 use crate::vocabulary::Vocabulary;
 
