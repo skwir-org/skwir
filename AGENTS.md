@@ -240,7 +240,10 @@ current source before assuming a planned crate, command, or API exists.
   (`follow.rs`), so its undo puts them back. The Tags view (a
   lens: the plugin's `lens.rs`, the shell's `tags_view.rs` draws) lists
   the tags under the folder shown with how many files have each, as the
-  index tallies them. A count (`count.rs`) teaches the index every
+  index tallies them, as a tree: a category's tags fold under it (Left
+  and Right, its arrow), and tags dragged onto a row go into it
+  (`tags.move`), dropped beside the rows out of theirs. A count
+  (`count.rs`) teaches the index every
   tagged file under the folder and makes it cover the folder as of when
   it began; opened again, even after a restart, the view shows those
   counts at once and checks: it reads only the files (and companions)
