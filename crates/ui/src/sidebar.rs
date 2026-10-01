@@ -680,7 +680,8 @@ fn pill(
     let open = open_invocation(place);
     let tab = open_in_tab(place);
     let title: SharedString = place.title.clone().into();
-    let tip = title.clone();
+    let tip: SharedString =
+        format!("{title} · Shift+click: also in this search · Alt+click: in this folder").into();
     let font = font.clone();
     let mut pill = div()
         .id(("place", i))
@@ -714,8 +715,28 @@ fn pill(
         })
         .cursor_pointer()
         .hover(move |s| s.border_color(tone))
-        .on_click(cx.listener(move |this, _, window, cx| {
-            this.run(&open.name, open.args.clone(), window, cx);
+        .on_click(cx.listener({
+            let tag = place.title.clone();
+            move |this, ev: &gpui::ClickEvent, window, cx| {
+                // Shift adds the tag to the search shown (or takes it out),
+                // Alt searches the folder shown for it.
+                let m = ev.modifiers();
+                let facet = if m.shift {
+                    "also_tag"
+                } else if m.alt {
+                    "tag"
+                } else {
+                    this.run(&open.name, open.args.clone(), window, cx);
+                    return;
+                };
+                let pane = this.pane;
+                this.run(
+                    "query.refine",
+                    serde_json::json!({ "facet": facet, "value": tag, "pane": pane }),
+                    window,
+                    cx,
+                );
+            }
         }))
         .on_mouse_down(
             MouseButton::Right,

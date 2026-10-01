@@ -263,6 +263,31 @@ pub fn refine(expr: &str, facet: &str, value: Option<&str>) -> Result<String, St
                 .filter(|t| !t.is_empty())
                 .map(str::to_owned);
         }
+        // One more tag every match has, or one less: the sidebar's
+        // Shift+click on a tag.
+        ("also_tag", Some(v)) => {
+            let v = v.trim();
+            let names = |part: &String| {
+                lang::parse(part)
+                    .ok()
+                    .and_then(|q| q.required_tag().map(str::to_owned))
+                    .is_some_and(|t| bibli_core::metadata::same_tag(&t, v))
+            };
+            if v.is_empty() {
+            } else if p
+                .tag
+                .as_deref()
+                .is_some_and(|t| bibli_core::metadata::same_tag(t, v))
+            {
+                p.tag = None;
+            } else if let Some(at) = p.advanced.iter().position(names) {
+                p.advanced.remove(at);
+            } else if p.tag.is_none() {
+                p.tag = Some(v.to_owned());
+            } else {
+                p.advanced.push(tag_term(v));
+            }
+        }
         ("content", None) => p.content = None,
         ("content", Some(text)) => {
             p.content = Some(
@@ -543,6 +568,26 @@ pub fn describe(expr: &str, tags_known: bool) -> Result<Description, String> {
 
     for (i, text) in p.advanced.iter().enumerate() {
         let index = i.to_string();
+        // One more tag (a Shift+click on the sidebar's): a Tag chip too.
+        let tag = lang::parse(text)
+            .ok()
+            .filter(|q| matches!(q.expr, Some(Expr::Term(Term::Tag(_)))))
+            .and_then(|q| q.required_tag().map(str::to_owned));
+        if let Some(tag) = tag {
+            chips.push(Chip {
+                id: "advanced".into(),
+                title: "Tag".into(),
+                value: Some(tag),
+                icon: "tag".into(),
+                choices: vec![Choice {
+                    label: "Remove".into(),
+                    command: refine_invocation("advanced", Some(&index)),
+                    active: false,
+                }],
+                clear: Some(refine_invocation("advanced", Some(&index))),
+            });
+            continue;
+        }
         chips.push(Chip {
             id: "advanced".into(),
             title: String::new(),
@@ -604,6 +649,13 @@ mod tests {
             .map(|c| c.value.clone().unwrap())
             .collect();
         assert_eq!(advanced, ["(name:a OR name:b)", "NOT name:draft"]);
+        // A second tag is a Tag chip, which takes it out.
+        let two = describe("tag:a tag:b", false).unwrap();
+        let more = two.chips.iter().find(|c| c.id == "advanced").unwrap();
+        assert_eq!(
+            (more.title.as_str(), more.value.as_deref()),
+            ("Tag", Some("b"))
+        );
         // The search cut in two: where it looks, and the rest.
         assert_eq!(d.root, std::path::Path::new("/data"));
         let again = lang::parse(&format!("{} in:/data", d.text)).unwrap();
@@ -654,6 +706,21 @@ mod tests {
         assert_eq!(
             r("where", Some("hidden")),
             "invoice size<1M in:/data hidden:true"
+        );
+        // Tags add up, and toggle out.
+        let two = refine("tag:a in:/d", "also_tag", Some("to do")).unwrap();
+        assert_eq!(two, r#"tag:a tag:"to do" in:/d"#);
+        assert_eq!(
+            refine(&two, "also_tag", Some("A")).unwrap(),
+            r#"tag:"to do" in:/d"#
+        );
+        assert_eq!(
+            refine(&two, "also_tag", Some("TO DO")).unwrap(),
+            "tag:a in:/d"
+        );
+        assert_eq!(
+            refine("in:/d", "also_tag", Some("a")).unwrap(),
+            "tag:a in:/d"
         );
         // Kinds toggle in and out.
         let two = refine("kind:image in:/d", "kind", Some("video")).unwrap();

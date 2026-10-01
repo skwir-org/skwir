@@ -354,8 +354,20 @@ fn selected(app: &App, vocabulary: &Vocabulary, a: PaneArgs) -> serde_json::Valu
     serde_json::json!({
         "items": refs.len(),
         "tags": tags,
-        "known": vocabulary.known(),
+        "known": known(sidebar::pinned(app), vocabulary.known()),
     })
+}
+
+/// The tags to offer: those pinned first, in their order, then the rest
+/// known, the most recently used first.
+fn known(pinned: Vec<String>, known: Vec<String>) -> Vec<String> {
+    let mut out = pinned;
+    for tag in known {
+        if !out.iter().any(|t| same_tag(t, &tag)) {
+            out.push(tag);
+        }
+    }
+    out
 }
 
 /// The comment of the pane's one selected entry, from what hydration read.
@@ -824,7 +836,7 @@ impl Plugin for TagsPlugin {
             ID,
             "tags.selected",
             "Tags of the selection",
-            "`{ items, tags: [{ name, count, color? }], known }`: the selection's tags, read from its files, with how many carry each and the color a file gives one (a Finder tag's), and the tags known, the most recently used first (blocks: dispatch from a worker)",
+            "`{ items, tags: [{ name, count, color? }], known }`: the selection's tags, read from its files, with how many carry each and the color a file gives one (a Finder tag's), and the tags known, those pinned first, then the most recently used (blocks: dispatch from a worker)",
             move |a, app| Ok(Outcome::Value(selected(app, &v, a))),
         );
         app.commands.register::<RateArgs, _>(
@@ -1927,6 +1939,14 @@ mod tests {
         let mut used_last = known[..2].to_vec();
         used_last.sort_unstable();
         assert_eq!(used_last, ["Work", "urgent"], "used first: {known:?}");
+        // Those pinned come before.
+        assert_eq!(
+            super::known(
+                vec!["home".into(), "x".into()],
+                known.iter().map(|t| (*t).to_owned()).collect()
+            )[..3],
+            ["home", "x", known[0]]
+        );
     }
 
     #[test]

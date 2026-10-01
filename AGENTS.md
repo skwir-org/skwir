@@ -290,7 +290,10 @@ current source before assuming a planned crate, command, or API exists.
   tags on the most files its index knows, as suggestions
   (`Place::suggested`, an outline), each a search of the home folder
   (`query.location` builds it, so no plugin writes another's syntax),
-  and last All Tags, the home folder's Tags view. A place with a `drop`
+  and last All Tags, the home folder's Tags view. Shift+click on a
+  tag's pill adds it to the search shown, or takes it out (`query.refine`,
+  facet `also_tag`); Alt+click searches the folder shown for it. The tag
+  editor offers the pinned tags first. A place with a `drop`
   command runs it with what is dropped on it (`pane` for a pane's
   selection, `entries` for another application's files): a tag's gives
   them the tag. Dragged onto a file's row (`dnd::takes_gifts`), it gives
