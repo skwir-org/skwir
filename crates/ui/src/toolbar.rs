@@ -15,6 +15,8 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
     }
     assets!(
         "star",
+        "down",
+        "eye-off",
         "star-filled",
         "star-half",
         "comment",

@@ -3,7 +3,8 @@
 //! A preference is something the user chose in Settings; this is not that. It
 //! is the shape of the last window — which view each pane showed, whether it
 //! was split and how, whether the preview, the timeline and the terminal were
-//! open, where the preview was and how big — kept as application data under one key and
+//! open, where the preview was and how big, how the sidebar's groups were
+//! arranged — kept as application data under one key and
 //! restored at startup. Nothing here is worth a dialog, and all of it is annoying to set
 //! up again every morning.
 //!
@@ -27,6 +28,8 @@ pub struct Session {
     pub row_zoom: u32,
     /// The sidebar put away with F9 (it also gives way to a narrow window).
     pub sidebar_hidden: bool,
+    /// How its groups were arranged: their order, those put away or folded.
+    pub sidebar_sections: crate::sidebar::Sections,
     /// How wide the sidebar was dragged; 0 until then.
     pub sidebar_width: f32,
     /// The first split pane's share of the room, as its edge was dragged;
@@ -70,6 +73,7 @@ impl Shell {
             zoom: self.zoom,
             row_zoom: self.row_zoom,
             sidebar_hidden: self.sidebar_hidden,
+            sidebar_sections: self.sidebar_sections.clone(),
             sidebar_width: self.sidebar_width,
             split_share: self.split_share,
             split: self.is_split(),

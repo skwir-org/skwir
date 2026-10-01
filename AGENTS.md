@@ -284,6 +284,10 @@ current source before assuming a planned crate, command, or API exists.
   runs it with what is dropped on it (`pane` for a pane's selection,
   `entries` for another application's files): a tag's gives them the
   tag.
+  The groups are the user's to arrange (`sidebar::Sections`, part of
+  the window's shape): a click on a header folds its group, a drag moves
+  it, and its menu hides it or shows one hidden (`ui.sidebar_section`).
+  A plugin names a place's group, never where the group goes.
   A plugin that needs a line of text from the user dispatches
   `ui.ask` with the command to complete, not a prompt kind of its own;
   one that needs a choice dispatches `ui.choose` with its choices or the

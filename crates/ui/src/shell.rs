@@ -210,8 +210,8 @@ pub struct Shell {
     /// Preferences changed from the toolbars and not saved yet
     /// (`settings::remember`).
     pub(crate) unsaved: std::collections::BTreeMap<&'static str, String>,
-    /// Sidebar groups the user folded, for this session.
-    pub sidebar_folded: std::collections::HashSet<String>,
+    /// How the user arranged the sidebar's groups (`ui.sidebar_section`).
+    pub sidebar_sections: crate::sidebar::Sections,
     /// Size, Modified, Type, Rating: which detail columns the list shows
     /// (`settings::COLUMN_KEYS`). Read through `shown_columns`.
     pub columns: [bool; 4],
@@ -473,7 +473,7 @@ impl Shell {
             prefs: Preferences::default(),
             unsaved: std::collections::BTreeMap::new(),
             backlog: false,
-            sidebar_folded: std::collections::HashSet::new(),
+            sidebar_sections: crate::sidebar::Sections::default(),
             columns: [true, true, true, false],
             reading_measure: crate::markdown::measure("comfortable"),
             reading_width_before: None,
@@ -568,6 +568,7 @@ impl Shell {
             self.row_zoom = session.row_zoom;
         }
         self.sidebar_hidden = session.sidebar_hidden;
+        self.sidebar_sections = session.sidebar_sections;
         if session.sidebar_width > 0. {
             self.sidebar_width = session.sidebar_width;
         }
@@ -1538,6 +1539,7 @@ impl Shell {
             "dismiss" => self.confirm_dismiss(window, cx),
             "toggle_hidden" => self.toggle_hidden(cx),
             "toggle_sidebar" => self.toggle_sidebar(window, cx),
+            "sidebar_section" => self.sidebar_section(args, cx),
             "context_menu" => self.open_context_menu_here(window, cx),
             "open_in_tab" => self.open_selection_in_tabs(window, cx),
             "sort" => {

@@ -213,7 +213,7 @@ pub struct KeyboardAnchor {
 
 impl MenuState {
     /// Take the keyboard for a menu of `items` at `position`.
-    fn open(
+    pub(crate) fn open(
         position: Point<Pixels>,
         items: Vec<MenuItem>,
         window: &mut Window,

@@ -9,6 +9,11 @@
 //! others of its group. A place with a color (a tag's) is a pill of it,
 //! the pills of a group wrapping together, and a place with a `drop`
 //! command takes files dropped on it (a tag gives them itself).
+//!
+//! The groups are the user's to arrange (`Sections`, remembered with the
+//! window's shape): a click on a group's header folds it, dragging the
+//! header moves the group, and its right-click menu hides it, or shows
+//! one hidden.
 
 use std::collections::HashMap;
 
@@ -55,6 +60,57 @@ fn group_rank(g: &str) -> usize {
         .iter()
         .position(|x| *x == g)
         .unwrap_or(GROUP_ORDER.len())
+}
+
+/// How the user arranged the sidebar's groups: their order, those put
+/// away and those folded. Part of the window's shape (`session.rs`), so
+/// the next window is arranged the same.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Sections {
+    /// Every group known when the user last moved one, in the order left;
+    /// empty until then. A group it does not name goes after them, in
+    /// the order the sidebar ships with.
+    pub order: Vec<String>,
+    pub hidden: std::collections::BTreeSet<String>,
+    pub folded: std::collections::BTreeSet<String>,
+}
+
+impl Sections {
+    /// Where `group` goes among the others.
+    pub fn rank(&self, group: &str) -> (usize, usize) {
+        let placed = self.order.iter().position(|g| g == group);
+        (placed.unwrap_or(self.order.len()), group_rank(group))
+    }
+
+    /// `present`, the groups that have places, in the user's order.
+    pub fn arranged(&self, present: &[String]) -> Vec<String> {
+        let mut groups = present.to_vec();
+        groups.sort_by_key(|g| self.rank(g));
+        groups.dedup();
+        groups
+    }
+
+    /// Put `group` before `before`, or last. `present` names the groups
+    /// that have places now, so a group that comes back later keeps the
+    /// place it had among them.
+    pub fn move_before(&mut self, group: &str, before: Option<&str>, present: &[String]) {
+        let mut known: Vec<String> = self.order.clone();
+        known.extend(GROUP_ORDER.iter().map(|g| (*g).to_owned()));
+        known.extend(present.iter().cloned());
+        let mut order = self.arranged(&known);
+        order.retain(|g| g != group);
+        let at = before
+            .and_then(|b| order.iter().position(|g| g == b))
+            .unwrap_or(order.len());
+        order.insert(at, group.to_owned());
+        self.order = order;
+    }
+
+    /// Whether anything differs from the sidebar as it ships.
+    pub fn arranged_by_user(&self) -> bool {
+        !self.order.is_empty() || !self.hidden.is_empty()
+    }
 }
 
 fn group_title(group: &str) -> String {
@@ -144,9 +200,14 @@ pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElem
     let theme = cx.global::<Theme>().clone();
     let current = shell.ui().address_shown.clone();
     let mut places = shell.app.registry.places.all();
-    // Within a group, folders come before virtual places (Shelf, Recent)
-    // whatever order their plugins published them in; the sort is stable.
-    places.sort_by_key(|p| (group_rank(&p.group), !p.location.is_path()));
+    // Groups in the user's order, those put away left out. Within a group,
+    // folders come before virtual places (Shelf, Recent) whatever order
+    // their plugins published them in; the sort is stable.
+    let sections = shell.sidebar_sections.clone();
+    places.retain(|p| !sections.hidden.contains(&p.group));
+    places.sort_by_key(|p| (sections.rank(&p.group), !p.location.is_path()));
+    let shown: Vec<String> =
+        sections.arranged(&places.iter().map(|p| p.group.clone()).collect::<Vec<_>>());
     let font = shell.font.clone();
     // Each group's movable places, in order, by what names them to the
     // group's move command.
@@ -192,47 +253,25 @@ pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElem
         .on_drop(cx.listener(|this, drag: &PlaceDrag, window, cx| {
             let command = drag.command(None);
             this.run(&command.name, command.args, window, cx);
-        }));
+        }))
+        // Beside the rows, the menu of the groups: those put away.
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                this.open_sections_menu(None, event.position, window, cx);
+            }),
+        );
 
     let mut last_group: Option<String> = None;
     let mut indices: HashMap<String, usize> = HashMap::new();
     // A group's tags, drawn as pills that wrap together.
     let mut pills: Vec<AnyElement> = Vec::new();
     for (i, place) in places.into_iter().enumerate() {
-        let folded = shell.sidebar_folded.contains(&place.group);
+        let folded = sections.folded.contains(&place.group);
         if last_group.as_deref() != Some(place.group.as_str()) {
             column = wrap_pills(column, &mut pills);
-            let group = place.group.clone();
-            let hover = theme.hover;
-            column = column.child(
-                div()
-                    .id(SharedString::from(format!("sidebar-group-{group}")))
-                    .flex_none()
-                    .mx_1()
-                    .mt_2()
-                    .px_2()
-                    .h(px(22.))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .rounded_md()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .cursor_pointer()
-                    .hover(move |s| s.bg(hover))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if !this.sidebar_folded.remove(&group) {
-                            this.sidebar_folded.insert(group.clone());
-                        }
-                        cx.notify();
-                    }))
-                    .child(group_title(&place.group))
-                    .child(controls::glyph(
-                        if folded { "chevron-right" } else { "chevron" },
-                        theme.text_muted,
-                        12.,
-                    )),
-            );
+            column = column.child(group_header(&place.group, folded, &shown, cx));
             last_group = Some(place.group.clone());
         }
         if folded {
@@ -476,6 +515,118 @@ pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElem
         .into_any_element()
 }
 
+/// A group dragged by its header to another position among the groups.
+#[derive(Clone, Debug)]
+pub struct GroupDrag {
+    pub group: String,
+}
+
+/// The command that puts `group` before `before`, or last.
+fn move_group(group: &str, before: Option<&str>) -> Invocation {
+    Invocation::with_args(
+        "ui.sidebar_section",
+        &serde_json::json!({ "group": group, "before": before }),
+    )
+}
+
+/// A group's header: a click folds the group, a drag moves it among the
+/// others (`shown`, in their order), a right click opens its menu. While
+/// another group is dragged over it, a line marks where that one lands,
+/// above its upper half and below its lower half, as with places.
+fn group_header(
+    group: &str,
+    folded: bool,
+    shown: &[String],
+    cx: &mut Context<Shell>,
+) -> gpui::Stateful<gpui::Div> {
+    let theme = cx.global::<Theme>().clone();
+    let hover = theme.hover;
+    let at = shown.iter().position(|g| g == group).unwrap_or(0);
+    let title = group_title(group);
+    let (fold, menu) = (group.to_owned(), group.to_owned());
+    let drag = GroupDrag {
+        group: group.to_owned(),
+    };
+    let zone = |top: bool| {
+        let edge = theme.accent;
+        // The group the line puts the dragged one before: this one from
+        // above, the next from below.
+        let before = if top {
+            shown.get(at).cloned()
+        } else {
+            shown.get(at + 1).cloned()
+        };
+        let (here, dropped) = (group.to_owned(), group.to_owned());
+        let lands = before.clone();
+        let zone = div().absolute().left_0().right_0().h(gpui::relative(0.5));
+        let zone = if top { zone.top_0() } else { zone.bottom_0() };
+        zone.drag_over::<GroupDrag>(move |s, drag, _, _| {
+            // Nothing moves where it already is.
+            if drag.group == here || lands.as_deref() == Some(drag.group.as_str()) {
+                s
+            } else if top {
+                s.border_t_2().border_color(edge)
+            } else {
+                s.border_b_2().border_color(edge)
+            }
+        })
+        .on_drop(cx.listener(move |this, drag: &GroupDrag, window, cx| {
+            cx.stop_propagation();
+            if drag.group == dropped || before.as_deref() == Some(drag.group.as_str()) {
+                return;
+            }
+            let command = move_group(&drag.group, before.as_deref());
+            this.run(&command.name, command.args, window, cx);
+        }))
+    };
+    let (upper, lower) = (zone(true), zone(false));
+    div()
+        .id(SharedString::from(format!("sidebar-group-{group}")))
+        .relative()
+        .flex_none()
+        .mx_1()
+        .mt_2()
+        .px_2()
+        .h(px(22.))
+        .flex()
+        .items_center()
+        .justify_between()
+        .rounded_md()
+        .text_xs()
+        .text_color(theme.text_muted)
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover))
+        .on_click(cx.listener(move |this, _, window, cx| {
+            this.run(
+                "ui.sidebar_section",
+                serde_json::json!({ "group": fold }),
+                window,
+                cx,
+            );
+        }))
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                this.open_sections_menu(Some(&menu), event.position, window, cx);
+            }),
+        )
+        .on_drag(drag, {
+            let title = title.clone();
+            move |_, position, _, cx| {
+                cx.new(|_| crate::dnd::DragPreview::named(title.clone(), position))
+            }
+        })
+        .child(title)
+        .child(controls::glyph(
+            if folded { "chevron-right" } else { "chevron" },
+            theme.text_muted,
+            12.,
+        ))
+        .child(upper)
+        .child(lower)
+}
+
 /// The pills gathered so far, as one line that wraps, left-aligned (a
 /// justified line would stretch the gaps of its last pills apart).
 fn wrap_pills(
@@ -699,6 +850,144 @@ impl Shell {
         cx.notify();
     }
 
+    /// The groups that have places, put away or not.
+    fn sidebar_groups(&self) -> Vec<String> {
+        let mut groups: Vec<String> = self
+            .app
+            .registry
+            .places
+            .all()
+            .into_iter()
+            .map(|p| p.group)
+            .collect();
+        groups.sort();
+        groups.dedup();
+        groups
+    }
+
+    /// `ui.sidebar_section`: arrange the sidebar's groups. `group` alone
+    /// folds or unfolds it (`fold` says which); with `hidden` it is put
+    /// away or shown; with `before` (a group, or null for last) it moves.
+    /// `reset` shows every group in the order the sidebar ships with.
+    pub fn sidebar_section(&mut self, args: &serde_json::Value, cx: &mut Context<Self>) {
+        let flag = |k: &str| args.get(k).and_then(serde_json::Value::as_bool);
+        let sections = &mut self.sidebar_sections;
+        if flag("reset") == Some(true) {
+            sections.order.clear();
+            sections.hidden.clear();
+        } else if let Some(group) = args.get("group").and_then(serde_json::Value::as_str) {
+            let group = group.to_owned();
+            if let Some(before) = args.get("before") {
+                let present = self.sidebar_groups();
+                self.sidebar_sections
+                    .move_before(&group, before.as_str(), &present);
+            } else if let Some(hidden) = flag("hidden") {
+                if hidden {
+                    sections.hidden.insert(group);
+                } else {
+                    sections.hidden.remove(&group);
+                }
+            } else {
+                let fold = flag("fold").unwrap_or(!sections.folded.contains(&group));
+                if fold {
+                    sections.folded.insert(group);
+                } else {
+                    sections.folded.remove(&group);
+                }
+            }
+        } else {
+            return;
+        }
+        self.remember_session();
+        cx.notify();
+    }
+
+    /// The menu of the sidebar's groups: for `group`'s header, folding,
+    /// moving and hiding it; everywhere, showing a group put away.
+    pub fn open_sections_menu(
+        &mut self,
+        group: Option<&str>,
+        position: gpui::Point<gpui::Pixels>,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let item = |title: String, args: serde_json::Value, order: i32, icon: &str| {
+            bibli_core::registry::MenuItem {
+                menu: "sidebar".into(),
+                title,
+                command: Invocation::with_args("ui.sidebar_section", &args),
+                when: None,
+                order,
+                icon: Some(icon.into()),
+                submenu: None,
+            }
+        };
+        let sections = &self.sidebar_sections;
+        let present = self.sidebar_groups();
+        let shown: Vec<String> = sections.arranged(
+            &present
+                .iter()
+                .filter(|g| !sections.hidden.contains(*g))
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
+        let mut items = Vec::new();
+        if let Some(group) = group {
+            let folded = sections.folded.contains(group);
+            items.push(item(
+                if folded { "Unfold" } else { "Fold" }.into(),
+                serde_json::json!({ "group": group, "fold": !folded }),
+                0,
+                if folded { "unfold" } else { "fold" },
+            ));
+            if let Some(at) = shown.iter().position(|g| g == group) {
+                if at > 0 {
+                    items.push(item(
+                        "Move Up".into(),
+                        serde_json::json!({ "group": group, "before": shown[at - 1] }),
+                        100,
+                        "up",
+                    ));
+                }
+                if at + 1 < shown.len() {
+                    items.push(item(
+                        "Move Down".into(),
+                        serde_json::json!({ "group": group, "before": shown.get(at + 2) }),
+                        101,
+                        "down",
+                    ));
+                }
+            }
+            items.push(item(
+                format!("Hide {}", group_title(group)),
+                serde_json::json!({ "group": group, "hidden": true }),
+                300,
+                "eye-off",
+            ));
+        }
+        for hidden in &sections.hidden {
+            items.push(item(
+                format!("Show {}", group_title(hidden)),
+                serde_json::json!({ "group": hidden, "hidden": false }),
+                400,
+                "eye",
+            ));
+        }
+        if sections.arranged_by_user() {
+            items.push(item(
+                "Reset Sections".into(),
+                serde_json::json!({ "reset": true }),
+                410,
+                "revert",
+            ));
+        }
+        if items.is_empty() {
+            return;
+        }
+        self.menu = Some(crate::menu::MenuState::open(position, items, window, cx));
+        cx.notify();
+    }
+
     /// Bookmark a folder dropped beside the rows. The command checks that
     /// it is one, on a worker: asking could block on a sleeping disk.
     fn bookmark(
@@ -718,7 +1007,7 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::{drop_target, group_title, same_place, used_fraction};
+    use super::{Sections, drop_target, group_title, same_place, used_fraction};
     use bibli_core::Location;
     use std::path::PathBuf;
 
@@ -743,6 +1032,38 @@ mod tests {
         // The gaps on either side of it leave it where it is.
         assert_eq!(drop_target(&order, 1, 1), None);
         assert_eq!(drop_target(&order, 1, 2), None);
+    }
+
+    #[test]
+    fn groups_go_where_the_user_put_them_and_new_ones_after() {
+        let owned = |v: &[&str]| v.iter().map(|g| (*g).to_owned()).collect::<Vec<_>>();
+        let present = owned(&["devices", "places", "tags", "bookmarks"]);
+        let mut sections = Sections::default();
+        assert_eq!(
+            sections.arranged(&present),
+            owned(&["places", "bookmarks", "tags", "devices"]),
+            "as the sidebar ships"
+        );
+        sections.move_before("tags", Some("places"), &present);
+        assert_eq!(
+            sections.arranged(&present),
+            owned(&["tags", "places", "bookmarks", "devices"])
+        );
+        sections.move_before("places", None, &present);
+        assert_eq!(
+            sections.arranged(&present),
+            owned(&["tags", "bookmarks", "devices", "places"])
+        );
+        // Searches had no places when the user moved the others: it comes
+        // back where it was among them, and a group never seen goes last.
+        let later = owned(&["places", "searches", "tags", "plugin", "bookmarks"]);
+        assert_eq!(
+            sections.arranged(&later),
+            owned(&["tags", "bookmarks", "searches", "places", "plugin"])
+        );
+        assert!(sections.arranged_by_user());
+        let toml = toml::Value::try_from(&sections).unwrap();
+        assert_eq!(toml.try_into::<Sections>().unwrap(), sections);
     }
 
     #[test]
