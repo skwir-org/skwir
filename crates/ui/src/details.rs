@@ -550,9 +550,13 @@ fn star_picker(
 
 /// Whether there is nothing to show but the details. A preview still on
 /// its way is not nothing: Details waits for the answer rather than
-/// filling the body for the instant before a picture replaces it.
+/// filling the body for the instant before a picture replaces it. Nor is
+/// a member with no preview of its own while its container's rows are
+/// kept beside it (`PreviewState::members`): the rows are content, so
+/// Details stays as the card left it, opened and closed on demand.
 pub fn alone(shell: &Shell) -> bool {
     shell.preview.media.session.is_none()
+        && shell.preview.members().is_none()
         && match &shell.preview.content {
             None => shell.preview.phase == crate::preview::PreviewPhase::Idle,
             Some(
@@ -564,18 +568,12 @@ pub fn alone(shell: &Shell) -> bool {
 
 /// The section: right under the header's card, above the toolbar
 /// (`preview::under_card` puts it there, and nothing else draws it). Opened
-/// on demand under a preview, taking up to half the panel; always open when
-/// `alone`, as tall as what it says, scrolling only when the panel is too
-/// short. Above a container's kept rows (`kept`) it takes up to half the
-/// panel either way: the rows are content too. The header's card is what
+/// on demand under a preview or above a container's kept rows, taking up
+/// to half the panel; always open when `alone`, as tall as what it says,
+/// scrolling only when the panel is too short. The header's card is what
 /// opens it, and holds the name, type, size and date, so the groups here
 /// repeat none of those.
-pub fn render(
-    shell: &Shell,
-    theme: &Theme,
-    kept: bool,
-    cx: &mut Context<Shell>,
-) -> Option<AnyElement> {
+pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let preview = &shell.preview;
     // Nothing to say (a search named with nothing selected): no section,
     // not an empty one with its scrollbar.
@@ -596,8 +594,8 @@ pub fn render(
         .bg(theme.bg)
         .border_b_1()
         .border_color(theme.border)
-        .when(alone && !kept, gpui::Styled::flex_initial)
-        .when(!alone || kept, |d| d.flex_none().max_h(gpui::relative(0.5)));
+        .when(alone, gpui::Styled::flex_initial)
+        .when(!alone, |d| d.flex_none().max_h(gpui::relative(0.5)));
     let groups = preview
         .selection_summary
         .iter()

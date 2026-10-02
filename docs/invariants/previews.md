@@ -287,7 +287,9 @@ still to come are in `docs/preview-frame.md`.
   not say (no Name or Type row: the header has them). With nothing to
   preview (a folder, an unknown file, an error) it is always open, as tall
   as what it says, with the toolbar and what the content says (why the
-  preview failed) right under it; under a preview it opens on demand in
+  preview failed) right under it, unless a container's rows are kept
+  beside the member (`details::alone`): the rows are content, so Details
+  stays as the card left it; under a preview it opens on demand in
   the same place, right under the card, above the toolbar, up to half
   the panel (Ctrl+I; with the panel closed, Ctrl+I opens both). Whether it
   is open belongs to the window's shape (`session.rs`). One function puts

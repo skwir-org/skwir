@@ -2492,15 +2492,16 @@ fn under_card(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let kept = interactive && shell.preview.members().is_some();
-    // Opened on demand under a preview; always open with nothing to
-    // preview (a folder, an unknown file, an error), so the toolbar and
-    // what the content says (why the preview failed) follow right under
-    // it. While peek shows the preview, the panel behind it is only a
-    // picture and keeps Details only when it is all there is.
+    // Opened on demand under a preview or above kept rows; always open
+    // with nothing to preview (a folder, an unknown file, an error), so
+    // the toolbar and what the content says (why the preview failed)
+    // follow right under it. While peek shows the preview, the panel
+    // behind it is only a picture and keeps Details only when it is all
+    // there is.
     let alone = crate::details::alone(shell);
     let details = Some(())
         .filter(|()| interactive || alone)
-        .and_then(|()| crate::details::render(shell, theme, kept, cx));
+        .and_then(|()| crate::details::render(shell, theme, cx));
     let body = body(shell, theme, interactive, cx);
     div()
         .flex_1()
