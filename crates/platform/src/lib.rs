@@ -38,6 +38,7 @@ pub mod picture;
 pub mod places;
 pub mod preview;
 pub mod process;
+pub mod sandbox;
 pub mod thumb_providers;
 pub mod thumbnails;
 pub mod uri;

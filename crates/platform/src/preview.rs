@@ -678,10 +678,9 @@ pub(crate) fn render_pdf_page(
     decode_preview(&read_artifact(&prefix.with_extension("ppm"))?, side)
 }
 
-/// Conversion is isolated from the user's `LibreOffice` session and files. Linux
-/// requires bubblewrap: no network, only the input and system runtime are readable,
-/// and only the disposable working directory is writable. Never silently retry
-/// without isolation when the sandbox cannot start.
+/// Conversion is isolated from the user's `LibreOffice` session and files
+/// (`sandbox`): a fresh profile in the working directory, macros and link
+/// updates off, no display.
 fn convert_office(
     office: &Path,
     input: &Path,
@@ -700,84 +699,23 @@ fn convert_office(
 <item oor:path="/org.openoffice.Office.Calc/Content/Update"><prop oor:name="Link" oor:op="fuse"><value>2</value></prop></item>
 </oor:items>"#,
     )?;
-    #[cfg(target_os = "linux")]
-    {
-        let bwrap = process::required("bwrap")?;
-        let mut command = Command::new(bwrap);
-        command.args(["--unshare-all", "--die-with-parent", "--new-session"]);
-        for system in [
-            "/nix/store",
-            "/usr",
-            "/bin",
-            "/lib",
-            "/lib64",
-            "/etc/fonts",
-            "/etc/ld.so.cache",
-            "/etc/localtime",
-        ] {
-            if Path::new(system).exists() {
-                command.args(["--ro-bind", system, system]);
-            }
-        }
-        let source = format!("/input/document.{}", extension(input));
-        command
-            .args([
-                "--proc",
-                "/proc",
-                "--dev",
-                "/dev",
-                "--tmpfs",
-                "/tmp",
-                "--dir",
-                "/input",
-                "--ro-bind",
-            ])
-            .arg(input)
-            .arg(&source)
-            .arg("--bind")
-            .arg(work)
-            .arg("/work")
-            .args([
-                "--chdir",
-                "/work",
-                "--setenv",
-                "HOME",
-                "/work/home",
-                "--setenv",
-                "XDG_CACHE_HOME",
-                "/work/cache",
-                "--setenv",
-                "SAL_USE_VCLPLUGIN",
-                "svp",
-                "--unsetenv",
-                "DISPLAY",
-                "--unsetenv",
-                "WAYLAND_DISPLAY",
-                "--unsetenv",
-                "DBUS_SESSION_BUS_ADDRESS",
-                "--",
-            ])
-            .arg(office)
-            .args([
-                "-env:UserInstallation=file:///work/profile",
-                "--headless",
-                "--nologo",
-                "--nodefault",
-                "--norestore",
-                "--convert-to",
-                output_format,
-                "--outdir",
-                "/work",
-            ])
-            .arg(source);
-        process::run(&mut command, cancel, CONVERT_TIMEOUT)?;
-        Ok(())
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = (office, input, output_format, cancel);
-        anyhow::bail!("isolated office preview is not implemented on this platform")
-    }
+    let (mut command, source) = crate::sandbox::command(office, input, work)?;
+    // The sandbox passes its environment on: no display, `LibreOffice`'s
+    // headless backend.
+    command.env("SAL_USE_VCLPLUGIN", "svp").args([
+        "-env:UserInstallation=file:///work/profile",
+        "--headless",
+        "--nologo",
+        "--nodefault",
+        "--norestore",
+        "--convert-to",
+        output_format,
+        "--outdir",
+        "/work",
+    ]);
+    command.arg(source);
+    process::run(&mut command, cancel, CONVERT_TIMEOUT)?;
+    Ok(())
 }
 
 #[cfg(test)]
