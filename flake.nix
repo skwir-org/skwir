@@ -98,6 +98,7 @@
           ripgrep
           jq
           vulkan-tools # vulkaninfo for the toolkit spike
+          pandoc # Office documents read as text, without LibreOffice
         ]
         ++ lib.optionals stdenv.hostPlatform.isLinux [
           bubblewrap # isolated Office document previews
