@@ -457,3 +457,36 @@ fn walkdir(dir: &Path) -> BTreeSet<String> {
     }
     out
 }
+
+#[test]
+fn a_card_dragged_between_two_columns_of_tags_moves_from_one_to_the_other() {
+    let s = setup();
+    // A board of Places shows its tags opened in place; a card dragged
+    // from France to Japan says the column it leaves.
+    go(&s, &tag_location(&s.root, Some("Places/France")));
+    s.app
+        .dispatch(&Invocation::with_args(
+            "select",
+            &serde_json::json!({ "names": ["france.jpg"] }),
+        ))
+        .unwrap();
+    let japan = tag_location(&s.root, Some("Places/Japan"));
+    let france = tag_location(&s.root, Some("Places/France"));
+    let plan = plan_of(
+        s.app
+            .dispatch(&Invocation::with_args(
+                "tags.drop",
+                &serde_json::json!({
+                    "location": japan.to_string(),
+                    "pane": s.pane,
+                    "move": true,
+                    "from": france.to_string(),
+                }),
+            ))
+            .unwrap(),
+    );
+    s.app.apply(plan);
+    until(&s.app, "the tag moved", || {
+        (read_tags(&s.root.join("trips/2024/france.jpg")) == tags(&["Places/Japan"])).then_some(())
+    });
+}

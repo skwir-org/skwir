@@ -894,6 +894,19 @@ impl Pane {
             .or_else(|| opened(&self.kept, &self.expanded).find_map(|(_, k)| k.listing.get(id)))
     }
 
+    /// The listing (`Listing::id`) that holds entry `id`: the shown one's,
+    /// or an opened folder's. An entry that moves from one to another (a
+    /// file dragged between two tags opened in place) arrives bare in the
+    /// other, to be hydrated again.
+    pub fn listing_of(&self, id: EntryId) -> Option<u64> {
+        if self.listing.get(id).is_some() {
+            return Some(self.listing.id());
+        }
+        opened(&self.kept, &self.expanded)
+            .find(|(_, k)| k.listing.get(id).is_some())
+            .map(|(_, k)| k.listing.id())
+    }
+
     /// Where an entry of an opened folder lives. `None` for the shown
     /// listing's own entries, which only its location knows. An opened
     /// place's (a tag's) are asked of it: plugin code, like `path_of`.

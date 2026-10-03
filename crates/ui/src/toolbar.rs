@@ -28,6 +28,7 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "busy",
         "grid",
         "columns",
+        "board",
         "preview",
         "preview-bottom",
         "sidebar",

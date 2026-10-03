@@ -135,6 +135,7 @@ pub const LIST: &str = "list";
 pub const GRID: &str = "grid";
 pub const COLUMNS: &str = "columns";
 pub const TREE: &str = "tree";
+pub const BOARD: &str = "board";
 
 /// Reconcile by registration identity, including disable/re-enable between two frames.
 /// Returns removed/replaced ids so their associated pane state can be discarded.

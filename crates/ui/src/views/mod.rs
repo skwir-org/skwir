@@ -1,5 +1,6 @@
 //! Built-in pane views.
 
+pub mod board;
 pub mod columns;
 pub mod grid;
 pub mod list;
@@ -64,6 +65,12 @@ pub fn specs() -> Vec<ViewSpec> {
         spec(view::COLUMNS, "Columns", 3, || {
             Box::new(columns::ColumnsView::default())
         }),
+        // The folders, or a tag's tags, side by side: a shape chosen now
+        // and then, with a button only while shown.
+        spec(view::BOARD, "Board", 4, || {
+            Box::new(board::BoardView::default())
+        })
+        .alternate(),
     ]
 }
 

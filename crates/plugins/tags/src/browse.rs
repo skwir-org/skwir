@@ -39,7 +39,8 @@ pub struct DropArgs {
     /// They move: out of the tag they came from.
     #[serde(default, rename = "move")]
     pub moved: bool,
-    /// Where `entries` were cut or copied.
+    /// Where `entries` were cut or copied, or the column of a board the
+    /// pane's selection was dragged from.
     #[serde(default)]
     pub from: Option<String>,
     /// Tag locations pasted with `entries`: their tags go into this one.
@@ -198,11 +199,13 @@ pub fn drop(
         .collect();
     let (files, places, from) = if a.entries.is_empty() && pasted.is_empty() {
         let pane = app.pane_or_active(a.pane);
-        (
-            app.selected_refs(pane),
-            selected_places(app, pane),
-            app.pane_location(pane),
-        )
+        // Dragged from a column of a board, from that column's tag.
+        let from = a
+            .from
+            .as_deref()
+            .map(Location::parse)
+            .or_else(|| app.pane_location(pane));
+        (app.selected_refs(pane), selected_places(app, pane), from)
     } else {
         (a.entries, pasted, a.from.as_deref().map(Location::parse))
     };

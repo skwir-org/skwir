@@ -83,7 +83,10 @@ pub struct ListState {
     /// again, and a listing that changes while 100 000 entries are in
     /// flight must not send them all a second time. A new listing, even of
     /// the folder already shown, starts bare and needs asking again.
-    pub pending_hydrate: HashSet<EntryId>,
+    /// Each by the listing that holds it (`Pane::listing_of`): an entry
+    /// that moves to another (between two folders opened in place) is
+    /// asked for again there.
+    pub pending_hydrate: HashSet<(u64, EntryId)>,
     /// The listing (`Listing::id`) everything here describes.
     listing: Option<u64>,
     /// The listing's `removed_version` when `pending_hydrate` last let go
@@ -132,7 +135,8 @@ impl ListState {
         // again by Undo) comes back bare: it is asked for again.
         if self.removed != listing.removed_version() {
             self.removed = listing.removed_version();
-            self.pending_hydrate.retain(|id| pane.entry(*id).is_some());
+            self.pending_hydrate
+                .retain(|(listing, id)| pane.listing_of(*id) == Some(*listing));
         }
         let at = (
             listing.version(),
@@ -302,9 +306,19 @@ impl Shell {
     /// another location.
     pub fn request_hydrate(&mut self, ids: impl IntoIterator<Item = EntryId>) {
         let pane = self.pane;
+        let held: Vec<(u64, EntryId)> = {
+            let ws = self.app.workspace.read();
+            let Some(p) = ws.pane(pane) else { return };
+            ids.into_iter()
+                .filter_map(|id| Some((p.listing_of(id)?, id)))
+                .collect()
+        };
         let need: Vec<EntryId> = {
             let pending = &mut self.ui_mut().list.pending_hydrate;
-            ids.into_iter().filter(|id| pending.insert(*id)).collect()
+            held.into_iter()
+                .filter(|key| pending.insert(*key))
+                .map(|(_, id)| id)
+                .collect()
         };
         if need.is_empty() {
             return;

@@ -142,7 +142,7 @@ current source before assuming a planned crate, command, or API exists.
   button leaves it closed instead of opening it again. The
   view buttons are the views that show the listing (`ViewRole::Listing`:
   list, grid, columns); a shape chosen now and then (`ViewRole::Alternate`:
-  the tree) and a lens, a view that gathers data of its own
+  the tree, the board) and a lens, a view that gathers data of its own
   (`ViewRole::Lens`: Usage), have a button only while shown, and the view
   states its role, never the shell. Beside them the View menu: how that
   pane shows its folder (every view, sort, direction, hidden files, zoom,
@@ -444,7 +444,16 @@ current source before assuming a planned crate, command, or API exists.
   never `pane.listing` alone. Only a view that says `opens_in_place`
   keeps them; the shell closes them under any other. The columns view's
   columns are a folder's parents, or the places of a location's trail
-  (`PaneView::kept_locations` is given the trail).
+  (`PaneView::kept_locations` is given the trail). The board
+  (`views/board.rs`, an alternate shape) opens every folder or place of
+  the one shown in place, at most `MAX_COLUMNS`, side by side as columns
+  of cards, a first column for what the place shown holds itself: a card
+  dragged to another column moves there (`BoardDrag` says the column it
+  leaves, a tag's drop the tag it loses), and a column emptied stays
+  while the board shows the place, to take cards back. A hydration asked
+  for is remembered by the listing that holds the entry
+  (`Pane::listing_of`), so one moved between two opened folders is
+  asked for again.
 - **What waits for a paste is core data.** The clipboard's owner publishes
   it in `App::pending` (entry ids and whether a paste will move them); the
   shell snapshots it once per frame. Every view dims cut entries
