@@ -447,7 +447,20 @@ pub struct Tagged {
 pub struct Contents {
     /// The tags in it, each with how many of its files are within it.
     pub places: Vec<(String, usize)>,
+    /// Beside each place, a few of the pictures within it, by their names
+    /// the last first (a camera's numbers: the newest): its tile's mosaic.
+    pub pictures: Vec<Vec<PathBuf>>,
     pub files: Vec<PathBuf>,
+}
+
+/// How many pictures a place's tile shows.
+pub const MOSAIC: usize = 4;
+
+/// Whether `path`'s name says it is a picture.
+fn is_picture(path: &Path) -> bool {
+    path.file_name()
+        .and_then(bibli_platform::mime::by_name)
+        .is_some_and(|m| bibli_platform::mime::is_kind(&m, Kind::Image))
 }
 
 /// Whether `file` passes what narrows `address`.
@@ -475,6 +488,8 @@ pub fn contents(address: &Address, files: &[Tagged], drafts: &[String]) -> Conte
     // The tags inside, by their names ignoring case: the spelling met
     // first, and the files within each, once.
     let mut places: Vec<(String, usize)> = Vec::new();
+    let mut pictures: Vec<Vec<PathBuf>> = Vec::new();
+    let mut by_name: HashMap<String, usize> = HashMap::new();
     let mut out = Vec::new();
     let inside = |file: &&Tagged| match &address.tag {
         Some(category) => file.tags.iter().any(|t| tag_within(t, category)),
@@ -502,10 +517,23 @@ pub fn contents(address: &Address, files: &[Tagged], drafts: &[String]) -> Conte
                 seen.push(child);
             }
         }
+        let picture = !seen.is_empty() && is_picture(&file.path);
         for child in seen {
-            match places.iter_mut().find(|(t, _)| same_tag(t, &child)) {
-                Some((_, n)) => *n += 1,
-                None => places.push((child, 1)),
+            let at = *by_name.entry(child.to_lowercase()).or_insert_with(|| {
+                places.push((child, 0));
+                pictures.push(Vec::new());
+                places.len() - 1
+            });
+            places[at].1 += 1;
+            if picture {
+                // The last names first, as many as a tile shows.
+                let list = &mut pictures[at];
+                let name = file.path.file_name();
+                let after = list.partition_point(|p| p.file_name() > name);
+                if after < MOSAIC {
+                    list.insert(after, file.path.clone());
+                    list.truncate(MOSAIC);
+                }
             }
         }
         if here || address.deep {
@@ -517,11 +545,16 @@ pub fn contents(address: &Address, files: &[Tagged], drafts: &[String]) -> Conte
             Some(category) => tag_parent(draft).is_some_and(|p| same_tag(p, category)),
             None => tag_parent(draft).is_none(),
         };
-        if inside && !places.iter().any(|(t, _)| same_tag(t, draft)) {
+        if inside && !by_name.contains_key(&draft.to_lowercase()) {
             places.push((draft.clone(), 0));
+            pictures.push(Vec::new());
         }
     }
-    Contents { places, files: out }
+    Contents {
+        places,
+        pictures,
+        files: out,
+    }
 }
 
 /// The entry a file is listed as, before it is stat-ed in full
@@ -542,6 +575,27 @@ fn entry_at(path: &Path) -> Option<Entry> {
         ino: meta.ino(),
     };
     Some(Entry::new(id, path.file_name()?.to_owned(), kind))
+}
+
+/// A place's pictures as its tile draws them (`keys::PLACE_PICTURES`):
+/// each its path, identity and modification time, for a thumbnail. Stats
+/// them: on a worker.
+fn tile_of(pictures: &[PathBuf]) -> Value {
+    use std::os::unix::fs::MetadataExt;
+    Value::List(
+        pictures
+            .iter()
+            .filter_map(|path| {
+                let meta = std::fs::metadata(path).ok()?;
+                Some(Value::List(vec![
+                    Value::Text(path.to_string_lossy().as_ref().into()),
+                    Value::UInt(meta.dev()),
+                    Value::UInt(meta.ino()),
+                    Value::Time(meta.modified().ok()?),
+                ]))
+            })
+            .collect(),
+    )
 }
 
 /// A place's identity: its tag, whatever its case.
@@ -742,7 +796,10 @@ impl Places {
 /// each file with the tags the index knew it by.
 #[derive(Default)]
 struct Sent {
-    places: HashMap<EntryId, (String, usize)>,
+    /// Each place's tag, files and pictures, as sent.
+    places: HashMap<EntryId, (String, usize, Vec<PathBuf>)>,
+    /// Each place's tile, as sent (`keys::PLACE_PICTURES`).
+    tiles: HashMap<EntryId, Value>,
     files: HashMap<EntryId, PathBuf>,
     tags: HashMap<EntryId, Vec<String>>,
     /// Every file it ever sent: one sent again (its tag given back) is
@@ -829,16 +886,39 @@ impl Open {
         let provenance = Provenance::Plugin {
             name: crate::ID.into(),
         };
+        // The places whose pictures changed: those stat-ed for their tiles,
+        // outside the lock.
+        let tiles: HashMap<EntryId, Value> = {
+            let before: HashMap<EntryId, Vec<PathBuf>> = self
+                .sent
+                .lock()
+                .places
+                .iter()
+                .map(|(id, (_, _, pictures))| (*id, pictures.clone()))
+                .collect();
+            contents
+                .places
+                .iter()
+                .zip(&contents.pictures)
+                .filter(|((tag, _), pictures)| {
+                    !pictures.is_empty() && before.get(&place_id(tag)) != Some(*pictures)
+                })
+                .map(|((tag, _), pictures)| (place_id(tag), tile_of(pictures)))
+                .collect()
+        };
         let wanted: HashSet<&PathBuf> = contents.files.iter().collect();
         let mut sent = self.sent.lock();
         let mut added: Vec<Entry> = Vec::new();
         let mut removed: Vec<EntryId> = Vec::new();
-        // Places: new, gone, or counting another number of files.
-        let mut places_now: HashMap<EntryId, (String, usize)> = HashMap::new();
-        for (tag, files) in &contents.places {
+        // Places: new, gone, or counting another number of files, or
+        // showing other pictures.
+        let mut places_now: HashMap<EntryId, (String, usize, Vec<PathBuf>)> = HashMap::new();
+        for ((tag, files), pictures) in contents.places.iter().zip(&contents.pictures) {
             let id = place_id(tag);
-            places_now.insert(id, (tag.clone(), *files));
-            if sent.places.get(&id) == Some(&(tag.clone(), *files)) {
+            let now = (tag.clone(), *files, pictures.clone());
+            let same = sent.places.get(&id) == Some(&now);
+            places_now.insert(id, now);
+            if same {
                 continue;
             }
             let mut entry = Entry::new(id, tag_leaf(tag), EntryKind::Directory);
@@ -850,6 +930,13 @@ impl Open {
                 Value::Text(tag.as_str().into()),
                 provenance.clone(),
             );
+            // Pictures unchanged: the tile sent with them.
+            let tile = tiles.get(&id).or_else(|| sent.tiles.get(&id)).cloned();
+            if let Some(tile) = tile.filter(|_| !pictures.is_empty()) {
+                entry
+                    .metadata
+                    .set(keys::PLACE_PICTURES, tile, provenance.clone());
+            }
             added.push(entry);
         }
         removed.extend(
@@ -858,6 +945,8 @@ impl Open {
                 .filter(|id| !places_now.contains_key(id))
                 .copied(),
         );
+        sent.tiles.retain(|id, _| places_now.contains_key(id));
+        sent.tiles.extend(tiles);
         sent.places = places_now;
         // Files: those no longer listed go, the new ones come.
         let gone: Vec<EntryId> = sent
@@ -957,7 +1046,7 @@ impl OpenLocation for Open {
 
     fn location_of(&self, id: EntryId) -> Option<Location> {
         let sent = self.sent.lock();
-        let (tag, _) = sent.places.get(&id)?;
+        let (tag, _, _) = sent.places.get(&id)?;
         Some(self.address.at(Some(tag.clone())).location())
     }
 
@@ -1232,6 +1321,41 @@ mod tests {
             ..at(Some("Places"))
         };
         assert!(contents(&pictures, &files, &[]).places.is_empty());
+    }
+
+    #[test]
+    fn a_place_shows_a_few_of_its_pictures_the_last_names_first() {
+        let files: Vec<Tagged> = (1..=6)
+            .map(|n| file(&format!("/p/IMG_{n:04}.jpg"), &["Places/France"]))
+            .chain([file("/p/notes.txt", &["Places/France"])])
+            .chain([file("/p/z.png", &["Places/Japan"])])
+            .collect();
+        let c = contents(&at(Some("Places")), &files, &[]);
+        let france = c
+            .places
+            .iter()
+            .position(|(t, _)| t == "Places/France")
+            .unwrap();
+        let names: Vec<String> = c.pictures[france]
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "IMG_0006.jpg",
+                "IMG_0005.jpg",
+                "IMG_0004.jpg",
+                "IMG_0003.jpg"
+            ],
+            "four, the last names first, no text file"
+        );
+        let japan = c
+            .places
+            .iter()
+            .position(|(t, _)| t == "Places/Japan")
+            .unwrap();
+        assert_eq!(c.pictures[japan].len(), 1);
     }
 
     #[test]

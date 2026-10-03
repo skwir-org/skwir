@@ -204,8 +204,10 @@ pub mod keys {
     /// The tag a place of a tag location stands for, `Value::Text`, its
     /// full name (`Places/France`): what its color and its menu are of.
     pub const PLACE_TAG: &str = "place_tag";
-    /// A few of the pictures a place holds, newest first, `Value::List`
-    /// of `Value::Text` paths: what the grid draws on its tile.
+    /// A few of the pictures a place holds, what the grid draws on its
+    /// tile: a `Value::List` of one `Value::List` each, its path
+    /// (`Value::Text`), device and inode (`Value::UInt`) and modification
+    /// time (`Value::Time`), what a thumbnail is asked with.
     pub const PLACE_PICTURES: &str = "place_pictures";
 }
 

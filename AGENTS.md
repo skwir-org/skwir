@@ -343,7 +343,10 @@ current source before assuming a planned crate, command, or API exists.
   selected has its own items (`tags.place_menu`). A tag dropped or pasted
   in a folder is copied there as a folder of its files, with one inside
   for each tag within it (`Verbs::export`, `tags.export`: a plan to
-  review); cut and pasted in a tag, it goes inside.
+  review); cut and pasted in a tag, it goes inside. In the grid a tag's
+  tile shows a few of its pictures, the last names first, framed in its
+  color (`keys::PLACE_PICTURES`, each with what a thumbnail is asked
+  with, `Shell::thumb_of`).
 - **Nothing to list is a state, not a blank.** `placeholder.rs` says why a
   pane is empty (empty folder, no results, empty shelf) or why it failed, in
   the user's words with the system's message as the detail, and offers the

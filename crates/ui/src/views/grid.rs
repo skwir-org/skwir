@@ -182,7 +182,7 @@ fn cell(
 ) -> AnyElement {
     let zoom = shell.zoom;
     let pane = shell.pane;
-    let (name, is_dir, selected, is_cursor, icon, link, path, tags, place) = {
+    let (name, is_dir, selected, is_cursor, icon, link, path, tags, place, pictures) = {
         let ws = shell.app.workspace.read();
         let Some(pane) = ws.pane(shell.pane) else {
             return div().into_any_element();
@@ -211,6 +211,7 @@ fn cell(
                     .unwrap_or_default();
                 (place, shell.tag_colors.of(tag))
             }),
+            mosaic_of(e),
         )
     };
     // A filled box shows the short side of the thumbnail at full size.
@@ -256,6 +257,20 @@ fn cell(
                 })
                 .into_any_element(),
         },
+    };
+    // A place with pictures (a tag's) shows a few of them.
+    let picture = match &place {
+        Some((_, color)) if !pictures.is_empty() => mosaic(
+            shell,
+            pictures,
+            zoom as f32,
+            size,
+            *color,
+            theme,
+            window,
+            cx,
+        ),
+        _ => picture,
     };
     let mut el = div()
         .id(ix)
@@ -328,6 +343,102 @@ fn cell(
         el = dnd::droppable_place(el, place, cx);
     }
     el.into_any_element()
+}
+
+/// The pictures a place's tile shows (`keys::PLACE_PICTURES`): each one's
+/// identity and path, and when it was modified.
+fn mosaic_of(
+    e: &bibli_core::Entry,
+) -> Vec<(bibli_core::op::EntryRef, Option<std::time::SystemTime>)> {
+    use bibli_core::Value;
+    let Some(Value::List(items)) = e.metadata.value(bibli_core::entry::keys::PLACE_PICTURES) else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            let Value::List(parts) = item else {
+                return None;
+            };
+            let [path, dev, ino, modified] = parts.as_slice() else {
+                return None;
+            };
+            let id = EntryId {
+                dev: dev.as_u64()?,
+                ino: ino.as_u64()?,
+            };
+            let path = std::path::PathBuf::from(path.as_str()?);
+            Some((bibli_core::op::EntryRef::new(id, path), modified.as_time()))
+        })
+        .collect()
+}
+
+/// A place's pictures on its tile, as a thumbnail fills a box: one alone,
+/// else four quarters, those it lacks left blank; framed in its tag's
+/// color, so a place is never taken for one of its files.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "what one tile draws, read once by its caller"
+)]
+fn mosaic(
+    shell: &mut Shell,
+    pictures: Vec<(bibli_core::op::EntryRef, Option<std::time::SystemTime>)>,
+    side: f32,
+    quality: ThumbSize,
+    color: usize,
+    theme: &Theme,
+    window: &mut Window,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    const GAP: f32 = 2.;
+    const FRAME: f32 = 3.;
+    let one = pictures.len() == 1;
+    let inner = side - 2. * FRAME;
+    let cell = if one { inner } else { (inner - GAP) / 2. };
+    let mut cells: Vec<AnyElement> = pictures
+        .into_iter()
+        .take(4)
+        .map(|(entry, mtime)| {
+            let frame = div()
+                .size(px(cell))
+                .flex_none()
+                .overflow_hidden()
+                .rounded_sm()
+                .bg(theme.placeholder);
+            match shell.thumb_of(entry, mtime, quality, window, cx) {
+                ThumbView::Ready(ri) => frame
+                    .child(img(ri).size_full().object_fit(gpui::ObjectFit::Cover))
+                    .into_any_element(),
+                _ => frame.into_any_element(),
+            }
+        })
+        .collect();
+    while !one && cells.len() < 4 {
+        cells.push(
+            div()
+                .size(px(cell))
+                .flex_none()
+                .rounded_sm()
+                .bg(theme.hover)
+                .into_any_element(),
+        );
+    }
+    div()
+        .size(px(side))
+        .p(px(FRAME - 1.))
+        .rounded_md()
+        .border_1()
+        .border_color(theme.tags[color % theme.tags.len()])
+        .bg(theme.tag_fill(color))
+        .child(
+            div()
+                .size(px(inner))
+                .flex()
+                .flex_wrap()
+                .gap(px(GAP))
+                .children(cells),
+        )
+        .into_any_element()
 }
 
 impl PaneView for GridView {

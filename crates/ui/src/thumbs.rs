@@ -118,6 +118,46 @@ impl Shell {
             };
             (key, req)
         };
+        self.thumb_asked(key, req, window, cx)
+    }
+
+    /// The thumbnail of a file no listing holds (a picture on a place's
+    /// tile, `keys::PLACE_PICTURES`), by its identity and path, requested
+    /// at visible priority if needed.
+    pub fn thumb_of(
+        &mut self,
+        entry: bibli_core::op::EntryRef,
+        mtime: Option<SystemTime>,
+        size: ThumbSize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ThumbView {
+        let key = (entry.id, size, mtime);
+        if let Some(img) = self.thumbs.get(&key) {
+            return ThumbView::Ready(img);
+        }
+        let type_named = entry
+            .path
+            .file_name()
+            .and_then(bibli_platform::mime::by_name)
+            .map(|m| Arc::from(m.as_str()));
+        let req = ThumbRequest {
+            entry,
+            mime: type_named,
+            mtime,
+            size,
+        };
+        self.thumb_asked(key, req, window, cx)
+    }
+
+    /// `req` asked of the thumbnails, kept under `key` once ready.
+    fn thumb_asked(
+        &mut self,
+        key: Key,
+        req: ThumbRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ThumbView {
         match self.app.thumbnails.get(req, Priority::Visible) {
             ThumbState::Ready(img) => {
                 let Some(ri) = to_render_image(&img) else {
