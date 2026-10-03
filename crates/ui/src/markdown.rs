@@ -51,6 +51,9 @@ pub struct MarkdownStyle {
     pub quote_text: Hsla,
     pub quote_border: Hsla,
     pub list_indent: f32,
+    /// The least space between a marker and its item's text: a marker
+    /// wider than the indent (`1.2.1.`, `1497.`) pushes the text on.
+    pub marker_gap: f32,
     /// Space between the text column and the edge of the pane.
     pub page_padding: f32,
     pub marker_color: Hsla,
@@ -118,6 +121,7 @@ impl MarkdownStyle {
             },
             quote_border: theme.accent,
             list_indent: if reading { 24. } else { 20. },
+            marker_gap: body_size * 0.4,
             page_padding: if reading { 28. } else { 8. },
             marker_color: if reading {
                 theme.text_muted
@@ -221,6 +225,7 @@ pub fn block(
                 div()
                     .flex_none()
                     .min_w(px(style.list_indent))
+                    .pr(px(style.marker_gap))
                     .text_color(style.marker_color)
                     .child(block.marker.clone().unwrap_or_default()),
             );

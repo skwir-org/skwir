@@ -563,6 +563,82 @@ fn svg_tree(bytes: &[u8]) -> anyhow::Result<resvg::usvg::Tree> {
     options.image_href_resolver.resolve_string = Box::new(|_, _| None);
     Ok(resvg::usvg::Tree::from_data(bytes, &options)?)
 }
+/// How a list or its notes count: `1.`, `01`, `b)`, `xiv`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Numbering {
+    #[default]
+    Decimal,
+    DecimalZero,
+    LowerLetter,
+    UpperLetter,
+    LowerRoman,
+    UpperRoman,
+    /// Counted, but no number shown.
+    None,
+}
+
+impl Numbering {
+    /// HTML's `<ol type>`: `1`, `a`, `A`, `i`, `I`.
+    pub fn of_html(kind: &str) -> Self {
+        match kind {
+            "a" => Self::LowerLetter,
+            "A" => Self::UpperLetter,
+            "i" => Self::LowerRoman,
+            "I" => Self::UpperRoman,
+            _ => Self::Decimal,
+        }
+    }
+
+    /// `n` (from 1) as this counts it.
+    pub fn number(self, n: u32) -> String {
+        match self {
+            Self::Decimal => n.to_string(),
+            Self::DecimalZero => format!("{n:02}"),
+            Self::LowerLetter => letters(n),
+            Self::UpperLetter => letters(n).to_uppercase(),
+            Self::LowerRoman => roman(n),
+            Self::UpperRoman => roman(n).to_uppercase(),
+            Self::None => String::new(),
+        }
+    }
+}
+
+/// a, b, … z, aa, bb, … as word processors and browsers letter a list.
+fn letters(n: u32) -> String {
+    if n == 0 {
+        return "0".into();
+    }
+    let letter = char::from(b'a' + u8::try_from((n - 1) % 26).unwrap_or(0));
+    std::iter::repeat_n(letter, ((n - 1) / 26 + 1) as usize).collect()
+}
+
+fn roman(mut n: u32) -> String {
+    if n == 0 || n >= 4000 {
+        return n.to_string();
+    }
+    let mut out = String::new();
+    for (value, digits) in [
+        (1000, "m"),
+        (900, "cm"),
+        (500, "d"),
+        (400, "cd"),
+        (100, "c"),
+        (90, "xc"),
+        (50, "l"),
+        (40, "xl"),
+        (10, "x"),
+        (9, "ix"),
+        (5, "v"),
+        (4, "iv"),
+        (1, "i"),
+    ] {
+        while n >= value {
+            out.push_str(digits);
+            n -= value;
+        }
+    }
+    out
+}
 /// One fact for the panel's Details, or nothing when the format left it
 /// blank. Bounded: a title can be a whole abstract.
 pub fn detail(label: &str, value: impl AsRef<str>) -> Option<bibli_core::inspection::Detail> {
@@ -1009,6 +1085,17 @@ mod tests {
         assert_eq!(text_prefix(b"plain"), Some("plain"));
         assert_eq!(text_prefix(b"nul\0byte"), None);
         assert_eq!(text_prefix(&[0xff, 0xfe, b'a']), None);
+    }
+
+    #[test]
+    fn lists_count_as_word_processors_and_browsers_write_them() {
+        assert_eq!(Numbering::Decimal.number(3), "3");
+        assert_eq!(Numbering::DecimalZero.number(3), "03");
+        assert_eq!(Numbering::LowerLetter.number(28), "bb");
+        assert_eq!(Numbering::of_html("A").number(2), "B");
+        assert_eq!(Numbering::of_html("i").number(14), "xiv");
+        assert_eq!(Numbering::UpperRoman.number(1999), "MCMXCIX");
+        assert_eq!(Numbering::None.number(4), "");
     }
 
     #[test]

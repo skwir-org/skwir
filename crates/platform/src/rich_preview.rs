@@ -139,6 +139,19 @@ pub fn html(
                 }
                 let parent = stack.last().expect("the root context").clone();
                 match node.value() {
+                    // Between a table's rows and cells, white space is the
+                    // source's layout, not a cell's text.
+                    Node::Text(text)
+                        if text.trim().is_empty()
+                            && node
+                                .parent()
+                                .and_then(|p| p.value().as_element().map(Element::name))
+                                .is_some_and(|name| {
+                                    matches!(
+                                        name,
+                                        "table" | "thead" | "tbody" | "tfoot" | "tr" | "colgroup"
+                                    )
+                                }) => {}
                     Node::Text(text) => walk.text(&parent, text),
                     Node::Element(e) => {
                         let element = ElementRef::wrap(node).expect("an element");
@@ -243,8 +256,9 @@ struct Context {
     code: bool,
     quote: bool,
     lists: u32,
-    /// Whether the nearest list is numbered, and where it starts.
-    list: Option<(bool, usize)>,
+    /// How the nearest list numbers its items (`None`: bullets), and
+    /// where it starts.
+    list: Option<(Option<crate::inspection::Numbering>, u32)>,
     /// The nearest list item and its marker.
     item: Option<(NodeId, String)>,
     link: Option<String>,
@@ -315,9 +329,11 @@ impl Context {
                 context.lists += 1;
                 let start = e
                     .attr("start")
-                    .and_then(|start| start.parse::<usize>().ok())
+                    .and_then(|start| start.parse::<u32>().ok())
                     .unwrap_or(1);
-                context.list = Some((name == "ol", start));
+                let numbering = (name == "ol")
+                    .then(|| crate::inspection::Numbering::of_html(e.attr("type").unwrap_or("1")));
+                context.list = Some((numbering, start));
             }
             "li" => {
                 let before = node
@@ -325,7 +341,10 @@ impl Context {
                     .filter(|n| n.value().as_element().is_some_and(|e| e.name() == "li"))
                     .count();
                 let marker = match context.list {
-                    Some((true, start)) => format!("{}.", start + before),
+                    Some((Some(numbering), start)) => {
+                        let n = start.saturating_add(u32::try_from(before).unwrap_or(u32::MAX));
+                        format!("{}.", numbering.number(n))
+                    }
                     _ => "•".into(),
                 };
                 context.item = Some((node.id(), marker));
@@ -841,7 +860,14 @@ mod tests {
             <p><span style="font-style:italic">said</span> and <span style="font-weight: 700">done</span></p>
             <ol start="3"><li>three</li><li><p>four</p><p>still four</p><ul><li>inner</li></ul></li></ol>
             <hr/>
-            <table><tr><th>Name</th><th>Qty</th></tr><tr><td><em>pear</em></td><td>12</td></tr></table>
+            <table>
+              <tr><th>Name</th> <th>Qty</th></tr>
+              <tr>
+                <td><em>pear</em></td>
+                <td>12</td>
+              </tr>
+            </table>
+            <ol type="a" start="2"><li>bee</li></ol><ol type="I"><li>one</li><li>two</li></ol>
             <center><img src="cover.png" alt="Cover"/></center>"#;
         let blocks = html(
             source,
@@ -864,12 +890,22 @@ mod tests {
                 "",
                 "Name\tQty",
                 "pear\t12",
+                "bee",
+                "one",
+                "two",
                 "Cover"
-            ]
+            ],
+            "white space between cells is not theirs"
         );
         assert_eq!(
-            [blocks[0].align, blocks[1].align, blocks[9].align],
+            [blocks[0].align, blocks[1].align, blocks[12].align],
             [Align::Center, Align::Start, Align::Center]
+        );
+        let typed: Vec<_> = blocks[9..12].iter().map(|b| b.marker.as_deref()).collect();
+        assert_eq!(
+            typed,
+            [Some("b."), Some("I."), Some("II.")],
+            "an ordered list counts as its type says"
         );
         assert!(blocks[1].runs[0].italic && blocks[1].runs.iter().any(|run| run.bold));
         let list: Vec<_> = blocks[2..6]

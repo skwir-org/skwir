@@ -395,9 +395,12 @@ still to come are in `docs/preview-frame.md`.
   stacked, so a long specimen text pushes the rest down.
 - **HTML is read for its structure** (`rich_preview::html`, shared by HTML
   files, EPUB and mail): headings, paragraphs, quotes and code; lists as a
-  depth and a marker beside the text, numbered from `start`, the marker on an
-  item's first block only; table rows as cells that are ranges of the row's
-  text, like Markdown's, an empty cell still a column; rules. XHTML (a book's
+  depth and a marker beside the text, numbered from `start` as `type` says
+  (`inspection::Numbering`, which a word processor's lists share), the
+  marker on an item's first block only; table rows as cells that are
+  ranges of the row's text, like Markdown's, an empty cell still a column,
+  and the white space between a table's cells none of theirs; rules.
+  XHTML (a book's
   chapters, `.xhtml` files) is read as XML first (`rich_preview/xml.rs`), into
   the same tree the HTML parser builds, so `<title/>` cannot swallow a page.
 - **A page's own styling is kept where it says how text reads**
