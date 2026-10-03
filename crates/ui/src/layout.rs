@@ -3,7 +3,7 @@
 //! Three choices, each with an automatic default: whether split panes sit
 //! side by side or one above the other, whether the preview is at the right
 //! edge or at the bottom, and whether a file of an archive is previewed at
-//! the right of the rows it came from or under them (`members.rs`). Automatic follows the window's shape: a window
+//! the right of its archive's view or under it (`members.rs`). Automatic follows the window's shape: a window
 //! taller than it is wide (a portrait screen, half of a screen divided top
 //! and bottom) stacks its panes and puts the preview under them. The
 //! window's size is known before layout, so this is decided in
@@ -69,7 +69,7 @@ impl Member {
         }
     }
 
-    /// Whether the member is previewed at the right of the rows, where
+    /// Whether the member is previewed at the right of its container's view, where
     /// Automatic would put it there when `wide`.
     pub fn beside(self, wide: bool) -> bool {
         match self {

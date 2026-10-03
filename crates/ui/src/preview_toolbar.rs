@@ -123,10 +123,15 @@ pub fn zoom_tools(bar: &mut Bar, shell: &Shell) {
     ));
 }
 
-/// Whether the hexadecimal inspection provider is registered. The registry
-/// lock is taken only when its revision changed since the last read, never
-/// once per variant per frame.
+/// Whether the bytes of what is shown can be viewed: the hexadecimal
+/// inspection provider is registered, and what is shown is a file here, not
+/// a member asked for that was never written out (too large, refused). The
+/// registry lock is taken only when its revision changed since the last
+/// read, never once per variant per frame.
 pub(crate) fn hex_available(shell: &Shell) -> bool {
+    if shell.preview.descend.is_some() {
+        return false;
+    }
     let revision = shell.app.previews.revision();
     let cache = &shell.preview.hex_provider;
     if let Some((seen, hex)) = cache.get()
@@ -162,7 +167,7 @@ fn caption(shell: &Shell) -> String {
 pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
     let image = matches!(shell.preview.content, Some(PreviewContent::Image { .. }));
     let mut bar = Bar::new("preview-tools");
-    crate::preview_bar::parent_tool(&mut bar, shell);
+    crate::preview_bar::close_tool(&mut bar, shell, theme);
     if let Some(PreviewContent::Image {
         detail: Some(PreviewInfo::Video { seconds, duration }),
         ..
@@ -229,5 +234,11 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
                 .into_any_element()
         },
     ));
-    crate::preview_bar::render(&bar, crate::preview::active_popup(shell), shell, theme, cx)
+    crate::preview_bar::render(
+        &bar,
+        crate::preview::active_popup(shell, false),
+        shell,
+        theme,
+        cx,
+    )
 }

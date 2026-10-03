@@ -332,7 +332,7 @@ fn layout_items(shell: &Shell, what: &'static str) -> Vec<Button> {
     let mut automatic = "Follow the window's shape: stacked when it is taller than wide";
     let choices: [(&str, &str, bool); 3] = if what == "member" {
         // Where a file of an archive, or an attachment, is previewed beside
-        // the rows it came from; Automatic follows the panel's shape.
+        // the view it came from; Automatic follows the panel's shape.
         automatic = "Follow the preview panel's shape: under the archive's files when it is \
                      at the right, at their right when it is at the bottom";
         [

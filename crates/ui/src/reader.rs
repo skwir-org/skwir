@@ -822,7 +822,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
                 .is_some_and(|session| !session.info().outlines.is_empty()),
         ),
     ));
-    crate::preview_bar::parent_tool(&mut bar, shell);
+    crate::preview_bar::close_tool(&mut bar, shell, theme);
 
     bar.push(Item::button(
         Slot::Navigate,
@@ -900,7 +900,13 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         .opens("find"),
     );
     bar.popups.push(("find", std::rc::Rc::new(find_panel)));
-    crate::preview_bar::render(&bar, crate::preview::active_popup(shell), shell, theme, cx)
+    crate::preview_bar::render(
+        &bar,
+        crate::preview::active_popup(shell, false),
+        shell,
+        theme,
+        cx,
+    )
 }
 
 /// The find field: its own keys and focus, anchored like a menu.

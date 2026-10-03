@@ -551,12 +551,12 @@ fn star_picker(
 /// Whether there is nothing to show but the details. A preview still on
 /// its way is not nothing: Details waits for the answer rather than
 /// filling the body for the instant before a picture replaces it. Nor is
-/// a member with no preview of its own while its container's rows are
-/// kept beside it (`PreviewState::members`): the rows are content, so
-/// Details stays as the card left it, opened and closed on demand.
+/// a member with no preview of its own while its container's view is kept
+/// above it (`PreviewState::parked`): that view is content, so Details
+/// stays as the card left it, opened and closed on demand.
 pub fn alone(shell: &Shell) -> bool {
     shell.preview.media.session.is_none()
-        && shell.preview.members().is_none()
+        && shell.preview.parked().is_none()
         && match &shell.preview.content {
             None => shell.preview.phase == crate::preview::PreviewPhase::Idle,
             Some(

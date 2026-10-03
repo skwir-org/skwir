@@ -3,16 +3,20 @@
 //! A preview never builds a row: it lists its tools, each in a slot, and this
 //! module lays them out, so the same action is in the same place whatever is
 //! shown. Slots, left to right: contents (its drawer opens on that side),
-//! navigate (parent, previous and next, page), view (how the content is shown:
-//! rendered or source, zoom or text size, fit), a spacer, find, then More.
-//! Copy has no button: it is Ctrl+C and the content's own right-click menu,
-//! where people look for it.
+//! navigate (previous and next, page), view (how the content is shown:
+//! rendered or source, zoom or text size, fit), a spacer, find, More, then
+//! the × that closes a member of a container (`close_tool`). A member shown
+//! under its container's view starts with its name (`Slot::Title`). Copy has
+//! no button: it is Ctrl+C and the content's own right-click menu, where
+//! people look for it.
 //!
 //! The menu rule is every responsive toolbar's: More holds what has no button
 //! in the variant the row chose this frame (`PopoverAnchor::popup_for`), plus
 //! what never has one (open externally, copy the path, a kind's own settings).
-//! Nothing is both a button and a menu row, and More is always there, so it
-//! never moves.
+//! Nothing is both a button and a menu row. More is there whenever it holds
+//! something, last but for the ×, which stays at the end. Open externally and
+//! copy the path are the entry's: under a container's view they are in its
+//! More, not the member's (`Bar::always`).
 use std::rc::Rc;
 
 use gpui::{AnyElement, Context, Div, div, prelude::*, px};
@@ -36,6 +40,9 @@ pub mod label {
     pub const MORE: &str = "More";
 }
 
+/// How tall the bar is.
+pub const HEIGHT: f32 = 42.;
+
 /// `keep` of an item no variant shows.
 const NEVER: usize = usize::MAX;
 
@@ -44,7 +51,10 @@ pub const MORE: &str = "preview";
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Slot {
-    /// Contents, first: the drawer it opens is on the left too.
+    /// The name of a member shown under its container's view, before
+    /// everything: the card names the container.
+    Title,
+    /// Contents, first of the tools: the drawer it opens is on the left too.
     Lead,
     Navigate,
     View,
@@ -143,6 +153,12 @@ pub struct Bar {
     pub settings: Option<Panel>,
     /// Popups a tool of this bar opens, by name.
     pub popups: Vec<(&'static str, Popup)>,
+    /// Whether More holds what is about the entry (open externally, copy
+    /// the path): every bar's but a member's under its container's view,
+    /// whose bar has them.
+    pub always: bool,
+    /// The × at the end that leaves a member (`close_tool`).
+    pub close: Option<Button>,
 }
 
 impl Bar {
@@ -152,6 +168,8 @@ impl Bar {
             items: Vec::new(),
             settings: None,
             popups: Vec::new(),
+            always: true,
+            close: None,
         }
     }
 
@@ -243,24 +261,63 @@ pub fn unit_popup(plain: &'static str) -> Popup {
     })
 }
 
-/// Back to the container, first in every bar while the panel shows one of
-/// its members: whatever the member turned out to be, the way out is the same.
-pub fn parent_tool(bar: &mut Bar, shell: &Shell) {
-    let inside =
-        !shell.preview.nested.is_empty() || shell.preview.inspection.request.target.is_some();
-    if inside {
-        bar.push(Item::button(
-            Slot::Navigate,
-            2,
-            Button::new(
-                "inspect-parent",
-                "up",
-                "Back to the container",
-                "ui.inspect",
-            )
-            .args(serde_json::json!({"action":"back"})),
-        ));
+/// The way out of a member, the same whatever the member turned out to be:
+/// an × at the end of its bar. Under its container's view (`members.rs`)
+/// the bar also starts with the member's name, which the card no longer
+/// says, and leaves what is about the entry to the container's More.
+pub fn close_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
+    if !shell.preview.inside() {
+        return;
     }
+    // Its tooltip names Escape where Escape does the same (`keymap::MEMBER`).
+    bar.close = Some(
+        Button::new("preview-close", "close", "Close", "ui.inspect")
+            .args(serde_json::json!({"action":"back"})),
+    );
+    let Some((name, size)) = crate::members::title(shell) else {
+        return;
+    };
+    bar.always = false;
+    let (text, muted) = (theme.text, theme.text_muted);
+    bar.push(
+        Item::widget(Slot::Title, 0, move |_, _| {
+            div()
+                .flex_1()
+                .min_w(px(64.))
+                .pl_1()
+                .flex()
+                .items_baseline()
+                .gap_1()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .child(
+                    div()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis_middle()
+                        .text_sm()
+                        .text_color(text)
+                        .child(name.clone()),
+                )
+                .children(
+                    size.clone()
+                        .map(|size| div().flex_none().text_xs().text_color(muted).child(size)),
+                )
+                .into_any_element()
+        })
+        .fills(),
+    );
+}
+
+/// Whether More has anything to hold in variant `mode`: what the entry is
+/// about, a kind's settings, or a button this variant drops.
+fn has_more(bar: &Bar, mode: usize) -> bool {
+    bar.always
+        || bar.settings.is_some()
+        || bar
+            .items
+            .iter()
+            .any(|item| !item.shown(mode) && matches!(item.tool, Tool::Button(_)))
 }
 
 /// What never has a button, for every kind.
@@ -343,13 +400,16 @@ fn row(
     if last != Some(Slot::Tools) && !filled {
         row = row.child(div().flex_1().min_w_0());
     }
-    row.child(
-        Button::new("preview-more", "more", label::MORE, "ui.preview_menu")
-            .active(active == Some(MORE))
-            // A popup whose own button this variant dropped opens here.
-            .anchor_if(anchor, active.is_some() && !anchored)
-            .render(shell, cx),
-    )
+    row.when(has_more(bar, mode), |row| {
+        row.child(
+            Button::new("preview-more", "more", label::MORE, "ui.preview_menu")
+                .active(active == Some(MORE))
+                // A popup whose own button this variant dropped opens here.
+                .anchor_if(anchor, active.is_some() && !anchored)
+                .render(shell, cx),
+        )
+    })
+    .children(bar.close.clone().map(|close| close.render(shell, cx)))
     .into_any_element()
 }
 
@@ -367,7 +427,7 @@ pub fn render(
         variants: (0..3)
             .map(|mode| row(bar, mode, active, &anchor, shell, theme, cx))
             .collect(),
-        height: 42.,
+        height: HEIGHT,
         chosen: Some(chosen.clone()),
     });
     let Some(active) = active else {
@@ -394,10 +454,12 @@ pub fn render(
                     panel = panel.children(settings(shell, theme, cx));
                     dropped = true;
                 }
-                if dropped {
+                if dropped && bar.always {
                     panel = panel.child(separator(theme));
                 }
-                panel.children(always(shell, cx)).into_any_element()
+                panel
+                    .when(bar.always, |panel| panel.children(always(shell, cx)))
+                    .into_any_element()
             })
             .collect();
         root = root.child(anchor.popup_for(&chosen, panels));

@@ -181,14 +181,18 @@ still to come are in `docs/preview-frame.md`.
   preview derives a colour locally or hard-codes one.
 - **One toolbar.** A preview never builds a row: it lists its tools in
   `preview_bar::Bar`, each in a slot, and the bar lays them out. Left to right:
-  contents (first, because its drawer opens on that side) · navigate (parent,
-  previous, the page or chapter as a field with the count, next:
+  a member's name under its container's view (`Slot::Title`, see below) ·
+  contents (first of the tools, because its drawer opens on that side) ·
+  navigate (previous, the page or chapter as a field with the count, next:
   `preview_bar::number_tool`, the reader's pages and a book's numbered
   sections alike, `Inspection::sections`) · view (zoom or text size, each
   as smaller, the value as a picker, larger; then fit or width: Fit width
   for a page, Full width for text; then the presentation: the reader's
   Continuous, or the format's own name as the switch between rendered and
-  source) · spacer · find · More. Text and a page give way alike: the
+  source) · spacer · find · More · the × that leaves a member
+  (`preview_bar::close_tool`, the same for every kind, and for a member
+  that could not be written out, whose failure stands in its place:
+  `PreviewState::inside`). Text and a page give way alike: the
   same keeps for the same places. Copy has no button: it is Ctrl+C and the content's
   right-click menu (`Shell::open_preview_menu`), where people look for it. An
   action too rare for a button in any variant, like View as hex, is
@@ -202,9 +206,13 @@ still to come are in `docs/preview-frame.md`.
   chosen variant dropped (`PopoverAnchor::popup_for`), a kind's settings that
   never have a button (volume, speed, tracks), and what no kind has a button
   for (open externally, copy the path). Nothing is both a button and a menu
-  row, and More is always last, so it never moves. A popup of another tool
-  (the zoom picker, the find field) is anchored to that tool, or to More when
-  the variant dropped it (`Item::opens`, `preview::active_popup`).
+  row. More is there whenever it holds something, last but for the ×, which
+  stays at the end; open externally and copy the path are the entry's, so
+  under a container's view they are in its More and a member's More holds
+  only what is the member's (`Bar::always`). A popup of another tool (the
+  zoom picker, the find field) is anchored to that tool, or to More when the
+  variant dropped it (`Item::opens`, `preview::active_popup`), in the bar it
+  was opened from (`PreviewState::menu_parked`).
 - **A map is looked at and moved** (`map_preview.rs`, `elements/map.rs`,
   ADR-020). It is an inspection (`InspectionKind::Map`), so Details, the
   switch to the source and the way out of a container are the frame's; its
@@ -278,24 +286,25 @@ still to come are in `docs/preview-frame.md`.
   layer). A thumbnail provider's `accepts` runs on the UI thread and looks
   at names only; its `thumbnail` returns `None` for a file not its own.
 - **The header is a card** (`preview::header`): the entry's icon, its name
-  (a trail inside a container) and one line of type, size and date. It is
-  the one place that says what the panel shows, and clicking it opens
-  Details. It has no close button: the panel is closed by the Preview button
+  (a trail inside a container) and one line of type, size and date. It
+  says what the panel shows (under a container's view kept above a member,
+  that container: the member's bar names the member), and clicking it
+  opens Details. It has no close button: the panel is closed by the Preview button
   that opened it (the peek overlay alone keeps one).
 - **Details** (`details.rs`) is a section of the frame, not a kind of
   preview: everything known about what the panel shows that the header does
   not say (no Name or Type row: the header has them). With nothing to
   preview (a folder, an unknown file, an error) it is always open, as tall
   as what it says, with the toolbar and what the content says (why the
-  preview failed) right under it, unless a container's rows are kept
-  beside the member (`details::alone`): the rows are content, so Details
+  preview failed) right under it, unless a container's view is kept
+  above the member (`details::alone`): that view is content, so Details
   stays as the card left it; under a preview it opens on demand in
   the same place, right under the card, above the toolbar, up to half
   the panel (Ctrl+I; with the panel closed, Ctrl+I opens both). Whether it
   is open belongs to the window's shape (`session.rs`). One function puts
   it there for every preview (`preview::under_card`): the toolbar and the
-  content (`preview::body`, what a container's split holds beside its
-  rows) never draw it, so neither a kind nor the split can come between
+  content (`preview::body`, what a container's split holds under its
+  view) never draw it, so neither a kind nor the split can come between
   the card and Details.
   Facts come from three places and none is read while painting: the entry's
   metadata with its provenance, collected when the entry, its listing or the
@@ -318,10 +327,10 @@ still to come are in `docs/preview-frame.md`.
   an archived picture zooms, an attached PDF opens in the reader, a JSON
   member folds. Sessions may hold the file open; it lives as long as the panel
   shows it (`preview::Nested`). The panel follows containers `NESTING` deep;
-  the header's trail and the Back button, first in every bar, lead out
-  (while the container's rows are kept beside the member, the trail is
-  only words: the card it sits in opens Details, and a click meant for
-  that must not leave the member).
+  the header's trail and the × at the end of every bar lead out (while a
+  container's view is kept above the member, the trail is only words: the
+  card it sits in opens Details, and a click meant for that must not leave
+  the member).
   Directories live in the one deletable cache under the process id, are only
   ever removed on a worker, and what a killed process left is swept at the
   next start. The entry's own commands (open externally, copy the path) stay
@@ -330,27 +339,40 @@ still to come are in `docs/preview-frame.md`.
   shows them itself. A container that only names files that exist on their
   own (a playlist) returns them with `own_file`: nothing is written or
   removed, and a location that is not on this machine is refused.
-- **The rows a member came from stay beside it** (`members.rs`). A member
-  of an archive or a message (`inspector::kept_rows`) is shown beside its
-  container's rows as they were shown, with their folds, and the member
-  highlighted: under them or at their right, as More's Layout says
-  (`layout::Member`, in `ui.layout`), whose Automatic follows the room
-  (under them in a panel at the right edge, at their right at the bottom
-  and in peek). Their edge is dragged like a split's: it stores the rows'
-  share of the room, one for each way it runs (`members::Share`), part of
-  the window's shape, and each side keeps a minimum. Details stays right
-  under the card, above the rows and the member alike
-  (`preview::under_card`): it is about what the card names. The rows are the
-  container's inspection, shared, never copied or read again; a click or
-  Up and Down (`PreviewMembers`) opens another member through
-  `ui.inspect` (`sibling`, `sibling_step`), which goes up to the
-  container's depth and down again without previewing the container in
-  between. Opening a member gives these rows the keyboard. They are kept
-  per member (`PreviewState::members`, beside `nested`) and go with it
-  when the panel goes up; while a member is on its way they are the ones
-  it was asked from (`members_asked`). A playlist keeps the player's
-  Previous and Next instead. The panel's copy is drawn only while peek is
-  closed: one element holds their focus.
+- **A container's view stays above its member** (`members.rs`). A member
+  of an archive or a message (`inspector::kept_rows`) is previewed as a
+  supplement under the container's view, which is left as it was shown:
+  its bar with Find and More, its strip, its header, its folds and place,
+  the member's row highlighted. The view is parked whole when the member
+  is opened (`members::Parked`: the `Display` and its `inspector::State`),
+  drawn by the inspector's own functions (`inspector::View`), never read
+  again; the member's × or Escape (`PreviewMember`) gives the panel back to
+  it as it was (`Shell::close_member`), and so does the trail to a depth
+  where one is kept. The member goes under the view or at its right, as
+  More's Layout says (`layout::Member`, in `ui.layout`), whose Automatic
+  follows the room (under it in a panel at the right edge, at its right at
+  the bottom and in peek). Their edge is dragged like a split's: it stores
+  the view's share of the room, one for each way it runs
+  (`members::Share`), part of the window's shape, and each side keeps a
+  minimum. Details stays right under the card, above the view and the
+  member alike (`preview::under_card`): it is about what the card names.
+  The highlight leads: a click on a file, the arrows (`PreviewMembers`: Up
+  and Down walk the rows, Left and Right fold a folder or go up to it,
+  `inspector::State::walk`) or a find that lands on a member previews it;
+  a folder or a file that cannot be opened is only highlighted. Each side
+  tracks a focus handle, so a press in one gives it the keyboard, and
+  `ui.inspect` acts on the side that has it
+  (`Shell::container_has_keyboard`): what changes the view alone
+  (`inspector::VIEW_ONLY`) is done on it in the panel's place
+  (`Shell::with_parked`, through `inspect_here`, never a command); another
+  file opens in the member's place (`sibling`); anything else shows the
+  container again first. Views are kept per member
+  (`PreviewState::containers`, beside `nested`) and go with it when the
+  panel goes up, their pictures evicted; while a member is on its way its
+  view is the one it was asked from (`container_asked`). A playlist keeps
+  the player's Previous and Next instead. The view is drawn only where the
+  panel is interactive (peek's copy while peek is open): one element holds
+  each focus handle.
 - **Rows.** What the inspector works out about rows is pure and tested
   (`inspector_rows.rs`) and never computed while painting. A table's column
   widths come from its content, as an estimate from character counts made on

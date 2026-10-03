@@ -43,8 +43,12 @@ pub const TERMINAL: &str = "Terminal";
 /// clears, F-keys drive a file manager). `install` shadows them.
 const TERMINAL_PASSTHROUGH: [&str; 2] = ["ui.terminal", "ui.palette"];
 pub const BULK: &str = "BulkRename";
-/// The rows of a container kept beside the member previewed (`members.rs`).
+/// The files of an archive or a message, as its preview lists them: the
+/// arrows walk them and the member reached is previewed (`members.rs`).
 pub const MEMBERS: &str = "PreviewMembers";
+/// A member shown under its container's view, and that view: Escape
+/// closes the member (`members.rs`).
+pub const MEMBER: &str = "PreviewMember";
 pub const MENU: &str = "ContextMenu";
 
 /// A binding as the palette shows it: keys and command name. Only the
@@ -331,18 +335,38 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         r#"{"action":"find_next"}"#,
         Some("InspectorFind"),
     ),
-    // The rows kept beside a member step through the others.
+    // The files of an archive or a message: the arrows walk them, the
+    // member reached is previewed under them, Left and Right fold a folder
+    // (or go up to it), Escape closes the member.
     (
         "up",
         "ui.inspect",
-        r#"{"action":"sibling_step","delta":-1}"#,
+        r#"{"action":"step","delta":-1}"#,
         Some("PreviewMembers"),
     ),
     (
         "down",
         "ui.inspect",
-        r#"{"action":"sibling_step","delta":1}"#,
+        r#"{"action":"step","delta":1}"#,
         Some("PreviewMembers"),
+    ),
+    (
+        "left",
+        "ui.inspect",
+        r#"{"action":"fold","delta":-1}"#,
+        Some("PreviewMembers"),
+    ),
+    (
+        "right",
+        "ui.inspect",
+        r#"{"action":"fold","delta":1}"#,
+        Some("PreviewMembers"),
+    ),
+    (
+        "escape",
+        "ui.inspect",
+        r#"{"action":"back"}"#,
+        Some("PreviewMember"),
     ),
     // A map moves under the arrows, as it does under a drag.
     (
@@ -587,6 +611,7 @@ pub fn context_label(context: &str) -> String {
             "Player" => place = "Pinned player",
             "Inspector" => place = "Structured previews",
             "PreviewMembers" => place = "Files of an archive or a message",
+            "PreviewMember" => place = "A file shown from an archive or a message",
             "ToolbarButton" | "ToolbarPopup" => place = "Toolbars",
             "ContextMenu" => place = "Context menu",
             "Shortcuts" => place = "Shortcut overview",

@@ -154,6 +154,37 @@ impl Display {
 }
 /// Whether the book's position counts its printed pages: the preference,
 /// when the book lists them.
+/// An inspection as it is drawn: what the panel shows (`PreviewState::
+/// content` and `inspection`), or the view of the container kept above a
+/// member of it (`members::Parked`), drawn the same way.
+#[derive(Clone, Copy)]
+pub struct View<'a> {
+    pub display: &'a Display,
+    pub state: &'a State,
+    /// The container's view kept above a member.
+    pub parked: bool,
+}
+
+/// The view `parked` names, if there is one.
+pub fn view(shell: &Shell, parked: bool) -> Option<View<'_>> {
+    if parked {
+        let kept = shell.preview.parked()?;
+        return Some(View {
+            display: &kept.display,
+            state: &kept.state,
+            parked,
+        });
+    }
+    match &shell.preview.content {
+        Some(PreviewContent::Inspection(display)) => Some(View {
+            display,
+            state: &shell.preview.inspection,
+            parked,
+        }),
+        _ => None,
+    }
+}
+
 pub(crate) fn counts_printed(shell: &Shell, data: &Inspection) -> bool {
     shell.prefs.printed_pages && !data.printed_pages.is_empty()
 }
@@ -320,6 +351,10 @@ impl State {
     /// Whether the find field is open.
     pub fn finding(&self) -> bool {
         self.find.is_some()
+    }
+    /// The item highlighted: a block, or a row after the blocks.
+    pub fn selected(&self) -> Option<usize> {
+        self.selected
     }
     /// Whether the keyboard is in this preview: its content or its find
     /// field, which go when the preview does.
@@ -516,6 +551,80 @@ impl State {
             scroll_into_view(&self.list, item);
         }
     }
+    /// Highlight a row, scrolled into view if it is shown: the member shown
+    /// under a container's view is its highlighted row.
+    fn highlight(&mut self, data: &Inspection, row: usize) {
+        let index = data.blocks.len() + row;
+        self.selected = Some(index);
+        if let Some(item) = self.item_of(data, index) {
+            scroll_into_view(&self.list, item);
+        }
+    }
+    /// The member whose row is highlighted, if one is: what a container's
+    /// view previews under it.
+    pub(crate) fn highlighted_member(&self, data: &Inspection) -> Option<String> {
+        let row = listed(data).get(self.selected?.checked_sub(data.blocks.len())?)?;
+        (!row.branch).then(|| row.target.clone()).flatten()
+    }
+    /// Highlight the row of `target`.
+    fn highlight_target(&mut self, data: &Inspection, target: &str) {
+        if let Some(row) = listed(data)
+            .iter()
+            .position(|row| row.target.as_deref() == Some(target))
+        {
+            self.highlight(data, row);
+        }
+    }
+    /// The arrows over the files of an archive or a message: `step` goes
+    /// `delta` rows up or down among those shown, from the highlighted one
+    /// (from either end with none); `fold` opens (1) or closes (-1) the
+    /// folder highlighted, goes into it once open, and from a closed folder
+    /// or a file goes up to the folder holding it. The member reached, if
+    /// any, is what to preview: a folder or a file that cannot be opened is
+    /// only highlighted.
+    pub(crate) fn walk(&mut self, data: &Inspection, action: &str, delta: isize) -> Option<String> {
+        let rows = listed(data);
+        let current = self
+            .selected
+            .and_then(|index| index.checked_sub(data.blocks.len()))
+            .filter(|&row| row < rows.len());
+        let reached = match (action, current) {
+            ("step", _) => {
+                let at = current.and_then(|row| self.visible.iter().position(|&r| r == row));
+                let last = self.visible.len().checked_sub(1)?;
+                let to = match at {
+                    Some(at) => at.saturating_add_signed(delta).min(last),
+                    None if delta > 0 => 0,
+                    None => last,
+                };
+                (Some(to) != at).then(|| self.visible[to])?
+            }
+            ("fold", Some(row)) => {
+                let folder = rows[row].branch;
+                let open = folder && !self.collapsed.contains(&row);
+                match (delta > 0, folder, open) {
+                    // Open a closed folder, close an open one: no row moves.
+                    (true, true, false) | (false, true, true) => {
+                        self.toggle_collapsed(data, row);
+                        return None;
+                    }
+                    (true, true, true) => {
+                        return self.walk(data, "step", 1);
+                    }
+                    (true, false, _) => return None,
+                    // Up to the folder holding it.
+                    (false, _, _) => {
+                        let depth = rows[row].depth;
+                        (0..row).rev().find(|&r| rows[r].depth < depth)?
+                    }
+                }
+            }
+            _ => return None,
+        };
+        self.highlight(data, reached);
+        let row = &rows[reached];
+        (!row.branch).then(|| row.target.clone()).flatten()
+    }
     fn toggle_collapsed(&mut self, data: &Inspection, index: usize) {
         let collapsed = Arc::make_mut(&mut self.collapsed);
         if !collapsed.remove(&index) {
@@ -582,14 +691,153 @@ impl State {
             .reset_with_uniform_height(data.blocks.len() + self.visible.len() + 1, estimate);
     }
 }
+/// What changes a container's view alone, so it is done on the view kept
+/// above a member in the panel's place (`Shell::with_parked`). Anything
+/// else (another presentation, a page) shows the container again first.
+const VIEW_ONLY: &[&str] = &[
+    "search",
+    "find_next",
+    "find_close",
+    "find",
+    "text_down",
+    "text_move",
+    "text_up",
+    "copy",
+    "sort",
+    "select",
+    "collapse",
+    "expand_all",
+    "collapse_all",
+    "reset",
+    "text_size",
+    "larger",
+    "smaller",
+    "outline",
+    "block",
+    "link",
+];
+
 impl Shell {
+    /// `ui.inspect`: on the inspection shown, or on the view of the
+    /// container kept above the member shown when that has the keyboard
+    /// (a press in it gives it the keyboard first).
     pub fn inspect_command(
         &mut self,
         args: &serde_json::Value,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.container_has_keyboard(window, cx) {
+            return self.container_command(args, window, cx);
+        }
+        // The highlight of an archive's or a message's files is what is
+        // previewed: what moved it alone (a find) onto a member opens it.
+        // Leaving a member is no such move, though its row is highlighted.
         let action = args["action"].as_str().unwrap_or("auto");
+        if !VIEW_ONLY.contains(&action) {
+            return self.inspect_here(args, window, cx);
+        }
+        let before = self.highlighted_member();
+        self.inspect_here(args, window, cx);
+        if let Some(target) = self.highlighted_member()
+            && Some(&target) != before.as_ref()
+        {
+            let args = serde_json::json!({"action":"target","target":target});
+            self.inspect_here(&args, window, cx);
+        }
+    }
+
+    /// The member highlighted in the files of the archive or the message the
+    /// panel shows.
+    fn highlighted_member(&self) -> Option<String> {
+        match &self.preview.content {
+            Some(PreviewContent::Inspection(display)) if kept_rows(display.data.kind) => {
+                self.preview.inspection.highlighted_member(&display.data)
+            }
+            _ => None,
+        }
+    }
+
+    /// The member highlighted in the container's view kept above a member.
+    fn parked_member(&self) -> Option<String> {
+        let parked = self.preview.parked()?;
+        parked.state.highlighted_member(&parked.display.data)
+    }
+
+    /// `ui.inspect` on the container's view kept above a member.
+    fn container_command(
+        &mut self,
+        args: &serde_json::Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let action = args["action"].as_str().unwrap_or("auto");
+        match action {
+            "back" => {
+                self.close_member(window, cx);
+            }
+            // Another of its files: previewed in the member's place.
+            "target" => self.inspect_here(
+                &serde_json::json!({"action":"sibling","target":args["target"]}),
+                window,
+                cx,
+            ),
+            "step" | "fold" => {
+                let delta = args["delta"].as_i64().unwrap_or(1) as isize;
+                let reached = self
+                    .with_parked(|this| {
+                        let parked = this.preview.content.as_ref();
+                        let Some(PreviewContent::Inspection(display)) = parked else {
+                            return None;
+                        };
+                        this.preview.inspection.walk(&display.data, action, delta)
+                    })
+                    .flatten();
+                if let Some(target) = reached {
+                    let args = serde_json::json!({"action":"sibling","target":target});
+                    self.inspect_here(&args, window, cx);
+                }
+                cx.notify();
+            }
+            _ if VIEW_ONLY.contains(&action) => {
+                let before = self.parked_member();
+                self.with_parked(|this| this.inspect_here(args, window, cx));
+                // The highlight leads: a find that moved it onto another
+                // member previews that one.
+                if let Some(target) = self.parked_member()
+                    && Some(&target) != before.as_ref()
+                {
+                    let args = serde_json::json!({"action":"sibling","target":target});
+                    self.inspect_here(&args, window, cx);
+                }
+            }
+            _ => {
+                if self.close_member(window, cx) {
+                    self.inspect_here(args, window, cx);
+                }
+            }
+        }
+    }
+
+    /// `ui.inspect` on the inspection the panel shows.
+    fn inspect_here(
+        &mut self,
+        args: &serde_json::Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let action = args["action"].as_str().unwrap_or("auto");
+        // Out of a member shown under its container's view, or up the
+        // trail to one: the container's view takes the panel back as it
+        // was left, without reading it again.
+        if action == "back" && self.close_member(window, cx) {
+            return;
+        }
+        if action == "ascend"
+            && self.ascend_to_container(args["depth"].as_u64().unwrap_or(0) as usize, window, cx)
+        {
+            return;
+        }
         match action {
             "search" => return self.inspect_find_open(window, cx),
             "find_next" => {
@@ -599,7 +847,7 @@ impl Shell {
                 let value = find.text(cx);
                 if !value.is_empty() {
                     let args = serde_json::json!({"action":"find","value":value});
-                    self.inspect_command(&args, window, cx);
+                    self.inspect_here(&args, window, cx);
                 }
                 return;
             }
@@ -611,21 +859,19 @@ impl Shell {
                 return cx.notify();
             }
             "section_edit" => return self.inspect_section_edit(window, cx),
-            // The rows kept beside a member (`members.rs`): the next or the
-            // previous of them, or a folder of them opened or closed.
-            "sibling_step" => {
+            // The arrows over an archive's or a message's files: the member
+            // reached is previewed under them.
+            "step" | "fold" => {
                 let delta = args["delta"].as_i64().unwrap_or(1) as isize;
-                if let Some(target) = self.preview.members().and_then(|m| m.step(delta)) {
-                    let args = serde_json::json!({"action":"sibling","target":target});
-                    self.inspect_command(&args, window, cx);
+                let Some(PreviewContent::Inspection(display)) = &self.preview.content else {
+                    return;
+                };
+                if !kept_rows(display.data.kind) {
+                    return;
                 }
-                return;
-            }
-            "sibling_fold" => {
-                if let (Some(members), Some(row)) =
-                    (self.preview.members_mut(), args["row"].as_u64())
-                {
-                    members.fold(row as usize);
+                if let Some(target) = self.preview.inspection.walk(&display.data, action, delta) {
+                    let args = serde_json::json!({"action":"target","target":target});
+                    self.inspect_here(&args, window, cx);
                 }
                 return cx.notify();
             }
@@ -664,7 +910,7 @@ impl Shell {
                         );
                     };
                     let args = serde_json::json!({"action":"section_cancel"});
-                    self.inspect_command(&args, window, cx);
+                    self.inspect_here(&args, window, cx);
                     let args = serde_json::json!({"action":"printed","index":index});
                     return self.run("ui.inspect", args, window, cx);
                 }
@@ -684,7 +930,7 @@ impl Shell {
                     );
                 };
                 let args = serde_json::json!({"action":"section_cancel"});
-                self.inspect_command(&args, window, cx);
+                self.inspect_here(&args, window, cx);
                 let args = serde_json::json!({"action":"page","offset":number - 1});
                 return self.run("ui.inspect", args, window, cx);
             }
@@ -836,7 +1082,7 @@ impl Shell {
                         return;
                     }
                     let args = serde_json::json!({"action":"target","target":page.target});
-                    return self.inspect_command(&args, window, cx);
+                    return self.inspect_here(&args, window, cx);
                 }
                 "reset" | "text_size" => {
                     let size = args["value"].as_f64().map_or(TEXT_SIZE, |v| v as f32);
@@ -985,26 +1231,23 @@ impl Shell {
                     return;
                 }
                 self.preview.descend = args["target"].as_str().map(str::to_owned);
-                // An archive's or a message's rows stay beside the member.
-                self.preview.members_asked = match (&self.preview.content, &self.preview.descend) {
-                    (Some(PreviewContent::Inspection(display)), Some(target))
-                        if kept_rows(display.data.kind) =>
-                    {
-                        let state = &self.preview.inspection;
-                        Some(crate::members::Members::new(
-                            display,
-                            state.collapsed.clone(),
-                            state.visible.clone(),
-                            self.preview.nested.len(),
-                            target,
-                            cx,
-                        ))
-                    }
-                    _ => None,
-                };
-                // They are the rows just acted on: the arrows go on from them.
-                if let Some(members) = &self.preview.members_asked {
-                    window.focus(&members.focus);
+                // An archive's or a message's view stays above the member, as
+                // it is, its row highlighted; what has the keyboard keeps it.
+                if let (Some(target), Some(kind)) = (self.preview.descend.clone(), kind)
+                    && kept_rows(kind)
+                    && let Some(PreviewContent::Inspection(display)) = self.preview.content.take()
+                {
+                    let mut state = std::mem::take(&mut self.preview.inspection);
+                    state.highlight_target(&display.data, &target);
+                    self.preview.container_asked = Some(crate::members::Parked {
+                        display,
+                        state,
+                        depth: self.preview.nested.len(),
+                        focus: cx.focus_handle(),
+                    });
+                    self.preview
+                        .member_focus
+                        .get_or_insert_with(|| cx.focus_handle());
                 }
                 // A playlist's rows, as shown, are what Previous and Next walk.
                 if kind == Some(InspectionKind::Table)
@@ -1032,33 +1275,43 @@ impl Shell {
             "member" => {
                 let depth = args["depth"].as_u64().unwrap_or(0) as usize;
                 let queue = self.preview.queue.take();
-                self.preview_ascend(depth);
+                self.preview_ascend(depth, window, cx);
                 self.preview.queue = queue;
                 self.preview.descend = args["target"].as_str().map(str::to_owned);
             }
-            // Another of the rows kept beside the member shown.
+            // Another file of the container whose view is kept above the
+            // member shown: previewed in its place.
             "sibling" => {
                 let Some(target) = args["target"].as_str() else {
                     return;
                 };
-                let Some(mut members) = self.preview.take_members() else {
+                let Some(mut parked) = self.preview.take_parked() else {
                     return;
                 };
-                members.show(target);
-                self.preview_ascend(members.depth);
-                self.preview.members_asked = Some(members);
+                parked.state.highlight_target(&parked.display.data, target);
+                self.preview_ascend(parked.depth, window, cx);
+                self.preview.container_asked = Some(parked);
                 self.preview.descend = Some(target.to_owned());
+            }
+            // A member that never arrived (too large to extract, refused):
+            // the container it was asked from again.
+            "back"
+                if self.preview.descend.is_some()
+                    && self.preview.inspection.request.target.is_none() =>
+            {
+                let depth = self.preview.nested.len();
+                self.preview_ascend(depth, window, cx);
             }
             "back"
                 if !self.preview.nested.is_empty()
                     && self.preview.inspection.request.target.is_none() =>
             {
                 let depth = self.preview.nested.len() - 1;
-                self.preview_ascend(depth);
+                self.preview_ascend(depth, window, cx);
             }
             "ascend" => {
                 let depth = args["depth"].as_u64().unwrap_or(0) as usize;
-                self.preview_ascend(depth);
+                self.preview_ascend(depth, window, cx);
             }
             _ => {}
         }
@@ -1334,24 +1587,66 @@ fn button(id: &'static str, icon: &'static str, title: &'static str, action: &st
     Button::new(id, icon, title, "ui.inspect").args(serde_json::json!({"action":action}))
 }
 pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
-    use crate::preview_bar::{Bar, Item, Slot, label};
-    let Some(PreviewContent::Inspection(display)) = &shell.preview.content else {
+    match view(shell, false) {
+        Some(view) => bar(shell, view, theme, cx),
+        None => div().into_any_element(),
+    }
+}
+
+/// The view of the container kept above a member (`members.rs`), whole:
+/// its bar, what it says about itself, its rows, its contents drawer. The
+/// panel draws its own in `preview::body` and `preview::content`.
+pub fn parked(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
+    let Some(view) = view(shell, true) else {
         return div().into_any_element();
     };
-    let data = &display.data;
-    let request = &shell.preview.inspection.request;
-    let mut bar = Bar::new("inspect-tools");
+    div()
+        .relative()
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .child(bar(shell, view, theme, cx))
+        .children(notice(view.display).map(|text| crate::preview::notice_strip(text, theme)))
+        // What is read is on paper, as the panel's own is (`preview::body`).
+        .child(
+            div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .bg(theme.bg)
+                .child(content(shell, view, theme, cx)),
+        )
+        .children(outline_drawer(shell, view, theme, cx))
+        .into_any_element()
+}
 
-    crate::preview_bar::parent_tool(&mut bar, shell);
+/// The bar of an inspection, the panel's or the container's kept above a
+/// member: the same tools, each acting on its own view (the side that has
+/// the keyboard, which a press on a button gives it). The container's has
+/// no ×, which is the member's, and its More holds what is about the entry.
+fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
+    use crate::preview_bar::{Bar, Item, Slot, label};
+    let (display, state, parked) = (view.display, view.state, view.parked);
+    let data = &display.data;
+    let request = &state.request;
+    let mut bar = Bar::new(if parked {
+        "container-tools"
+    } else {
+        "inspect-tools"
+    });
+
+    if !parked {
+        crate::preview_bar::close_tool(&mut bar, shell, theme);
+    }
     // Numbered sections (a book's chapters) are gone through as a
     // document's pages are: previous, the number as a field, next, the
     // buttons there even when there is nowhere to go.
     let numbered = data.sections > 0;
     // Counted by printed pages, the same tools turn and show those.
     let printed = counts_printed(shell, data);
-    let page = printed
-        .then(|| shell.preview.inspection.printed_page(data))
-        .flatten();
+    let page = printed.then(|| state.printed_page(data)).flatten();
     let (previous, next, titles) = if printed {
         let last = data.printed_pages.len() - 1;
         (
@@ -1433,8 +1728,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         bar.push(Item::button(
             Slot::Lead,
             1,
-            button("inspect-outline", "contents", label::CONTENTS, "outline")
-                .active(shell.preview.inspection.outline),
+            button("inspect-outline", "contents", label::CONTENTS, "outline").active(state.outline),
         ));
     }
 
@@ -1493,7 +1787,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
                     "ui.preview_menu",
                 )
                 .args(serde_json::json!({"kind":"text"}))
-                .label(text_size_label(shell.preview.inspection.font_size)),
+                .label(text_size_label(state.font_size)),
             )
             .opens("text"),
         );
@@ -1502,7 +1796,10 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
             1,
             button("inspect-larger", "plus", "Larger text", "larger"),
         ));
-        bar.popups.push(("text", std::rc::Rc::new(text_size_panel)));
+        bar.popups.push((
+            "text",
+            std::rc::Rc::new(move |shell, theme, cx| text_size_panel(shell, parked, theme, cx)),
+        ));
     }
     // What is read in a column may take the whole panel instead: the
     // Reading width preference, from where it shows. It stands where a
@@ -1570,20 +1867,33 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
             Item::button(
                 Slot::Tools,
                 2,
-                button("inspect-search", "search", label::FIND, "search")
-                    .active(shell.preview.inspection.finding()),
+                button("inspect-search", "search", label::FIND, "search").active(state.finding()),
             )
             .opens("find"),
         );
-        bar.popups.push(("find", std::rc::Rc::new(find_panel)));
+        bar.popups.push((
+            "find",
+            std::rc::Rc::new(move |shell, theme, cx| find_panel(shell, parked, theme, cx)),
+        ));
     }
-    crate::preview_bar::render(&bar, crate::preview::active_popup(shell), shell, theme, cx)
+    crate::preview_bar::render(
+        &bar,
+        crate::preview::active_popup(shell, parked),
+        shell,
+        theme,
+        cx,
+    )
 }
 /// The text size picker, as a document's zoom picker is: the default size,
 /// then the sizes to choose from, as shares of it.
-fn text_size_panel(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
+fn text_size_panel(
+    shell: &Shell,
+    parked: bool,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> Option<AnyElement> {
     let popup = shell.preview.menu.as_ref()?;
-    let size = shell.preview.inspection.font_size;
+    let size = view(shell, parked)?.state.font_size;
     let mut presets = div().flex().flex_wrap().gap_1();
     for (id, percent) in [
         ("text75", 75.),
@@ -1624,8 +1934,13 @@ fn text_size_panel(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Opt
 /// The find field: the same popup, keys and place as the document reader's.
 /// A structured preview searches as it goes, so there is no count: Enter and
 /// F3 move to the next match and wrap.
-pub fn find_panel(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    let find = shell.preview.inspection.find.as_ref()?;
+pub fn find_panel(
+    shell: &Shell,
+    parked: bool,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> Option<AnyElement> {
+    let find = view(shell, parked)?.state.find.as_ref()?;
     let buttons = vec![
         button("inspect-next-match", "right", "Next match", "find_next"),
         button("inspect-close-find", "close", "Close find", "find_close"),
@@ -1651,14 +1966,14 @@ pub fn notice(display: &Display) -> Option<String> {
 /// Headings of what is shown, and a book's chapters, in the shared drawer.
 pub fn outline_drawer(
     shell: &Shell,
-    display: &Display,
+    view: View<'_>,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> Option<AnyElement> {
-    if !shell.preview.inspection.outline {
+    if !view.state.outline {
         return None;
     }
-    let data = &display.data;
+    let data = &view.display.data;
     let mut entries: Vec<crate::outline::Entry> = data
         .blocks
         .iter()
@@ -1697,10 +2012,11 @@ pub fn outline_drawer(
 
 pub fn content(
     shell: &Shell,
-    display: &Display,
+    view: View<'_>,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
+    let (display, state) = (view.display, view.state);
     if display.data.kind == InspectionKind::Map {
         return crate::map_preview::content(shell, display, theme);
     }
@@ -1709,19 +2025,22 @@ pub fn content(
     let images = display.images.clone();
     // The blocks the rows draw, reported after layout so the pictures they
     // show can be asked for (`inspector_pictures`).
-    let loaded = Rc::clone(&shell.preview.inspection.pictures.loaded);
+    let loaded = Rc::clone(&state.pictures.loaded);
     let drawn = Rc::new(RefCell::new(Vec::new()));
     let seen = Rc::clone(&drawn);
-    let later = data
-        .blocks
-        .iter()
-        .any(|block| matches!(block.picture, Some(Picture::Later { .. })));
+    // A container's view kept above a member decodes nothing more: what it
+    // showed is what it keeps.
+    let later = !view.parked
+        && data
+            .blocks
+            .iter()
+            .any(|block| matches!(block.picture, Some(Picture::Later { .. })));
     let row_icons = display.row_icons.clone();
-    let visible = shell.preview.inspection.visible.clone();
-    let collapsed = shell.preview.inspection.collapsed.clone();
-    let selected = shell.preview.inspection.selected;
-    let selection = shell.preview.inspection.selection;
-    let font_size = shell.preview.inspection.font_size;
+    let visible = state.visible.clone();
+    let collapsed = state.collapsed.clone();
+    let selected = state.selected;
+    let selection = state.selection;
+    let font_size = state.font_size;
     let mono = shell.mono_font.clone();
     let mut hex_font = gpui::font(mono.clone());
     // A byte viewer must preserve individual ASCII characters, even in coding fonts.
@@ -1743,10 +2062,12 @@ pub fn content(
         ),
         shell.reading_measure,
     );
-    let note = crate::note_popover::popover(shell, &list_style, theme, cx);
+    let note = (!view.parked)
+        .then(|| crate::note_popover::popover(shell, &list_style, theme, cx))
+        .flatten();
     let measure = list_style.measure;
     let entity = cx.entity().downgrade();
-    let list = gpui::list(shell.preview.inspection.list.clone(), move |index, _, _| {
+    let list = gpui::list(state.list.clone(), move |index, _, _| {
         let theme = &list_theme;
         if index == 0 {
             // The notice is the frame's strip (`notice`); the first item is
@@ -1921,15 +2242,20 @@ pub fn content(
         .min_h_0()
         .flex()
         .flex_col()
-        .key_context("Inspector")
+        // The files of an archive or a message are walked with the arrows.
+        .key_context(if kept_rows(display.data.kind) {
+            "Inspector PreviewMembers"
+        } else {
+            "Inspector"
+        })
         // After the list has scrolled: what is left of the gesture at an edge
         // turns the section, so a book reads on from chapter to chapter.
-        .on_scroll_wheel(cx.listener(|this, event, window, cx| {
-            this.inspect_wheel(event, window, cx);
-        }))
-        .when_some(shell.preview.inspection.focus.as_ref(), |d, focus| {
-            d.track_focus(focus)
-        });
+        .when(!view.parked, |d| {
+            d.on_scroll_wheel(cx.listener(|this, event, window, cx| {
+                this.inspect_wheel(event, window, cx);
+            }))
+        })
+        .when_some(state.focus.as_ref(), gpui::InteractiveElement::track_focus);
     if display.data.kind == InspectionKind::Archive {
         body = body.child(crate::archive_preview::header(theme));
     } else if !display.data.columns.is_empty() {
@@ -1947,7 +2273,7 @@ pub fn content(
             },
         );
         let table = display.data.kind == InspectionKind::Table;
-        let sort = shell.preview.inspection.sort;
+        let sort = state.sort;
         if table {
             header = header
                 .p_0()
@@ -2043,14 +2369,12 @@ pub fn content(
             })
             .child(crate::elements::scrollbar::vertical(
                 "inspect-scrollbar",
-                crate::elements::scrollbar::Scrolls::Items(shell.preview.inspection.list.clone()),
+                crate::elements::scrollbar::Scrolls::Items(state.list.clone()),
             )),
     );
     let mut decoded = None;
     if display.data.kind == InspectionKind::Hex
-        && let Some(row) = shell
-            .preview
-            .inspection
+        && let Some(row) = state
             .selected
             .and_then(|selected| selected.checked_sub(display.data.blocks.len()))
             .and_then(|index| display.data.rows.get(index))
@@ -2323,6 +2647,88 @@ mod tests {
         state.collapse_all(&display.data, false);
         assert_eq!(state.visible(), [0, 1, 2, 3, 4, 5, 6]);
         assert_eq!(state.list.item_count(), 8, "rows plus the notice item");
+    }
+
+    /// `docs/` holding `a.txt` and `b.txt`, then `locked.bin` (no target)
+    /// and `z.txt`: an archive's files, each member named by its target.
+    fn files() -> Inspection {
+        let row = |name: &str, depth: usize, branch: bool, target: Option<&str>| Row {
+            cells: vec![name.into()],
+            depth,
+            branch,
+            target: target.map(str::to_owned),
+            ..Row::default()
+        };
+        Inspection {
+            kind: InspectionKind::Archive,
+            rows: vec![
+                row("docs", 0, true, None),
+                row("a.txt", 1, false, Some("1")),
+                row("b.txt", 1, false, Some("2")),
+                row("locked.bin", 0, false, None),
+                row("z.txt", 0, false, Some("4")),
+            ],
+            ..Inspection::default()
+        }
+    }
+
+    #[test]
+    fn the_arrows_walk_an_archives_files_and_say_which_member_to_preview() {
+        let data = files();
+        let mut state = State::default();
+        state.reset(&data);
+        // From nothing highlighted, Down starts at the top: a folder is
+        // highlighted, nothing is previewed.
+        assert_eq!(state.walk(&data, "step", 1), None);
+        assert_eq!(state.selected(), Some(0));
+        assert_eq!(state.walk(&data, "step", 1).as_deref(), Some("1"));
+        assert_eq!(state.walk(&data, "step", 1).as_deref(), Some("2"));
+        // A file that cannot be opened is highlighted, not previewed.
+        assert_eq!(state.walk(&data, "step", 1), None);
+        assert_eq!(state.selected(), Some(3));
+        assert_eq!(state.walk(&data, "step", 1).as_deref(), Some("4"));
+        // Nothing past the end.
+        assert_eq!(state.walk(&data, "step", 1), None);
+        assert_eq!(state.selected(), Some(4));
+        // From nothing highlighted, Up starts at the bottom.
+        let mut state = State::default();
+        state.reset(&data);
+        assert_eq!(state.walk(&data, "step", -1).as_deref(), Some("4"));
+    }
+
+    #[test]
+    fn left_and_right_fold_a_folder_and_lead_in_and_out_of_it() {
+        let data = files();
+        let mut state = State::default();
+        state.reset(&data);
+        state.highlight(&data, 2);
+        // Left from a file goes up to its folder.
+        assert_eq!(state.walk(&data, "fold", -1), None);
+        assert_eq!(state.selected(), Some(0));
+        // Left on an open folder closes it; again, there is nowhere up.
+        assert_eq!(state.walk(&data, "fold", -1), None);
+        assert_eq!(state.visible(), [0, 3, 4]);
+        assert_eq!(state.walk(&data, "fold", -1), None);
+        assert_eq!(state.selected(), Some(0));
+        // Right opens it, and goes into it once open.
+        assert_eq!(state.walk(&data, "fold", 1), None);
+        assert_eq!(state.visible(), [0, 1, 2, 3, 4]);
+        assert_eq!(state.walk(&data, "fold", 1).as_deref(), Some("1"));
+        // Right on a file does nothing.
+        assert_eq!(state.walk(&data, "fold", 1), None);
+        assert_eq!(state.selected(), Some(1));
+    }
+
+    #[test]
+    fn a_member_opened_is_its_containers_highlighted_row() {
+        let data = files();
+        let mut state = State::default();
+        state.reset(&data);
+        state.highlight_target(&data, "2");
+        assert_eq!(state.selected(), Some(2));
+        // A target no row has leaves the highlight where it was.
+        state.highlight_target(&data, "9");
+        assert_eq!(state.selected(), Some(2));
     }
 
     #[test]

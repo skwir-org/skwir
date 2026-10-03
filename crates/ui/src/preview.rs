@@ -324,14 +324,20 @@ pub struct PreviewState {
     pub nested: Vec<Arc<Nested>>,
     /// A member asked for and not extracted yet: the worker's next job.
     pub descend: Option<String>,
-    /// The rows each member was opened from, when they are kept beside it
-    /// (`members.rs`): one per member of `nested`, `None` for a container
-    /// whose rows are not kept.
-    members: Vec<Option<crate::members::Members>>,
-    /// The rows the member of `descend` is asked from, until it arrives.
-    pub(crate) members_asked: Option<crate::members::Members>,
-    /// Their share of the room beside the member, as their edge was dragged.
+    /// The view of the container each member was opened from, kept above
+    /// it (`members.rs`): one per member of `nested`, `None` for a
+    /// container whose view is not kept (a playlist).
+    containers: Vec<Option<crate::members::Parked>>,
+    /// The view the member of `descend` is asked from, until it arrives.
+    pub(crate) container_asked: Option<crate::members::Parked>,
+    /// Its share of the room beside the member, as their edge was dragged.
     pub members_share: crate::members::Share,
+    /// What a press on the member's side under a container's view gives
+    /// the keyboard to, when nothing inside takes it.
+    pub member_focus: Option<FocusHandle>,
+    /// Whether the open popup (`menu`) is of the container's bar rather
+    /// than the bar of what is shown.
+    pub(crate) menu_parked: bool,
     nested_tx: flume::Sender<(u64, Arc<Nested>)>,
     nested_rx: flume::Receiver<(u64, Arc<Nested>)>,
     /// Fields read on demand that Details shows (a picture's place,
@@ -475,9 +481,11 @@ impl Default for PreviewState {
             queue: None,
             autoplay: None,
             nested: Vec::new(),
-            members: Vec::new(),
-            members_asked: None,
+            containers: Vec::new(),
+            container_asked: None,
             members_share: crate::members::Share::default(),
+            member_focus: None,
+            menu_parked: false,
             descend: None,
             nested_tx,
             nested_rx,
@@ -549,32 +557,50 @@ impl PreviewState {
         })
     }
 
-    /// The rows kept beside the member shown or asked for, if any.
-    pub fn members(&self) -> Option<&crate::members::Members> {
-        match &self.members_asked {
+    /// The view of the container kept above the member shown or asked for,
+    /// if any.
+    pub fn parked(&self) -> Option<&crate::members::Parked> {
+        match &self.container_asked {
             Some(asked) => Some(asked),
-            None => self.members.last()?.as_ref(),
+            None => self.containers.last()?.as_ref(),
         }
     }
 
-    pub(crate) fn members_mut(&mut self) -> Option<&mut crate::members::Members> {
-        match &mut self.members_asked {
-            Some(asked) => Some(asked),
-            None => self.members.last_mut()?.as_mut(),
+    /// Whether the panel shows something inside the entry: a member gone
+    /// into, one asked for whether or not it could be extracted (too large,
+    /// refused: its failure is shown in its place), or a target its
+    /// provider shows itself.
+    pub fn inside(&self) -> bool {
+        !self.nested.is_empty()
+            || self.descend.is_some()
+            || self.inspection.request.target.is_some()
+    }
+
+    /// What the container calls the member `depth` deep: the one asked for
+    /// while it is on its way, else the one shown.
+    pub(crate) fn member_target(&self, depth: usize) -> Option<&str> {
+        match &self.descend {
+            Some(target) if depth == self.nested.len() => Some(target),
+            _ => self.nested.get(depth).map(|member| member.target.as_str()),
         }
     }
 
-    /// Take the rows kept beside the member shown, to ask for another.
-    pub(crate) fn take_members(&mut self) -> Option<crate::members::Members> {
-        self.members_asked
+    /// Take that view: to ask for another member from it, to give the
+    /// panel back to it, or to act on it in the panel's place
+    /// (`Shell::with_parked`), which puts it back with `put_parked`.
+    pub(crate) fn take_parked(&mut self) -> Option<crate::members::Parked> {
+        self.container_asked
             .take()
-            .or_else(|| self.members.last_mut()?.take())
+            .or_else(|| self.containers.last_mut()?.take())
     }
 
-    /// Whether the kept rows have the keyboard.
-    pub(crate) fn members_hold_focus(&self, window: &Window, cx: &gpui::App) -> bool {
-        self.members()
-            .is_some_and(|members| members.focus.contains_focused(window, cx))
+    /// Put back a view `take_parked` took, where it was.
+    fn put_parked(&mut self, parked: crate::members::Parked) {
+        let count = self.containers.len();
+        match self.containers.last_mut() {
+            Some(slot @ None) if parked.depth + 1 == count => *slot = Some(parked),
+            _ => self.container_asked = Some(parked),
+        }
     }
 
     /// Whether a preview result is for the track the player stepped to.
@@ -861,6 +887,9 @@ impl Shell {
             popup.restore(window);
         }
         if !was_open && args.get("close").and_then(serde_json::Value::as_bool) != Some(true) {
+            // Whose bar it is: the side that has the keyboard, which the
+            // press on its button gave it.
+            self.preview.menu_parked = self.container_has_keyboard(window, cx);
             self.preview.menu = Some(crate::toolbar::Popup::new(kind, window, cx));
         }
         cx.notify();
@@ -1047,8 +1076,8 @@ impl Shell {
         while let Ok((generation, member)) = self.preview.nested_rx.try_recv() {
             if generation == self.preview.generation && self.preview.nested.len() < NESTING {
                 self.preview.nested.push(member);
-                let members = self.preview.members_asked.take();
-                self.preview.members.push(members);
+                let container = self.preview.container_asked.take();
+                self.preview.containers.push(container);
                 self.preview.descend = None;
             } else {
                 self.discard_nested(vec![member]);
@@ -1940,7 +1969,7 @@ impl Shell {
         let held = menu
             || self.preview.reader.holds_focus(window, cx)
             || self.preview.inspection.holds_focus(window, cx)
-            || self.preview.members_hold_focus(window, cx)
+            || self.split_has_keyboard(window, cx)
             || [&self.preview.media.focus, &self.preview.image_focus]
                 .into_iter()
                 .flatten()
@@ -1966,7 +1995,7 @@ impl Shell {
         self.clear_document_pages(window, cx);
         self.preview.reader = crate::reader::ReaderState::default();
         self.preview.inspection = crate::inspector::State::default();
-        self.preview_ascend(0);
+        self.preview_ascend(0, window, cx);
         self.preview.phase = PreviewPhase::Idle;
 
         self.preview.page = 1;
@@ -2133,8 +2162,15 @@ impl Shell {
         );
     }
 
-    /// Go back up to `depth` members deep; 0 is the entry itself.
-    pub(crate) fn preview_ascend(&mut self, depth: usize) {
+    /// Go back up to `depth` members deep; 0 is the entry itself. The views
+    /// of the containers left go with their members; one to be shown again
+    /// is taken first (`restore_container`).
+    pub(crate) fn preview_ascend(
+        &mut self,
+        depth: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let depth = depth.min(self.preview.nested.len());
         if self
             .preview
@@ -2146,9 +2182,154 @@ impl Shell {
         }
         let left = self.preview.nested.split_off(depth);
         self.discard_nested(left);
-        self.preview.members.truncate(depth);
-        self.preview.members_asked = None;
+        let views = self
+            .preview
+            .containers
+            .split_off(depth.min(self.preview.containers.len()));
+        let asked = self.preview.container_asked.take();
+        for parked in views.into_iter().flatten().chain(asked) {
+            discard_parked(parked, window, cx);
+        }
         self.preview.descend = None;
+    }
+
+    /// Whether the keyboard is in the container's view kept above a member:
+    /// its side, its find field, or a popup of its bar. Commands act on the
+    /// side that has the keyboard (`inspector::Shell::inspect_command`).
+    pub(crate) fn container_has_keyboard(&self, window: &Window, cx: &gpui::App) -> bool {
+        let Some(parked) = self.preview.parked() else {
+            return false;
+        };
+        parked.focus.contains_focused(window, cx)
+            || parked.state.holds_focus(window, cx)
+            || (self.preview.menu_parked
+                && self
+                    .preview
+                    .menu
+                    .as_ref()
+                    .is_some_and(|menu| menu.focus.contains_focused(window, cx)))
+    }
+
+    /// Whether the keyboard is anywhere in the container's view or the
+    /// member's side under it.
+    fn split_has_keyboard(&self, window: &Window, cx: &gpui::App) -> bool {
+        self.container_has_keyboard(window, cx)
+            || (self.preview.parked().is_some()
+                && self
+                    .preview
+                    .member_focus
+                    .as_ref()
+                    .is_some_and(|focus| focus.contains_focused(window, cx)))
+    }
+
+    /// Close the member shown under its container's view: the panel shows
+    /// the container again as it was left, without reading it again. False
+    /// when no container's view is kept above what is shown.
+    pub(crate) fn close_member(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let keyboard = self.split_has_keyboard(window, cx);
+        let Some(parked) = self.preview.take_parked() else {
+            return false;
+        };
+        self.preview_ascend(parked.depth, window, cx);
+        self.restore_container(parked, keyboard, window, cx);
+        true
+    }
+
+    /// Go back up to `depth`, where a container's view is kept: shown again
+    /// as it was left. False when none is kept there.
+    pub(crate) fn ascend_to_container(
+        &mut self,
+        depth: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let kept = self.preview.container_asked.is_some() && depth == self.preview.nested.len()
+            || self
+                .preview
+                .containers
+                .get(depth)
+                .is_some_and(Option::is_some);
+        if !kept {
+            return false;
+        }
+        let keyboard = self.split_has_keyboard(window, cx);
+        let parked = if depth == self.preview.nested.len() {
+            self.preview.container_asked.take()
+        } else {
+            self.preview.containers[depth].take()
+        };
+        let Some(parked) = parked else {
+            return false;
+        };
+        self.preview_ascend(depth, window, cx);
+        self.restore_container(parked, keyboard, window, cx);
+        true
+    }
+
+    /// The container's view takes the panel back from the member: what the
+    /// member was shown with goes, and the view is what it was, folds,
+    /// place, row and find included. `keyboard`: the split had it, and the
+    /// view keeps it.
+    fn restore_container(
+        &mut self,
+        parked: crate::members::Parked,
+        keyboard: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cancel_pending_preview();
+        self.media_exit_fullscreen(window, cx);
+        self.preview.media = crate::media::MediaState::default();
+        self.clear_document_pages(window, cx);
+        self.preview.reader = crate::reader::ReaderState::default();
+        if let Some(popup) = self.preview.menu.take() {
+            popup.restore(window);
+        }
+        self.replace_preview_content(None, window, cx);
+        self.preview.autoplay = None;
+        let crate::members::Parked { display, state, .. } = parked;
+        self.preview.inspection = state;
+        self.preview.content = Some(PreviewContent::Inspection(display));
+        self.preview.phase = PreviewPhase::Idle;
+        if keyboard && let Some(focus) = &self.preview.inspection.focus {
+            window.focus(focus);
+        }
+        cx.notify();
+    }
+
+    /// Act on the container's view kept above the member as if it were what
+    /// the panel shows: it takes the panel's place for `f`, and goes back
+    /// above the member after. Only for what changes the view alone (a fold,
+    /// a find, a row): nothing that reads or replaces what is shown, so `f`
+    /// acts through `inspect_here`, never a command, which would take the
+    /// view for what the panel shows.
+    pub(crate) fn with_parked<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> Option<R> {
+        let crate::members::Parked {
+            display,
+            mut state,
+            depth,
+            focus,
+        } = self.preview.take_parked()?;
+        let member = self
+            .preview
+            .content
+            .replace(PreviewContent::Inspection(display));
+        std::mem::swap(&mut self.preview.inspection, &mut state);
+        let result = f(self);
+        std::mem::swap(&mut self.preview.inspection, &mut state);
+        if let Some(PreviewContent::Inspection(display)) =
+            std::mem::replace(&mut self.preview.content, member)
+        {
+            self.preview.put_parked(crate::members::Parked {
+                display,
+                state,
+                depth,
+                focus,
+            });
+        } else {
+            tracing::error!("a container's view was replaced while acted on");
+        }
+        Some(result)
     }
 
     /// Removing an extracted member is filesystem work: hand it to a worker.
@@ -2479,11 +2660,11 @@ impl Shell {
 /// Everything under the header's card: Details, then the toolbar and the
 /// content (`body`). This is the one place Details is put, for every kind
 /// of preview: right under the card that opens it, above the toolbar,
-/// whether a preview follows or not, and above the kept rows and the
-/// member alike when a member of a container is shown beside its rows
-/// (`members::split`), since it is about what the card names. `body`
-/// never draws it, so nothing a kind or the split does can come between
-/// the card and Details. `wide` is whether the room is wider than tall.
+/// whether a preview follows or not, and above the container's view and
+/// the member alike when a member is shown under its container's view
+/// (`members::split`), since it is about what the card names: the
+/// container. `body` never draws it, so nothing a kind or the split does
+/// can come between the card and Details. `wide` is whether the room is wider than tall.
 fn under_card(
     shell: &Shell,
     theme: &Theme,
@@ -2491,7 +2672,7 @@ fn under_card(
     wide: bool,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
-    let kept = interactive && shell.preview.members().is_some();
+    let kept = interactive && shell.preview.parked().is_some();
     // Opened on demand under a preview or above kept rows; always open
     // with nothing to preview (a folder, an unknown file, an error), so
     // the toolbar and what the content says (why the preview failed)
@@ -2515,6 +2696,21 @@ fn under_card(
             body
         })
         .into_any_element()
+}
+
+/// What a container's view held goes with it: its pictures, uploaded to the
+/// atlas, are evicted as a replaced preview's are.
+fn discard_parked(parked: crate::members::Parked, window: &mut Window, cx: &mut Context<Shell>) {
+    let crate::members::Parked {
+        display, mut state, ..
+    } = parked;
+    for image in display.images.iter().flatten() {
+        cx.drop_image(Arc::clone(image), Some(window));
+    }
+    state.notes.close(window);
+    for image in state.pictures.clear() {
+        cx.drop_image(image, Some(window));
+    }
 }
 
 /// The toolbar and the content. Details is not its to draw (`under_card`).
@@ -2597,19 +2793,25 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
 
 /// The popup of the preview's bar that is open: More, the zoom menu, or the
 /// reader's find field, which is no menu but is anchored like one.
-pub fn active_popup(shell: &Shell) -> Option<&'static str> {
-    match &shell.preview.menu {
-        Some(popup) => Some(popup.kind),
-        None => {
-            (shell.preview.reader.finding() || shell.preview.inspection.finding()).then_some("find")
-        }
+/// `parked`: of the bar of the container's view kept above a member
+/// (`members.rs`), whose popups are its own.
+pub fn active_popup(shell: &Shell, parked: bool) -> Option<&'static str> {
+    let preview = &shell.preview;
+    match &preview.menu {
+        Some(popup) if preview.menu_parked == parked => Some(popup.kind),
+        Some(_) => None,
+        None if parked => preview
+            .parked()
+            .is_some_and(|parked| parked.state.finding())
+            .then_some("find"),
+        None => (preview.reader.finding() || preview.inspection.finding()).then_some("find"),
     }
 }
 
 /// One line under the toolbar for what a preview has to say about itself:
 /// how the content is shown and what was left out. Why there is no preview
 /// at all is the body's to say (`failure`).
-fn notice_strip(text: String, theme: &Theme) -> gpui::Div {
+pub(crate) fn notice_strip(text: String, theme: &Theme) -> gpui::Div {
     div()
         .flex_none()
         .px_2()
@@ -2647,20 +2849,27 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
         return crate::media::audio_content(shell, theme, interactive, cx);
     }
     match &p.content {
-        Some(PreviewContent::Inspection(display)) => div()
-            .relative()
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_h_0()
-            .children(crate::inspector::notice(display).map(|text| notice_strip(text, theme)))
-            .child(crate::inspector::content(shell, display, theme, cx))
-            .children(
-                Some(())
-                    .filter(|()| interactive)
-                    .and_then(|()| crate::inspector::outline_drawer(shell, display, theme, cx)),
-            )
-            .into_any_element(),
+        Some(PreviewContent::Inspection(display)) => {
+            let view = crate::inspector::View {
+                display,
+                state: &p.inspection,
+                parked: false,
+            };
+            div()
+                .relative()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h_0()
+                .children(crate::inspector::notice(display).map(|text| notice_strip(text, theme)))
+                .child(crate::inspector::content(shell, view, theme, cx))
+                .children(
+                    Some(())
+                        .filter(|()| interactive)
+                        .and_then(|()| crate::inspector::outline_drawer(shell, view, theme, cx)),
+                )
+                .into_any_element()
+        }
         // A wait that has lasted shows the file's thumbnail, where its
         // preview will stand; a shorter one shows nothing yet, so a preview
         // that comes at once never flickers through a stand-in.
@@ -2822,10 +3031,12 @@ fn failure(error: &str, theme: &Theme) -> AnyElement {
 }
 
 /// The name of what is shown. Inside a container it is a trail,
-/// `bundle.zip › notes.md`, and every step before the last leads back to it,
-/// unless the container's rows are kept beside the member (`members.rs`):
-/// then the card is only what opens Details, and Back and the rows lead
-/// elsewhere, so a click meant for Details never leaves the member.
+/// `bundle.zip › notes.md`, and every step before the last leads back to it.
+/// While a container's view is kept above the member (`members.rs`), the
+/// card names that container, the member's bar names the member, and the
+/// trail is only words: the card is what opens Details, and the member's ×
+/// and the container's rows lead elsewhere, so a click meant for Details
+/// never leaves the member.
 fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
     let preview = &shell.preview;
     let mut line = div().min_w_0().flex_1().flex().items_center().gap_1();
@@ -2837,19 +3048,21 @@ fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
             .text_ellipsis_middle()
             .child(name)
     };
-    if preview.nested.is_empty() {
+    let parked = preview.parked().map(|parked| parked.depth);
+    let last = parked.unwrap_or(preview.nested.len());
+    if last == 0 {
         return line.child(name(preview.info.name.clone()));
     }
     let names = std::iter::once(preview.info.name.clone())
-        .chain(preview.nested.iter().map(|member| member.name.clone()));
-    let last = preview.nested.len();
+        .chain(preview.nested.iter().map(|member| member.name.clone()))
+        .take(last + 1);
     for (depth, name_at) in names.enumerate() {
         if depth > 0 {
             line = line.child(div().flex_none().text_color(theme.text_muted).child("›"));
         }
         line = line.child(if depth == last {
             name(name_at).into_any_element()
-        } else if preview.members().is_some() {
+        } else if parked.is_some() {
             name(name_at)
                 .flex_shrink()
                 .text_color(theme.text_muted)

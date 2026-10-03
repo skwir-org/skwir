@@ -1100,7 +1100,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     use crate::preview_bar::{Bar, Item, Slot};
     let state = &shell.preview.media.state;
     let mut bar = Bar::new("video-tools");
-    crate::preview_bar::parent_tool(&mut bar, shell);
+    crate::preview_bar::close_tool(&mut bar, shell, theme);
     // Other audio files in the folder: the track before and the one after.
     let (previous, next) = shell.track_neighbours();
     let step = |id, icon, title, delta: i64, there: bool| {
@@ -1205,7 +1205,13 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     );
     bar.popups.push((CONTINUE_POPUP, Rc::new(continue_popup)));
     bar.settings = Some(std::rc::Rc::new(settings));
-    crate::preview_bar::render(&bar, crate::preview::active_popup(shell), shell, theme, cx)
+    crate::preview_bar::render(
+        &bar,
+        crate::preview::active_popup(shell, false),
+        shell,
+        theme,
+        cx,
+    )
 }
 
 /// The popup of what follows a track that ends (`ui.media_continue`).
