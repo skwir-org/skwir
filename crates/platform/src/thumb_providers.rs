@@ -40,6 +40,19 @@ pub fn ensure_file(p: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The picture another program drew into `output`, at most `pixels` on
+/// its longer side: its size checked before it is decoded.
+pub(crate) fn drawn(output: &Path, pixels: u32) -> anyhow::Result<Image> {
+    let open =
+        || -> anyhow::Result<_> { Ok(image::ImageReader::open(output)?.with_guessed_format()?) };
+    let (w, h) = open()?.into_dimensions()?;
+    anyhow::ensure!(
+        u64::from(w) * u64::from(h) <= MAX_PIXELS,
+        "what it drew is too large"
+    );
+    Ok(fit(open()?.decode()?, pixels))
+}
+
 /// Downscale so the longest side is at most `px`, then RGBA8.
 fn fit(img: DynamicImage, px: u32) -> Image {
     let img = if img.width().max(img.height()) > px {
@@ -399,6 +412,31 @@ pub fn substitute_exec(exec: &str, input: &Path, output: &Path, size: u32) -> Ve
         .collect()
 }
 
+/// What a thumbnailer writes, in its private folder.
+const THUMBNAIL: &str = "thumbnail.png";
+
+/// `entry`'s command for `path`, isolated (ADR-031): the file read at its
+/// name inside the sandbox (`%i`, and `%u` as its URI), the picture
+/// written in `work` (`%o`), the program found as the desktop would find
+/// it and run from where it really is.
+fn isolated(
+    entry: &ThumbnailerEntry,
+    path: &Path,
+    work: &Path,
+    pixels: u32,
+) -> anyhow::Result<std::process::Command> {
+    let inside = crate::sandbox::inside_name(path);
+    let output = Path::new("/work").join(THUMBNAIL);
+    let argv = substitute_exec(&entry.exec, Path::new(&inside), &output, pixels);
+    let Some((exe, exe_args)) = argv.split_first() else {
+        anyhow::bail!("empty Exec in {}", entry.name)
+    };
+    let program = crate::process::required(&exe.to_string_lossy())?;
+    let (mut command, _) = crate::sandbox::command(&program, path, work)?;
+    command.args(exe_args);
+    Ok(command)
+}
+
 /// Runs the desktop's `*.thumbnailer` programs for the MIME types they claim.
 #[derive(Debug)]
 pub struct Thumbnailers {
@@ -469,36 +507,28 @@ impl Thumbnailers {
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Image>> {
         // A FIFO named `x.mp4` would hold the thumbnailer until its timeout.
-        anyhow::ensure!(
-            std::fs::metadata(path)?.is_file(),
-            "{} is not a regular file",
-            path.display()
-        );
+        ensure_file(path)?;
         let scratch = tempfile::tempdir()?;
-        let output = scratch.path().join("thumbnail.png");
-        let argv = substitute_exec(&entry.exec, path, &output, pixels);
-        let Some((exe, exe_args)) = argv.split_first() else {
-            anyhow::bail!("empty Exec in {}", entry.name)
+        let mut command = if crate::sandbox::available() {
+            isolated(entry, path, scratch.path(), pixels)?
+        } else {
+            let output = scratch.path().join(THUMBNAIL);
+            let argv = substitute_exec(&entry.exec, path, &output, pixels);
+            let Some((exe, exe_args)) = argv.split_first() else {
+                anyhow::bail!("empty Exec in {}", entry.name)
+            };
+            let mut command = std::process::Command::new(exe);
+            command.args(exe_args);
+            command
         };
-        let result = crate::process::run(
-            std::process::Command::new(exe).args(exe_args),
-            cancel,
-            self.timeout,
-        );
+        let result = crate::process::run(&mut command, cancel, self.timeout);
         if cancel.is_cancelled() {
             return Ok(None);
         }
         result?;
-        let (w, h) = image::ImageReader::open(&output)?
-            .with_guessed_format()?
-            .into_dimensions()?;
-        anyhow::ensure!(
-            u64::from(w) * u64::from(h) <= MAX_PIXELS,
-            "thumbnailer output is too large"
-        );
-        image::open(&output)
-            .map(|img| Some(fit(img, pixels)))
-            .with_context(|| format!("{}: decode its output", entry.name))
+        drawn(&scratch.path().join(THUMBNAIL), pixels)
+            .map(Some)
+            .with_context(|| format!("{}: read what it drew", entry.name))
     }
 }
 
@@ -775,18 +805,23 @@ mod tests {
 
     #[test]
     fn a_fake_thumbnailer_script_produces_a_thumbnail() {
-        // A 4x4 red PNG fixture the script "renders".
+        // A script that "renders" a 4x4 red picture, with nothing but the
+        // shell: isolated, it sees only the system and its own folder.
         let tmp = tempfile::tempdir().unwrap();
-        let fixture = tmp.path().join("fixture.png");
-        image::RgbaImage::from_pixel(4, 4, image::Rgba([255, 0, 0, 255]))
-            .save(&fixture)
-            .unwrap();
         let script = tmp.path().join("fake-thumb.sh");
+        let red = "255 0 0 ".repeat(16);
+        // Where it can be isolated, a file beside it is out of its sight.
+        let secret = tmp.path().join("secret");
+        std::fs::write(&secret, "").unwrap();
+        let unseen = if crate::sandbox::available() {
+            format!("[ -e '{}' ] && exit 4\n", secret.display())
+        } else {
+            String::new()
+        };
         std::fs::write(
             &script,
             format!(
-                "#!/bin/sh\n[ \"$1\" = 128 ] || exit 3\ncp {} \"$3\"\n",
-                fixture.display()
+                "#!/bin/sh\n[ \"$1\" = 128 ] || exit 3\n{unseen}printf 'P3 4 4 255 {red}' > \"$3\"\n"
             ),
         )
         .unwrap();
