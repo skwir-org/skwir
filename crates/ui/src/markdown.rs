@@ -59,6 +59,15 @@ pub struct MarkdownStyle {
     /// The widest the text column may be, when reading asks for a measure.
     pub measure: Option<f32>,
     pub reading: bool,
+    /// The found link under the pointer while Ctrl (Cmd) is held: the text
+    /// it is drawn in and its range there, drawn and followed as a link
+    /// this frame (`links.rs`).
+    pub armed_link: Option<(gpui::ElementId, std::ops::Range<usize>)>,
+    /// While the links in view are labelled: by block, each label at the
+    /// start of its link (`links.rs`).
+    pub labels: Option<std::rc::Rc<std::collections::HashMap<usize, Vec<(usize, SharedString)>>>>,
+    /// A label's text, on `link`.
+    pub label_text: Hsla,
 }
 
 /// The widest a reading column may be, in ems of its text, for a
@@ -118,6 +127,9 @@ impl MarkdownStyle {
             placeholder: theme.surface,
             measure: measure.filter(|_| reading).map(|ems| body_size * ems),
             reading,
+            armed_link: None,
+            labels: None,
+            label_text: theme.on_fill,
         }
     }
 

@@ -5,8 +5,8 @@ use bibli_core::{
     workspace::PaneId,
 };
 use gpui::{
-    AnyElement, HighlightStyle, MouseButton, RunPosition, StrikethroughStyle, StyledText,
-    UnderlineStyle, WeakEntity, div, prelude::*, px,
+    AnyElement, HighlightStyle, MouseButton, RunPosition, SharedString, StrikethroughStyle,
+    StyledText, UnderlineStyle, WeakEntity, div, prelude::*, px,
 };
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Selection {
@@ -101,16 +101,30 @@ pub fn render(
     part(block, index, id, whole, selection, style, pane, entity)
 }
 
+/// What a frame draws over a block's text besides its own style
+/// (`links.rs`): the found link Ctrl is held over, in the block's
+/// coordinates, and the labels the links carry while they are labelled,
+/// each at the start of its link.
+#[derive(Clone, Copy, Default)]
+pub struct Marks<'a> {
+    pub armed: Option<&'a std::ops::Range<usize>>,
+    pub labels: &'a [(usize, SharedString)],
+}
+
 /// The text of `range` as drawn and its highlights (relative to `range`):
 /// emphasis, links, code, scripts, small capitals and the `selection`, which
-/// is in the block's coordinates. Shared by the reader's rows and the note
-/// popover, so a note reads as it does in the text.
+/// is in the block's coordinates. A link found in raw text is drawn as one
+/// only while armed (`marks`); a label is set before its link. Shared by the
+/// reader's rows and the note popover, so a note reads as it does in the
+/// text.
 pub fn styled(
     block: &Block,
     range: std::ops::Range<usize>,
     selection: std::ops::Range<usize>,
     style: &MarkdownStyle,
+    marks: Marks<'_>,
 ) -> (String, Vec<(std::ops::Range<usize>, HighlightStyle)>) {
+    let armed = marks.armed;
     let (shown, reduced) = small_capitals(block, range.clone());
     let mut edges = vec![range.start, range.end];
     edges.extend(reduced.iter().flat_map(|r| [r.start, r.end]));
@@ -137,6 +151,8 @@ pub fn styled(
                 .filter(|r| r.range.start <= start);
             let mut highlight = HighlightStyle::default();
             if let Some(r) = run {
+                let link =
+                    r.link.is_some() && (!r.found || armed.is_some_and(|a| a.contains(&start)));
                 highlight.font_weight = r.bold.then_some(gpui::FontWeight::BOLD);
                 highlight.font_style = r.italic.then_some(gpui::FontStyle::Italic);
                 highlight.color = r
@@ -144,7 +160,7 @@ pub fn styled(
                     .map(|[r, g, b]| {
                         gpui::rgb((u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b)).into()
                     })
-                    .or_else(|| r.link.as_ref().map(|_| style.link));
+                    .or_else(|| link.then_some(style.link));
                 highlight.background_color = r.code.then_some(style.inline_code_bg);
                 if r.strikethrough {
                     highlight.strikethrough = Some(StrikethroughStyle {
@@ -160,7 +176,7 @@ pub fn styled(
                 if highlight.position.is_none() && reduced.iter().any(|r| r.contains(&start)) {
                     highlight.position = Some(RunPosition::Reduced);
                 }
-                if r.link.is_some() && style.link_underline {
+                if link && (style.link_underline || r.found) {
                     highlight.underline = Some(UnderlineStyle {
                         thickness: px(1.),
                         color: Some(style.link),
@@ -180,7 +196,101 @@ pub fn styled(
             (start - range.start..end - range.start, highlight)
         })
         .collect::<Vec<_>>();
-    (shown, highlights)
+    labelled(shown, highlights, range, marks.labels, style)
+}
+
+/// `shown` with each label set before the link it names: what follows a
+/// label moves along by its length, and the label is drawn as a key cap.
+/// Labels stand at the start of a link, which is an edge of every
+/// highlight, so none is cut in two.
+fn labelled(
+    shown: String,
+    highlights: Vec<(std::ops::Range<usize>, HighlightStyle)>,
+    range: std::ops::Range<usize>,
+    labels: &[(usize, SharedString)],
+    style: &MarkdownStyle,
+) -> (String, Vec<(std::ops::Range<usize>, HighlightStyle)>) {
+    let labels: Vec<(usize, &SharedString)> = labels
+        .iter()
+        .filter(|(at, _)| range.contains(at) && shown.is_char_boundary(at - range.start))
+        .map(|(at, label)| (at - range.start, label))
+        .collect();
+    if labels.is_empty() {
+        return (shown, highlights);
+    }
+    let before = |offset: usize, inclusive: bool| -> usize {
+        labels
+            .iter()
+            .filter(|(at, _)| *at < offset || inclusive && *at == offset)
+            .map(|(_, label)| label.len())
+            .sum()
+    };
+    let mut highlights: Vec<_> = highlights
+        .into_iter()
+        .map(|(r, h)| {
+            (
+                r.start + before(r.start, true)..r.end + before(r.end, false),
+                h,
+            )
+        })
+        .collect();
+    let mut text = shown;
+    for (at, label) in labels.iter().rev() {
+        text.insert_str(*at, label);
+    }
+    let cap = HighlightStyle {
+        color: Some(style.label_text),
+        background_color: Some(style.link),
+        font_weight: Some(gpui::FontWeight::BOLD),
+        ..HighlightStyle::default()
+    };
+    for (at, label) in &labels {
+        let start = at + before(*at, false);
+        highlights.push((start..start + label.len(), cap));
+    }
+    highlights.sort_by_key(|(r, _)| r.start);
+    (text, highlights)
+}
+
+/// A link of a stretch of text: where it is drawn (relative to the
+/// stretch), where it is in the block, where it leads, and how it is
+/// followed.
+#[derive(Clone)]
+pub(crate) struct Link {
+    shown: std::ops::Range<usize>,
+    pub(crate) block: std::ops::Range<usize>,
+    pub(crate) target: String,
+    pub(crate) note: bool,
+    found: bool,
+}
+
+/// The links of `range` of `block`, in order: the runs one link was cut
+/// into (a found address across a source line's colours) are one link.
+pub(crate) fn links_in(block: &Block, range: std::ops::Range<usize>) -> Vec<Link> {
+    let mut links: Vec<Link> = Vec::new();
+    for run in &block.runs {
+        let clipped = run.range.start.max(range.start)..run.range.end.min(range.end);
+        let Some(target) = run.link.as_ref().filter(|_| clipped.start < clipped.end) else {
+            continue;
+        };
+        if let Some(last) = links.last_mut()
+            && last.block.end == clipped.start
+            && last.target == *target
+            && last.found == run.found
+        {
+            last.block.end = clipped.end;
+            last.shown.end = clipped.end - range.start;
+            continue;
+        }
+        links.push(Link {
+            shown: clipped.start - range.start..clipped.end - range.start,
+            block: clipped,
+            target: target.clone(),
+            note: run.note,
+            found: run.found,
+        });
+    }
+    links
 }
 
 /// One stretch of a block's text as its own element: the whole block, or a
@@ -199,49 +309,69 @@ pub fn part(
 ) -> AnyElement {
     let selected = selection.map_or(0..0, |s| s.range(index, block.text.len()));
     let selection = selected.start.max(range.start)..selected.end.min(range.end);
-    let (shown, highlights) = styled(block, range.clone(), selection, style);
+    let element = gpui::ElementId::from((id.clone(), "text"));
+    // The found link Ctrl is held over, if it is drawn here.
+    let armed = style
+        .armed_link
+        .as_ref()
+        .filter(|(at, _)| *at == element)
+        .map(|(_, armed)| armed.clone());
+    let labels = style
+        .labels
+        .as_ref()
+        .and_then(|labels| labels.get(&index))
+        .map_or(&[][..], Vec::as_slice);
+    let marks = Marks {
+        armed: armed.as_ref(),
+        labels,
+    };
+    let (shown, highlights) = styled(block, range.clone(), selection, style, marks);
     let text = StyledText::new(shown).with_highlights(highlights);
     let down = text.layout().clone();
     let moved = down.clone();
-    let links: Vec<_> = block
-        .runs
+    // While labelled the text moved along by its labels: the keys follow
+    // links then, not the pointer.
+    let links = if style.labels.is_some() {
+        Vec::new()
+    } else {
+        links_in(block, range.clone())
+    };
+    // What answers a click: written links, and the found one armed.
+    let followed: Vec<Link> = links
         .iter()
-        .filter_map(|r| {
-            let clipped = r.range.start.max(range.start)..r.range.end.min(range.end);
-            (clipped.start < clipped.end)
-                .then(|| r.link.clone())
-                .flatten()
-                .map(|href| {
-                    (
-                        clipped.start - range.start..clipped.end - range.start,
-                        href,
-                        r.note,
-                    )
-                })
-        })
+        .filter(|link| !link.found || armed.as_ref() == Some(&link.block))
+        .cloned()
         .collect();
-    let ranges = links.iter().map(|(r, _, _)| r.clone()).collect();
+    let ranges = followed.iter().map(|link| link.shown.clone()).collect();
+    let found: Vec<Link> = links.into_iter().filter(|link| link.found).collect();
     let clicked = down.clone();
     let weak = entity.clone();
     let offset_of = move |position, layout: &gpui::TextLayout| {
         range.start + layout.index_for_position(position).unwrap_or_else(|i| i)
     };
-    let text = gpui::InteractiveText::new(gpui::ElementId::from((id.clone(), "text")), text)
-        .on_click(ranges, move |i, window, cx| {
-            let (range, target, note) = &links[i];
+    let text =
+        gpui::InteractiveText::new(element.clone(), text).on_click(ranges, move |i, window, cx| {
+            let link = &followed[i];
+            let held = window.modifiers();
+            if link.found && !held.secondary() {
+                return;
+            }
             // A note opens under its reference: where the reference is
             // drawn now, below its line.
             let under = clicked
-                .position_for_index(range.start)
+                .position_for_index(link.shown.start)
                 .map(|at| at + gpui::point(px(0.), clicked.line_height()));
             let _ = weak.update(cx, |s, cx| {
+                // The keys reach links too (Ctrl+Shift+O): said once.
+                s.note_pointer_use("ui.inspect", &serde_json::json!({"action": "links"}), cx);
                 s.with_pane(pane, |s| {
                     s.run(
                         "ui.inspect",
                         serde_json::json!({
                             "action": "link",
-                            "target": target,
-                            "note": note,
+                            "target": link.target,
+                            "note": link.note,
+                            "tab": held.shift,
                             "x": under.map(|at| f32::from(at.x)),
                             "y": under.map(|at| f32::from(at.y)),
                         }),
@@ -251,6 +381,27 @@ pub fn part(
                 });
             });
         });
+    // A found link under the pointer becomes one while Ctrl is held: the
+    // shell keeps which, and draws it so (`Shell::armed_link`). Every move
+    // is read, as the text's own hover says nothing when the pointer comes
+    // back to the character it left from.
+    let hovered = (!found.is_empty()).then(|| (element.clone(), entity.clone()));
+    let pointed = hovered.clone().map(|(element, weak)| {
+        let layout = moved.clone();
+        move |event: &gpui::MouseMoveEvent, cx: &mut gpui::App| {
+            let under = layout
+                .index_for_position(event.position)
+                .ok()
+                .and_then(|index| {
+                    found
+                        .iter()
+                        .find(|link| link.shown.contains(&index))
+                        .map(|link| link.block.clone())
+                });
+            let held = event.modifiers.secondary();
+            let _ = weak.update(cx, |s, cx| s.hover_link(&element, under, held, cx));
+        }
+    });
     let press = entity.clone();
     let motion = entity.clone();
     let release = entity.clone();
@@ -258,6 +409,13 @@ pub fn part(
         .id(gpui::ElementId::from((id, "select")))
         .cursor_text()
         .child(text)
+        .when_some(hovered, |d, (element, weak)| {
+            d.on_hover(move |inside, _, cx| {
+                if !*inside {
+                    let _ = weak.update(cx, |s, cx| s.leave_link(&element, cx));
+                }
+            })
+        })
         .on_mouse_down(MouseButton::Left, move |event, window, cx| {
             let offset = offset_of(event.position, &down);
             let _ = press.update(cx, |s, cx| {
@@ -272,6 +430,9 @@ pub fn part(
             });
         })
         .on_mouse_move(move |event, window, cx| {
+            if let Some(pointed) = &pointed {
+                pointed(event, cx);
+            }
             if event.pressed_button == Some(MouseButton::Left) {
                 let offset = offset_of(event.position, &moved);
                 let _ = motion.update(cx, |s, cx| {

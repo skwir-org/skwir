@@ -3,12 +3,14 @@
 
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::term::Term;
-use alacritty_terminal::term::cell::Flags;
+use alacritty_terminal::term::cell::{Flags, Hyperlink};
 use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::vte::ansi::{self, CursorShape as Shape, NamedColor};
 use bibli_core::terminal::{
-    Attrs, Color, Cursor, CursorShape, Palette, Rgb, Run, Screen, Selection, Style,
+    Attrs, Color, Cursor, CursorShape, Link, Palette, Rgb, Run, Screen, Selection, Style,
 };
+
+use crate::links::Stamps;
 
 /// The xterm 256-colour table beyond the sixteen: a 6×6×6 cube, then 24
 /// greys. It is the standard's, not a theme's.
@@ -154,8 +156,49 @@ fn clamp16(value: usize) -> u16 {
     u16::try_from(value).unwrap_or(u16::MAX)
 }
 
-/// Everything the UI needs of `term`'s visible part.
-pub fn build<T: alacritty_terminal::event::EventListener>(term: &Term<T>) -> Screen {
+/// The cells of each link on screen, gathered cell by cell: the cells of
+/// one link are one span per row.
+#[derive(Default)]
+struct Linked(Vec<(Hyperlink, Vec<(u16, u16, u16)>)>);
+
+impl Linked {
+    fn add(&mut self, link: Hyperlink, row: u16, col: u16, wide: bool) {
+        let last = col + u16::from(wide);
+        let index = if let Some(index) = self.0.iter().rposition(|(seen, _)| *seen == link) {
+            index
+        } else {
+            self.0.push((link, Vec::new()));
+            self.0.len() - 1
+        };
+        let spans = &mut self.0[index].1;
+        match spans.last_mut() {
+            Some((r, _, end)) if *r == row && *end + 1 >= col => *end = (*end).max(last),
+            _ => spans.push((row, col, last)),
+        }
+    }
+
+    /// The links that lead somewhere, as `stamps` say.
+    fn links(self, stamps: &Stamps) -> Vec<Link> {
+        self.0
+            .into_iter()
+            .filter_map(|(link, spans)| {
+                let (target, written) = stamps.target(&link)?;
+                Some(Link {
+                    target,
+                    spans,
+                    written,
+                })
+            })
+            .collect()
+    }
+}
+
+/// Everything the UI needs of `term`'s visible part, its links as the
+/// stamps on it (`links.rs`) and its programs say.
+pub fn build<T: alacritty_terminal::event::EventListener>(
+    term: &Term<T>,
+    stamps: &Stamps,
+) -> Screen {
     let content = term.renderable_content();
     let (cols, rows) = (term.columns(), term.screen_lines());
     let offset = content.display_offset;
@@ -163,6 +206,7 @@ pub fn build<T: alacritty_terminal::event::EventListener>(term: &Term<T>) -> Scr
     // negative; the screen's rows from the top of what is shown.
     let shift = i32::try_from(offset).unwrap_or(i32::MAX);
     let mut lines: Vec<Line> = (0..rows).map(|_| Line::default()).collect();
+    let mut linked = Linked::default();
     for indexed in content.display_iter {
         let cell = indexed.cell;
         if cell
@@ -177,6 +221,14 @@ pub fn build<T: alacritty_terminal::event::EventListener>(term: &Term<T>) -> Scr
         let Some(line) = lines.get_mut(row) else {
             continue;
         };
+        if let Some(link) = cell.hyperlink() {
+            linked.add(
+                link,
+                clamp16(row),
+                clamp16(indexed.point.column.0),
+                cell.flags.contains(Flags::WIDE_CHAR),
+            );
+        }
         let style = style(cell.flags, cell.fg, cell.bg, content.colors);
         let c = if cell.flags.contains(Flags::HIDDEN) {
             ' '
@@ -275,6 +327,7 @@ pub fn build<T: alacritty_terminal::event::EventListener>(term: &Term<T>) -> Scr
         cursor,
         selection,
         selected_text: term.selection_to_string().filter(|text| !text.is_empty()),
+        links: linked.links(stamps),
         scrolled: offset,
         history: term.grid().history_size(),
         ..Screen::default()
@@ -306,7 +359,7 @@ mod tests {
 
     #[test]
     fn words_are_one_run_and_blanks_draw_nothing() {
-        let screen = build(&term(20, 3, b"ls -la  \r\n\r\n   x"));
+        let screen = build(&term(20, 3, b"ls -la  \r\n\r\n   x"), &Stamps::default());
         assert_eq!((screen.cols, screen.rows), (20, 3));
         assert_eq!(texts(&screen, 0), [(0, "ls -la")]);
         assert!(screen.lines[1].is_empty());
@@ -317,11 +370,12 @@ mod tests {
 
     #[test]
     fn colours_stay_symbolic_until_a_program_asks_for_rgb() {
-        let screen = build(&term(
+        let shown = term(
             30,
             1,
             b"\x1b[31mred\x1b[0m \x1b[1;38;5;196mcube\x1b[0m \x1b[7mrev\x1b[0m",
-        ));
+        );
+        let screen = build(&shown, &Stamps::default());
         let runs = &screen.lines[0];
         assert_eq!(runs[0].style.fg, Color::Ansi(1));
         assert_eq!(runs[0].text, "red");
@@ -337,7 +391,10 @@ mod tests {
 
     #[test]
     fn wide_and_combining_characters_stand_at_their_column() {
-        let screen = build(&term(20, 1, "a漢b e\u{301}!".as_bytes()));
+        let screen = build(
+            &term(20, 1, "a漢b e\u{301}!".as_bytes()),
+            &Stamps::default(),
+        );
         let runs = &screen.lines[0];
         let at = |text: &str| runs.iter().find(|run| run.text == text).unwrap();
         assert_eq!((at("漢").col, at("漢").cells), (1, 2));

@@ -876,6 +876,23 @@ completion (12966 us / 12000 us); a rerun after concurrent builds finished passe
 all unchanged budgets (9897 us). UI startup/idle budgets remain unestablished by
 these functional checks.
 
+Links (2026-10-03, ADR-029): addresses found in raw text (the code view, long
+text) are followed with Ctrl+click and drawn as links only while Ctrl is held
+over them; Markdown's bare addresses and plain-text mail are links like written
+ones. The terminal shows the links programs write (OSC 8) and finds addresses
+and paths (`src/main.rs:12:5`) in their output: Ctrl+click reveals a path in the
+pane (the shell follows), Ctrl+Shift+click in a new tab, a line number shows that
+line in the preview. Paths are read from the folder their line was printed in,
+stamped into the grid by the plugin. Ctrl+Shift+O labels the links in view, in
+the terminal and in a preview, for the keyboard. Every address goes through one
+gate (`ui.open_url`, on a worker; the inspector used to call the desktop itself).
+Not covered: table cells, Details comments, lines past a long file's first page.
+Lint and 1033 of 1034 tests pass; the failure (`mime::tests::the_bytes_decide_for_a_name_that_says_nothing`)
+compares with the system's MIME database, which now names a shell script
+`text/x-shellscript`. Checked on an isolated X11 display: Ctrl hover and click in the
+code view, Markdown and the terminal, labels in both, reveal with line in the pane
+and in a new tab, idle CPU back to 0–1 %.
+
 ## Phase 0 — Foundations and toolkit spike (~2 weeks)
 
 Goal: a repo that can measure itself, and a toolkit decision backed by numbers.

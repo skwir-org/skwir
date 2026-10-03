@@ -269,7 +269,13 @@ pub(crate) fn popover(
         .text_size(px(size))
         .line_height(px(size * style.line_height));
     for (index, block) in open.blocks.iter().enumerate() {
-        let (shown, highlights) = inspector_text::styled(block, 0..block.text.len(), 0..0, style);
+        let (shown, highlights) = inspector_text::styled(
+            block,
+            0..block.text.len(),
+            0..0,
+            style,
+            inspector_text::Marks::default(),
+        );
         let links: Vec<_> = block
             .runs
             .iter()

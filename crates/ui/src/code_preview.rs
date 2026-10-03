@@ -88,12 +88,15 @@ impl Highlighter {
 }
 
 /// Highlight the code view: one block per line, parser state kept between
-/// them. Runs on the preview conversion worker, before any UI rows exist.
+/// them, and the addresses each line writes found as links, followed with
+/// Ctrl (`Run::found`). Runs on the preview conversion worker, before any UI
+/// rows exist.
 pub fn highlight(data: &mut Inspection, dark: bool) {
     let language = data.blocks.first().and_then(|b| b.language.clone());
     let mut highlighter = Highlighter::new(language.as_deref(), dark);
     for block in &mut data.blocks {
         block.runs = highlighter.line(&block.text);
+        bibli_platform::links::link_block(block, true);
     }
 }
 

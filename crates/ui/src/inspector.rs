@@ -60,6 +60,13 @@ impl Display {
         if data.kind == InspectionKind::Code {
             crate::code_preview::highlight(&mut data, dark);
         } else {
+            // Text too long for the code view is raw text all the same: its
+            // addresses are found before it is cut, so none is cut in two.
+            if data.kind == InspectionKind::Text {
+                for block in data.blocks.iter_mut().filter(|block| !block.code) {
+                    bibli_platform::links::link_block(block, true);
+                }
+            }
             data.blocks = bibli_core::inspection::split_blocks(data.blocks);
         }
         for block in &mut data.blocks {
@@ -312,6 +319,9 @@ pub struct State {
     pub(crate) pictures: crate::inspector_pictures::Pictures,
     /// A note opened under its reference.
     pub(crate) notes: crate::note_popover::Notes,
+    /// The links in view labelled (Ctrl+Shift+O): typing a label follows
+    /// its link.
+    pub(crate) labels: Option<crate::links::Labels>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -335,6 +345,7 @@ impl Default for State {
             land_at_end: false,
             pictures: crate::inspector_pictures::Pictures::default(),
             notes: crate::note_popover::Notes::default(),
+            labels: None,
         }
     }
 }
@@ -369,6 +380,7 @@ impl State {
             || self.notes.holds_focus(window, cx)
     }
     pub fn reset(&mut self, data: &Inspection) {
+        self.labels = None;
         self.collapsed = Arc::default();
         self.selected = None;
         self.selection = None;
@@ -397,6 +409,7 @@ impl State {
             let items = data.blocks.len() + listed(data).len();
             self.selected = self.selected.filter(|&i| i < items);
             self.selection = None;
+            self.labels = None;
             self.dragging = false;
             self.reindex(data);
             self.go_to(data, top);
@@ -549,6 +562,63 @@ impl State {
         self.reindex(data);
         if let Some(item) = self.item_of(data, index) {
             scroll_into_view(&self.list, item);
+        }
+    }
+    /// The block list item `item` draws, if it draws one (the first item
+    /// is the inspection's picture; rows come after the blocks).
+    fn block_of_item(&self, data: &Inspection, item: usize) -> Option<usize> {
+        let i = item.checked_sub(1)?;
+        if data.kind == InspectionKind::Code {
+            self.visible.get(i).copied()
+        } else {
+            (i < data.blocks.len()).then_some(i)
+        }
+    }
+    /// Label the links of the blocks in view, as last drawn: what the
+    /// keyboard can reach of what the pointer can. Whether there are any.
+    pub(crate) fn label_links(&mut self, data: &Inspection) -> bool {
+        let bottom = self.list.viewport_bounds().bottom();
+        let mut found = Vec::new();
+        let mut item = self.list.logical_scroll_top().item_ix;
+        while let Some(bounds) = self.list.bounds_for_item(item) {
+            if bounds.top() >= bottom {
+                break;
+            }
+            if let Some(index) = self.block_of_item(data, item)
+                && let Some(block) = data.blocks.get(index)
+            {
+                found.extend(
+                    crate::inspector_text::links_in(block, 0..block.text.len())
+                        .into_iter()
+                        .map(|link| (index, link)),
+                );
+            }
+            item += 1;
+        }
+        let labels = crate::links::labels(found.len());
+        self.labels = (!found.is_empty()).then(|| crate::links::Labels {
+            links: found
+                .into_iter()
+                .zip(labels)
+                .map(|((block, link), label)| crate::links::Labelled {
+                    block,
+                    at: link.block.start,
+                    label,
+                    target: link.target,
+                    note: link.note,
+                })
+                .collect(),
+            typed: String::new(),
+        });
+        self.labels.is_some()
+    }
+    /// Show line `line` (from 1) of the code view, highlighted, as a link
+    /// to it asks (`src/main.rs:12`). Only a page that starts the file
+    /// numbers its lines from the file's start.
+    pub(crate) fn show_line(&mut self, data: &Inspection, line: u32) {
+        let index = (line as usize).saturating_sub(1);
+        if data.kind == InspectionKind::Code && data.position == 0 && index < data.blocks.len() {
+            self.reveal(data, index);
         }
     }
     /// Highlight a row, scrolled into view if it is shown: the member shown
@@ -715,6 +785,9 @@ const VIEW_ONLY: &[&str] = &[
     "outline",
     "block",
     "link",
+    "links",
+    "links_close",
+    "label_key",
 ];
 
 impl Shell {
@@ -954,6 +1027,65 @@ impl Shell {
         };
         if let Some(PreviewContent::Inspection(display)) = &self.preview.content {
             match action {
+                // The links in view labelled, or no longer.
+                "links" => {
+                    let state = &mut self.preview.inspection;
+                    if state.labels.take().is_none() && !state.label_links(&display.data) {
+                        self.set_status("No link in view", false, cx);
+                    }
+                    return cx.notify();
+                }
+                "links_close" => {
+                    self.preview.inspection.labels = None;
+                    return cx.notify();
+                }
+                "label_key" => {
+                    let Some(labels) = self.preview.inspection.labels.as_mut() else {
+                        return;
+                    };
+                    let key = args["key"].as_str().unwrap_or("");
+                    if key == "backspace" {
+                        labels.typed.pop();
+                        return cx.notify();
+                    }
+                    let mut letters = key.chars();
+                    let (Some(letter), None) = (letters.next(), letters.next()) else {
+                        return;
+                    };
+                    if !letter.is_ascii_alphabetic() {
+                        return;
+                    }
+                    labels.typed.push(letter.to_ascii_lowercase());
+                    let tab = args["shift"].as_bool() == Some(true) || letter.is_ascii_uppercase();
+                    let picked = labels
+                        .links
+                        .iter()
+                        .find(|link| link.label == labels.typed)
+                        .map(|link| {
+                            serde_json::json!({
+                                "action": "link",
+                                "target": link.target,
+                                "note": link.note,
+                                "tab": tab,
+                                "keys": true,
+                            })
+                        });
+                    let matches = labels
+                        .links
+                        .iter()
+                        .any(|link| link.label.starts_with(labels.typed.as_str()));
+                    if picked.is_some() || !matches {
+                        self.preview.inspection.labels = None;
+                    }
+                    cx.notify();
+                    match picked {
+                        Some(link) => return self.inspect_here(&link, window, cx),
+                        None if !matches => {
+                            return self.set_status("No link has that label", false, cx);
+                        }
+                        None => return,
+                    }
+                }
                 "text_down" | "text_move" => {
                     if action == "text_move" && !self.preview.inspection.dragging {
                         return;
@@ -1150,11 +1282,14 @@ impl Shell {
             }
         }
         if action == "link" {
-            if self
-                .preview
-                .inspection
-                .selection
-                .is_some_and(|s| s.start != s.end)
+            // A press that ended a selection is not a click on a link; a
+            // label typed is.
+            if args["keys"].as_bool() != Some(true)
+                && self
+                    .preview
+                    .inspection
+                    .selection
+                    .is_some_and(|s| s.start != s.end)
             {
                 return;
             }
@@ -1185,17 +1320,21 @@ impl Shell {
                 return;
             }
             let href = args["target"].as_str().unwrap_or("");
-            if href.starts_with("https://")
-                || href.starts_with("http://")
-                || href.starts_with("mailto:")
-            {
-                cx.open_url(href);
+            // An address goes to the desktop through the one gate.
+            if crate::links::is_address(href) {
+                self.run(
+                    "ui.open_url",
+                    serde_json::json!({ "url": href }),
+                    window,
+                    cx,
+                );
                 return;
             }
             // A link to a neighbouring file or folder is a place in the
             // filesystem: go there, select it, and let the preview follow the
-            // selection. Only a book's links mean something inside a
-            // container, so those fall through to the provider below.
+            // selection; with Shift, in a tab of its own. Only a book's links
+            // mean something inside a container, so those fall through to the
+            // provider below.
             if kind != Some(InspectionKind::Book) {
                 match self
                     .preview
@@ -1204,7 +1343,11 @@ impl Shell {
                 {
                     Some(target) => {
                         let pane = self.pane;
-                        if !self.reveal_path(pane, &target, window, cx) {
+                        let at = crate::links::RevealAt {
+                            tab: args["tab"].as_bool() == Some(true),
+                            line: None,
+                        };
+                        if !self.reveal_path_at(pane, &target, at, window, cx) {
                             let name = target.file_name().map_or_else(
                                 || target.display().to_string(),
                                 |name| name.to_string_lossy().into_owned(),
@@ -2065,6 +2208,9 @@ pub fn content(
     let note = (!view.parked)
         .then(|| crate::note_popover::popover(shell, &list_style, theme, cx))
         .flatten();
+    let mut list_style = list_style;
+    list_style.armed_link = shell.armed_link();
+    list_style.labels = state.labels.as_ref().map(|labels| Rc::new(labels.shown()));
     let measure = list_style.measure;
     let entity = cx.entity().downgrade();
     let ui_font = shell.font.clone();
@@ -2250,10 +2396,30 @@ pub fn content(
         .flex()
         .flex_col()
         // The files of an archive or a message are walked with the arrows.
-        .key_context(if kept_rows(display.data.kind) {
-            "Inspector PreviewMembers"
-        } else {
-            "Inspector"
+        .key_context(
+            match (kept_rows(display.data.kind), state.labels.is_some()) {
+                (true, false) => "Inspector PreviewMembers",
+                (true, true) => "Inspector PreviewMembers labelling",
+                (false, false) => "Inspector",
+                (false, true) => "Inspector labelling",
+            },
+        )
+        // While its links are labelled, what is typed picks one.
+        .when(state.labels.is_some(), |d| {
+            d.on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                let keystroke = &event.keystroke;
+                let key = match keystroke.key.as_str() {
+                    "backspace" => "backspace".to_owned(),
+                    key => keystroke.key_char.clone().unwrap_or_else(|| key.to_owned()),
+                };
+                let args = serde_json::json!({
+                    "action": "label_key",
+                    "key": key,
+                    "shift": keystroke.modifiers.shift,
+                });
+                this.run("ui.inspect", args, window, cx);
+                cx.stop_propagation();
+            }))
         })
         // After the list has scrolled: what is left of the gesture at an edge
         // turns the section, so a book reads on from chapter to chapter.

@@ -554,6 +554,7 @@ impl Walk {
                 && (context.reference || context.style.script == Script::Superscript),
             code: context.code,
             link: context.link.clone(),
+            found: false,
         });
     }
 

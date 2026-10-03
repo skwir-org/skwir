@@ -163,6 +163,7 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     // selection across a split, as F6 moves it.
     ("shift-f5", "ui.copy_other", Some("pane split selection")),
     ("shift-f6", "ui.move_other", Some("pane split selection")),
+    ("ctrl-shift-o", "ui.terminal_links", Some("terminal")),
     ("enter", "ui.review_apply", Some("review")),
     ("escape", "ui.review_cancel", Some("review")),
     ("up", "ui.jump_up", Some("jump")),
@@ -461,6 +462,20 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         r#"{"delta":1}"#,
         Some("SettingNumber"),
     ),
+    // The links in view labelled, for the keyboard to follow, as foot's
+    // and kitty's hints label a terminal's.
+    (
+        "ctrl-shift-o",
+        "ui.inspect",
+        r#"{"action":"links"}"#,
+        Some("Inspector"),
+    ),
+    (
+        "escape",
+        "ui.inspect",
+        r#"{"action":"links_close"}"#,
+        Some("Inspector labelling"),
+    ),
     (
         "shift-pageup",
         "ui.terminal_page",
@@ -573,6 +588,7 @@ fn condition(flag: &str) -> String {
         "sweep" => "selecting as the cursor moves",
         "filtered" => "filtered by name",
         "tags" => "in the Tags view",
+        "labelling" => "while links are labelled",
         other => other,
     }
     .to_owned()

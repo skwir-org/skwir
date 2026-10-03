@@ -103,14 +103,26 @@ impl PreviewProvider for Provider {
                 let part = message.parts.iter().find(|p| p.content_id() == Some(id))?;
                 inspection::image(part.contents()).ok()
             });
-            let page = rich_preview::html(&html, rich_preview::Markup::Html, cancel, images)?;
+            let mut page = rich_preview::html(&html, rich_preview::Markup::Html, cancel, images)?;
             truncated = page.truncated;
+            // The parser writes a message in plain text as HTML: the addresses
+            // its text gives are links, as mail readers make them.
+            let written = message
+                .html_part(0)
+                .is_some_and(|part| matches!(part.body, mail_parser::PartType::Html(_)));
+            if !written {
+                for block in page.blocks.iter_mut().filter(|block| !block.code) {
+                    bibli_platform::links::link_block(block, false);
+                }
+            }
             blocks.extend(page.blocks);
         } else if let Some(text) = message.body_text(0) {
-            blocks.push(Block {
+            let mut body = Block {
                 text: text.into_owned(),
                 ..Block::default()
-            });
+            };
+            bibli_platform::links::link_block(&mut body, false);
+            blocks.push(body);
         }
         let attachments = message.attachments().count();
         let details = inspection::details([
@@ -225,6 +237,32 @@ mod tests {
         );
         assert!(data.plain_text().contains("Just text."));
         assert!(data.notice.is_empty(), "{}", data.notice);
+    }
+
+    #[test]
+    fn a_plain_message_links_the_addresses_it_writes() {
+        let data = read(
+            "From: sender@example.invalid\r\nSubject: Plain\r\n\r\nRead https://example.invalid/notes.\r\n",
+        );
+        let link = data
+            .blocks
+            .iter()
+            .flat_map(|block| block.runs.iter().map(move |run| (block, run)))
+            .find_map(|(block, run)| {
+                Some((
+                    &block.text[run.range.clone()],
+                    run.link.as_deref()?,
+                    run.found,
+                ))
+            });
+        assert_eq!(
+            link,
+            Some((
+                "https://example.invalid/notes",
+                "https://example.invalid/notes",
+                false
+            ))
+        );
     }
 
     #[test]

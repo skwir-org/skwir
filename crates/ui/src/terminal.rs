@@ -11,6 +11,10 @@
 //! shell exits, when the plugin is disabled, or with the window. The keys
 //! the window binds are the shell's while it has the keyboard, but F4 and
 //! the palette (`keymap::TERMINAL_PASSTHROUGH`).
+//!
+//! Its links (ADR-029) follow Ctrl+click, or the keyboard: Ctrl+Shift+O
+//! labels them, and typing a label follows its link (in a tab of its own
+//! in capitals), as foot's and kitty's hints do.
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -53,6 +57,8 @@ pub struct TerminalState {
     followed: Option<PathBuf>,
     palette: Option<Palette>,
     grid: Rc<GridState>,
+    /// The links are labelled (Ctrl+Shift+O): what was typed of a label.
+    labelled: Option<String>,
 }
 
 impl TerminalState {
@@ -70,7 +76,14 @@ impl TerminalState {
             followed: None,
             palette: None,
             grid: Rc::default(),
+            labelled: None,
         }
+    }
+
+    /// Label the links, or stop.
+    fn label(&mut self, labelled: Option<String>) {
+        self.grid.set_labelling(labelled.is_some());
+        self.labelled = labelled;
     }
 
     fn forget_session(&mut self) {
@@ -81,6 +94,7 @@ impl TerminalState {
         self.followed = None;
         self.palette = None;
         self.grid = Rc::default();
+        self.labelled = None;
     }
 }
 
@@ -152,6 +166,12 @@ fn key_of(keystroke: &gpui::Keystroke) -> Option<Key> {
 pub(crate) struct HeightHandle;
 
 impl Shell {
+    /// Whether the pointer rests on a link of the terminal: Ctrl pressed or
+    /// released there draws it as one, or not.
+    pub(crate) fn terminal_pointer_over_link(&self) -> bool {
+        self.terminal.open && self.terminal.grid.pointer_on_link()
+    }
+
     fn terminal_session(&self) -> Option<Arc<dyn TerminalSession>> {
         self.terminal.session.clone()
     }
@@ -161,6 +181,7 @@ impl Shell {
     pub(crate) fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.terminal.open {
             self.terminal.open = false;
+            self.terminal.label(None);
             // The panel leaves with the focus: the pane takes it back
             // (`Shell::drawn_focus`).
         } else if self.app.terminals.provider().is_none() {
@@ -300,6 +321,10 @@ impl Shell {
                     }
                 }
             }
+            // Labels name the links shown: none left, none to type.
+            if screen.links.is_empty() {
+                self.terminal.label(None);
+            }
             self.terminal.screen = screen;
             cx.notify();
         }
@@ -344,7 +369,77 @@ impl Shell {
         }
     }
 
-    fn on_terminal_key(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    /// `ui.terminal_links`: label the links on screen, so typing a label
+    /// follows its link; again, or Escape, stops.
+    pub(crate) fn label_terminal_links(&mut self, cx: &mut Context<Self>) {
+        if self.terminal.labelled.is_some() {
+            self.terminal.label(None);
+        } else if self.terminal.screen.links.is_empty() {
+            self.set_status("No link on the terminal's screen", false, cx);
+        } else {
+            self.terminal.label(Some(String::new()));
+        }
+        cx.notify();
+    }
+
+    /// A key while the links are labelled: a letter of a label (a capital
+    /// for a tab of its own), Backspace, or Escape. Nothing reaches the
+    /// shell.
+    fn terminal_label_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(mut typed) = self.terminal.labelled.clone() else {
+            return;
+        };
+        let keystroke = &event.keystroke;
+        match keystroke.key.as_str() {
+            "escape" => return self.terminal.label(None),
+            "backspace" => {
+                typed.pop();
+                return self.terminal.label(Some(typed));
+            }
+            _ => {}
+        }
+        let letter = keystroke
+            .key_char
+            .as_deref()
+            .unwrap_or(&keystroke.key)
+            .chars()
+            .next()
+            .filter(char::is_ascii_alphabetic);
+        let Some(letter) = letter else {
+            return;
+        };
+        let tab = keystroke.modifiers.shift || letter.is_ascii_uppercase();
+        typed.push(letter.to_ascii_lowercase());
+        let labels = crate::links::labels(self.terminal.screen.links.len());
+        if let Some(index) = labels.iter().position(|label| *label == typed) {
+            let target = self.terminal.screen.links[index].target.clone();
+            self.terminal.label(None);
+            self.follow_terminal_link(&target, tab, window, cx);
+        } else if labels.iter().any(|label| label.starts_with(&typed)) {
+            self.terminal.label(Some(typed));
+        } else {
+            self.terminal.label(None);
+            self.set_status("No link has that label", false, cx);
+        }
+    }
+
+    fn on_terminal_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.terminal.labelled.is_some() {
+            self.terminal_label_key(event, window, cx);
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         let Some(session) = self.terminal_session() else {
             return;
         };
@@ -398,6 +493,20 @@ impl Shell {
             .height
             .unwrap_or(DEFAULT_HEIGHT)
             .min(self.terminal_height_limit(window));
+        let weak = cx.entity().downgrade();
+        let follow: crate::elements::terminal::FollowLink =
+            Rc::new(move |target, tab, window, cx| {
+                let _ = weak.update(cx, |shell, cx| {
+                    shell.note_pointer_use("ui.terminal_links", &serde_json::json!({}), cx);
+                    shell.follow_terminal_link(target, tab, window, cx);
+                });
+            });
+        let labels = self.terminal.labelled.clone().map(|typed| {
+            (
+                crate::links::labels(self.terminal.screen.links.len()),
+                typed,
+            )
+        });
         let grid = self.terminal_session().map(|session| {
             let mut font = gpui::font(self.mono_font.clone());
             // Glyphs sit one per cell: a ligature would shift the rest.
@@ -414,10 +523,23 @@ impl Shell {
                     bg: theme.bg,
                     ansi: theme.terminal,
                     selection: theme.selection_bg,
+                    link: theme.accent,
+                    on_link: theme.on_fill,
                 },
                 state: Rc::clone(&self.terminal.grid),
+                follow,
+                labels,
             }
         });
+        // Where a link a program wrote leads, said before it is followed:
+        // its text may say something else.
+        let tip = {
+            let (grid, font) = (Rc::clone(&self.terminal.grid), self.font.clone());
+            move |_: &mut Window, cx: &mut gpui::App| {
+                grid.tip()
+                    .map(|tip| crate::toolbar::tooltip(tip, font.clone(), cx))
+            }
+        };
         let reset = cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
             if event.click_count() == 2 {
                 this.terminal.height = None;
@@ -443,6 +565,7 @@ impl Shell {
                 .id("terminal-panel")
                 .track_focus(&self.terminal.focus)
                 .key_context(keymap::TERMINAL)
+                .optional_tooltip(tip)
                 .on_key_down(cx.listener(Self::on_terminal_key))
                 .relative()
                 .flex_none()

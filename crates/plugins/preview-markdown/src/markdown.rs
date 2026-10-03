@@ -65,6 +65,10 @@ fn flush(blocks: &mut Vec<Block>, current: &mut Block, marker: &mut Option<Strin
     if current.marker.is_some() {
         *marker = None;
     }
+    // An address written bare is a link, as GitHub reads Markdown.
+    if !current.code {
+        bibli_platform::links::link_block(current, false);
+    }
     blocks.push(std::mem::take(current));
 }
 
@@ -242,6 +246,7 @@ pub fn parse(
                     cells: std::mem::take(cells),
                     header,
                 };
+                bibli_platform::links::link_block(current, false);
                 blocks.push(std::mem::take(current));
             };
             match event {
@@ -662,6 +667,40 @@ mod tests {
         assert_eq!(cells_of(&blocks[1]), (vec!["one", "two"], false));
         // The row reads as one line, so copying and searching need no case.
         assert_eq!(blocks[1].text, "one\ttwo");
+    }
+
+    /// Each link of `block`: its text, where it leads, whether found.
+    fn links(block: &Block) -> Vec<(&str, &str, bool)> {
+        block
+            .runs
+            .iter()
+            .filter_map(|r| Some((&block.text[r.range.clone()], r.link.as_deref()?, r.found)))
+            .collect()
+    }
+
+    #[test]
+    fn a_bare_address_is_a_link_as_github_reads_it() {
+        let blocks = parse(
+            "See https://example.org/a_b_c. Not `https://code.example`, \
+             [named](https://named.example) or *https://em.example/x*.\n\n\
+             | where |\n|---|\n| mailto:a@b.example |\n",
+        );
+        assert_eq!(
+            links(&blocks[0]),
+            [
+                (
+                    "https://example.org/a_b_c",
+                    "https://example.org/a_b_c",
+                    false
+                ),
+                ("named", "https://named.example", false),
+                ("https://em.example/x", "https://em.example/x", false),
+            ]
+        );
+        assert_eq!(
+            links(&blocks[2]),
+            [("mailto:a@b.example", "mailto:a@b.example", false)]
+        );
     }
 
     #[test]

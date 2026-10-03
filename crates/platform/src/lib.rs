@@ -16,6 +16,7 @@
 //! - [`apps`]: the desktop's applications, what opens which type, launching one.
 //! - [`file`]: opening the user's files for reading without blocking on a FIFO.
 //! - [`uri`]: `file://` URIs escaped as the desktop escapes them.
+//! - [`links`]: addresses and paths found in plain text, and the files they name.
 //! - [`process`]: bounded tool runs, and children started without waiting on them.
 
 pub mod access;
@@ -27,6 +28,7 @@ pub mod file;
 pub mod filesystem;
 pub mod icons;
 mod line_channel;
+pub mod links;
 pub mod media;
 pub mod mime;
 pub mod model;

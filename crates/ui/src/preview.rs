@@ -1881,8 +1881,10 @@ impl Shell {
             }
             _ => {}
         }
-        // A note belongs to the text it was opened from.
+        // A note belongs to the text it was opened from, as the link the
+        // pointer rested on does.
         self.preview.inspection.notes.close(window);
+        self.links.hover = None;
         // Pictures decoded as they came into view belong to the page they
         // were of, whatever replaces it.
         for image in self.preview.inspection.pictures.clear() {
@@ -1897,6 +1899,8 @@ impl Shell {
                 .get_or_insert_with(|| cx.focus_handle());
         }
         self.preview.content = content;
+        // A link to a line of this file shows it now it is here.
+        self.show_waiting_line();
     }
 
     /// The fields Details shows for `entry` at `path` (a picture's place,

@@ -34,6 +34,7 @@ mod inspector_text;
 pub mod jump;
 pub mod keymap;
 pub mod layout;
+mod links;
 pub mod list;
 mod loading;
 mod map_preview;

@@ -181,6 +181,17 @@ current source before assuming a planned crate, command, or API exists.
   (`Detail::with_action`, drawn as a link after the value, run through
   `Shell::run`): a position shows the file on the map. The row itself
   still copies its value; the link is the only thing that acts.
+- **Links** (ADR-029). A link written in a document answers a click; one
+  found in raw text (`bibli_platform::links`: addresses by their scheme,
+  never a bare domain; in the terminal, paths) answers Ctrl+click and is
+  drawn as one only while Ctrl is held over it (`Run::found`,
+  `Shell::armed_link`), Shift added for a tab of its own. An address goes
+  to the desktop only through `ui.open_url`; a file or folder only
+  through `ui.reveal` (with `line`, the preview shows it), never opened.
+  Ctrl+Shift+O labels the links in view for the keyboard (`links.rs`). A
+  terminal path is read from the folder its line was printed in: the
+  plugin stamps it into the grid (`plugins/terminal/src/links.rs`), so a
+  new kind of found link is stamped there too, never resolved at click.
 - **Notes live on the file.** Tags, a rating and a comment are kept where
   the desktop and other applications keep them, never in a database of
   ours (ADR-027): each place is a store (`bibli_core::notes::NotesStore`,

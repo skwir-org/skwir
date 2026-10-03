@@ -33,7 +33,7 @@ use bibli_core::terminal::{
 use parking_lot::{Condvar, Mutex, RwLock};
 
 use crate::follow::{self, Follow};
-use crate::{keys, screen};
+use crate::{keys, links, screen};
 
 /// The least time between two screens published: about one frame.
 const INTERVAL: Duration = Duration::from_millis(8);
@@ -239,6 +239,7 @@ pub(crate) fn open(
     // Detached: when the shell ends or the session stops, the loop returns
     // and the pty is dropped on its own thread (hang up, then reap).
     drop(event_loop.spawn());
+    let found = Arc::clone(&shared);
     let worker = Worker {
         shared: Arc::clone(&shared),
         term,
@@ -246,7 +247,10 @@ pub(crate) fn open(
         pid,
         family,
         follow_on: Arc::clone(&options.follow),
+        cwd: Some(spawn.dir.clone()),
         follow: Follow::starting_in(spawn.dir),
+        // A path found to lead somewhere is a link more to publish.
+        links: links::Finder::new(move || found.with_state(|state| state.dirty = true)),
     };
     std::thread::Builder::new()
         .name("bibli-terminal".into())
@@ -268,6 +272,10 @@ struct Worker {
     family: Option<follow::Family>,
     follow_on: Arc<AtomicBool>,
     follow: Follow,
+    /// Where the shell is, as last read: what paths printed now are read
+    /// from.
+    cwd: Option<PathBuf>,
+    links: links::Finder,
 }
 
 impl Worker {
@@ -474,14 +482,16 @@ impl Worker {
         }
     }
 
-    /// Where the shell is, when it is looked at after output.
+    /// Where the shell is, when it is looked at after output: where the
+    /// paths it printed are read from, and where the pane follows it.
     fn look_at_shell(&mut self) {
-        if !self.follow_on.load(Ordering::Relaxed) {
-            return;
-        }
         let Ok(cwd) = std::fs::read_link(format!("/proc/{}/cwd", self.pid)) else {
             return;
         };
+        self.cwd = Some(cwd.clone());
+        if !self.follow_on.load(Ordering::Relaxed) {
+            return;
+        }
         let foreground = self.shell_has_terminal();
         if let Some(dir) = self.follow.shell_at(&cwd, foreground) {
             self.type_cd(&dir);
@@ -492,7 +502,10 @@ impl Worker {
         if !exited {
             self.look_at_shell();
         }
-        let mut screen = screen::build(&self.term.lock());
+        let mut term = self.term.lock();
+        self.links.stamp(&mut term, self.cwd.as_deref());
+        let mut screen = screen::build(&term, &self.links.stamps());
+        drop(term);
         screen.title.clone_from(&self.shared.title.lock());
         screen.cwd = self.follow.seen().map(PathBuf::from);
         screen.moved = self.follow.moved;

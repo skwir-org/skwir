@@ -215,6 +215,10 @@ pub struct Run {
     pub note: bool,
     pub code: bool,
     pub link: Option<String>,
+    /// The link was found in raw text rather than written as one (source,
+    /// a log), where a click selects: it is drawn and followed only while
+    /// Ctrl (Cmd) is held over it (`bibli_platform::links::link_block`).
+    pub found: bool,
 }
 #[derive(Clone, Debug, Default)]
 pub struct Row {

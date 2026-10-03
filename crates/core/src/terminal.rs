@@ -107,6 +107,42 @@ pub struct Selection {
     pub block: bool,
 }
 
+/// Where a link of the terminal leads (ADR-029).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Target {
+    /// An address: one a program wrote as a link, or a web or mail address
+    /// found in its text. What may open it is the UI's to decide.
+    Uri(String),
+    /// A file or a folder that is there, absolute, and the line and column
+    /// a message points at in it (`src/main.rs:12:5`).
+    Path {
+        path: PathBuf,
+        line: Option<u32>,
+        column: Option<u32>,
+    },
+}
+
+/// A link on screen: what a program wrote as one (OSC 8), or an address or
+/// a path the terminal found in its text. A long one wraps over rows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Link {
+    pub target: Target,
+    /// The cells it covers, top to bottom: row, first and last column.
+    pub spans: Vec<(u16, u16, u16)>,
+    /// A program wrote it as a link: its text may say something else than
+    /// where it leads, which is said before it is followed.
+    pub written: bool,
+}
+
+impl Link {
+    /// Whether the link covers the cell at `row`, `col`.
+    pub fn covers(&self, row: u16, col: u16) -> bool {
+        self.spans
+            .iter()
+            .any(|&(r, first, last)| r == row && (first..=last).contains(&col))
+    }
+}
+
 /// What the terminal shows, whole: the UI draws it as it is.
 #[derive(Clone, Debug, Default)]
 pub struct Screen {
@@ -120,6 +156,8 @@ pub struct Screen {
     pub selection: Option<Selection>,
     /// The selection's text, as it would be copied.
     pub selected_text: Option<String>,
+    /// The links on screen, top to bottom.
+    pub links: Vec<Link>,
     /// Lines scrolled back into the history, 0 at the bottom.
     pub scrolled: usize,
     /// Lines of history above the screen.

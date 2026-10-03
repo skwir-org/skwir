@@ -6,19 +6,24 @@
 //! turned into cells with the bounds and cell of this frame. Runs are placed
 //! at their own column and ASCII is shaped at exactly the cell's width, so a
 //! bold face or a glyph from a fallback font cannot drift off the grid.
-use std::cell::Cell;
+//!
+//! A link (`Screen::links`) is drawn as one while Ctrl (Cmd) is held over
+//! it, and followed by Ctrl+click, Shift added for a tab of its own
+//! (`links.rs`); a plain press still selects. While the links are labelled
+//! (Ctrl+Shift+O), each carries its label at its first cell.
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use bibli_core::terminal::{
-    At, Attrs, Color, CursorShape, Input, Run, Screen, Size, TerminalSession, Unit,
+    At, Attrs, Color, CursorShape, Input, Run, Screen, Size, Target, TerminalSession, Unit,
 };
 use gpui::{
-    App, Bounds, Element, ElementId, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId,
-    Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, ShapedLine,
-    StrikethroughStyle, Style, TextRun, UTF16Selection, UnderlineStyle, Window, point, px,
-    relative, size,
+    App, Bounds, CursorStyle, Element, ElementId, FocusHandle, Font, FontStyle, FontWeight,
+    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent,
+    ShapedLine, SharedString, StrikethroughStyle, Style, TextRun, UTF16Selection, UnderlineStyle,
+    Window, point, px, relative, size,
 };
 
 /// Between the panel's edges and the grid.
@@ -35,6 +40,10 @@ pub struct Colors {
     pub bg: Hsla,
     pub ansi: [Hsla; 16],
     pub selection: Hsla,
+    /// A link's underline, and a label's fill.
+    pub link: Hsla,
+    /// A label's text, on `link`.
+    pub on_link: Hsla,
 }
 
 impl Colors {
@@ -61,7 +70,54 @@ pub struct GridState {
     sent: Cell<Option<Size>>,
     dragging: Cell<bool>,
     wheel: Cell<f32>,
+    /// The pointer is on a link, whether drawn as one or not: Ctrl pressed
+    /// or released there changes it (`Shell::on_modifiers`).
+    on_link: Cell<bool>,
+    /// The link drawn as one, by its place in `Screen::links`.
+    armed: Cell<Option<usize>>,
+    /// Where the link pressed with Ctrl leads: followed if released on it.
+    pressed: RefCell<Option<Target>>,
+    /// Where the armed link leads, when a program wrote it: said in a
+    /// tooltip, since its text may say otherwise.
+    tip: RefCell<Option<SharedString>>,
+    /// The links are labelled: what is typed picks one, nothing reaches the
+    /// shell.
+    labelling: Cell<bool>,
 }
+
+impl GridState {
+    pub fn pointer_on_link(&self) -> bool {
+        self.on_link.get()
+    }
+
+    /// What the tooltip says: where the link under the pointer leads, when
+    /// a program wrote it and Ctrl is held over it.
+    pub fn tip(&self) -> Option<SharedString> {
+        self.tip.borrow().clone()
+    }
+
+    pub fn set_labelling(&self, on: bool) {
+        self.labelling.set(on);
+    }
+}
+
+/// What a link says it leads to, for its tooltip.
+fn describe(target: &Target) -> SharedString {
+    match target {
+        Target::Uri(uri) => uri.clone().into(),
+        Target::Path {
+            path, line: None, ..
+        } => path.display().to_string().into(),
+        Target::Path {
+            path,
+            line: Some(line),
+            ..
+        } => format!("{}:{line}", path.display()).into(),
+    }
+}
+
+/// Follow a link: where it leads, and whether in a tab of its own.
+pub type FollowLink = Rc<dyn Fn(&Target, bool, &mut Window, &mut App)>;
 
 pub struct TerminalGrid {
     pub session: Arc<dyn TerminalSession>,
@@ -71,6 +127,10 @@ pub struct TerminalGrid {
     pub font_size: Pixels,
     pub colors: Colors,
     pub state: Rc<GridState>,
+    pub follow: FollowLink,
+    /// While the links are labelled: each link's label, in the order of
+    /// `Screen::links`, and what was typed of one so far.
+    pub labels: Option<(Vec<String>, String)>,
 }
 
 /// A frame's grid: where it starts and how big a cell is.
@@ -91,6 +151,20 @@ impl Geometry {
             ),
             size(self.cell.width * f32::from(cells), self.cell.height),
         )
+    }
+
+    /// The cell under `position`, if it is on the grid.
+    fn cell_under(&self, position: Point<Pixels>) -> Option<(u16, u16)> {
+        let x = f32::from(position.x - self.origin.x) / f32::from(self.cell.width);
+        let y = f32::from(position.y - self.origin.y) / f32::from(self.cell.height);
+        (x >= 0. && y >= 0. && x < f32::from(self.cols) && y < f32::from(self.rows))
+            .then_some((y as u16, x as u16))
+    }
+
+    /// The link of `screen` under `position`, by its place in the list.
+    fn link_under(&self, screen: &Screen, position: Point<Pixels>) -> Option<usize> {
+        let (row, col) = self.cell_under(position)?;
+        screen.links.iter().position(|link| link.covers(row, col))
     }
 
     /// The cell under `position`, clamped to the grid, so a drag past an
@@ -116,6 +190,10 @@ pub struct Prepainted {
     cursor: Option<(Bounds<Pixels>, Hsla, bool)>,
     /// The character under a block cursor, drawn again in the background.
     under_cursor: Option<(Point<Pixels>, ShapedLine)>,
+    /// The armed link's underline, one bar per row it covers.
+    underlines: Vec<Bounds<Pixels>>,
+    /// Labels while the links are labelled: their fill and their text.
+    labels: Vec<(Bounds<Pixels>, ShapedLine)>,
 }
 
 impl IntoElement for TerminalGrid {
@@ -345,6 +423,60 @@ impl Element for TerminalGrid {
                     ),
                 }
             });
+        // The link under the pointer, drawn as one while Ctrl is held.
+        let under = bounds
+            .contains(&window.mouse_position())
+            .then(|| geometry.link_under(&self.screen, window.mouse_position()))
+            .flatten();
+        let armed = under.filter(|_| window.modifiers().secondary());
+        self.state.on_link.set(under.is_some());
+        self.state.armed.set(armed);
+        let link = armed.and_then(|index| self.screen.links.get(index));
+        *self.state.tip.borrow_mut() = link
+            .filter(|link| link.written)
+            .map(|link| describe(&link.target));
+        let underlines = link.map_or_else(Vec::new, |link| {
+            link.spans
+                .iter()
+                .filter(|&&(row, first, _)| row < rows && first < cols)
+                .map(|&(row, first, last)| {
+                    let cells = last.min(cols - 1) - first + 1;
+                    let whole = geometry.cell_bounds(row, first, cells);
+                    Bounds::new(
+                        point(whole.origin.x, whole.bottom() - px(1.)),
+                        gpui::size(whole.size.width, px(1.)),
+                    )
+                })
+                .collect()
+        });
+        let labels = self
+            .labels
+            .as_ref()
+            .map_or_else(Vec::new, |(labels, typed)| {
+                self.screen
+                    .links
+                    .iter()
+                    .zip(labels)
+                    .filter(|(_, label)| label.starts_with(typed.as_str()))
+                    .filter_map(|(link, label)| {
+                        let &(row, first, _) = link.spans.first()?;
+                        let cells = u16::try_from(label.len()).ok()?;
+                        (row < rows && first + cells <= cols).then(|| {
+                            let run = Run {
+                                col: first,
+                                cells,
+                                text: label.clone(),
+                                style: bibli_core::terminal::Style {
+                                    attrs: Attrs::BOLD,
+                                    ..bibli_core::terminal::Style::default()
+                                },
+                            };
+                            let shaped = self.shape(window, &run, self.colors.on_link, cell.width);
+                            (geometry.cell_bounds(row, first, cells), shaped)
+                        })
+                    })
+                    .collect()
+            });
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         Prepainted {
             geometry,
@@ -353,6 +485,8 @@ impl Element for TerminalGrid {
             text,
             cursor,
             under_cursor,
+            underlines,
+            labels,
         }
     }
 
@@ -375,6 +509,7 @@ impl Element for TerminalGrid {
             Typing {
                 session: Arc::clone(&self.session),
                 caret,
+                state: Rc::clone(&self.state),
             },
             cx,
         );
@@ -396,7 +531,17 @@ impl Element for TerminalGrid {
             if let Some((origin, line)) = &frame.under_cursor {
                 let _ = line.paint(*origin, line_height, window, cx);
             }
+            for bar in frame.underlines.drain(..) {
+                window.paint_quad(gpui::fill(bar, self.colors.link));
+            }
+            for (bounds, label) in &frame.labels {
+                window.paint_quad(gpui::fill(*bounds, self.colors.link).corner_radii(px(2.)));
+                let _ = label.paint(bounds.origin, line_height, window, cx);
+            }
         });
+        if self.state.armed.get().is_some() {
+            window.set_cursor_style(CursorStyle::PointingHand, &frame.hitbox);
+        }
         self.listen(&frame.hitbox, geometry, window);
     }
 }
@@ -413,11 +558,24 @@ impl TerminalGrid {
             self.focus.clone(),
         );
         let hit = hitbox.clone();
+        let screen = Arc::clone(&self.screen);
         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
             if !phase.bubble() || !hit.is_hovered(window) {
                 return;
             }
             match event.button {
+                // A link pressed with Ctrl is followed when released on it,
+                // and selects nothing.
+                MouseButton::Left
+                    if event.modifiers.secondary()
+                        && let Some(link) = geometry
+                            .link_under(&screen, event.position)
+                            .and_then(|index| screen.links.get(index)) =>
+                {
+                    window.focus(&focus);
+                    *state.pressed.borrow_mut() = Some(link.target.clone());
+                    cx.stop_propagation();
+                }
                 MouseButton::Left => {
                     window.focus(&focus);
                     let at = geometry.at(event.position);
@@ -448,18 +606,46 @@ impl TerminalGrid {
             }
         });
         let (session, state) = (Arc::clone(&self.session), Rc::clone(&self.state));
-        window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, _| {
-            if phase.bubble()
-                && state.dragging.get()
-                && event.pressed_button == Some(MouseButton::Left)
-            {
+        let (hit, screen) = (hitbox.clone(), Arc::clone(&self.screen));
+        window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, _| {
+            if !phase.bubble() {
+                return;
+            }
+            if state.dragging.get() && event.pressed_button == Some(MouseButton::Left) {
                 session.send(Input::Extend(geometry.at(event.position)));
             }
+            // Onto a link or off it: drawn again, as one while Ctrl is held.
+            let under = hit
+                .is_hovered(window)
+                .then(|| geometry.link_under(&screen, event.position))
+                .flatten();
+            let armed = under.filter(|_| event.modifiers.secondary());
+            if under.is_some() != state.on_link.get() || armed != state.armed.get() {
+                state.on_link.set(under.is_some());
+                state.armed.set(armed);
+                window.refresh();
+            }
         });
-        let state = Rc::clone(&self.state);
-        window.on_mouse_event(move |event: &MouseUpEvent, phase, _, _| {
-            if phase.bubble() && event.button == MouseButton::Left {
-                state.dragging.set(false);
+        let (state, screen, follow) = (
+            Rc::clone(&self.state),
+            Arc::clone(&self.screen),
+            Rc::clone(&self.follow),
+        );
+        window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
+            if !phase.bubble() || event.button != MouseButton::Left {
+                return;
+            }
+            state.dragging.set(false);
+            let Some(pressed) = state.pressed.borrow_mut().take() else {
+                return;
+            };
+            let released = geometry
+                .link_under(&screen, event.position)
+                .and_then(|index| screen.links.get(index))
+                .is_some_and(|link| link.target == pressed);
+            if released && event.modifiers.secondary() {
+                follow(&pressed, event.modifiers.shift, window, cx);
+                cx.stop_propagation();
             }
         });
         let (session, state, hit) = (
@@ -490,6 +676,8 @@ impl TerminalGrid {
 struct Typing {
     session: Arc<dyn TerminalSession>,
     caret: Bounds<Pixels>,
+    /// Nothing typed reaches the shell while the links are labelled.
+    state: Rc<GridState>,
 }
 
 impl gpui::InputHandler for Typing {
@@ -526,7 +714,7 @@ impl gpui::InputHandler for Typing {
         _: &mut Window,
         _: &mut App,
     ) {
-        if !text.is_empty() {
+        if !text.is_empty() && !self.state.labelling.get() {
             self.session.send(Input::Text(text.to_owned()));
         }
     }

@@ -14,6 +14,11 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   so the folder shown is the one the link named. The pane navigates there and
   `Shell::reveal_path` selects the file once the listing has it, which is what
   opens it in the preview. A link is a place to show, never a file to run.
+- An address found in text (ADR-029) is a link too: in a document read as a
+  page (Markdown's bare addresses, a plain-text mail) like a written one; in
+  raw text (the code view) only under Ctrl, since a click there selects
+  (`bibli_platform::links::link_block`, run on the conversion worker).
+  Every address, written or found, reaches the desktop through `ui.open_url`.
 - HTML reading mode is inert: no scripts, remote assets or automatic link opens.
   Markdown images, and an HTML file's pictures and stylesheets, must stay within
   the document directory after canonicalizing; EPUB resources (pictures and

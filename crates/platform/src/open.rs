@@ -28,6 +28,27 @@ pub fn is_web_uri(uri: &str) -> bool {
         && !uri.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
+/// Whether `uri` is a mail address to write to: `mailto:` and someone,
+/// with nothing a handler could take for another argument.
+pub fn is_mail_uri(uri: &str) -> bool {
+    uri.get(..7)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("mailto:"))
+        && uri.len() > 7
+        && !uri.chars().any(|c| c.is_whitespace() || c.is_control())
+}
+
+/// Follow an address a document or the terminal shows, when the user asks:
+/// a web page goes to the browser, a mail address to the mail client
+/// (`is_web_uri`, `is_mail_uri`), and nothing else reaches the desktop's
+/// handlers from a file's text. It starts a program: call it on a worker.
+pub fn open_address(uri: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        is_web_uri(uri) || is_mail_uri(uri),
+        "only web and mail links open from here"
+    );
+    open::that_detached(uri).map_err(Into::into)
+}
+
 /// Show a place in the desktop's maps application: a `geo:` URI (RFC 5870)
 /// and nothing else, so no other scheme's handler runs from here.
 pub fn open_geo_uri(uri: &str) -> anyhow::Result<()> {
@@ -167,7 +188,7 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::is_web_uri;
+    use super::{is_mail_uri, is_web_uri};
 
     #[test]
     fn only_web_links_reach_the_desktop() {
@@ -193,6 +214,15 @@ mod tests {
             "héhé",
         ] {
             assert!(!is_web_uri(refused), "{refused}");
+        }
+    }
+
+    #[test]
+    fn a_mail_address_reaches_the_mail_client_alone() {
+        assert!(is_mail_uri("mailto:someone@example.org?subject=Hi"));
+        assert!(is_mail_uri("MAILTO:someone@example.org"));
+        for refused in ["mailto:", "mailto:a b@c", "mailto:a@b\n-x", "mail:a@b", ""] {
+            assert!(!is_mail_uri(refused), "{refused}");
         }
     }
 }

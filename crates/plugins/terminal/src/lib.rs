@@ -10,6 +10,7 @@
 
 mod follow;
 mod keys;
+mod links;
 mod screen;
 mod session;
 

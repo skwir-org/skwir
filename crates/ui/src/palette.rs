@@ -93,6 +93,12 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.terminal", "{}", "Toggle terminal"),
     ("ui.terminal_copy", "{}", "Terminal: copy"),
     ("ui.terminal_paste", "{}", "Terminal: paste"),
+    ("ui.terminal_links", "{}", "Terminal: follow a link…"),
+    (
+        "ui.inspect",
+        r#"{"action":"links"}"#,
+        "Preview: follow a link…",
+    ),
     (
         "ui.preview_page",
         r#"{"delta":-1}"#,

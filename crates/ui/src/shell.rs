@@ -322,6 +322,9 @@ pub struct Shell {
     /// Advances with each `reveal_path`, so only the latest one's answer
     /// from its worker is acted on.
     reveal_asked: u64,
+    /// Links as the pointer and Ctrl left them, and a line waiting for its
+    /// file's preview (`links.rs`).
+    pub(crate) links: crate::links::LinkState,
     /// The window's shape as last written to settings; `remember_session`
     /// compares against it so nothing is written on an ordinary frame.
     /// `None` until the last window's shape was read (`restore_session`):
@@ -537,6 +540,7 @@ impl Shell {
             press_collapse: None,
             reveal: None,
             reveal_asked: 0,
+            links: crate::links::LinkState::default(),
             stored_session: None,
             sidebar_scroll: gpui::ScrollHandle::new(),
             started,
@@ -826,6 +830,19 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        self.reveal_path_at(pane, path, crate::links::RevealAt::default(), window, cx)
+    }
+
+    /// `reveal_path`, in a tab of its own when `at` says so (the pane it
+    /// opens from gives it its sort), and with the line its preview shows.
+    pub fn reveal_path_at(
+        &mut self,
+        pane: PaneId,
+        path: &std::path::Path,
+        at: crate::links::RevealAt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         if path.parent().is_none() && !path.has_root() {
             return false;
         }
@@ -858,18 +875,34 @@ impl Shell {
                     this.set_status(format!("“{name}” is not there any more"), true, cx);
                     return;
                 };
-                this.activate_pane(pane, cx);
-                this.run(
-                    "navigate",
-                    serde_json::json!({ "location": PathArg::from(folder), "pane": pane }),
-                    window,
-                    cx,
-                );
+                let pane = if at.tab {
+                    let location = bibli_core::Location::from_path(&folder);
+                    match this.app.new_tab(Some(pane), Some(location), true) {
+                        Ok((_, opened)) => opened,
+                        Err(error) => {
+                            this.set_status(format!("{error:#}"), true, cx);
+                            return;
+                        }
+                    }
+                } else {
+                    this.activate_pane(pane, cx);
+                    this.run(
+                        "navigate",
+                        serde_json::json!({ "location": PathArg::from(folder), "pane": pane }),
+                        window,
+                        cx,
+                    );
+                    pane
+                };
+                if let (Some(line), true) = (at.line, name.is_some()) {
+                    this.wait_for_line(pane, path.clone(), line, cx);
+                }
                 this.reveal = name.map(|name| Reveal {
                     pane,
                     name,
                     until: Instant::now() + std::time::Duration::from_secs(10),
                 });
+                cx.notify();
             },
             window,
             cx,
@@ -1512,15 +1545,12 @@ impl Shell {
             "tag_editor_up" => self.tag_editor_move(-1, cx),
             "tag_editor_down" => self.tag_editor_move(1, cx),
             "tag_editor_apply" => self.tag_editor_apply(window, cx),
-            // A link a file names (where it was downloaded from), opened
-            // in the browser when the user asks: bibli fetches nothing.
-            "open_url" => {
-                // One filter for every link a file names: the platform's.
-                let url = arg("url").unwrap_or_default();
-                if let Err(e) = bibli_platform::open::open_web_uri(&url) {
-                    self.set_status(format!("Could not open the link: {e}"), true, cx);
-                }
-            }
+            // An address followed (a document's link, one found in text,
+            // where a file was downloaded from), opened by the desktop when
+            // the user asks: bibli fetches nothing (ADR-020).
+            "open_url" => self.open_address(&arg("url").unwrap_or_default(), cx),
+            // A file shown in its folder, from a link.
+            "reveal" => self.reveal_command(args, window, cx),
             "jump" => self.open_jump(window, cx),
             "jump_up" => self.jump_move(-1, cx),
             "jump_down" => self.jump_move(1, cx),
@@ -1550,6 +1580,7 @@ impl Shell {
             "terminal_copy" => self.terminal_copy(cx),
             "terminal_paste" => self.terminal_paste(cx),
             "terminal_page" => self.terminal_page(args),
+            "terminal_links" => self.label_terminal_links(cx),
             "timeline_bucket" => {
                 let b = arg("bucket").unwrap_or_else(|| "month".into());
                 self.timeline_set_bucket(&b, cx);
@@ -2349,6 +2380,8 @@ impl Render for Shell {
         let root = div()
             .key_context(keymap::ROOT)
             .on_action(cx.listener(Self::on_run_command))
+            // Ctrl (Cmd) held over a link found in text makes it one.
+            .on_modifiers_changed(cx.listener(Self::on_modifiers))
             // Before anything under the pointer: a popup closed by this
             // press notes it (`note_dismissed`).
             .capture_any_mouse_down(cx.listener(|this, _, _, _| this.presses += 1))
