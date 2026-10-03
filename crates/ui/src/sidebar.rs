@@ -179,8 +179,18 @@ pub fn open_invocation(place: &Place) -> Invocation {
 }
 
 /// Opening `place` in a tab behind the one shown: a middle click on its
-/// row, or its menu.
+/// row, or its menu. One that must be mounted or unlocked first runs that
+/// command with `tab`, which opens the volume there once it is mounted.
 pub fn open_in_tab(place: &Place) -> Invocation {
+    if let Some(activate) = &place.activate {
+        let mut run = activate.clone();
+        if let Some(args) = run.args.as_object_mut() {
+            args.insert("tab".into(), serde_json::json!(true));
+        } else {
+            run.args = serde_json::json!({ "tab": true });
+        }
+        return run;
+    }
     let location = match place.location.path() {
         Some(path) => serde_json::json!(PathArg::from(path)),
         None => serde_json::json!(place.location.to_string()),
@@ -432,8 +442,9 @@ pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElem
                     }
                 }),
             )
-            // The middle button opens it in a tab behind the one shown.
-            .when(place.activate.is_none(), |row| {
+            // The middle button opens it in a tab behind the one shown;
+            // not again while its owner works on it, as a click.
+            .when(busy.is_none(), |row| {
                 let tab = open_in_tab(&place);
                 row.on_mouse_down(
                     MouseButton::Middle,
@@ -1160,6 +1171,55 @@ mod tests {
         assert!(sections.arranged_by_user());
         let toml = toml::Value::try_from(&sections).unwrap();
         assert_eq!(toml.try_into::<Sections>().unwrap(), sections);
+    }
+
+    /// A middle click on a volume to mount or unlock runs that command
+    /// with `tab`, keeping its arguments; any other place opens a tab
+    /// behind the one shown.
+    #[test]
+    fn a_volume_to_mount_opens_in_a_tab_once_mounted() {
+        let place = |location: &str| bibli_core::registry::Place {
+            title: "Backup".into(),
+            location: Location::parse(location),
+            icon: None,
+            group: "devices".into(),
+            space: None,
+            eject: None,
+            activate: None,
+            unavailable: None,
+            busy: None,
+            menu: Vec::new(),
+            forget: None,
+            reorder: None,
+            color: None,
+            drop: None,
+            suggested: false,
+        };
+        let mut locked = place("device:/dev/sdz");
+        locked.activate = Some(bibli_core::command::Invocation::with_args(
+            "ui.unlock_prompt",
+            &serde_json::json!({ "device": "/dev/sdz", "title": "Backup" }),
+        ));
+        let run = super::open_in_tab(&locked);
+        assert_eq!(&*run.name, "ui.unlock_prompt");
+        assert_eq!(
+            run.args,
+            serde_json::json!({ "device": "/dev/sdz", "title": "Backup", "tab": true })
+        );
+        assert_eq!(
+            super::open_invocation(&locked).args.get("tab"),
+            None,
+            "a click opens it in the pane"
+        );
+        let mut plain = place("device:/dev/sdy1");
+        plain.activate = Some(bibli_core::command::Invocation::new("places.mount"));
+        assert_eq!(
+            super::open_in_tab(&plain).args,
+            serde_json::json!({ "tab": true })
+        );
+        let run = super::open_in_tab(&place("/run/media/example/Backup"));
+        assert_eq!(&*run.name, "tab.new");
+        assert_eq!(run.args["show"], serde_json::json!(false));
     }
 
     #[test]

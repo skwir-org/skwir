@@ -302,7 +302,7 @@ pub struct Shell {
     /// A rubber-band selection in progress.
     pub marquee: Option<crate::elements::marquee::Drag>,
     /// The encrypted volume the passphrase prompt is for.
-    pub unlock_device: Option<String>,
+    pub unlock: Option<crate::prompts::Unlock>,
     pub nudges: crate::shortcuts::Nudges,
     /// What `/` looked for last, and whether backward: `n` and `N` look
     /// for it again.
@@ -531,7 +531,7 @@ impl Shell {
             pending: Arc::default(),
             shortcuts: None,
             marquee: None,
-            unlock_device: None,
+            unlock: None,
             nudges: crate::shortcuts::Nudges::default(),
             last_find: None,
             sequence: None,
@@ -1427,7 +1427,8 @@ impl Shell {
             "unlock_prompt" => {
                 if let Some(device) = arg("device") {
                     let title = arg("title").unwrap_or_else(|| "this volume".into());
-                    self.unlock_device = Some(device);
+                    let tab = args.get("tab").and_then(serde_json::Value::as_bool) == Some(true);
+                    self.unlock = Some(crate::prompts::Unlock { device, tab });
                     self.open_prompt(
                         crate::prompts::PromptKind::Passphrase,
                         &format!("Unlock “{title}”"),

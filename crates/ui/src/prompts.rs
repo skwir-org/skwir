@@ -12,9 +12,16 @@ use crate::modal::{self, FocusReturn};
 use crate::shell::Shell;
 use crate::theme::Theme;
 
+/// The encrypted volume the passphrase prompt is for, and whether it then
+/// opens in a tab behind the one shown (a middle click on its place).
+pub struct Unlock {
+    pub device: String,
+    pub tab: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PromptKind {
-    /// The passphrase of `Shell::unlock_device`. Masked, never trimmed.
+    /// The passphrase of `Shell::unlock`. Masked, never trimmed.
     Passphrase,
     Rename,
     Mkdir,
@@ -168,7 +175,7 @@ impl Shell {
                     cx.notify();
                 }
                 InputEvent::Cancel => {
-                    this.unlock_device = None;
+                    this.unlock = None;
                     this.close_prompt(window, cx);
                 }
                 InputEvent::Changed => {
@@ -224,7 +231,7 @@ impl Shell {
                 });
             }
             PromptKind::Passphrase => {
-                let Some(device) = self.unlock_device.take() else {
+                let Some(Unlock { device, tab }) = self.unlock.take() else {
                     return;
                 };
                 if text.is_empty() {
@@ -235,7 +242,12 @@ impl Shell {
                 let pane = self.pane;
                 let unlock = Invocation::with_args(
                     "places.unlock",
-                    &serde_json::json!({ "device": device, "passphrase": text, "pane": pane }),
+                    &serde_json::json!({
+                        "device": device,
+                        "passphrase": text,
+                        "pane": pane,
+                        "tab": tab,
+                    }),
                 );
                 match self.app.dispatch(&unlock) {
                     Ok(_) => self.set_status("Unlocking…", false, cx),
@@ -337,7 +349,7 @@ pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElemen
         120.,
         3,
         |this, window, cx| {
-            this.unlock_device = None;
+            this.unlock = None;
             this.close_prompt(window, cx);
         },
         &theme,

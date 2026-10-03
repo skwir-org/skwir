@@ -533,6 +533,9 @@ struct MountArgs {
     device: String,
     #[serde(default)]
     pane: Option<bibli_core::workspace::PaneId>,
+    /// Open the volume in a tab behind the one shown, not in the pane.
+    #[serde(default)]
+    tab: bool,
 }
 
 // No `Debug`: the passphrase must not reach a log through a formatter.
@@ -543,17 +546,22 @@ struct UnlockArgs {
     passphrase: String,
     #[serde(default)]
     pane: Option<bibli_core::workspace::PaneId>,
+    /// Open the volume in a tab behind the one shown, not in the pane.
+    #[serde(default)]
+    tab: bool,
 }
 
 /// Unlock if a passphrase is given, mount, republish the places and open the
-/// volume in the pane that asked. Everything blocks, so it runs on a worker;
-/// the pane is resolved now, not when the work ends.
+/// volume in the pane that asked, or with `tab` in a tab behind the one
+/// shown. Everything blocks, so it runs on a worker; the pane is resolved
+/// now, not when the work ends.
 fn attach(
     places: &Places,
     app: &App,
     device: String,
     passphrase: Option<String>,
     pane: Option<bibli_core::workspace::PaneId>,
+    tab: bool,
 ) {
     let pane = app.pane_or_active(pane);
     let this = places.clone();
@@ -586,7 +594,17 @@ fn attach(
                     || path.display().to_string(),
                     |name| name.to_string_lossy().into_owned(),
                 );
-                match app.navigate(pane, &Location::from_path(&path)) {
+                let location = Location::from_path(&path);
+                let opened = if tab {
+                    app.new_tab(Some(pane), Some(location), false).map(|_| ())
+                } else {
+                    app.navigate(pane, &location)
+                };
+                match opened {
+                    Ok(()) if tab => app.notify(
+                        NotifyLevel::Info,
+                        format!("Mounted “{name}”, opened in a new tab"),
+                    ),
                     Ok(()) => app.notify(NotifyLevel::Info, format!("Mounted “{name}”")),
                     Err(error) => app.notify(NotifyLevel::Error, format!("{error:#}")),
                 }
@@ -1048,7 +1066,7 @@ impl Plugin for PlacesPlugin {
             "Mount volume",
             "Mount a present volume through udisks and open it",
             move |args, app| {
-                attach(&places, app, args.device, None, args.pane);
+                attach(&places, app, args.device, None, args.pane, args.tab);
                 Ok(Outcome::Done)
             },
         );
@@ -1059,7 +1077,14 @@ impl Plugin for PlacesPlugin {
             "Unlock volume",
             "Unlock an encrypted volume with its passphrase, mount it and open it. The passphrase is a secret: it is handed to udisks on standard input and never stored or logged",
             move |args, app| {
-                attach(&places, app, args.device, Some(args.passphrase), args.pane);
+                attach(
+                    &places,
+                    app,
+                    args.device,
+                    Some(args.passphrase),
+                    args.pane,
+                    args.tab,
+                );
                 Ok(Outcome::Done)
             },
         );
@@ -1246,7 +1271,9 @@ mod tests {
     /// the new device) lists the container as its cleartext volume, which
     /// is still being attached. `lsblk` and `udisksctl` are fakes first on
     /// PATH, never a real drive; udisks holds the unlock and the mount
-    /// until the test lets them answer.
+    /// until the test lets them answer. Asked for a tab (a middle click),
+    /// the volume opens in one behind the tab shown, the pane left where
+    /// it was.
     #[test]
     #[allow(unsafe_code)]
     fn a_volume_says_it_is_unlocking_and_is_right_as_soon_as_it_ends() {
@@ -1332,19 +1359,25 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(10));
             }
         };
-        let unlock = || {
+        let unlock = |tab: bool| {
             app.dispatch(&Invocation::with_args(
                 "places.unlock",
-                &serde_json::json!({ "device": "/dev/sdz", "passphrase": "example words" }),
+                &serde_json::json!({
+                    "device": "/dev/sdz",
+                    "passphrase": "example words",
+                    "tab": tab,
+                }),
             ))
             .unwrap();
         };
+        let pane = app.workspace.read().active_id();
+        let before = app.workspace.read().pane(pane).unwrap().shown().cloned();
         wait(&|| volume().is_some());
         assert_eq!(volume().unwrap().busy, None);
 
         // Refused.
         std::fs::write(&refuse, b"").unwrap();
-        unlock();
+        unlock(false);
         // At once, before the worker has asked udisks anything.
         assert_eq!(volume().unwrap().busy.as_deref(), Some("Unlocking…"));
         // A rescan meanwhile (a disk plugged) keeps saying so.
@@ -1363,7 +1396,7 @@ mod tests {
         // Accepted. Unlocked and not yet mounted, a rescan lists the
         // container as its cleartext volume: still being attached.
         std::fs::remove_file(&refuse).unwrap();
-        unlock();
+        unlock(true);
         wait(&|| unlocked.exists());
         app.dispatch(&Invocation::new("places.refresh")).unwrap();
         wait(&|| opened().is_some());
@@ -1378,6 +1411,14 @@ mod tests {
         std::fs::write(&mount_gate, b"").unwrap();
         let notice = next_notice(&app);
         assert!(notice.text.starts_with("Mounted"), "{}", notice.text);
+        {
+            let ws = app.workspace.read();
+            assert_eq!(ws.active_id(), pane, "the tab shown stays shown");
+            assert_eq!(ws.pane(pane).unwrap().shown().cloned(), before);
+            let behind = ws.tabs().iter().find(|t| !t.panes.contains(&pane));
+            let shown = behind.and_then(|t| ws.pane(t.panes[0])?.shown().cloned());
+            assert_eq!(shown, Some(Location::from_path(&mnt)), "in a tab behind");
+        }
         assert!(
             volume().is_none() && opened().is_none(),
             "not offered again while lsblk runs"

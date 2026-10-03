@@ -505,10 +505,6 @@ impl Shell {
                 0,
                 "open",
             ));
-        }
-        // A place that must be mounted or unlocked first has nothing to show
-        // in a tab yet.
-        if place.activate.is_none() && !busy {
             items.push(item(
                 "Open in New Tab",
                 crate::sidebar::open_in_tab(place),

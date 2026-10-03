@@ -525,7 +525,10 @@ current source before assuming a planned crate, command, or API exists.
   `activate` runs that command instead of navigating: `places.mount`, or
   `ui.unlock_prompt` for a locked container, which asks for the passphrase in
   a masked input and dispatches `places.unlock` directly, never through
-  `Shell::run` (it traces arguments). The passphrase reaches udisks on
+  `Shell::run` (it traces arguments). Opened in a tab (a middle click, the
+  place's menu: `sidebar::open_in_tab`), it runs the same command with
+  `tab`, carried through the prompt, and the volume mounted opens in a
+  tab behind the one shown, the pane left where it was. The passphrase reaches udisks on
   standard input, is never stored, logged or put on a command line, and its
   argument struct has no `Debug`. Before unmounting, `App::release` lets
   go of everything under the mount point (an open listing holds its
