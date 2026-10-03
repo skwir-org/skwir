@@ -650,6 +650,25 @@ pub fn text_prefix(bytes: &[u8]) -> Option<&str> {
     (!text.contains('\0')).then_some(text)
 }
 
+/// Whether a file beginning with `head` is text: the one text-or-binary
+/// rule (`mime::by_content`, the preview's check of a declared type), and
+/// what it calls text is what `decode` reads. UTF-8 without NUL is, cut
+/// through its last character or not. Otherwise the bytes are read as
+/// `decode` would (UTF-16 by its mark, else Windows-1252) and are text while
+/// that reads no control character a text holds none of: binary bytes read
+/// so give one within a few hundred bytes, a text in a legacy code page
+/// none. DOS's end-of-file mark (0x1A) and escapes are a text's.
+pub fn is_text(head: &[u8]) -> bool {
+    let marked = encoding_rs::Encoding::for_bom(head).is_some();
+    if !marked && text_prefix(head).is_some() {
+        return true;
+    }
+    !decode(head)
+        .0
+        .chars()
+        .any(|c| c.is_control() && !matches!(c, '\t' | '\n' | '\r' | '\x0c' | '\x1a' | '\x1b'))
+}
+
 /// Bytes per hexadecimal row and the group separator used by every byte viewer.
 pub const HEX_ROW: usize = 16;
 const HEX_GROUP: usize = 8;
@@ -990,6 +1009,31 @@ mod tests {
         assert_eq!(text_prefix(b"plain"), Some("plain"));
         assert_eq!(text_prefix(b"nul\0byte"), None);
         assert_eq!(text_prefix(&[0xff, 0xfe, b'a']), None);
+    }
+
+    #[test]
+    fn text_is_what_decode_reads_without_a_control_character() {
+        // UTF-8, cut through its last character or not.
+        let text = "café".repeat(3);
+        assert!(is_text(&text.as_bytes()[..text.len() - 1]));
+        assert!(is_text(b""));
+        // A legacy code page: "mappa \xe8 pensata", a DOS end mark.
+        assert!(is_text(b"Questa mappa \xe8 pensata\r\nper l'uso\r\n\x1a"));
+        // UTF-16 by its mark, either order, cut through a code unit or not.
+        let le: Vec<u8> = [0xFF, 0xFE]
+            .into_iter()
+            .chain("l\u{e9}gende\n".encode_utf16().flat_map(u16::to_le_bytes))
+            .collect();
+        let be: Vec<u8> = [0xFE, 0xFF]
+            .into_iter()
+            .chain("l\u{e9}gende\n".encode_utf16().flat_map(u16::to_be_bytes))
+            .collect();
+        assert!(is_text(&le) && is_text(&be) && is_text(&le[..le.len() - 1]));
+        // Binary bytes, however they begin.
+        assert!(!is_text(b"nul\0byte"));
+        assert!(!is_text(b"\xe8\x01\x02\x03 not UTF-8, controls"));
+        assert!(!is_text(&[0xFF, 0xFE, 0x00, 0x00, 0x01, 0x00]));
+        assert!(!is_text(&[0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F']));
     }
 
     #[test]

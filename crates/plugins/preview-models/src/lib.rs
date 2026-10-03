@@ -295,7 +295,7 @@ fn is_text(path: &Path) -> anyhow::Result<bool> {
     use std::io::Read;
     let mut head = Vec::new();
     inspection::open(path)?.take(1024).read_to_end(&mut head)?;
-    Ok(inspection::text_prefix(&head).is_some_and(|text| text.len() + 4 >= head.len()))
+    Ok(inspection::is_text(&head))
 }
 
 /// The grid's thumbnails: the same pictures. A fallback: a thumbnailer the

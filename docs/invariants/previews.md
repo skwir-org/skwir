@@ -268,12 +268,15 @@ still to come are in `docs/preview-frame.md`.
 - **A name that says nothing is not a binary file.** `mime::by_name` answers
   `None` for a name the database has no glob for (`settings.cfg`, `README`,
   `.env`); the preview worker then asks the bytes (`mime::by_content`: the
-  database's magic, else text or binary by `inspection::text_prefix`) before
+  database's magic, else text or binary by `inspection::is_text`) before
   any provider is, and the header takes what they said. A request says
   `application/octet-stream` only when the bytes were read and are binary;
   that, and nothing about the name, is what the hexadecimal preview accepts.
   A declared type is trusted only as far as the bytes bear it out, by the
   same rule (`preview::compute`): text is read as text whatever it is called.
+  Text is what `inspection::decode` reads, the rule being its own: UTF-8
+  without NUL, else UTF-16 by its mark or Windows-1252, read without a
+  control character (a `.txt` from an old zip is Latin-1).
   The unknown-file icon (`icons::unknown`) is the one place the desktop's
   octet-stream stands for "unknown"; it is a picture, never a claim.
 - **Whoever accepts a file owns it.** The first provider whose `accepts`

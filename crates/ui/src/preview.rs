@@ -837,8 +837,9 @@ fn compute(
     };
     // Whatever the name declared, the bytes decide, by the same rule that
     // names an unknown file's bytes (`mime::by_content`): a `.txt` holding
-    // NULs is not text, and a PEM key named like a Keynote file is.
-    if bibli_platform::inspection::text_prefix(&head).is_some() {
+    // NULs is not text, and a PEM key named like a Keynote file is, as is
+    // one written in a legacy code page or UTF-16, which `plain` decodes.
+    if bibli_platform::inspection::is_text(&head) {
         // Every text file is read the way structured code is: a gutter,
         // selection, find and copy. There is no second, poorer text view.
         return match bibli_platform::inspection::plain(path, offset, cancel) {
@@ -3649,6 +3650,93 @@ mod tests {
             };
             assert_eq!((width, height, pixels), (40, 20, super::Pixels::Any));
             assert_eq!(image.size(0).width.0, drawn);
+        }
+    }
+
+    #[test]
+    fn a_text_in_a_legacy_code_page_or_utf16_is_read_in_a_folder_and_in_an_archive() {
+        use super::{PreviewContent, compute, extract_member};
+        use bibli_core::CancelToken;
+        use bibli_core::preview::{Member, PreviewProvider, PreviewRequest, Previews};
+        use std::path::Path;
+        fn bytes(which: &str) -> Vec<u8> {
+            match which {
+                "latin" => b"Questa mappa \xe8 pensata\r\nper l'uso\r\n".to_vec(),
+                "utf16" => [0xFF, 0xFE]
+                    .into_iter()
+                    .chain("l\u{e9}gende\n".encode_utf16().flat_map(u16::to_le_bytes))
+                    .collect(),
+                _ => b"\xe8\x01\x02\x03\x04\x05\x06".to_vec(),
+            }
+        }
+        // A container whose members are those bytes.
+        struct Pack;
+        impl PreviewProvider for Pack {
+            fn id(&self) -> &'static str {
+                "pack"
+            }
+            fn accepts(&self, _: &PreviewRequest) -> bool {
+                true
+            }
+            fn extract(
+                &self,
+                _: &PreviewRequest,
+                target: &str,
+                into: &Path,
+                _: &CancelToken,
+            ) -> anyhow::Result<Option<Member>> {
+                let path = into.join("member");
+                std::fs::write(&path, bytes(target))?;
+                Ok(Some(Member {
+                    name: format!("l’{target} è.txt"),
+                    path,
+                    own_file: false,
+                }))
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = CancelToken::new();
+        let previews = Previews::default();
+        previews.register("pack", std::sync::Arc::new(Pack));
+        let pack = dir.path().join("pack.zip");
+        std::fs::write(&pack, b"").unwrap();
+        let request = PreviewRequest {
+            entry: bibli_core::op::EntryRef::from_path(&pack).unwrap(),
+            mime: Some("application/zip".into()),
+            page: 1,
+            seconds: None,
+            max_side: 1024,
+            text_size: None,
+        };
+        let notice = |path: &Path, mime: Option<&str>| match compute(
+            path, false, mime, false, 0, 1024, &cancel,
+        ) {
+            PreviewContent::Inspection(display) => Some(display.data.notice.clone()),
+            PreviewContent::Generic => None,
+            _ => panic!("text or nothing"),
+        };
+        for (which, read_as) in [
+            ("latin", Some("Read as Windows-1252")),
+            ("utf16", Some("Read as UTF-16LE")),
+            ("binary", None),
+        ] {
+            let alone = dir.path().join(format!("{which}.txt"));
+            std::fs::write(&alone, bytes(which)).unwrap();
+            assert_eq!(
+                notice(&alone, Some("text/plain")).as_deref(),
+                read_as,
+                "{which} in a folder"
+            );
+            let members = dir.path().join("members");
+            let member = extract_member(&previews, &request, which, &members, &cancel)
+                .unwrap()
+                .unwrap();
+            assert_eq!(member.mime.as_deref(), Some("text/plain"));
+            assert_eq!(
+                notice(&member.path, member.mime.as_deref()).as_deref(),
+                read_as,
+                "{which} in an archive"
+            );
         }
     }
 

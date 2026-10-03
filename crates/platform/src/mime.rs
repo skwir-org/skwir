@@ -137,7 +137,9 @@ pub fn identify(name: &OsStr, path: &Path) -> Option<Mime> {
 /// What the bytes say, for a file whose name says nothing. Reads the head
 /// of the file: call from a worker. The database's magic first (a PNG named
 /// `picture.cfg` is a PNG); without a match, `text/plain` when the head is
-/// UTF-8 without NUL, else `application/octet-stream`, which from here, and
+/// text (`inspection::is_text`: UTF-8 without NUL, or UTF-16 or a legacy
+/// code page without control characters), else `application/octet-stream`,
+/// which from here, and
 /// only from here, means the bytes were looked at and are binary. `None`
 /// when the file cannot be read or is not a regular file (a FIFO would
 /// otherwise block until something writes to it).
@@ -154,11 +156,11 @@ const SNIFF: usize = 8 * 1024;
 
 /// `text/plain` or `application/octet-stream` from a file's head: the one
 /// text-or-binary rule, the same one the preview applies to a declared type
-/// (`crate::inspection::text_prefix`).
+/// (`crate::inspection::is_text`).
 #[cfg(any(target_os = "linux", test))]
 fn text_or_binary(head: &[u8]) -> Mime {
     Mime(
-        if crate::inspection::text_prefix(head).is_some() {
+        if crate::inspection::is_text(head) {
             "text/plain"
         } else {
             "application/octet-stream"
@@ -780,7 +782,10 @@ mod tests {
         let text = "caf\u{e9}".repeat(3);
         let cut = &text.as_bytes()[..text.len() - 1];
         assert_eq!(text_or_binary(cut).0, "text/plain");
-        assert_eq!(text_or_binary(&[0xff, 0xfe]).0, "application/octet-stream");
+        assert_eq!(
+            text_or_binary(&[0xff, 0xfe, 0x00, 0x00]).0,
+            "application/octet-stream"
+        );
     }
 
     #[test]
