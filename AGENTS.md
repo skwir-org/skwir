@@ -30,9 +30,10 @@ current source before assuming a planned crate, command, or API exists.
    stream; every provider call is async, batched, and cancellable; visible work
    has priority. The UI sleeps until the core wakes it (`App::set_waker`); never
    run a `request_animation_frame` loop.
-2. **Light.** Idle memory and startup are budgeted (ADR-000, revised in ADR-002:
-   PSS, not RSS). `just bench-check` must stay green. Budgets are tightened when
-   the reference improves and never loosened without an ADR.
+2. **Light.** Idle memory and startup are budgeted (ADR-000, revised in ADR-002
+   and ADR-033: PSS, counting bibli's own share, not the GPU driver's code).
+   `just bench-check` and `just idle-pss` must stay green. Budgets are tightened
+   when the reference improves and never loosened without an ADR.
 3. **Stateless and idempotent.** No daemon, no database. One deletable cache
    (`bibli_core::cache`). Re-applying an applied plan is a no-op.
 4. **Harness the environment.** Reuse OS thumbnails, icon themes, the MIME
@@ -1054,7 +1055,8 @@ user's Trash. Run tests through nextest (`just test`), not `cargo test`.
   cases; a passing randomized rerun does not resolve a previous failure.
 - `just bench-check` enforces the microsecond budgets in
   `crates/bench/budgets.toml`. It does not validate UI startup, frame times, or
-  idle PSS; those require the real-app measurements below and ADR-002.
+  idle PSS: `just idle-pss` measures idle memory and the first frame on the
+  session's display (ADR-033), frame times need the real-app checks below.
 
 ## Verifying UI changes
 
@@ -1076,7 +1078,8 @@ user's Trash. Run tests through nextest (`just test`), not `cargo test`.
   `XDG_CACHE_HOME` and `XDG_DATA_HOME` at scratch directories: settings,
   the cache and the Trash all live under them, and a test that trashes a
   fixture otherwise puts it in the user's real Trash.
-- Measure: first frame from the shell's log line, memory from
+- Measure: first frame from the shell's log line, idle memory with
+  `just idle-pss` (own share, driver and total by mapping), other memory from
   `/proc/<pid>/smaps_rollup` (PSS), corrections/traces from `RUST_LOG=bibli_ui=trace`.
   The binaries use a tuned mimalloc (`crates/alloc`, ADR-011); heaptrack sees
   only glibc's malloc, so profile a build made with `--no-default-features`.

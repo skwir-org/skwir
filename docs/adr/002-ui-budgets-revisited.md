@@ -1,6 +1,7 @@
 # ADR-002: UI budgets revisited after Phase 2
 
-Status: accepted, 2026-09-18
+Status: accepted, 2026-09-18. Decision 1 amended by ADR-033 (2026-10-04):
+the idle budget counts bibli's own share, without the GPU driver's code.
 
 ## Context
 
@@ -81,6 +82,8 @@ decision per contributor: shrink it, or budget it in a new ADR with the reason.
 Until then the status line in `docs/PLAN.md` reports the gate as open, and
 per-change status notes must not restate the number without a comparison
 against the previous commit under identical conditions.
+
+Closed by ADR-033 (2026-10-04), which budgets the build as it stands.
 
 Measurement caveat: PSS divides each shared page by the number of processes
 mapping it. About 60 MB of our idle footprint is the NVIDIA user-space driver

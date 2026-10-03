@@ -82,6 +82,11 @@ bench-list *profiles:
 bench-check:
     cargo run --release -p bibli-bench -- check
 
+# Idle memory and first frame (ADR-033) on this display; close other bibli first.
+idle-pss:
+    cargo build --release -p bibli
+    tools/measure/idle-pss.py
+
 # Build both toolkit spikes.
 spike-build:
     cd spikes && cargo build --release

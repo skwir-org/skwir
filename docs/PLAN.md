@@ -15,10 +15,11 @@ Principles (non-negotiable, every phase is checked against them):
 Durations are relative sizes for one developer working with an AI assistant, not commitments.
 Each phase has a **Done when** gate. Do not start the next phase before the gate passes.
 
-Status (2026-09-20): Phases 0 to 4 are built; Phase 2's gate (one week of daily use) is
-still yours to run. Phase 4's gate holds: every plugin (now 26, including nine structured
-preview plugins) is proven by `crates/bibli/tests/plugins_toggle.rs` to disable at runtime
-with no trace and to re-enable. Beyond the plan, the tree now has: a settings dialog
+Status (2026-10-04): Phases 0 to 4 are built and their gates pass. Phase 2's gate, one
+week of daily use as the only file manager, passed, followed by two weeks of improvements
+from it. Phase 4's gate holds: every plugin (now 35, 14 of them previews) is proven by
+`crates/bibli/tests/plugins_toggle.rs` to disable at runtime with no trace and to
+re-enable. Beyond the plan, the tree now has: a settings dialog
 (ADR-010: category column, search, controls chosen by the schema, changes applied
 immediately through the atomic save, plugin toggles with tool requirements, a read-only
 shortcut list); two native PDF readers (PDFium and
@@ -31,9 +32,15 @@ modal, prompts, treemap and timeline strip live in `bibli-ui`; `edit-as-buffer` 
 `$VISUAL`/`$EDITOR` in a terminal; the query language's date parser and the timeline's
 calendar math are duplicated; AccessKit is unavailable in gpui 0.2.2 (ADR-001); the native
 workers are workspace members outside `default-members`, so the default build needs no
-Poppler, GStreamer or libarchive. Open gate: idle PSS is about 118 to 120 MB against the
-100 MB budget of ADR-002 on the reference machine (see the ADR-002 addendum); it has not
-been loosened. The per-change validation history that used to sit here is in
+Poppler, GStreamer or libarchive. The idle memory gate, open since ADR-002's addendum at
+118 to 120 MB of PSS against 100, is closed by ADR-033 (2026-10-04): the budget counts
+bibli's own share of PSS, without the GPU driver's code, whose share depends on the GPU
+vendor and on the other programs mapping it. Measured by `just idle-pss`: 89.2 MiB own
+share against 100 (133.7 MiB in all, 44.6 of them the driver's), first frame 116 to 169 ms
+over nine warm starts (median 146, budget 150). Found while measuring: on Wayland the idle
+main thread wakes at the display's refresh rate (about 1% of a core), because gpui's
+Wayland backend asks for a frame callback in every frame callback, drawn or not; open, for
+a vendored patch. The per-change validation history that used to sit here is in
 `docs/STATUS-LOG.md`.
 
 Sidebar tags as pills (2026-10-01): a place with a color is drawn as a
