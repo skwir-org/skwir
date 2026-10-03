@@ -893,6 +893,35 @@ compares with the system's MIME database, which now names a shell script
 code view, Markdown and the terminal, labels in both, reveal with line in the pane
 and in a new tab, idle CPU back to 0–1 %.
 
+Text documents (2026-10-03, ADR-030): Word (`.docx`, `.docm`, `.dotx`,
+`.dotm`), OpenDocument text (`.odt`, `.ott`) and RTF follow a Text
+documents setting: Pages (LibreOffice, the default, unchanged), Reading
+or Pandoc, each giving way to the next when its program is missing.
+bibli reads Word and OpenDocument itself into reading-mode blocks
+(`preview-documents`: headings, emphasis, lists with the numbers their
+document gives them, tables with merged cells, footnotes and endnotes
+under their reference, links, pictures named for later, text boxes,
+fields, accepted changes, Details from the package's properties), a
+long document in parts of `PART_BLOCKS` with numbers counted from its
+start. Pandoc reads RTF, or everything when chosen, in the converters'
+sandbox (`bibli_platform::sandbox`, extracted from the LibreOffice
+path), its extracted pictures kept in the plugin's cache. The grid shows
+the picture of its first page an Office or OpenDocument file keeps
+(`stored.rs`, a fallback before converted pages). Along the way the
+reading mode counts `<ol type>` lists as their type says, ignores white
+space between table cells, and leaves a gap after a list marker wider
+than its column. Measured once on the reference machine, a small
+synthetic Word file: LibreOffice 1.2–2.7 s and up to 370 MB, Pandoc
+0.03 s and 120 MB. Not covered: `.fodt`, presentations and spreadsheets
+as text, find beyond the part shown, links to bookmarks in another part.
+Checked: lint; bench-check; 1050 of 1051 tests (the failure is the
+system MIME database's `text/x-shellscript`, as before); the ignored Pandoc smoke
+test, and LibreOffice's (nine formats through the extracted sandbox,
+with the worker paths set); on an isolated X11 display, Word and ODT
+files written by LibreOffice and by Pandoc, an RTF through Pandoc, a
+3200-paragraph document's second part, a footnote's popover, a kept
+first page in the grid, and Pages as the default.
+
 ## Phase 0 — Foundations and toolkit spike (~2 weeks)
 
 Goal: a repo that can measure itself, and a toolkit decision backed by numbers.

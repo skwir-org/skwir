@@ -33,6 +33,25 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   read by `rich_preview::html` where they stand: dropping them loses a README's
   logo and centered headers. Every image in a document, Markdown's and HTML's,
   goes through the one document-local loader.
+- **A text document is read as its structure, or laid out as pages**
+  (ADR-030). Word and `OpenDocument` text are walked into blocks by
+  `preview-documents` (`docx.rs`, `odt.rs`, through `blocks::Builder`),
+  never through HTML, so a list keeps the marker its document numbers it
+  with and a heading its number; Pandoc's HTML (RTF, or every format when
+  chosen) is read by `rich_preview::html` like any page. Which
+  presentation a file gets is decided in the reading provider's `accepts`
+  from the Text documents setting, the file's first bytes and what is
+  installed: a choice whose program is missing gives way to the next that
+  can show the file. A package is read by normalized member name, each
+  member within `BINARY_INPUT` of inflated bytes; a picture is named for
+  later by its member, and Pandoc's from the cache its conversion filled
+  (extracted again when the cache let it go). A long document is cut into
+  parts between paragraphs or table rows (`blocks::PART_BLOCKS`), list and
+  note numbers counted from its start, and each part's notes follow it
+  under a rule. Pandoc runs only in `bibli_platform::sandbox`, as
+  `LibreOffice` does. An Office or `OpenDocument` file's grid picture is
+  the one it keeps of its first page (`stored.rs`), before the first page
+  of a conversion.
 - **A picture is decoded when it is seen** (`inspection::Picture`). A
   provider that can read a picture again names it (`Picture::Later`: its own
   key and the size it will be shown at, read from the file's header by

@@ -1,5 +1,5 @@
 //! Thumbnails bibli makes when the desktop cannot (PDF and Office pages,
-//! audio, book and comic covers): tried only after the desktop's cache and
+//! the pictures Office documents keep, audio, book and comic covers): tried only after the desktop's cache and
 //! thumbnailers, whichever plugin registers first, and shared through the
 //! desktop's cache.
 use bibli_core::{
@@ -57,8 +57,16 @@ fn assert_order(app: &App, after: &str) {
             "comic-covers",
             "epub-covers",
             "office-pages",
+            "office-stored-pictures",
             "pdf-pages"
         ],
+        "{after}: {ids:?}"
+    );
+    // The picture a document keeps costs a read; a converted page needs a
+    // preview made first.
+    let at = |id: &str| ids.iter().position(|i| *i == id);
+    assert!(
+        at("office-stored-pictures") < at("office-pages"),
         "{after}: {ids:?}"
     );
 }

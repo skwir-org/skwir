@@ -19,7 +19,8 @@ const MAX_SIDE: u32 = 2048;
 const MAX_VIDEO_SIDE: u32 = 8192;
 const MAX_ARTIFACT: u64 = 64 * 1024 * 1024;
 const RENDER_TIMEOUT: Duration = Duration::from_secs(15);
-const CONVERT_TIMEOUT: Duration = Duration::from_secs(45);
+/// How long a converter (`LibreOffice`, Pandoc) may take over one file.
+pub const CONVERT_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// Wait for a gate until it is free or the request is cancelled. There is no
 /// deadline of its own: whoever holds a gate is bounded by the timeouts of
@@ -97,6 +98,18 @@ fn fingerprint_of(id: bibli_core::EntryId, path: &Path) -> anyhow::Result<Vec<u8
 
 fn key(base: &[u8], suffix: impl serde::Serialize) -> anyhow::Result<Vec<u8>> {
     Ok(serde_json::to_vec(&("preview-v1", base, suffix))?)
+}
+
+/// Where what `tool` made of `path` (entry `id`) is cached, `what` telling
+/// the products of one conversion apart: by the file's version and the
+/// tool's, so either changing makes it again.
+pub fn made_key(
+    id: bibli_core::EntryId,
+    path: &Path,
+    tool: &Path,
+    what: impl serde::Serialize,
+) -> anyhow::Result<Vec<u8>> {
+    key(&fingerprint_of(id, path)?, (tool_stamp(tool)?, what))
 }
 
 // A tiny JSON header followed by compressed PNG, not an array of JSON pixels.
@@ -399,12 +412,14 @@ fn is_pdf(req: &PreviewRequest) -> bool {
 }
 
 /// A document `LibreOffice` converts to PDF for its preview.
-pub(crate) fn is_office(path: &Path) -> bool {
+pub fn is_office(path: &Path) -> bool {
     matches!(
         extension(path).as_str(),
         "doc"
             | "docx"
             | "docm"
+            | "dotx"
+            | "dotm"
             | "odt"
             | "ott"
             | "rtf"

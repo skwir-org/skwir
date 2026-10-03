@@ -10,6 +10,13 @@ rust-version.workspace = true
 bibli-core.workspace = true
 bibli-platform.workspace = true
 toml.workspace = true
+anyhow.workspace = true
+parking_lot.workspace = true
+roxmltree.workspace = true
+tempfile.workspace = true
+# Word and OpenDocument files are zips: the version and inflater already
+# in the tree.
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [lints]
 workspace = true

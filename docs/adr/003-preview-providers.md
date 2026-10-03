@@ -25,6 +25,8 @@ GPUI into plugins or loading office/PDF engines at application startup.
 - Convert supported Office/OpenDocument files to PDF with installed
   LibreOffice. Reuse the PDF backend for pages, slides, and spreadsheet print
   layouts. Conversion does not provide an interactive spreadsheet grid.
+  (ADR-030 amends this: a text document can also be read as text, by bibli
+  or by Pandoc, in the same sandbox.)
 - On Linux, Office conversion requires bubblewrap. Mount only the input,
   system runtime directories, and private scratch space; disable networking,
   macros, and link updates, and use an isolated LibreOffice profile. A sandbox

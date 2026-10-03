@@ -21,6 +21,7 @@ Each format is enabled by an independent plugin in **Settings → Plugins**:
 | Plugin | Formats and controls |
 | --- | --- |
 | `preview-media` | Audio and video in one player: playback, seeking, volume, speed (pitch kept), audio and subtitle tracks, fullscreen for video; tags, embedded cover and a spectrum ring in the cover's colour for audio. Previous and Next step through the folder's files of the same kind or a playlist. **Keep playing while you browse** (on by default) pins what plays so it goes on in a player at the foot of the preview, steered from the status bar and from the desktop's media keys (MPRIS), without a gap between tracks. **Play on selection** starts a file once selected; **When a track ends** stops, plays the next or shuffles. ReplayGain and the video engine are settings. |
+| `preview-documents` | PDF in the document reader (PDFium, Poppler or MuPDF). Office documents as pages, converted by LibreOffice in a sandbox. Word (`.docx`, `.docm`, `.dotx`, `.dotm`), OpenDocument text (`.odt`, `.ott`) and RTF follow the **Text documents** setting: Pages (LibreOffice, the default), Reading (bibli reads Word and OpenDocument files itself, at once and to fit the panel: headings, lists with their numbers, tables, footnotes that open under their reference, links and pictures; RTF goes to Pandoc), or Pandoc for all of them. A choice whose program is missing gives way to another. A long document is read in parts, `[` and `]` between them. The grid shows the picture of its first page an Office or OpenDocument file keeps, before any preview. |
 | `preview-hex` | Read-only hexadecimal/ASCII ranges for binary files; available explicitly for any file. Jump to a decimal or `0x` offset; search text or `hex: 00 ff 7a` byte sequences. |
 | `preview-markdown` | Markdown and HTML reading mode with source toggle, headings, emphasis, lists, tables, code highlighting, links and local images. HTML keeps what its stylesheets say about emphasis, alignment, indents and hidden text, and is inert: no scripts, fonts or remote content. Fenced `mermaid` blocks are drawn as diagrams when `bibli-mermaid-worker` is installed, and stay code without it. Jupyter notebooks (`.ipynb`, format 4) read the same way: Markdown cells, code in the kernel's language, and what each cell printed, returned, raised or plotted. |
 | `preview-archives` | File-list-style archive tree with themed icons, folders first, aligned sizes, expand/collapse controls and selected-member image/text previews; other members show paged hexadecimal bytes. |
@@ -71,6 +72,9 @@ need no external runtime or network service.
 - Archives and comics: `bibli-archive-worker` plus libarchive. Neither 7-Zip nor
   libarchive loads into the UI process.
 - Existing PDF, Office and video backend settings are unchanged.
+- Office documents as pages: LibreOffice and bubblewrap. Word and
+  OpenDocument text read as text need nothing; RTF, or every text document
+  when Pandoc is chosen, needs Pandoc and bubblewrap.
 - SQLite databases: the system's `libsqlite3`, which bibli links.
 - Mermaid diagrams: `bibli-mermaid-worker` (pure Rust, built by default, kept
   out of bibli because its layout engine is about 16 MB).
