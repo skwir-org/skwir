@@ -964,7 +964,21 @@ the tree opens tags in place (what a pane opens in place is now a location
 at an entry), the columns walk the tags above. The sidebar's tags and All
 Tags open tag folders; the Tags view and `PaneView::command` are gone. The
 shelf takes the same verbs: Delete unshelves. Lists of files from many
-folders gain a Folder column and Show in Folder (Ctrl+Alt+O).
+folders gain a Folder column and Show in Folder (Ctrl+Alt+O). The extras
+of the design came with it: a tag dropped or pasted in a folder is
+exported as a folder of its files; a tag's grid tile shows a few of its
+pictures; the board (an alternate view) lays out a place's places or a
+folder's folders as columns of cards, a card dragged across moving there;
+and any folder can be narrowed by the Narrow by bar (the View menu's
+Narrow by, `query.narrow`), kept below the folder it was set in. Checked
+in a window on Xvfb: browsing, Up, the menus, Delete and its Undo, F2,
+New Tag, drags onto tags and across the board, the columns and tree over
+tags, mosaics, and a folder narrowed, kept below and dropped above it.
+Not checked in a window: an export by a real drag (tested through the
+clipboard), the board's keys, and the Narrow by bar over a very large
+folder, which reads every file's metadata as the timeline does. The bench
+check of tags now goes through a tag location (1.5 s against its 4 s
+budget).
 
 ## Phase 0 — Foundations and toolkit spike (~2 weeks)
 

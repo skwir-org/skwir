@@ -63,11 +63,24 @@ impl Shell {
                 Some((dir, p.filter().map(str::to_owned), p.location_lifetime()))
             })
         };
+        // A narrowing decides from each file's metadata, its size among it:
+        // what it shows is added up here once every file has it.
+        let narrowed = {
+            let ws = self.app.workspace.read();
+            ws.pane(pane)
+                .filter(|p| p.narrowed().is_some())
+                .map(narrowed_bytes)
+        };
         let weight = &mut self.ui_mut().weight;
         if let Some(cancel) = weight.cancel.take() {
             cancel.cancel();
         }
         weight.key = Some(key);
+        if let Some(bytes) = narrowed {
+            weight.dir = asked.map(|(dir, _, _)| dir);
+            weight.bytes = bytes;
+            return;
+        }
         let Some((dir, filter, lifetime)) = asked else {
             // Not a folder: nothing to weigh.
             weight.dir = None;
@@ -115,6 +128,25 @@ impl Shell {
     pub(crate) fn listed_bytes(&self) -> Option<u64> {
         self.ui().weight.bytes
     }
+}
+
+/// What the files a narrowed pane shows weigh, once each has its metadata.
+fn narrowed_bytes(p: &bibli_core::workspace::Pane) -> Option<u64> {
+    if !p.files_unknown().is_empty() {
+        return None;
+    }
+    Some(
+        p.order()
+            .iter()
+            .filter_map(|id| p.entry(*id))
+            .filter(|e| !e.is_dir())
+            .filter_map(|e| {
+                e.metadata
+                    .value(bibli_core::entry::keys::SIZE)
+                    .and_then(bibli_core::Value::as_u64)
+            })
+            .sum(),
+    )
 }
 
 /// The files in `dir` a pane shows, added up: what is not a folder, names

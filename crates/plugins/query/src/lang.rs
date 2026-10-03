@@ -1375,6 +1375,17 @@ impl Query {
         self.any(&|t| matches!(t, Term::Content(_)))
     }
 
+    /// Terms that read the file itself: what it contains, where it says
+    /// it was made. What a listing knows of a file cannot decide them.
+    pub fn reads_files(&self) -> bool {
+        self.any(&|t| {
+            matches!(
+                t,
+                Term::Content(_) | Term::Near { .. } | Term::Inside { .. }
+            )
+        })
+    }
+
     /// The substrings every match's name contains, when the expression is
     /// exactly that: one substring, or an AND of them. This is what a
     /// locate database answers (it ANDs its patterns); an OR, a NOT, a

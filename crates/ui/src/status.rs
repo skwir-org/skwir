@@ -101,8 +101,8 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
                 p.listing.error().map(str::to_owned),
                 p.location().is_some_and(|l| &*l.scheme == "query"),
                 p.selection.sweeping(),
-                // Filtered by name: how many there are in all.
-                p.filter().map(|_| p.listing.sorted(p.sort).len()),
+                // Filtered by name or narrowed: how many there are in all.
+                p.is_filtered().then(|| p.listing.sorted(p.sort).len()),
             )
         })
     };

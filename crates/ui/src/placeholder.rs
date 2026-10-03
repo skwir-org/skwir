@@ -111,6 +111,21 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
             problem: false,
         });
     }
+    // Narrowed down to nothing (`query.narrow`): say to what, and the way
+    // back.
+    if let Some(narrowed) = state.narrowed() {
+        let to: Vec<&str> = narrowed.pills.iter().map(|p| p.label.as_str()).collect();
+        return Some(Placeholder {
+            icon: "sliders",
+            title: "No file here is what the folder is narrowed to".to_owned(),
+            detail: format!(
+                "Narrowed to {}. Take one off in the address, or search the folders inside.",
+                to.join(", ")
+            ),
+            action: Some(("Show everything", "query.narrow")),
+            problem: false,
+        });
+    }
     let location = state.location()?;
     // The pane's own search: in a split, the other pane may have searched
     // for something else since.

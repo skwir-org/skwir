@@ -424,9 +424,67 @@ pub struct Pane {
     filter: Option<Arc<str>>,
     /// Changes with the filter.
     filter_version: u64,
-    /// The filtered order, the order it filtered (by identity) and the
-    /// filter's version.
-    filter_cache: parking_lot::Mutex<Option<(Arc<[EntryId]>, u64, Arc<[EntryId]>)>>,
+    /// What the folder's files are narrowed to, kept below the folder it
+    /// was set in.
+    narrowed: Option<Narrowed>,
+    /// The filtered order, the order it filtered (by identity), the
+    /// filter's version and, while narrowed, the listings' (a file's
+    /// metadata arriving decides whether it is shown), and the order.
+    filter_cache: parking_lot::Mutex<Option<FilterCache>>,
+}
+
+type FilterCache = (Arc<[EntryId]>, u64, (u64, u64), Arc<[EntryId]>);
+
+/// What a folder's files are narrowed to (a locked filter): kept while
+/// the pane shows the folder it was set in or one under it
+/// (`Pane::replace_open`), let go of anywhere else. What it means is its
+/// setter's, the query plugin's `query.narrow`: the core keeps its words
+/// and pills and asks it of each file. Every folder is shown whatever it
+/// says, so what is under it can be reached.
+#[derive(Clone)]
+pub struct Narrowed {
+    /// The folder it was set in.
+    pub root: PathBuf,
+    /// Its words, in its setter's language (`kind:image modified:2024`),
+    /// what a further choice changes.
+    pub expr: String,
+    /// A pill each after the trail, each with what takes it off.
+    pub pills: Vec<Pill>,
+    /// The facets it narrows by already (`kind`, `modified`), which the
+    /// Narrow by bar does not offer again.
+    pub set: Vec<String>,
+    /// Whether a file is shown. One it cannot tell yet (its metadata is
+    /// still to come) is not, until it can.
+    pub keeps: Arc<dyn Fn(&Entry) -> bool + Send + Sync>,
+}
+
+impl std::fmt::Debug for Narrowed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Narrowed")
+            .field("root", &self.root)
+            .field("expr", &self.expr)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Narrowed {
+    /// Whether `entry` is shown: a folder always is.
+    pub fn shows(&self, entry: &Entry) -> bool {
+        entry.is_dir() || (self.keeps)(entry)
+    }
+}
+
+/// A pill: its words, and what takes it off.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pill {
+    pub label: String,
+    pub remove: crate::command::Invocation,
+}
+
+/// Whether the pane shows `entry`: its name holds the filter, and the
+/// narrowing keeps it.
+fn shown(filter: Option<&str>, narrowed: Option<&Narrowed>, entry: &Entry) -> bool {
+    filter.is_none_or(|f| name_holds(&entry.name, f)) && narrowed.is_none_or(|n| n.shows(entry))
 }
 
 /// Whether `name` holds `filter`: anywhere in it, case ignored unless the
@@ -461,6 +519,7 @@ impl Pane {
             order_cache: parking_lot::Mutex::new(None),
             filter: None,
             filter_version: 0,
+            narrowed: None,
             filter_cache: parking_lot::Mutex::new(None),
         }
     }
@@ -499,6 +558,14 @@ impl Pane {
             self.expanded_changed();
         }
         self.set_filter(None);
+        // A narrowing stays below the folder it was set in.
+        let below = |n: &Narrowed| {
+            let open = self.open.as_ref().map(|o| o.location().path());
+            open.flatten().is_some_and(|path| path.starts_with(&n.root))
+        };
+        if self.narrowed.as_ref().is_some_and(|n| !below(n)) {
+            self.set_narrowed(None);
+        }
     }
 
     /// What the pane's names must hold to be shown, if anything.
@@ -521,16 +588,44 @@ impl Pane {
             return;
         }
         self.filter = text.map(Arc::from);
-        self.filter_version += 1;
-        if let Some(filter) = &self.filter {
-            let (listing, kept, expanded) = (&self.listing, &self.kept, &self.expanded);
-            self.selection.retain(|id| {
-                listing
-                    .get(id)
-                    .or_else(|| opened(kept, expanded).find_map(|(_, k)| k.listing.get(id)))
-                    .is_some_and(|e| name_holds(&e.name, filter))
-            });
+        self.filter_changed();
+    }
+
+    /// What the files are narrowed to, if anything.
+    pub fn narrowed(&self) -> Option<&Narrowed> {
+        self.narrowed.as_ref()
+    }
+
+    /// Whether some of the entries are not shown: filtered by name or
+    /// narrowed.
+    pub fn is_filtered(&self) -> bool {
+        self.filter.is_some() || self.narrowed.is_some()
+    }
+
+    /// Narrow the files to what `narrowed` keeps (`None`: show them all
+    /// again). What is selected and no longer shown is deselected, as the
+    /// filter does.
+    pub fn set_narrowed(&mut self, narrowed: Option<Narrowed>) {
+        if narrowed.is_none() && self.narrowed.is_none() {
+            return;
         }
+        self.narrowed = narrowed;
+        self.filter_changed();
+    }
+
+    fn filter_changed(&mut self) {
+        self.filter_version += 1;
+        if !self.is_filtered() {
+            return;
+        }
+        let (listing, kept, expanded) = (&self.listing, &self.kept, &self.expanded);
+        let (filter, narrowed) = (self.filter.as_deref(), self.narrowed.as_ref());
+        self.selection.retain(|id| {
+            listing
+                .get(id)
+                .or_else(|| opened(kept, expanded).find_map(|(_, k)| k.listing.get(id)))
+                .is_some_and(|e| shown(filter, narrowed, e))
+        });
     }
 
     /// Let go of what the pane shows while its tab is not shown (ADR-018):
@@ -1004,27 +1099,50 @@ impl Pane {
 
     /// The entries the pane shows, in the order shown: the listing sorted,
     /// each opened folder's entries after it, sorted the same way, those
-    /// the filter keeps. What range selection, select all and the views
-    /// follow.
+    /// the filter and the narrowing keep. What range selection, select
+    /// all and the views follow.
     pub fn order(&self) -> Arc<[EntryId]> {
         let all = self.unfiltered_order();
-        let Some(filter) = &self.filter else {
+        if !self.is_filtered() {
             return all;
+        }
+        // A narrowing reads metadata, which changes the listings' versions
+        // and not always their order.
+        let listings = if self.narrowed.is_some() {
+            (self.listing.version(), self.tree_version)
+        } else {
+            (0, 0)
         };
         let mut cache = self.filter_cache.lock();
-        if let Some((from, version, order)) = cache.as_ref()
+        if let Some((from, version, at, order)) = cache.as_ref()
             && Arc::ptr_eq(from, &all)
             && *version == self.filter_version
+            && *at == listings
         {
             return Arc::clone(order);
         }
+        let (filter, narrowed) = (self.filter.as_deref(), self.narrowed.as_ref());
         let order: Arc<[EntryId]> = all
             .iter()
             .copied()
-            .filter(|id| self.entry(*id).is_some_and(|e| name_holds(&e.name, filter)))
+            .filter(|id| self.entry(*id).is_some_and(|e| shown(filter, narrowed, e)))
             .collect();
-        *cache = Some((all, self.filter_version, Arc::clone(&order)));
+        *cache = Some((all, self.filter_version, listings, Arc::clone(&order)));
         order
+    }
+
+    /// The files the pane holds whose metadata has not come yet: what a
+    /// narrowing cannot tell yet, and does not show until it can. No view
+    /// draws them, so whoever narrows asks for them (`hydrate`).
+    pub fn files_unknown(&self) -> Vec<EntryId> {
+        self.unfiltered_order()
+            .iter()
+            .copied()
+            .filter(|id| {
+                self.entry(*id)
+                    .is_some_and(|e| !e.is_dir() && !e.is_place() && !e.metadata.is_hydrated())
+            })
+            .collect()
     }
 
     /// `order` before the filter.

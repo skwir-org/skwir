@@ -138,6 +138,8 @@ pub struct Preferences {
     pub friendly_dates: bool,
     /// `ui.grid_fill`: thumbnails cropped to their box.
     pub grid_fill: bool,
+    /// `ui.narrow_folders`: the Narrow by bar over a folder.
+    pub narrow_folders: bool,
     /// `ui.single_tab`: the tab of a window that has only one is drawn.
     pub single_tab: bool,
     /// `ui.printed_pages`: a book's position counts its printed pages.
@@ -151,6 +153,7 @@ impl Default for Preferences {
         Self {
             friendly_dates: true,
             grid_fill: false,
+            narrow_folders: false,
             single_tab: false,
             printed_pages: false,
             player: crate::player::PlayerPrefs::default(),
@@ -1183,6 +1186,23 @@ impl Shell {
         }
     }
 
+    /// `ui.narrow_folders`: the Narrow by bar over folders, a preference
+    /// like Fill thumbnails.
+    fn toggle_narrow_folders(&mut self, cx: &mut Context<Self>) {
+        self.prefs.narrow_folders = !self.prefs.narrow_folders;
+        cx.notify();
+        if let Err(error) = self.app.dispatch(&Invocation::with_args(
+            "settings.apply",
+            &serde_json::json!({
+                "changes": {
+                    crate::settings::NARROW_FOLDERS_KEY: self.prefs.narrow_folders.to_string()
+                }
+            }),
+        )) {
+            self.set_status(format!("{error:#}"), true, cx);
+        }
+    }
+
     /// `ui.printed_pages`: count a book by chapters or by printed pages. A
     /// preference, so it goes through `settings.apply` like the dialog's
     /// switch; the unit picker closes on its choice.
@@ -1680,6 +1700,7 @@ impl Shell {
             }
             "columns_reset" => self.reset_column_widths(cx),
             "grid_fill" => self.toggle_grid_fill(cx),
+            "narrow_folders" => self.toggle_narrow_folders(cx),
             "full_width" => self.toggle_full_width(cx),
             "printed_pages" => {
                 let on = args
@@ -1961,6 +1982,11 @@ impl Shell {
                 .app
                 .settings
                 .get::<bool>(crate::settings::GRID_FILL_KEY)
+                .unwrap_or(false);
+            self.prefs.narrow_folders = self
+                .app
+                .settings
+                .get::<bool>(crate::settings::NARROW_FOLDERS_KEY)
                 .unwrap_or(false);
             self.prefs.single_tab = self
                 .app

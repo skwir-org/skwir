@@ -13,6 +13,14 @@
 //! (`Verbs::narrow`, the tags plugin's `tags.narrow`), kept while its
 //! trail is walked.
 //!
+//! Over a folder, when asked for (`ui.narrow_folders`, the View menu's
+//! Narrow by) or while it is narrowed, it offers its files' kinds, years
+//! and tags: a choice narrows the folder (`query.narrow`, a
+//! `workspace::Narrowed`), kept while the pane shows it or a folder
+//! under it. Its folders always show. What it offers needs what each
+//! file's metadata says, so every file is asked for, as the timeline
+//! does, and a file the narrowing cannot tell yet waits hidden.
+//!
 //! What it offers is counted from the search's own results, so it holds
 //! for every facet the search has: once per change of the listing, never
 //! per frame, at most every `EVERY` while the search streams.
@@ -164,7 +172,13 @@ impl Shell {
         // A search's tags, or what a location that narrows itself (a tag
         // location) says its files all have.
         let (mut tags, _) = self.ui().chips.tags();
-        let own = self.ui().place.verbs.narrow.clone();
+        let mut own = self.ui().place.verbs.narrow.clone();
+        // A folder narrows through the query plugin, when asked for or
+        // while it is narrowed.
+        let folder = self.folder_narrowing();
+        if let Some(narrowing) = &folder {
+            own = Some(narrowing.clone());
+        }
         if let Some(own) = &own {
             tags.clone_from(&own.tags);
         }
@@ -185,12 +199,23 @@ impl Shell {
                 p.listing.is_complete(),
             )
         };
-        let narrow = &self.ui().narrow;
-        if narrow.key == Some(key) {
+        if self.ui().narrow.key == Some(key) {
             return;
         }
+        // A folder's files are complete once each has its metadata.
+        let mut complete = key.3;
+        if folder.is_some() {
+            let unknown = {
+                let ws = self.app.workspace.read();
+                ws.pane(pane)
+                    .map(bibli_core::workspace::Pane::files_unknown)
+                    .unwrap_or_default()
+            };
+            complete &= unknown.is_empty();
+            self.request_hydrate(unknown);
+        }
         // While it streams, at most every `EVERY`; the end counts at once.
-        let complete = key.3;
+        let narrow = &self.ui().narrow;
         if !complete && narrow.counted.is_some_and(|at| at.elapsed() < EVERY) {
             return;
         }
@@ -201,8 +226,9 @@ impl Shell {
             p.order()
                 .iter()
                 .filter_map(|id| p.entry(*id))
-                // A place (a tag's) is no file.
-                .filter(|e| !e.is_place())
+                // A place (a tag's) is no file; a folder narrowed shows
+                // its folders whatever it offers.
+                .filter(|e| !(e.is_place() || folder.is_some() && e.is_dir()))
                 .map(|e| File {
                     tags: crate::views::list::tags_of(e),
                     kinds: if complete {
@@ -245,6 +271,28 @@ impl Shell {
             offer,
             command: own.map(|own| own.command),
         };
+    }
+}
+
+impl Shell {
+    /// How the folder the pane being rendered shows is narrowed, when it
+    /// is or the bar is asked for over folders, and the query plugin is
+    /// there to do it.
+    fn folder_narrowing(&self) -> Option<bibli_core::Narrowing> {
+        if !self.ui().place.folder || self.app.commands.get("query.narrow").is_none() {
+            return None;
+        }
+        let set = {
+            let ws = self.app.workspace.read();
+            let p = ws.pane(self.pane)?;
+            p.location()?.path()?;
+            p.narrowed().map(|n| n.set.clone())
+        };
+        (self.prefs.narrow_folders || set.is_some()).then(|| bibli_core::Narrowing {
+            command: bibli_core::command::Invocation::new("query.narrow"),
+            tags: Vec::new(),
+            set: set.unwrap_or_default(),
+        })
     }
 }
 

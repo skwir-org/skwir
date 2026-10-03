@@ -10,6 +10,7 @@
 
 pub mod facets;
 pub mod lang;
+pub mod narrow;
 pub mod plocate;
 pub mod provider;
 pub mod saved;
@@ -113,6 +114,20 @@ struct MoveArgs {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct PaneOnly {
+    #[serde(default)]
+    pane: Option<PaneId>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct NarrowArgs {
+    /// A facet as `query.refine` takes it (`kind`, `modified`, `also_tag`,
+    /// `not_tag`, `drop_tag`…); omitted, the folder shows everything again.
+    #[serde(default)]
+    facet: Option<String>,
+    /// What to set it to, as `query.refine` takes it; omitted, the facet
+    /// is cleared.
+    #[serde(default)]
+    value: Option<String>,
     #[serde(default)]
     pane: Option<PaneId>,
 }
@@ -474,10 +489,15 @@ impl Plugin for QueryPlugin {
         )]
     }
 
-    fn on_disable(&self, _app: &App) {
+    fn on_disable(&self, app: &App) {
         if let Some(lifetime) = self.lifetime.lock().take() {
             lifetime.cancel();
         }
+        // A folder narrowed by its words shows everything again.
+        for pane in app.workspace.write().panes_mut() {
+            pane.set_narrowed(None);
+        }
+        app.wake();
     }
 
     fn register(&self, app: &App) {
@@ -719,6 +739,39 @@ impl Plugin for QueryPlugin {
                 let refined = facets::refine(&expr, &a.facet, a.value.as_deref())
                     .map_err(|e| anyhow::anyhow!("query: {e}"))?;
                 app.navigate(pane, &Location::new(SCHEME, refined))?;
+                Ok(Outcome::Done)
+            },
+        );
+        app.commands.register::<NarrowArgs, _>(
+            ID,
+            "query.narrow",
+            "Narrow folder",
+            "Change one facet of what the pane's folder is narrowed to (its files of a kind, a year, with or without a tag), kept while it shows that folder or one under it; without `facet`, show everything again",
+            |a, app| {
+                let pane = app.pane_or_active(a.pane);
+                let (folder, current) = {
+                    let ws = app.workspace.read();
+                    let p = ws
+                        .pane(pane)
+                        .ok_or_else(|| anyhow::anyhow!("no pane {}", pane.0))?;
+                    let folder = p.location().and_then(Location::path).ok_or_else(|| {
+                        anyhow::anyhow!("only a folder is narrowed; a search is refined")
+                    })?;
+                    (folder, p.narrowed().map(|n| (n.root.clone(), n.expr.clone())))
+                };
+                let narrowed = match a.facet {
+                    None => None,
+                    Some(facet) => {
+                        let (root, expr) = current.unwrap_or((folder, String::new()));
+                        let expr = facets::refine(&expr, &facet, a.value.as_deref())
+                            .map_err(|e| anyhow::anyhow!("query: {e}"))?;
+                        narrow::narrowed(&expr, root).map_err(|e| anyhow::anyhow!("query: {e}"))?
+                    }
+                };
+                if let Some(p) = app.workspace.write().pane_mut(pane) {
+                    p.set_narrowed(narrowed);
+                }
+                app.wake();
                 Ok(Outcome::Done)
             },
         );
@@ -1263,6 +1316,128 @@ mod tests {
         assert_eq!(app.work_dir(pane).unwrap(), root.join("docs/deep"));
         select(&["old.txt", "notes.txt"]);
         assert_eq!(app.work_dir(pane).unwrap(), root.join("docs"));
+    }
+
+    /// A folder narrowed shows its folders and the files the narrowing
+    /// keeps, stays narrowed below where it was set and no further, and
+    /// waits for what a file's metadata says before showing it.
+    #[test]
+    fn a_folder_narrowed_stays_so_below_it_and_no_further() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("it's here");
+        std::fs::create_dir(&root).unwrap();
+        tree(&root);
+        let pics = root.join("pics");
+        let year_2001 = SystemTime::UNIX_EPOCH + Duration::from_secs(11_474 * 86_400);
+        std::fs::write(pics.join("list.txt"), "a list").unwrap();
+        for name in ["dog.JPG", "list.txt"] {
+            std::fs::File::options()
+                .write(true)
+                .open(pics.join(name))
+                .unwrap()
+                .set_modified(year_2001)
+                .unwrap();
+        }
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+        let pane = app.workspace.read().active_id();
+        let go = |path: &Path| {
+            app.navigate(pane, &Location::from_path(path)).unwrap();
+            assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        };
+        let shown = || -> BTreeSet<String> {
+            let ws = app.workspace.read();
+            let p = ws.pane(pane).unwrap();
+            p.order()
+                .iter()
+                .filter_map(|id| p.entry(*id))
+                .map(|e| e.name_str().into_owned())
+                .collect()
+        };
+        let narrow = |facet: &str, value: &str| {
+            app.dispatch(&Invocation::with_args(
+                "query.narrow",
+                &serde_json::json!({ "facet": facet, "value": value }),
+            ))
+        };
+        let pills = || -> Vec<String> {
+            let ws = app.workspace.read();
+            ws.pane(pane)
+                .unwrap()
+                .narrowed()
+                .map(|n| n.pills.iter().map(|p| p.label.clone()).collect())
+                .unwrap_or_default()
+        };
+
+        go(&root);
+        narrow("kind", "image").unwrap();
+        assert_eq!(
+            shown(),
+            set(&["docs", "pics"]),
+            "folders, and no file is a picture"
+        );
+        assert_eq!(pills(), ["Images"]);
+        go(&pics);
+        assert_eq!(shown(), set(&["cat.png", "dog.JPG"]), "kept below");
+        go(tmp.path());
+        assert!(pills().is_empty(), "let go of above where it was set");
+
+        go(&pics);
+        app.dispatch(&Invocation::with_args(
+            "select",
+            &serde_json::json!({ "names": ["list.txt"] }),
+        ))
+        .unwrap();
+        narrow("modified", "2001").unwrap();
+        assert!(
+            app.workspace
+                .read()
+                .pane(pane)
+                .unwrap()
+                .selection
+                .is_empty(),
+            "what is no longer shown is no longer selected"
+        );
+        // Not stat-ed yet: when they were modified is not known.
+        assert_eq!(shown(), BTreeSet::new());
+        let ids: Vec<bibli_core::EntryId> = {
+            let ws = app.workspace.read();
+            ws.pane(pane)
+                .unwrap()
+                .listing
+                .iter()
+                .map(|e| e.id)
+                .collect()
+        };
+        app.dispatch(&Invocation::with_args(
+            "hydrate",
+            &serde_json::json!({ "ids": ids, "pane": pane }),
+        ))
+        .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while shown() != set(&["dog.JPG", "list.txt"]) {
+            assert!(std::time::Instant::now() < deadline, "{:?}", shown());
+            app.pump();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        narrow("kind", "image").unwrap();
+        assert_eq!(shown(), set(&["dog.JPG"]));
+        assert_eq!(pills(), ["Images", "modified in 2001"]);
+        // A pill's own command takes it off.
+        let remove = {
+            let ws = app.workspace.read();
+            ws.pane(pane).unwrap().narrowed().unwrap().pills[0]
+                .remove
+                .clone()
+        };
+        app.dispatch(&remove).unwrap();
+        assert_eq!(shown(), set(&["dog.JPG", "list.txt"]));
+        assert!(
+            narrow("content", "needle").is_err(),
+            "what a file contains is a search's"
+        );
+        app.dispatch(&Invocation::new("query.narrow")).unwrap();
+        assert_eq!(shown(), set(&["cat.png", "dog.JPG", "list.txt"]));
     }
 
     /// The designer's path: a chip on a folder starts a search there, each

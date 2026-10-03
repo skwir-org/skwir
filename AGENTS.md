@@ -623,7 +623,17 @@ current source before assuming a planned crate, command, or API exists.
   its tags, the other tags its files have, their kinds and years, each
   with how many files, counted from the results when the listing changes;
   a click refines the search (a tag within one takes its place), Alt+click
-  leaves a tag out. The sidebar suggests the tags at the top: a category
+  leaves a tag out. Over a folder the same bar offers its files' kinds,
+  years and tags when the View menu's Narrow by asks for it
+  (`ui.narrow_folders`) or while the folder is narrowed: a choice narrows
+  the folder (`query.narrow`), kept while the pane shows it or a folder
+  under it, a pill each after the trail. The narrowing is pane state like
+  the name filter (core's `workspace::Narrowed`, applied by
+  `Pane::order`): the query plugin's words, their pills, and a test of
+  each file from what the listing knows of it, never reading the file.
+  Its folders always show; every file is asked for its metadata
+  (`Pane::files_unknown`), and one the test cannot tell yet waits hidden.
+  The sidebar suggests the tags at the top: a category
   stands for those within it. An
   affordance that goes with what it acts on (a pill's ×) takes no focus;
   the keyboard reaches the same through the pill's menu. A location is

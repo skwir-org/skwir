@@ -55,6 +55,8 @@ pub const COLUMN_KEYS: [&str; 5] = [
 ];
 /// Whether the grid crops thumbnails to fill their box.
 pub const GRID_FILL_KEY: &str = "ui.grid_fill";
+/// Whether a folder has the Narrow by bar above its files (`narrow.rs`).
+pub const NARROW_FOLDERS_KEY: &str = "ui.narrow_folders";
 /// Whether the tab strip shows for a window that has only one tab.
 pub const SINGLE_TAB_KEY: &str = "ui.single_tab";
 /// How documents are read: one scrolling column, or a page at a time.
@@ -127,6 +129,15 @@ pub fn declare(app: &App) {
             false,
         )
         .section("Grid"),
+    );
+    app.settings.declare(
+        SettingSpec::toggle(
+            NARROW_FOLDERS_KEY,
+            "Narrow folders",
+            "Show the Narrow by bar above a folder's files: their kinds, the years they were modified and their tags, each with how many files, to show only those. The choice stays while you browse the folders inside. A search and a tag's folder offer it whatever this says.",
+            false,
+        )
+        .section("Folders"),
     );
     app.settings.declare(
         SettingSpec::toggle(

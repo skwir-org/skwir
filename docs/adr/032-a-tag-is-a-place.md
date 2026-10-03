@@ -110,6 +110,26 @@ of `tags:/`, its menu the tag folders' own, Count again is F5 there. The
 sidebar's tags open their tag folders; All Tags opens `tags:/`; keeping
 a tag folder (Ctrl+D) pins its tag.
 
+### What follows from it
+
+- **A tag leaves as a folder**: a tag dropped or pasted in a real folder
+  is copied there as a folder of its files, with a folder inside for
+  each tag within it (a plan to review). That is how a tag goes onto a
+  stick or to someone without bibli.
+- **A tag's tile shows its pictures**: in the grid, a few of its latest,
+  framed in its color, as an album does.
+- **The board**: an alternate view that opens every place (or folder) of
+  the one shown side by side as columns of cards; a card dragged to
+  another column moves there. On a field it is the field's values.
+- **Any folder can be narrowed**: the Narrow by bar offers a folder's
+  kinds, years and tags too, when the View menu asks for it, and a
+  choice is kept while the pane shows that folder or one under it, as
+  Dolphin's locked filter bar is, a pill each after the trail. It is
+  pane state like the filter typed in the field, not a location: Back
+  and the address stay the folder's, and nothing is searched. It knows
+  only what the listing reads of each file (its name, its stat, its
+  notes); what needs the file read is a search's.
+
 ## Consequences
 
 - A view treats a place like a folder it cannot read: no path, no

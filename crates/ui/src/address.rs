@@ -8,8 +8,10 @@ use crate::{
     theme::Theme,
     toolbar::{self, Button},
 };
+use bibli_core::command::Invocation;
 use bibli_core::location::{Crumb, Location};
 use bibli_core::registry::{ViewRole, ViewSpec};
+use bibli_core::workspace::Pill;
 use gpui::{AnyElement, Context, Window, div, prelude::*, px};
 use std::path::PathBuf;
 
@@ -275,6 +277,19 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
                 toggle.label.clone(),
             ));
         }
+    }
+    // A folder narrowed by its files' kinds, years and tags (`narrow.rs`).
+    if shell.ui().place.folder {
+        show.push(menu_item(
+            Button::new(
+                "menu-narrow-folders",
+                "sliders",
+                "Offer the kinds, years and tags of a folder's files above them, to show only those",
+                "ui.narrow_folders",
+            )
+            .active(shell.prefs.narrow_folders),
+            "Narrow by",
+        ));
     }
     // Only the grid draws thumbnails in a box.
     if shell.ui().view_id == crate::view::GRID {
@@ -577,9 +592,10 @@ pub fn more_popup(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
 /// What the address field shows.
 enum Address {
     /// A folder, or a location that reads as one (a tag's, `trail.rs`), as
-    /// a trail of places, then what narrows it, each with where its ×
-    /// leads.
-    Trail(Vec<Crumb>, Vec<Crumb>),
+    /// a trail of places, then what narrows it, each with what its ×
+    /// runs: a folder's narrowing (`query.narrow`), or going where the
+    /// location leads without it.
+    Trail(Vec<Crumb>, Vec<Pill>),
     /// A search, as pills (`search_bar::pills`).
     Pills,
     /// The text: while it is being edited (Ctrl+L, or a click beside the
@@ -640,13 +656,27 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
                         .into_iter()
                         .map(|(label, path)| Crumb::new(label, Location::from_path(path)))
                         .collect(),
-                    Vec::new(),
+                    pane.and_then(|p| p.narrowed())
+                        .map(|n| n.pills.clone())
+                        .unwrap_or_default(),
                 ),
                 None if !shell.ui().chips.chips.is_empty() => Address::Pills,
                 None => match &shell.ui().place.trail {
                     Some(trail) => Address::Trail(
                         crate::trail::segments(trail, home.as_deref()),
-                        trail.filters.clone(),
+                        trail
+                            .filters
+                            .iter()
+                            .map(|filter| Pill {
+                                label: filter.label.clone(),
+                                remove: Invocation::with_args(
+                                    "navigate",
+                                    &serde_json::json!({
+                                        "location": crate::trail::location_arg(&filter.location),
+                                    }),
+                                ),
+                            })
+                            .collect(),
                     ),
                     None => Address::Text,
                 },
@@ -774,20 +804,20 @@ fn filter_pill(shell: &Shell, filter: &str, theme: &Theme, cx: &mut Context<Shel
     .into_any_element()
 }
 
-/// What narrows a location that reads as a trail ("with family", a
-/// tag location's): its × goes where the location leads without it.
-/// Kept while the trail is walked up and down, so it is drawn like the
-/// filter typed in the field, after the trail.
+/// What narrows a folder ("Images", `query.narrow`) or a location that
+/// reads as a trail ("with family", a tag location's): its × takes it
+/// off. Kept while the trail is walked up and down, so it is drawn like
+/// the filter typed in the field, after the trail.
 fn narrowing_pill(
     shell: &Shell,
     i: usize,
-    filter: &Crumb,
+    filter: &Pill,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let pane = shell.pane;
     let hover = theme.hover;
-    let without = crate::trail::location_arg(&filter.location);
+    let remove = filter.remove.clone();
     div()
         .id(("narrowing", i))
         .flex_none()
@@ -818,12 +848,12 @@ fn narrowing_pill(
                 .on_click(cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();
                     this.activate_pane(pane, cx);
-                    this.run(
-                        "navigate",
-                        serde_json::json!({ "location": without, "pane": pane }),
-                        window,
-                        cx,
-                    );
+                    let mut args = remove.args.clone();
+                    if !args.is_object() {
+                        args = serde_json::json!({});
+                    }
+                    args["pane"] = serde_json::json!(pane);
+                    this.run(&remove.name, args, window, cx);
                 }))
                 .child(crate::controls::glyph("close", theme.selection_text, 10.)),
         )

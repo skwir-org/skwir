@@ -21,7 +21,7 @@
 //! the language's own (`kind:image`, `modified:this-week`, `size>1G`).
 
 use bibli_core::command::Invocation;
-use bibli_core::metadata::{TAG_SEPARATOR, clean_tag, same_tag, tag_within};
+use bibli_core::metadata::{TAG_SEPARATOR, clean_tag, same_tag, tag_leaf, tag_within};
 use bibli_platform::mime::Kind;
 use serde::Serialize;
 
@@ -512,6 +512,66 @@ fn tag_chip(tag: &str) -> Chip {
         clear: Some(refine_invocation("drop_tag", Some(tag))),
         segments,
     }
+}
+
+/// A part of a folder's narrowing (`query.narrow`) as a pill: its words,
+/// and the facet and value that take it off, as [`refine`] takes them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Part {
+    pub label: String,
+    pub facet: &'static str,
+    pub value: Option<String>,
+}
+
+/// What a narrowing reads as (`kind:image modified:2024` is “Images” and
+/// “modified in 2024”), and the facets it sets, which the Narrow by bar
+/// does not offer again.
+pub fn parts(expr: &str) -> Result<(Vec<Part>, Vec<String>), String> {
+    let q = lang::parse(expr).map_err(|e| e.to_string())?;
+    let p = Parts::of(&q);
+    let part = |label: String, facet, value: Option<&str>| Part {
+        label,
+        facet,
+        value: value.map(str::to_owned),
+    };
+    let mut parts = Vec::new();
+    let mut set = Vec::new();
+    if !p.words.is_empty() {
+        parts.push(part(format!("“{}”", p.words.join(" ")), "words", None));
+    }
+    for kind in &p.kinds {
+        parts.push(part(kind.title().to_owned(), "kind", Some(kind.name())));
+        set.push("kind".to_owned());
+    }
+    if let Some(term) = &p.modified {
+        let when = label_of(term, "modified", &MODIFIED);
+        let label = if when.chars().all(|c| c.is_ascii_digit()) {
+            format!("modified in {when}")
+        } else {
+            format!("modified {}", when.to_lowercase())
+        };
+        parts.push(part(label, "modified", None));
+        set.push("modified".to_owned());
+    }
+    if let Some(term) = &p.size {
+        let size = label_of(term, "size", &SIZE).to_lowercase();
+        parts.push(part(format!("size {size}"), "size", None));
+    }
+    for tag in &p.tags {
+        parts.push(part(
+            format!("with {}", tag_leaf(tag)),
+            "drop_tag",
+            Some(tag),
+        ));
+    }
+    for tag in &p.not_tags {
+        parts.push(part(format!("not {}", tag_leaf(tag)), "not_tag", Some(tag)));
+    }
+    for (i, text) in p.advanced.iter().enumerate() {
+        parts.push(part(text.clone(), "advanced", Some(&i.to_string())));
+    }
+    set.dedup();
+    Ok((parts, set))
 }
 
 /// The chips of `expr`: every facet, set or not, then the parts no facet
