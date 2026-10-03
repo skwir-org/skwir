@@ -271,6 +271,29 @@ fn a_long_word_document_is_read_in_parts_numbered_from_its_start() {
     assert_eq!(read.words, total * 2);
 }
 
+#[test]
+fn a_text_document_is_read_by_default_whatever_is_installed() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = bibli_core::App::new(bibli_core::app::AppConfig::ephemeral(
+        dir.path().join("state"),
+    ))
+    .unwrap();
+    app.plugins.add(Arc::new(PreviewPlugin), &app);
+    let path = dir.path().join("report.docx");
+    word(&path, BODY, &[(1, "The note.")], false);
+    let data = app
+        .previews
+        .inspect(
+            &request(&path),
+            &InspectRequest::default(),
+            &CancelToken::new(),
+        )
+        .unwrap()
+        .expect("the reading provider answers");
+    assert!(data.notice.starts_with("Reading mode"), "{}", data.notice);
+    assert_eq!(data.blocks[0].text, "Café report");
+}
+
 fn request(path: &Path) -> PreviewRequest {
     PreviewRequest {
         entry: EntryRef::from_path(path).unwrap(),

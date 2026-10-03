@@ -35,9 +35,9 @@ LibreOffice's pages when asked).
 (`.docx`, `.docm`, `.dotx`, `.dotm`), OpenDocument text (`.odt`, `.ott`)
 and RTF files are shown:
 
-- **Pages** (the default, as before): LibreOffice lays them out.
-- **Reading**: bibli reads Word and OpenDocument files itself; what it
-  does not read (RTF) goes to Pandoc.
+- **Reading** (the default): bibli reads Word and OpenDocument files
+  itself; what it does not read (RTF) goes to Pandoc.
+- **Pages**: LibreOffice lays them out, as before.
 - **Pandoc**: every format Pandoc reads goes to Pandoc.
 
 What is installed is detected, never assumed: a choice whose program is
@@ -121,8 +121,10 @@ previewed. A picture the reader cannot decode (WMF, EMF) is none.
   exists.
 - Reading mode is not the document's layout: page size, columns, fonts and
   floating positions are gone. That is the point of the choice, and Pages
-  remains one setting away. The default stays Pages, so nothing changes
-  for whoever relied on it.
+  remains one setting away. Reading is the default, for the costs measured
+  above: a preview is for glancing at a document while the selection
+  moves, and pages that take seconds each hold every step. Whoever relied
+  on pages chooses Pages.
 - The dev shell carries Pandoc; it is optional at run time, like
   LibreOffice, and listed in the plugin's requirements with bubblewrap.
 - Find searches the part shown, as in a paged text file.

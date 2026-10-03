@@ -102,11 +102,11 @@ impl Plugin for PreviewPlugin {
         app.settings.declare(SettingSpec::choice(
             TEXT_DOCUMENTS,
             "Text documents",
-            "How Word, OpenDocument and RTF documents are shown. Pages lays them out as LibreOffice prints them, which takes a few seconds each. Reading shows their text, headings, lists, tables, notes and pictures at once, to fit the panel: bibli reads Word and OpenDocument files, Pandoc RTF. Pandoc has Pandoc read them all. When what a choice needs is not installed, another is used.",
-            "pages",
+            "How Word, OpenDocument and RTF documents are shown. Reading shows their text, headings, lists, tables, notes and pictures at once, to fit the panel: bibli reads Word and OpenDocument files, Pandoc RTF. Pages lays them out as LibreOffice prints them, which takes a few seconds each. Pandoc has Pandoc read them all. When what a choice needs is not installed, another is used.",
+            "reading",
             &[
-                ("pages", "Pages"),
                 ("reading", "Reading"),
+                ("pages", "Pages"),
                 ("pandoc", "Pandoc"),
             ],
         ));
@@ -120,9 +120,9 @@ impl Plugin for PreviewPlugin {
             .filter(|s| !s.is_empty())
             .map(Into::into);
         let choice = match app.settings.get::<String>(TEXT_DOCUMENTS).as_deref() {
-            Some("reading") => Choice::Reading,
+            Some("pages") => Choice::Pages,
             Some("pandoc") => Choice::Pandoc,
-            _ => Choice::Pages,
+            _ => Choice::Reading,
         };
         let cache = app.cache.namespace(self.id());
         app.previews.register(

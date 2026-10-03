@@ -895,7 +895,7 @@ and in a new tab, idle CPU back to 0–1 %.
 
 Text documents (2026-10-03, ADR-030): Word (`.docx`, `.docm`, `.dotx`,
 `.dotm`), OpenDocument text (`.odt`, `.ott`) and RTF follow a Text
-documents setting: Pages (LibreOffice, the default, unchanged), Reading
+documents setting: Reading (the default), Pages (LibreOffice, as before)
 or Pandoc, each giving way to the next when its program is missing.
 bibli reads Word and OpenDocument itself into reading-mode blocks
 (`preview-documents`: headings, emphasis, lists with the numbers their
