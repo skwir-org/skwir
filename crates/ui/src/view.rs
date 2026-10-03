@@ -80,9 +80,14 @@ pub trait PaneView {
     }
     /// Locations the pane should keep open beside `shown`, listed and
     /// current, because this view shows them too (the columns view's
-    /// ancestors). Asked on every sync; the pane lets go of the rest,
+    /// ancestors; `trail` is `shown`'s, for one that is no folder). Asked
+    /// on every sync; the pane lets go of the rest,
     /// the location it just left included (`App::keep_locations`).
-    fn kept_locations(&self, _shown: Option<&Location>) -> Vec<Location> {
+    fn kept_locations(
+        &self,
+        _shown: Option<&Location>,
+        _trail: Option<&bibli_core::location::Trail>,
+    ) -> Vec<Location> {
         Vec::new()
     }
     /// A chance to run a command the view's own way, for a view whose

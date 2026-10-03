@@ -76,6 +76,13 @@ impl LocationProvider for Fake {
         if location.rest == "/" {
             sink.send(ListingEvent::Added(vec![place("few", 2), place("many", 9)]));
         }
+        if location.rest == "/few" {
+            sink.send(ListingEvent::Added(vec![Entry::new(
+                EntryId { dev: 7, ino: 1 },
+                "inside.txt",
+                EntryKind::File,
+            )]));
+        }
         sink.send(ListingEvent::Complete);
         Ok(Arc::new(Open {
             location: location.clone(),
@@ -229,4 +236,53 @@ fn places_sort_first_and_by_how_many_files_they_hold() {
             .is_hydrated(),
         "a place counted is known, never asked to be stat-ed"
     );
+}
+
+#[test]
+fn a_place_opens_in_place_as_a_folder_does() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = with_fake(tmp.path());
+    let pane = active(&app);
+    go(&app, "fake:/");
+    let few = EntryId::place(3);
+    app.dispatch(&Invocation::with_args(
+        "expand",
+        &serde_json::json!({ "ids": [few], "mode": "toggle" }),
+    ))
+    .unwrap();
+    let inside = EntryId { dev: 7, ino: 1 };
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let order = loop {
+        app.pump();
+        let order: Vec<EntryId> = {
+            let ws = app.workspace.read();
+            ws.pane(pane).unwrap().order().to_vec()
+        };
+        if order.contains(&inside) {
+            break order;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the place opened in place"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(
+        order,
+        [few, inside, EntryId::place(4)],
+        "its entries right under it, before the next place"
+    );
+    {
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        assert!(p.is_open_at(few));
+        assert_eq!(p.depth(inside), 1);
+    }
+    app.dispatch(&Invocation::with_args(
+        "expand",
+        &serde_json::json!({ "ids": [few], "mode": "toggle" }),
+    ))
+    .unwrap();
+    let ws = app.workspace.read();
+    assert!(!ws.pane(pane).unwrap().is_open_at(few), "and closes again");
 }

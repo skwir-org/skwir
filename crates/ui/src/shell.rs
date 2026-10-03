@@ -224,7 +224,7 @@ pub struct Shell {
     pub sidebar_sections: crate::sidebar::Sections,
     /// Size, Modified, Type, Rating: which detail columns the list shows
     /// (`settings::COLUMN_KEYS`). Read through `shown_columns`.
-    pub columns: [bool; 4],
+    pub columns: [bool; 5],
     /// `reading.width`: the reading column's widest, in ems, or `None`
     /// for the whole panel (`markdown::measure`).
     pub reading_measure: Option<f32>,
@@ -235,7 +235,7 @@ pub struct Shell {
     pub zoom_wheel: crate::reader_scroll::WheelTurn,
     /// The wheel over the tab strip, counted in notches like the zoom's.
     pub tab_wheel: crate::reader_scroll::WheelTurn,
-    pub column_widths: [f32; 4],
+    pub column_widths: [f32; 5],
     /// A header edge being dragged: column, pointer x and width at the start.
     pub column_drag: Option<(usize, f32, f32)>,
     pub preview: PreviewState,
@@ -490,7 +490,7 @@ impl Shell {
             unsaved: std::collections::BTreeMap::new(),
             backlog: false,
             sidebar_sections: crate::sidebar::Sections::default(),
-            columns: [true, true, true, false],
+            columns: [true, true, true, false, true],
             reading_measure: crate::markdown::measure("comfortable"),
             reading_width_before: None,
             zoom_wheel: crate::reader_scroll::WheelTurn::default(),
@@ -2052,12 +2052,16 @@ impl Shell {
             // Only a view that draws folders opened in place (the tree)
             // keeps them: in any other, their entries would be selected
             // and acted on unseen.
+            // What the location says of itself (its trail, its verbs),
+            // read when it changed, outside the lock.
+            crate::trail::sync(self);
             let (wanted, close) = {
                 let ws = app.workspace.read();
                 let Some(pane) = ws.pane(id) else { continue };
                 let view = self.ui().views.get(self.ui().view_id);
+                let trail = self.ui().place.trail.as_ref();
                 let wanted = view
-                    .map(|view| view.kept_locations(pane.location()))
+                    .map(|view| view.kept_locations(pane.location(), trail))
                     .unwrap_or_default();
                 let close =
                     !pane.expanded().is_empty() && !view.is_some_and(|view| view.opens_in_place());

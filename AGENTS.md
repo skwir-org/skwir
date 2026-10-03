@@ -435,9 +435,14 @@ current source before assuming a planned crate, command, or API exists.
 - **Folders opened in place are the pane's** (ADR-025): the tree view
   opens folders under the one shown (`Pane::expanded`, the core `expand`
   command), and their entries are selected and acted on like the shown
-  listing's. Read a pane's entries through `Pane::entry`, `Pane::path_of`
-  and `Pane::order`, never `pane.listing` alone. Only a view that says
-  `opens_in_place` keeps them; the shell closes them under any other.
+  listing's. What is opened is a location, at the entry that leads there
+  (`workspace::Opened`): a folder, or a place (a tag's, ADR-032), so the
+  tree works in a tag location too. Read a pane's entries through
+  `Pane::entry`, `Pane::path_of`, `Pane::location_of` and `Pane::order`,
+  never `pane.listing` alone. Only a view that says `opens_in_place`
+  keeps them; the shell closes them under any other. The columns view's
+  columns are a folder's parents, or the places of a location's trail
+  (`PaneView::kept_locations` is given the trail).
 - **What waits for a paste is core data.** The clipboard's owner publishes
   it in `App::pending` (entry ids and whether a paste will move them); the
   shell snapshots it once per frame. Every view dims cut entries
@@ -651,7 +656,11 @@ current source before assuming a planned crate, command, or API exists.
   placed in prepaint (`elements/chips.rs`): those that do not fit drop
   whole, and "+N" says how many. Header and rows share that one function. A name too
   long keeps both ends (`text_ellipsis_middle`) in every view: the extension
-  tells files apart. Which columns show is
+  tells files apart. Where files from many folders are listed (a search,
+  a tag, the shelf, Recent) the Folder column says each one's, first of
+  the details and the last to give way, its whole path in its tooltip,
+  and Show in Folder (`show_in_folder`, Ctrl+Alt+O) goes there with the
+  file selected. Which columns show is
   chosen where they are — the header's own menu (`Shell::open_column_menu`),
   not the Settings dialog — and still through `settings.apply`, so the
   dialog and the header never disagree. The sidebar gives way to

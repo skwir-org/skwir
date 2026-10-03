@@ -1094,6 +1094,29 @@ mod builtin {
 
         c.register::<PaneArg, _>(
             "core",
+            "show_in_folder",
+            "Show in folder",
+            "Open the folder the selected file is in, the file selected: from a search, a tag, the shelf, where files from many folders are listed",
+            |a, app| {
+                let pane = app.pane_or_active(a.pane);
+                let refs = app.selected_refs(pane);
+                let [one] = refs.as_slice() else {
+                    anyhow::bail!("select one file to show in its folder");
+                };
+                let (Some(parent), Some(name)) = (one.path.parent(), one.path.file_name()) else {
+                    anyhow::bail!("{} is in no folder", one.path.display());
+                };
+                app.navigate(pane, &Location::from_path(parent))?;
+                if let Some(p) = app.workspace.write().pane_mut(pane) {
+                    p.reveal(name.to_owned());
+                }
+                app.wake();
+                Ok(Outcome::Done)
+            },
+        );
+
+        c.register::<PaneArg, _>(
+            "core",
             "take_out",
             "Take out of here",
             "Take the selection out of a location that lists files kept elsewhere, as it says (a tag's takes its tag off them, the shelf's unshelves them): the files stay where they are. What the Delete key does there",
@@ -1335,8 +1358,9 @@ mod builtin {
                     app.collapse_all(pane);
                     return Ok(Outcome::Done);
                 }
-                // Which of them are folders, and where: the shown
-                // location's own are asked outside the lock.
+                // Which of them are folders or places, and where they
+                // lead: the shown location's own folders are asked outside
+                // the lock.
                 let Some((open, folders)) = app.with_open(pane, |p| {
                     let ids: Vec<EntryId> = if a.ids.is_empty() {
                         p.selection.iter().collect()
@@ -1345,16 +1369,21 @@ mod builtin {
                     };
                     ids.into_iter()
                         .filter(|id| p.entry(*id).is_some_and(crate::Entry::is_dir))
-                        .map(|id| (id, p.opened_path(id)))
+                        .map(|id| (id, p.location_of(id), p.opened_path(id)))
                         .collect::<Vec<_>>()
                 }) else {
                     anyhow::bail!("the pane shows nothing");
                 };
-                let paths: Vec<PathBuf> = folders
+                let leads: Vec<(EntryId, Location)> = folders
                     .into_iter()
-                    .filter_map(|(id, opened)| opened.or_else(|| open.path_of(id)))
+                    .filter_map(|(id, place, opened)| {
+                        let location = place.or_else(|| {
+                            opened.or_else(|| open.path_of(id)).map(Location::from_path)
+                        })?;
+                        Some((id, location))
+                    })
                     .collect();
-                if paths.is_empty() {
+                if leads.is_empty() {
                     return Err(crate::command::NothingSelected.into());
                 }
                 {
@@ -1362,14 +1391,14 @@ mod builtin {
                     let p = ws
                         .pane_mut(pane)
                         .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-                    for path in paths {
-                        let open = p.is_expanded(&path);
+                    for (at, location) in leads {
+                        let open = p.is_expanded(&location);
                         match a.mode {
                             ExpandMode::Expand | ExpandMode::Toggle if !open => {
-                                p.expand(path);
+                                p.expand(location, at);
                             }
                             ExpandMode::Collapse | ExpandMode::Toggle if open => {
-                                p.collapse(&path);
+                                p.collapse(&location);
                             }
                             _ => {}
                         }

@@ -47,8 +47,8 @@ const INDENT: f32 = DISCLOSURE + 4.0;
 /// How much of a cut entry remains visible until it is pasted.
 pub const CUT_OPACITY: f32 = 0.45;
 
-/// Size, Modified, Type, Rating.
-pub const DEFAULT_WIDTHS: [f32; 4] = [80.0, 136.0, 150.0, 76.0];
+/// Size, Modified, Type, Rating, Folder.
+pub const DEFAULT_WIDTHS: [f32; 5] = [80.0, 136.0, 150.0, 76.0, 180.0];
 const DETAIL_GAP: f32 = 12.0;
 
 pub fn clamp_width(width: f32) -> f32 {
@@ -132,10 +132,12 @@ impl Shell {
 
     /// The detail columns drawn: those chosen, but Rating only while the
     /// tags plugin, whose ratings they are, is on.
-    pub fn shown_columns(&self) -> [bool; 4] {
-        let [size, modified, kind, rating] = self.columns;
+    pub fn shown_columns(&self) -> [bool; 5] {
+        let [size, modified, kind, rating, folder] = self.columns;
         let rated = rating && self.app.commands.get("tags.rate").is_some();
-        [size, modified, kind, rated]
+        // Where files from many folders are listed: a folder's are in it.
+        let elsewhere = folder && !self.ui().place.folder;
+        [size, modified, kind, rated, elsewhere]
     }
 
     /// `ui.columns_reset`: back to the widths the view ships with.
@@ -235,6 +237,9 @@ pub struct RowData {
     /// folder whether it is open in place.
     pub depth: usize,
     pub expanded: bool,
+    /// The folder it is in, and its whole path, where files from many
+    /// folders are listed.
+    pub folder: Option<(String, String)>,
     /// A place (a tag's): where it leads, and its tag's color.
     pub place: Option<(bibli_core::Location, usize)>,
 }
@@ -294,7 +299,7 @@ impl Shell {
                 id,
                 name: e.name_str().into_owned(),
                 is_dir: e.is_dir(),
-                expanded: path.as_deref().is_some_and(|p| pane.is_expanded(p)),
+                expanded: e.is_dir() && pane.is_open_at(id),
                 depth: pane.depth(id),
                 path,
                 size: String::new(),
@@ -310,9 +315,20 @@ impl Shell {
                 rating: None,
                 link: icons::Link::of(e),
                 place,
+                folder: None,
             };
             if !compact {
-                let [size, modified, kind, rating] = columns;
+                let [size, modified, kind, rating, folder] = columns;
+                if folder && !e.is_place() {
+                    row.folder = pane.path_of(id).and_then(|path| {
+                        let dir = path.parent()?;
+                        let name = dir.file_name().map_or_else(
+                            || dir.display().to_string(),
+                            |n| n.to_string_lossy().into_owned(),
+                        );
+                        Some((name, dir.display().to_string()))
+                    });
+                }
                 if rating {
                     row.rating = e
                         .metadata
@@ -553,8 +569,26 @@ pub fn row(
     if !compact {
         let font = shell.font.clone();
         let exact: gpui::SharedString = r.modified_exact.clone().into();
-        let [size, modified, kind, rating] = shell.shown_columns();
+        let [size, modified, kind, rating, folder] = shell.shown_columns();
+        let place = r.folder.clone();
         line = line
+            // First of the details: the last to give way.
+            .when(folder, |d| {
+                let (name, whole) = place.unwrap_or_default();
+                d.child(
+                    column(shell.column_widths[4], muted, height)
+                        .id(("folder", ix))
+                        .truncate()
+                        .when(!whole.is_empty(), |d| {
+                            let font = shell.font.clone();
+                            let whole: gpui::SharedString = whole.into();
+                            d.tooltip(move |_, cx| {
+                                crate::toolbar::tooltip(whole.clone(), font.clone(), cx)
+                            })
+                        })
+                        .child(name),
+                )
+            })
             .when(size, |d| {
                 d.child(
                     column(shell.column_widths[0], muted, height)
@@ -702,6 +736,14 @@ fn header(shell: &Shell, theme: &Theme, tree: bool, cx: &mut Context<Shell>) -> 
                 NAME_MIN,
                 ROW_HEIGHT,
             )
+            .when(columns[4], |d| {
+                d.child(
+                    column(shell.column_widths[4], theme.text_muted, ROW_HEIGHT)
+                        .relative()
+                        .child("Folder")
+                        .child(resize_edge(4, cx)),
+                )
+            })
             .when(columns[0], |d| {
                 d.child(
                     column(shell.column_widths[0], theme.text_muted, ROW_HEIGHT)
@@ -902,7 +944,7 @@ impl PaneView for ListView {
                 return false;
             };
             let dir = p.entry(id).is_some_and(bibli_core::Entry::is_dir);
-            let open = dir && p.path_of(id).is_some_and(|path| p.is_expanded(&path));
+            let open = dir && p.is_open_at(id);
             let depth = p.depth(id);
             let parent = (depth > 0)
                 .then(|| (0..ix).rev().find(|&j| p.depth(sorted[j]) < depth))

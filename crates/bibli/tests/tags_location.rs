@@ -358,3 +358,27 @@ fn a_pill_alt_clicked_shows_its_tag_in_the_folder_shown() {
     assert!(s.app.pump_until_complete(s.pane, Duration::from_secs(10)));
     assert_eq!(listed(&s).1, names(&["paris.jpg", "tokyo.jpg"]));
 }
+
+#[test]
+fn a_file_of_a_tag_is_shown_in_its_folder() {
+    let s = setup();
+    go(&s, &tag_location(&s.root, Some("Places/France/Lyon")));
+    s.app
+        .dispatch(&Invocation::with_args(
+            "select",
+            &serde_json::json!({ "names": ["lyon.jpg"] }),
+        ))
+        .unwrap();
+    s.app.dispatch(&Invocation::new("show_in_folder")).unwrap();
+    assert_eq!(shows(&s), Location::from_path(s.root.join("trips")));
+    until(&s.app, "the file selected in its folder", || {
+        let ws = s.app.workspace.read();
+        let p = ws.pane(s.pane).unwrap();
+        let selected: Vec<String> = p
+            .selection
+            .iter()
+            .filter_map(|id| p.entry(id).map(|e| e.name_str().into_owned()))
+            .collect();
+        (selected == ["lyon.jpg"]).then_some(())
+    });
+}

@@ -1,5 +1,6 @@
 //! Miller columns: ancestor directories to the left, the pane's listing as
-//! the deepest column. The ancestors are locations the pane keeps open
+//! the deepest column; for a location that reads as a trail (a tag's,
+//! ADR-032), the places of its trail. The ancestors are locations the pane keeps open
 //! beside the one it shows (`PaneView::kept_locations`, `App::keep_locations`):
 //! the core keeps their listings current and pumps them with the pane's,
 //! and going up or down one level adopts a listing already there instead of
@@ -10,7 +11,7 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use bibli_core::os_path::PathArg;
+use bibli_core::location::Trail;
 use bibli_core::{EntryId, Location, SortSpec};
 use gpui::{
     AnyElement, Context, MouseButton, ScrollStrategy, UniformListScrollHandle, Window, div,
@@ -28,8 +29,9 @@ const MAX_ANCESTORS: usize = 3;
 const COLUMN_W: f32 = 240.0;
 
 struct Ancestor {
-    path: PathBuf,
     location: Location,
+    /// The folder it is, for a folder's column: its rows' paths are in it.
+    path: Option<PathBuf>,
     /// Name of the child on the way to the pane's directory.
     child: std::ffi::OsString,
     scroll: UniformListScrollHandle,
@@ -41,14 +43,36 @@ struct Ancestor {
 
 #[derive(Default)]
 pub struct ColumnsView {
-    base: Option<PathBuf>,
+    base: Option<Location>,
     ancestors: Vec<Ancestor>,
     scroll: UniformListScrollHandle,
 }
 
+/// The places above `shown` drawn as columns, farthest first, each with
+/// the name of the one on the way down: a folder's parents, or the places
+/// of a location's trail (a tag's categories).
+fn chain(shown: &Location, trail: Option<&Trail>) -> Vec<(Location, std::ffi::OsString)> {
+    if let Some(base) = shown.path() {
+        return folders(&base)
+            .into_iter()
+            .map(|(path, child)| (Location::from_path(path), child))
+            .collect();
+    }
+    let Some(trail) = trail else {
+        return Vec::new();
+    };
+    let crumbs = &trail.crumbs;
+    let from = crumbs.len().saturating_sub(MAX_ANCESTORS + 1);
+    crumbs
+        .windows(2)
+        .skip(from)
+        .map(|pair| (pair[0].location.clone(), pair[1].label.clone().into()))
+        .collect()
+}
+
 /// The folders above `base` that are shown as columns, farthest first,
 /// each with the name of the child on the way down.
-fn chain(base: &Path) -> Vec<(PathBuf, std::ffi::OsString)> {
+fn folders(base: &Path) -> Vec<(PathBuf, std::ffi::OsString)> {
     let mut chain = Vec::new();
     let mut cur = base.to_path_buf();
     while let Some(parent) = cur.parent().map(Path::to_path_buf) {
@@ -66,10 +90,10 @@ fn chain(base: &Path) -> Vec<(PathBuf, std::ffi::OsString)> {
 impl ColumnsView {
     /// The ancestors of `base`, nearest last. Those already shown (going one
     /// level down or up keeps most of them) keep their scroll.
-    fn rebuild(&mut self, base: &Path) {
+    fn rebuild(&mut self, base: &Location, trail: Option<&Trail>) {
         let mut old: Vec<Ancestor> = std::mem::take(&mut self.ancestors);
-        for (path, child) in chain(base) {
-            if let Some(i) = old.iter().position(|a| a.path == path) {
+        for (location, child) in chain(base, trail) {
+            if let Some(i) = old.iter().position(|a| a.location == location) {
                 let mut kept = old.swap_remove(i);
                 if kept.child != child {
                     kept.child = child;
@@ -80,15 +104,15 @@ impl ColumnsView {
                 continue;
             }
             self.ancestors.push(Ancestor {
-                location: Location::from_path(&path),
-                path,
+                path: location.path(),
+                location,
                 child,
                 scroll: UniformListScrollHandle::new(),
                 shown_child: false,
                 looked_at: None,
             });
         }
-        self.base = Some(base.to_path_buf());
+        self.base = Some(base.clone());
     }
 }
 
@@ -100,6 +124,8 @@ struct AncestorRow {
     is_dir: bool,
     icon: Option<Arc<std::path::Path>>,
     link: icons::Link,
+    /// Where it leads, for a place (a tag's), and its tag's color.
+    place: Option<(Location, usize)>,
 }
 
 fn ancestor_column(
@@ -125,6 +151,7 @@ fn ancestor_column(
             let rows: Vec<AncestorRow> = {
                 let ws = this.app.workspace.read();
                 let listing = ws.pane(pane).and_then(|p| p.kept(&location));
+                let p = ws.pane(pane);
                 ids[range.clone()]
                     .iter()
                     .filter_map(|id| listing?.get(*id))
@@ -135,12 +162,22 @@ fn ancestor_column(
                         is_dir: e.is_dir(),
                         icon: this.icons.for_entry(e, icon_px),
                         link: icons::Link::of(e),
+                        place: p
+                            .and_then(|p| p.kept_location_of(&location, e.id))
+                            .map(|leads| {
+                                let tag = e
+                                    .metadata
+                                    .value(bibli_core::entry::keys::PLACE_TAG)
+                                    .and_then(bibli_core::Value::as_str)
+                                    .unwrap_or_default();
+                                (leads, this.tag_colors.of(tag))
+                            }),
                     })
                     .collect()
             };
             let mut out = Vec::with_capacity(rows.len());
             for (ix, row) in range.zip(rows) {
-                let target = path.join(&row.name);
+                let target = path.as_ref().map(|dir| dir.join(&row.name));
                 let is_on_path = row.name == child;
                 let icon: AnyElement = match row.icon {
                     Some(p) => icons::element(&p, f32::from(icon_px)),
@@ -150,8 +187,18 @@ fn ancestor_column(
                         .bg(theme.text_muted)
                         .into_any_element(),
                 };
-                let icon = icons::with_link(icon, f32::from(icon_px), row.link, &theme);
-                let dir_target = row.is_dir.then(|| target.clone());
+                let icon = match &row.place {
+                    Some((_, color)) => icons::with_tag(icon, f32::from(icon_px), *color, &theme),
+                    None => icons::with_link(icon, f32::from(icon_px), row.link, &theme),
+                };
+                // What a press opens: a folder, or where a place leads.
+                let leads = match (&row.place, &target) {
+                    (Some((place, _)), _) => Some(crate::trail::location_arg(place)),
+                    (None, Some(target)) if row.is_dir => {
+                        Some(crate::trail::location_arg(&Location::from_path(target)))
+                    }
+                    _ => None,
+                };
                 let mut el = div()
                     .id(ix)
                     .h(px(height))
@@ -168,13 +215,10 @@ fn ancestor_column(
                         MouseButton::Left,
                         cx.listener(move |this, _, window, cx| {
                             this.activate_pane(pane, cx);
-                            if let Some(t) = &dir_target {
+                            if let Some(leads) = &leads {
                                 this.run(
                                     "navigate",
-                                    serde_json::json!({
-                                        "location": PathArg::from(t.as_path()),
-                                        "pane": pane,
-                                    }),
+                                    serde_json::json!({ "location": leads, "pane": pane }),
                                     window,
                                     cx,
                                 );
@@ -198,13 +242,21 @@ fn ancestor_column(
                     });
                 // A tag dropped on it is its own: these are not the
                 // pane's entries, so never its selection.
-                el = dnd::takes_gift_for(
-                    el,
-                    bibli_core::op::EntryRef::new(row.id, target.clone()),
-                    cx,
-                );
-                if row.is_dir {
-                    el = dnd::droppable_dir(el, target, cx);
+                if let Some(target) = &target
+                    && row.place.is_none()
+                {
+                    el = dnd::takes_gift_for(
+                        el,
+                        bibli_core::op::EntryRef::new(row.id, target.clone()),
+                        cx,
+                    );
+                }
+                match (row.place, target) {
+                    (Some((place, _)), _) => el = dnd::droppable_place(el, place, cx),
+                    (None, Some(target)) if row.is_dir => {
+                        el = dnd::droppable_dir(el, target, cx);
+                    }
+                    _ => {}
                 }
                 out.push(el);
             }
@@ -228,7 +280,10 @@ fn ancestor_column(
             ("column-scrollbar", k),
             crate::elements::scrollbar::Scrolls::Offset(a.scroll.0.borrow().base_handle.clone()),
         ));
-    col = dnd::droppable_dir(col, a.path.clone(), cx);
+    col = match &a.path {
+        Some(dir) => dnd::droppable_dir(col, dir.clone(), cx),
+        None => dnd::droppable_place(col, a.location.clone(), cx),
+    };
     col.into_any_element()
 }
 
@@ -243,13 +298,14 @@ impl PaneView for ColumnsView {
             let ws = shell.app.workspace.read();
             let p = ws.pane(shell.pane);
             (
-                p.and_then(|p| p.location().and_then(Location::path)),
+                p.and_then(|p| p.location().cloned()),
                 p.map_or_else(SortSpec::default, |p| p.sort),
             )
         };
         if base != self.base {
             if let Some(b) = &base {
-                self.rebuild(b);
+                let trail = shell.ui().place.trail.clone();
+                self.rebuild(b, trail.as_ref());
             } else {
                 self.ancestors.clear();
                 self.base = None;
@@ -328,8 +384,10 @@ impl PaneView for ColumnsView {
                     self.scroll.0.borrow().base_handle.clone(),
                 ),
             ));
-        if let Some(b) = &base {
-            last_col = dnd::droppable_dir(last_col, b.clone(), cx);
+        match base.as_ref().map(|b| (b.path(), b)) {
+            Some((Some(dir), _)) => last_col = dnd::droppable_dir(last_col, dir, cx),
+            Some((None, place)) => last_col = dnd::droppable_place(last_col, place.clone(), cx),
+            None => {}
         }
         columns = columns.child(last_col);
         // Ctrl and the wheel size the rows, over any column.
@@ -342,13 +400,12 @@ impl PaneView for ColumnsView {
         self.scroll.scroll_to_item(ix, ScrollStrategy::Top);
     }
 
-    fn kept_locations(&self, shown: Option<&Location>) -> Vec<Location> {
+    fn kept_locations(&self, shown: Option<&Location>, trail: Option<&Trail>) -> Vec<Location> {
         shown
-            .and_then(Location::path)
-            .map(|base| {
-                chain(&base)
+            .map(|shown| {
+                chain(shown, trail)
                     .into_iter()
-                    .map(|(path, _)| Location::from_path(&path))
+                    .map(|(location, _)| location)
                     .collect()
             })
             .unwrap_or_default()
@@ -391,5 +448,53 @@ impl PaneView for ColumnsView {
 
     fn reset(&mut self) {
         self.scroll.scroll_to_item_strict(0, ScrollStrategy::Top);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bibli_core::location::Crumb;
+
+    #[test]
+    fn a_trail_is_walked_in_columns_and_a_folder_by_its_parents() {
+        let crumb = |label: &str, rest: &str| Crumb::new(label, Location::new("tags", rest));
+        let trail = Trail {
+            base: Some("/home/someone".into()),
+            crumbs: vec![
+                crumb("Tags", "/"),
+                crumb("Places", "/Places"),
+                crumb("France", "/Places/France"),
+                crumb("Paris", "/Places/France/Paris"),
+                crumb("Old town", "/Places/France/Paris/Old town"),
+            ],
+            filters: Vec::new(),
+            toggles: Vec::new(),
+        };
+        let shown = trail.crumbs[4].location.clone();
+        let columns: Vec<(String, String)> = chain(&shown, Some(&trail))
+            .into_iter()
+            .map(|(l, child)| (l.rest, child.to_string_lossy().into_owned()))
+            .collect();
+        assert_eq!(
+            columns,
+            [
+                ("/Places".to_owned(), "France".to_owned()),
+                ("/Places/France".to_owned(), "Paris".to_owned()),
+                ("/Places/France/Paris".to_owned(), "Old town".to_owned()),
+            ],
+            "the nearest places, each with the one on the way down"
+        );
+        assert!(chain(&shown, None).is_empty(), "no trail, no columns");
+        let folder = Location::from_path("/a/b/c");
+        let parents: Vec<Location> = chain(&folder, None).into_iter().map(|(l, _)| l).collect();
+        assert_eq!(
+            parents,
+            [
+                Location::from_path("/"),
+                Location::from_path("/a"),
+                Location::from_path("/a/b")
+            ]
+        );
     }
 }

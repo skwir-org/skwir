@@ -191,6 +191,13 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
     ("forward", "forward", None),
     // Where the location takes files out without deleting them (a tag,
     // the shelf), Delete does that instead (`take_out`, the shell's).
+    // Where files from many folders are listed, the folder one is in, as
+    // Nautilus's Open Item Location.
+    (
+        "ctrl-alt-o",
+        "show_in_folder",
+        Some("pane single !folder !place"),
+    ),
     ("delete", "trash", Some("pane selection !refs")),
     ("delete", "take_out", Some("pane selection refs")),
     ("ctrl-c", "clipboard_copy", Some("pane selection")),
@@ -247,6 +254,13 @@ const BINDINGS_ARGS: &[(&str, &str, &str)] = &[
 // contributed by the open-with plugin, which owns those commands.
 const MENU: &[(&str, &str, Option<&str>, i32, &str)] = &[
     ("Open in New Tab", "tab.open", Some("dir"), 2, "tab-new"),
+    (
+        "Show in Folder",
+        "show_in_folder",
+        Some("single !folder !place"),
+        3,
+        "folder",
+    ),
     ("Rename", "ui.rename_prompt", Some("single"), 100, "rename"),
     ("Cut", "clipboard_cut", Some("selection !place"), 110, "cut"),
     (

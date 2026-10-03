@@ -46,11 +46,12 @@ pub const DATES_KEY: &str = "ui.date_format";
 pub const COLUMN_WIDTHS_KEY: &str = "ui.column_widths";
 /// Detail columns of the list view, in the order they give way when a pane
 /// gets narrow (the last one first).
-pub const COLUMN_KEYS: [&str; 4] = [
+pub const COLUMN_KEYS: [&str; 5] = [
     "ui.column_size",
     "ui.column_modified",
     "ui.column_type",
     "ui.column_rating",
+    "ui.column_folder",
 ];
 /// Whether the grid crops thumbnails to fill their box.
 pub const GRID_FILL_KEY: &str = "ui.grid_fill";
@@ -167,7 +168,7 @@ pub fn declare(app: &App) {
     ));
     app.settings.declare(SettingSpec::data(
         COLUMN_WIDTHS_KEY,
-        "Widths of the Size, Modified, Type and Rating columns, in pixels",
+        "Widths of the Size, Modified, Type, Rating and Folder columns, in pixels",
         toml::Value::Array(
             crate::views::list::DEFAULT_WIDTHS
                 .iter()
@@ -194,6 +195,12 @@ pub fn declare(app: &App) {
             "Rating",
             "Show the stars each file was given, with the Tags plugin. It is the first column to give way in a narrow pane.",
             false,
+        ),
+        (
+            COLUMN_KEYS[4],
+            "Folder",
+            "Show the folder each file is in, where files from many folders are listed: a search, a tag, the shelf, Recent. It is the last column to give way.",
+            true,
         ),
     ] {
         app.settings

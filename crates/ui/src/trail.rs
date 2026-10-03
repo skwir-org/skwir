@@ -18,6 +18,8 @@ pub struct Shown {
     location: String,
     pub trail: Option<Trail>,
     pub verbs: Verbs,
+    /// It is a folder: what it lists is in it (no Folder column).
+    pub folder: bool,
     /// The trail's places that take files dropped on them (`Verbs::drop`).
     takes_drops: Vec<Location>,
 }
@@ -53,6 +55,7 @@ pub fn sync(shell: &mut Shell) {
         .map(|crumb| crumb.location.clone())
         .collect();
     shell.ui_mut().place = Shown {
+        folder: location.as_ref().is_none_or(Location::is_path),
         location: text,
         trail,
         verbs,
