@@ -84,6 +84,9 @@ pub enum Stage {
     /// renderers, so an installed thumbnailer keeps the look other
     /// applications share.
     Fallback,
+    /// A converter of many formats (`ImageMagick`, ADR-031), asked only when
+    /// nothing made for the format itself could.
+    LastResort,
 }
 
 /// A thumbnail source. Tried by [`Stage`], then in registration order.
@@ -549,13 +552,14 @@ mod tests {
     #[test]
     fn stages_order_providers_whoever_registers_first() {
         let t = Thumbnails::new(Scheduler::new(1));
+        t.register("desktop", Fake::new("converter", Stage::LastResort, false));
         t.register("renderer", Fake::new("fallback", Stage::Fallback, true));
         t.register("desktop", Fake::new("thumbnailer", Stage::Generate, false));
         t.register("desktop", Fake::new("cache", Stage::Cache, false));
         t.register("other", Fake::new("decoder", Stage::Generate, false));
         assert_eq!(
             t.provider_ids(),
-            ["cache", "thumbnailer", "decoder", "fallback"]
+            ["cache", "thumbnailer", "decoder", "fallback", "converter"]
         );
         // Registered again (a settings change), the cache still comes first.
         t.unregister_owner("desktop");

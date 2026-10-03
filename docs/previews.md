@@ -39,7 +39,11 @@ Pictures are decoded in the process (PNG, JPEG, GIF, WebP, BMP, TIFF, ICO,
 QOI, TGA, PNM, OpenEXR, DDS) and SVG drawings are drawn, sharper as they are
 zoomed. A picture of another kind (HEIC, AVIF, JPEG XL, a camera's raw file)
 is shown as the desktop's thumbnailer for it draws it, 1024 pixels at most,
-when one is installed (`thumbnails` plugin). So is a 3D model (STL, glTF,
+when one is installed (`thumbnails` plugin), else as ImageMagick draws it
+(the **Use ImageMagick** setting, on by default): AVIF, HEIC, JPEG XL, JPEG
+2000, raw files, Photoshop and GIMP images, DjVu, whatever its build reads.
+Both run isolated from your files and the network where bubblewrap works
+(ADR-031). So is a 3D model (STL, glTF,
 STEP, IGES, a Blender file…) when f3d, Blender or another thumbnailer
 claims its type. Code is highlighted with bat's
 grammars.
@@ -81,7 +85,10 @@ need no external runtime or network service.
 - 3D meshes without a stored picture: `bibli-model-worker` (pure Rust, built
   by default). Without it, an installed thumbnailer (f3d) draws them, if any.
 - HEIC, AVIF, JPEG XL and raw photos: a thumbnailer for them (libheif's
-  `heif-thumbnailer`, for example); without one they show no picture.
+  `heif-thumbnailer`, for example), else ImageMagick (`magick`, or
+  ImageMagick 6's `convert`) and bubblewrap; with neither they show no
+  picture. Thumbnailers run in bubblewrap when it is installed and can
+  isolate; ImageMagick runs only there.
 
 ASF containers (`application/vnd.ms-asf`, `application/x-ms-asf`, or `.asf`)
 use `preview-media`. GStreamer discovers their streams: video files use the video

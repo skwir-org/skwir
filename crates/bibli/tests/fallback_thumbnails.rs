@@ -39,7 +39,8 @@ fn app(root: &Path) -> Arc<App> {
     app
 }
 
-/// The desktop's providers first, in their order, then every fallback once.
+/// The desktop's providers first, in their order, then every fallback once,
+/// then the last resort.
 #[track_caller]
 fn assert_order(app: &App, after: &str) {
     let ids = app.thumbnails.provider_ids();
@@ -48,7 +49,8 @@ fn assert_order(app: &App, after: &str) {
         ["freedesktop-cache", "image-decoder", "thumbnailers"],
         "{after}: {ids:?}"
     );
-    let mut fallbacks = ids[3..].to_vec();
+    assert_eq!(ids.last(), Some(&"imagemagick"), "{after}: {ids:?}");
+    let mut fallbacks = ids[3..ids.len() - 1].to_vec();
     fallbacks.sort_unstable();
     assert_eq!(
         fallbacks,
@@ -97,6 +99,15 @@ fn fallbacks_come_after_the_desktop_whoever_registers_first() {
         app.plugins.settings_changed(&[key.into()], &app);
         assert_order(&app, key);
     }
+    // Turned off, ImageMagick is asked nothing; turned on, it is last again.
+    let key = "thumbnails.imagemagick";
+    for on in [false, true] {
+        app.settings.set(key, toml::Value::Boolean(on));
+        app.plugins.settings_changed(&[key.into()], &app);
+        let ids = app.thumbnails.provider_ids();
+        assert_eq!(ids.contains(&"imagemagick"), on, "{ids:?}");
+    }
+    assert_order(&app, key);
 }
 
 fn wait_ready(app: &App, req: &ThumbRequest) -> Arc<Image> {

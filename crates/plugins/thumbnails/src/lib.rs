@@ -1,27 +1,32 @@
 //! bibli plugin: thumbnails. Registers, in order, the freedesktop cache
-//! (read and write-back), the in-process image decoder, and the desktop's
-//! installed thumbnailers into the core thumbnail service. The same
-//! thumbnailers preview the pictures bibli does not decode (`Pictures`).
+//! (read and write-back), the in-process image decoder, the desktop's
+//! installed thumbnailers, and `ImageMagick` as the last resort, into the
+//! core thumbnail service. The same thumbnailers, then `ImageMagick`,
+//! preview the pictures bibli does not decode (`Pictures`). Thumbnailers
+//! and `ImageMagick` run isolated (ADR-031).
 //!
-//! Settings: `thumbnails.write_cache` (bool, default true) and
-//! `thumbnails.budget_mb` (integer, default 64).
+//! Settings: `thumbnails.write_cache` (bool, default true),
+//! `thumbnails.budget_mb` (integer, default 64) and
+//! `thumbnails.imagemagick` (bool, default true).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use bibli_core::App;
 use bibli_core::cancel::CancelToken;
-use bibli_core::plugin::Plugin;
+use bibli_core::plugin::{Plugin, Requirement};
 use bibli_core::preview::{Preview, PreviewInfo, PreviewProvider, PreviewRequest};
 use bibli_core::scheduler::Priority;
 use bibli_core::settings::SettingSpec;
-use bibli_core::thumbs::{Image, ThumbRequest, ThumbnailProvider};
+use bibli_core::thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider};
+use bibli_platform::magick::Magick;
 use bibli_platform::thumb_providers::{self, FreedesktopCache, ImageDecoder, Thumbnailers};
 use bibli_platform::thumbnails::{ThumbCache, ThumbSize};
 
 const ID: &str = "thumbnails";
 const WRITE_CACHE: &str = "thumbnails.write_cache";
 const BUDGET_MB: &str = "thumbnails.budget_mb";
+const IMAGEMAGICK: &str = "thumbnails.imagemagick";
 
 /// The plugin.
 #[derive(Default)]
@@ -29,15 +34,23 @@ pub struct ThumbnailsPlugin {
     thumbnailers: Arc<Discovered>,
 }
 
-/// The desktop's thumbnailers. Finding them reads every `.thumbnailer`
-/// file, which registration must not do: a worker fills this once, and
-/// until then the provider accepts nothing; files asked for meanwhile are
-/// asked again once it is filled (`Thumbnails::providers_changed`). Kept
-/// across settings changes and re-enabling.
+/// The desktop's thumbnailers and `ImageMagick`. Finding them reads every
+/// `.thumbnailer` file and runs `ImageMagick`, which registration must not
+/// do: a worker fills this once, and until then the providers accept
+/// nothing; files asked for meanwhile are asked again once it is filled
+/// (`Thumbnails::providers_changed`). Kept across settings changes and
+/// re-enabling.
 #[derive(Default)]
 struct Discovered {
     started: AtomicBool,
     found: OnceLock<Thumbnailers>,
+    magick: OnceLock<Option<Magick>>,
+}
+
+impl Discovered {
+    fn magick(&self) -> Option<&Magick> {
+        self.magick.get().and_then(Option::as_ref)
+    }
 }
 
 impl ThumbnailProvider for Discovered {
@@ -57,13 +70,51 @@ impl ThumbnailProvider for Discovered {
     }
 }
 
+/// `ImageMagick`, the last resort: a picture nothing else drew (ADR-031).
+struct Converted(Arc<Discovered>);
+
+impl ThumbnailProvider for Converted {
+    fn id(&self) -> &'static str {
+        "imagemagick"
+    }
+
+    fn stage(&self) -> Stage {
+        Stage::LastResort
+    }
+
+    fn accepts(&self, req: &ThumbRequest) -> bool {
+        self.0
+            .magick()
+            .zip(mime_of(req))
+            .is_some_and(|(magick, mime)| magick.draws(&mime))
+    }
+
+    fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
+        let (Some(magick), Some(mime)) = (self.0.magick(), mime_of(req)) else {
+            return Ok(None);
+        };
+        magick.draw(&req.entry.path, &mime, req.size.pixels(), cancel)
+    }
+}
+
+/// The type of a request: the caller's, else the name's.
+fn mime_of(req: &ThumbRequest) -> Option<String> {
+    match &req.mime {
+        Some(mime) => Some(mime.to_string()),
+        None => bibli_platform::mime::by_name(req.entry.path.file_name()?).map(|m| m.0),
+    }
+}
+
 /// Pictures bibli does not decode itself (HEIF, AVIF, JPEG XL, a camera's
-/// raw file) previewed as the desktop's thumbnailer draws them, at the
-/// largest size the thumbnail cache knows, and kept there like any
-/// thumbnail so the next look, and other applications, find it drawn. A 3D
-/// model is one too (`pictured`): what f3d or Blender draws of it.
+/// raw file) previewed as the desktop's thumbnailer draws them, else as
+/// `ImageMagick` does, at the largest size the thumbnail cache knows, and
+/// kept there like any thumbnail so the next look, and other applications,
+/// find it drawn. A 3D model is one too (`pictured`): what f3d or Blender
+/// draws of it.
 struct Pictures {
     thumbnailers: Arc<Discovered>,
+    /// Whether `ImageMagick` may draw what no thumbnailer does.
+    magick: bool,
     cache: Option<ThumbCache>,
     write_back: bool,
 }
@@ -85,11 +136,7 @@ impl PreviewProvider for Pictures {
         req.mime.as_deref().is_some_and(|mime| {
             pictured(mime)
                 && !thumb_providers::decodes(mime)
-                && self
-                    .thumbnailers
-                    .found
-                    .get()
-                    .is_some_and(|t| t.claims(mime))
+                && (self.claimed(mime) || self.converted(mime).is_some())
         })
     }
 
@@ -132,21 +179,49 @@ fn pictured(mime: &str) -> bool {
 }
 
 impl Pictures {
-    /// The picture drawn by its thumbnailer, and kept in the cache.
+    /// Whether a desktop thumbnailer draws pictures of type `mime`.
+    fn claimed(&self, mime: &str) -> bool {
+        self.thumbnailers
+            .found
+            .get()
+            .is_some_and(|t| t.claims(mime))
+    }
+
+    /// `ImageMagick`, if it may draw pictures of type `mime`.
+    fn converted(&self, mime: &str) -> Option<&Magick> {
+        self.thumbnailers
+            .magick()
+            .filter(|magick| self.magick && magick.draws(mime))
+    }
+
+    /// The picture drawn by its thumbnailer, else by `ImageMagick` (when the
+    /// thumbnailer failed too), and kept in the cache.
     fn draw(
         &self,
         path: &std::path::Path,
         mime: &str,
         cancel: &CancelToken,
     ) -> anyhow::Result<Image> {
-        let thumbnailers = self
-            .thumbnailers
-            .found
-            .get()
-            .ok_or_else(|| anyhow::anyhow!("No thumbnailer draws this picture"))?;
-        let image = thumbnailers
-            .draw(path, mime, PICTURE_SIZE.pixels(), cancel)?
-            .ok_or_else(|| anyhow::anyhow!("cancelled"))?;
+        let pixels = PICTURE_SIZE.pixels();
+        let mut failed = None;
+        let mut drawn = None;
+        if let Some(thumbnailers) = self.thumbnailers.found.get().filter(|t| t.claims(mime)) {
+            match thumbnailers.draw(path, mime, pixels, cancel) {
+                Ok(image) => drawn = Some(image),
+                Err(error) => failed = Some(error),
+            }
+        }
+        if drawn.is_none()
+            && let Some(magick) = self.converted(mime)
+        {
+            drawn = Some(magick.draw(path, mime, pixels, cancel)?);
+        }
+        let image = match (drawn, failed) {
+            (Some(Some(image)), _) => image,
+            (Some(None), _) => anyhow::bail!("cancelled"),
+            (None, Some(error)) => return Err(error),
+            (None, None) => anyhow::bail!("No thumbnailer draws this picture"),
+        };
         if let Some(cache) = self.cache.as_ref().filter(|_| self.write_back)
             && let Ok(modified) = std::fs::metadata(path).and_then(|m| m.modified())
             && let Err(error) = cache.store(path, PICTURE_SIZE, &image, modified)
@@ -184,9 +259,10 @@ fn budget(app: &App) {
 
 impl ThumbnailsPlugin {
     /// The providers, in order: the cache first, then the decoder, then
-    /// the desktop's thumbnailers.
+    /// the desktop's thumbnailers, and `ImageMagick` last of all (its stage).
     fn providers(&self, app: &App) {
         let write_back = app.settings.get::<bool>(WRITE_CACHE).unwrap_or(true);
+        let magick = app.settings.get::<bool>(IMAGEMAGICK).unwrap_or(true);
         app.thumbnails.unregister_owner(ID);
         app.thumbnails
             .register(ID, Arc::new(FreedesktopCache::desktop(write_back)));
@@ -195,11 +271,16 @@ impl ThumbnailsPlugin {
             ID,
             Arc::clone(&self.thumbnailers) as Arc<dyn ThumbnailProvider>,
         );
+        if magick {
+            app.thumbnails
+                .register(ID, Arc::new(Converted(Arc::clone(&self.thumbnailers))));
+        }
         app.previews.unregister(ID, "desktop-pictures");
         app.previews.register(
             ID,
             Arc::new(Pictures {
                 thumbnailers: Arc::clone(&self.thumbnailers),
+                magick,
                 cache: ThumbCache::desktop(),
                 write_back,
             }),
@@ -217,20 +298,30 @@ impl Plugin for ThumbnailsPlugin {
     }
 
     fn description(&self) -> &'static str {
-        "Thumbnails from the desktop cache, an image decoder, and installed thumbnailers"
+        "Thumbnails from the desktop cache, an image decoder, installed thumbnailers and ImageMagick"
     }
 
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Previews
     }
 
+    fn requirements(&self) -> Vec<Requirement> {
+        vec![
+            Requirement::program(
+                "magick",
+                "Pictures no thumbnailer draws (HEIC, AVIF, JPEG XL, raw files…)",
+            ),
+            Requirement::program("bwrap", "Thumbnailers and ImageMagick run isolated"),
+        ]
+    }
+
     fn on_settings_changed(&self, app: &App, keys: &[String]) {
         if keys.iter().any(|k| k == BUDGET_MB) {
             budget(app);
         }
-        // Only the cache provider depends on it, but the order matters, so
+        // Only some providers depend on them, but the order matters, so
         // the list is registered again; nothing is discovered again.
-        if keys.iter().any(|k| k == WRITE_CACHE) {
+        if keys.iter().any(|k| k == WRITE_CACHE || k == IMAGEMAGICK) {
             self.providers(app);
         }
     }
@@ -253,6 +344,12 @@ impl Plugin for ThumbnailsPlugin {
             .unit("MB")
             .step(16),
         );
+        app.settings.declare(SettingSpec::toggle(
+            IMAGEMAGICK,
+            "Use ImageMagick",
+            "Draw the pictures no thumbnailer draws (HEIC, AVIF, JPEG XL, camera raw files, Photoshop and GIMP images…) with ImageMagick when it is installed, isolated from your files and the network.",
+            true,
+        ));
         budget(app);
         self.providers(app);
         if !self.thumbnailers.started.swap(true, Ordering::AcqRel) {
@@ -266,6 +363,12 @@ impl Plugin for ThumbnailsPlugin {
                     let found = Thumbnailers::from_system();
                     let any = !found.is_empty();
                     let _ = discovered.found.set(found);
+                    if any {
+                        service.providers_changed();
+                    }
+                    let magick = Magick::find();
+                    let any = magick.is_some();
+                    let _ = discovered.magick.set(magick);
                     if any {
                         service.providers_changed();
                     }
@@ -442,6 +545,7 @@ mod tests {
         let cache = ThumbCache::at(dir.path().join("cache"));
         let pictures = Pictures {
             thumbnailers: discovered,
+            magick: false,
             cache: Some(cache.clone()),
             write_back: true,
         };
@@ -480,6 +584,93 @@ mod tests {
         assert!(
             cache.lookup(&photo, PICTURE_SIZE).is_some(),
             "kept in the desktop's cache"
+        );
+    }
+
+    #[test]
+    fn imagemagick_draws_last_what_no_thumbnailer_could() {
+        use bibli_platform::thumb_providers::ThumbnailerEntry;
+        use std::os::unix::fs::PermissionsExt;
+        if !bibli_platform::sandbox::available() {
+            eprintln!("bubblewrap cannot isolate here");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let photo = dir.path().join("a photo’s [name].heic");
+        std::fs::write(&photo, b"not read by the fakes").unwrap();
+        let executable = |name: &str, script: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, script).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        };
+        // A thumbnailer that fails, and an ImageMagick that draws a 3×2
+        // picture where its last argument says, whatever it is asked.
+        let failing = executable("thumbnail", "#!/bin/sh\nexit 1\n");
+        let magick = executable(
+            "magick",
+            "#!/bin/sh\nfor last; do :; done\nprintf 'P3\\n3 2\\n255\\n0 0 255 0 0 255 0 0 255 0 0 255 0 0 255 0 0 255\\n' > \"${last#PAM:}\"\n",
+        );
+        let discovered = Arc::new(Discovered::default());
+        let _ = discovered
+            .found
+            .set(Thumbnailers::new(vec![ThumbnailerEntry {
+                name: "heif".into(),
+                try_exec: None,
+                exec: format!("{} %i %o", failing.display()),
+                mime_types: vec!["image/heif".into()],
+            }]));
+        let _ = discovered.magick.set(Some(Magick::listing(
+            magick,
+            "     HEIC  rw+   High Efficiency Image Format\n",
+        )));
+        let converted = Converted(Arc::clone(&discovered));
+        assert_eq!(converted.stage(), Stage::LastResort);
+        let thumb = ThumbRequest {
+            entry: EntryRef::from_path(&photo).unwrap(),
+            mime: Some("image/heif".into()),
+            mtime: None,
+            size: ThumbSize::Normal,
+        };
+        assert!(converted.accepts(&thumb));
+        let image = converted
+            .thumbnail(&thumb, &CancelToken::new())
+            .unwrap()
+            .expect("drawn");
+        assert_eq!((image.width, image.height), (3, 2));
+        assert_eq!(&image.rgba[..4], &[0, 0, 255, 255]);
+
+        let pictures = |magick| Pictures {
+            thumbnailers: Arc::clone(&discovered),
+            magick,
+            cache: None,
+            write_back: false,
+        };
+        let preview = PreviewRequest {
+            entry: EntryRef::from_path(&photo).unwrap(),
+            mime: Some("image/heif".into()),
+            page: 1,
+            seconds: None,
+            max_side: 2048,
+            text_size: None,
+        };
+        assert!(
+            pictures(false)
+                .render(&preview, &CancelToken::new())
+                .is_err(),
+            "the thumbnailer fails, and ImageMagick is off"
+        );
+        let shown = pictures(true)
+            .render(&preview, &CancelToken::new())
+            .unwrap();
+        assert_eq!((shown.image.width, shown.image.height), (3, 2));
+        let jxl = PreviewRequest {
+            mime: Some("image/jxl".into()),
+            ..preview
+        };
+        assert!(
+            !pictures(true).accepts(&jxl),
+            "this ImageMagick does not read it"
         );
     }
 

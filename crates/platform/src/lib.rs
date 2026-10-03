@@ -11,6 +11,7 @@
 //! - [`picture`]: picture files decoded and sized the way their EXIF Orientation turns them.
 //! - [`thumbnails`]: the freedesktop thumbnail cache: lookup, load, store.
 //! - [`thumb_providers`]: thumbnail providers for the core service: cache, image decoder, external thumbnailers.
+//! - [`magick`]: `ImageMagick`, isolated, for the pictures nothing else draws.
 //! - [`places`]: home, XDG user dirs, GTK bookmarks, mounted volumes.
 //! - [`open`]: open with the default application, open a terminal.
 //! - [`apps`]: the desktop's applications, what opens which type, launching one.
@@ -29,6 +30,7 @@ pub mod filesystem;
 pub mod icons;
 mod line_channel;
 pub mod links;
+pub mod magick;
 pub mod media;
 pub mod mime;
 pub mod model;

@@ -921,6 +921,33 @@ with the worker paths set); on an isolated X11 display, Word and ODT
 files written by LibreOffice and by Pandoc, an RTF through Pandoc, a
 3200-paragraph document's second part, a footnote's popover, a kept
 first page in the grid, and Pages as the default.
+Pictures by ImageMagick (2026-10-03, ADR-031): a picture no desktop
+thumbnailer draws (AVIF, HEIC, JPEG XL, JPEG 2000, raw files, PSD, XCF,
+DjVu, as the installed build reads them) has a thumbnail and a preview
+from ImageMagick, the last thumbnail provider of all (`Stage::LastResort`,
+new in the core) and the preview's after the thumbnailer: the format
+named from the MIME database's globs (`mime::extensions`), never one of
+`magick::REFUSED`, run only in the sandbox under a policy written per
+run (that format read, PAM written, no delegate, 256 MiB, one thread),
+two at a time (`thumbnails.imagemagick`, on by default). The desktop's
+thumbnailers now run in the same sandbox where bubblewrap can isolate
+(`sandbox::available` asks it once), as before where it cannot; the
+sandbox names its file from a plain extension (`sandbox::inside_name`)
+and binds `/etc/alternatives`, the fontconfig cache and a program kept
+outside the system's folders. Declined: AVIF decoded in the process
+(rav1d: 2.7 MB of code with its assembly) and KDE's thumbnailers (a
+Qt helper for one desktop). Measured on the reference machine, a
+synthetic 12-megapixel AVIF to 256 px: ImageMagick 0.72 s and about
+213 MB, `heif-thumbnailer` 0.57 s; ffmpegthumbnailer isolated about
+5 ms slower than alone. Checked: lint; bench-check; 1059 of 1060 tests
+(the system MIME database's `text/x-shellscript`, as before); the
+ignored ImageMagick test (an AVIF with transparency drawn isolated, a
+file that is none refused); a fake ImageMagick behind a failing
+thumbnailer, isolated; on an isolated X11 display, the grid's
+thumbnails of AVIF (one transparent, one named with brackets and an
+apostrophe), HEIC, JPEG XL, PSD and JPEG 2000 by ImageMagick and an MP4
+by the sandboxed ffmpegthumbnailer, all written to the shared cache, and
+an AVIF's preview.
 
 ## Phase 0 — Foundations and toolkit spike (~2 weeks)
 

@@ -346,6 +346,21 @@ pub fn unalias(mime: &Mime) -> Mime {
     imp::unalias(mime)
 }
 
+/// The extensions the MIME database names files of type `mime` by, from
+/// its plain `*.ext` globs, lowercase, in the database's order (heaviest
+/// first, the most specific folder first). Aliases are resolved. No I/O
+/// once the database is loaded.
+pub fn extensions(mime: &Mime) -> Vec<String> {
+    imp::extensions(&imp::unalias(mime))
+}
+
+/// The extension a `globs2` pattern names, if it is a plain `*.ext`.
+fn plain_extension(glob: &str) -> Option<String> {
+    let extension = glob.strip_prefix("*.")?;
+    (!extension.is_empty() && !extension.contains(['*', '?', '[', '.']))
+        .then(|| extension.to_lowercase())
+}
+
 /// `mime` and the types it descends from, nearest first, each once: its
 /// declared parents and theirs, then the ones every type implies, as the
 /// desktop reads them to find an application: `text/plain` under any
@@ -517,6 +532,41 @@ mod imp {
             .unwrap_or_default()
     }
 
+    /// What `extensions` answers, from every folder's `globs2` (lines of
+    /// `weight:type:glob[:flags]`), read once.
+    pub fn extensions(m: &Mime) -> Vec<String> {
+        static EXTENSIONS: OnceLock<std::collections::HashMap<String, Vec<String>>> =
+            OnceLock::new();
+        EXTENSIONS
+            .get_or_init(|| {
+                let mut map = std::collections::HashMap::<String, Vec<String>>::new();
+                for dir in data_dirs() {
+                    let Ok(text) = std::fs::read_to_string(dir.join("mime/globs2")) else {
+                        continue;
+                    };
+                    for line in text.lines().filter(|l| !l.starts_with('#')) {
+                        let mut fields = line.split(':');
+                        let (Some(_weight), Some(mime), Some(glob)) =
+                            (fields.next(), fields.next(), fields.next())
+                        else {
+                            continue;
+                        };
+                        let Some(extension) = super::plain_extension(glob) else {
+                            continue;
+                        };
+                        let known = map.entry(mime.to_owned()).or_default();
+                        if !known.contains(&extension) {
+                            known.push(extension);
+                        }
+                    }
+                }
+                map
+            })
+            .get(m.as_str())
+            .cloned()
+            .unwrap_or_default()
+    }
+
     /// `$XDG_DATA_HOME`, then `$XDG_DATA_DIRS`: where the database lives.
     fn data_dirs() -> Vec<std::path::PathBuf> {
         crate::xdg::data_search()
@@ -563,6 +613,9 @@ mod imp {
         m.clone()
     }
     pub fn parents(_m: &Mime) -> Vec<Mime> {
+        Vec::new()
+    }
+    pub fn extensions(_m: &Mime) -> Vec<String> {
         Vec::new()
     }
     pub fn generic_icon_name(m: &Mime) -> String {
@@ -837,5 +890,19 @@ mod tests {
     fn directory_check() {
         assert!(is_directory(&Mime("inode/directory".into())));
         assert!(!is_directory(&Mime("text/plain".into())));
+    }
+
+    #[test]
+    fn a_type_is_named_by_its_plain_globs() {
+        assert_eq!(plain_extension("*.CR2").as_deref(), Some("cr2"));
+        assert_eq!(plain_extension("*.tar.gz"), None, "not one extension");
+        assert_eq!(plain_extension("*.[ch]"), None);
+        assert_eq!(plain_extension("README"), None);
+        #[cfg(target_os = "linux")]
+        {
+            let heif = extensions(&Mime("image/heif".into()));
+            assert!(heif.iter().any(|e| e == "heic"), "{heif:?}");
+            assert!(extensions(&Mime("image/x-unknown-to-anyone".into())).is_empty());
+        }
     }
 }

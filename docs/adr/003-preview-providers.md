@@ -35,7 +35,9 @@ GPUI into plugins or loading office/PDF engines at application startup.
 - Run tools with separate argv values, null stdin, bounded captured diagnostics,
   deadlines, and cancellation. On Unix, kill the child process group and reap
   the direct child. Bubblewrap also destroys its PID namespace on termination.
-  Desktop thumbnailers use the same runner and private temporary directories.
+  Desktop thumbnailers use the same runner and private temporary directories
+  (ADR-031 amends this: where bubblewrap can isolate, they run in the
+  converters' sandbox, and ImageMagick, isolated, draws what none does).
 - Serialize expensive work within each backend instance. Render only the
   requested page/frame, at most 2048 pixels on either side. Tool deadlines are
   15 seconds for rendering/metadata and 45 seconds for Office conversion;

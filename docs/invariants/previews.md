@@ -71,7 +71,20 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   (`thumbnails` plugin, a fallback provider), and so is a 3D model (the
   `model/*` types and what the MIME database draws as a picture,
   `pictured`), and what it drew is all there is (`Pixels::Drawn`: never
-  sharpened, its own size from EXIF when known).
+  sharpened, its own size from EXIF when known). A picture no thumbnailer
+  draws is ImageMagick's (`bibli_platform::magick`, ADR-031): the last
+  thumbnail provider of all (`Stage::LastResort`, after every plugin's
+  fallback) and the preview's after the thumbnailer. It reads the format
+  the MIME database's globs name, given explicitly, never one of
+  `magick::REFUSED`, only in the sandbox, under a policy written for the
+  run (that format read, PAM written, no delegate, bounded memory, one
+  thread), at most `magick::RUNNING` at once.
+- Every program run on a file that is not ours runs in
+  `bibli_platform::sandbox` where bubblewrap can isolate: converters
+  (LibreOffice, Pandoc) and ImageMagick only there, the desktop's
+  thumbnailers there when it can and as before when it cannot (ADR-031).
+  A sandbox that started and failed is never retried outside it. The
+  file is at `sandbox::inside_name`, never its own name.
 - A model, drawing or print is shown by the picture its application stored
   in it (`preview-models`), read from where the format keeps it and no
   further: a Blender file's blocks before its `TEST` block (a compressed
