@@ -438,13 +438,15 @@ fn tag_segments(
                         .child(segment.label.clone()),
                 )
             }
-            None => pill.child(
+            None => pill.child(crate::elements::clip::clipped(
                 div()
+                    .id(SharedString::from(format!("chip-{chip}-tag")))
                     .min_w_0()
                     .overflow_hidden()
-                    .text_ellipsis()
-                    .child(segment.label.clone()),
-            ),
+                    .text_ellipsis(),
+                segment.label.clone(),
+                shell.font.clone(),
+            )),
         };
     }
     pill

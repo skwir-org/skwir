@@ -345,22 +345,26 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                     Some(path) => crate::icons::themed(&path, ICON_PX, theme.text_muted),
                     None => div().size(px(ICON_PX)).flex_none().into_any_element(),
                 })
-                .child(
+                .child(crate::elements::clip::clipped(
                     div()
+                        .id("choice-title")
                         .flex_none()
                         .max_w(px(260.))
-                        .truncate()
-                        .child(choice.title.clone()),
-                )
-                .child(
+                        .truncate(),
+                    choice.title.clone(),
+                    shell.font.clone(),
+                ))
+                .child(crate::elements::clip::clipped(
                     div()
+                        .id("choice-detail")
                         .flex_1()
                         .min_w_0()
                         .truncate()
                         .text_xs()
-                        .text_color(muted)
-                        .children(choice.detail.clone()),
-                ),
+                        .text_color(muted),
+                    choice.detail.clone().unwrap_or_default(),
+                    shell.font.clone(),
+                )),
         );
     }
     if c.loaded && c.filtered.is_empty() {
@@ -390,13 +394,15 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 &c.option_focus,
                 &theme,
             ))
-            .child(
+            .child(crate::elements::clip::clipped(
                 div()
+                    .id("choose-option-title")
                     .flex_1()
                     .min_w_0()
-                    .truncate()
-                    .child(option.title.clone()),
-            )
+                    .truncate(),
+                option.title.clone(),
+                shell.font.clone(),
+            ))
             .children(option_keys.map(|keys| crate::controls::keycap(keys, &theme)))
     });
     let panel = modal::panel(520., &theme)
@@ -411,16 +417,18 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 .border_color(theme.border)
                 // A file's name keeps both ends: the extension says what
                 // the applications below are for.
-                .child(
+                .child(crate::elements::clip::clipped(
                     div()
+                        .id("choose-title")
                         .px_1()
                         .whitespace_nowrap()
                         .overflow_hidden()
                         .text_ellipsis_middle()
                         .text_xs()
-                        .text_color(theme.text_muted)
-                        .child(c.title.clone()),
-                )
+                        .text_color(theme.text_muted),
+                    c.title.clone(),
+                    shell.font.clone(),
+                ))
                 .child(c.input.clone()),
         )
         .child(list)

@@ -7,6 +7,7 @@ pub mod uniform_grid;
 
 pub mod adaptive;
 pub mod chips;
+pub mod clip;
 pub mod halo;
 pub mod map;
 pub mod marquee;

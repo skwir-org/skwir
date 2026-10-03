@@ -1066,8 +1066,10 @@ fn breadcrumbs(
         let hover = theme.hover;
         let open = target.clone();
         let in_tab = target.clone();
+        let (text, clip) = crate::elements::clip::text(label.clone());
         let segment = div()
             .id(("crumb", index))
+            .optional_tooltip(clip.tooltip(None, shell.font.clone()))
             .h(px(24.))
             .max_w(px(260.))
             .px(px(6.))
@@ -1107,7 +1109,7 @@ fn breadcrumbs(
                     );
                 }),
             )
-            .child(label.clone());
+            .child(text);
         let segment = crate::dnd::droppable_dir(segment, target.clone(), cx);
         let before = index
             .checked_sub(1)

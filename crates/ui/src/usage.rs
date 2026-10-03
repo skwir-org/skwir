@@ -170,45 +170,48 @@ impl PaneView for UsageView {
 fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let pane = shell.pane;
+    let font = shell.font.clone();
     let state = &shell.ui().usage;
     let status = state.status.as_ref();
     let mut header = toolbar::row(&theme)
         .text_color(theme.text)
         .id(("usage-tools", pane.0 as usize));
-    header = header.child(
+    header = header.child(crate::elements::clip::clipped(
         div()
+            .id("usage-summary")
             .flex_1()
             .min_w_0()
             .text_xs()
-            .truncate()
-            .child(status.map_or_else(
-                || {
-                    if state.root.is_some() {
-                        "Scanning…".into()
+            .truncate(),
+        status.map_or_else(
+            || {
+                if state.root.is_some() {
+                    "Scanning…".into()
+                } else {
+                    "Usage is available for filesystem folders".into()
+                }
+            },
+            |s| {
+                if s.tree.is_none() && s.scanning {
+                    return "Calculating sizes…".into();
+                }
+                format!(
+                    "{}{} · {} on disk · {} files · {} folders{}",
+                    if s.tree.as_ref().is_some_and(|n| n.incomplete) {
+                        "Counted so far: "
                     } else {
-                        "Usage is available for filesystem folders".into()
-                    }
-                },
-                |s| {
-                    if s.tree.is_none() && s.scanning {
-                        return "Calculating sizes…".into();
-                    }
-                    format!(
-                        "{}{} · {} on disk · {} files · {} folders{}",
-                        if s.tree.as_ref().is_some_and(|n| n.incomplete) {
-                            "Counted so far: "
-                        } else {
-                            ""
-                        },
-                        format::size(s.size),
-                        format::size(s.alloc),
-                        format::thousands(s.files as usize),
-                        format::thousands(s.dirs as usize),
-                        if s.updating { " · updating…" } else { "" }
-                    )
-                },
-            )),
-    );
+                        ""
+                    },
+                    format::size(s.size),
+                    format::size(s.alloc),
+                    format::thousands(s.files as usize),
+                    format::thousands(s.dirs as usize),
+                    if s.updating { " · updating…" } else { "" }
+                )
+            },
+        ),
+        font.clone(),
+    ));
     header = header.child(
         Button::new(
             format!("usage-refresh-{}", pane.0),
@@ -353,14 +356,16 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
         .text_color(theme.on_fill)
         .child(header)
         .child(div().flex_1().min_h_0().w_full().child(map))
-        .child(
+        .child(crate::elements::clip::clipped(
             div()
+                .id("usage-hint")
                 .h(px(24.))
                 .px_2()
                 .text_xs()
                 .text_color(theme.text_muted)
-                .truncate()
-                .child(hint),
-        )
+                .truncate(),
+            hint,
+            font,
+        ))
         .into_any_element()
 }

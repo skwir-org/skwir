@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 use bibli_core::command::{Invocation, Outcome};
 use bibli_core::os_path::PathArg;
-use gpui::{AnyElement, Context, SharedString, Window, div, prelude::*, px};
+use gpui::{AnyElement, Context, Window, div, prelude::*, px};
 
 use crate::elements::popover::PopoverAnchor;
 use crate::shell::Shell;
@@ -531,25 +531,31 @@ pub fn dropdown(
                         .flex_none()
                         .text_color(muted),
                 )
-                .child(
+                .child(crate::elements::clip::clipped(
                     div()
+                        .id("omni-title")
                         .flex_1()
                         .min_w_0()
                         .overflow_hidden()
                         .whitespace_nowrap()
-                        .text_ellipsis_middle()
-                        .child(SharedString::from(title)),
-                )
+                        .text_ellipsis_middle(),
+                    title,
+                    shell.font.clone(),
+                ))
                 .children(detail.map(|detail| {
-                    div()
-                        .max_w(px(220.))
-                        .min_w_0()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis_middle()
-                        .text_xs()
-                        .text_color(muted)
-                        .child(detail)
+                    crate::elements::clip::clipped(
+                        div()
+                            .id("omni-detail")
+                            .max_w(px(220.))
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis_middle()
+                            .text_xs()
+                            .text_color(muted),
+                        detail,
+                        shell.font.clone(),
+                    )
                 }))
                 .children(keys.map(|keys| {
                     div()

@@ -154,6 +154,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let overview = shell.shortcuts.as_ref()?;
     let theme = cx.global::<Theme>().clone();
     let mut columns = div().flex().flex_wrap().gap_x_8().gap_y_4();
+    let mut row = 0_usize;
     for (place, hints) in &overview.groups {
         let mut column = div().w(px(300.)).flex().flex_col().gap(px(3.)).child(
             div()
@@ -178,9 +179,14 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                     .items_center()
                     .justify_between()
                     .gap_3()
-                    .child(div().flex_1().min_w_0().truncate().child(title.clone()))
+                    .child(crate::elements::clip::clipped(
+                        div().id(("shortcut", row)).flex_1().min_w_0().truncate(),
+                        title.clone(),
+                        shell.font.clone(),
+                    ))
                     .child(keys),
             );
+            row += 1;
         }
         columns = columns.child(column);
     }

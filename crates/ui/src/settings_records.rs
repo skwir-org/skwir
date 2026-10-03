@@ -718,14 +718,24 @@ impl SettingsView {
                     .flex()
                     .flex_col()
                     .gap(px(2.))
-                    .child(div().truncate().child(title))
-                    .child(
+                    .child(crate::elements::clip::clipped(
                         div()
+                            .id(gpui::SharedString::from(format!("record-title-{key}-{id}")))
+                            .truncate(),
+                        title,
+                        self.font.clone(),
+                    ))
+                    .child(crate::elements::clip::clipped(
+                        div()
+                            .id(gpui::SharedString::from(format!(
+                                "record-detail-{key}-{id}"
+                            )))
                             .text_xs()
                             .text_color(theme.text_muted)
-                            .truncate()
-                            .child(detail),
-                    ),
+                            .truncate(),
+                        detail,
+                        self.font.clone(),
+                    )),
             )
             .child(actions)
             // The gaps above and below, where a dragged record lands.

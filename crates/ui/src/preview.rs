@@ -3040,18 +3040,22 @@ fn failure(error: &str, theme: &Theme) -> AnyElement {
 fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
     let preview = &shell.preview;
     let mut line = div().min_w_0().flex_1().flex().items_center().gap_1();
-    let name = |name: String| {
-        div()
-            .min_w_0()
-            .overflow_hidden()
-            .whitespace_nowrap()
-            .text_ellipsis_middle()
-            .child(name)
+    let name = |name: String, depth: usize| {
+        crate::elements::clip::clipped(
+            div()
+                .id(("preview-name", depth))
+                .min_w_0()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis_middle(),
+            name,
+            shell.font.clone(),
+        )
     };
     let parked = preview.parked().map(|parked| parked.depth);
     let last = parked.unwrap_or(preview.nested.len());
     if last == 0 {
-        return line.child(name(preview.info.name.clone()));
+        return line.child(name(preview.info.name.clone(), 0));
     }
     let names = std::iter::once(preview.info.name.clone())
         .chain(preview.nested.iter().map(|member| member.name.clone()))
@@ -3061,15 +3065,17 @@ fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
             line = line.child(div().flex_none().text_color(theme.text_muted).child("›"));
         }
         line = line.child(if depth == last {
-            name(name_at).into_any_element()
+            name(name_at, depth).into_any_element()
         } else if parked.is_some() {
-            name(name_at)
+            name(name_at, depth)
                 .flex_shrink()
                 .text_color(theme.text_muted)
                 .into_any_element()
         } else {
+            let (text, clip) = crate::elements::clip::text(name_at);
             div()
                 .id(("preview-trail", depth))
+                .optional_tooltip(clip.tooltip(None, shell.font.clone()))
                 .min_w_0()
                 .flex_shrink()
                 .truncate()
@@ -3085,7 +3091,7 @@ fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
                         cx,
                     );
                 }))
-                .child(name_at)
+                .child(text)
                 .into_any_element()
         });
     }

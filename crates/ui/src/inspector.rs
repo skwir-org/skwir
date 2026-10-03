@@ -2067,6 +2067,7 @@ pub fn content(
         .flatten();
     let measure = list_style.measure;
     let entity = cx.entity().downgrade();
+    let ui_font = shell.font.clone();
     let list = gpui::list(state.list.clone(), move |index, _, _| {
         let theme = &list_theme;
         if index == 0 {
@@ -2135,6 +2136,7 @@ pub fn content(
                     row_icons.get(ri).and_then(|i| i.as_deref()),
                     collapsed.contains(&ri),
                     selected == Some(data.blocks.len() + ri),
+                    ui_font.clone(),
                     theme,
                 )
                 .id(("inspect-row", ri))
@@ -2184,8 +2186,20 @@ pub fn content(
                 let numeric = shape
                     .as_ref()
                     .is_some_and(|shape| shape.numeric.get(column) == Some(&true));
+                // A cell cut by its column says the rest when pointed at.
+                let (cell, clip) = if data.kind == InspectionKind::Hex {
+                    (hex_cell(cell, column, theme), None)
+                } else {
+                    let (text, clip) =
+                        crate::elements::clip::text(cell.chars().take(512).collect::<String>());
+                    (text.into_any_element(), Some(clip))
+                };
                 row = row.child(
                     div()
+                        .id(("cell", column))
+                        .when_some(clip, |d, clip| {
+                            d.optional_tooltip(clip.tooltip(None, ui_font.clone()))
+                        })
                         .w(px(column_width(shape.as_deref(), data.kind, column)))
                         .flex_none()
                         .when(data.kind == InspectionKind::Hex && column < 2, |d| {
@@ -2199,14 +2213,7 @@ pub fn content(
                                 .truncate()
                                 .when(numeric, gpui::Styled::text_right)
                         })
-                        .child(if data.kind == InspectionKind::Hex {
-                            hex_cell(cell, column, theme)
-                        } else {
-                            cell.chars()
-                                .take(512)
-                                .collect::<String>()
-                                .into_any_element()
-                        }),
+                        .child(cell),
                 );
             }
             let logical_row = data.blocks.len() + ri;
@@ -2293,9 +2300,13 @@ pub fn content(
                 }
                 _ => "",
             };
+            let (title, clip) = crate::elements::clip::text(format!("{column}{arrow}"));
             header = header.child(
                 div()
                     .id(("inspect-column", index))
+                    .when(table, |d| {
+                        d.optional_tooltip(clip.tooltip(None, shell.font.clone()))
+                    })
                     .w(px(column_width(
                         display.table.as_deref(),
                         display.data.kind,
@@ -2322,7 +2333,7 @@ pub fn content(
                                 );
                             }))
                     })
-                    .child(format!("{column}{arrow}")),
+                    .child(title),
             );
         }
         body = body.child(header);

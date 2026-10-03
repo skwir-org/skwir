@@ -295,17 +295,19 @@ fn cell(
                         )),
                 ),
         )
-        .child(
+        .child(crate::elements::clip::clipped(
             div()
+                .id(("label", ix))
                 .w_full()
                 .text_xs()
                 .line_height(px(LABEL_LINE))
                 .text_center()
                 .overflow_hidden()
                 .text_ellipsis_middle()
-                .line_clamp(usize::from(lines))
-                .child(name),
-        );
+                .line_clamp(usize::from(lines)),
+            name,
+            shell.font.clone(),
+        ));
     el = crate::list::entry_mouse(el, pane, ix, cx);
     el = dnd::draggable(el, pane, cx);
     el = dnd::takes_gifts(el, pane, ix, cx);

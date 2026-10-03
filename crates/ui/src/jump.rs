@@ -153,15 +153,17 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                     }
                     this.jump_submit(window, cx);
                 }))
-                .child(
+                .child(crate::elements::clip::clipped(
                     div()
+                        .id("jump-path")
                         .flex_1()
                         .min_w_0()
                         .overflow_hidden()
                         .whitespace_nowrap()
-                        .text_ellipsis_middle()
-                        .child(c.path.to_string_lossy().into_owned()),
-                )
+                        .text_ellipsis_middle(),
+                    c.path.to_string_lossy().into_owned(),
+                    shell.font.clone(),
+                ))
                 .child(
                     div()
                         .text_xs()

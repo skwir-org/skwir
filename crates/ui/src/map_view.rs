@@ -352,15 +352,17 @@ impl PaneView for MapView {
 
         let mut header = toolbar::row(&theme)
             .id(("map-view-tools", pane.0 as usize))
-            .child(
+            .child(crate::elements::clip::clipped(
                 div()
+                    .id("map-status")
                     .flex_1()
                     .min_w_0()
                     .text_xs()
                     .text_color(theme.text_muted)
-                    .truncate()
-                    .child(self.status()),
-            );
+                    .truncate(),
+                self.status(),
+                shell.font.clone(),
+            ));
         if folder {
             header = header.child(
                 Button::new(

@@ -353,13 +353,16 @@ pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElem
                 .flex_none()
                 .into_any_element(),
         };
+        // A title cut by the sidebar's width is said whole by the row's
+        // tooltip, before what the row has to say of its own.
+        let (title, clip) = crate::elements::clip::text(place.title.clone());
         let mut texts = div()
             .flex_1()
             .min_w_0()
             .flex()
             .flex_col()
             .gap(px(3.))
-            .child(div().truncate().child(place.title.clone()));
+            .child(div().truncate().child(title));
         let mut tip: Option<SharedString> = None;
         if let Some(busy) = &busy {
             texts = texts.child(
@@ -453,10 +456,7 @@ pub fn render(shell: &mut Shell, width: f32, cx: &mut Context<Shell>) -> AnyElem
         if let Some(busy) = &busy {
             tip = Some(busy.clone().into());
         }
-        if let Some(tip) = tip {
-            let font = font.clone();
-            row = row.tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), font.clone(), cx));
-        }
+        row = row.optional_tooltip(clip.tooltip(tip, font.clone()));
         if let Some(eject) = place.eject.clone().filter(|_| busy.is_none()) {
             let hover = theme.selection_bg;
             row = row.child(

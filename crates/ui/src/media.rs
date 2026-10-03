@@ -1420,20 +1420,24 @@ pub(crate) fn halo_square(
 
 /// The audio player's figure: `picture` (a `halo_square`, with whatever
 /// the caller laid over it) with the title and the artist and album under
-/// it. Drawn for the panel and, pinned, for a tall dock.
+/// it. Drawn for the panel and, pinned, for a tall dock. A line cut short
+/// says itself whole when pointed at, then `also`, the tooltip of what the
+/// figure lies in.
 pub(crate) fn audio_figure(
     state: &Playback,
     title: String,
     picture: AnyElement,
+    also: Option<&'static str>,
+    font: &gpui::SharedString,
     theme: &Theme,
 ) -> gpui::Div {
-    let line = |text: &str, muted: bool| {
-        div()
-            .flex_none()
-            .max_w_full()
-            .truncate()
-            .when(muted, |d| d.text_color(theme.text_muted))
-            .child(text.to_owned())
+    let line = |id: &'static str, text: String| {
+        crate::elements::clip::clipped_with(
+            div().id(id).flex_none().max_w_full().truncate(),
+            text,
+            also.map(gpui::SharedString::from),
+            font.clone(),
+        )
     };
     div()
         .flex_1()
@@ -1445,16 +1449,9 @@ pub(crate) fn audio_figure(
         .justify_center()
         .gap_1()
         .child(picture)
-        .child(
-            div()
-                .flex_none()
-                .max_w_full()
-                .truncate()
-                .text_lg()
-                .child(title),
-        )
-        .child(line(&state.artist, true))
-        .child(line(&state.album, true))
+        .child(line("figure-title", title).text_lg())
+        .child(line("figure-artist", state.artist.clone()).text_color(theme.text_muted))
+        .child(line("figure-album", state.album.clone()).text_color(theme.text_muted))
 }
 
 /// The panel's audio player: the figure, with a click anywhere on it
@@ -1480,7 +1477,7 @@ pub fn audio_content(
         .playing_path()
         .map(|path| track_title(&p.media.state, &path))
         .unwrap_or_default();
-    let figure = audio_figure(&p.media.state, title, square, theme);
+    let figure = audio_figure(&p.media.state, title, square, None, &shell.font, theme);
     if interactive {
         clickable("audio-surface", figure, Flash::Preview, cx).into_any_element()
     } else {

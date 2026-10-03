@@ -464,12 +464,16 @@ pub fn row(
         })
         .child(
             // A name keeps its end: the extension tells files apart.
-            div()
-                .min_w_0()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis_middle()
-                .child(r.name.clone()),
+            crate::elements::clip::clipped(
+                div()
+                    .id(("name", ix))
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis_middle(),
+                r.name.clone(),
+                shell.font.clone(),
+            ),
         )
         // The tags take only what the name leaves (no basis of their own):
         // the chips that do not fit drop whole, last first, "+N" saying how

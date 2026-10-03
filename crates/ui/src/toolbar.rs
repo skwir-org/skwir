@@ -102,6 +102,9 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
     )
 }
 
+/// The widest a tooltip grows: a long name (`elements::clip`) wraps.
+const TIP_MAX: f32 = 480.;
+
 struct Tip {
     text: SharedString,
     font: SharedString,
@@ -118,6 +121,7 @@ impl Render for Tip {
             .border_color(theme.border)
             .rounded_md()
             .shadow_sm()
+            .max_w(px(TIP_MAX))
             .px_2()
             .py_1()
             .child(self.text.clone())
@@ -224,6 +228,11 @@ impl Button {
             Some(keys) => format!("{} · {keys}", self.title).into(),
             None => self.title,
         };
+        // A label cut short says itself in the tooltip, before the title.
+        let (label, clip) = self
+            .label
+            .map(crate::elements::clip::text)
+            .map_or((None, None), |(label, clip)| (Some(label), Some(clip)));
         div()
             .id(self.id)
             .relative()
@@ -257,7 +266,13 @@ impl Button {
                     .focus(|s| s.border_color(theme.accent))
             })
             .when(!enabled, |d| d.opacity(0.35))
-            .tooltip(move |_, cx| tooltip(title.clone(), font.clone(), cx))
+            .tooltip(move |_, cx| {
+                let tip = clip
+                    .as_ref()
+                    .and_then(|clip| clip.says(Some(&title)))
+                    .unwrap_or_else(|| title.clone());
+                tooltip(tip, font.clone(), cx)
+            })
             .when(menu && self.icon.is_empty(), |d| {
                 d.child(div().size(px(16.)).flex_none())
             })
@@ -275,7 +290,7 @@ impl Button {
                 )
             })
             // A label too long for a menu keeps both ends, as names do.
-            .children(self.label.map(|label| {
+            .children(label.map(|label| {
                 div()
                     .min_w_0()
                     .overflow_hidden()

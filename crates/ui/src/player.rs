@@ -1057,21 +1057,22 @@ pub fn render_status(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> O
                     .render(shell, cx),
             )
             .child(
-                div()
-                    .id("pin-title")
-                    .min_w_0()
-                    .px_1()
-                    .rounded_md()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis_middle()
-                    .cursor_pointer()
-                    .hover(|d| d.bg(theme.hover))
-                    .tooltip(move |_, cx| {
-                        crate::toolbar::tooltip("Show this track".into(), font.clone(), cx)
-                    })
-                    .on_click(cx.listener(|this, _, window, cx| this.player_reveal(window, cx)))
-                    .child(title),
+                crate::elements::clip::clipped_with(
+                    div()
+                        .id("pin-title")
+                        .min_w_0()
+                        .px_1()
+                        .rounded_md()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis_middle()
+                        .cursor_pointer()
+                        .hover(|d| d.bg(theme.hover)),
+                    title,
+                    Some(crate::dock::REVEAL_TIP.into()),
+                    font,
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.player_reveal(window, cx))),
             )
             .child(
                 div()

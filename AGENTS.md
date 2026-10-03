@@ -70,7 +70,12 @@ current source before assuming a planned crate, command, or API exists.
   `crates/ui/src/toolbar.rs`. Responsive rows select variants by intrinsic
   measurement in `elements/adaptive.rs` prepaint; do not maintain pixel
   breakpoints beside changing labels. Tooltips, focus styles and keyboard
-  activation belong to the shared button. Pane actions capture their target
+  activation belong to the shared button. A text cut to fit (`truncate`,
+  `text_ellipsis_middle`, a clamp) is drawn through `elements/clip.rs`:
+  pointed at while cut, it says itself whole in a tooltip, before the
+  tooltip of what it lies in (`clipped_with`); whole, it says nothing.
+  Whether it was cut is the layout's answer, read when the tooltip is
+  asked for, never in `render`. Pane actions capture their target
   during rendering and need pane-specific element IDs. Popovers restore focus
   when dismissed; retain a focused button's handle when it becomes disabled.
   GPUI already emits Enter/Space clicks on key-up: do not dispatch again on

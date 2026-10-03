@@ -31,6 +31,7 @@ use gpui::{
 };
 
 use crate::controls::{self, ButtonStyle};
+use crate::elements::clip::clipped;
 use crate::input::{InputEvent, TextInput};
 use crate::keymap;
 use crate::modal::{self, FocusReturn, Picker};
@@ -777,15 +778,19 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
             theme.text_muted
         };
         let line = match &shown {
-            Shown::New(tags) => line.child(controls::glyph("plus", muted, 14.)).child(
-                div().flex_1().min_w_0().truncate().child(format!(
-                    "Add {}",
-                    tags.iter()
-                        .map(|t| format!("“{t}”"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
+            Shown::New(tags) => line
+                .child(controls::glyph("plus", muted, 14.))
+                .child(clipped(
+                    div().id("tag-new").flex_1().min_w_0().truncate(),
+                    format!(
+                        "Add {}",
+                        tags.iter()
+                            .map(|t| format!("“{t}”"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    shell.font.clone(),
                 )),
-            ),
             Shown::Row(i) => {
                 let tag = &e.rows[*i];
                 let color = colors.of_or(&tag.name, tag.given);
@@ -823,22 +828,22 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                             .flex()
                             .items_baseline()
                             .gap_2()
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .max_w_full()
-                                    .truncate()
-                                    .child(tag_leaf(&tag.name).to_owned()),
-                            )
+                            .child(clipped(
+                                div().id("tag-name").flex_none().max_w_full().truncate(),
+                                tag_leaf(&tag.name).to_owned(),
+                                shell.font.clone(),
+                            ))
                             .when_some(tag_parent(&tag.name), |d, category| {
-                                d.child(
+                                d.child(clipped(
                                     div()
+                                        .id("tag-category")
                                         .min_w_0()
                                         .truncate()
                                         .text_xs()
-                                        .text_color(muted)
-                                        .child(category.to_owned()),
-                                )
+                                        .text_color(muted),
+                                    category.to_owned(),
+                                    shell.font.clone(),
+                                ))
                             }),
                     )
                     .child(div().flex_none().text_xs().text_color(muted).child(detail))
@@ -915,16 +920,18 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 .gap_1()
                 .border_b_1()
                 .border_color(theme.border)
-                .child(
+                .child(clipped(
                     div()
+                        .id("tags-title")
                         .px_1()
                         .whitespace_nowrap()
                         .overflow_hidden()
                         .text_ellipsis_middle()
                         .text_xs()
-                        .text_color(theme.text_muted)
-                        .child(e.title.clone()),
-                )
+                        .text_color(theme.text_muted),
+                    e.title.clone(),
+                    shell.font.clone(),
+                ))
                 .child(e.input.clone()),
         )
         .child(list)

@@ -180,7 +180,11 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
     }
     // With nothing listed the pane itself explains the failure.
     if let Some(e) = error.filter(|_| count > 0) {
-        bar = bar.child(div().text_color(theme.error).truncate().child(e));
+        bar = bar.child(crate::elements::clip::clipped(
+            div().id("listing-error").text_color(theme.error).truncate(),
+            e,
+            shell.font.clone(),
+        ));
     }
     bar = bar.child(div().flex_1());
     if !window {

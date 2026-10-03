@@ -4,6 +4,7 @@
 use bibli_core::command::{Invocation, Outcome};
 use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*, px};
 
+use crate::elements::clip::clipped;
 use crate::input::{InputEvent, TextInput};
 use crate::keymap;
 use crate::modal::{self, FocusReturn};
@@ -276,21 +277,28 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         .overflow_hidden()
         .text_xs()
         .font_family(shell.mono_font.clone());
-    for (from, to) in b.preview.iter().take(40) {
+    let font = shell.mono_font.clone();
+    for (i, (from, to)) in b.preview.iter().take(40).enumerate() {
         list = list.child(
             div()
                 .flex()
                 .gap_2()
-                .child(
+                .child(clipped(
                     div()
+                        .id(("rename-from", i))
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .text_color(theme.text_muted)
-                        .child(from.clone()),
-                )
+                        .text_color(theme.text_muted),
+                    from.clone(),
+                    font.clone(),
+                ))
                 .child(div().flex_none().child("→"))
-                .child(div().flex_1().min_w_0().truncate().child(to.clone())),
+                .child(clipped(
+                    div().id(("rename-to", i)).flex_1().min_w_0().truncate(),
+                    to.clone(),
+                    font.clone(),
+                )),
         );
     }
     if b.preview.len() > 40 {

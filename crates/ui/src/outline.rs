@@ -34,9 +34,11 @@ pub fn drawer(
     }
     for (index, entry) in entries.into_iter().enumerate() {
         let (command, closing) = (entry.command, close.clone());
+        let (title, clip) = crate::elements::clip::text(entry.title);
         list = list.child(
             div()
                 .id(("outline-entry", index))
+                .optional_tooltip(clip.tooltip(None, shell.font.clone()))
                 .pl(px(entry.depth.min(12) as f32 * 10. + 8.))
                 .py_1()
                 .rounded_md()
@@ -48,7 +50,7 @@ pub fn drawer(
                         .hover(|s| s.bg(theme.hover))
                         .focus(|s| s.bg(theme.selection_bg))
                 })
-                .child(entry.title)
+                .child(title)
                 .on_click(cx.listener(move |shell, _, window, cx| {
                     if let Some((name, args)) = &command {
                         shell.run(name, args.clone(), window, cx);

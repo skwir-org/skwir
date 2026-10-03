@@ -7,7 +7,7 @@ use crate::{
     views::list::{ROW_HEIGHT, column, line},
 };
 use bibli_core::inspection::Row;
-use gpui::{Div, div, prelude::*, px, svg};
+use gpui::{Div, SharedString, div, prelude::*, px, svg};
 use std::path::Path;
 
 const SIZE_WIDTH: f32 = 90.;
@@ -42,7 +42,14 @@ pub fn header(theme: &Theme) -> Div {
         )
 }
 
-pub fn row(row: &Row, icon: Option<&Path>, collapsed: bool, selected: bool, theme: &Theme) -> Div {
+pub fn row(
+    row: &Row,
+    icon: Option<&Path>,
+    collapsed: bool,
+    selected: bool,
+    font: SharedString,
+    theme: &Theme,
+) -> Div {
     let icon = icon.map_or_else(
         || {
             div()
@@ -81,15 +88,17 @@ pub fn row(row: &Row, icon: Option<&Path>, collapsed: bool, selected: bool, them
                 }),
         )
         .child(div().size(px(ICON_SIZE)).flex_none().child(icon))
-        .child(
+        .child(crate::elements::clip::clipped(
             div()
+                .id("member-name")
                 .flex_1()
                 .min_w_0()
                 .overflow_hidden()
                 .whitespace_nowrap()
-                .text_ellipsis_middle()
-                .child(row.cells.first().cloned().unwrap_or_default()),
-        );
+                .text_ellipsis_middle(),
+            row.cells.first().cloned().unwrap_or_default(),
+            font,
+        ));
     if let Some(status) = row.cells.get(2).filter(|s| !s.is_empty()) {
         name = name.child(
             div()

@@ -206,7 +206,11 @@ impl SettingsView {
                             15.,
                         ))
                     })
-                    .child(div().flex_1().min_w_0().truncate().child(title))
+                    .child(crate::elements::clip::clipped(
+                        div().id("page-title").flex_1().min_w_0().truncate(),
+                        title,
+                        self.font.clone(),
+                    ))
                     .when(modified > 0, |d| {
                         d.child(
                             div()
@@ -795,13 +799,18 @@ impl SettingsView {
         }
         card_row(theme, edge)
             .py_2()
-            .child(
+            .child(crate::elements::clip::clipped(
                 div()
+                    .id(SharedString::from(format!(
+                        "binding-{}-{}-{}",
+                        hint.context, hint.keys, hint.command
+                    )))
                     .flex_1()
                     .min_w_0()
-                    .truncate()
-                    .child(self.command_title(hint)),
-            )
+                    .truncate(),
+                self.command_title(hint),
+                self.font.clone(),
+            ))
             .when(hint.layer == crate::keymap::Layer::User, |row| {
                 row.child(
                     div()

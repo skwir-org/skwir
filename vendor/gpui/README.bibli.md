@@ -152,6 +152,24 @@ layout (`crates/gpui/...`) so they apply there with `git apply -p1`.
   follow (`crates/ui/src/sequence.rs`), so reading the strip is not a race.
   A change of focus still drops the pending keys, as before.
 
+- `0011-optional-tooltip.patch`: `optional_tooltip`, on `Interactivity`
+  and `StatefulInteractiveElement`: a tooltip whose builder may return
+  `None`, so nothing shows for that element and a tooltip of an element it
+  lies in shows instead; the builder is asked again on the next move.
+  A builder that declines no longer asks for a redraw, which gpui did
+  after every delayed build whatever it returned.
+  `TooltipBuilder` already ended in an `Option` (the tooltip machinery
+  takes one, and `InteractiveText` declines through it), so `tooltip` and
+  `hoverable_tooltip` now wrap theirs in `Some`. bibli uses it for a text
+  cut to fit (`crates/ui/src/elements/clip.rs`): whether it was cut is
+  known only after layout, so its tooltip decides when shown.
+  `InteractiveText` could decline already, but it notifies its view each
+  time the pointer crosses a character, and bibli's shell is one view.
+  Measured in a release build on Xvfb, sweeping the pointer: 55 such
+  tooltips per draw (a list) cost nothing measurable; 551 (a CSV of 20
+  columns, one per cell) about 0.3 ms per draw (median 7.55 to 7.86 ms)
+  and 0.03 ms per mouse move.
+
 ## Regenerating a patch
 
     G=$(ls -d ~/.cargo/registry/src/*/gpui-0.2.2)

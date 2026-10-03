@@ -223,8 +223,14 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
                 disc,
             })
             .children(crate::media::flash(Flash::Dock, shell, 1.));
-        let figure =
-            crate::media::audio_figure(state, title.clone(), square.into_any_element(), &theme);
+        let figure = crate::media::audio_figure(
+            state,
+            title.clone(),
+            square.into_any_element(),
+            Some(REVEAL_TIP),
+            &shell.font,
+            &theme,
+        );
         reveal(shell, "dock-figure", figure, cx).into_any_element()
     } else {
         let row = crate::elements::adaptive::AdaptiveRow {
@@ -329,15 +335,21 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
             .items_center()
             .gap_2()
             .text_xs()
-            .child(div().min_w_0().truncate().child(title.clone()))
+            .child(revealed(
+                div().id("caption-title").min_w_0().truncate(),
+                title.clone(),
+                shell,
+            ))
             .when(!by.is_empty(), |d| {
-                d.child(
+                d.child(revealed(
                     div()
+                        .id("caption-by")
                         .min_w_0()
                         .truncate()
-                        .text_color(theme.text_muted)
-                        .child(by.clone()),
-                )
+                        .text_color(theme.text_muted),
+                    by.clone(),
+                    shell,
+                ))
             });
         reveal(shell, "dock-caption", line, cx)
     });
@@ -370,6 +382,19 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
     )
 }
 
+/// What a click on the dock's text does, said by its tooltip.
+pub(crate) const REVEAL_TIP: &str = "Show this track";
+
+/// A line of the dock's text inside `reveal`: cut, it says itself whole
+/// before what a click does.
+fn revealed(
+    el: gpui::Stateful<gpui::Div>,
+    text: String,
+    shell: &Shell,
+) -> gpui::Stateful<gpui::Div> {
+    crate::elements::clip::clipped_with(el, text, Some(REVEAL_TIP.into()), shell.font.clone())
+}
+
 /// Something of the dock that shows the track when clicked: what is not
 /// the picture and not the transport.
 fn reveal(
@@ -384,7 +409,7 @@ fn reveal(
         .id(id)
         .cursor_pointer()
         .hover(move |d| d.bg(theme.hover))
-        .tooltip(move |_, cx| crate::toolbar::tooltip("Show this track".into(), font.clone(), cx))
+        .tooltip(move |_, cx| crate::toolbar::tooltip(REVEAL_TIP.into(), font.clone(), cx))
         .on_click(cx.listener(|this, _, window, cx| this.player_reveal(window, cx)))
 }
 
@@ -457,10 +482,14 @@ fn compact_row(
     )
     .tooltip(play_tip(shell));
     let line = |text: &str, muted: bool| {
-        div()
-            .when(muted, |d| d.text_xs().text_color(theme.text_muted))
-            .truncate()
-            .child(text.to_owned())
+        revealed(
+            div()
+                .id(if muted { "row-by" } else { "row-title" })
+                .when(muted, |d| d.text_xs().text_color(theme.text_muted))
+                .truncate(),
+            text.to_owned(),
+            shell,
+        )
     };
     let text = div()
         .min_w_0()

@@ -171,7 +171,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let steps = plan.steps.len();
     match &review.diff {
         Some(diff) => {
-            for (text, status, kind) in lines(diff).into_iter().take(60) {
+            for (i, (text, status, kind)) in lines(diff).into_iter().take(60).enumerate() {
                 let color = match kind {
                     LineKind::Pending => theme.text,
                     LineKind::Done => theme.text_muted,
@@ -182,7 +182,11 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                         .flex()
                         .gap_2()
                         .text_color(color)
-                        .child(div().flex_1().min_w_0().truncate().child(text))
+                        .child(crate::elements::clip::clipped(
+                            div().id(("step", i)).flex_1().min_w_0().truncate(),
+                            text,
+                            shell.mono_font.clone(),
+                        ))
                         .child(div().flex_none().text_color(theme.text_muted).child(status)),
                 );
             }

@@ -95,7 +95,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     };
     let typed: Vec<String> = sequence.typed.iter().map(Keystroke::unparse).collect();
     let mut list = div().flex().flex_wrap().gap_x_6().gap_y_1();
-    for (keys, title) in &sequence.next {
+    for (i, (keys, title)) in sequence.next.iter().enumerate() {
         list = list.child(
             div()
                 .w(px(240.))
@@ -103,14 +103,16 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 .items_center()
                 .gap_2()
                 .child(caps(keys, &theme))
-                .child(
+                .child(crate::elements::clip::clipped(
                     div()
+                        .id(("next-key", i))
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .text_color(theme.text_muted)
-                        .child(title.clone()),
-                ),
+                        .text_color(theme.text_muted),
+                    title.clone(),
+                    shell.font.clone(),
+                )),
         );
     }
     let card = div()

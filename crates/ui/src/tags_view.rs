@@ -892,15 +892,17 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
     let header = toolbar::row(&theme)
         .id(("tags-tools", pane.0 as usize))
         .text_color(theme.text)
-        .child(
+        .child(crate::elements::clip::clipped(
             div()
+                .id("tags-summary")
                 .flex_1()
                 .min_w_0()
                 .px_1()
                 .text_xs()
-                .truncate()
-                .child(summary),
-        )
+                .truncate(),
+            summary,
+            shell.font.clone(),
+        ))
         .children(room)
         .child(
             Button::new(
@@ -988,6 +990,7 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
             at_cursor,
             targets,
             pane,
+            shell.font.clone(),
             &theme,
             cx,
         ));
@@ -1046,14 +1049,16 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
                     )
                     .child(div().flex_none().w(px(14.)))
                     .child(crate::controls::glyph("search", theme.text_muted, 12.))
-                    .child(
+                    .child(crate::elements::clip::clipped(
                         div()
+                            .id("kept-title")
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_sm()
-                            .child(place.title.clone()),
-                    ),
+                            .text_sm(),
+                        place.title.clone(),
+                        shell.font.clone(),
+                    )),
             );
         }
     }
@@ -1094,6 +1099,7 @@ fn tag_row(
     at_cursor: bool,
     targets: Vec<String>,
     pane: bibli_core::workspace::PaneId,
+    font: SharedString,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
@@ -1252,14 +1258,11 @@ fn tag_row(
         .child(div().flex_none().w(px(INDENT * tree.depth as f32)))
         .child(arrow)
         .child(crate::tags::dot(color, theme))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .text_sm()
-                .child(SharedString::from(tag_leaf(&row.tag).to_owned())),
-        )
+        .child(crate::elements::clip::clipped(
+            div().id("tag-name").flex_1().min_w_0().truncate().text_sm(),
+            tag_leaf(&row.tag).to_owned(),
+            font,
+        ))
         .when(tree.field, |d| {
             d.child(
                 div()

@@ -285,7 +285,14 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     };
     controls = controls
         .child(div().flex_1())
-        .child(div().text_color(theme.text_muted).truncate().child(info));
+        .child(crate::elements::clip::clipped(
+            div()
+                .id("timeline-info")
+                .text_color(theme.text_muted)
+                .truncate(),
+            info,
+            shell.font.clone(),
+        ));
 
     let mut bars_row = div()
         .h(px(BAR_AREA_H))
