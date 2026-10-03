@@ -3498,23 +3498,37 @@ pub fn render_panel(
     // At the right, the panel's own bar mirrors the sidebar's header: as
     // tall as a pane's row, their edges meeting, with Split and Preview at
     // the window's edge (`Shell::toggles_at`).
+    // Split and Preview say their names while the panel is wide enough.
     let bar = (!bottom).then(|| {
-        let [split, preview] = crate::address::panel_toggles(shell, cx);
+        let variants = [true, false]
+            .into_iter()
+            .map(|labeled| {
+                let [split, preview] = crate::address::panel_toggles(shell, labeled, cx);
+                div()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .gap(px(2.))
+                    .child(div().flex_1())
+                    .child(split)
+                    .child(preview)
+                    .into_any_element()
+            })
+            .collect();
         div()
             .id("preview-header")
             .tab_group()
             .flex_none()
             .w_full()
             .h(px(crate::address::PANE_ROW_HEIGHT))
-            .flex()
-            .items_center()
-            .gap(px(2.))
             .px(px(6.))
             .border_b_1()
             .border_color(theme.border)
-            .child(div().flex_1())
-            .child(split)
-            .child(preview)
+            .child(crate::elements::adaptive::AdaptiveRow {
+                variants,
+                height: crate::address::PANE_ROW_HEIGHT - 1.,
+                chosen: None,
+            })
     });
     let panel = div()
         .id("preview-panel")

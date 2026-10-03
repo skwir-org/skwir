@@ -489,22 +489,32 @@ fn corner(shell: &Shell, cx: &mut Context<Shell>) -> [AnyElement; 2] {
 }
 
 /// Split and Preview, at the end of what has them (`Shell::toggles_at`).
-pub fn panel_toggles(shell: &Shell, cx: &mut Context<Shell>) -> [AnyElement; 2] {
+/// `labeled`: each says its name beside its icon, so they are found; each
+/// place that holds them offers this as its richest variant, chosen by
+/// `AdaptiveRow` while nothing else gives up room for it.
+pub fn panel_toggles(shell: &Shell, labeled: bool, cx: &mut Context<Shell>) -> [AnyElement; 2] {
     let (split_icon, split_tip) = shell.layout.split_button();
+    let split = Button::new("split-toggle", split_icon, split_tip, "ui.split");
+    let preview = Button::new(
+        "preview-toggle",
+        shell.layout.preview_icon(),
+        "Preview panel",
+        "ui.toggle_preview",
+    );
+    let (split, preview) = if labeled {
+        (split.label("Split"), preview.label("Preview"))
+    } else {
+        (split, preview)
+    };
     [
-        Button::new("split-toggle", split_icon, split_tip, "ui.split")
+        split
             .active(shell.is_split())
             .render(shell, cx)
             .into_any_element(),
-        Button::new(
-            "preview-toggle",
-            shell.layout.preview_icon(),
-            "Preview panel",
-            "ui.toggle_preview",
-        )
-        .active(shell.preview.open)
-        .render(shell, cx)
-        .into_any_element(),
+        preview
+            .active(shell.preview.open)
+            .render(shell, cx)
+            .into_any_element(),
     ]
 }
 
@@ -584,9 +594,9 @@ struct Ends {
 /// how the pane shows its folder. Up is the trail's parent segment, or
 /// Alt+Up.
 ///
-/// Two variants, chosen in prepaint by `AdaptiveRow`: the view buttons
-/// while the address keeps `FIELD_MIN`, else the one button that opens the
-/// View menu. The address counts as `FIELD_MIN` when a variant is measured
+/// Variants chosen in prepaint by `AdaptiveRow`: the view buttons while
+/// the address keeps `FIELD_MIN`, else the one button that opens the View
+/// menu; a row holding Split first tries it with its label. The address counts as `FIELD_MIN` when a variant is measured
 /// (its content has no width of its own) and takes the rest when drawn.
 pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
@@ -647,11 +657,13 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         .border_color(theme.border)
         .bg(theme.surface)
         .child(AdaptiveRow {
-            variants: [true, false]
+            // The toggles' labels go first, the view buttons next.
+            variants: [(true, true), (true, false), (false, false)]
                 .into_iter()
-                .map(|wide| {
+                .filter(|&(_, labeled)| !labeled || row.ends.toggles)
+                .map(|(wide, labeled)| {
                     let anchors = [&anchor, &nav_anchor, &chip_anchor, &omni_anchor];
-                    pane_row(shell, &row, wide, anchors, cx)
+                    pane_row(shell, &row, wide, labeled, anchors, cx)
                 })
                 .collect(),
             height: PANE_ROW_HEIGHT - 1.,
@@ -772,6 +784,7 @@ fn pane_row(
     shell: &Shell,
     row: &PaneRow,
     wide: bool,
+    labeled: bool,
     [anchor, nav_anchor, chip_anchor, omni_anchor]: [&PopoverAnchor; 4],
     cx: &mut Context<Shell>,
 ) -> AnyElement {
@@ -945,7 +958,7 @@ fn pane_row(
         }
     }
     if row.ends.toggles {
-        let [split, preview] = panel_toggles(shell, cx);
+        let [split, preview] = panel_toggles(shell, labeled, cx);
         line = line
             .child(toolbar::separator(&theme))
             .child(split)

@@ -426,6 +426,9 @@ impl Shell {
 /// edge meets the sidebar header's; the tabs stand on its foot.
 pub const STRIP_HEIGHT: f32 = crate::address::PANE_ROW_HEIGHT;
 
+/// The widest a tab grows.
+const TAB_MAX: f32 = 220.;
+
 /// The tab strip, when it shows (see the module comment), and the button
 /// that opens another tab.
 pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
@@ -435,6 +438,45 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
     if !shell.strip_shown() {
         return None;
     }
+    // Split and Preview say their names only while every tab can be as
+    // wide as a tab gets: the labeled row holds its tabs at `TAB_MAX`
+    // (`AdaptiveRow` measures it so), so the labels never take a tab's room.
+    if shell.toggles_at() != crate::shell::TogglesAt::Strip {
+        return Some(row(shell, &labels, shown, None, cx));
+    }
+    let variants = [true, false]
+        .into_iter()
+        .map(|labeled| row(shell, &labels, shown, Some(labeled), cx))
+        .collect();
+    let theme = cx.global::<Theme>().clone();
+    Some(
+        div()
+            .flex_none()
+            .h(px(STRIP_HEIGHT))
+            .w_full()
+            .bg(theme.surface)
+            .border_b_1()
+            .border_color(theme.border)
+            .child(crate::elements::adaptive::AdaptiveRow {
+                variants,
+                height: STRIP_HEIGHT - 1.,
+                chosen: None,
+            })
+            .into_any_element(),
+    )
+}
+
+/// The tabs and the button that opens another, then Split and Preview
+/// when the strip holds them (`toggles`: whether they have their labels,
+/// its tabs then held at their widest). Alone, the row draws its own border;
+/// under `AdaptiveRow`, its parent's.
+fn row(
+    shell: &mut Shell,
+    labels: &[Label],
+    shown: Option<TabId>,
+    toggles: Option<bool>,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let mut strip = div()
         .id("tab-strip")
@@ -478,13 +520,14 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
             }),
         );
     let count = labels.len();
-    for (index, label) in labels.into_iter().enumerate() {
+    for (index, label) in labels.iter().enumerate() {
         strip = strip.child(tab(
             shell,
-            &label,
+            label,
             index,
             count,
             shown == Some(label.tab),
+            toggles == Some(true),
             cx,
         ));
     }
@@ -494,8 +537,8 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
     // Split and Preview end the strip while the preview is not open at the
     // right (`Shell::toggles_at`): beside the tabs, not in them, so a
     // double click on one opens no tab.
-    let toggles = (shell.toggles_at() == crate::shell::TogglesAt::Strip).then(|| {
-        let [split, preview] = crate::address::panel_toggles(shell, cx);
+    let toggles = toggles.map(|labeled| {
+        let [split, preview] = crate::address::panel_toggles(shell, labeled, cx);
         div()
             .flex_none()
             .h_full()
@@ -506,19 +549,18 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
             .child(split)
             .child(preview)
     });
-    Some(
-        div()
+    let line = div().flex().child(strip);
+    match toggles {
+        Some(toggles) => line.size_full().child(toggles),
+        None => line
             .flex_none()
             .h(px(STRIP_HEIGHT))
             .w_full()
-            .flex()
             .bg(theme.surface)
             .border_b_1()
-            .border_color(theme.border)
-            .child(strip)
-            .children(toggles)
-            .into_any_element(),
-    )
+            .border_color(theme.border),
+    }
+    .into_any_element()
 }
 
 fn tab(
@@ -527,6 +569,7 @@ fn tab(
     index: usize,
     count: usize,
     shown: bool,
+    widest: bool,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
@@ -569,8 +612,8 @@ fn tab(
         .id(("tab", id.0 as usize))
         .relative()
         .flex_1()
-        .min_w(px(56.))
-        .max_w(px(220.))
+        .min_w(px(if widest { TAB_MAX } else { 56. }))
+        .max_w(px(TAB_MAX))
         .h(px(30.))
         .flex()
         .items_center()

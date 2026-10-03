@@ -118,6 +118,10 @@ current source before assuming a planned crate, command, or API exists.
   header), else at the right end of the tab strip, else at the end of the
   row of the pane at the window's right, or of the top one when stacked.
   One rule decides (`Shell::toggles_at`), so they are never in two places.
+  They say their names beside their icons where they have room
+  (`address::panel_toggles`, each place's richest `AdaptiveRow` variant):
+  in a pane's row before the view buttons fold, in the strip while every
+  tab keeps its full width.
   A preview at the bottom has no bar: its top is mid-window. Tabs are a
   strip above the panes, what a tab changes, when there are two or more,
   or one and `ui.single_tab` asks for it (`tabs.rs`); a second tab
