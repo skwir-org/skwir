@@ -351,8 +351,77 @@ impl Address {
                     .collect(),
                 set,
             }),
+            // A tag copied into a folder: a folder of its files there.
+            export: here.map(|_| {
+                Invocation::with_args("tags.export", &serde_json::json!({ "location": location }))
+            }),
         }
     }
+}
+
+/// What a tag exported into a folder makes (`tags.export`): a folder of
+/// its own files, named as the tag, and one inside it for each tag within
+/// it, as deep as they go: each file copied where it is listed, under a
+/// new name when one there has its name already.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Export {
+    /// The folders to make, outermost first.
+    pub folders: Vec<PathBuf>,
+    /// Each file and the folder and name it is copied to.
+    pub copies: Vec<(PathBuf, PathBuf, std::ffi::OsString)>,
+}
+
+/// The export of `address`'s tag (narrowed as it is) into `dest`, from
+/// the tagged files under its folder; `taken` says whether a name is
+/// taken in `dest` already (the folder made gets another).
+pub fn export(
+    address: &Address,
+    files: &[Tagged],
+    dest: &Path,
+    taken: impl Fn(&Path) -> bool,
+) -> Option<Export> {
+    let tag = address.tag.as_deref()?;
+    let mut out = Export::default();
+    let name = tag_leaf(tag);
+    let mut top = dest.join(name);
+    let mut n = 2;
+    while taken(&top) {
+        top = dest.join(format!("{name} ({n})"));
+        n += 1;
+    }
+    let mut stack: Vec<(String, PathBuf)> = vec![(tag.to_owned(), top)];
+    while let Some((tag, folder)) = stack.pop() {
+        let here = Address {
+            tag: Some(tag),
+            deep: false,
+            ..address.clone()
+        };
+        let contents = contents(&here, files, &[]);
+        out.folders.push(folder.clone());
+        let mut names: HashSet<std::ffi::OsString> = HashSet::new();
+        for file in contents.files {
+            let Some(name) = file.file_name() else {
+                continue;
+            };
+            let mut unique = name.to_owned();
+            let mut n = 2;
+            while !names.insert(unique.clone()) {
+                let path = Path::new(name);
+                let stem = path.file_stem().unwrap_or(name).to_string_lossy();
+                unique = match path.extension() {
+                    Some(ext) => format!("{stem} ({n}).{}", ext.to_string_lossy()).into(),
+                    None => format!("{stem} ({n})").into(),
+                };
+                n += 1;
+            }
+            out.copies.push((file, folder.clone(), unique));
+        }
+        for (child, _) in contents.places.into_iter().rev() {
+            let leaf = tag_leaf(&child).to_owned();
+            stack.push((child, folder.join(leaf)));
+        }
+    }
+    Some(out)
 }
 
 /// `path` as a scope: none for the home folder, which is the default.
@@ -634,6 +703,24 @@ impl Places {
         self.relist(Some(root));
     }
 
+    /// The tagged files under `root` within `address`'s tag (every one
+    /// at the top), with their years when it is narrowed by one. Reads the
+    /// index and stats: on a worker.
+    pub fn tagged(&self, address: &Address, root: &Path) -> Vec<Tagged> {
+        let calendar = (!address.years.is_empty()).then(bibli_platform::calendar::Calendar::system);
+        self.index
+            .files_under(root, address.tag.as_deref())
+            .into_iter()
+            .map(|(path, tags)| {
+                let year = calendar.as_ref().and_then(|calendar| {
+                    let modified = std::fs::symlink_metadata(&path).ok()?.modified().ok()?;
+                    Some(bibli_platform::calendar::civil_from_days(calendar.day_of(modified)).0)
+                });
+                Tagged { path, tags, year }
+            })
+            .collect()
+    }
+
     fn drafts_of(&self, root: &Path) -> Vec<String> {
         self.drafts
             .lock()
@@ -718,19 +805,7 @@ impl Open {
     /// last time. Reads the index and stats new files: on a worker.
     fn relist(&self) {
         let index = &self.places.index;
-        let found = index.files_under(&self.root, self.address.tag.as_deref());
-        let calendar =
-            (!self.address.years.is_empty()).then(bibli_platform::calendar::Calendar::system);
-        let tagged: Vec<Tagged> = found
-            .into_iter()
-            .map(|(path, tags)| {
-                let year = calendar.as_ref().and_then(|calendar| {
-                    let modified = std::fs::symlink_metadata(&path).ok()?.modified().ok()?;
-                    Some(bibli_platform::calendar::civil_from_days(calendar.day_of(modified)).0)
-                });
-                Tagged { path, tags, year }
-            })
-            .collect();
+        let tagged = self.places.tagged(&self.address, &self.root);
         let drafts = self.places.drafts_of(&self.root);
         let contents = contents(&self.address, &tagged, &drafts);
         self.places.forget_given(&self.root, &contents.places);
@@ -993,6 +1068,56 @@ mod tests {
             tag: tag.map(str::to_owned),
             ..Address::default()
         }
+    }
+
+    #[test]
+    fn a_tag_exported_is_a_folder_of_its_files_and_one_per_tag_within() {
+        let files = [
+            file("/p/a/one.jpg", &["Places/France"]),
+            file("/p/b/one.jpg", &["Places/France"]),
+            file("/p/paris.jpg", &["Places/France/Paris"]),
+            file("/p/tokyo.jpg", &["Places/Japan"]),
+        ];
+        let out = export(&at(Some("Places/France")), &files, Path::new("/out"), |p| {
+            p == Path::new("/out/France")
+        })
+        .unwrap();
+        assert_eq!(
+            out.folders,
+            [
+                PathBuf::from("/out/France (2)"),
+                PathBuf::from("/out/France (2)/Paris")
+            ],
+            "a name taken gets another"
+        );
+        let names: Vec<(String, String)> = out
+            .copies
+            .iter()
+            .map(|(from, to, name)| {
+                (
+                    from.display().to_string(),
+                    to.join(name).display().to_string(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            names,
+            [
+                (
+                    "/p/a/one.jpg".to_owned(),
+                    "/out/France (2)/one.jpg".to_owned()
+                ),
+                (
+                    "/p/b/one.jpg".to_owned(),
+                    "/out/France (2)/one (2).jpg".to_owned()
+                ),
+                (
+                    "/p/paris.jpg".to_owned(),
+                    "/out/France (2)/Paris/paris.jpg".to_owned()
+                ),
+            ]
+        );
+        assert!(export(&at(None), &files, Path::new("/out"), |_| false).is_none());
     }
 
     #[test]

@@ -7,6 +7,8 @@
 //! (`tags.narrow`, `tags.pill`); Ctrl+D pins its tag (`tags.keep`); a tag
 //! selected has its own menu items (`tags.place_menu`).
 
+use std::path::Path;
+
 use bibli_core::app::App;
 use bibli_core::cancel::CancelToken;
 use bibli_core::command::{Invocation, Outcome};
@@ -40,6 +42,9 @@ pub struct DropArgs {
     /// Where `entries` were cut or copied.
     #[serde(default)]
     pub from: Option<String>,
+    /// Tag locations pasted with `entries`: their tags go into this one.
+    #[serde(default)]
+    pub places: Vec<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -87,6 +92,14 @@ pub struct PillArgs {
     /// `also`: the files shown that have it too (Shift+click); `here`: its
     /// files in the folder shown (Alt+click).
     pub how: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ExportArgs {
+    /// The tag location exported.
+    pub location: String,
+    /// The folder it is copied into.
+    pub dest: PathArg,
 }
 
 #[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
@@ -157,10 +170,15 @@ pub fn drop(
     let target = shown(app, app.pane_or_active(a.pane), Some(&a.location))?;
     let Some(tag) = target.tag.clone() else {
         // On the top of the tags: tags come out of their categories.
-        let places = if a.entries.is_empty() {
+        let pasted: Vec<String> = a
+            .places
+            .iter()
+            .filter_map(|l| address_of(&Location::parse(l))?.tag)
+            .collect();
+        let places = if a.entries.is_empty() && pasted.is_empty() {
             selected_places(app, app.pane_or_active(a.pane))
         } else {
-            Vec::new()
+            pasted
         };
         let places: Vec<String> = places
             .into_iter()
@@ -173,7 +191,12 @@ pub fn drop(
         crate::everywhere::move_into(app, lifetime, follows, places, None, target.root())?;
         return Ok(Outcome::Done);
     };
-    let (files, places, from) = if a.entries.is_empty() {
+    let pasted: Vec<String> = a
+        .places
+        .iter()
+        .filter_map(|l| address_of(&Location::parse(l))?.tag)
+        .collect();
+    let (files, places, from) = if a.entries.is_empty() && pasted.is_empty() {
         let pane = app.pane_or_active(a.pane);
         (
             app.selected_refs(pane),
@@ -181,11 +204,7 @@ pub fn drop(
             app.pane_location(pane),
         )
     } else {
-        (
-            a.entries,
-            Vec::new(),
-            a.from.as_deref().map(Location::parse),
-        )
+        (a.entries, pasted, a.from.as_deref().map(Location::parse))
     };
     // Tags dragged onto it go into it, on every file: a plan to review.
     let places: Vec<String> = places
@@ -316,6 +335,66 @@ pub fn new(
         p.reveal_coming(tag_leaf(&tag).into());
     }
     app.wake();
+    Ok(Outcome::Done)
+}
+
+/// `tags.export`: a folder of the tag's files, and of the tags within it,
+/// made in `dest`, as a plan proposed for review. Reads the index and
+/// stats every file: on a worker.
+pub fn export(
+    app: &App,
+    places: &std::sync::Arc<crate::location::Places>,
+    a: ExportArgs,
+) -> anyhow::Result<Outcome> {
+    let address = Address::parse(&Location::parse(&a.location).rest);
+    let tag = address
+        .tag
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("a tag is copied, not all of them"))?;
+    let root = address
+        .root()
+        .ok_or_else(|| anyhow::anyhow!("no home folder"))?;
+    let dest = a.dest.into_inner();
+    let (places, weak) = (std::sync::Arc::clone(places), app.weak());
+    app.scheduler.spawn(
+        bibli_core::scheduler::Priority::Normal,
+        "tags.export",
+        app.lifetime().child(),
+        move || {
+            let Some(app) = weak.upgrade() else { return };
+            let files = places.tagged(&address, &root);
+            let Some(made) = crate::location::export(&address, &files, &dest, Path::exists) else {
+                return;
+            };
+            let mut steps: Vec<Box<dyn bibli_core::op::Operation>> = made
+                .folders
+                .iter()
+                .map(|path| {
+                    Box::new(bibli_core::op::Mkdir { path: path.clone() })
+                        as Box<dyn bibli_core::op::Operation>
+                })
+                .collect();
+            for (from, folder, name) in made.copies {
+                let Some(entry) = EntryRef::from_path(&from) else {
+                    continue;
+                };
+                let mut copy = bibli_core::op::Copy::from_settings(entry, folder, &app.settings);
+                if from.file_name() != Some(name.as_os_str()) {
+                    copy.new_name = Some(name);
+                }
+                steps.push(Box::new(copy));
+            }
+            let place = dest.file_name().map_or_else(
+                || dest.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            );
+            app.propose(bibli_core::op::Plan::with_steps(
+                format!("copy the files tagged {tag} to {place}"),
+                steps,
+            ));
+            app.wake();
+        },
+    );
     Ok(Outcome::Done)
 }
 

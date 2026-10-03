@@ -242,6 +242,36 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A place dragged into a folder is copied there as its location
+        // says (`Verbs::export`: a tag's, a folder of its files); files go
+        // as files do.
+        let (places, files) = {
+            let ws = self.app.workspace.read();
+            ws.pane(from).map_or((Vec::new(), 0), |p| {
+                let places: Vec<bibli_core::Location> = p
+                    .selection
+                    .iter()
+                    .filter_map(|id| p.location_of(id))
+                    .collect();
+                (
+                    places,
+                    p.selection.iter().filter(|id| !id.is_place()).count(),
+                )
+            })
+        };
+        for place in places {
+            if let Some(export) = self.app.verbs(&place).export {
+                let mut args = export.args.clone();
+                if !args.is_object() {
+                    args = serde_json::json!({});
+                }
+                args["dest"] = serde_json::json!(PathArg::from(dest));
+                self.run(&export.name, args, window, cx);
+            }
+        }
+        if files == 0 {
+            return;
+        }
         let modifiers = window.modifiers();
         let args = serde_json::json!({ "dest": PathArg::from(dest), "pane": from });
         if modifiers.control || modifiers.shift {

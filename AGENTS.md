@@ -340,7 +340,10 @@ current source before assuming a planned crate, command, or API exists.
   taken off every file, a plan to review (`tags.untag`); New Folder's
   key makes a tag in it, listed until a file has it (`tags.new`: no
   file, no tag, nothing kept); F2 on a tag renames it everywhere; a tag
-  selected has its own items (`tags.place_menu`).
+  selected has its own items (`tags.place_menu`). A tag dropped or pasted
+  in a folder is copied there as a folder of its files, with one inside
+  for each tag within it (`Verbs::export`, `tags.export`: a plan to
+  review); cut and pasted in a tag, it goes inside.
 - **Nothing to list is a state, not a blank.** `placeholder.rs` says why a
   pane is empty (empty folder, no results, empty shelf) or why it failed, in
   the user's words with the system's message as the detail, and offers the

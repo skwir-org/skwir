@@ -348,9 +348,10 @@ pub struct Verbs {
     /// Files dropped or pasted here: run with `pane` (the pane they are
     /// dragged from: its selection, and where they are) or `entries`
     /// (another application's files, or those of the clipboard with
-    /// `from`, where they were cut or copied), and `move` when they were
-    /// cut or dragged without Ctrl. A tag's gives them its tag, and moved
-    /// from another tag takes that one off.
+    /// `from`, where they were cut or copied, and `places`, the places
+    /// it holds), and `move` when they were cut or dragged without Ctrl.
+    /// A tag's gives them its tag, and moved from another tag takes that
+    /// one off; tags dropped go into it.
     pub drop: Option<crate::command::Invocation>,
     /// Taking the selection out: the Delete key there (`take_out`), and a
     /// menu item of these words. The files stay where they are: a tag's
@@ -365,6 +366,10 @@ pub struct Verbs {
     pub rename: Option<Verb>,
     /// Narrowing it, for the Narrow by bar.
     pub narrow: Option<Narrowing>,
+    /// Copying the place this location is into a folder, for its entry
+    /// dropped or pasted there: run with `dest`. A tag's makes a folder of
+    /// its files there.
+    pub export: Option<crate::command::Invocation>,
 }
 
 /// What narrowing a location runs (the Narrow by bar's choices), and what

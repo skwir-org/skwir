@@ -45,7 +45,7 @@ fn until<T>(app: &App, what: &str, mut f: impl FnMut() -> Option<T>) -> T {
 }
 
 struct Setup {
-    _tmp: tempfile::TempDir,
+    tmp: tempfile::TempDir,
     root: PathBuf,
     app: Arc<App>,
     pane: PaneId,
@@ -80,7 +80,7 @@ fn setup() -> Setup {
     );
     let pane = app.workspace.read().active_id();
     Setup {
-        _tmp: tmp,
+        tmp,
         root,
         app,
         pane,
@@ -381,4 +381,79 @@ fn a_file_of_a_tag_is_shown_in_its_folder() {
             .collect();
         (selected == ["lyon.jpg"]).then_some(())
     });
+}
+
+#[test]
+fn a_tag_copied_into_a_folder_is_a_folder_of_its_files() {
+    let s = setup();
+    let out = s.tmp.path().join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    // Copied from where it is listed, pasted in a folder.
+    go(&s, &tag_location(&s.root, Some("Places")));
+    let france = {
+        let ws = s.app.workspace.read();
+        let p = ws.pane(s.pane).unwrap();
+        p.listing
+            .iter()
+            .find(|e| e.is_place() && e.name_str() == "France")
+            .unwrap()
+            .id
+    };
+    s.app
+        .dispatch(&Invocation::with_args(
+            "select",
+            &serde_json::json!({ "ids": [france] }),
+        ))
+        .unwrap();
+    s.app.dispatch(&Invocation::new("clipboard_copy")).unwrap();
+    s.app.navigate(s.pane, &Location::from_path(&out)).unwrap();
+    assert!(s.app.pump_until_complete(s.pane, Duration::from_secs(10)));
+    s.app.dispatch(&Invocation::new("clipboard_paste")).unwrap();
+    let plan = until(&s.app, "the copy proposed", || s.app.take_proposals().pop());
+    let r = s.app.executor.execute_blocking(&plan, s.app.lifetime());
+    assert!(r.error.is_none(), "{:?}", r.error);
+    let made: BTreeSet<String> = walkdir(&out);
+    assert_eq!(
+        made,
+        names(&[
+            "France",
+            "France/france.jpg",
+            "France/Lyon",
+            "France/Lyon/lyon.jpg",
+            "France/Paris",
+            "France/Paris/paris.jpg",
+        ])
+    );
+    assert_eq!(
+        read_tags(&out.join("France/Paris/paris.jpg")),
+        tags(&["Places/France/Paris", "family"]),
+        "a copy keeps its tags"
+    );
+    // Again: the folder's name is taken, the second gets another.
+    s.app.dispatch(&Invocation::new("clipboard_paste")).unwrap();
+    let plan = until(&s.app, "the copy proposed", || s.app.take_proposals().pop());
+    assert!(
+        s.app
+            .executor
+            .execute_blocking(&plan, s.app.lifetime())
+            .error
+            .is_none()
+    );
+    assert!(out.join("France (2)/Paris/paris.jpg").exists());
+}
+
+/// Every path under `dir`, relative to it.
+fn walkdir(dir: &Path) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).unwrap() {
+            let p = e.unwrap().path();
+            out.insert(p.strip_prefix(dir).unwrap().display().to_string());
+            if p.is_dir() {
+                stack.push(p);
+            }
+        }
+    }
+    out
 }

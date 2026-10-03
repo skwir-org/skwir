@@ -43,6 +43,9 @@ struct Clipboard {
     /// Where they were cut or copied: a paste into a place that takes
     /// files (a tag's) is told, so a cut from another tag moves them.
     from: Option<bibli_core::Location>,
+    /// Places cut or copied (a tag's): pasted in a folder, copied there as
+    /// their location says (`Verbs::export`); in a place, given to it.
+    places: Vec<bibli_core::Location>,
 }
 
 /// The ops-basic plugin.
@@ -51,12 +54,29 @@ pub struct OpsBasicPlugin {
     clipboard: Arc<Mutex<Clipboard>>,
 }
 
-fn take_selection(app: &App, pane: Option<PaneId>) -> anyhow::Result<Vec<EntryRef>> {
-    let refs = app.selected_refs(app.pane_or_active(pane));
-    if refs.is_empty() {
+/// The selection's files, and its places (a tag's), what a copy or a cut
+/// remembers.
+fn take_selection(
+    app: &App,
+    pane: Option<PaneId>,
+) -> anyhow::Result<(Vec<EntryRef>, Vec<bibli_core::Location>)> {
+    let pane = app.pane_or_active(pane);
+    let refs = app.selected_refs(pane);
+    let places: Vec<bibli_core::Location> = {
+        let ws = app.workspace.read();
+        ws.pane(pane)
+            .map(|p| {
+                p.selection
+                    .iter()
+                    .filter_map(|id| p.location_of(id))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    if refs.is_empty() && places.is_empty() {
         anyhow::bail!("nothing selected");
     }
-    Ok(refs)
+    Ok((refs, places))
 }
 
 /// Let every view show what is waiting for a paste.
@@ -109,13 +129,28 @@ fn paste(clipboard: &Mutex<Clipboard>, pane: Option<PaneId>, app: &App) -> anyho
     let Ok(dest) = app.pane_dir(pane) else {
         return paste_on_place(clipboard, pane, app);
     };
-    let (entries, cut) = {
+    let (entries, cut, places) = {
         let c = clipboard.lock();
-        if c.entries.is_empty() {
+        if c.entries.is_empty() && c.places.is_empty() {
             anyhow::bail!("clipboard is empty");
         }
-        (c.entries.clone(), c.cut)
+        (c.entries.clone(), c.cut, c.places.clone())
     };
+    // Places (a tag's) are copied in as their location says: a folder of
+    // their files.
+    for place in places {
+        if let Some(mut export) = app.verbs(&place).export {
+            if !export.args.is_object() {
+                export.args = serde_json::json!({});
+            }
+            export.args["dest"] =
+                serde_json::json!(bibli_core::os_path::PathArg::from(dest.as_path()));
+            app.dispatch(&export)?;
+        }
+    }
+    if entries.is_empty() {
+        return Ok(Outcome::Done);
+    }
     let steps: Vec<Box<dyn Operation>> = entries
         .into_iter()
         .map(|entry| -> Box<dyn Operation> {
@@ -152,12 +187,12 @@ fn paste_on_place(
     let Some(drop) = app.verbs(&shown).drop else {
         anyhow::bail!("nothing can be pasted here");
     };
-    let (entries, cut, from) = {
+    let (entries, cut, from, places) = {
         let c = clipboard.lock();
-        if c.entries.is_empty() {
+        if c.entries.is_empty() && c.places.is_empty() {
             anyhow::bail!("clipboard is empty");
         }
-        (c.entries.clone(), c.cut, c.from.clone())
+        (c.entries.clone(), c.cut, c.from.clone(), c.places.clone())
     };
     let mut invocation = drop;
     if !invocation.args.is_object() {
@@ -165,6 +200,8 @@ fn paste_on_place(
     }
     invocation.args["entries"] = serde_json::json!(entries);
     invocation.args["move"] = serde_json::json!(cut);
+    invocation.args["places"] =
+        serde_json::json!(places.iter().map(ToString::to_string).collect::<Vec<_>>());
     if let Some(from) = from {
         invocation.args["from"] = serde_json::json!(from.to_string());
     }
@@ -262,14 +299,10 @@ const MENU: &[(&str, &str, Option<&str>, i32, &str)] = &[
         "folder",
     ),
     ("Rename", "ui.rename_prompt", Some("single"), 100, "rename"),
-    ("Cut", "clipboard_cut", Some("selection !place"), 110, "cut"),
-    (
-        "Copy",
-        "clipboard_copy",
-        Some("selection !place"),
-        120,
-        "copy",
-    ),
+    // A place too: a tag copied into a folder is a folder of its files,
+    // cut and pasted in a tag it goes inside.
+    ("Cut", "clipboard_cut", Some("selection"), 110, "cut"),
+    ("Copy", "clipboard_copy", Some("selection"), 120, "copy"),
     (
         "Paste",
         "clipboard_paste",
@@ -335,12 +368,13 @@ impl Plugin for OpsBasicPlugin {
             "Copy",
             "Remember the selection for a later paste (copy)",
             move |a, app| {
-                let entries = take_selection(app, a.pane)?;
+                let (entries, places) = take_selection(app, a.pane)?;
                 publish(app, &entries, false);
                 *cb.lock() = Clipboard {
                     entries,
                     cut: false,
                     from: app.pane_location(app.pane_or_active(a.pane)),
+                    places,
                 };
                 Ok(Outcome::Done)
             },
@@ -352,12 +386,13 @@ impl Plugin for OpsBasicPlugin {
             "Cut",
             "Remember the selection for a later paste (move)",
             move |a, app| {
-                let entries = take_selection(app, a.pane)?;
+                let (entries, places) = take_selection(app, a.pane)?;
                 publish(app, &entries, true);
                 *cb.lock() = Clipboard {
                     entries,
                     cut: true,
                     from: app.pane_location(app.pane_or_active(a.pane)),
+                    places,
                 };
                 Ok(Outcome::Done)
             },

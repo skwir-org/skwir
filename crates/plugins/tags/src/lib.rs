@@ -1054,6 +1054,16 @@ impl Plugin for TagsPlugin {
         );
         {
             let places = Arc::clone(&places);
+            app.commands.register::<browse::ExportArgs, _>(
+                ID,
+                "tags.export",
+                "Copy a tag into a folder",
+                "Make in `dest` a folder of the files a tag location (`location`) lists, named as its tag, with a folder inside for each tag within it: a plan proposed for review. What a tag dropped or pasted in a folder does",
+                move |a, app| browse::export(app, &places, a),
+            );
+        }
+        {
+            let places = Arc::clone(&places);
             app.commands.register::<browse::CountedArgs, _>(
                 ID,
                 "tags.counted",
