@@ -235,6 +235,8 @@ pub struct RowData {
     /// folder whether it is open in place.
     pub depth: usize,
     pub expanded: bool,
+    /// A place (a tag's): where it leads, and its tag's color.
+    pub place: Option<(bibli_core::Location, usize)>,
 }
 
 /// Tags from the entry's `tags` metadata field (a list of text values).
@@ -279,6 +281,14 @@ impl Shell {
                 self.icons.for_mime(mime.as_ref(), icon_px)
             };
             let path = if e.is_dir() { pane.path_of(id) } else { None };
+            let place = pane.location_of(id).map(|place| {
+                let tag = e
+                    .metadata
+                    .value(keys::PLACE_TAG)
+                    .and_then(bibli_core::Value::as_str)
+                    .unwrap_or_default();
+                (place, self.tag_colors.of(tag))
+            });
             let mut row = RowData {
                 ix,
                 id,
@@ -299,6 +309,7 @@ impl Shell {
                 tags: crate::tags::entry_tags(e, &self.tag_colors),
                 rating: None,
                 link: icons::Link::of(e),
+                place,
             };
             if !compact {
                 let [size, modified, kind, rating] = columns;
@@ -315,7 +326,16 @@ impl Shell {
                         .and_then(bibli_core::Value::as_u64)
                     {
                         Some(s) if !e.is_dir() => format::size(s),
-                        _ => "—".to_owned(),
+                        // A place says how many files it holds.
+                        _ => match e
+                            .metadata
+                            .value(keys::FILES)
+                            .and_then(bibli_core::Value::as_u64)
+                        {
+                            Some(1) => "1 file".to_owned(),
+                            Some(n) => format!("{n} files"),
+                            None => "—".to_owned(),
+                        },
                     };
                 }
                 if modified {
@@ -331,7 +351,9 @@ impl Shell {
                     };
                 }
                 if kind {
-                    row.kind = if e.is_dir() {
+                    row.kind = if e.is_place() {
+                        place_kind(e, &self.tag_fields).into()
+                    } else if e.is_dir() {
                         "Folder".into()
                     } else if e.is_broken_link() {
                         crate::typenames::BROKEN_LINK.into()
@@ -348,6 +370,26 @@ impl Shell {
         self.type_names.request(&app);
         self.icons.request(&app);
         out
+    }
+}
+
+/// What a place is, for its Type column: a tag's is a Tag, or a Field
+/// when its category holds one tag at a time (`tags.exclusive`).
+fn place_kind(e: &bibli_core::Entry, fields: &[String]) -> &'static str {
+    let tag = e
+        .metadata
+        .value(keys::PLACE_TAG)
+        .and_then(bibli_core::Value::as_str);
+    match tag {
+        Some(tag)
+            if fields
+                .iter()
+                .any(|f| bibli_core::metadata::same_tag(f, tag)) =>
+        {
+            "Field"
+        }
+        Some(_) => "Tag",
+        None => "Place",
     }
 }
 
@@ -422,7 +464,10 @@ pub fn row(
             .flex_none()
             .into_any_element(),
     };
-    let icon = icons::with_link(icon, icon_px, r.link, theme);
+    let icon = match &r.place {
+        Some((_, color)) => icons::with_tag(icon, icon_px, *color, theme),
+        None => icons::with_link(icon, icon_px, r.link, theme),
+    };
     let el = div()
         .id(ix)
         .relative()
@@ -551,6 +596,8 @@ pub fn row(
     el = dnd::takes_gifts(el, pane, ix, cx);
     if let Some(p) = &r.path {
         el = dnd::droppable_dir(el, p.clone(), cx);
+    } else if let Some((place, _)) = &r.place {
+        el = dnd::droppable_place(el, place.clone(), cx);
     }
     el
 }

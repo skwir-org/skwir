@@ -73,6 +73,9 @@ pub struct PaneUi {
     pub narrow: crate::narrow::Narrow,
     /// The chips of the search it shows (`search_bar`).
     pub chips: crate::search_bar::Chips,
+    /// The trail and verbs of the location it shows, when that is no
+    /// folder (`trail.rs`).
+    pub place: crate::trail::Shown,
     /// The placeholder's button, kept so Tab can reach it.
     pub(crate) placeholder_focus: FocusHandle,
     /// Its pane came back (or is new) and has not been put in place yet
@@ -691,6 +694,7 @@ impl Shell {
             weight: crate::weight::Weight::default(),
             narrow: crate::narrow::Narrow::default(),
             chips: crate::search_bar::Chips::default(),
+            place: crate::trail::Shown::default(),
             placeholder_focus: cx.focus_handle(),
             returning: true,
             anchor: None,
@@ -1444,17 +1448,30 @@ impl Shell {
             "palette_up" => self.palette_move(-1, cx),
             "palette_down" => self.palette_move(1, cx),
             "rename_prompt" => {
-                let single = {
+                let (single, place) = {
                     let ws = self.app.workspace.read();
-                    ws.pane(self.pane).and_then(|p| {
-                        let mut it = p.selection.iter();
-                        let id = it.next()?;
-                        if it.next().is_some() {
-                            return None;
-                        }
-                        p.entry(id).map(|e| e.name_str().into_owned())
-                    })
+                    ws.pane(self.pane)
+                        .and_then(|p| {
+                            let mut it = p.selection.iter();
+                            let id = it.next()?;
+                            if it.next().is_some() {
+                                return None;
+                            }
+                            let name = p.entry(id).map(|e| e.name_str().into_owned());
+                            Some((name, p.location_of(id)))
+                        })
+                        .unwrap_or_default()
                 };
+                // A place (a tag's) is renamed as its location says.
+                if let Some(place) = place {
+                    match self.app.verbs(&place).rename {
+                        Some(rename) => {
+                            self.run(&rename.command.name, rename.command.args, window, cx);
+                        }
+                        None => self.set_status("This cannot be renamed", true, cx),
+                    }
+                    return;
+                }
                 match single {
                     Some(name) => {
                         let stem = name.rfind('.').filter(|&i| i > 0).unwrap_or(name.len());
@@ -1513,6 +1530,12 @@ impl Shell {
             "mkdir_prompt" => {
                 self.open_prompt(PromptKind::Mkdir, "New folder", "", None, window, cx);
             }
+            // A new place where the location shown makes them (a tag in
+            // the one shown), as it says (`Verbs::create`).
+            "create_here" => match self.ui().place.verbs.create.clone() {
+                Some(create) => self.run(&create.command.name, create.command.args, window, cx),
+                None => self.set_status("Nothing new can be made here", true, cx),
+            },
             // The address field, in search: where it looks as a pill, and a
             // text to start from (`content:`) typed after.
             "search" => self.omnibox_begin(true, arg("text"), window, cx),
@@ -1878,13 +1901,19 @@ impl Shell {
                 if !e.is_dir() {
                     return None;
                 }
-                p.path_of(id)
+                // A place opens where it leads.
+                match p.location_of(id) {
+                    Some(place) => Some(serde_json::json!(place.to_string())),
+                    None => p
+                        .path_of(id)
+                        .map(|path| serde_json::json!(PathArg::from(path))),
+                }
             })
         };
-        if let Some(path) = target {
+        if let Some(location) = target {
             self.run(
                 "navigate",
-                serde_json::json!({ "location": PathArg::from(path), "pane": self.pane }),
+                serde_json::json!({ "location": location, "pane": self.pane }),
                 window,
                 cx,
             );
@@ -2134,6 +2163,7 @@ impl Shell {
         // The pane commands act on among those drawn.
         let active = saved == id;
         crate::search_bar::sync(self, window);
+        crate::trail::sync(self);
         let address_bar = address::render_address(self, window, cx);
         // The Usage view draws its own scanning and empty states.
         let placeholder = (self.ui().view_id != "usage")

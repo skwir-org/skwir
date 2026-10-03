@@ -461,7 +461,7 @@ impl Plugin for RenameBulkPlugin {
             KeyBinding {
                 keys: "ctrl-f2".into(),
                 command: Invocation::new("ui.rename_bulk_prompt"),
-                when: Some("pane selection".into()),
+                when: Some("pane selection !place".into()),
             },
         );
         // F2 on several items renames them together, as in Nautilus. On one
@@ -472,7 +472,7 @@ impl Plugin for RenameBulkPlugin {
             KeyBinding {
                 keys: "f2".into(),
                 command: Invocation::new("ui.rename_bulk_prompt"),
-                when: Some("pane selection".into()),
+                when: Some("pane selection !place".into()),
             },
         );
         app.registry.menus.add(
@@ -481,7 +481,7 @@ impl Plugin for RenameBulkPlugin {
                 menu: "context".into(),
                 title: "Rename Several…".into(),
                 command: Invocation::new("ui.rename_bulk_prompt"),
-                when: Some("selection".into()),
+                when: Some("selection !place".into()),
                 order: 105,
                 icon: Some("rename".into()),
                 submenu: Some("More".into()),

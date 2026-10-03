@@ -693,9 +693,16 @@ pub(crate) fn register(app: &App) {
                 let Some(p) = ws.pane(pane) else {
                     anyhow::bail!("no such pane");
                 };
+                let places: Vec<Location> = p
+                    .selection
+                    .iter()
+                    .filter_map(|id| p.location_of(id))
+                    .collect();
                 refs.into_iter()
                     .filter(|r| p.entry(r.id).is_some_and(crate::Entry::is_dir))
                     .map(|r| Location::from_path(r.path))
+                    // A place (a tag's) opens where it leads.
+                    .chain(places)
                     .collect()
             };
             if folders.is_empty() {

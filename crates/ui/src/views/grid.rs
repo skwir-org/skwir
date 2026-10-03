@@ -182,7 +182,7 @@ fn cell(
 ) -> AnyElement {
     let zoom = shell.zoom;
     let pane = shell.pane;
-    let (name, is_dir, selected, is_cursor, icon, link, path, tags) = {
+    let (name, is_dir, selected, is_cursor, icon, link, path, tags, place) = {
         let ws = shell.app.workspace.read();
         let Some(pane) = ws.pane(shell.pane) else {
             return div().into_any_element();
@@ -203,6 +203,14 @@ fn cell(
                 None
             },
             crate::tags::entry_tags(e, &shell.tag_colors),
+            pane.location_of(id).map(|place| {
+                let tag = e
+                    .metadata
+                    .value(bibli_core::entry::keys::PLACE_TAG)
+                    .and_then(bibli_core::Value::as_str)
+                    .unwrap_or_default();
+                (place, shell.tag_colors.of(tag))
+            }),
         )
     };
     // A filled box shows the short side of the thumbnail at full size.
@@ -285,7 +293,10 @@ fn cell(
                     div()
                         .relative()
                         .flex_none()
-                        .child(icons::with_link(picture, icon_px, link, theme))
+                        .child(match &place {
+                            Some((_, color)) => icons::with_tag(picture, icon_px, *color, theme),
+                            None => icons::with_link(picture, icon_px, link, theme),
+                        })
                         .children(crate::tags::tile_dots(
                             ("tile-tags", ix),
                             &tags,
@@ -313,6 +324,8 @@ fn cell(
     el = dnd::takes_gifts(el, pane, ix, cx);
     if let Some(p) = path {
         el = dnd::droppable_dir(el, p, cx);
+    } else if let Some((place, _)) = place {
+        el = dnd::droppable_place(el, place, cx);
     }
     el.into_any_element()
 }

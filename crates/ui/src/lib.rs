@@ -80,6 +80,7 @@ pub mod thumbs;
 pub mod timeline;
 pub mod toast;
 pub mod toolbar;
+pub mod trail;
 pub mod treemap;
 pub mod typenames;
 pub mod usage;

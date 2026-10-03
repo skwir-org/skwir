@@ -1,11 +1,12 @@
 //! The pane row's menus of places: the history behind Back or ahead of
-//! Forward (their right-click, `ui.history_menu`), and the folders inside
-//! a folder of the trail (the chevron after it, `ui.subfolder_menu`).
+//! Forward (their right-click, `ui.history_menu`), and the places inside
+//! a place of the trail (the chevron after it, `ui.subfolder_menu`): a
+//! folder's folders, a tag's tags (`LocationProvider::places`).
 //!
 //! Both hang from what opened them in the pane's row, which draws their
 //! anchor (`address::render_address`). A folder is read on a worker, since
-//! a sleeping disk can block it; the menu opens when the answer arrives,
-//! if it is still wanted.
+//! a sleeping disk can block it, and so are a provider's places; the menu
+//! opens when the answer arrives, if it is still wanted.
 
 use std::path::{Path, PathBuf};
 
@@ -25,8 +26,13 @@ const FOLDER_ROWS: usize = 500;
 /// What a menu of places lists.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NavWhat {
-    History { forward: bool },
-    Subfolders { folder: PathBuf },
+    History {
+        forward: bool,
+    },
+    /// The places inside `of`: a folder's folders, a tag's tags.
+    Subfolders {
+        of: bibli_core::Location,
+    },
 }
 
 /// A place in the menu: what it runs, and whether the pane is there
@@ -131,20 +137,21 @@ impl Shell {
         });
     }
 
-    /// `ui.subfolder_menu { path, current }`: the folders inside `path`,
-    /// `current` (where the trail goes on) marked; `{ close: true }`
-    /// closes it. Hidden folders are listed when the pane shows hidden
-    /// files.
+    /// `ui.subfolder_menu { location, current }`: the folders inside
+    /// `location` (a folder; `path` is its old name), or the places a
+    /// provider says are inside one that is no folder, `current` (where
+    /// the trail goes on) marked; `{ close: true }` closes it. Hidden
+    /// folders are listed when the pane shows hidden files.
     pub fn toggle_subfolder_menu(
         &mut self,
         args: &serde_json::Value,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let path = |key: &str| {
+        let location = |key: &str| {
             args.get(key)
                 .and_then(|v| serde_json::from_value::<PathArg>(v.clone()).ok())
-                .map(PathArg::into_inner)
+                .map(|arg| bibli_core::Location::parse_os(arg.as_os_str()))
         };
         let was = self.close_nav_menu(window);
         cx.notify();
@@ -153,17 +160,20 @@ impl Shell {
         if self.nav_closing(args, was.as_ref()) {
             return;
         }
-        let Some(folder) = path("path") else {
+        let Some(of) = location("location").or_else(|| location("path")) else {
             return;
         };
-        let what = NavWhat::Subfolders {
-            folder: folder.clone(),
-        };
+        let what = NavWhat::Subfolders { of: of.clone() };
         if was.as_ref() == Some(&what) || self.just_dismissed(&what.key()) {
             return;
         }
         let asked = self.nav_asked;
-        let current = path("current");
+        let current = location("current");
+        let Some(folder) = of.path() else {
+            self.places_menu(of, current, asked, window, cx);
+            return;
+        };
+        let current = current.as_ref().and_then(bibli_core::Location::path);
         let hidden = self.sort_spec().show_hidden;
         let pane = self.pane;
         let reading = folder.clone();
@@ -199,7 +209,69 @@ impl Shell {
                 shell.close_nav_menu(window);
                 shell.nav_menu = Some(NavMenu {
                     pane,
-                    what: NavWhat::Subfolders { folder },
+                    what: NavWhat::Subfolders {
+                        of: bibli_core::Location::from_path(folder),
+                    },
+                    rows,
+                    popup: Popup::new("nav", window, cx),
+                });
+                cx.notify();
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// The places a provider says are inside `of`, a place of the trail
+    /// that is no folder (a tag's tags), asked on a worker.
+    fn places_menu(
+        &mut self,
+        of: bibli_core::Location,
+        current: Option<bibli_core::Location>,
+        asked: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let pane = self.pane;
+        let app = self.app.clone();
+        let reading = of.clone();
+        self.off_thread(
+            "places",
+            move || app.places_in(&reading),
+            move |shell, places, window, cx| {
+                if shell.nav_asked != asked {
+                    return;
+                }
+                let navigate =
+                    |l: &bibli_core::Location| serde_json::json!({ "location": l.to_string() });
+                let mut rows: Vec<NavRow> = places
+                    .iter()
+                    .take(FOLDER_ROWS)
+                    .map(|place| NavRow {
+                        label: place.label.clone().into(),
+                        tip: shell.app.location_title(&place.location).into(),
+                        icon: "folder",
+                        command: "navigate",
+                        args: navigate(&place.location),
+                        current: current.as_ref() == Some(&place.location),
+                        enabled: true,
+                    })
+                    .collect();
+                if rows.is_empty() {
+                    rows.push(NavRow {
+                        label: "Nothing inside".into(),
+                        tip: "Nothing inside".into(),
+                        icon: "",
+                        command: "navigate",
+                        args: navigate(&of),
+                        current: false,
+                        enabled: false,
+                    });
+                }
+                shell.close_nav_menu(window);
+                shell.nav_menu = Some(NavMenu {
+                    pane,
+                    what: NavWhat::Subfolders { of },
                     rows,
                     popup: Popup::new("nav", window, cx),
                 });

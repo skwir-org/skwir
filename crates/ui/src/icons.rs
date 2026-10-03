@@ -288,6 +288,40 @@ pub fn with_link(
         .into_any_element()
 }
 
+/// `picture` (a folder's icon) marked as a place that is a tag's
+/// (`EntryId::is_place`), with the tag's mark in its color on its
+/// bottom-right corner, where a link has its arrow: a place is a folder
+/// that holds files kept elsewhere.
+pub fn with_tag(
+    picture: AnyElement,
+    size: f32,
+    color: usize,
+    theme: &crate::theme::Theme,
+) -> AnyElement {
+    let tone = theme.tags[color % theme.tags.len()];
+    let badge = (size * 0.3 + 6.).round().clamp(11., 22.);
+    div()
+        .relative()
+        .flex_none()
+        .child(picture)
+        .child(
+            div()
+                .absolute()
+                .right(px(-1.))
+                .bottom(px(-1.))
+                .size(px(badge))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_sm()
+                .bg(theme.bg)
+                .border_1()
+                .border_color(theme.border)
+                .child(crate::controls::glyph("tag", tone, badge - 2.)),
+        )
+        .into_any_element()
+}
+
 /// A named theme icon at `size` px: in full color, or tinted with `color`
 /// when it is symbolic.
 pub fn themed(path: &Path, size: f32, color: Hsla) -> AnyElement {

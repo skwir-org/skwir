@@ -8,7 +8,7 @@ use crate::{
     theme::Theme,
     toolbar::{self, Button},
 };
-use bibli_core::os_path::PathArg;
+use bibli_core::location::{Crumb, Location};
 use bibli_core::registry::{ViewRole, ViewSpec};
 use gpui::{AnyElement, Context, Window, div, prelude::*, px};
 use std::path::PathBuf;
@@ -555,8 +555,10 @@ pub fn more_popup(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
 
 /// What the address field shows.
 enum Address {
-    /// A folder, as a trail of places.
-    Trail(PathBuf),
+    /// A folder, or a location that reads as one (a tag's, `trail.rs`), as
+    /// a trail of places, then what narrows it, each with where its ×
+    /// leads.
+    Trail(Vec<Crumb>, Vec<Crumb>),
     /// A search, as pills (`search_bar::pills`).
     Pills,
     /// The text: while it is being edited (Ctrl+L, or a click beside the
@@ -600,6 +602,7 @@ struct Ends {
 /// (its content has no width of its own) and takes the rest when drawn.
 pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
+    let home = std::env::var_os("HOME").map(PathBuf::from);
     let row = {
         let ws = shell.app.workspace.read();
         let pane = ws.pane(shell.pane);
@@ -611,9 +614,21 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
             forward: pane.is_some_and(|p| p.history_pos + 1 < p.history.len()),
             address: match location.as_ref().and_then(bibli_core::Location::path) {
                 _ if focused => Address::Text,
-                Some(path) => Address::Trail(path),
+                Some(path) => Address::Trail(
+                    crumbs(&path, home.as_deref())
+                        .into_iter()
+                        .map(|(label, path)| Crumb::new(label, Location::from_path(path)))
+                        .collect(),
+                    Vec::new(),
+                ),
                 None if !shell.ui().chips.chips.is_empty() => Address::Pills,
-                None => Address::Text,
+                None => match &shell.ui().place.trail {
+                    Some(trail) => Address::Trail(
+                        crate::trail::segments(trail, home.as_deref()),
+                        trail.filters.clone(),
+                    ),
+                    None => Address::Text,
+                },
             },
             edge: if focused {
                 theme.accent
@@ -738,6 +753,62 @@ fn filter_pill(shell: &Shell, filter: &str, theme: &Theme, cx: &mut Context<Shel
     .into_any_element()
 }
 
+/// What narrows a location that reads as a trail ("with family", a
+/// tag location's): its × goes where the location leads without it.
+/// Kept while the trail is walked up and down, so it is drawn like the
+/// filter typed in the field, after the trail.
+fn narrowing_pill(
+    shell: &Shell,
+    i: usize,
+    filter: &Crumb,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let pane = shell.pane;
+    let hover = theme.hover;
+    let without = crate::trail::location_arg(&filter.location);
+    div()
+        .id(("narrowing", i))
+        .flex_none()
+        .h(px(22.))
+        .max_w(px(200.))
+        .pl(px(9.))
+        .pr(px(2.))
+        .mr(px(2.))
+        .flex()
+        .items_center()
+        .gap(px(2.))
+        .rounded_full()
+        .bg(theme.selection_bg)
+        .text_color(theme.selection_text)
+        .text_sm()
+        .child(div().truncate().child(filter.label.clone()))
+        .child(
+            div()
+                .id(("narrowing-clear", i))
+                .size(px(18.))
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .cursor_pointer()
+                .hover(move |s| s.bg(hover))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.activate_pane(pane, cx);
+                    this.run(
+                        "navigate",
+                        serde_json::json!({ "location": without, "pane": pane }),
+                        window,
+                        cx,
+                    );
+                }))
+                .child(crate::controls::glyph("close", theme.selection_text, 10.)),
+        )
+        .into_any_element()
+}
+
 /// Back or Forward: its right button lists the history that way.
 fn history_button(
     shell: &Shell,
@@ -796,7 +867,7 @@ fn pane_row(
     let address = match &row.address {
         Address::Pills => crate::search_bar::pills(shell, chip_anchor, cx)
             .unwrap_or_else(|| div().into_any_element()),
-        Address::Trail(path) => div()
+        Address::Trail(segments, filters) => div()
             .flex_1()
             .w(px(0.))
             .min_w_0()
@@ -819,12 +890,18 @@ fn pane_row(
                     }))
                     .child(breadcrumbs(
                         shell,
-                        path,
+                        segments,
                         row.nav.as_ref(),
                         nav_anchor,
                         &theme,
                         cx,
                     )),
+            )
+            .children(
+                filters
+                    .iter()
+                    .enumerate()
+                    .map(|(i, filter)| narrowing_pill(shell, i, filter, &theme, cx)),
             )
             .children(
                 row.filter
@@ -994,24 +1071,22 @@ pub fn crumbs(path: &std::path::Path, home: Option<&std::path::Path>) -> Vec<(St
 
 /// The trail, laid out by flexbox alone: the segments are given last first to
 /// a right-to-left wrapping line one row tall, so the ones nearest the current
-/// folder stay and the outermost wrap out of sight in a narrow pane, with
+/// place stay and the outermost wrap out of sight in a narrow pane, with
 /// nothing measured. Every segment but the outermost carries its chevron:
 /// a trail that starts with one visibly continues to the left.
 ///
-/// A chevron lists the folders inside the segment before it, the one the
-/// trail goes on into marked; one more after the last lists the folders
-/// inside the folder shown. `open` is the menu of places open from this
-/// row, whose chevron hangs it from `anchor`.
+/// A chevron lists the places inside the segment before it (a folder's
+/// folders, a tag's tags), the one the trail goes on into marked; one more
+/// after the last lists those inside the place shown. `open` is the menu of
+/// places open from this row, whose chevron hangs it from `anchor`.
 fn breadcrumbs(
     shell: &Shell,
-    path: &std::path::Path,
+    crumbs: &[Crumb],
     open: Option<&crate::nav_menu::NavWhat>,
     anchor: &PopoverAnchor,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    let crumbs = crumbs(path, home.as_deref());
     let pane = shell.pane;
     let last = crumbs.len().saturating_sub(1);
     let mut trail = div()
@@ -1027,21 +1102,21 @@ fn breadcrumbs(
         .justify_start()
         .line_height(px(24.));
     let chevron =
-        |index: usize, folder: &PathBuf, current: Option<&PathBuf>, cx: &mut Context<Shell>| {
+        |index: usize, of: &Crumb, current: Option<&Location>, cx: &mut Context<Shell>| {
             let shown = open
                 == Some(&crate::nav_menu::NavWhat::Subfolders {
-                    folder: folder.clone(),
+                    of: of.location.clone(),
                 });
             let args = serde_json::json!({
-                "path": PathArg::from(folder.as_path()),
-                "current": current.map(|c| PathArg::from(c.as_path())),
+                "location": crate::trail::location_arg(&of.location),
+                "current": current.map(crate::trail::location_arg),
             });
             let font = shell.font.clone();
-            let name = folder.file_name().map_or_else(
-                || folder.display().to_string(),
-                |n| n.to_string_lossy().into_owned(),
-            );
-            let tip: gpui::SharedString = format!("Folders in {name}").into();
+            let tip: gpui::SharedString = if of.location.is_path() {
+                format!("Folders in {}", of.label).into()
+            } else {
+                format!("In {}", of.label).into()
+            };
             let hover = theme.hover;
             div()
                 .id(("crumb-folders", index))
@@ -1075,11 +1150,11 @@ fn breadcrumbs(
                 )
                 .when(shown, |d| d.child(anchor.marker()))
         };
-    for (index, (label, target)) in crumbs.iter().enumerate().rev() {
+    for (index, crumb) in crumbs.iter().enumerate().rev() {
         let hover = theme.hover;
-        let open = target.clone();
-        let in_tab = target.clone();
-        let (text, clip) = crate::elements::clip::text(label.clone());
+        let open = crate::trail::location_arg(&crumb.location);
+        let in_tab = open.clone();
+        let (text, clip) = crate::elements::clip::text(crumb.label.clone());
         let segment = div()
             .id(("crumb", index))
             .optional_tooltip(clip.tooltip(None, shell.font.clone()))
@@ -1100,12 +1175,12 @@ fn breadcrumbs(
                 this.activate_pane(pane, cx);
                 this.run(
                     "navigate",
-                    serde_json::json!({ "location": PathArg::from(open.as_path()), "pane": pane }),
+                    serde_json::json!({ "location": open, "pane": pane }),
                     window,
                     cx,
                 );
             }))
-            // The middle button opens the folder in a tab behind this one.
+            // The middle button opens the place in a tab behind this one.
             .on_mouse_down(
                 gpui::MouseButton::Middle,
                 cx.listener(move |this, _, window, cx| {
@@ -1113,7 +1188,7 @@ fn breadcrumbs(
                     this.run(
                         "tab.new",
                         serde_json::json!({
-                            "location": PathArg::from(in_tab.as_path()),
+                            "location": in_tab,
                             "show": false,
                             "pane": pane,
                         }),
@@ -1123,11 +1198,17 @@ fn breadcrumbs(
                 }),
             )
             .child(text);
-        let segment = crate::dnd::droppable_dir(segment, target.clone(), cx);
+        let segment = match crumb.location.path() {
+            Some(dir) => crate::dnd::droppable_dir(segment, dir, cx),
+            None if shell.ui().place.takes_drops(&crumb.location) => {
+                crate::dnd::droppable_place(segment, crumb.location.clone(), cx)
+            }
+            None => segment,
+        };
         let before = index
             .checked_sub(1)
-            .map(|parent| chevron(index, &crumbs[parent].1, Some(target), cx));
-        let after = (index == last).then(|| chevron(index + 1, target, None, cx));
+            .map(|parent| chevron(index, &crumbs[parent], Some(&crumb.location), cx));
+        let after = (index == last).then(|| chevron(index + 1, crumb, None, cx));
         trail = trail.child(
             div()
                 .flex()

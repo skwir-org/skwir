@@ -199,7 +199,7 @@ impl Plugin for ShellPlugin {
                 menu: "context".into(),
                 title: "Copy Paths".into(),
                 command: Invocation::new("shell.copy_paths"),
-                when: Some("selection".into()),
+                when: Some("selection !place".into()),
                 order: 135,
                 icon: Some("copy".into()),
                 submenu: Some("More".into()),

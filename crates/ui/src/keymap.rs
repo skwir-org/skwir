@@ -69,9 +69,15 @@ pub struct KeyHint {
 /// the plugins' (ops-basic binds the file operations).
 const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("f2", "ui.rename_prompt", Some("pane single")),
-    ("shift-delete", "ui.confirm_delete", Some("pane selection")),
+    (
+        "shift-delete",
+        "ui.confirm_delete",
+        Some("pane selection !place"),
+    ),
     // Into the folder shown, like Ctrl+V: a search or the shelf has none.
     ("ctrl-shift-n", "ui.mkdir_prompt", Some("pane folder")),
+    // A new place where the location makes them (a tag's: a tag in it).
+    ("ctrl-shift-n", "ui.create_here", Some("pane creates")),
     ("ctrl-l", "ui.focus_address", None),
     ("ctrl-shift-p", "ui.palette", None),
     ("ctrl-q", "ui.quit", None),
@@ -577,6 +583,9 @@ pub fn context_of(when: Option<&str>) -> String {
 
 /// A flag of the pane's key context in plain words.
 fn condition(flag: &str) -> String {
+    if let Some(not) = flag.strip_prefix('!') {
+        return format!("not {}", condition(not));
+    }
     match flag {
         "single" => "one item selected",
         "selection" => "with a selection",
@@ -586,6 +595,10 @@ fn condition(flag: &str) -> String {
         "file" => "on a file",
         "folder" => "in a folder",
         "sweep" => "selecting as the cursor moves",
+        "place" => "on a tag or another place",
+        "refs" => "where removing leaves files where they are",
+        "drops" => "where files can be dropped",
+        "creates" => "where new places can be made",
         "filtered" => "filtered by name",
         "tags" => "in the Tags view",
         "labelling" => "while links are labelled",

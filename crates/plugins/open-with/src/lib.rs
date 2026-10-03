@@ -102,7 +102,7 @@ struct OpenArgs {
 fn open(args: OpenArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
     let pane = app.pane_or_active(args.pane);
     // Resolve the targets while holding the read lock, then release it.
-    let (targets, lifetime): (Vec<Target>, _) = {
+    let (targets, places, lifetime): (Vec<Target>, Vec<Location>, _) = {
         let ws = app.workspace.read();
         let p = ws
             .pane(pane)
@@ -113,6 +113,8 @@ fn open(args: OpenArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
         } else {
             args.ids
         };
+        // A place (a tag's, in a tag location) opens where it leads.
+        let places = ids.iter().filter_map(|id| p.location_of(*id)).collect();
         let targets = ids
             .into_iter()
             .filter_map(|id| {
@@ -121,10 +123,14 @@ fn open(args: OpenArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
                 Some(Target { path, kind })
             })
             .collect();
-        (targets, p.location_lifetime())
+        (targets, places, p.location_lifetime())
     };
     if targets.is_empty() {
-        anyhow::bail!("nothing to open");
+        let [place] = places.as_slice() else {
+            anyhow::bail!("nothing to open");
+        };
+        app.navigate(pane, place)?;
+        return Ok(Outcome::Done);
     }
     match targets.as_slice() {
         [
@@ -864,7 +870,7 @@ impl Plugin for OpenWithPlugin {
                 menu: "context".into(),
                 title: "Open With…".into(),
                 command: choose(&serde_json::json!({})),
-                when: Some("selection".into()),
+                when: Some("selection !place".into()),
                 order: 1,
                 icon: Some("open".into()),
                 submenu: None,
@@ -894,7 +900,7 @@ impl Plugin for OpenWithPlugin {
             ID,
             MenuSource {
                 menu: "context".into(),
-                when: Some("selection".into()),
+                when: Some("selection !place".into()),
                 command: Invocation::new("open_with.menu"),
                 replaces: vec![Invocation::new("open")],
             },

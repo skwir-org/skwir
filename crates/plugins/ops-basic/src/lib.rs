@@ -12,6 +12,12 @@
 //! - `file`: every selected entry is a regular file
 //! - `empty`: nothing is selected; for a menu, the one opened on the
 //!   folder's background, about the folder itself
+//! - `folder`: the pane shows a folder
+//! - `place`: every selected entry is a place, no file (a tag's)
+//! - `refs`, `drops`, `creates`: the location shown lists files kept
+//!   elsewhere, takes files dropped or pasted, makes new places
+//!   (`bibli_core::location::Verbs`)
+//! - `!token`: the token does not hold
 //!
 //! Absent (`None`) means always. For key bindings the UI also filters by
 //! focus context: `pane` (the file list), `address`, `palette`, or none
@@ -34,6 +40,9 @@ const ID: &str = "ops-basic";
 struct Clipboard {
     entries: Vec<EntryRef>,
     cut: bool,
+    /// Where they were cut or copied: a paste into a place that takes
+    /// files (a tag's) is told, so a cut from another tag moves them.
+    from: Option<bibli_core::Location>,
 }
 
 /// The ops-basic plugin.
@@ -96,7 +105,10 @@ fn follow(clipboard: &Mutex<Clipboard>, changes: &[Change], app: &App) {
 }
 
 fn paste(clipboard: &Mutex<Clipboard>, pane: Option<PaneId>, app: &App) -> anyhow::Result<Outcome> {
-    let dest = app.pane_dir(app.pane_or_active(pane))?;
+    let pane = app.pane_or_active(pane);
+    let Ok(dest) = app.pane_dir(pane) else {
+        return paste_on_place(clipboard, pane, app);
+    };
     let (entries, cut) = {
         let c = clipboard.lock();
         if c.entries.is_empty() {
@@ -125,6 +137,46 @@ fn paste(clipboard: &Mutex<Clipboard>, pane: Option<PaneId>, app: &App) -> anyho
     Ok(Outcome::Plan(Plan::with_steps(title, steps)))
 }
 
+/// A paste into a location that is no folder but takes files (a tag's):
+/// what its provider says a drop means there (`Verbs::drop`), with the
+/// clipboard's files, whether they were cut, and where from. A cut is
+/// done once pasted.
+fn paste_on_place(
+    clipboard: &Mutex<Clipboard>,
+    pane: PaneId,
+    app: &App,
+) -> anyhow::Result<Outcome> {
+    let shown = app
+        .pane_location(pane)
+        .ok_or_else(|| anyhow::anyhow!("the pane shows nothing"))?;
+    let Some(drop) = app.verbs(&shown).drop else {
+        anyhow::bail!("nothing can be pasted here");
+    };
+    let (entries, cut, from) = {
+        let c = clipboard.lock();
+        if c.entries.is_empty() {
+            anyhow::bail!("clipboard is empty");
+        }
+        (c.entries.clone(), c.cut, c.from.clone())
+    };
+    let mut invocation = drop;
+    if !invocation.args.is_object() {
+        invocation.args = serde_json::json!({});
+    }
+    invocation.args["entries"] = serde_json::json!(entries);
+    invocation.args["move"] = serde_json::json!(cut);
+    if let Some(from) = from {
+        invocation.args["from"] = serde_json::json!(from.to_string());
+    }
+    let outcome = app.dispatch(&invocation)?;
+    if cut {
+        *clipboard.lock() = Clipboard::default();
+        app.pending.clear();
+        app.wake();
+    }
+    Ok(outcome)
+}
+
 // Keys for the plugin's own and core commands. Keys for the shell's `ui.*`
 // commands live in the shell's builtin table, so they outlive this plugin.
 const BINDINGS: &[(&str, &str, Option<&str>)] = &[
@@ -137,11 +189,15 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
     // mouse's side buttons act on the pane under the pointer (`Shell`).
     ("back", "back", None),
     ("forward", "forward", None),
-    ("delete", "trash", Some("pane selection")),
+    // Where the location takes files out without deleting them (a tag,
+    // the shelf), Delete does that instead (`take_out`, the shell's).
+    ("delete", "trash", Some("pane selection !refs")),
+    ("delete", "take_out", Some("pane selection refs")),
     ("ctrl-c", "clipboard_copy", Some("pane selection")),
     ("ctrl-x", "clipboard_cut", Some("pane selection")),
-    // Into the folder shown: a search or the shelf has none.
-    ("ctrl-v", "clipboard_paste", Some("pane folder")),
+    // Into the folder shown, or a place that takes files (a tag gives
+    // them itself): a search has neither.
+    ("ctrl-v", "clipboard_paste", Some("pane folder|drops")),
     ("ctrl-z", "undo", None),
     ("ctrl-shift-z", "redo", None),
     ("ctrl-y", "redo", None),
@@ -192,9 +248,21 @@ const BINDINGS_ARGS: &[(&str, &str, &str)] = &[
 const MENU: &[(&str, &str, Option<&str>, i32, &str)] = &[
     ("Open in New Tab", "tab.open", Some("dir"), 2, "tab-new"),
     ("Rename", "ui.rename_prompt", Some("single"), 100, "rename"),
-    ("Cut", "clipboard_cut", Some("selection"), 110, "cut"),
-    ("Copy", "clipboard_copy", Some("selection"), 120, "copy"),
-    ("Paste", "clipboard_paste", Some("folder"), 130, "paste"),
+    ("Cut", "clipboard_cut", Some("selection !place"), 110, "cut"),
+    (
+        "Copy",
+        "clipboard_copy",
+        Some("selection !place"),
+        120,
+        "copy",
+    ),
+    (
+        "Paste",
+        "clipboard_paste",
+        Some("folder|drops"),
+        130,
+        "paste",
+    ),
     // The folder's own menu, on its background.
     (
         "New Folder",
@@ -210,11 +278,18 @@ const MENU: &[(&str, &str, Option<&str>, i32, &str)] = &[
         201,
         "file-plus",
     ),
-    ("Move to Trash", "trash", Some("selection"), 300, "trash"),
+    // Files, never places (a tag's has no file to trash).
+    (
+        "Move to Trash",
+        "trash",
+        Some("selection !place"),
+        300,
+        "trash",
+    ),
     (
         "Delete Permanently",
         "ui.confirm_delete",
-        Some("selection"),
+        Some("selection !place"),
         310,
         "close",
     ),
@@ -251,6 +326,7 @@ impl Plugin for OpsBasicPlugin {
                 *cb.lock() = Clipboard {
                     entries,
                     cut: false,
+                    from: app.pane_location(app.pane_or_active(a.pane)),
                 };
                 Ok(Outcome::Done)
             },
@@ -264,7 +340,11 @@ impl Plugin for OpsBasicPlugin {
             move |a, app| {
                 let entries = take_selection(app, a.pane)?;
                 publish(app, &entries, true);
-                *cb.lock() = Clipboard { entries, cut: true };
+                *cb.lock() = Clipboard {
+                    entries,
+                    cut: true,
+                    from: app.pane_location(app.pane_or_active(a.pane)),
+                };
                 Ok(Outcome::Done)
             },
         );

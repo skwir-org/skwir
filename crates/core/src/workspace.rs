@@ -848,6 +848,20 @@ impl Pane {
             .or_else(|| self.open.as_ref()?.path_of(id))
     }
 
+    /// Where a place the pane shows leads (`OpenLocation::location_of`):
+    /// plugin code, called under the caller's lock, like `path_of`.
+    pub fn location_of(&self, id: EntryId) -> Option<Location> {
+        if !id.is_place() {
+            return None;
+        }
+        if self.listing.get(id).is_some() {
+            return self.open.as_ref()?.location_of(id);
+        }
+        opened(&self.kept, &self.expanded)
+            .find(|(_, k)| k.listing.get(id).is_some())
+            .and_then(|(_, k)| k.open.as_ref()?.location_of(id))
+    }
+
     /// How many opened folders deep entry `id` is: 0 for the shown
     /// listing's own entries.
     pub fn depth(&self, id: EntryId) -> usize {

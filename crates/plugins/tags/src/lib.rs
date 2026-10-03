@@ -438,7 +438,8 @@ fn menu_item(title: &str, command: Invocation, order: i32, icon: &str) -> MenuIt
         menu: "context".into(),
         title: title.into(),
         command,
-        when: Some("selection".into()),
+        // A file's notes: a place (a tag's) has its own menu.
+        when: Some("selection !place".into()),
         order,
         icon: Some(icon.into()),
         submenu: None,
@@ -1120,7 +1121,7 @@ impl Plugin for TagsPlugin {
                 // Ctrl+Shift+T reopens a closed tab, as in file managers.
                 keys: "ctrl-shift-g".into(),
                 command: Invocation::new("ui.tags_prompt"),
-                when: Some("pane selection".into()),
+                when: Some("pane selection !place".into()),
             },
         );
         app.registry.menus.add(

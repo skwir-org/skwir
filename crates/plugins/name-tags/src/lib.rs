@@ -299,7 +299,8 @@ fn menu_item(title: &str, command: &str, order: i32, icon: &str) -> MenuItem {
         menu: "context".into(),
         title: title.into(),
         command: bibli_core::command::Invocation::new(command),
-        when: Some("selection".into()),
+        // Files' names, never a place's (a tag's has none).
+        when: Some("selection !place".into()),
         order,
         icon: Some(icon.into()),
         submenu: Some("Notes".into()),

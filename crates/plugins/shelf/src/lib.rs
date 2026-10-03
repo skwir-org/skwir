@@ -13,7 +13,7 @@ use bibli_core::entry::{Entry, EntryId, EntryKind};
 use bibli_core::fs::hydrate_paths;
 use bibli_core::fs::stat::stat_path;
 use bibli_core::location::{
-    EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
+    EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation, Verb, Verbs,
 };
 use bibli_core::op::{Change, Copy, EntryRef, Followed, Move, Operation, Plan, Trash};
 use bibli_core::plugin::Plugin;
@@ -104,11 +104,19 @@ struct AddArgs {
     /// Entries to add; the pane's selection when omitted.
     #[serde(default)]
     ids: Vec<EntryId>,
+    /// Files to add by where they are (another application's, dropped,
+    /// or the clipboard's, pasted), instead of a pane's.
+    #[serde(default)]
+    entries: Vec<EntryRef>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct RemoveArgs {
+    /// Entries to take off; the pane's selection when omitted.
+    #[serde(default)]
     ids: Vec<EntryId>,
+    #[serde(default)]
+    pane: Option<PaneId>,
 }
 
 impl ShelfPlugin {
@@ -278,6 +286,21 @@ fn selection_items(
         .collect())
 }
 
+/// A file dropped or pasted on the shelf, by where it is: no listing
+/// knows it, so a stat says what it is when it is hydrated.
+fn dropped_item(entry: &EntryRef) -> Option<(ShelfItem, Option<Entry>)> {
+    let name = entry.path.file_name()?.to_owned();
+    Some((
+        ShelfItem {
+            id: entry.id,
+            path: entry.path.clone(),
+            name,
+            kind: EntryKind::Unknown,
+        },
+        None,
+    ))
+}
+
 fn plan_into(items: &[ShelfItem], dest: &Path, copy: bool, app: &App) -> anyhow::Result<Outcome> {
     let steps: Vec<Box<dyn Operation>> = items
         .iter()
@@ -411,6 +434,19 @@ impl LocationProvider for ShelfProvider {
         SCHEME
     }
 
+    /// The shelf holds files kept where they are: Delete takes them off
+    /// it, and files dropped or pasted on it are shelved (ADR-032).
+    fn verbs(&self, _location: &Location) -> Verbs {
+        Verbs {
+            drop: Some(Invocation::new("shelf.add")),
+            remove: Some(Verb::new(
+                "Remove from Shelf",
+                Invocation::new("shelf.remove"),
+            )),
+            ..Verbs::default()
+        }
+    }
+
     fn open(&self, location: &Location, ctx: OpenContext) -> anyhow::Result<Arc<dyn OpenLocation>> {
         let (sink, rx) = ctx.channel();
         self.state.lock().sinks.push(sink.clone());
@@ -431,8 +467,13 @@ impl LocationProvider for ShelfProvider {
 const BINDINGS: &[(&str, &str, Option<&str>)] =
     &[("ctrl-shift-b", "shelf.add", Some("pane selection"))];
 
-const MENU: &[(&str, &str, Option<&str>, i32, &str)] =
-    &[("Add to Shelf", "shelf.add", Some("selection"), 140, "shelf")];
+const MENU: &[(&str, &str, Option<&str>, i32, &str)] = &[(
+    "Add to Shelf",
+    "shelf.add",
+    Some("selection !place"),
+    140,
+    "shelf",
+)];
 
 impl Plugin for ShelfPlugin {
     fn id(&self) -> &'static str {
@@ -481,7 +522,11 @@ impl Plugin for ShelfPlugin {
             "Add to shelf",
             "Put the selection (or the given entries) on the shelf",
             move |a, app| {
-                let items = selection_items(app, app.pane_or_active(a.pane), &a.ids)?;
+                let items = if a.entries.is_empty() {
+                    selection_items(app, app.pane_or_active(a.pane), &a.ids)?
+                } else {
+                    a.entries.iter().filter_map(dropped_item).collect()
+                };
                 let n = ShelfPlugin::add(&st, items);
                 Ok(Outcome::Value(serde_json::json!({ "added": n })))
             },
@@ -492,8 +537,17 @@ impl Plugin for ShelfPlugin {
             "shelf.remove",
             "Remove from shelf",
             "Take entries off the shelf",
-            move |a, _| {
-                let n = ShelfPlugin::remove(&st, &a.ids);
+            move |a, app| {
+                let ids = if a.ids.is_empty() {
+                    let ws = app.workspace.read();
+                    let pane = ws
+                        .pane(app.pane_or_active(a.pane))
+                        .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                    pane.selection.iter().collect()
+                } else {
+                    a.ids
+                };
+                let n = ShelfPlugin::remove(&st, &ids);
                 Ok(Outcome::Value(serde_json::json!({ "removed": n })))
             },
         );
@@ -695,6 +749,37 @@ mod tests {
                 .is_empty()
         );
         assert!(app.dispatch(&Invocation::new("shelf.trash")).is_err());
+    }
+
+    #[test]
+    fn delete_on_the_shelf_takes_files_off_it_and_a_drop_shelves_them() {
+        let (_tmp, app, pane, src) = setup();
+        select(&app, pane, &["a.txt", "b.txt"]);
+        app.dispatch(&Invocation::new("shelf.add")).unwrap();
+        app.navigate(pane, &Location::parse("shelf:")).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        select(&app, pane, &["a.txt"]);
+        // What Delete runs on the shelf: the location's own taking out.
+        let v = value(app.dispatch(&Invocation::new("take_out")).unwrap());
+        assert_eq!(v["removed"], 1);
+        assert!(src.join("a.txt").exists(), "the file stays where it is");
+        let left = value(app.dispatch(&Invocation::new("shelf.list")).unwrap());
+        assert_eq!(left.as_array().unwrap().len(), 1);
+        // Dropped or pasted on it, by where they are.
+        let drop = app
+            .verbs(&Location::parse("shelf:"))
+            .drop
+            .expect("takes drops");
+        let mut args = drop.args.clone();
+        args["entries"] = serde_json::json!([EntryRef::from_path(src.join("a.txt")).unwrap()]);
+        let v = value(
+            app.dispatch(&Invocation {
+                name: drop.name,
+                args,
+            })
+            .unwrap(),
+        );
+        assert_eq!(v["added"], 1);
     }
 
     #[test]

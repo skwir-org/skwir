@@ -32,6 +32,27 @@ pub struct EntryId {
     pub ino: u64,
 }
 
+impl EntryId {
+    /// The device number no filesystem gives: a place's (ADR-032).
+    pub const PLACE_DEV: u64 = u64::MAX;
+
+    /// A place's identity, from what makes it the place it is (a tag's
+    /// name, hashed by its provider): the same each time it is listed.
+    pub const fn place(key: u64) -> EntryId {
+        EntryId {
+            dev: Self::PLACE_DEV,
+            ino: key,
+        }
+    }
+
+    /// Whether this is a place's: an entry that is no file but a location
+    /// of its own, shown as a folder (a tag's in a tag location), which
+    /// opens where `OpenLocation::location_of` says and has no path.
+    pub const fn is_place(self) -> bool {
+        self.dev == Self::PLACE_DEV
+    }
+}
+
 /// Kind as reported by the directory listing (`d_type`), before any stat.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -176,6 +197,16 @@ pub mod keys {
     /// `Value::List` of two `Value::Float` (latitude, longitude, degrees).
     /// Read on demand (`crate::fields`), never at hydration (ADR-020).
     pub const POSITION: &str = "position";
+    /// How many files a place holds (`EntryId::is_place`), `Value::UInt`:
+    /// what its row says where a folder's size would be, and what sorting
+    /// by size orders places by. A place's is known when it is listed.
+    pub const FILES: &str = "files";
+    /// The tag a place of a tag location stands for, `Value::Text`, its
+    /// full name (`Places/France`): what its color and its menu are of.
+    pub const PLACE_TAG: &str = "place_tag";
+    /// A few of the pictures a place holds, newest first, `Value::List`
+    /// of `Value::Text` paths: what the grid draws on its tile.
+    pub const PLACE_PICTURES: &str = "place_pictures";
 }
 
 /// The metadata bag. Keys are sorted for deterministic serialization.
@@ -214,9 +245,10 @@ impl Metadata {
         self.fields.is_empty()
     }
 
-    /// Whether a stat has populated this bag (size is always set by stat).
+    /// Whether a stat has populated this bag (size is always set by stat),
+    /// or, for a place, its provider (which counts its files).
     pub fn is_hydrated(&self) -> bool {
-        self.fields.contains_key(keys::SIZE)
+        self.fields.contains_key(keys::SIZE) || self.fields.contains_key(keys::FILES)
     }
 }
 
@@ -263,6 +295,11 @@ impl Entry {
 
     pub fn name_str(&self) -> std::borrow::Cow<'_, str> {
         self.name.to_string_lossy()
+    }
+
+    /// Whether the entry is a place, no file: see `EntryId::is_place`.
+    pub fn is_place(&self) -> bool {
+        self.id.is_place()
     }
 
     /// Whether the entry opens as a folder: a directory, or a link that

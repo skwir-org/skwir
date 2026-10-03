@@ -305,6 +305,27 @@ current source before assuming a planned crate, command, or API exists.
   the listing, not the folder. Tests that need a volume refusing
   attributes run against one named by `BIBLI_NO_XATTR_DIR` (a
   `bindfs --xattr-none` mount).
+- **Places, trails and verbs** (ADR-032). A location that is no folder
+  can list places, entries that are no files but locations of their own
+  (`EntryId::place`): every view shows one as a folder (with its tag's
+  mark, `icons::with_tag`, for a tag's), opening it goes where
+  `OpenLocation::location_of` says (`Pane::location_of`), and it has no
+  path, so what acts on files says `!place` in its `when`. Its provider
+  counts what it holds (`keys::FILES`: its size column, its sort by
+  size). Such a location reads as a trail (`LocationProvider::trail`,
+  from its text: the folder it is of, its places, what narrows it), which
+  the address draws as a folder's (`trail.rs`, read once per location),
+  whose chevrons list `LocationProvider::places` on a worker, and which
+  Up walks back (`App::parent`: a search goes up to the folder it looks
+  in). What gestures mean there is the location's
+  (`LocationProvider::verbs`): a drop or a paste (`drop`), Delete
+  (`remove`, run by the core `take_out`), New Folder's key and item
+  (`create`, `ui.create_here`), F2 on a place (`rename`). A gesture it
+  does not give keeps a folder's meaning or does nothing. Keys follow the
+  place, commands and menu items keep their meaning: on the shelf Delete
+  unshelves, beside a Move to Trash that still trashes. The menu adds the
+  location's own items in its words (`menu::verb_items`), and the pane's
+  key context says `refs`, `drops`, `creates` and `place` for bindings.
 - **Nothing to list is a state, not a blank.** `placeholder.rs` says why a
   pane is empty (empty folder, no results, empty shelf) or why it failed, in
   the user's words with the system's message as the detail, and offers the
@@ -659,8 +680,9 @@ current source before assuming a planned crate, command, or API exists.
 - **Conventions.** Key bindings use gpui notation (`ctrl-shift-n`, `G` for
   Shift+G, `g g` for a sequence); `when` is
   a space-separated list of tokens that must all hold (`selection`, `single`,
-  `dir`, `file`, `empty`, `folder`, `sweep`; `pane`/`address`/`palette` for context);
-  `a|b` holds when either does. A command that works in a folder but can
+  `dir`, `file`, `empty`, `folder`, `sweep`, `place`, `refs`, `drops`,
+  `creates`; `pane`/`address`/`palette` for context);
+  `a|b` holds when either does, `!a` when it does not. A command that works in a folder but can
   run from a search uses `App::work_dir`, not `pane_dir`. Menu `order` groups
   by the hundreds digit (0xx open, 1xx edit, 2xx create, 3xx destructive,
   4xx misc); the UI draws separators between groups. `ui.*` commands are

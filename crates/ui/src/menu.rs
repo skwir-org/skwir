@@ -19,6 +19,10 @@ use crate::theme::Theme;
 /// What the selection looks like, and where it is, for `when` evaluation
 /// and key contexts.
 #[derive(Clone, Copy, Debug, Default)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent flags, one per token of the `when` vocabulary"
+)]
 pub struct SelectionCtx {
     pub count: usize,
     pub all_dirs: bool,
@@ -28,13 +32,34 @@ pub struct SelectionCtx {
     /// The pane shows a folder, not a search, the shelf or another virtual
     /// location.
     pub folder: bool,
+    /// Every selected entry is a place, no file (`EntryId::is_place`: a
+    /// tag's in a tag location).
+    pub all_places: bool,
+    /// The location shown lists files kept elsewhere, which taking out
+    /// leaves where they are (`Verbs::remove`): Delete runs `take_out`.
+    pub refs: bool,
+    /// The location shown takes files dropped or pasted (`Verbs::drop`).
+    pub drops: bool,
+    /// The location shown makes new places (`Verbs::create`).
+    pub creates: bool,
 }
 
 /// What `when` can say about the selection, for menu items and key bindings
 /// alike: one vocabulary, one table. `empty` is nothing selected; `folder`
 /// is the pane showing a folder, which an item about the folder shown (New
 /// Folder, Bookmark This Folder) needs beside `empty`.
-pub const SELECTION_TOKENS: [&str; 6] = ["empty", "selection", "single", "dir", "file", "folder"];
+pub const SELECTION_TOKENS: [&str; 10] = [
+    "empty",
+    "selection",
+    "single",
+    "dir",
+    "file",
+    "folder",
+    "place",
+    "refs",
+    "drops",
+    "creates",
+];
 
 /// A token as the table spells it: `none` is the old spelling of `empty`.
 pub fn canonical_token(token: &str) -> &str {
@@ -51,6 +76,10 @@ impl SelectionCtx {
             "dir" => self.count > 0 && self.all_dirs,
             "file" => self.count > 0 && self.all_files,
             "folder" => self.folder,
+            "place" => self.count > 0 && self.all_places,
+            "refs" => self.refs,
+            "drops" => self.drops,
+            "creates" => self.creates,
             _ => false,
         }
     }
@@ -65,9 +94,10 @@ impl SelectionCtx {
 }
 
 /// Space-separated tokens, all of which must hold; a token of
-/// alternatives (`selection|folder`) holds when one of them does. `None`
-/// always holds. `kind:` and `has:` ask `types`
-/// (`bibli_core::registry::MenuItem` has the vocabulary).
+/// alternatives (`selection|folder`) holds when one of them does, and one
+/// after `!` when it does not (`!refs`). `None` always holds. `kind:` and
+/// `has:` ask `types` (`bibli_core::registry::MenuItem` has the
+/// vocabulary).
 pub fn when_holds(when: Option<&str>, ctx: SelectionCtx, types: &SelectionTypes) -> bool {
     when.is_none_or(|when| {
         when.split_whitespace()
@@ -76,6 +106,9 @@ pub fn when_holds(when: Option<&str>, ctx: SelectionCtx, types: &SelectionTypes)
 }
 
 fn token_holds(token: &str, ctx: SelectionCtx, types: &SelectionTypes) -> bool {
+    if let Some(not) = token.strip_prefix('!') {
+        return !token_holds(not, ctx, types);
+    }
     match token.split_once(':') {
         Some(("kind", what)) => types.every(what),
         Some(("has", what)) => types.some(what),
@@ -354,10 +387,11 @@ impl Shell {
         } else {
             SelectionTypes::default()
         };
-        let items: Vec<MenuItem> = statics
+        let mut items: Vec<MenuItem> = statics
             .into_iter()
             .filter(|m| when_holds(m.when.as_deref(), ctx, &types))
             .collect();
+        items.extend(self.verb_items(ctx));
         let answers = sources
             .into_iter()
             .filter(|source| when_holds(source.when.as_deref(), ctx, &types))
@@ -400,6 +434,31 @@ impl Shell {
     /// `ui.context_menu` (Menu key, Shift+F10): the menu a right-click on
     /// the selection opens, or on the background with nothing selected,
     /// from the keyboard, its first item ready for Enter.
+    /// What the location shown says its gestures are (`Verbs`), as
+    /// items in its words: taking the selection out (what Delete does
+    /// there, beside Move to Trash, which keeps its meaning) and making a
+    /// new place, on the background.
+    fn verb_items(&self, ctx: SelectionCtx) -> Vec<MenuItem> {
+        let verbs = &self.ui().place.verbs;
+        let item = |title: &str, command: &str, order: i32, icon: &str| MenuItem {
+            menu: "context".into(),
+            title: title.into(),
+            command: bibli_core::command::Invocation::new(command),
+            when: None,
+            order,
+            icon: Some(icon.into()),
+            submenu: None,
+        };
+        let mut items = Vec::new();
+        if let Some(remove) = verbs.remove.as_ref().filter(|_| ctx.count > 0) {
+            items.push(item(&remove.title, "take_out", 295, "minus"));
+        }
+        if let Some(create) = verbs.create.as_ref().filter(|_| ctx.count == 0) {
+            items.push(item(&create.title, "ui.create_here", 200, "folder-plus"));
+        }
+        items
+    }
+
     pub fn open_context_menu_here(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(ix) = self.cursor_index() {
             self.with_view(|v, _| v.scroll_to(ix));
@@ -1022,8 +1081,7 @@ mod tests {
             count,
             all_dirs,
             all_files,
-            bytes: 0,
-            folder: false,
+            ..SelectionCtx::default()
         }
     }
 
@@ -1054,6 +1112,27 @@ mod tests {
         assert!(!when_holds(Some("single selection|folder"), folder));
         assert!(when_holds(Some("empty"), ctx(0, true, true)));
         assert!(!when_holds(Some("empty"), ctx(1, true, true)));
+        // A token after `!` holds when it does not.
+        let places = SelectionCtx {
+            all_places: true,
+            refs: true,
+            ..ctx(2, true, false)
+        };
+        assert!(when_holds(Some("place"), places));
+        assert!(!when_holds(Some("selection !place"), places));
+        assert!(when_holds(Some("selection !place"), ctx(2, true, false)));
+        assert!(when_holds(Some("selection refs"), places));
+        assert!(!when_holds(Some("selection !refs"), places));
+        assert!(
+            !when_holds(
+                Some("place"),
+                SelectionCtx {
+                    all_places: true,
+                    ..ctx(0, true, true)
+                }
+            ),
+            "nothing selected is no place"
+        );
     }
 
     #[test]

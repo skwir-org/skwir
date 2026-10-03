@@ -87,6 +87,19 @@ impl LocationProvider for QueryProvider {
         Some(crate::suggested_name(&location.rest))
     }
 
+    /// A search is in the folder it looks in: Up goes there.
+    fn trail(&self, location: &Location) -> Option<bibli_core::location::Trail> {
+        let query = lang::parse(&location.rest).ok()?;
+        Some(bibli_core::location::Trail {
+            base: Some(query.root),
+            crumbs: vec![bibli_core::location::Crumb::new(
+                crate::suggested_name(&location.rest),
+                location.clone(),
+            )],
+            filters: Vec::new(),
+        })
+    }
+
     fn open(&self, location: &Location, ctx: OpenContext) -> anyhow::Result<Arc<dyn OpenLocation>> {
         let query = lang::parse(&location.rest).map_err(|e| anyhow::anyhow!("query: {e}"))?;
         // Whether the root is a folder is I/O (a sleeping disk can block

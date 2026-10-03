@@ -283,7 +283,11 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let Some(dest) = self.pane_folder(self.pane) else {
-            self.set_status("drop target is not a directory", true, cx);
+            // A location that takes files (a tag's) says what a drop does.
+            let shown = self.app.pane_location(self.pane);
+            if !shown.is_some_and(|place| self.drop_paths_on_place(paths, &place, window, cx)) {
+                self.set_status("drop target is not a directory", true, cx);
+            }
             return;
         };
         self.drop_paths_into(paths, &dest, window, cx);
@@ -344,6 +348,81 @@ pub fn droppable_dir<E: InteractiveElement>(el: E, dir: PathBuf, cx: &mut Contex
         .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
             this.drop_paths_into(paths.paths(), &dir2, window, cx);
         }))
+}
+
+/// Make an element a drop target onto `place`, a location that is no
+/// folder but takes files (`Verbs::drop`: a tag's gives them its tag),
+/// for in-window drags and for compositor drags.
+pub fn droppable_place<E: InteractiveElement>(
+    el: E,
+    place: bibli_core::Location,
+    cx: &mut Context<Shell>,
+) -> E {
+    let theme = cx.global::<Theme>().clone();
+    let (tint, edge) = (theme.drop_target, theme.accent);
+    let place2 = place.clone();
+    el.drag_over::<DragPayload>(move |s, _, _, _| s.bg(tint).border_color(edge))
+        .on_drop(cx.listener(move |this, payload: &DragPayload, window, cx| {
+            cx.stop_propagation();
+            this.drop_on_place(payload.pane, &place, window, cx);
+        }))
+        .drag_over::<ExternalPaths>(move |s, _, _, _| s.bg(tint).border_color(edge))
+        .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
+            cx.stop_propagation();
+            this.drop_paths_on_place(paths.paths(), &place2, window, cx);
+        }))
+}
+
+impl Shell {
+    /// `from`'s selection dropped on `place`, a location that is no
+    /// folder: what its provider says a drop means there (`Verbs::drop`),
+    /// told whether the files move (not with Ctrl: a tag's then takes
+    /// them out of the one they were dragged from). Returns whether
+    /// `place` takes drops.
+    pub fn drop_on_place(
+        &mut self,
+        from: PaneId,
+        place: &bibli_core::Location,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(drop) = self.app.verbs(place).drop else {
+            return false;
+        };
+        let mut args = drop.args.clone();
+        if !args.is_object() {
+            args = serde_json::json!({});
+        }
+        args["pane"] = serde_json::json!(from);
+        args["move"] = serde_json::json!(!window.modifiers().control);
+        self.run(&drop.name, args, window, cx);
+        true
+    }
+
+    /// Paths from another application (or our own drag back through the
+    /// compositor) dropped on `place`, as `drop_on_place`.
+    pub fn drop_paths_on_place(
+        &mut self,
+        paths: &[PathBuf],
+        place: &bibli_core::Location,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.is_own_drag(paths) {
+            return self.drop_on_place(self.pane, place, window, cx);
+        }
+        let Some(drop) = self.app.verbs(place).drop else {
+            return false;
+        };
+        let entries: Vec<EntryRef> = paths.iter().filter_map(EntryRef::from_path).collect();
+        let mut args = drop.args.clone();
+        if !args.is_object() {
+            args = serde_json::json!({});
+        }
+        args["entries"] = serde_json::json!(entries);
+        self.run(&drop.name, args, window, cx);
+        true
+    }
 }
 
 /// Make an entry's row take what a dragged place gives files (a tag's

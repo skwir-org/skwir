@@ -218,6 +218,12 @@ pub trait OpenLocation: Send + Sync {
     /// Where this entry lives on disk, if anywhere. Operations need this.
     fn path_of(&self, id: EntryId) -> Option<PathBuf>;
 
+    /// Where a place (`EntryId::is_place`: an entry that is no file)
+    /// leads: what opening it shows. `None` for what `path_of` places.
+    fn location_of(&self, _id: EntryId) -> Option<Location> {
+        None
+    }
+
     /// Re-list from scratch (emits `Removed` for gone entries, `Added` for new).
     fn refresh(&self);
 
@@ -237,6 +243,115 @@ pub trait LocationProvider: Send + Sync {
     fn title(&self, _location: &Location) -> Option<String> {
         None
     }
+
+    /// `location` as a trail of places, for one that is no folder but
+    /// lives in a hierarchy of its own (a tag in its categories): what the
+    /// address draws, what Up goes back along. Answered from the text
+    /// alone, like `title`.
+    fn trail(&self, _location: &Location) -> Option<Trail> {
+        None
+    }
+
+    /// The places inside `location` (a tag's tags), each with where it
+    /// leads: what the trail's menus list. Called on a worker.
+    fn places(&self, _location: &Location) -> Vec<Crumb> {
+        Vec::new()
+    }
+
+    /// What gestures mean in `location`, when its entries are not its own
+    /// files (ADR-032). Answered from the text alone, like `title`.
+    fn verbs(&self, _location: &Location) -> Verbs {
+        Verbs::default()
+    }
+}
+
+/// One place of a trail: its words, and where it leads.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Crumb {
+    pub label: String,
+    pub location: Location,
+}
+
+impl Crumb {
+    pub fn new(label: impl Into<String>, location: Location) -> Self {
+        Crumb {
+            label: label.into(),
+            location,
+        }
+    }
+}
+
+/// A location that is no folder, read as a trail of places
+/// (`LocationProvider::trail`): a tag location reads `Home › Tags ›
+/// Places › France`, then what narrows it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Trail {
+    /// The folder it is of, drawn first as that folder's own trail: the
+    /// folder whose tags a tag location shows. What Up goes to from the
+    /// first crumb.
+    pub base: Option<PathBuf>,
+    /// The places it is in, outermost first; the last is itself.
+    pub crumbs: Vec<Crumb>,
+    /// What narrows it ("with family"), each with where it leads without
+    /// it: a pill after the crumbs, whose × goes there. Kept while going
+    /// up and down the crumbs.
+    pub filters: Vec<Crumb>,
+}
+
+impl Trail {
+    /// Where Up goes from the location: the crumb before the last, else
+    /// the folder it is of.
+    pub fn parent(&self) -> Option<Location> {
+        match self.crumbs.len() {
+            0 | 1 => self.base.as_ref().map(Location::from_path),
+            n => Some(self.crumbs[n - 2].location.clone()),
+        }
+    }
+}
+
+/// A gesture's words and command (`Verbs`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Verb {
+    /// What a menu item says: "Remove from “France”".
+    pub title: String,
+    pub command: crate::command::Invocation,
+}
+
+impl Verb {
+    pub fn new(title: impl Into<String>, command: crate::command::Invocation) -> Self {
+        Verb {
+            title: title.into(),
+            command,
+        }
+    }
+}
+
+/// What gestures mean in a location whose entries are not its own files,
+/// but files kept elsewhere it lists (a tag's, the shelf's) and places
+/// (ADR-032). Each `None` keeps what it means in a folder; a gesture with
+/// no meaning in such a location does nothing there. The commands it
+/// gives say what they act on: `pane` (that pane's selection) is added
+/// when they run.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Verbs {
+    /// Files dropped or pasted here: run with `pane` (the pane they are
+    /// dragged from: its selection, and where they are) or `entries`
+    /// (another application's files, or those of the clipboard with
+    /// `from`, where they were cut or copied), and `move` when they were
+    /// cut or dragged without Ctrl. A tag's gives them its tag, and moved
+    /// from another tag takes that one off.
+    pub drop: Option<crate::command::Invocation>,
+    /// Taking the selection out: the Delete key there (`take_out`), and a
+    /// menu item of these words. The files stay where they are: a tag's
+    /// takes its tag off them, the shelf's unshelves them. Move to Trash
+    /// keeps its meaning beside it.
+    pub remove: Option<Verb>,
+    /// Making a new place here: New Folder's key and menu item ("New
+    /// Tag…").
+    pub create: Option<Verb>,
+    /// Renaming the place this location is, for its entry where it is
+    /// listed (F2): run with the new name as `to`.
+    pub rename: Option<Verb>,
 }
 
 /// What to sort a listing by. Directories always come first.
@@ -359,7 +474,8 @@ impl Delta {
     fn between(old: &Entry, new: &Entry) -> Self {
         use crate::entry::keys;
         let name = old.name != new.name;
-        let size = old.metadata.value(keys::SIZE) != new.metadata.value(keys::SIZE);
+        let size = old.metadata.value(keys::SIZE) != new.metadata.value(keys::SIZE)
+            || old.metadata.value(keys::FILES) != new.metadata.value(keys::FILES);
         let modified = old.metadata.value(keys::MODIFIED) != new.metadata.value(keys::MODIFIED);
         let rating = old.metadata.value(keys::RATING) != new.metadata.value(keys::RATING);
         Delta {
@@ -707,9 +823,14 @@ impl Listing {
         let e = &slot.entry;
         let num = match spec.key {
             SortKey::Name => 0,
+            // A place by how many files it holds.
             SortKey::Size => e
                 .metadata
-                .value(keys::SIZE)
+                .value(if e.is_place() {
+                    keys::FILES
+                } else {
+                    keys::SIZE
+                })
                 .and_then(Value::as_u64)
                 .unwrap_or(0),
             SortKey::Modified => e

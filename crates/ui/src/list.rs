@@ -165,10 +165,11 @@ fn summarize(pane: &bibli_core::workspace::Pane) -> SelectionCtx {
         count: pane.selection.len(),
         all_dirs: true,
         all_files: true,
-        bytes: 0,
-        folder: false,
+        all_places: true,
+        ..SelectionCtx::default()
     };
     for id in pane.selection.iter() {
+        ctx.all_places &= id.is_place();
         match pane.entry(id) {
             Some(e) if e.is_dir() => ctx.all_files = false,
             Some(e) => {
@@ -198,6 +199,14 @@ impl Shell {
         // Where the pane is, read every time: navigating replaces the
         // listing, whose version can then repeat the cached one.
         let folder = pane.location().is_some_and(bibli_core::Location::is_path);
+        let verbs = &self.ui().place.verbs;
+        let here = |ctx: SelectionCtx| SelectionCtx {
+            folder,
+            refs: verbs.remove.is_some(),
+            drops: verbs.drop.is_some(),
+            creates: verbs.create.is_some(),
+            ..ctx
+        };
         let key = (
             pane.selection.revision(),
             pane.listing.version(),
@@ -207,11 +216,11 @@ impl Shell {
         if let Some((at, ctx)) = cache.get()
             && at == key
         {
-            return SelectionCtx { folder, ..ctx };
+            return here(ctx);
         }
         let ctx = summarize(pane);
         cache.set(Some((key, ctx)));
-        SelectionCtx { folder, ..ctx }
+        here(ctx)
     }
 
     /// What the selected entries are, by name (a link's target's), for a
@@ -815,9 +824,17 @@ impl Shell {
                 if payload.pane == pane {
                     return;
                 }
-                match this.pane_folder(pane) {
-                    Some(dest) => this.drop_into(payload.pane, &dest, window, cx),
-                    None => this.set_status("drop target is not a directory", true, cx),
+                if let Some(dest) = this.pane_folder(pane) {
+                    this.drop_into(payload.pane, &dest, window, cx);
+                } else {
+                    // A location that takes files (a tag's) says what a
+                    // drop does there.
+                    let shown = this.app.pane_location(pane);
+                    let taken = shown
+                        .is_some_and(|place| this.drop_on_place(payload.pane, &place, window, cx));
+                    if !taken {
+                        this.set_status("drop target is not a directory", true, cx);
+                    }
                 }
             }))
             .drag_over::<ExternalPaths>(move |s, _, _, _| s.bg(tint))

@@ -391,6 +391,37 @@ impl App {
         )
     }
 
+    /// `location` as a trail of places, when its provider reads it as one
+    /// (`LocationProvider::trail`): answered from its text.
+    pub fn trail(&self, location: &Location) -> Option<crate::location::Trail> {
+        self.provider(&location.scheme)?.trail(location)
+    }
+
+    /// Where Up goes from `location`: a folder's parent, else the place
+    /// before it in its trail. `None` at the top.
+    pub fn parent(&self, location: &Location) -> Option<Location> {
+        match location.path() {
+            Some(path) => path.parent().map(Location::from_path),
+            None => self.trail(location)?.parent(),
+        }
+    }
+
+    /// What gestures mean in `location` (`LocationProvider::verbs`): a
+    /// folder's meanings when its provider says nothing.
+    pub fn verbs(&self, location: &Location) -> crate::location::Verbs {
+        self.provider(&location.scheme)
+            .map(|provider| provider.verbs(location))
+            .unwrap_or_default()
+    }
+
+    /// The places inside `location`, for the trail's menus. Asks the
+    /// provider, which may read: on a worker.
+    pub fn places_in(&self, location: &Location) -> Vec<crate::location::Crumb> {
+        self.provider(&location.scheme)
+            .map(|provider| provider.places(location))
+            .unwrap_or_default()
+    }
+
     /// Open a location in a pane, replacing what it showed. Returns immediately;
     /// entries arrive through `pump`.
     pub fn navigate(&self, pane: PaneId, location: &Location) -> anyhow::Result<()> {
@@ -1048,14 +1079,38 @@ mod builtin {
             "core",
             "up",
             "Parent directory",
-            "Go to the parent of the current directory",
+            "Go to the parent of the current directory, or to the place before the one shown in its trail (a tag's category, the folder a search looks in)",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
-                let dir = app.pane_dir(pane)?;
-                if let Some(parent) = dir.parent() {
-                    app.navigate(pane, &Location::from_path(parent))?;
+                let shown = app
+                    .pane_location(pane)
+                    .ok_or_else(|| anyhow::anyhow!("the pane shows nothing"))?;
+                if let Some(parent) = app.parent(&shown) {
+                    app.navigate(pane, &parent)?;
                 }
                 Ok(Outcome::Done)
+            },
+        );
+
+        c.register::<PaneArg, _>(
+            "core",
+            "take_out",
+            "Take out of here",
+            "Take the selection out of a location that lists files kept elsewhere, as it says (a tag's takes its tag off them, the shelf's unshelves them): the files stay where they are. What the Delete key does there",
+            |a, app| {
+                let pane = app.pane_or_active(a.pane);
+                let shown = app
+                    .pane_location(pane)
+                    .ok_or_else(|| anyhow::anyhow!("the pane shows nothing"))?;
+                let Some(remove) = app.verbs(&shown).remove else {
+                    anyhow::bail!("nothing is taken out of here: Move to Trash deletes");
+                };
+                let mut invocation = remove.command;
+                if !invocation.args.is_object() {
+                    invocation.args = serde_json::json!({});
+                }
+                invocation.args["pane"] = serde_json::json!(pane);
+                app.dispatch(&invocation)
             },
         );
 
