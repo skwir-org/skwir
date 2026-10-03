@@ -274,8 +274,42 @@ fn pinned_tags_replace_the_suggestions_in_the_order_put() {
     assert!(dispatch("tags.pin", serde_json::json!({ "tag": " " })).is_err());
 }
 
+/// The tags `root`'s tag location lists at its top, with how many files
+/// each holds, by name.
+fn tags_at_top(app: &App, pane: bibli_core::workspace::PaneId) -> Vec<(String, u64)> {
+    let ws = app.workspace.read();
+    let mut have: Vec<(String, u64)> = ws
+        .pane(pane)
+        .unwrap()
+        .listing
+        .iter()
+        .filter(|e| e.is_place())
+        .map(|e| {
+            let files = e
+                .metadata
+                .value(bibli_core::entry::keys::FILES)
+                .and_then(bibli_core::Value::as_u64)
+                .unwrap_or_default();
+            (e.name_str().into_owned(), files)
+        })
+        .collect();
+    have.sort_by_key(|(t, _)| t.to_lowercase());
+    have
+}
+
+/// The top of `root`'s tags, shown in `pane`, listed whole.
+fn show_tags_of(app: &App, pane: bibli_core::workspace::PaneId, root: &std::path::Path) {
+    let location = bibli_plugin_tags::location::Address {
+        scope: Some(root.to_path_buf()),
+        ..Default::default()
+    }
+    .location();
+    app.navigate(pane, &location).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+}
+
 #[test]
-fn the_tags_view_counts_the_files_under_its_folder_and_what_is_applied() {
+fn a_tag_location_counts_the_files_under_its_folder_and_what_is_applied() {
     let tmp = home_tempdir();
     let root = tmp.path().join("it's home");
     std::fs::create_dir_all(root.join("sub")).unwrap();
@@ -297,37 +331,16 @@ fn the_tags_view_counts_the_files_under_its_folder_and_what_is_applied() {
     app.plugins
         .add(Arc::new(bibli_plugin_tags::TagsPlugin::default()), &app);
     let pane = app.workspace.read().active_id();
-    app.navigate(pane, &Location::from_path(&root)).unwrap();
     let dispatch =
         |name: &str, args: serde_json::Value| app.dispatch(&Invocation::with_args(name, &args));
-    dispatch("tags.lens", serde_json::json!({ "pane": pane })).unwrap();
+    show_tags_of(&app, pane, &root);
     let counted = |want: &[(&str, u64)]| {
+        let want: Vec<(String, u64)> = want.iter().map(|(t, n)| ((*t).to_owned(), *n)).collect();
         until(&app, "the counts", || {
-            let Ok(bibli_core::command::Outcome::Value(v)) =
-                dispatch("tags.lens_status", serde_json::json!({ "pane": pane }))
-            else {
-                panic!("a value")
-            };
-            let have: Vec<(String, u64)> = v["tags"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|r| {
-                    (
-                        r["tag"].as_str().unwrap().to_owned(),
-                        r["files"].as_u64().unwrap(),
-                    )
-                })
-                .collect();
-            let want: Vec<(String, u64)> =
-                want.iter().map(|(t, n)| ((*t).to_owned(), *n)).collect();
-            (v["walking"] == false && v["checking"] == false && have == want).then_some(v)
-        })
+            (tags_at_top(&app, pane) == want).then_some(())
+        });
     };
-    let v = counted(&[("Work", 2), ("x", 1)]);
-    assert_eq!(v["files"], 2);
-    assert_eq!(v["tags"][0]["pinned"], false);
-    assert!(v["tags"][0]["color"].is_string());
+    counted(&[("Work", 2), ("x", 1)]);
 
     // What is applied is counted as it is, without walking again.
     let entry = bibli_core::op::EntryRef::from_path(root.join("c.txt")).unwrap();
@@ -370,21 +383,18 @@ fn the_tags_view_counts_the_files_under_its_folder_and_what_is_applied() {
     );
     counted(&[("new", 1), ("Work", 1), ("x", 2)]);
 
-    // Let go and opened again, the folder is covered: the counts are those
-    // of the count, as of when it began, and a check finds nothing new.
-    dispatch("tags.lens_release", serde_json::json!({ "pane": pane })).unwrap();
-    dispatch("tags.lens", serde_json::json!({ "pane": pane })).unwrap();
-    let v = counted(&[("new", 1), ("Work", 1), ("x", 2)]);
-    assert!(v["counted"].is_u64(), "{v}");
-
-    // Let go, it shows nothing.
-    dispatch("tags.lens_release", serde_json::json!({ "pane": pane })).unwrap();
-    let Ok(bibli_core::command::Outcome::Value(v)) =
-        dispatch("tags.lens_status", serde_json::json!({ "pane": pane }))
-    else {
+    // Shown again, the folder is covered: the counts are those of the
+    // count, as of when it began.
+    app.navigate(pane, &Location::from_path(&root)).unwrap();
+    show_tags_of(&app, pane, &root);
+    counted(&[("new", 1), ("Work", 1), ("x", 2)]);
+    let Ok(bibli_core::command::Outcome::Value(v)) = dispatch(
+        "tags.counted",
+        serde_json::json!({ "root": PathArg::from(root.as_path()) }),
+    ) else {
         panic!("a value")
     };
-    assert!(v["root"].is_null() && v["tags"].as_array().unwrap().is_empty());
+    assert!(v["counted"].is_u64() && v["counting"] == false, "{v}");
 }
 
 #[test]
@@ -445,35 +455,6 @@ fn a_tags_pin_and_color_follow_it_renamed_everywhere_and_come_back_with_undo() {
     );
 }
 
-/// The Tags view's counts for `pane`, once neither counting nor checking.
-fn settled(
-    app: &App,
-    pane: bibli_core::workspace::PaneId,
-) -> (Vec<(String, u64)>, serde_json::Value) {
-    until(app, "the counts", || {
-        let Ok(bibli_core::command::Outcome::Value(v)) = app.dispatch(&Invocation::with_args(
-            "tags.lens_status",
-            &serde_json::json!({ "pane": pane }),
-        )) else {
-            panic!("a value")
-        };
-        (v["root"].is_string() && v["walking"] == false && v["checking"] == false).then(|| {
-            let have = v["tags"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|r| {
-                    (
-                        r["tag"].as_str().unwrap().to_owned(),
-                        r["files"].as_u64().unwrap(),
-                    )
-                })
-                .collect();
-            (have, v)
-        })
-    })
-}
-
 #[test]
 fn a_folder_counted_is_checked_after_a_restart_for_what_others_changed() {
     let tmp = home_tempdir();
@@ -490,12 +471,8 @@ fn a_folder_counted_is_checked_after_a_restart_for_what_others_changed() {
         app.plugins
             .add(Arc::new(bibli_plugin_tags::TagsPlugin::default()), &app);
         let pane = app.workspace.read().active_id();
-        app.navigate(pane, &Location::from_path(&root)).unwrap();
-        app.dispatch(&Invocation::with_args(
-            "tags.lens",
-            &serde_json::json!({ "pane": pane }),
-        ))
-        .unwrap();
+        // Complete once counted, or checked when a count covers it.
+        show_tags_of(&app, pane, &root);
         (app, pane)
     };
     let owned = |v: &[(&str, u64)]| {
@@ -505,7 +482,7 @@ fn a_folder_counted_is_checked_after_a_restart_for_what_others_changed() {
     };
     {
         let (app, pane) = start();
-        assert_eq!(settled(&app, pane).0, owned(&[("work", 2), ("x", 1)]));
+        assert_eq!(tags_at_top(&app, pane), owned(&[("work", 2), ("x", 1)]));
         // The index, covering the folder, is written for the next run.
         let slot = bibli_core::cache::Cache::new(tmp.path().join("state/cache")).namespace("tags");
         until(&app, "the index written", || {
@@ -521,9 +498,9 @@ fn a_folder_counted_is_checked_after_a_restart_for_what_others_changed() {
     std::fs::write(root.join("sub/c.txt"), b"x").unwrap();
     write_tags(&root.join("sub/c.txt"), &tags(&["x"])).unwrap();
     let (app, pane) = start();
-    let (counts, v) = settled(&app, pane);
-    assert_eq!(counts, owned(&[("late", 1), ("work", 1), ("x", 1)]));
-    assert!(v["counted"].is_u64());
+    until(&app, "the counts checked", || {
+        (tags_at_top(&app, pane) == owned(&[("late", 1), ("work", 1), ("x", 1)])).then_some(())
+    });
 }
 
 #[test]

@@ -54,13 +54,14 @@ pub struct Report {
     /// A `tag:` search of the whole tree through the query plugin, until
     /// `Complete`.
     pub tag_search: Stat,
-    /// The Tags view opened again on the whole tree, counted before and
-    /// unchanged since: the check of what changed, until it settles.
+    /// The tags of the whole tree checked again (F5 in its tag location),
+    /// counted before and unchanged since: the check of what changed,
+    /// until it ends.
     pub tags_check: Stat,
     /// The tags index (`bibli_plugin_tags::index`) learning 500 000
     /// tagged files, in batches as a count teaches it.
     pub tags_index_learn: Stat,
-    /// Then the counts under the home folder, as the Tags view asks.
+    /// Then the counts under the home folder, as a tag location asks.
     pub tags_index_tally: Stat,
     /// Then one file retagged and the index written, as after an edit.
     pub tags_index_change: Stat,
@@ -428,9 +429,9 @@ pub fn tag_search(root: &Path, profile: Profile, runs: usize) -> Stat {
     )
 }
 
-/// The Tags view on the whole tree: counted once in full, then opened
-/// again `runs` times, each a check that finds nothing changed, timed
-/// until its status settles.
+/// The tags of the whole tree browsed as folders (ADR-032): counted once in
+/// full, then checked again `runs` times (F5), each check finding nothing
+/// changed, timed until it ends.
 pub fn tags_check(root: &Path, profile: Profile, runs: usize) -> Stat {
     use bibli_core::command::{Invocation, Outcome};
     let dir = root.join(profile.name());
@@ -440,37 +441,40 @@ pub fn tags_check(root: &Path, profile: Profile, runs: usize) -> Stat {
     let app = tags_app();
     let root = std::fs::canonicalize(&dir).expect("tree");
     let pane = app.workspace.read().active_id();
-    app.navigate(pane, &bibli_core::Location::from_path(&root))
-        .expect("navigate");
     let call = |name: &str, args: serde_json::Value| {
         app.dispatch(&Invocation::with_args(name, &args))
             .expect(name)
     };
-    let settle = || loop {
-        app.pump();
-        if let Outcome::Value(v) = call("tags.lens_status", serde_json::json!({ "pane": pane }))
-            && v["root"].is_string()
-            && v["walking"] == false
-            && v["checking"] == false
-        {
-            assert!(v["error"].is_null(), "{v}");
-            return v;
-        }
-        std::thread::sleep(Duration::from_millis(1));
+    let counted = || {
+        let Outcome::Value(v) = call(
+            "tags.counted",
+            serde_json::json!({ "root": bibli_core::os_path::PathArg::from(root.as_path()) }),
+        ) else {
+            panic!("tags.counted answers a value");
+        };
+        v
     };
-    call(
-        "tags.lens",
-        serde_json::json!({ "pane": pane, "again": true }),
+    let location = bibli_plugin_tags::location::Address {
+        scope: Some(root.clone()),
+        ..Default::default()
+    }
+    .location();
+    app.navigate(pane, &location).expect("navigate");
+    // Its listing completes once the full count ends.
+    assert!(app.pump_until_complete(pane, Duration::from_secs(600)));
+    assert!(
+        counted()["counted"].is_u64(),
+        "a full count covers the tree"
     );
-    let counted = settle();
-    assert!(counted["counted"].is_u64(), "a full count covers the tree");
     Stat::of(
         (0..runs)
             .map(|_| {
-                call("tags.lens_release", serde_json::json!({ "pane": pane }));
                 let t = Instant::now();
-                call("tags.lens", serde_json::json!({ "pane": pane }));
-                settle();
+                call("refresh", serde_json::json!({ "pane": pane }));
+                while counted()["counting"] == true {
+                    app.pump();
+                    std::thread::sleep(Duration::from_millis(1));
+                }
                 t.elapsed()
             })
             .collect(),

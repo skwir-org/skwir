@@ -1,7 +1,7 @@
 //! The tagged files bibli has seen (ADR-026): every file the provider
 //! reads tells it whether the file has tags (a folder shown, a search's
-//! walk, a file changed and read again), and a count of the Tags view
-//! teaches it a whole folder (`count.rs`), which it then covers.
+//! walk, a file changed and read again), and a count of a tag location's
+//! folder teaches it the whole folder (`count.rs`), which it then covers.
 //!
 //! Kept small so it can hold a large library: each tag's name once, by
 //! number; files by folder, each folder's path once, with how many of its
@@ -15,8 +15,8 @@
 //! `Places/France/Paris`), as a search for it finds them: each tag knows
 //! its category, which is a tag of the index too. How much room it may take
 //! is the user's (`tags.index_mb`): past it, it learns no new file (those
-//! known stay current) and covers no folder, and the Tags view says its
-//! counts leave some out.
+//! known stay current) and covers no folder, and bibli says the tags
+//! leave some out.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsStr;

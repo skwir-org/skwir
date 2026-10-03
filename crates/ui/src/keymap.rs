@@ -600,7 +600,6 @@ fn condition(flag: &str) -> String {
         "drops" => "where files can be dropped",
         "creates" => "where new places can be made",
         "filtered" => "filtered by name",
-        "tags" => "in the Tags view",
         "labelling" => "while links are labelled",
         other => other,
     }

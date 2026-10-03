@@ -263,27 +263,23 @@ current source before assuming a planned crate, command, or API exists.
   several at once merge or go in one plan) takes its files from the
   search, not the index, as a plan proposed for review; under the home
   folder the tag's pin and color follow it, a step of the same plan
-  (`follow.rs`), so its undo puts them back. The Tags view (a
-  lens: the plugin's `lens.rs`, the shell's `tags_view.rs` draws) lists
-  the tags under the folder shown with how many files have each, as the
-  index tallies them, as a tree: a category's tags fold under it (Left
-  and Right, its arrow), and tags dragged onto a row go into it
-  (`tags.move`), dropped beside the rows out of theirs; the searches the
-  user kept follow the tree. The view counts a folder: shown a location
-  that is none (a tag's pill clicked), the pane returns to its listing
-  view. A count
-  (`count.rs`) teaches the index every
+  (`follow.rs`), so its undo puts them back. The tags under a folder
+  are browsed as folders, in any view (`tags:` locations, ADR-032,
+  below); there is no Tags view of its own. A tag location counts its
+  folder: a count (`count.rs`) teaches the index every
   tagged file under the folder and makes it cover the folder as of when
-  it began; opened again, even after a restart, the view shows those
-  counts at once and checks: it reads only the files (and companions)
+  it began; shown again, even after a restart, a tag location lists
+  those counts at once and checks, complete once checked: it reads only
+  the files (and companions)
   whose change time moved since, and whole the folders it did not see
   there (by device, inode and path: new or moved in) and those on a
   filesystem whose change times do not tell (`filesystem::
-  change_times_tell`: network, FUSE). Between, the index follows what
-  panes list and what bibli applies (tags, moves, trash). Count again
-  reads every file. Its own selection of tags is what its menu, Enter,
-  F2 and Delete act on, and what the pane's key context says is
-  selected.
+  change_times_tell`: network, FUSE). A folder counted or checked once
+  since bibli started is not checked again until F5. Between, the index
+  follows what panes list and what bibli applies (tags, moves, trash),
+  and the tag locations open list again at once. `tags.counted` says
+  whether a folder's tags are being counted, and since when a count
+  covers them.
 - **Files beside a file go where it goes** (ADR-028). A companion (a
   Mac's `._x`, an XMP sidecar, TagSpaces' `.ts/x.json`) is declared by
   name rules (`bibli_core::companions::Companion`, registered in
@@ -765,9 +761,9 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   in `crates/ui/src/views/`, not separate plugin crates.
 - Plugin views register owner-tagged `ViewSpec::named` descriptors; their GPUI
   renderers implement `PaneView` in `bibli-ui` and are resolved in
-  `views::named_renderer`. A view whose items are not the pane's entries
-  (the Tags view) takes the commands that would act on the files it
-  hides (`PaneView::command`): Enter, Delete and F2 act on what it shows. Do not hard-code plugin views into the toolbar or
+  `views::named_renderer`. A view shows the pane's entries: what is no
+  file is a place among them (ADR-032), never a selection of the view's
+  own. Do not hard-code plugin views into the toolbar or
   palette. Reconcile registration identity, including disable/re-enable between
   frames, and fall back to List when the active view disappears. Publish data,
   advance the descriptor revision, then wake the app; never query plugin data

@@ -60,8 +60,6 @@ pub struct PaneUi {
     /// lens goes back to.
     pub listing_view: &'static str,
     pub usage: UsageState,
-    /// The Tags view's counts and selection (`tags_view.rs`).
-    pub tags: crate::tags_view::TagsLens,
     pub loading: crate::loading::State,
     /// What this pane last searched for, for its "Nothing found".
     pub last_search: String,
@@ -687,7 +685,6 @@ impl Shell {
             view_id: view::LIST,
             listing_view: view::LIST,
             usage: UsageState::default(),
-            tags: crate::tags_view::TagsLens::default(),
             loading: crate::loading::State::default(),
             last_search: String::new(),
             omni: None,
@@ -1331,14 +1328,6 @@ impl Shell {
             }
             return;
         }
-        // A lens acts on what it shows, not on the files it hides.
-        if self
-            .with_view(|view, shell| view.command(name, &args, shell, window, cx))
-            .unwrap_or(false)
-        {
-            cx.notify();
-            return;
-        }
         if let Some(ui) = name.strip_prefix("ui.") {
             self.run_ui(ui, &args, window, cx);
             cx.notify();
@@ -1351,9 +1340,6 @@ impl Shell {
         if name == "refresh" {
             if self.ui().view_id == "usage" {
                 self.refresh_usage(cx);
-            }
-            if self.ui().view_id == crate::tags_view::ID {
-                self.tags_refresh(cx);
             }
             self.reader_retry_pages();
         }
@@ -1598,18 +1584,6 @@ impl Shell {
             "usage" => self.set_view("usage", cx),
             "usage_close" => self.set_view(view::LIST, cx),
             "usage_refresh" => self.refresh_usage(cx),
-            "tags_refresh" => self.tags_refresh(cx),
-            "tags_sort" => {
-                let lens = &mut self.ui_mut().tags;
-                lens.by_files = !lens.by_files;
-            }
-            "tags_open" => {
-                if let Some(tag) = arg("tag") {
-                    let tab = args.get("tab").and_then(serde_json::Value::as_bool) == Some(true);
-                    self.tags_open(&tag, tab, window, cx);
-                }
-            }
-            "tags_color" => self.tags_color(args, window, cx),
             "timeline" => self.toggle_timeline(cx),
             "terminal" => self.toggle_terminal(window, cx),
             "terminal_copy" => self.terminal_copy(cx),
@@ -2134,7 +2108,6 @@ impl Shell {
         for id in self.panes.iter().map(|p| p.id).collect::<Vec<_>>() {
             self.with_pane(id, |shell| {
                 shell.sync_usage(cx);
-                shell.sync_tags_lens(cx);
             });
         }
         self.sync_timeline(cx);

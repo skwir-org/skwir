@@ -949,6 +949,23 @@ apostrophe), HEIC, JPEG XL, PSD and JPEG 2000 by ImageMagick and an MP4
 by the sandboxed ffmpegthumbnailer, all written to the shared cache, and
 an AVIF's preview.
 
+Tags as places (2026-10-03, ADR-032): a location that is no folder can list
+places, entries that are locations of their own (`EntryId::place`), read as
+a trail of places that Up walks back, and say what gestures mean there
+(`Verbs`: a drop, Delete through `take_out`, New Folder's key, F2 on a
+place). The tags plugin's `tags:` location is the tags of a folder browsed
+as folders: a tag lists its tags as places and the files tagged with it
+exactly (Include Sub-Tags lists everything within), what narrows it (also
+or not tagged, a kind, a year) stays while its trail is walked, files
+dropped or pasted on a tag are given it, moved from another tag they lose
+that one, Delete takes the tag off while Move to Trash still trashes, F2
+renames a tag everywhere, Ctrl+Shift+N makes a tag. It works in every view:
+the tree opens tags in place (what a pane opens in place is now a location
+at an entry), the columns walk the tags above. The sidebar's tags and All
+Tags open tag folders; the Tags view and `PaneView::command` are gone. The
+shelf takes the same verbs: Delete unshelves. Lists of files from many
+folders gain a Folder column and Show in Folder (Ctrl+Alt+O).
+
 ## Phase 0 — Foundations and toolkit spike (~2 weeks)
 
 Goal: a repo that can measure itself, and a toolkit decision backed by numbers.

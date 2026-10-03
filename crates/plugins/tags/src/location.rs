@@ -297,9 +297,11 @@ impl Address {
             set.push("modified".to_owned());
         }
         Verbs {
-            drop: here.map(|_| {
-                Invocation::with_args("tags.drop", &serde_json::json!({ "location": location }))
-            }),
+            // At the top, tags dropped come out of their categories.
+            drop: Some(Invocation::with_args(
+                "tags.drop",
+                &serde_json::json!({ "location": location }),
+            )),
             remove: Some(Verb::new(
                 match here {
                     Some(tag) => format!("Remove from “{}”", tag_leaf(tag)),
@@ -498,6 +500,8 @@ pub struct Places {
     scopes: Mutex<HashMap<PathBuf, Scope>>,
     /// Tags made here (`tags.new`), with the folder they were made in.
     drafts: Mutex<Vec<(PathBuf, String)>>,
+    /// The index was found full once: said once.
+    told_full: std::sync::atomic::AtomicBool,
 }
 
 impl Places {
@@ -509,6 +513,7 @@ impl Places {
             open: Mutex::new(Vec::new()),
             scopes: Mutex::new(HashMap::new()),
             drafts: Mutex::new(Vec::new()),
+            told_full: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -574,16 +579,45 @@ impl Places {
                     scope.running = false;
                     scope.done = true;
                 }
+                if this.index.is_full()
+                    && !this
+                        .told_full
+                        .swap(true, std::sync::atomic::Ordering::Relaxed)
+                {
+                    app.notify_about_setting(
+                        bibli_core::app::NotifyLevel::Warning,
+                        "Some tagged files are left out of the tags: the room bibli gives them is full",
+                        crate::index::LIMIT_SETTING,
+                    );
+                }
                 this.relist(Some(&root));
                 app.wake();
             },
         );
     }
 
-    /// Whether what the index says of `root` holds: counted since bibli
-    /// started, or covered by a count before.
-    fn known(&self, root: &Path) -> bool {
-        self.scopes.lock().get(root).is_some_and(|s| s.done) || self.index.covering(root).is_some()
+    /// Whether `root`'s tags were counted or checked since bibli
+    /// started: what the index says of them holds. A tag location of it
+    /// is complete then; until, it shows what the index knew, checking.
+    fn done(&self, root: &Path) -> bool {
+        self.scopes.lock().get(root).is_some_and(|s| s.done)
+    }
+
+    /// `tags.counted`: whether `root`'s tags are being counted, and as of
+    /// when a count covers them.
+    pub fn counted(&self, root: &Path) -> serde_json::Value {
+        let scope = self.scopes.lock().get(root).cloned().unwrap_or_default();
+        let since = self
+            .index
+            .covering(root)
+            .and_then(|c| c.since().duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs());
+        serde_json::json!({
+            "root": PathArg::from(root),
+            "counting": scope.running,
+            "counted": since,
+            "partial": self.index.is_full(),
+        })
     }
 
     /// A tag made in `root`'s tags (`tags.new`), shown until a file has it.
@@ -798,7 +832,7 @@ impl Open {
         if !added.is_empty() {
             self.sink.send(ListingEvent::Added(added));
         }
-        if !sent.complete && self.places.known(&self.root) {
+        if !sent.complete && self.places.done(&self.root) {
             sent.complete = true;
             self.sink.send(ListingEvent::Complete);
         }

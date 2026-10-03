@@ -89,6 +89,13 @@ pub struct PillArgs {
     pub how: String,
 }
 
+#[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
+pub struct CountedArgs {
+    /// The folder whose tags; the home folder when omitted.
+    #[serde(default)]
+    pub root: Option<PathArg>,
+}
+
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, schemars::JsonSchema)]
 pub struct PaneOnly {
     #[serde(default)]
@@ -149,7 +156,22 @@ pub fn drop(
 ) -> anyhow::Result<Outcome> {
     let target = shown(app, app.pane_or_active(a.pane), Some(&a.location))?;
     let Some(tag) = target.tag.clone() else {
-        anyhow::bail!("files are given one tag: drop them on it");
+        // On the top of the tags: tags come out of their categories.
+        let places = if a.entries.is_empty() {
+            selected_places(app, app.pane_or_active(a.pane))
+        } else {
+            Vec::new()
+        };
+        let places: Vec<String> = places
+            .into_iter()
+            .filter(|p| tag_parent(p).is_some())
+            .collect();
+        anyhow::ensure!(
+            !places.is_empty(),
+            "files are given one tag: drop them on it"
+        );
+        crate::everywhere::move_into(app, lifetime, follows, places, None, target.root())?;
+        return Ok(Outcome::Done);
     };
     let (files, places, from) = if a.entries.is_empty() {
         let pane = app.pane_or_active(a.pane);
@@ -525,6 +547,23 @@ pub fn place_menu(app: &App, a: PaneOnly) -> Outcome {
                     141 + i32::try_from(i).unwrap_or_default(),
                 );
             }
+        }
+        if tags.len() > 1 {
+            items.push(item(
+                "Merge Into One…",
+                Invocation::with_args(
+                    "ui.ask",
+                    &serde_json::json!({
+                        "title": "Merge these tags into one, on every file",
+                        "placeholder": "The tag they become",
+                        "command": "tags.rename",
+                        "args": { "tags": tags, "root": root },
+                        "field": "to",
+                    }),
+                ),
+                122,
+                "rename",
+            ));
         }
         items.push(item(
             "Remove Tag From Every File…",

@@ -21,7 +21,6 @@ pub mod finder;
 mod follow;
 mod hints;
 pub mod index;
-mod lens;
 pub mod location;
 mod ops;
 mod sidebar;
@@ -248,15 +247,6 @@ struct DeleteArgs {
     /// Where the files are; the home folder when omitted.
     #[serde(default)]
     root: Option<PathArg>,
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-struct LensArgs {
-    #[serde(default)]
-    pane: Option<PaneId>,
-    /// Count anew, though counted already.
-    #[serde(default)]
-    again: bool,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -503,8 +493,6 @@ pub(crate) struct Sidebar {
     shown: Arc<sidebar::Shown>,
     /// One edit of the pins at a time.
     pub(crate) saving: Arc<Mutex<()>>,
-    /// The Tags views, which show the pins and colors too.
-    lenses: Arc<lens::Lenses>,
     /// The tag locations open, which list what the index knows.
     places: Arc<location::Places>,
 }
@@ -512,7 +500,6 @@ pub(crate) struct Sidebar {
 impl Sidebar {
     pub(crate) fn publish(&self, app: &App) {
         sidebar::publish(app, &self.index, &self.vocabulary, &self.shown);
-        self.lenses.touch(app);
         self.places.touch();
     }
 }
@@ -580,7 +567,7 @@ impl Plugin for TagsPlugin {
             SettingSpec::integer(
                 index::LIMIT_SETTING,
                 "Room for tagged files",
-                "How much memory bibli may give what it knows of tagged files, about sixteen thousand files a megabyte, for the Tags view, the sidebar's suggestions and quicker tag searches. Past it, new tagged files are left out of the counts, and the Tags view says so",
+                "How much memory bibli may give what it knows of tagged files, about sixteen thousand files a megabyte, for tags browsed as folders, the sidebar's suggestions and quicker tag searches. Past it, new tagged files are left out of the tags' folders, and bibli says so",
                 index::LIMIT_DEFAULT,
                 (8, 4096),
             )
@@ -601,23 +588,6 @@ impl Plugin for TagsPlugin {
         app.companions
             .register(ID, Arc::new(appledouble::AsideCompanion));
         ops::register_legacy(app);
-        // The Tags view: the tags under a pane's folder (`lens.rs`).
-        let lenses = lens::Lenses::new(
-            Arc::clone(&index),
-            Arc::clone(&vocabulary),
-            Arc::default(),
-            lifetime.clone(),
-        );
-        app.registry.views.add(
-            ID,
-            bibli_core::registry::ViewSpec::named(
-                lens::VIEW,
-                "Tags",
-                "tag",
-                Arc::clone(&lenses.revision),
-            )
-            .lens(),
-        );
         // The tags as places to browse (ADR-032): `tags:` locations.
         let places = location::Places::new(Arc::clone(&index), app, lifetime.clone());
         app.register_provider(
@@ -647,7 +617,7 @@ impl Plugin for TagsPlugin {
         // An edit applied is learned by the index at once: a file edited
         // while no pane shows it (a tag renamed everywhere) is not read
         // again soon; a file moved, renamed or trashed takes its tags along
-        // in it. The Tags views follow the index.
+        // in it. The tag locations follow the index.
         {
             let (weak, index, lifetime) = (app.weak(), Arc::clone(&index), lifetime.clone());
             let places = Arc::clone(&places);
@@ -716,7 +686,6 @@ impl Plugin for TagsPlugin {
             vocabulary: Arc::clone(&vocabulary),
             shown: Arc::new(sidebar::Shown::default()),
             saving: Arc::new(Mutex::new(())),
-            lenses: Arc::clone(&lenses),
             places: Arc::clone(&places),
         };
         {
@@ -812,45 +781,6 @@ impl Plugin for TagsPlugin {
                     });
                     Ok(Outcome::Done)
                 });
-        }
-        {
-            let lenses = Arc::clone(&lenses);
-            app.commands.register::<LensArgs, _>(
-                ID,
-                "tags.lens",
-                "Count tags",
-                "Count the tags of the files under the folder the pane shows, for its Tags view: what changed since the last count, or every file (`again`)",
-                move |a, app| {
-                    lenses.open(app, app.pane_or_active(a.pane), a.again)?;
-                    Ok(Outcome::Done)
-                },
-            );
-        }
-        {
-            let lenses = Arc::clone(&lenses);
-            app.commands.register::<LensArgs, _>(
-                ID,
-                "tags.lens_status",
-                "Tags counted",
-                "`{ root, tags: [{ tag, files, color, pinned }], files, walking, checking, counted, partial, error }`: the tags the pane's Tags view counted (`counted`: as of when, in seconds since the epoch)",
-                move |a, app| {
-                    let status = lenses.status(app.pane_or_active(a.pane));
-                    Ok(Outcome::Value(serde_json::to_value(&*status)?))
-                },
-            );
-        }
-        {
-            let lenses = Arc::clone(&lenses);
-            app.commands.register::<LensArgs, _>(
-                ID,
-                "tags.lens_release",
-                "Stop counting tags",
-                "Let go of the pane's Tags view",
-                move |a, app| {
-                    lenses.release(app, app.pane_or_active(a.pane));
-                    Ok(Outcome::Done)
-                },
-            );
         }
         // What a `tag:` search asks first (ADR-026).
         app.hints.register(ID, Arc::new(hints::Baloo::default()));
@@ -1122,6 +1052,23 @@ impl Plugin for TagsPlugin {
             "Pin the tag a pane's tag location shows: one tag of the home folder, not narrowed",
             |a, app| browse::keep(app, a),
         );
+        {
+            let places = Arc::clone(&places);
+            app.commands.register::<browse::CountedArgs, _>(
+                ID,
+                "tags.counted",
+                "Tags counted",
+                "`{ root, counting, counted, partial }`: whether the tags of the files under `root` (the home folder when omitted) are being counted for its tag locations, as of when a count covers them (`counted`, in seconds since the epoch), and whether some are left out for want of room (`partial`). Answers from memory",
+                move |a, _| {
+                    let root = a
+                        .root
+                        .map(PathArg::into_inner)
+                        .or_else(std::env::home_dir)
+                        .ok_or_else(|| anyhow::anyhow!("no home folder"))?;
+                    Ok(Outcome::Value(places.counted(&root)))
+                },
+            );
+        }
         app.commands.register::<browse::PaneOnly, _>(
             ID,
             "tags.place_menu",

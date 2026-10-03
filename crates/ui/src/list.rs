@@ -321,21 +321,8 @@ impl Shell {
     fn pane_key_context(&self) -> KeyContext {
         let mut kc = KeyContext::default();
         kc.add(keymap::PANE);
-        if self.ui().view_id == crate::tags_view::ID {
-            // The Tags view's selection is of tags: the keys that need a
-            // selection act on them (`PaneView::command`).
-            let n = self.ui().tags.selected.len();
-            kc.add("tags");
-            if n > 0 {
-                kc.add("selection");
-            }
-            if n == 1 {
-                kc.add("single");
-            }
-        } else {
-            for f in self.selection_ctx().flags() {
-                kc.add(f);
-            }
+        for f in self.selection_ctx().flags() {
+            kc.add(f);
         }
         if self.is_split() {
             kc.add("split");

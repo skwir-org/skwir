@@ -1,4 +1,4 @@
-//! The count behind the Tags view: every tagged file under a folder,
+//! The count behind tag locations (`location.rs`): every tagged file under a folder,
 //! outside hidden folders, learned by the index (`index::TagIndex`), which
 //! then covers the folder as of the time the count began.
 //!
