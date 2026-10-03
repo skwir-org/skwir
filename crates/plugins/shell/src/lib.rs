@@ -220,7 +220,7 @@ impl Plugin for ShellPlugin {
                         "field": "command",
                     }),
                 ),
-                when: Some("selection|folder".into()),
+                when: Some("selection|folder !place".into()),
                 order: 410,
                 icon: Some("command".into()),
                 submenu: Some("More".into()),

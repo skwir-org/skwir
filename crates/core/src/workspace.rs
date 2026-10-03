@@ -388,8 +388,9 @@ pub struct Pane {
     pub history: Vec<Location>,
     /// Index into `history` of the current location.
     pub history_pos: usize,
-    /// A name to select once the listing has it; see [`Pane::reveal`].
-    reveal: Option<OsString>,
+    /// A name to select once the listing has it, and whether it is still
+    /// coming once the listing is complete; see [`Pane::reveal`].
+    reveal: Option<(OsString, bool)>,
     /// The selection a dormant pane had, given back once its listing is
     /// complete again (see [`Pane::suspend`]).
     restore: Option<Selection>,
@@ -678,16 +679,26 @@ impl Pane {
     /// the next navigation forgets it, and so does a listing that
     /// completes without that name.
     pub fn reveal(&mut self, name: OsString) {
-        self.reveal = Some(name);
+        self.reveal = Some((name, false));
+        self.take_reveal();
+    }
+
+    /// `reveal` an entry that its location lists a moment after it is
+    /// complete (a tag just made, listed by a worker): the name is kept
+    /// until it is listed or the pane shows another location.
+    pub fn reveal_coming(&mut self, name: OsString) {
+        self.reveal = Some((name, true));
         self.take_reveal();
     }
 
     fn take_reveal(&mut self) {
-        let Some(name) = &self.reveal else { return };
+        let Some((name, coming)) = &self.reveal else {
+            return;
+        };
         if let Some(id) = self.listing.find_by_name(name).map(|e| e.id) {
             self.selection.set([id]);
             self.reveal = None;
-        } else if self.listing.is_complete() {
+        } else if self.listing.is_complete() && !coming {
             self.reveal = None;
         }
     }

@@ -695,7 +695,7 @@ fn pill(
         .to_owned()
         .into();
     let tip: SharedString = format!(
-        "{} · Shift+click: also in this search · Alt+click: in this folder",
+        "{} · Shift+click: only what has it too · Alt+click: in this folder",
         place.title
     )
     .into();
@@ -735,21 +735,22 @@ fn pill(
         .on_click(cx.listener({
             let tag = place.title.clone();
             move |this, ev: &gpui::ClickEvent, window, cx| {
-                // Shift adds the tag to the search shown (or takes it out),
-                // Alt searches the folder shown for it.
+                // Shift narrows what is shown to the files that have the
+                // tag too (or no longer), Alt shows its files in the
+                // folder shown: the tags plugin says how (`tags.pill`).
                 let m = ev.modifiers();
-                let facet = if m.shift {
-                    "also_tag"
+                let how = if m.shift {
+                    "also"
                 } else if m.alt {
-                    "tag"
+                    "here"
                 } else {
                     this.run(&open.name, open.args.clone(), window, cx);
                     return;
                 };
                 let pane = this.pane;
                 this.run(
-                    "query.refine",
-                    serde_json::json!({ "facet": facet, "value": tag, "pane": pane }),
+                    "tags.pill",
+                    serde_json::json!({ "tag": tag, "how": how, "pane": pane }),
                     window,
                     cx,
                 );

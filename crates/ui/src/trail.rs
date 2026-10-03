@@ -100,6 +100,7 @@ mod tests {
                 Crumb::new("Places", Location::new("tags", "/Places?in=x")),
             ],
             filters: Vec::new(),
+            toggles: Vec::new(),
         };
         let labels: Vec<String> = segments(&trail, Some(Path::new("/home/someone")))
             .into_iter()

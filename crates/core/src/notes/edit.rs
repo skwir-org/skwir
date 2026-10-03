@@ -62,6 +62,11 @@ pub struct SetNotes {
     /// made.
     #[serde(default)]
     pub policy: Policy,
+    /// What it says it does, when the plan that made it knows better than
+    /// the tags it ends with ("remove the tag “France” from “a.jpg”", not
+    /// "tag “a.jpg” family").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub words: Option<Words>,
     #[serde(skip)]
     #[schemars(skip)]
     stores: Option<Arc<NoteStores>>,
@@ -98,8 +103,16 @@ impl SetNotes {
             comment: None,
             sync: false,
             policy,
+            words: None,
             stores: Some(stores),
         }
+    }
+
+    /// What it says it will do and did, in place of what its fields say.
+    #[must_use]
+    pub fn saying(mut self, will: String, did: String) -> Self {
+        self.words = Some(Words { will, did });
+        self
     }
 
     /// Write every store, so those that differ agree.
@@ -189,6 +202,16 @@ impl SetNotes {
 
     fn words(&self) -> (String, String, &'static str) {
         let name = name_of(&self.entry.path);
+        if let Some(words) = &self.words {
+            let field = if self.tags.is_some() {
+                keys::TAGS
+            } else if self.rating.is_some() {
+                keys::RATING
+            } else {
+                keys::COMMENT
+            };
+            return (words.will.clone(), words.did.clone(), field);
+        }
         if self.sync {
             return (
                 format!("make the notes of “{name}” agree"),

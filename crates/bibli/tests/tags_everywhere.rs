@@ -112,7 +112,8 @@ fn a_tag_is_renamed_on_every_file_after_review_and_the_sidebar_follows() {
         .places
         .find(|p| p.group == "tags" && p.title == "Job")
         .unwrap();
-    assert_eq!(&*job.location.scheme, "query");
+    // It opens the tag's folder of the home folder (ADR-032).
+    assert_eq!(job.location.to_string(), "tags:/Job");
     assert!(job.color.is_some());
     // Files dropped on it get it.
     let drop = job.drop.expect("a tag takes files dropped on it");
@@ -223,17 +224,14 @@ fn pinned_tags_replace_the_suggestions_in_the_order_put() {
         until(&app, "the sidebar", || (pins(&app) == want).then_some(()));
     };
     until_sidebar(&[("Work", false), ("x", false), ("Été", false)]);
-    // Then every tag, the home folder's Tags view.
+    // Then every tag: the home folder's tags, browsed as folders.
     let all = app
         .registry
         .places
         .find(|p| p.group == "tags" && p.color.is_none())
         .expect("All Tags");
-    let open = all.activate.unwrap();
-    assert_eq!(
-        (&*open.name, &open.args["id"]),
-        ("ui.view", &serde_json::json!("tags"))
-    );
+    assert_eq!(all.location.to_string(), "tags:/");
+    assert!(all.activate.is_none());
 
     // Pinned, the suggestions go; a pin goes last, or before another.
     dispatch("tags.pin", serde_json::json!({ "tag": "x" })).unwrap();
@@ -529,7 +527,7 @@ fn a_folder_counted_is_checked_after_a_restart_for_what_others_changed() {
 }
 
 #[test]
-fn without_the_search_there_is_neither_a_tags_group_nor_a_rename() {
+fn without_the_search_a_tag_is_not_renamed_everywhere() {
     let tmp = home_tempdir();
     let file = tmp.path().join("a.txt");
     std::fs::write(&file, b"x").unwrap();
@@ -543,8 +541,9 @@ fn without_the_search_there_is_neither_a_tags_group_nor_a_rename() {
             &serde_json::json!({ "tag": "work", "to": "job" }),
         ))
         .unwrap_err();
+    // Finding every file that has it is the search's; the sidebar's tags
+    // are not, being the tags plugin's own locations (ADR-032).
     assert!(err.to_string().contains("Search plugin"), "{err}");
-    assert!(sidebar(&app).is_empty());
 }
 
 /// What an open search shows, kept up to date from its events.

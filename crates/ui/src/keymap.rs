@@ -885,6 +885,41 @@ pub fn keys_for(hints: &[KeyHint], command: &str, args: &serde_json::Value) -> O
         .map(|hint| display_keys(&hint.keys))
 }
 
+/// `keys_for`, among the bindings whose condition holds where the item is
+/// shown: `holds` says whether a flag of the pane's key context holds
+/// (`!refs` too), `None` for one it cannot tell, taken to hold. A menu
+/// item names the key that does it there (on a tag, Delete is Remove from
+/// the tag, not Move to Trash).
+pub fn keys_for_where(
+    hints: &[KeyHint],
+    command: &str,
+    args: &serde_json::Value,
+    holds: impl Fn(&str) -> Option<bool>,
+) -> Option<String> {
+    let flag = |atom: &str| match atom.strip_prefix('!') {
+        Some(not) => holds(not).map(|h| !h),
+        None => holds(atom),
+    };
+    let applies = |context: &str| {
+        conditions(context).into_iter().all(|atom| {
+            match atom.strip_prefix('(').and_then(|a| a.strip_suffix(')')) {
+                Some(alts) => alts.split("||").any(|alt| flag(alt.trim()).unwrap_or(true)),
+                None => flag(atom).unwrap_or(true),
+            }
+        })
+    };
+    let empty = serde_json::Value::Object(serde_json::Map::new());
+    let args = if args.is_null() { &empty } else { args };
+    hints
+        .iter()
+        .filter(|hint| hint.command == command && hint.args == *args && applies(&hint.context))
+        .fold(None, |best: Option<&KeyHint>, hint| match best {
+            Some(best) if best.layer >= hint.layer => Some(best),
+            _ => Some(hint),
+        })
+        .map(|hint| display_keys(&hint.keys))
+}
+
 /// Every binding, in the order of their layers: the plugins', the shell's
 /// own, the schemes', the user's. A binding declared twice is listed once,
 /// in the higher of its layers.
@@ -1063,8 +1098,8 @@ pub fn install(app: &App, user: Vec<UserBinding>, cx: &mut gpui::App) -> Keymap 
 #[cfg(test)]
 mod tests {
     use super::{
-        BUILTIN, BUILTIN_ARGS, Layer, Spec, context_label, context_of, display_keys, key_caps,
-        shadowed, specs, takes_a_character, valid_keys, zoom_specs,
+        BUILTIN, BUILTIN_ARGS, KeyHint, Layer, Spec, context_label, context_of, display_keys,
+        key_caps, keys_for_where, shadowed, specs, takes_a_character, valid_keys, zoom_specs,
     };
     use bibli_core::command::Invocation;
     use bibli_core::keymap::UserBinding;
@@ -1241,6 +1276,36 @@ mod tests {
         assert_eq!(display_keys(", M"), ", Shift+M");
         assert_eq!(key_caps("alt-pageup"), vec![vec!["Alt", "Page Up"]]);
         assert_eq!(display_keys("ctrl-shift-n"), "Ctrl+Shift+N");
+    }
+
+    #[test]
+    fn a_menu_names_the_key_that_does_its_item_where_it_is() {
+        let hint = |keys: &str, command: &str, when: &str| KeyHint {
+            keys: keys.into(),
+            command: command.into(),
+            args: serde_json::json!({}),
+            context: context_of(Some(when)),
+            layer: Layer::Plugin,
+        };
+        let hints = [
+            hint("delete", "trash", "pane selection !refs"),
+            hint("delete", "take_out", "pane selection refs"),
+        ];
+        let in_a_tag = |flag: &str| match flag {
+            "selection" | "refs" => Some(true),
+            _ => None,
+        };
+        let args = serde_json::json!({});
+        assert_eq!(keys_for_where(&hints, "trash", &args, in_a_tag), None);
+        assert_eq!(
+            keys_for_where(&hints, "take_out", &args, in_a_tag).as_deref(),
+            Some("Delete")
+        );
+        let in_a_folder = |flag: &str| (flag == "refs").then_some(false);
+        assert_eq!(
+            keys_for_where(&hints, "trash", &args, in_a_folder).as_deref(),
+            Some("Delete")
+        );
     }
 
     #[test]

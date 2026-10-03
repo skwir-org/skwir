@@ -13,6 +13,7 @@
 
 mod appledouble;
 mod attrs;
+mod browse;
 mod count;
 mod everywhere;
 mod fields;
@@ -21,6 +22,7 @@ mod follow;
 mod hints;
 pub mod index;
 mod lens;
+pub mod location;
 mod ops;
 mod sidebar;
 mod vocabulary;
@@ -503,12 +505,15 @@ pub(crate) struct Sidebar {
     pub(crate) saving: Arc<Mutex<()>>,
     /// The Tags views, which show the pins and colors too.
     lenses: Arc<lens::Lenses>,
+    /// The tag locations open, which list what the index knows.
+    places: Arc<location::Places>,
 }
 
 impl Sidebar {
     pub(crate) fn publish(&self, app: &App) {
         sidebar::publish(app, &self.index, &self.vocabulary, &self.shown);
         self.lenses.touch(app);
+        self.places.touch();
     }
 }
 
@@ -613,12 +618,39 @@ impl Plugin for TagsPlugin {
             )
             .lens(),
         );
+        // The tags as places to browse (ADR-032): `tags:` locations.
+        let places = location::Places::new(Arc::clone(&index), app, lifetime.clone());
+        app.register_provider(
+            ID,
+            Arc::new(location::Provider {
+                places: Arc::clone(&places),
+            }),
+        );
+        app.registry.keepers.add(
+            ID,
+            bibli_core::registry::Keeper {
+                scheme: location::SCHEME.into(),
+                save: Invocation::new("tags.keep"),
+                save_title: "Pin this tag to the sidebar".into(),
+                forget_title: "Unpin this tag from the sidebar".into(),
+            },
+        );
+        app.registry.menu_sources.add(
+            ID,
+            bibli_core::registry::MenuSource {
+                menu: "context".into(),
+                when: Some("place".into()),
+                command: Invocation::new("tags.place_menu"),
+                replaces: Vec::new(),
+            },
+        );
         // An edit applied is learned by the index at once: a file edited
         // while no pane shows it (a tag renamed everywhere) is not read
         // again soon; a file moved, renamed or trashed takes its tags along
         // in it. The Tags views follow the index.
         {
             let (weak, index, lifetime) = (app.weak(), Arc::clone(&index), lifetime.clone());
+            let places = Arc::clone(&places);
             app.executor.observe(
                 ID,
                 Arc::new(move |changes| {
@@ -648,11 +680,15 @@ impl Plugin for TagsPlugin {
                     }
                     if !moves.is_empty() {
                         index.moved(&moves);
+                        // The tag locations shown follow at once, not when
+                        // the index is next written.
+                        places.touch();
                     }
                     let Some(app) = weak.upgrade().filter(|_| !paths.is_empty()) else {
                         return;
                     };
-                    let (index, weak) = (Arc::clone(&index), weak.clone());
+                    let (index, weak, places) =
+                        (Arc::clone(&index), weak.clone(), Arc::clone(&places));
                     app.scheduler.spawn(
                         Priority::Background,
                         "tags.learn",
@@ -667,6 +703,7 @@ impl Plugin for TagsPlugin {
                                 })
                                 .collect();
                             index.learn(learned);
+                            places.touch();
                         },
                     );
                 }),
@@ -680,6 +717,7 @@ impl Plugin for TagsPlugin {
             shown: Arc::new(sidebar::Shown::default()),
             saving: Arc::new(Mutex::new(())),
             lenses: Arc::clone(&lenses),
+            places: Arc::clone(&places),
         };
         {
             let (weak, state) = (app.weak(), state.clone());
@@ -1024,7 +1062,7 @@ impl Plugin for TagsPlugin {
                 Ok(Outcome::Done)
             },
         );
-        let (everywhere, f) = (lifetime.clone(), follows);
+        let (everywhere, f) = (lifetime.clone(), follows.clone());
         app.commands.register::<DeleteArgs, _>(
             ID,
             "tags.delete",
@@ -1035,6 +1073,61 @@ impl Plugin for TagsPlugin {
                 everywhere::start(app, &everywhere, &f, from, None, root_of(a.root))?;
                 Ok(Outcome::Done)
             },
+        );
+        // What gestures do in a tag location (`browse.rs`).
+        let (everywhere, f) = (lifetime.clone(), follows.clone());
+        app.commands.register::<browse::DropArgs, _>(
+            ID,
+            "tags.drop",
+            "Drop on a tag",
+            "Give files dropped or pasted on a tag location (`location`) its tag: a pane's selection (`pane`) or `entries`; with `move`, out of the tag location they come from (the pane's, or `from`). Tags dropped go into it, a plan to review",
+            move |a, app| browse::drop(app, &everywhere, &f, a),
+        );
+        let (everywhere, f) = (lifetime.clone(), follows);
+        app.commands.register::<browse::UntagArgs, _>(
+            ID,
+            "tags.untag",
+            "Remove from tag",
+            "Take the tag a tag location shows (the pane's, or `location`) off the selected files; tags selected there are taken off every file, a plan to review. What Delete does in a tag location",
+            move |a, app| browse::untag(app, &everywhere, &f, &a),
+        );
+        {
+            let places = Arc::clone(&places);
+            app.commands.register::<browse::NewArgs, _>(
+                ID,
+                "tags.new",
+                "New tag",
+                "Make a tag `name` in the tag a tag location shows (`location`): shown there until a file is given it",
+                move |a, app| browse::new(app, &places, &a),
+            );
+        }
+        app.commands.register::<browse::NarrowArgs, _>(
+            ID,
+            "tags.narrow",
+            "Narrow a tag location",
+            "Show, in the tag location the pane shows, only the files that also have a tag (`facet` `also_tag`), none that have one (`not_tag`), of a `kind`, `modified` a year, or every file within the tag (`deep`); `on` false takes it back, omitted it switches",
+            |a, app| browse::narrow(app, &a),
+        );
+        app.commands.register::<browse::PillArgs, _>(
+            ID,
+            "tags.pill",
+            "A tag, here",
+            "A tag of the sidebar clicked with Shift (`how` `also`: the files shown that have it too) or Alt (`here`: its files in the folder shown)",
+            |a, app| browse::pill(app, &a),
+        );
+        app.commands.register::<browse::PaneOnly, _>(
+            ID,
+            "tags.keep",
+            "Pin the tag shown",
+            "Pin the tag a pane's tag location shows: one tag of the home folder, not narrowed",
+            |a, app| browse::keep(app, a),
+        );
+        app.commands.register::<browse::PaneOnly, _>(
+            ID,
+            "tags.place_menu",
+            "Tags' menu",
+            "The context menu's items for the tags selected in a tag location. Answers from memory",
+            |a, app| Ok(browse::place_menu(app, a)),
         );
         let (colors, color_sidebar) = (lifetime.clone(), sidebar.clone());
         app.commands.register::<ColorArgs, _>(

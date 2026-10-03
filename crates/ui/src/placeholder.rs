@@ -63,6 +63,11 @@ pub fn empty(scheme: &str, query: Option<&str>, new_folder_keys: Option<&str>) -
             "The shelf is empty".to_owned(),
             "Collect files from different folders with Add to Shelf, then move or copy them together.".to_owned(),
         ),
+        "tags" => (
+            "tag",
+            "No file here has this tag".to_owned(),
+            "Drop files here to give them the tag.".to_owned(),
+        ),
         bibli_core::location::PATH_SCHEME => (
             "folder-plus",
             "This folder is empty".to_owned(),
@@ -111,11 +116,25 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
     // for something else since.
     let query = (&*location.scheme == "query").then_some(shell.ui().last_search.as_str());
     let keys = shell.keys_for("ui.mkdir_prompt", &serde_json::Value::Null);
-    Some(empty(
+    let mut placeholder = empty(
         &location.scheme,
         query.filter(|query| !query.is_empty()),
         keys.as_deref(),
-    ))
+    );
+    // The top of the tags of a folder whose files have none.
+    if &*location.scheme == "tags"
+        && shell
+            .ui()
+            .place
+            .trail
+            .as_ref()
+            .is_some_and(|trail| trail.crumbs.len() == 1)
+    {
+        "No file here has a tag".clone_into(&mut placeholder.title);
+        "Give files tags with Tags… in their menu, or drop them on a tag in the sidebar."
+            .clone_into(&mut placeholder.detail);
+    }
+    Some(placeholder)
 }
 
 pub fn render(

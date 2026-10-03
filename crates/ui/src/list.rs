@@ -86,6 +86,9 @@ pub struct ListState {
     pub pending_hydrate: HashSet<EntryId>,
     /// The listing (`Listing::id`) everything here describes.
     listing: Option<u64>,
+    /// The listing's `removed_version` when `pending_hydrate` last let go
+    /// of the entries taken out.
+    removed: u64,
     pub visible_rows: usize,
     /// How many entries the view laid out: what a tab shown again shows
     /// first.
@@ -105,6 +108,7 @@ impl Default for ListState {
             sorted_at: None,
             pending_hydrate: HashSet::new(),
             listing: None,
+            removed: 0,
             visible_rows: 20,
             visible_items: 0,
             typeahead: String::new(),
@@ -123,6 +127,12 @@ impl ListState {
         if self.listing != Some(listing.id()) {
             self.reset();
             self.listing = Some(listing.id());
+        }
+        // An entry taken out and back (a file untagged, then given its tag
+        // again by Undo) comes back bare: it is asked for again.
+        if self.removed != listing.removed_version() {
+            self.removed = listing.removed_version();
+            self.pending_hydrate.retain(|id| pane.entry(*id).is_some());
         }
         let at = (
             listing.version(),

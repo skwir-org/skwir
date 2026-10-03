@@ -1095,7 +1095,7 @@ impl Plugin for PlacesPlugin {
             (
                 "Add to Bookmarks",
                 Invocation::new("places.bookmark"),
-                "single dir",
+                "single dir !place",
             ),
             // The folder's own menu, on its background.
             ("Bookmark This Folder", shown(), "empty folder"),

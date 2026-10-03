@@ -1039,6 +1039,47 @@ impl TagIndex {
         here
     }
 
+    /// The tagged files under `root` outside hidden folders, each with its
+    /// tags as spelled on it: those with a tag within `within` only, when
+    /// given. What a tag location lists (`location.rs`).
+    pub fn files_under(&self, root: &Path, within: Option<&str>) -> Vec<(PathBuf, Vec<String>)> {
+        let mut state = self.state();
+        let ids: Option<Vec<u32>> = within.map(|tag| {
+            state
+                .tags
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| tag_within(t, tag))
+                .map(|(i, _)| u32::try_from(i).unwrap_or(u32::MAX))
+                .collect()
+        });
+        if ids.as_ref().is_some_and(Vec::is_empty) {
+            return Vec::new();
+        }
+        let under = self.load_under(&mut state, root);
+        let mut out = Vec::new();
+        for (path, at) in under {
+            if hidden_under(&path, root) {
+                continue;
+            }
+            let Some(folder) = state.pieces[at].folders.get(&path) else {
+                continue;
+            };
+            for file in &folder.files {
+                if hidden(file.name()) || ids.as_ref().is_some_and(|ids| !file.has(ids)) {
+                    continue;
+                }
+                let tags = file
+                    .tags()
+                    .into_iter()
+                    .filter_map(|t| state.tags.get(t as usize).cloned())
+                    .collect();
+                out.push((path.join(file.name()), tags));
+            }
+        }
+        out
+    }
+
     /// The `at_most` tags on the most files under `root`, each with how
     /// many, the most used first (then by name). Under the home folder,
     /// from what it keeps known without reading a piece.

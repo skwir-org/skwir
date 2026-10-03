@@ -326,6 +326,25 @@ current source before assuming a planned crate, command, or API exists.
   unshelves, beside a Move to Trash that still trashes. The menu adds the
   location's own items in its words (`menu::verb_items`), and the pane's
   key context says `refs`, `drops`, `creates` and `place` for bindings.
+- **Tags are places** (ADR-032). The tags plugin provides `tags:`
+  locations (`location.rs`): `tags:/Places/France` is the tag
+  `Places/France` of the home folder (`in` names another folder), its
+  tags listed as places, each counting the files within it, and its own
+  files those tagged with it exactly, or everything within it with
+  `deep` (the View menu's Include Sub-Tags, a `Trail::toggles`). What
+  narrows it (`with`, `without`, `kind`, `year`) is kept while its
+  trail is walked, a pill each after it; the Narrow by bar offers it
+  (`Verbs::narrow`, `tags.narrow`). Its listing is what the tags index
+  knows (`TagIndex::files_under`), shown at once where a count covered
+  the folder and checked, or counted on a first visit, complete once
+  counted; it lists again when the index changes, and F5 checks. A tag
+  location's verbs (`browse.rs`): files dropped or pasted are given its
+  tag, moved from another tag they lose that one (`tags.drop`), tags
+  dropped go into it; Delete takes its tag off them, a tag selected is
+  taken off every file, a plan to review (`tags.untag`); New Folder's
+  key makes a tag in it, listed until a file has it (`tags.new`: no
+  file, no tag, nothing kept); F2 on a tag renames it everywhere; a tag
+  selected has its own items (`tags.place_menu`).
 - **Nothing to list is a state, not a blank.** `placeholder.rs` says why a
   pane is empty (empty folder, no results, empty shelf) or why it failed, in
   the user's words with the system's message as the detail, and offers the
@@ -361,15 +380,15 @@ current source before assuming a planned crate, command, or API exists.
   group wrapping together, left-aligned (`sidebar::wrap_pills`: layout
   only): the tags plugin's Tags, those the user pinned (`tags.pin`,
   from a pill's or a Details chip's menu; dragged into order, unpinned
-  by the pane's keep button like any kept place; a tag's search from
-  the home folder is kept as its pin, by the button and Ctrl+D) or,
-  until one is, the
+  by the pane's keep button like any kept place; a tag folder of the
+  home folder, or a tag's search from it, is kept as its pin, by the
+  button and Ctrl+D) or, until one is, the
   tags on the most files its index knows, as suggestions
-  (`Place::suggested`, an outline), each a search of the home folder
-  (`query.location` builds it, so no plugin writes another's syntax),
-  and last All Tags, the home folder's Tags view. Shift+click on a
-  tag's pill adds it to the search shown, or takes it out (`query.refine`,
-  facet `also_tag`); Alt+click searches the folder shown for it. The tag
+  (`Place::suggested`, an outline), each opening its tag folder of the
+  home folder (`tags:/family`), and last All Tags (`tags:/`). Shift+click
+  on a tag's pill narrows what is shown to the files that have it too,
+  or no longer; Alt+click shows its files in the folder shown
+  (`tags.pill`, which leaves a search to `query.refine`). The tag
   editor offers the pinned tags first. A place with a `drop`
   command runs it with what is dropped on it (`pane` for a pane's
   selection, `entries` for another application's files): a tag's gives

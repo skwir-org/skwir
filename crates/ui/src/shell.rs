@@ -1081,6 +1081,17 @@ impl Shell {
         keymap::keys_for(&self.key_hints, command, args)
     }
 
+    /// The keys that run `command` in the pane being rendered, as it is
+    /// now: a binding whose condition does not hold there is not named.
+    pub fn keys_here(&self, command: &str, args: &serde_json::Value) -> Option<String> {
+        let ctx = self.selection_ctx();
+        keymap::keys_for_where(&self.key_hints, command, args, |flag| {
+            crate::menu::SELECTION_TOKENS
+                .contains(&crate::menu::canonical_token(flag))
+                .then(|| ctx.holds(flag))
+        })
+    }
+
     /// Install the key bindings again when a plugin added or withdrew some.
     fn sync_keymap(&mut self, cx: &mut Context<Self>) {
         let revisions = keymap::Stamp::revisions(&self.app);

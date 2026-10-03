@@ -1,16 +1,17 @@
 //! The sidebar's Tags: those the user pinned, in the order they put
 //! them (`tags.pinned`); until one is, suggestions, the tags on the most
-//! files the index knows under the home folder, drawn fainter. Each is a
-//! search of the home folder for it, in the color it wears (the user's
-//! choice, else a file's, else its name's). Published when the index or
-//! the pins change, once for changes close together, and only when what
-//! the sidebar shows changed.
+//! files the index knows under the home folder, drawn fainter. Each opens
+//! its tag folder of the home folder (`tags:/family`, ADR-032), in the
+//! color it wears (the user's choice, else a file's, else its name's);
+//! All Tags opens them all (`tags:/`). Published when the index or the
+//! pins change, once for changes close together, and only when what the
+//! sidebar shows changed.
 
 use std::sync::Arc;
 
 use bibli_core::app::App;
 use bibli_core::app::NotifyLevel;
-use bibli_core::command::{Invocation, Outcome};
+use bibli_core::command::Invocation;
 use bibli_core::location::Location;
 use bibli_core::metadata::{
     TAG_COLOR_SETTING, TAG_COLORS, same_tag, tag_color, tag_lineage, tag_parent,
@@ -129,18 +130,14 @@ fn menu(tag: &str, pinned: bool) -> Vec<MenuItem> {
     items
 }
 
-/// Where a search for `tag` is: the query plugin's to say. `None` while
-/// it is off, with nothing to search with.
-fn location(app: &App, tag: &str) -> Option<String> {
-    let ask = Invocation::with_args(
-        "query.location",
-        &serde_json::json!({ "facet": "tag", "value": tag }),
-    );
-    app.commands.get(&ask.name)?;
-    match app.dispatch(&ask) {
-        Ok(Outcome::Value(v)) => v["location"].as_str().map(str::to_owned),
-        _ => None,
+/// Where a tag's pill leads: its tag folder of the home folder.
+fn location(tag: &str) -> String {
+    crate::location::Address {
+        tag: Some(tag.to_owned()),
+        ..crate::location::Address::default()
     }
+    .location()
+    .to_string()
 }
 
 /// The colors the user chose for tags, read once for many.
@@ -314,7 +311,7 @@ pub fn publish(app: &App, index: &Arc<TagIndex>, vocabulary: &Vocabulary, shown:
     let mut last = shown.0.lock();
     let colors = Colors::of(app);
     let row = |tag: String, pinned: bool| {
-        let location = location(app, &tag)?;
+        let location = location(&tag);
         let color = colors.of_tag(vocabulary, &tag);
         Some(Row {
             tag,
@@ -377,32 +374,24 @@ pub fn publish(app: &App, index: &Arc<TagIndex>, vocabulary: &Vocabulary, shown:
             color: Some(r.color),
         }
     });
-    // Last, every tag: the home folder's Tags view, where they are managed.
-    let all = location(app, "x")
-        .and(std::env::home_dir())
-        .map(|home| Place {
-            title: "All Tags".into(),
-            location: Location::new("tags", ""),
-            icon: Some("tag".into()),
-            group: GROUP.into(),
-            space: None,
-            eject: None,
-            activate: Some(Invocation::with_args(
-                "ui.view",
-                &serde_json::json!({
-                    "id": crate::lens::VIEW,
-                    "location": bibli_core::os_path::PathArg::from(home.as_path()),
-                }),
-            )),
-            unavailable: None,
-            busy: None,
-            menu: Vec::new(),
-            forget: None,
-            reorder: None,
-            color: None,
-            drop: None,
-            suggested: false,
-        });
+    // Last, every tag: the home folder's tags, browsed as folders.
+    let all = Some(Place {
+        title: "All Tags".into(),
+        location: crate::location::Address::default().location(),
+        icon: Some("tag".into()),
+        group: GROUP.into(),
+        space: None,
+        eject: None,
+        activate: None,
+        unavailable: None,
+        busy: None,
+        menu: Vec::new(),
+        forget: None,
+        reorder: None,
+        color: None,
+        drop: None,
+        suggested: false,
+    });
     let places = places.chain(all);
     if app.registry.places.replace_owner(crate::ID, places) {
         app.wake();

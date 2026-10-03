@@ -97,6 +97,7 @@ impl LocationProvider for QueryProvider {
                 location.clone(),
             )],
             filters: Vec::new(),
+            toggles: Vec::new(),
         })
     }
 

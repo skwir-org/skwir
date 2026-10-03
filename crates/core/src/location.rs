@@ -296,6 +296,17 @@ pub struct Trail {
     /// it: a pill after the crumbs, whose × goes there. Kept while going
     /// up and down the crumbs.
     pub filters: Vec<Crumb>,
+    /// How it can show otherwise, for the View menu ("Include Sub-Tags").
+    pub toggles: Vec<Toggle>,
+}
+
+/// A way a location can show otherwise, for the View menu: its words,
+/// whether it does now, and where it leads switched.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Toggle {
+    pub label: String,
+    pub on: bool,
+    pub location: Location,
 }
 
 impl Trail {
@@ -352,6 +363,22 @@ pub struct Verbs {
     /// Renaming the place this location is, for its entry where it is
     /// listed (F2): run with the new name as `to`.
     pub rename: Option<Verb>,
+    /// Narrowing it, for the Narrow by bar.
+    pub narrow: Option<Narrowing>,
+}
+
+/// What narrowing a location runs (the Narrow by bar's choices), and what
+/// it narrows by already, which is not offered again.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Narrowing {
+    /// Run with `facet` and `value`: `also_tag` (files that also have the
+    /// tag `value`), `not_tag` (none that have it), `kind` (of that kind,
+    /// by its name), `modified` (modified that year).
+    pub command: crate::command::Invocation,
+    /// The tags every file listed has.
+    pub tags: Vec<String>,
+    /// The facets it narrows by already (`kind`, `modified`).
+    pub set: Vec<String>,
 }
 
 /// What to sort a listing by. Directories always come first.
@@ -544,6 +571,9 @@ pub struct Listing {
     rating_version: u64,
     /// Incremented when the location itself changed (`ListingEvent::Changed`).
     itself_version: u64,
+    /// Incremented when entries were taken out: one that comes back (a
+    /// file given a tag again) arrives bare, to be hydrated anew.
+    removed_version: u64,
     sort_cache: parking_lot::Mutex<Option<SortCache>>,
     /// The rules of files beside a file, to hide them (ADR-028).
     companions: Option<Arc<crate::companions::Companions>>,
@@ -567,6 +597,7 @@ impl Default for Listing {
             modified_version: id,
             rating_version: id,
             itself_version: id,
+            removed_version: id,
             sort_cache: parking_lot::Mutex::new(None),
             companions: None,
             owners: std::collections::HashSet::new(),
@@ -635,6 +666,7 @@ impl Listing {
                 }
                 if self.entries.len() != before {
                     delta = Delta::removal();
+                    self.removed_version = stamp();
                 }
             }
             ListingEvent::Complete => {
@@ -748,6 +780,12 @@ impl Listing {
     /// so far: what describes the folder shown reads it again when it moves.
     pub fn itself_version(&self) -> u64 {
         self.itself_version
+    }
+
+    /// Entries taken out so far: what remembers asking for an entry's
+    /// metadata forgets those gone, which come back bare if they come back.
+    pub fn removed_version(&self) -> u64 {
+        self.removed_version
     }
 
     /// The ids in `spec` order, directories first. Cached until something

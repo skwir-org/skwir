@@ -686,10 +686,11 @@ impl Plugin for QueryPlugin {
             },
         );
         for (title, by, when, order) in [
-            ("Same Kind", similar::By::Kind, "single", 470),
-            ("Same Day", similar::By::Day, "single", 471),
+            // A file's likes: a place (a tag's) has none.
+            ("Same Kind", similar::By::Kind, "single !place", 470),
+            ("Same Day", similar::By::Day, "single !place", 471),
             ("Similar Size", similar::By::Size, "single file", 472),
-            ("Same Tags", similar::By::Tags, "single", 473),
+            ("Same Tags", similar::By::Tags, "single !place", 473),
         ] {
             app.registry.menus.add(
                 ID,

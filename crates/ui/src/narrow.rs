@@ -8,6 +8,11 @@
 //! a tag out; Back undoes either, and the tag's pill in the address goes
 //! back up.
 //!
+//! Over a tag location (ADR-032) it offers the same, but the tags within
+//! its tag, which it lists as places: a choice narrows it as it says
+//! (`Verbs::narrow`, the tags plugin's `tags.narrow`), kept while its
+//! trail is walked.
+//!
 //! What it offers is counted from the search's own results, so it holds
 //! for every facet the search has: once per change of the listing, never
 //! per frame, at most every `EVERY` while the search streams.
@@ -56,12 +61,15 @@ pub struct File {
     pub year: Option<i64>,
 }
 
-/// A pane's bar: what it offers, and what that was counted for.
+/// A pane's bar: what it offers, what that was counted for, and what a
+/// choice runs: the location's own narrowing (a tag location's,
+/// `Verbs::narrow`), else the query plugin's.
 #[derive(Default)]
 pub struct Narrow {
     key: Option<Key>,
     counted: Option<Instant>,
     pub offer: Offer,
+    command: Option<bibli_core::command::Invocation>,
 }
 
 /// Each value's count, most first, then in the order met.
@@ -153,8 +161,14 @@ impl Shell {
     /// Count again what the pane being rendered's search can be narrowed
     /// to, when its listing changed.
     pub(crate) fn sync_narrow(&mut self) {
-        let (tags, _) = self.ui().chips.tags();
-        if tags.is_empty() {
+        // A search's tags, or what a location that narrows itself (a tag
+        // location) says its files all have.
+        let (mut tags, _) = self.ui().chips.tags();
+        let own = self.ui().place.verbs.narrow.clone();
+        if let Some(own) = &own {
+            tags.clone_from(&own.tags);
+        }
+        if tags.is_empty() && own.is_none() {
             if self.ui().narrow.key.is_some() {
                 self.ui_mut().narrow = Narrow::default();
             }
@@ -187,6 +201,8 @@ impl Shell {
             p.order()
                 .iter()
                 .filter_map(|id| p.entry(*id))
+                // A place (a tag's) is no file.
+                .filter(|e| !e.is_place())
                 .map(|e| File {
                     tags: crate::views::list::tags_of(e),
                     kinds: if complete {
@@ -207,16 +223,27 @@ impl Shell {
         let mut offer = offer(&files, &tags, complete);
         // What the search chooses already is not offered again.
         let chips = &self.ui().chips;
-        if chips.is_set("kind") {
+        let set = |facet: &str| {
+            chips.is_set(facet)
+                || own
+                    .as_ref()
+                    .is_some_and(|own| own.set.iter().any(|s| s == facet))
+        };
+        if set("kind") {
             offer.kinds.clear();
         }
-        if chips.is_set("modified") {
+        if set("modified") {
             offer.years.clear();
+        }
+        // A tag location lists the tags within it as places.
+        if own.is_some() {
+            offer.within.clear();
         }
         self.ui_mut().narrow = Narrow {
             key: Some(key),
             counted: Some(Instant::now()),
             offer,
+            command: own.map(|own| own.command),
         };
     }
 }
@@ -234,6 +261,12 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let theme = cx.global::<Theme>().clone();
     let pane = shell.pane;
     let font = shell.font.clone();
+    let command = shell
+        .ui()
+        .narrow
+        .command
+        .clone()
+        .unwrap_or_else(|| bibli_core::command::Invocation::new("query.refine"));
     let label = |text: String| {
         div()
             .flex_none()
@@ -262,6 +295,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                     leave_out: bool| {
         n += 1;
         let font = font.clone();
+        let command = command.clone();
         let tip: SharedString = if leave_out {
             format!("{tip} · Alt+click: none tagged so").into()
         } else {
@@ -290,12 +324,14 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                     facet
                 };
                 this.activate_pane(pane, cx);
-                this.run(
-                    "query.refine",
-                    serde_json::json!({ "facet": facet, "value": value, "pane": pane }),
-                    window,
-                    cx,
-                );
+                let mut args = command.args.clone();
+                if !args.is_object() {
+                    args = serde_json::json!({});
+                }
+                args["facet"] = serde_json::json!(facet);
+                args["value"] = serde_json::json!(value);
+                args["pane"] = serde_json::json!(pane);
+                this.run(&command.name, args, window, cx);
             }))
             .child(text)
             .child(

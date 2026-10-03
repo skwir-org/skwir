@@ -450,7 +450,13 @@ impl Shell {
             submenu: None,
         };
         let mut items = Vec::new();
-        if let Some(remove) = verbs.remove.as_ref().filter(|_| ctx.count > 0) {
+        // A place selected alone has items of its own (a tag's: Remove Tag
+        // From Every File).
+        if let Some(remove) = verbs
+            .remove
+            .as_ref()
+            .filter(|_| ctx.count > 0 && !ctx.all_places)
+        {
             items.push(item(&remove.title, "take_out", 295, "minus"));
         }
         if let Some(create) = verbs.create.as_ref().filter(|_| ctx.count == 0) {
@@ -841,7 +847,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 if !nested {
                     previous = Some(item);
                 }
-                let keys = shell.keys_for(&item.command.name, &item.command.args);
+                let keys = shell.keys_here(&item.command.name, &item.command.args);
                 (
                     item.title.clone(),
                     item.icon.clone(),

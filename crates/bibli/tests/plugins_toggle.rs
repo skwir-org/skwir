@@ -67,7 +67,7 @@ fn snapshot(app: &App) -> Snapshot {
             .collect(),
         views: app.registry.views.all().len(),
         panels: app.registry.panels.all().len(),
-        providers: ["path", "query", "shelf", "recent"]
+        providers: ["path", "query", "shelf", "recent", "tags"]
             .into_iter()
             .filter(|s| app.provider(s).is_some())
             .collect(),

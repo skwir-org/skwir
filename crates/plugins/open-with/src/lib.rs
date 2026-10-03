@@ -801,7 +801,7 @@ impl Plugin for OpenWithPlugin {
                 menu: "context".into(),
                 title: "Open Terminal Here".into(),
                 command: Invocation::new("open_terminal"),
-                when: Some("selection|folder".into()),
+                when: Some("selection|folder !place".into()),
                 order: 10,
                 icon: Some("command".into()),
                 submenu: None,

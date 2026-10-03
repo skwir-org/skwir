@@ -255,6 +255,27 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
             "Companion files",
         ));
     }
+    // How the location shown can show otherwise (a tag location's
+    // "Include Sub-Tags"): where it leads switched.
+    if let Some(trail) = &shell.ui().place.trail {
+        let pane = shell.pane;
+        for (i, toggle) in trail.toggles.iter().enumerate() {
+            show.push(menu_item(
+                Button::new(
+                    format!("menu-toggle-{i}"),
+                    if toggle.on { "check" } else { "" },
+                    toggle.label.clone(),
+                    "navigate",
+                )
+                .args(serde_json::json!({
+                    "location": crate::trail::location_arg(&toggle.location),
+                    "pane": pane,
+                }))
+                .active(toggle.on),
+                toggle.label.clone(),
+            ));
+        }
+    }
     // Only the grid draws thumbnails in a box.
     if shell.ui().view_id == crate::view::GRID {
         show.push(menu_item(

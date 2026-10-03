@@ -93,6 +93,7 @@ impl LocationProvider for Fake {
             base: Some(self.base.clone()),
             crumbs,
             filters: Vec::new(),
+            toggles: Vec::new(),
         })
     }
 
