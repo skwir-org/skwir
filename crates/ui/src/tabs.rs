@@ -67,7 +67,7 @@ pub struct Label {
 /// The strip's labels and what they were read from.
 #[derive(Default)]
 pub struct Labels {
-    key: Option<(u64, Vec<(TabId, Option<Location>)>)>,
+    key: Option<(u64, u64, Vec<(TabId, Option<Location>)>)>,
     pub labels: Vec<Label>,
 }
 
@@ -377,13 +377,18 @@ impl Shell {
                 .map(|t| (t.id, ws.pane(t.active).and_then(|p| p.shown()).cloned()))
                 .collect()
         };
-        let key = (self.app.registry.places.revision(), shows);
+        self.sync_roots();
+        let key = (
+            self.app.registry.places.revision(),
+            self.roots.generation,
+            shows,
+        );
         if self.tab_labels.key.as_ref() == Some(&key) {
             return;
         }
         let places = self.app.registry.places.all();
         let labels = key
-            .1
+            .2
             .iter()
             .map(|(tab, location)| {
                 let place = location
@@ -396,7 +401,7 @@ impl Shell {
                     tab: *tab,
                     title: location
                         .as_ref()
-                        .map(|l| self.app.location_title(l))
+                        .map(|l| self.location_name(l))
                         .unwrap_or_default()
                         .into(),
                     tip: location

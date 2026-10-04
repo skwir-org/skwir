@@ -18,7 +18,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
-use std::fmt::Write as _;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
@@ -29,7 +28,7 @@ use bibli_core::command::Invocation;
 use bibli_core::entry::{Entry, EntryId, EntryKind, Provenance, Value, keys};
 use bibli_core::location::{
     Crumb, EmptyState, EventSink, ListingEvent, Location, LocationProvider, Narrowing, OpenContext,
-    OpenLocation, Toggle, Trail, Verb, Verbs,
+    OpenLocation, Toggle, Trail, Verb, Verbs, escape, unescape,
 };
 use bibli_core::metadata::{clean_tag, same_tag, tag_leaf, tag_parent, tag_under, tag_within};
 use bibli_core::os_path::PathArg;
@@ -59,49 +58,6 @@ pub struct Address {
     pub years: Vec<i64>,
     /// Every file within the tag, not only those tagged with it exactly.
     pub deep: bool,
-}
-
-/// `text` with what would end it or read otherwise escaped (`%`, `?`,
-/// `&`, `=`, `#`, control characters), and bytes that are not UTF-8: the
-/// rest stays readable, as typed.
-fn escape(text: &[u8]) -> String {
-    let mut out = String::with_capacity(text.len());
-    for chunk in text.utf8_chunks() {
-        for c in chunk.valid().chars() {
-            if matches!(c, '%' | '?' | '&' | '=' | '#') || c.is_control() {
-                let mut buf = [0u8; 4];
-                for b in c.encode_utf8(&mut buf).bytes() {
-                    let _ = write!(out, "%{b:02X}");
-                }
-            } else {
-                out.push(c);
-            }
-        }
-        for b in chunk.invalid() {
-            let _ = write!(out, "%{b:02X}");
-        }
-    }
-    out
-}
-
-/// What `escape` wrote, as bytes again.
-fn unescape(text: &str) -> Vec<u8> {
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%'
-            && let Some(hex) = bytes.get(i + 1..i + 3)
-            && let Ok(b) = u8::from_str_radix(std::str::from_utf8(hex).unwrap_or("zz"), 16)
-        {
-            out.push(b);
-            i += 3;
-        } else {
-            out.push(bytes[i]);
-            i += 1;
-        }
-    }
-    out
 }
 
 fn push_tag(list: &mut Vec<String>, tag: &str) {
@@ -272,6 +228,7 @@ impl Address {
             // A tag holds the tags within it, the top of a folder's tags
             // every tag.
             holds_places: true,
+            one_folder: false,
         }
     }
 

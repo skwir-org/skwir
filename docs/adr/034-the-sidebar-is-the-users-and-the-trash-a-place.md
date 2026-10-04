@@ -1,6 +1,8 @@
 # ADR-034: The sidebar's places are the user's to arrange, and the trash is one
 
 Status: accepted, 2026-10-04. Amends ADR-032 (verbs) for the trash.
+Amended 2026-10-04: a trashed folder stays in the trash, and a folder's
+trail starts at the sidebar's place (below).
 
 ## Context
 
@@ -106,6 +108,63 @@ Delete, Delete in the trash, Empty Trash.
 - The trash lists no Deleted column and does not sort by it: Details says
   when a file was deleted and where from, and the Folder column says the
   folder it came from.
-- Restoring over a file that took the place is refused, not renamed.
+- Restoring over a file that took the place is refused, not renamed; a
+  folder merges into one there again (amendment below).
 - A volume's trash is watched once read: one mounted later is read when
   the Trash is opened or refreshed.
+
+## Amendment: in the trash, and from the sidebar's places (2026-10-04)
+
+### A trashed folder stays in the trash
+
+Opening a trashed folder went to its path, so the address read
+`Home › .local › share › Trash › files › old project`, and the pane was
+a folder like any other: New Folder, paste, drop and Move to Trash were
+offered in the trash, and the core, which knew only the items of a
+trash's `files` as trashed, put a file of a trashed folder in the trash
+again, as an item that came from the trash.
+
+A location may now say where a folder it lists leads, as it says where
+a place does (`OpenLocation::location_of`, asked of folders too): a
+trashed folder leads to `trash:` and its path, which the trash plugin
+lists with the core's own folder listing and reads as
+`Trash › old project › sub`. Opening it, opening it in a tab or in
+place, and dropping on it all go there; it keeps its path for what acts
+on files. Its files are the trash's: Delete deletes for good, a drop or
+a paste trashes, as on the Trash itself (moving files into a trashed
+folder would make restoring it bring them where they never were), and
+there is no New Folder or Rename. The core knows a file anywhere under a
+trash's `files` as trashed (`op::in_trash`), and Trash refuses it.
+
+A file of a trashed folder is restored alone (`RestorePart`): where it
+was is where the folder was, then its path in the folder; the folders
+missing on the way are made again, as their counterparts in the trash
+are (mode, `user.*` attributes, times), and it moves back with its
+companions. The folder stays in the trash with the rest and its
+`.trashinfo`, which still speaks of it rightly. Restored later, the
+folder merges into the folders made again (`Restore`): what it holds
+moves in where its place is free, and a file where one of its files
+would go stops it, as a file in the folder's own place always did.
+Undone, each puts back only what it moved (`ReturnPart`, `Unmerge`), and
+the folders a restore made go while empty. The freedesktop.org trash
+keeps one `.trashinfo` per item, which is why file managers usually
+restore only items; nothing in it forbids taking a file out of one.
+
+### A folder's trail starts at the sidebar's place
+
+A place renamed in the sidebar kept its folder's name everywhere else.
+A folder's trail now starts at the deepest folder the sidebar shows
+that holds it, under the sidebar's name (`sidebar::roots`): the rule
+"the home folder stands for everything above it" made general, as
+Dolphin's breadcrumb does with its places. Documents named Papers reads
+`Papers › 2026`, a drive `stick › Photos`; the home folder stands for
+what is above it even when the sidebar hides it. Of two places on one
+folder (Music, and a bookmark of it), the first in the sidebar's order
+names it. A place hidden, in a group put away, or not mounted starts no
+trail. The location stays a path: Up goes to the real parent, Ctrl+L
+edits the real path, and only where a place is named (the trail, a
+tab, the history) does the sidebar's name replace the folder's; a
+listing, a toast and Details say the folder's own. The core does not see
+the user's names (they are the window's, ADR-034), so the CLI and
+agents name a folder as its owner does, and the search's pill ("In
+Documents") is the query plugin's words.

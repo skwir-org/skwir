@@ -296,6 +296,89 @@ pub fn arrange(mut places: Vec<Place>, sections: &Sections) -> Vec<Arranged> {
         .collect()
 }
 
+/// A folder the sidebar shows, where a trail starts (`address::crumbs`):
+/// its path, and the name the sidebar gives it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Root {
+    pub path: std::path::PathBuf,
+    pub name: String,
+}
+
+/// The folders the sidebar shows, in its order and under the names it
+/// gives them (the user's, ADR-034), then the home folder, which stands
+/// for what is above it even when the sidebar does not show it: where
+/// trails start. A place hidden, in a group put away, or not mounted is
+/// none.
+pub fn roots(places: Vec<Place>, sections: &Sections, home: Option<&std::path::Path>) -> Vec<Root> {
+    let mut roots: Vec<Root> = arrange(places, sections)
+        .into_iter()
+        .filter(|a| {
+            a.shown
+                && !sections.hidden.contains(&a.place.group)
+                && a.place.activate.is_none()
+                && a.place.unavailable.is_none()
+        })
+        .filter_map(|a| {
+            Some(Root {
+                path: a.place.location.path()?,
+                name: a.place.title,
+            })
+        })
+        .collect();
+    if let Some(home) = home.filter(|home| !roots.iter().any(|r| r.path == *home)) {
+        roots.push(Root {
+            path: home.to_path_buf(),
+            name: "Home".to_owned(),
+        });
+    }
+    roots
+}
+
+/// `roots`, read again only when the places or their arrangement change,
+/// and how many times they were.
+#[derive(Default)]
+pub struct Roots {
+    key: Option<(u64, Sections)>,
+    pub roots: Vec<Root>,
+    pub generation: u64,
+}
+
+impl Shell {
+    /// Read the trails' roots again if the places or their arrangement
+    /// changed since.
+    pub fn sync_roots(&mut self) {
+        let revision = self.app.registry.places.revision();
+        if self
+            .roots
+            .key
+            .as_ref()
+            .is_some_and(|(r, s)| *r == revision && *s == self.sidebar_sections)
+        {
+            return;
+        }
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+        self.roots = Roots {
+            roots: roots(
+                self.app.registry.places.all(),
+                &self.sidebar_sections,
+                home.as_deref(),
+            ),
+            key: Some((revision, self.sidebar_sections.clone())),
+            generation: self.roots.generation + 1,
+        };
+    }
+
+    /// What `location` is called among others (its tab, the history): the
+    /// sidebar's name for a folder it shows, as the user named it, else
+    /// what the core calls it (`App::location_title`).
+    pub fn location_name(&self, location: &Location) -> String {
+        location
+            .path()
+            .and_then(|path| self.roots.roots.iter().find(|r| r.path == path))
+            .map_or_else(|| self.app.location_title(location), |r| r.name.clone())
+    }
+}
+
 impl Sections {
     /// Where `group` goes among the others.
     pub fn rank(&self, group: &str) -> (usize, usize) {

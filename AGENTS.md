@@ -132,6 +132,15 @@ current source before assuming a planned crate, command, or API exists.
   Back, Forward, the address (the breadcrumb trail, or the text being
   edited) ending with the button that keeps the location in the sidebar,
   then how the pane shows its folder.
+  A folder's trail starts at the deepest folder the sidebar shows that
+  holds it, under the sidebar's name (`sidebar::roots`, read again only
+  when the places or their arrangement change; `address::crumbs`):
+  `Papers › 2026` for a folder of Documents the user named Papers in the
+  sidebar, `stick › Photos` on a drive, Home when nothing deeper holds
+  it. A tab and the history name such a folder as the sidebar does
+  (`Shell::location_name`); a listing, a toast and Details keep the
+  folder's own name. Up still goes to the real parent, and Ctrl+L edits
+  the real path.
   There is no Up button: the trail's parent segment and Alt+Up do it.
   Back and Forward list the history that way on a right-click
   (`ui.history_menu`, `back`/`forward` with `steps`); each chevron of the
@@ -307,7 +316,10 @@ current source before assuming a planned crate, command, or API exists.
   (`EntryId::place`): every view shows one as a folder (with its tag's
   mark, `icons::with_tag`, for a tag's), opening it goes where
   `OpenLocation::location_of` says (`Pane::location_of`), and it has no
-  path, so what acts on files says `!place` in its `when`. Its provider
+  path, so what acts on files says `!place` in its `when`. A folder a
+  location does not let open at its path (a trashed folder) leads where
+  `location_of` says too: opening it, in a tab, in place and dropping on
+  it all go there, and it keeps its path for what acts on files. Its provider
   counts what it holds (`keys::FILES`: its size column, its sort by
   size). Such a location reads as a trail (`LocationProvider::trail`,
   from its text: the folder it is of, its places, what narrows it; one
@@ -646,12 +658,18 @@ current source before assuming a planned crate, command, or API exists.
   what every trash holds (`bibli_platform::trash`: the home trash and
   the volumes' the sidebar shows), each file under the name it had,
   where it came from in `keys::TRASHED_FROM` (the Folder column) and
-  when in `keys::TRASHED`. The trash plugin reads; the core acts: Restore
-  names the item (`Restore::item`), Delete takes the `.trashinfo` along
-  wherever a trashed file is deleted from, and Trash refuses a file in a
-  trash. A location whose files are the trash's says `Verbs::restore`
-  (the `restores` token): Restore in their menu, no Move to Trash, and
-  Delete deletes for good. A step Undo cannot take back
+  when in `keys::TRASHED`. A trashed folder opens in the trash
+  (`trash:` and its path, `Trash › old project › sub`), listed by the
+  core's own folder listing (`Trail::one_folder`: no Folder column). The
+  trash plugin reads; the core acts: Restore names the item
+  (`Restore::item`) and merges a folder into one there again; a file
+  inside a trashed folder is restored alone (`RestorePart`: its folders
+  made again as they are in the trash, the rest left there, undone by
+  `ReturnPart`); Delete takes the `.trashinfo` along wherever a trashed
+  file is deleted from; and Trash refuses a file in a trash at any depth
+  (`op::in_trash`). A location whose files are the trash's says
+  `Verbs::restore` (the `restores` token): Restore in their menu, no Move
+  to Trash, a drop or a paste trashes, and Delete deletes for good. A step Undo cannot take back
   (`Operation::undoable`: deleting for good) makes its plan ask before a
   gesture applies it (`Shell::apply_user_plan`), whatever the gesture.
 - **Search chips.** A pane showing a search draws it in its address field

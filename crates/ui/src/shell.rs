@@ -221,6 +221,8 @@ pub struct Shell {
     pub(crate) unsaved: std::collections::BTreeMap<&'static str, String>,
     /// How the user arranged the sidebar's groups (`ui.sidebar_section`).
     pub sidebar_sections: crate::sidebar::Sections,
+    /// The folders the sidebar shows, where trails start.
+    pub roots: crate::sidebar::Roots,
     /// Size, Modified, Type, Rating: which detail columns the list shows
     /// (`settings::COLUMN_KEYS`). Read through `shown_columns`.
     pub columns: [bool; 5],
@@ -491,6 +493,7 @@ impl Shell {
             unsaved: std::collections::BTreeMap::new(),
             backlog: false,
             sidebar_sections: crate::sidebar::Sections::default(),
+            roots: crate::sidebar::Roots::default(),
             columns: [true, true, true, false, true],
             reading_measure: crate::markdown::measure("comfortable"),
             reading_width_before: None,
@@ -2179,6 +2182,7 @@ impl Shell {
         let active = saved == id;
         crate::search_bar::sync(self, window);
         crate::trail::sync(self);
+        self.sync_roots();
         let address_bar = address::render_address(self, window, cx);
         // The Usage view draws its own scanning and empty states.
         let placeholder = (self.ui().view_id != "usage")

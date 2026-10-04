@@ -99,6 +99,7 @@ impl LocationProvider for QueryProvider {
             filters: Vec::new(),
             toggles: Vec::new(),
             holds_places: false,
+            one_folder: false,
         })
     }
 

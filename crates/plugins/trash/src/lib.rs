@@ -9,8 +9,16 @@
 //! worker, and again when one changes (a watch on each `info` folder, and
 //! the plans bibli applies), so the listings open and the place's icon
 //! follow.
+//!
+//! A trashed folder stays in the trash when opened (`trash:` and its
+//! path, a trail of `Trash › old project › sub`): its files are restored
+//! alone (the core's `RestorePart`, making its folders again) or deleted
+//! for good, and files dropped or pasted there are put in the trash, as on
+//! the Trash itself.
 
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -21,10 +29,12 @@ use bibli_core::command::{Invocation, NoArgs, Outcome};
 use bibli_core::entry::{Entry, EntryId, keys};
 use bibli_core::fs::stat::stat_path;
 use bibli_core::location::{
-    EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
-    Tool, ToolPane, Verbs,
+    Crumb, EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext,
+    OpenLocation, PATH_SCHEME, Tool, ToolPane, Trail, Verbs, escape, unescape,
 };
-use bibli_core::op::{Change, Delete, EntryRef, Operation, Plan, Restore, Trash, trash_info_of};
+use bibli_core::op::{
+    Change, Delete, EntryRef, Operation, Plan, Restore, RestorePart, Trash, in_trash,
+};
 use bibli_core::os_path::PathArg;
 use bibli_core::plugin::Plugin;
 use bibli_core::registry::{MenuItem, Place};
@@ -59,6 +69,17 @@ impl Item {
     fn entry_ref(&self) -> EntryRef {
         EntryRef::new(self.entry.id, self.trashed.file.clone())
     }
+}
+
+/// Where a folder of the trash leads, staying in the trash: `trash:` and
+/// its path there.
+fn folder_location(folder: &Path) -> Location {
+    Location::new(SCHEME, escape(folder.as_os_str().as_bytes()))
+}
+
+/// The folder of the trash `location` shows; `None` for the trash itself.
+fn folder_of(location: &Location) -> Option<PathBuf> {
+    (!location.rest.is_empty()).then(|| PathBuf::from(OsString::from_vec(unescape(&location.rest))))
 }
 
 /// Names a trashed file's entry as the file was named, and says when it was
@@ -99,6 +120,8 @@ fn read(trashes: &[PathBuf], calendar: &Calendar) -> Vec<Item> {
 struct State {
     /// What the trashes held when last read.
     items: Vec<Item>,
+    /// Where each of `items` is among them, by its entry's id.
+    by_id: HashMap<EntryId, usize>,
     /// Whether they were read since the plugin started: a listing opened
     /// before waits in `waiting`.
     read: bool,
@@ -126,6 +149,15 @@ impl State {
 
     fn entries(&self) -> Vec<Entry> {
         self.items.iter().map(|i| i.entry.clone()).collect()
+    }
+
+    fn item(&self, id: EntryId) -> Option<&Item> {
+        self.by_id.get(&id).and_then(|&n| self.items.get(n))
+    }
+
+    /// The item whose file in the trash is `file`.
+    fn item_at(&self, file: &Path) -> Option<&Item> {
+        self.items.iter().find(|i| i.trashed.file == file)
     }
 }
 
@@ -195,6 +227,12 @@ impl Trashes {
             .map(|i| i.entry.clone())
             .collect();
         s.items = items;
+        s.by_id = s
+            .items
+            .iter()
+            .enumerate()
+            .map(|(n, i)| (i.entry.id, n))
+            .collect();
         if !removed.is_empty() {
             s.broadcast(&ListingEvent::Removed(removed));
         }
@@ -268,13 +306,8 @@ impl Trashes {
 
     /// The trash's items that are `ids`.
     fn items(&self, ids: &[EntryId]) -> Vec<Item> {
-        self.state
-            .lock()
-            .items
-            .iter()
-            .filter(|i| ids.contains(&i.entry.id))
-            .cloned()
-            .collect()
+        let s = self.state.lock();
+        ids.iter().filter_map(|id| s.item(*id).cloned()).collect()
     }
 }
 
@@ -330,44 +363,126 @@ struct TrashProvider {
     app: Weak<App>,
 }
 
+impl TrashProvider {
+    /// What a folder of the trash is called: the item its own name had,
+    /// a folder inside it its name.
+    fn name_of(&self, folder: &Path) -> String {
+        let item = in_trash(folder).filter(|t| t.inner.as_os_str().is_empty());
+        item.and_then(|_| {
+            let s = self.trashes.state.lock();
+            s.item_at(folder).map(|i| i.entry.name_str().into_owned())
+        })
+        .or_else(|| folder.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_default()
+    }
+}
+
 impl LocationProvider for TrashProvider {
     fn scheme(&self) -> &'static str {
         SCHEME
     }
 
-    fn title(&self, _location: &Location) -> Option<String> {
-        Some("Trash".into())
+    fn title(&self, location: &Location) -> Option<String> {
+        Some(match folder_of(location) {
+            Some(folder) => self.name_of(&folder),
+            None => "Trash".into(),
+        })
+    }
+
+    /// The trash, then a trashed folder under its own name, then the
+    /// folders inside it, each where it is in the trash.
+    fn trail(&self, location: &Location) -> Option<Trail> {
+        let folder = folder_of(location)?;
+        let inside = in_trash(&folder)?;
+        let mut crumbs = vec![
+            Crumb::new("Trash", Location::new(SCHEME, "")),
+            Crumb::new(self.name_of(&inside.item), folder_location(&inside.item)),
+        ];
+        let mut at = inside.item.clone();
+        for part in inside.inner.components() {
+            at.push(part);
+            crumbs.push(Crumb::new(
+                part.as_os_str().to_string_lossy(),
+                folder_location(&at),
+            ));
+        }
+        Some(Trail {
+            crumbs,
+            holds_places: true,
+            one_folder: true,
+            ..Trail::default()
+        })
+    }
+
+    /// The trashed folders at its top, the folders in a trashed folder:
+    /// what the trail's chevrons list.
+    fn places(&self, location: &Location) -> Vec<Crumb> {
+        let mut places: Vec<Crumb> = match folder_of(location) {
+            None => self
+                .trashes
+                .state
+                .lock()
+                .items
+                .iter()
+                .filter(|i| i.entry.is_dir())
+                .map(|i| Crumb::new(i.entry.name_str(), folder_location(&i.trashed.file)))
+                .collect(),
+            Some(folder) => std::fs::read_dir(&folder)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+                .map(|e| Crumb::new(e.file_name().to_string_lossy(), folder_location(&e.path())))
+                .collect(),
+        };
+        places
+            .sort_by_cached_key(|c| bibli_core::collate::sort_key(std::ffi::OsStr::new(&c.label)));
+        places
     }
 
     fn icon(&self, _location: &Location) -> Option<&'static str> {
         Some("trash")
     }
 
-    fn empty_state(&self, _location: &Location) -> Option<EmptyState> {
-        Some(EmptyState::new(
-            "The trash is empty",
-            "Files moved to the trash wait here until it is emptied: restore them from their menu.",
-        ))
+    fn empty_state(&self, location: &Location) -> Option<EmptyState> {
+        Some(match folder_of(location) {
+            None => EmptyState::new(
+                "The trash is empty",
+                "Files moved to the trash wait here until it is emptied: restore them from their menu.",
+            ),
+            Some(_) => EmptyState::new(
+                "This folder is empty",
+                "Nothing it held is left in the trash.",
+            ),
+        })
     }
 
-    /// Files dropped or pasted here are put in the trash; its own are
-    /// restored (`Verbs::restore`), and deleted for good by Delete or all
-    /// at once by its button.
-    fn verbs(&self, _location: &Location) -> Verbs {
+    /// Files dropped or pasted here are put in the trash, in one of its
+    /// folders as on the trash itself; its own are restored
+    /// (`Verbs::restore`), and deleted for good by Delete, or all at once
+    /// by the trash's button.
+    fn verbs(&self, location: &Location) -> Verbs {
         Verbs {
             drop: Some(Invocation::new("trash.put")),
             restore: Some(Invocation::new("trash.restore")),
-            tools: vec![Tool::new(
-                "trash",
-                EMPTY_TRASH,
-                Invocation::new("trash.empty"),
-                ToolPane::Shown,
-            )],
+            tools: if folder_of(location).is_none() {
+                vec![Tool::new(
+                    "trash",
+                    EMPTY_TRASH,
+                    Invocation::new("trash.empty"),
+                    ToolPane::Shown,
+                )]
+            } else {
+                Vec::new()
+            },
             ..Verbs::default()
         }
     }
 
     fn open(&self, location: &Location, ctx: OpenContext) -> anyhow::Result<Arc<dyn OpenLocation>> {
+        if let Some(folder) = folder_of(location) {
+            return self.open_folder(location, &folder, ctx);
+        }
         let (sink, rx) = ctx.channel();
         {
             let mut s = self.trashes.state.lock();
@@ -395,6 +510,72 @@ impl LocationProvider for TrashProvider {
             trashes: self.trashes.clone(),
             app: self.app.clone(),
         }))
+    }
+}
+
+impl TrashProvider {
+    /// A folder of the trash, listed as the folder it is (the core's own
+    /// listing, watched), kept in the trash: its folders lead into it.
+    fn open_folder(
+        &self,
+        location: &Location,
+        folder: &Path,
+        ctx: OpenContext,
+    ) -> anyhow::Result<Arc<dyn OpenLocation>> {
+        anyhow::ensure!(
+            in_trash(folder).is_some(),
+            "{} is no folder of the trash",
+            folder.display()
+        );
+        let app = self
+            .app
+            .upgrade()
+            .ok_or_else(|| anyhow::anyhow!("bibli is closing"))?;
+        let folders = app
+            .provider(PATH_SCHEME)
+            .ok_or_else(|| anyhow::anyhow!("no provider for folders"))?;
+        Ok(Arc::new(TrashFolder {
+            location: location.clone(),
+            inner: folders.open(&Location::from_path(folder), ctx)?,
+        }))
+    }
+}
+
+/// A folder of the trash: the folder's own listing, under its location in
+/// the trash.
+struct TrashFolder {
+    location: Location,
+    inner: Arc<dyn OpenLocation>,
+}
+
+impl OpenLocation for TrashFolder {
+    fn location(&self) -> &Location {
+        &self.location
+    }
+
+    fn events(&self) -> &Receiver<ListingEvent> {
+        self.inner.events()
+    }
+
+    fn hydrate(&self, ids: &[EntryId], priority: Priority) {
+        self.inner.hydrate(ids, priority);
+    }
+
+    fn path_of(&self, id: EntryId) -> Option<PathBuf> {
+        self.inner.path_of(id)
+    }
+
+    /// A folder inside it stays in the trash too.
+    fn location_of(&self, id: EntryId) -> Option<Location> {
+        self.inner.path_of(id).map(|path| folder_location(&path))
+    }
+
+    fn refresh(&self) {
+        self.inner.refresh();
+    }
+
+    fn close(&self) {
+        self.inner.close();
     }
 }
 
@@ -467,10 +648,15 @@ impl OpenLocation for TrashLocation {
         self.trashes
             .state
             .lock()
-            .items
-            .iter()
-            .find(|i| i.entry.id == id)
+            .item(id)
             .map(|i| i.trashed.file.clone())
+    }
+
+    /// A trashed folder stays in the trash when opened.
+    fn location_of(&self, id: EntryId) -> Option<Location> {
+        let s = self.trashes.state.lock();
+        let item = s.item(id).filter(|i| i.entry.is_dir())?;
+        Some(folder_location(&item.trashed.file))
     }
 
     fn refresh(&self) {
@@ -497,10 +683,11 @@ struct PutArgs {
 
 #[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
 struct RestoreArgs {
-    /// The pane showing the trash, whose selection is restored.
+    /// The pane showing the trash, or a folder of it, whose selection is
+    /// restored.
     #[serde(default)]
     pane: Option<PaneId>,
-    /// The trash's entries to restore, instead of the pane's selection.
+    /// The entries of that pane to restore, instead of its selection.
     #[serde(default)]
     ids: Vec<EntryId>,
 }
@@ -518,12 +705,39 @@ struct Listed {
     deleted: Option<u64>,
 }
 
-/// The selection of `pane`, by id.
-fn selected(app: &App, pane: Option<PaneId>) -> Vec<EntryId> {
+/// The entries `ids` of `pane`, or its selection, where they are.
+fn chosen(app: &App, pane: Option<PaneId>, ids: Vec<EntryId>) -> Vec<EntryRef> {
     let ws = app.workspace.read();
-    ws.pane(app.pane_or_active(pane))
-        .map(|p| p.selection.iter().collect())
-        .unwrap_or_default()
+    let Some(p) = ws.pane(app.pane_or_active(pane)) else {
+        return Vec::new();
+    };
+    let ids = if ids.is_empty() {
+        p.selection.iter().collect()
+    } else {
+        ids
+    };
+    ids.into_iter()
+        .filter_map(|id| Some(EntryRef::new(id, p.path_of(id)?)))
+        .collect()
+}
+
+/// The step that puts `entry`, a file of the trash, back where it was: a
+/// whole item by what the trash says of it, a file inside a trashed folder
+/// alone, where that folder was.
+fn restore_step(state: &State, entry: EntryRef) -> Option<Box<dyn Operation>> {
+    let inside = in_trash(&entry.path)?;
+    let item = state.item_at(&inside.item)?;
+    Some(if inside.inner.as_os_str().is_empty() {
+        Box::new(Restore {
+            path: item.trashed.original.clone(),
+            item: Some(PathArg(item.trashed.info.clone())),
+        })
+    } else {
+        Box::new(RestorePart {
+            path: item.trashed.original.join(&inside.inner),
+            entry,
+        })
+    })
 }
 
 fn register_commands(app: &App, trashes: &Trashes) {
@@ -540,7 +754,7 @@ fn register_commands(app: &App, trashes: &Trashes) {
             };
             let steps: Vec<Box<dyn Operation>> = refs
                 .into_iter()
-                .filter(|r| trash_info_of(&r.path).is_none())
+                .filter(|r| in_trash(&r.path).is_none())
                 .map(|entry| Box::new(Trash { entry }) as Box<dyn Operation>)
                 .collect();
             anyhow::ensure!(!steps.is_empty(), "These are in the trash already");
@@ -554,21 +768,13 @@ fn register_commands(app: &App, trashes: &Trashes) {
         "Restore from the trash",
         "Put files of the trash back where they came from (plan): the trash pane's selection, or the entries given",
         move |a, app| {
-            let ids = if a.ids.is_empty() {
-                selected(app, a.pane)
-            } else {
-                a.ids
+            let refs = chosen(app, a.pane, a.ids);
+            let steps: Vec<Box<dyn Operation>> = {
+                let s = t.state.lock();
+                refs.into_iter()
+                    .filter_map(|entry| restore_step(&s, entry))
+                    .collect()
             };
-            let steps: Vec<Box<dyn Operation>> = t
-                .items(&ids)
-                .into_iter()
-                .map(|item| {
-                    Box::new(Restore {
-                        path: item.trashed.original,
-                        item: Some(PathArg(item.trashed.info)),
-                    }) as Box<dyn Operation>
-                })
-                .collect();
             if steps.is_empty() {
                 return Err(bibli_core::command::NothingSelected.into());
             }

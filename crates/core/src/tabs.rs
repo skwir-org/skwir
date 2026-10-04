@@ -699,9 +699,13 @@ pub(crate) fn register(app: &App) {
                     .filter_map(|id| p.location_of(id))
                     .collect();
                 refs.into_iter()
-                    .filter(|r| p.entry(r.id).is_some_and(crate::Entry::is_dir))
+                    .filter(|r| {
+                        p.entry(r.id).is_some_and(crate::Entry::is_dir)
+                            && p.location_of(r.id).is_none()
+                    })
                     .map(|r| Location::from_path(r.path))
-                    // A place (a tag's) opens where it leads.
+                    // A place (a tag's), or a folder that does not open at
+                    // its path (a trashed one), opens where it leads.
                     .chain(places)
                     .collect()
             };

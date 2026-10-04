@@ -644,7 +644,7 @@ struct Ends {
 /// (its content has no width of its own) and takes the rest when drawn.
 pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let roots = &shell.roots.roots;
     let row =
         {
             let ws = shell.app.workspace.read();
@@ -658,7 +658,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
             address: match location.as_ref().and_then(bibli_core::Location::path) {
                 _ if focused => Address::Text,
                 Some(path) => Address::Trail(
-                    crumbs(&path, home.as_deref())
+                    crumbs(&path, roots)
                         .into_iter()
                         .map(|(label, path)| Crumb::new(label, Location::from_path(path)))
                         .collect(),
@@ -670,7 +670,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
                 None if !shell.ui().chips.chips.is_empty() => Address::Pills,
                 None => match &shell.ui().place.trail {
                     Some(trail) => Address::Trail(
-                        crate::trail::segments(trail, home.as_deref()),
+                        crate::trail::segments(trail, roots),
                         trail
                             .filters
                             .iter()
@@ -1133,21 +1133,26 @@ fn tool_pane(
 }
 
 /// The folders leading to `path`, outermost first, each with the path it
-/// opens. The home folder stands for everything above it.
-pub fn crumbs(path: &std::path::Path, home: Option<&std::path::Path>) -> Vec<(String, PathBuf)> {
-    let mut out = Vec::new();
-    let mut current = PathBuf::new();
-    let home = home.filter(|home| path.starts_with(home) && *home != std::path::Path::new("/"));
-    for component in path.components() {
+/// opens. The deepest of the sidebar's folders that holds it
+/// (`sidebar::roots`, the home folder among them) stands for everything
+/// above it, under the sidebar's name: `Papers › 2026` for a folder of
+/// Documents the user named Papers, `stick › Photos` on a drive. Of two
+/// on one folder, the first in the sidebar.
+pub fn crumbs(path: &std::path::Path, roots: &[crate::sidebar::Root]) -> Vec<(String, PathBuf)> {
+    let root = roots
+        .iter()
+        .filter(|root| path.starts_with(&root.path))
+        .min_by_key(|root| std::cmp::Reverse(root.path.components().count()));
+    let (mut out, mut current, rest) = match root {
+        Some(root) => (
+            vec![(root.name.clone(), root.path.clone())],
+            root.path.clone(),
+            path.strip_prefix(&root.path).unwrap_or(path),
+        ),
+        None => (Vec::new(), PathBuf::new(), path),
+    };
+    for component in rest.components() {
         current.push(component);
-        if let Some(home) = home
-            && home.starts_with(&current)
-        {
-            if current == home {
-                out.push(("Home".to_owned(), current.clone()));
-            }
-            continue;
-        }
         let label = match component {
             std::path::Component::RootDir => "/".to_owned(),
             other => other.as_os_str().to_string_lossy().into_owned(),
@@ -1315,6 +1320,7 @@ fn breadcrumbs(
 #[cfg(test)]
 mod tests {
     use super::{ViewSpec, crumbs, tool_pane, toolbar_views};
+    use crate::sidebar::Root;
     use bibli_core::location::{Location, ToolPane};
     use bibli_core::workspace::PaneId;
     use std::path::{Path, PathBuf};
@@ -1364,8 +1370,15 @@ mod tests {
         assert_eq!(shown("tree"), ["list", "tree", "grid"]);
     }
 
-    fn labels(path: &str, home: Option<&str>) -> Vec<String> {
-        crumbs(Path::new(path), home.map(Path::new))
+    fn root(path: &str, name: &str) -> Root {
+        Root {
+            path: path.into(),
+            name: name.into(),
+        }
+    }
+
+    fn labels(path: &str, roots: &[Root]) -> Vec<String> {
+        crumbs(Path::new(path), roots)
             .into_iter()
             .map(|(label, _)| label)
             .collect()
@@ -1373,31 +1386,48 @@ mod tests {
 
     #[test]
     fn home_stands_for_everything_above_it() {
+        let home = [root("/home/example", "Home")];
         assert_eq!(
-            labels(
-                "/home/example/Projects/it's a report",
-                Some("/home/example")
-            ),
+            labels("/home/example/Projects/it's a report", &home),
             ["Home", "Projects", "it's a report"]
         );
-        assert_eq!(labels("/home/example", Some("/home/example")), ["Home"]);
-        assert_eq!(
-            labels("/srv/data", Some("/home/example")),
-            ["/", "srv", "data"]
-        );
-        assert_eq!(labels("/", None), ["/"]);
+        assert_eq!(labels("/home/example", &home), ["Home"]);
+        assert_eq!(labels("/srv/data", &home), ["/", "srv", "data"]);
+        assert_eq!(labels("/", &[]), ["/"]);
         // A sibling that merely shares a prefix is not inside the home folder.
+        assert_eq!(labels("/home/example2", &home), ["/", "home", "example2"]);
+    }
+
+    /// The deepest of the sidebar's folders holding a folder starts its
+    /// trail, under the sidebar's name; of two on one folder, the first.
+    #[test]
+    fn a_trail_starts_at_the_deepest_place_of_the_sidebar_under_its_name() {
+        let roots = [
+            root("/home/example", "Home"),
+            root("/home/example/Documents", "Papers"),
+            root("/run/media/example/stick", "stick"),
+            root("/", "Root"),
+            root("/home/example/Documents", "Docs too"),
+        ];
         assert_eq!(
-            labels("/home/example2", Some("/home/example")),
-            ["/", "home", "example2"]
+            labels("/home/example/Documents/2026/taxes", &roots),
+            ["Papers", "2026", "taxes"]
         );
+        assert_eq!(labels("/home/example/Music", &roots), ["Home", "Music"]);
+        assert_eq!(
+            labels("/run/media/example/stick/Photos", &roots),
+            ["stick", "Photos"]
+        );
+        assert_eq!(labels("/etc/fonts", &roots), ["Root", "etc", "fonts"]);
+        let trail = crumbs(Path::new("/home/example/Documents/2026"), &roots);
+        assert_eq!(trail[0].1, PathBuf::from("/home/example/Documents"));
     }
 
     #[test]
     fn every_segment_opens_its_own_folder() {
         let trail = crumbs(
             Path::new("/home/example/a/b"),
-            Some(Path::new("/home/example")),
+            &[root("/home/example", "Home")],
         );
         assert_eq!(trail[0].1, PathBuf::from("/home/example"));
         assert_eq!(trail[2].1, PathBuf::from("/home/example/a/b"));

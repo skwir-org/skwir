@@ -113,7 +113,7 @@ impl Shell {
         let rows = places
             .into_iter()
             .map(|(steps, location)| NavRow {
-                label: self.app.location_title(&location).into(),
+                label: self.location_name(&location).into(),
                 tip: match location.path() {
                     Some(path) => path.display().to_string().into(),
                     None => location.to_string().into(),

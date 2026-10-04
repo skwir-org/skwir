@@ -1024,10 +1024,12 @@ impl Pane {
             .or_else(|| self.open.as_ref()?.path_of(id))
     }
 
-    /// Where a place the pane shows leads (`OpenLocation::location_of`):
-    /// plugin code, called under the caller's lock, like `path_of`.
+    /// Where a place the pane shows leads, or a folder that does not open
+    /// at its path (a trashed folder: `OpenLocation::location_of`): plugin
+    /// code, called under the caller's lock, like `path_of`. Opening it,
+    /// in a tab, in place, and dropping on it, all go there.
     pub fn location_of(&self, id: EntryId) -> Option<Location> {
-        if !id.is_place() {
+        if !id.is_place() && !self.entry(id).is_some_and(crate::Entry::is_dir) {
             return None;
         }
         if self.listing.get(id).is_some() {

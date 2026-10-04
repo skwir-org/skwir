@@ -113,10 +113,12 @@ fn open(args: OpenArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
         } else {
             args.ids
         };
-        // A place (a tag's, in a tag location) opens where it leads.
+        // A place (a tag's, in a tag location) opens where it leads, as a
+        // folder that does not open at its path does (a trashed one).
         let places = ids.iter().filter_map(|id| p.location_of(*id)).collect();
         let targets = ids
             .into_iter()
+            .filter(|id| p.location_of(*id).is_none())
             .filter_map(|id| {
                 let kind = p.entry(id)?.kind;
                 let path = p.path_of(id)?;

@@ -102,6 +102,7 @@ impl LocationProvider for Fake {
             filters: Vec::new(),
             toggles: Vec::new(),
             holds_places: true,
+            one_folder: false,
         })
     }
 

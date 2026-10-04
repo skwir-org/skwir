@@ -135,8 +135,11 @@ impl Shell {
     pub fn shown_columns(&self) -> [bool; 5] {
         let [size, modified, kind, rating, folder] = self.columns;
         let rated = rating && self.app.commands.get("tags.rate").is_some();
-        // Where files from many folders are listed: a folder's are in it.
-        let elsewhere = folder && !self.ui().place.folder;
+        // Where files from many folders are listed: a folder's are in it,
+        // as a trashed folder's are.
+        let place = &self.ui().place;
+        let elsewhere =
+            folder && !place.folder && !place.trail.as_ref().is_some_and(|trail| trail.one_folder);
         [size, modified, kind, rated, elsewhere]
     }
 
@@ -240,8 +243,9 @@ pub struct RowData {
     /// The folder it is in, and its whole path, where files from many
     /// folders are listed.
     pub folder: Option<(String, String)>,
-    /// A place (a tag's): where it leads, and its tag's color.
-    pub place: Option<(bibli_core::Location, usize)>,
+    /// A place (a tag's), or a folder that does not open at its path (a
+    /// trashed one): where it leads, and a tag's color.
+    pub place: Option<(bibli_core::Location, Option<usize>)>,
 }
 
 /// Tags from the entry's `tags` metadata field (a list of text values).
@@ -290,9 +294,8 @@ impl Shell {
                 let tag = e
                     .metadata
                     .value(keys::PLACE_TAG)
-                    .and_then(bibli_core::Value::as_str)
-                    .unwrap_or_default();
-                (place, self.tag_colors.of(tag))
+                    .and_then(bibli_core::Value::as_str);
+                (place, tag.map(|tag| self.tag_colors.of(tag)))
             });
             let mut row = RowData {
                 ix,
@@ -489,8 +492,8 @@ pub fn row(
             .into_any_element(),
     };
     let icon = match &r.place {
-        Some((_, color)) => icons::with_tag(icon, icon_px, *color, theme),
-        None => icons::with_link(icon, icon_px, r.link, theme),
+        Some((_, Some(color))) => icons::with_tag(icon, icon_px, *color, theme),
+        _ => icons::with_link(icon, icon_px, r.link, theme),
     };
     let el = div()
         .id(ix)
@@ -636,10 +639,12 @@ pub fn row(
     let mut el = el.child(line);
     el = dnd::draggable(el, pane, cx);
     el = dnd::takes_gifts(el, pane, ix, cx);
-    if let Some(p) = &r.path {
-        el = dnd::droppable_dir(el, p.clone(), cx);
-    } else if let Some((place, _)) = &r.place {
+    // Where it leads takes what is dropped on it, a folder of the trash
+    // as the trash does: its path is not the user's to drop into.
+    if let Some((place, _)) = &r.place {
         el = dnd::droppable_place(el, place.clone(), cx);
+    } else if let Some(p) = &r.path {
+        el = dnd::droppable_dir(el, p.clone(), cx);
     }
     el
 }

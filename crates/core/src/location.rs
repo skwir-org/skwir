@@ -118,6 +118,51 @@ impl Location {
     }
 }
 
+/// `text` written into a location's text with what would end it or read
+/// otherwise escaped (`%`, `?`, `&`, `=`, `#`, control characters), and
+/// bytes that are not UTF-8: the rest stays readable, as typed. A tag's
+/// name, a folder's path in a location of a plugin's (`tags:`, `trash:`).
+pub fn escape(text: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(text.len());
+    for chunk in text.utf8_chunks() {
+        for c in chunk.valid().chars() {
+            if matches!(c, '%' | '?' | '&' | '=' | '#') || c.is_control() {
+                let mut buf = [0u8; 4];
+                for b in c.encode_utf8(&mut buf).bytes() {
+                    let _ = write!(out, "%{b:02X}");
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        for b in chunk.invalid() {
+            let _ = write!(out, "%{b:02X}");
+        }
+    }
+    out
+}
+
+/// What `escape` wrote, as bytes again.
+pub fn unescape(text: &str) -> Vec<u8> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && let Some(hex) = bytes.get(i + 1..i + 3)
+            && let Ok(b) = u8::from_str_radix(std::str::from_utf8(hex).unwrap_or("zz"), 16)
+        {
+            out.push(b);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
 impl fmt::Display for Location {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_path() {
@@ -219,7 +264,10 @@ pub trait OpenLocation: Send + Sync {
     fn path_of(&self, id: EntryId) -> Option<PathBuf>;
 
     /// Where a place (`EntryId::is_place`: an entry that is no file)
-    /// leads: what opening it shows. `None` for what `path_of` places.
+    /// leads: what opening it shows. Asked of a folder too, which leads
+    /// to a location of the provider's when it is not the user's to open
+    /// as a folder (a trashed folder stays in the trash, `trash:`); `None`
+    /// opens a folder at its path.
     fn location_of(&self, _id: EntryId) -> Option<Location> {
         None
     }
@@ -318,6 +366,9 @@ pub struct Trail {
     /// `LocationProvider::places` lists): the trail ends with the chevron
     /// that lists them. A place that holds only files (the trash) has none.
     pub holds_places: bool,
+    /// What it lists is in one folder (a trashed folder's files): the list
+    /// has no Folder column, which says where files from many are.
+    pub one_folder: bool,
 }
 
 /// What a location says when it lists nothing

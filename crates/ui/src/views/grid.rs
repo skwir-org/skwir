@@ -207,9 +207,8 @@ fn cell(
                 let tag = e
                     .metadata
                     .value(bibli_core::entry::keys::PLACE_TAG)
-                    .and_then(bibli_core::Value::as_str)
-                    .unwrap_or_default();
-                (place, shell.tag_colors.of(tag))
+                    .and_then(bibli_core::Value::as_str);
+                (place, tag.map(|tag| shell.tag_colors.of(tag)))
             }),
             mosaic_of(e),
         )
@@ -260,7 +259,7 @@ fn cell(
     };
     // A place with pictures (a tag's) shows a few of them.
     let picture = match &place {
-        Some((_, color)) if !pictures.is_empty() => mosaic(
+        Some((_, Some(color))) if !pictures.is_empty() => mosaic(
             shell,
             pictures,
             zoom as f32,
@@ -309,8 +308,10 @@ fn cell(
                         .relative()
                         .flex_none()
                         .child(match &place {
-                            Some((_, color)) => icons::with_tag(picture, icon_px, *color, theme),
-                            None => icons::with_link(picture, icon_px, link, theme),
+                            Some((_, Some(color))) => {
+                                icons::with_tag(picture, icon_px, *color, theme)
+                            }
+                            _ => icons::with_link(picture, icon_px, link, theme),
                         })
                         .children(crate::tags::tile_dots(
                             ("tile-tags", ix),
@@ -337,10 +338,11 @@ fn cell(
     el = crate::list::entry_mouse(el, pane, ix, cx);
     el = dnd::draggable(el, pane, cx);
     el = dnd::takes_gifts(el, pane, ix, cx);
-    if let Some(p) = path {
-        el = dnd::droppable_dir(el, p, cx);
-    } else if let Some((place, _)) = place {
+    // Where it leads takes what is dropped on it (a folder of the trash).
+    if let Some((place, _)) = place {
         el = dnd::droppable_place(el, place, cx);
+    } else if let Some(p) = path {
+        el = dnd::droppable_dir(el, p, cx);
     }
     el.into_any_element()
 }

@@ -125,7 +125,7 @@ struct AncestorRow {
     icon: Option<Arc<std::path::Path>>,
     link: icons::Link,
     /// Where it leads, for a place (a tag's), and its tag's color.
-    place: Option<(Location, usize)>,
+    place: Option<(Location, Option<usize>)>,
 }
 
 fn ancestor_column(
@@ -168,9 +168,8 @@ fn ancestor_column(
                                 let tag = e
                                     .metadata
                                     .value(bibli_core::entry::keys::PLACE_TAG)
-                                    .and_then(bibli_core::Value::as_str)
-                                    .unwrap_or_default();
-                                (leads, this.tag_colors.of(tag))
+                                    .and_then(bibli_core::Value::as_str);
+                                (leads, tag.map(|tag| this.tag_colors.of(tag)))
                             }),
                     })
                     .collect()
@@ -188,8 +187,10 @@ fn ancestor_column(
                         .into_any_element(),
                 };
                 let icon = match &row.place {
-                    Some((_, color)) => icons::with_tag(icon, f32::from(icon_px), *color, &theme),
-                    None => icons::with_link(icon, f32::from(icon_px), row.link, &theme),
+                    Some((_, Some(color))) => {
+                        icons::with_tag(icon, f32::from(icon_px), *color, &theme)
+                    }
+                    _ => icons::with_link(icon, f32::from(icon_px), row.link, &theme),
                 };
                 // What a press opens: a folder, or where a place leads.
                 let leads = match (&row.place, &target) {
@@ -471,6 +472,7 @@ mod tests {
             filters: Vec::new(),
             toggles: Vec::new(),
             holds_places: true,
+            one_folder: false,
         };
         let shown = trail.crumbs[4].location.clone();
         let columns: Vec<(String, String)> = chain(&shown, Some(&trail))

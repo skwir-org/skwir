@@ -1049,6 +1049,30 @@ into that folder, and the trash's button and its words. Not pressed in a
 window: Empty Trash, as the machine's own volume trash is listed beside
 the fixture (its plan, run with a pane, in tests).
 
+In the trash, and from the sidebar's places (2026-10-04, ADR-034
+amended): a trashed folder opens in the trash (`trash:` and its path,
+`Trash › old project › sub`) instead of at its path under
+`.local/share/Trash/files`, where the pane offered New Folder, paste and
+Move to Trash, and where a file could be put in the trash a second time;
+a location may now say where its folders lead (`location_of`, asked of
+folders too), so opening, a tab, the tree and a drop on the row go
+there. A file of a trashed folder is restored alone, its folders made
+again as they are in the trash (`RestorePart`, undone by `ReturnPart`),
+and a folder restored into one there again merges into it (`Unmerge`
+undoes it); a drop or a paste there trashes, and Trash refuses a file of
+the trash at any depth. A folder's trail starts at the deepest folder
+the sidebar shows that holds it, under the sidebar's name
+(`sidebar::roots`): Documents renamed Papers reads `Papers › 2026`, and
+its tab and the history say Papers too. Checked in a window on Xvfb
+with a synthetic home: a trashed folder and one inside it opened in the
+trash, its menu (Restore, Delete Permanently, no Move to Trash or
+Rename), a file restored alone with its folders made, Undo, Alt+Up back
+to the Trash, a place renamed in the sidebar in the trail and in a tab.
+Not checked in a window: a merge (in tests), a drop on a trashed folder,
+a drive's trail (in tests: the machine's drives are real ones). Left: a
+folder restored by merging leaves the companions trashed beside it in
+the trash; the CLI and agents do not see the sidebar's names.
+
 ## Phase 0 — Foundations and toolkit spike (~2 weeks)
 
 Goal: a repo that can measure itself, and a toolkit decision backed by numbers.

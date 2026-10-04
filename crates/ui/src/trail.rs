@@ -92,13 +92,14 @@ pub fn location_arg(location: &Location) -> serde_json::Value {
 }
 
 /// The segments of a trail as the address draws them: the folders of
-/// its base, each its own place, then its crumbs.
-pub fn segments(trail: &Trail, home: Option<&std::path::Path>) -> Vec<Crumb> {
+/// its base, each its own place, from the sidebar's that holds it
+/// (`address::crumbs`), then its crumbs.
+pub fn segments(trail: &Trail, roots: &[crate::sidebar::Root]) -> Vec<Crumb> {
     let mut out: Vec<Crumb> = trail
         .base
         .as_deref()
         .map(|base| {
-            crate::address::crumbs(base, home)
+            crate::address::crumbs(base, roots)
                 .into_iter()
                 .map(|(label, path)| Crumb::new(label, Location::from_path(path)))
                 .collect()
@@ -124,8 +125,13 @@ mod tests {
             filters: Vec::new(),
             toggles: Vec::new(),
             holds_places: true,
+            one_folder: false,
         };
-        let labels: Vec<String> = segments(&trail, Some(Path::new("/home/someone")))
+        let home = crate::sidebar::Root {
+            path: "/home/someone".into(),
+            name: "Home".into(),
+        };
+        let labels: Vec<String> = segments(&trail, &[home])
             .into_iter()
             .map(|c| c.label)
             .collect();

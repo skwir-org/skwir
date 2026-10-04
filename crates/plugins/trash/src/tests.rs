@@ -216,3 +216,91 @@ fn emptying_the_trash_deletes_its_files_and_what_it_said_of_them() {
         Some("trash.put")
     );
 }
+
+/// A trashed folder opens in the trash, `Trash › folder`, where a file is
+/// restored alone, its folders made again, and undone goes back; the rest
+/// of the folder, restored after, merges into them.
+#[test]
+fn a_trashed_folder_is_browsed_in_the_trash_and_restored_a_file_at_a_time() {
+    let tmp = base();
+    let volume = tmp.path().join("volume");
+    let trash = volume_trash(&volume);
+    std::fs::write(trash.join("files/folder/c.txt"), "c").unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("app"))).unwrap();
+    app.plugins.add(
+        Arc::new(TrashPlugin::with_trashes(vec![trash.clone()])),
+        &app,
+    );
+    eventually("the trash is read", || listed(&app).len() == 2);
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &Location::parse("trash:")).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    let inside = {
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        let folder = p.listing.iter().find(|e| e.name == "folder").unwrap().id;
+        p.location_of(folder)
+            .expect("a trashed folder stays in the trash")
+    };
+    let trail = app.trail(&inside).unwrap();
+    let labels: Vec<&str> = trail.crumbs.iter().map(|c| c.label.as_str()).collect();
+    assert_eq!(labels, ["Trash", "folder"]);
+    assert!(trail.one_folder);
+    assert!(app.verbs(&inside).restore.is_some());
+
+    app.navigate(pane, &inside).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    let b = {
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        let mut names: Vec<String> = p.listing.iter().map(|e| e.name_str().into()).collect();
+        names.sort();
+        assert_eq!(names, ["b.txt", "c.txt"]);
+        p.listing.iter().find(|e| e.name == "b.txt").unwrap().id
+    };
+    // In the trash already: not put there again.
+    let again = app.dispatch(&Invocation::with_args(
+        "trash.put",
+        &serde_json::json!({ "pane": pane }),
+    ));
+    assert!(again.is_err(), "nothing selected, or in the trash");
+
+    let restore = plan(
+        &app,
+        "trash.restore",
+        &serde_json::json!({ "pane": pane, "ids": [b] }),
+    );
+    let r = app.executor.execute_blocking(&restore, app.lifetime());
+    assert!(r.error.is_none(), "{:?}", r.error);
+    let back = volume.join("docs/folder");
+    assert_eq!(std::fs::read_to_string(back.join("b.txt")).unwrap(), "b");
+    assert!(trash.join("files/folder/c.txt").exists(), "the rest stays");
+    assert!(trash.join("info/folder.trashinfo").exists());
+    // Undone, it is in the trashed folder again, and the folders made go.
+    let r = app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert!(r.error.is_none(), "{:?}", r.error);
+    assert!(trash.join("files/folder/b.txt").exists());
+    assert!(!volume.join("docs").exists());
+    let r = app.executor.redo_blocking(app.lifetime()).unwrap();
+    assert!(r.error.is_none(), "{:?}", r.error);
+
+    // The folder itself, restored after, merges into what came back.
+    eventually("the trash is read again", || listed(&app).len() == 2);
+    app.navigate(pane, &Location::parse("trash:")).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    let folder = {
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        p.listing.iter().find(|e| e.name == "folder").unwrap().id
+    };
+    let whole = plan(
+        &app,
+        "trash.restore",
+        &serde_json::json!({ "pane": pane, "ids": [folder] }),
+    );
+    let r = app.executor.execute_blocking(&whole, app.lifetime());
+    assert!(r.error.is_none(), "{:?}", r.error);
+    assert!(back.join("b.txt").exists() && back.join("c.txt").exists());
+    assert!(!trash.join("files/folder").exists());
+    assert!(!trash.join("info/folder.trashinfo").exists());
+}
