@@ -1,12 +1,15 @@
 //! What the location a pane shows says of itself when it is no folder
 //! (ADR-032): its trail of places (`LocationProvider::trail`: a tag
-//! location reads `Home › Tags › Places › France`, then what narrows it),
-//! and what gestures mean there (`LocationProvider::verbs`: Delete takes a
-//! file out of a tag or the shelf, a drop gives files the tag, New Folder
-//! makes a tag). Read once per location a pane shows, outside the
-//! workspace lock, never per frame.
+//! location reads `Home › Tags › Places › France`, then what narrows it;
+//! the trash, one place), what gestures mean there
+//! (`LocationProvider::verbs`: Delete takes a file out of a tag or the
+//! shelf, a drop gives files the tag, New Folder makes a tag), and what
+//! it says when it lists nothing (`LocationProvider::empty_state`, with
+//! its `icon`). Read once per location a pane shows, outside the
+//! workspace lock, never per frame. The shell never asks a location's
+//! scheme how to show it: a new kind of location needs no branch here.
 
-use bibli_core::location::{Crumb, Location, Trail, Verbs};
+use bibli_core::location::{Crumb, EmptyState, Location, Trail, Verbs};
 use bibli_core::os_path::PathArg;
 
 use crate::shell::Shell;
@@ -18,6 +21,10 @@ pub struct Shown {
     location: String,
     pub trail: Option<Trail>,
     pub verbs: Verbs,
+    /// The glyph that stands for it (`LocationProvider::icon`).
+    pub icon: Option<&'static str>,
+    /// What it says when it lists nothing (`LocationProvider::empty_state`).
+    pub empty: Option<EmptyState>,
     /// It is a folder: what it lists is in it (no Folder column).
     pub folder: bool,
     /// The trail's places that take files dropped on them (`Verbs::drop`).
@@ -42,11 +49,14 @@ pub fn sync(shell: &mut Shell) {
     if shell.ui().place.location == text {
         return;
     }
-    let (trail, verbs) = match &location {
-        Some(location) if !location.is_path() => {
-            (shell.app.trail(location), shell.app.verbs(location))
-        }
-        _ => (None, Verbs::default()),
+    let (trail, verbs, icon, empty) = match &location {
+        Some(location) if !location.is_path() => (
+            shell.app.trail(location),
+            shell.app.verbs(location),
+            shell.app.location_icon(location),
+            shell.app.empty_state(location),
+        ),
+        _ => (None, Verbs::default(), None, None),
     };
     let takes_drops = trail
         .iter()
@@ -59,8 +69,17 @@ pub fn sync(shell: &mut Shell) {
         location: text,
         trail,
         verbs,
+        icon,
+        empty,
         takes_drops,
     };
+}
+
+/// The glyph that stands for `location` where it is named among others (a
+/// tab, the history, a menu of places): its provider's
+/// (`LocationProvider::icon`), else a folder's.
+pub fn glyph(app: &bibli_core::App, location: &Location) -> &'static str {
+    app.location_icon(location).unwrap_or("folder")
 }
 
 /// A location as a command's `location` argument: a folder's path exactly
@@ -104,6 +123,7 @@ mod tests {
             ],
             filters: Vec::new(),
             toggles: Vec::new(),
+            holds_places: true,
         };
         let labels: Vec<String> = segments(&trail, Some(Path::new("/home/someone")))
             .into_iter()

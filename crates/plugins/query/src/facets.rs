@@ -574,6 +574,21 @@ pub fn parts(expr: &str) -> Result<(Vec<Part>, Vec<String>), String> {
     Ok((parts, set))
 }
 
+/// The search without where it looks (`Description::text`): what it asks
+/// for, as typed.
+pub fn text_of(expr: &str) -> Option<String> {
+    let q = lang::parse(expr).ok()?;
+    Some(without_root(&Parts::of(&q), &q))
+}
+
+/// Written as `refine` writes a query back: names as typed.
+fn without_root(p: &Parts, q: &Query) -> String {
+    p.write(&Query {
+        root_given: false,
+        ..q.clone()
+    })
+}
+
 /// The chips of `expr`: every facet, set or not, then the parts no facet
 /// holds. With `tags_known`, the Tag chip picks from the tags the search
 /// found (`query.tag_choices`), else it asks for one.
@@ -768,11 +783,7 @@ pub fn describe(expr: &str, tags_known: bool) -> Result<Description, String> {
             segments: Vec::new(),
         });
     }
-    // Written as `refine` writes a query back: names as typed.
-    let text = p.write(&Query {
-        root_given: false,
-        ..q.clone()
-    });
+    let text = without_root(&p, &q);
     Ok(Description {
         chips,
         root: q.root,

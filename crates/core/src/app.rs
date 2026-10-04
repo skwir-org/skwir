@@ -391,10 +391,37 @@ impl App {
         )
     }
 
-    /// `location` as a trail of places, when its provider reads it as one
-    /// (`LocationProvider::trail`): answered from its text.
+    /// `location` as a trail of places (`LocationProvider::trail`),
+    /// answered from its text. A location that is no folder reads as one
+    /// place, named as its tab is (`location_title`), when its provider
+    /// gives no trail: the address draws it as a place, never as text.
     pub fn trail(&self, location: &Location) -> Option<crate::location::Trail> {
-        self.provider(&location.scheme)?.trail(location)
+        if location.is_path() {
+            return None;
+        }
+        let provider = self.provider(&location.scheme)?;
+        provider.trail(location).or_else(|| {
+            Some(crate::location::Trail {
+                crumbs: vec![crate::location::Crumb::new(
+                    self.location_title(location),
+                    location.clone(),
+                )],
+                ..crate::location::Trail::default()
+            })
+        })
+    }
+
+    /// The bundled glyph that stands for `location`
+    /// (`LocationProvider::icon`): `None` for a folder, and for a location
+    /// whose provider names none.
+    pub fn location_icon(&self, location: &Location) -> Option<&'static str> {
+        self.provider(&location.scheme)?.icon(location)
+    }
+
+    /// What a pane showing `location` says when it lists nothing
+    /// (`LocationProvider::empty_state`).
+    pub fn empty_state(&self, location: &Location) -> Option<crate::location::EmptyState> {
+        self.provider(&location.scheme)?.empty_state(location)
     }
 
     /// Where Up goes from `location`: a folder's parent, else the place

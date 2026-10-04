@@ -389,11 +389,9 @@ impl Shell {
                 let place = location
                     .as_ref()
                     .and_then(|l| places.iter().find(|p| p.location.same_place(l)));
-                let glyph = match location.as_ref().map(|l| &*l.scheme) {
-                    Some("query") => "search",
-                    Some("shelf") => "shelf",
-                    _ => "folder",
-                };
+                let glyph = location
+                    .as_ref()
+                    .map_or("folder", |l| crate::trail::glyph(&self.app, l));
                 Label {
                     tab: *tab,
                     title: location

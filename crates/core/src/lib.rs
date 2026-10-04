@@ -61,8 +61,8 @@ pub use app::App;
 pub use cancel::CancelToken;
 pub use entry::{Entry, EntryId, EntryKind, LinkTarget, Metadata, Provenance, Value};
 pub use location::{
-    Crumb, Listing, ListingEvent, Location, LocationProvider, Narrowing, OpenLocation, SortKey,
-    SortSpec, Toggle, Trail, Verb, Verbs,
+    Crumb, EmptyState, Listing, ListingEvent, Location, LocationProvider, Narrowing, OpenLocation,
+    SortKey, SortSpec, Toggle, Trail, Verb, Verbs,
 };
 pub use op::{Operation, Plan};
 

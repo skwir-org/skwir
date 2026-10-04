@@ -295,7 +295,6 @@ impl Shell {
             }
             Some(Suggestion::Search { everywhere }) => {
                 let root = if everywhere { home() } else { scope };
-                self.ui_mut().last_search.clone_from(&text);
                 self.run(
                     "query.search",
                     serde_json::json!({

@@ -1,6 +1,8 @@
 # ADR-032: A tag is a place
 
 Status: accepted, 2026-10-03. Amends ADR-026 (the Tags view) and ADR-027.
+Amended 2026-10-04: every location that is no folder reads as a trail,
+and its provider alone says how it is shown (below).
 
 ## Context
 
@@ -146,3 +148,33 @@ a tag folder (Ctrl+D) pins its tag.
   says both, with their keys, and the toast says what happened, with
   Undo.
 - An empty tag is not kept across restarts unless pinned.
+
+## Amendment: a location is shown as its provider says (2026-10-04)
+
+A location that is no folder *may* read as a trail, the decision said,
+and only the tags and the searches did: the shelf and Recent, older,
+showed their text (`shelf:`, `recent:`) in the address, while the
+trash, newer, read as one place. How each showed elsewhere was chosen in
+the shell by its scheme, in four places that disagreed: the glyph of a
+tab and of the history (a search's and the shelf's, every other a
+folder's), and the words of a pane with nothing to list (the shelf's,
+the trash's and a tag's there, Recent's a bare "Nothing here").
+
+Every location that is no folder now reads as a trail: one whose
+provider gives none is one place, named as its tab is
+(`App::trail`, from `location_title`), with nothing above it, so Up
+does nothing there, as before. Its provider says the rest
+(`LocationProvider`): its name (`title`), the glyph that stands for it
+(`icon`: its tab, the history, its pane when empty), what it says when
+it lists nothing (`empty_state`), and whether the place shown holds
+places of its own (`Trail::holds_places`), the only case the trail
+ends with a chevron listing them: a tag holds tags, the trash only
+files. The shell reads these once per location (`trail.rs`) and keeps
+no words or glyphs of its own for a scheme, so a new kind of location
+is shown like the others by what its provider answers.
+
+A search's "Nothing found" now quotes what that search looks for, read
+from its location. The shell kept the text last typed in the pane's
+field, so a search reached by Back or from a saved search quoted another
+search's words, or none.
+

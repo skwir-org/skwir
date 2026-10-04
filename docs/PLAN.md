@@ -1019,6 +1019,22 @@ a drag between groups refused. Not done: a Deleted column or sort, and
 restoring a file by dragging it out of the trash (refused: restore it
 first).
 
+Every location that is no folder reads as a trail (2026-10-04, ADR-032
+amended): the shelf and Recent showed their text (`shelf:`, `recent:`)
+in the address and now read as one place, as the trash did; a provider
+that gives no trail gets one place, its name (`App::trail`). Its provider
+says how it is shown (`LocationProvider::title`, `icon`, `empty_state`,
+`Trail::holds_places`): the shell's choices by scheme are gone (a tab's
+and the history's glyph, the empty pane's words, the search's "Nothing
+found" read from the last text typed), and a chevron after the last
+place is drawn only where it holds places, so the trash's no longer
+opens an empty menu. Recent has a glyph and words of its own. Checked in
+a window on Xvfb with a synthetic home: Recent, the Shelf and the Trash
+in the address, the empty Shelf and Recent, the history's glyphs, a tag
+location's trail and words, and an empty search. Left by scheme in the
+shell: the search's pills (the query plugin's `query.describe`), and the
+shelf's two buttons that move or copy its files to the other pane.
+
 ## Phase 0 — Foundations and toolkit spike (~2 weeks)
 
 Goal: a repo that can measure itself, and a toolkit decision backed by numbers.

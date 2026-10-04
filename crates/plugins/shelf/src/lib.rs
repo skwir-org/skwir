@@ -13,7 +13,8 @@ use bibli_core::entry::{Entry, EntryId, EntryKind};
 use bibli_core::fs::hydrate_paths;
 use bibli_core::fs::stat::stat_path;
 use bibli_core::location::{
-    EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation, Verb, Verbs,
+    EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
+    Verb, Verbs,
 };
 use bibli_core::op::{Change, Copy, EntryRef, Followed, Move, Operation, Plan, Trash};
 use bibli_core::plugin::Plugin;
@@ -26,6 +27,8 @@ use parking_lot::Mutex;
 const ID: &str = "shelf";
 /// The location scheme of the virtual shelf listing.
 pub const SCHEME: &str = "shelf";
+/// What the shelf is called, in the sidebar and wherever it is shown.
+const TITLE: &str = "Shelf";
 /// The count the shelf publishes in `App::tallies`.
 pub const TALLY: &str = "shelf.items";
 
@@ -434,6 +437,21 @@ impl LocationProvider for ShelfProvider {
         SCHEME
     }
 
+    fn title(&self, _location: &Location) -> Option<String> {
+        Some(TITLE.into())
+    }
+
+    fn icon(&self, _location: &Location) -> Option<&'static str> {
+        Some("shelf")
+    }
+
+    fn empty_state(&self, _location: &Location) -> Option<EmptyState> {
+        Some(EmptyState::new(
+            "The shelf is empty",
+            "Collect files from different folders with Add to Shelf, then move or copy them together.",
+        ))
+    }
+
     /// The shelf holds files kept where they are: Delete takes them off
     /// it, and files dropped or pasted on it are shelved (ADR-032).
     fn verbs(&self, _location: &Location) -> Verbs {
@@ -624,7 +642,7 @@ impl Plugin for ShelfPlugin {
         app.registry.places.add(
             ID,
             Place {
-                title: "Shelf".into(),
+                title: TITLE.into(),
                 location: Location::parse("shelf:"),
                 icon: Some("folder-drag-accept".into()),
                 group: "places".into(),
@@ -863,7 +881,12 @@ mod tests {
         let (_tmp, app, pane, _src) = setup();
         select(&app, pane, &["a.txt"]);
         app.dispatch(&Invocation::new("shelf.add")).unwrap();
-        let open = app.open_location(&Location::parse("shelf:")).unwrap();
+        let shelf = Location::parse("shelf:");
+        // It reads as one place in the address, under its own glyph.
+        let crumbs = app.trail(&shelf).unwrap().crumbs;
+        assert_eq!(crumbs, [bibli_core::Crumb::new("Shelf", shelf.clone())]);
+        assert_eq!(app.location_icon(&shelf), Some("shelf"));
+        let open = app.open_location(&shelf).unwrap();
         let mut listing = bibli_core::Listing::default();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while !listing.is_complete() {

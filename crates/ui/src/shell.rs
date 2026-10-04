@@ -61,8 +61,6 @@ pub struct PaneUi {
     pub listing_view: &'static str,
     pub usage: UsageState,
     pub loading: crate::loading::State,
-    /// What this pane last searched for, for its "Nothing found".
-    pub last_search: String,
     /// The address field while it is typed in (`omnibox.rs`).
     pub omni: Option<crate::omnibox::Omni>,
     /// What the files it shows weigh, for its footer (`weight.rs`).
@@ -692,7 +690,6 @@ impl Shell {
             listing_view: view::LIST,
             usage: UsageState::default(),
             loading: crate::loading::State::default(),
-            last_search: String::new(),
             omni: None,
             weight: crate::weight::Weight::default(),
             narrow: crate::narrow::Narrow::default(),

@@ -470,6 +470,7 @@ mod tests {
             ],
             filters: Vec::new(),
             toggles: Vec::new(),
+            holds_places: true,
         };
         let shown = trail.crumbs[4].location.clone();
         let columns: Vec<(String, String)> = chain(&shown, Some(&trail))

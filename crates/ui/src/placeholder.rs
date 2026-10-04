@@ -3,6 +3,7 @@
 //! with the reason and the way out. Shown in place of the view, inside the
 //! pane container, so drops and the folder's menu keep working on it.
 
+use bibli_core::location::EmptyState;
 use bibli_core::workspace::PaneId;
 use gpui::{AnyElement, Context, div, prelude::*, px};
 
@@ -48,43 +49,31 @@ pub fn failure(error: &str) -> Placeholder {
     }
 }
 
-/// `scheme` is the location's scheme; `query` the search text, if any.
-pub fn empty(scheme: &str, query: Option<&str>, new_folder_keys: Option<&str>) -> Placeholder {
-    let (icon, title, detail) = match scheme {
-        "query" => (
-            "search",
-            "Nothing found".to_owned(),
-            query.map_or_else(String::new, |query| {
-                format!("No file matches “{query}” here. Check the spelling or search a folder higher up.")
-            }),
-        ),
-        "shelf" => (
-            "shelf",
-            "The shelf is empty".to_owned(),
-            "Collect files from different folders with Add to Shelf, then move or copy them together.".to_owned(),
-        ),
-        "tags" => (
-            "tag",
-            "No file here has this tag".to_owned(),
-            "Drop files here to give them the tag.".to_owned(),
-        ),
-        "trash" => (
-            "trash",
-            "The trash is empty".to_owned(),
-            "Files moved to the trash wait here until it is emptied: restore them from their menu.".to_owned(),
-        ),
-        bibli_core::location::PATH_SCHEME => (
-            "folder-plus",
-            "This folder is empty".to_owned(),
-            match new_folder_keys {
-                Some(keys) => format!("Drop files here, or press {keys} for a new folder."),
-                None => "Drop files here.".to_owned(),
-            },
-        ),
-        _ => ("info", "Nothing here".to_owned(), String::new()),
-    };
+/// A folder with nothing in it: files can be dropped in, or a folder
+/// made with `new_folder_keys`.
+pub fn empty_folder(new_folder_keys: Option<&str>) -> Placeholder {
     Placeholder {
-        icon,
+        icon: "folder-plus",
+        title: "This folder is empty".to_owned(),
+        detail: match new_folder_keys {
+            Some(keys) => format!("Drop files here, or press {keys} for a new folder."),
+            None => "Drop files here.".to_owned(),
+        },
+        action: None,
+        problem: false,
+    }
+}
+
+/// A location that is no folder, with nothing to list: what it says of
+/// itself (`LocationProvider::empty_state`, read with its glyph in
+/// `trail.rs`), never words chosen here by its scheme.
+pub fn empty_place(icon: Option<&'static str>, empty: Option<&EmptyState>) -> Placeholder {
+    let (title, detail) = empty.map_or_else(
+        || ("Nothing here".to_owned(), String::new()),
+        |empty| (empty.title.clone(), empty.detail.clone()),
+    );
+    Placeholder {
+        icon: icon.unwrap_or("info"),
         title,
         detail,
         action: None,
@@ -131,30 +120,12 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
             problem: false,
         });
     }
-    let location = state.location()?;
-    // The pane's own search: in a split, the other pane may have searched
-    // for something else since.
-    let query = (&*location.scheme == "query").then_some(shell.ui().last_search.as_str());
-    let keys = shell.keys_for("ui.mkdir_prompt", &serde_json::Value::Null);
-    let mut placeholder = empty(
-        &location.scheme,
-        query.filter(|query| !query.is_empty()),
-        keys.as_deref(),
-    );
-    // The top of the tags of a folder whose files have none.
-    if &*location.scheme == "tags"
-        && shell
-            .ui()
-            .place
-            .trail
-            .as_ref()
-            .is_some_and(|trail| trail.crumbs.len() == 1)
-    {
-        "No file here has a tag".clone_into(&mut placeholder.title);
-        "Give files tags with Tags… in their menu, or drop them on a tag in the sidebar."
-            .clone_into(&mut placeholder.detail);
+    if state.location()?.is_path() {
+        let keys = shell.keys_for("ui.mkdir_prompt", &serde_json::Value::Null);
+        return Some(empty_folder(keys.as_deref()));
     }
-    Some(placeholder)
+    let shown = &shell.ui().place;
+    Some(empty_place(shown.icon, shown.empty.as_ref()))
 }
 
 pub fn render(
@@ -223,7 +194,7 @@ pub fn render(
 
 #[cfg(test)]
 mod tests {
-    use super::{empty, failure};
+    use super::{EmptyState, empty_folder, empty_place, failure};
 
     #[test]
     fn failures_read_as_sentences_and_keep_the_system_message() {
@@ -246,15 +217,17 @@ mod tests {
 
     #[test]
     fn empty_states_say_what_to_do_next() {
-        let folder = empty(
-            bibli_core::location::PATH_SCHEME,
-            None,
-            Some("Ctrl+Shift+N"),
-        );
+        let folder = empty_folder(Some("Ctrl+Shift+N"));
         assert_eq!(folder.title, "This folder is empty");
         assert!(folder.detail.contains("Ctrl+Shift+N"));
-        let search = empty("query", Some("it's a draft"), None);
-        assert!(search.detail.contains("“it's a draft”"));
-        assert!(!empty("shelf", None, None).problem);
+        // Any other location says what its provider says, under its glyph.
+        let said = EmptyState::new("The shelf is empty", "Collect files…");
+        let shelf = empty_place(Some("shelf"), Some(&said));
+        assert_eq!(
+            (shelf.icon, shelf.title.as_str()),
+            ("shelf", "The shelf is empty")
+        );
+        assert!(!shelf.problem);
+        assert_eq!(empty_place(None, None).title, "Nothing here");
     }
 }

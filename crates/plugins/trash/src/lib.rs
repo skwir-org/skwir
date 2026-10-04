@@ -21,7 +21,7 @@ use bibli_core::command::{Invocation, NoArgs, Outcome};
 use bibli_core::entry::{Entry, EntryId, keys};
 use bibli_core::fs::stat::stat_path;
 use bibli_core::location::{
-    Crumb, EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation, Trail,
+    EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
     Verbs,
 };
 use bibli_core::op::{Change, Delete, EntryRef, Operation, Plan, Restore, Trash, trash_info_of};
@@ -336,11 +336,15 @@ impl LocationProvider for TrashProvider {
         Some("Trash".into())
     }
 
-    fn trail(&self, location: &Location) -> Option<Trail> {
-        Some(Trail {
-            crumbs: vec![Crumb::new("Trash", location.clone())],
-            ..Trail::default()
-        })
+    fn icon(&self, _location: &Location) -> Option<&'static str> {
+        Some("trash")
+    }
+
+    fn empty_state(&self, _location: &Location) -> Option<EmptyState> {
+        Some(EmptyState::new(
+            "The trash is empty",
+            "Files moved to the trash wait here until it is emptied: restore them from their menu.",
+        ))
     }
 
     /// Files dropped or pasted here are put in the trash; its own are

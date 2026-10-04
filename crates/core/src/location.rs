@@ -247,8 +247,24 @@ pub trait LocationProvider: Send + Sync {
     /// `location` as a trail of places, for one that is no folder but
     /// lives in a hierarchy of its own (a tag in its categories): what the
     /// address draws, what Up goes back along. Answered from the text
-    /// alone, like `title`.
+    /// alone, like `title`. One that gives none reads as a single place,
+    /// named as its tab is (`App::trail`): the trash, the shelf.
     fn trail(&self, _location: &Location) -> Option<Trail> {
+        None
+    }
+
+    /// The bundled symbolic glyph that stands for `location` where it is
+    /// named among others (its tab, the history) and in its pane when it
+    /// lists nothing: `trash`, `tag`. A folder's when `None`. Answered
+    /// from the text alone, like `title`.
+    fn icon(&self, _location: &Location) -> Option<&'static str> {
+        None
+    }
+
+    /// What a pane showing `location` says when it lists nothing, in the
+    /// user's words: what the place holds and how it fills ("The shelf is
+    /// empty"). Answered from the text alone, like `title`.
+    fn empty_state(&self, _location: &Location) -> Option<EmptyState> {
         None
     }
 
@@ -298,6 +314,30 @@ pub struct Trail {
     pub filters: Vec<Crumb>,
     /// How it can show otherwise, for the View menu ("Include Sub-Tags").
     pub toggles: Vec<Toggle>,
+    /// The place shown holds places of its own (a tag its tags, which
+    /// `LocationProvider::places` lists): the trail ends with the chevron
+    /// that lists them. A place that holds only files (the trash) has none.
+    pub holds_places: bool,
+}
+
+/// What a location says when it lists nothing
+/// (`LocationProvider::empty_state`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EmptyState {
+    /// What is so: "The trash is empty".
+    pub title: String,
+    /// What fills it, or the way out: "Files moved to the trash wait
+    /// here…".
+    pub detail: String,
+}
+
+impl EmptyState {
+    pub fn new(title: impl Into<String>, detail: impl Into<String>) -> Self {
+        EmptyState {
+            title: title.into(),
+            detail: detail.into(),
+        }
+    }
 }
 
 /// A way a location can show otherwise, for the View menu: its words,

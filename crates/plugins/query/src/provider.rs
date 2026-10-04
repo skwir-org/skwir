@@ -12,7 +12,7 @@ use bibli_core::cancel::CancelToken;
 use bibli_core::entry::{Entry, EntryId, EntryKind};
 use bibli_core::fs::Statter;
 use bibli_core::location::{
-    EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
+    EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
 };
 use bibli_core::op::Change;
 use bibli_core::scheduler::Priority;
@@ -98,7 +98,24 @@ impl LocationProvider for QueryProvider {
             )],
             filters: Vec::new(),
             toggles: Vec::new(),
+            holds_places: false,
         })
+    }
+
+    fn icon(&self, _location: &Location) -> Option<&'static str> {
+        Some("search")
+    }
+
+    fn empty_state(&self, location: &Location) -> Option<EmptyState> {
+        let detail = crate::facets::text_of(&location.rest)
+            .filter(|text| !text.is_empty())
+            .map(|text| {
+                format!(
+                    "No file matches “{text}” here. Check the spelling or search a folder higher up."
+                )
+            })
+            .unwrap_or_default();
+        Some(EmptyState::new("Nothing found", detail))
     }
 
     fn open(&self, location: &Location, ctx: OpenContext) -> anyhow::Result<Arc<dyn OpenLocation>> {
@@ -805,6 +822,24 @@ mod tests {
                 ListingEvent::Updated(_) | ListingEvent::Changed => {}
             }
         }
+    }
+
+    /// A search that finds nothing says what it looked for, not where:
+    /// the folder is its pill.
+    #[test]
+    fn a_search_that_finds_nothing_says_what_it_looked_for() {
+        let provider = QueryProvider::new(CancelToken::new(), Searches::default());
+        let location = crate::location_for("it's a draft", Some(Path::new("/x/a folder")));
+        let empty = provider.empty_state(&location).unwrap();
+        assert_eq!(empty.title, "Nothing found");
+        assert!(
+            empty
+                .detail
+                .starts_with("No file matches “it's a draft” here."),
+            "{}",
+            empty.detail
+        );
+        assert_eq!(provider.icon(&location), Some("search"));
     }
 
     /// A search whose period moves on (`today` at midnight) lists again

@@ -118,11 +118,7 @@ impl Shell {
                     Some(path) => path.display().to_string().into(),
                     None => location.to_string().into(),
                 },
-                icon: match &*location.scheme {
-                    "query" => "search",
-                    "shelf" => "shelf",
-                    _ => "folder",
-                },
+                icon: crate::trail::glyph(&self.app, &location),
                 command: if forward { "forward" } else { "back" },
                 args: serde_json::json!({ "steps": steps }),
                 current: false,
@@ -250,7 +246,7 @@ impl Shell {
                     .map(|place| NavRow {
                         label: place.label.clone().into(),
                         tip: shell.app.location_title(&place.location).into(),
-                        icon: "folder",
+                        icon: crate::trail::glyph(&shell.app, &place.location),
                         command: "navigate",
                         args: navigate(&place.location),
                         current: current.as_ref() == Some(&place.location),

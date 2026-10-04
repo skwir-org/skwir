@@ -1,7 +1,7 @@
 //! Locations that are no folders but read as places (ADR-032): their
 //! places open where they lead, Up walks their trail back to the folder
-//! they are of, Delete takes out what their verbs say, and places sort
-//! by how many files they hold.
+//! they are of, Delete takes out what their verbs say, places sort by how
+//! many files they hold, and one that gives no trail reads as one place.
 
 mod common;
 
@@ -12,8 +12,8 @@ use std::time::Duration;
 use bibli_core::command::{Invocation, Outcome};
 use bibli_core::entry::{Entry, EntryId, EntryKind, Provenance, Value, keys};
 use bibli_core::location::{
-    Crumb, EventSink, Listing, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
-    SortKey, SortSpec, Trail, Verb, Verbs,
+    Crumb, EmptyState, EventSink, Listing, ListingEvent, Location, LocationProvider, OpenContext,
+    OpenLocation, SortKey, SortSpec, Trail, Verb, Verbs,
 };
 use bibli_core::scheduler::Priority;
 use bibli_core::workspace::PaneId;
@@ -101,6 +101,7 @@ impl LocationProvider for Fake {
             crumbs,
             filters: Vec::new(),
             toggles: Vec::new(),
+            holds_places: true,
         })
     }
 
@@ -285,4 +286,60 @@ fn a_place_opens_in_place_as_a_folder_does() {
     .unwrap();
     let ws = app.workspace.read();
     assert!(!ws.pane(pane).unwrap().is_open_at(few), "and closes again");
+}
+
+/// `flat:` is a place that holds only files (the trash, the shelf): it
+/// says its name, its glyph and what it says empty, and no trail.
+struct Flat;
+
+impl LocationProvider for Flat {
+    fn scheme(&self) -> &'static str {
+        "flat"
+    }
+
+    fn open(&self, _: &Location, _: OpenContext) -> anyhow::Result<Arc<dyn OpenLocation>> {
+        anyhow::bail!("not opened here")
+    }
+
+    fn title(&self, _: &Location) -> Option<String> {
+        Some("Pile".into())
+    }
+
+    fn icon(&self, _: &Location) -> Option<&'static str> {
+        Some("shelf")
+    }
+
+    fn empty_state(&self, _: &Location) -> Option<EmptyState> {
+        Some(EmptyState::new("The pile is empty", "Put files on it."))
+    }
+}
+
+/// A location that is no folder reads as a trail whatever its provider
+/// says: one place, named as its tab is, when it gives no trail of its
+/// own, with nothing above it and no places inside to list.
+#[test]
+fn a_place_that_gives_no_trail_reads_as_one_place_by_its_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = with_fake(tmp.path());
+    app.register_provider("test", Arc::new(Flat));
+    let flat = Location::parse("flat:");
+    let trail = app.trail(&flat).expect("a trail");
+    assert_eq!(trail.crumbs, [Crumb::new("Pile", flat.clone())]);
+    assert!(trail.base.is_none() && !trail.holds_places);
+    assert_eq!(app.parent(&flat), None, "nothing above it");
+    assert_eq!(app.location_icon(&flat), Some("shelf"));
+    assert_eq!(
+        app.empty_state(&flat).map(|e| e.title),
+        Some("The pile is empty".to_owned())
+    );
+    // A provider's own trail is kept; a folder and a scheme nobody
+    // provides have none.
+    assert!(
+        app.trail(&Location::new(SCHEME, "/few"))
+            .unwrap()
+            .holds_places
+    );
+    assert_eq!(app.trail(&Location::from_path(tmp.path())), None);
+    assert_eq!(app.trail(&Location::parse("nobody:")), None);
+    assert_eq!(app.location_icon(&Location::from_path(tmp.path())), None);
 }

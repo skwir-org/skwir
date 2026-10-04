@@ -114,6 +114,10 @@ fn a_file_in_the_trash_is_listed_as_it_was_and_restored_where_it_was() {
     };
     assert!(physical.starts_with(home.join("files")), "{physical:?}");
     assert!(app.verbs(&Location::parse("trash:")).restore.is_some());
+    // One place in the address, which holds no places to list.
+    let trail = app.trail(&Location::parse("trash:")).unwrap();
+    assert_eq!(trail.crumbs[0].label, "Trash");
+    assert!(!trail.holds_places);
 
     let restore = plan(
         &app,

@@ -28,7 +28,7 @@ use bibli_core::cancel::CancelToken;
 use bibli_core::command::Invocation;
 use bibli_core::entry::{Entry, EntryId, EntryKind, Provenance, Value, keys};
 use bibli_core::location::{
-    Crumb, EventSink, ListingEvent, Location, LocationProvider, Narrowing, OpenContext,
+    Crumb, EmptyState, EventSink, ListingEvent, Location, LocationProvider, Narrowing, OpenContext,
     OpenLocation, Toggle, Trail, Verb, Verbs,
 };
 use bibli_core::metadata::{clean_tag, same_tag, tag_leaf, tag_parent, tag_under, tag_within};
@@ -269,6 +269,35 @@ impl Address {
                 on: self.deep,
                 location: switched.location(),
             }],
+            // A tag holds the tags within it, the top of a folder's tags
+            // every tag.
+            holds_places: true,
+        }
+    }
+
+    /// What it says when it lists nothing: the top of a folder's tags,
+    /// that no file there has one; a tag, how to give it; narrowed, that
+    /// nothing is what it is narrowed to.
+    pub fn empty_state(&self) -> EmptyState {
+        let narrowed = !(self.with.is_empty()
+            && self.without.is_empty()
+            && self.kinds.is_empty()
+            && self.years.is_empty());
+        if narrowed {
+            EmptyState::new(
+                "No file here is what it is narrowed to",
+                "Take a narrowing off in the address.",
+            )
+        } else if self.tag.is_none() {
+            EmptyState::new(
+                "No file here has a tag",
+                "Give files tags with Tags… in their menu, or drop them on a tag in the sidebar.",
+            )
+        } else {
+            EmptyState::new(
+                "No file here has this tag",
+                "Drop files here to give them the tag.",
+            )
         }
     }
 
@@ -1108,6 +1137,14 @@ impl LocationProvider for Provider {
         Some(Address::parse(&location.rest).trail())
     }
 
+    fn icon(&self, _location: &Location) -> Option<&'static str> {
+        Some("tag")
+    }
+
+    fn empty_state(&self, location: &Location) -> Option<EmptyState> {
+        Some(Address::parse(&location.rest).empty_state())
+    }
+
     fn places(&self, location: &Location) -> Vec<Crumb> {
         let address = Address::parse(&location.rest);
         let Some(root) = address.root() else {
@@ -1208,6 +1245,24 @@ mod tests {
             ]
         );
         assert!(export(&at(None), &files, Path::new("/out"), |_| false).is_none());
+    }
+
+    /// Empty, the top of a folder's tags says no file there has one, a
+    /// tag how to give it, and either narrowed that nothing is what it is
+    /// narrowed to.
+    #[test]
+    fn an_empty_tag_location_says_why() {
+        let said = |text: &str| Address::parse(text).empty_state().title;
+        assert_eq!(said("/"), "No file here has a tag");
+        assert_eq!(said("/Places/France"), "No file here has this tag");
+        assert_eq!(
+            said("/Places?with=family"),
+            "No file here is what it is narrowed to"
+        );
+        assert_eq!(
+            said("/?year=2024"),
+            "No file here is what it is narrowed to"
+        );
     }
 
     #[test]

@@ -310,11 +310,13 @@ current source before assuming a planned crate, command, or API exists.
   path, so what acts on files says `!place` in its `when`. Its provider
   counts what it holds (`keys::FILES`: its size column, its sort by
   size). Such a location reads as a trail (`LocationProvider::trail`,
-  from its text: the folder it is of, its places, what narrows it), which
-  the address draws as a folder's (`trail.rs`, read once per location),
-  whose chevrons list `LocationProvider::places` on a worker, and which
-  Up walks back (`App::parent`: a search goes up to the folder it looks
-  in). What gestures mean there is the location's
+  from its text: the folder it is of, its places, what narrows it; one
+  that gives none is one place, its name, `App::trail`), which the
+  address draws as a folder's (`trail.rs`, read once per location),
+  whose chevrons list `LocationProvider::places` on a worker (after the
+  last place only when it holds places, `Trail::holds_places`: a tag,
+  not the trash), and which Up walks back (`App::parent`: a search goes
+  up to the folder it looks in). What gestures mean there is the location's
   (`LocationProvider::verbs`): a drop or a paste (`drop`), Delete
   (`remove`, run by the core `take_out`), New Folder's key and item
   (`create`, `ui.create_here`), F2 on a place (`rename`). A gesture it
@@ -323,6 +325,13 @@ current source before assuming a planned crate, command, or API exists.
   unshelves, beside a Move to Trash that still trashes. The menu adds the
   location's own items in its words (`menu::verb_items`), and the pane's
   key context says `refs`, `drops`, `creates` and `place` for bindings.
+  How such a location is shown is its provider's alone: its name
+  (`title`), the bundled glyph that stands for it (`icon`: its tab, the
+  history, its pane when empty) and what it says with nothing to list
+  (`empty_state`). The shell never picks a word, a glyph or a trail by a
+  location's scheme: a new kind of location (a flat one, as the trash,
+  the shelf and Recent are, gives `title`, `icon` and `empty_state`) is
+  shown as the others are, with no branch in the UI.
 - **Tags are places** (ADR-032). The tags plugin provides `tags:`
   locations (`location.rs`): `tags:/Places/France` is the tag
   `Places/France` of the home folder (`in` names another folder), its
@@ -349,9 +358,10 @@ current source before assuming a planned crate, command, or API exists.
   color (`keys::PLACE_PICTURES`, each with what a thumbnail is asked
   with, `Shell::thumb_of`).
 - **Nothing to list is a state, not a blank.** `placeholder.rs` says why a
-  pane is empty (empty folder, no results, empty shelf) or why it failed, in
-  the user's words with the system's message as the detail, and offers the
-  way out. It renders inside the pane container, so drops and the folder's
+  pane is empty (an empty folder; any other location in its provider's
+  words, `LocationProvider::empty_state`: no results, an empty shelf) or
+  why it failed, in the user's words with the system's message as the
+  detail, and offers the way out. It renders inside the pane container, so drops and the folder's
   menu still work. The banner above the view is only for an error beside
   existing entries.
 - **Tokens.** Colors, radii and shadows come from `theme.rs` (its header

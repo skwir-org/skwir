@@ -16,7 +16,7 @@ use bibli_core::command::{Invocation, Outcome};
 use bibli_core::entry::EntryId;
 use bibli_core::fs::hydrate_paths;
 use bibli_core::location::{
-    EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
+    EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
 };
 use bibli_core::os_path::PathArg;
 use bibli_core::plugin::Plugin;
@@ -29,6 +29,8 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 use parking_lot::Mutex;
 
 const ID: &str = "jump";
+/// What `recent:` is called, in the sidebar and wherever it is shown.
+const RECENT: &str = "Recent";
 
 /// A ranked jump target.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
@@ -259,7 +261,7 @@ impl Plugin for JumpPlugin {
         app.registry.places.add(
             ID,
             Place {
-                title: "Recent".into(),
+                title: RECENT.into(),
                 location: Location::parse("recent:"),
                 icon: Some("document-open-recent".into()),
                 group: "places".into(),
@@ -304,6 +306,21 @@ pub struct RecentProvider;
 impl LocationProvider for RecentProvider {
     fn scheme(&self) -> &'static str {
         "recent"
+    }
+
+    fn title(&self, _location: &Location) -> Option<String> {
+        Some(RECENT.into())
+    }
+
+    fn icon(&self, _location: &Location) -> Option<&'static str> {
+        Some("recent")
+    }
+
+    fn empty_state(&self, _location: &Location) -> Option<EmptyState> {
+        Some(EmptyState::new(
+            "No recent files",
+            "The files you open in your applications are listed here, as the desktop records them.",
+        ))
     }
     fn open(&self, location: &Location, ctx: OpenContext) -> anyhow::Result<Arc<dyn OpenLocation>> {
         Ok(RecentLocation::open(location.clone(), ctx))
@@ -539,7 +556,12 @@ mod tests {
         let app = app(tmp.path());
         app.plugins.add(Arc::new(JumpPlugin::default()), &app);
         let pane = app.workspace.read().active_id();
-        app.navigate(pane, &Location::parse("recent:")).unwrap();
+        let recent = Location::parse("recent:");
+        // It reads as one place in the address, under its own glyph.
+        let crumbs = app.trail(&recent).unwrap().crumbs;
+        assert_eq!(crumbs, [bibli_core::Crumb::new("Recent", recent.clone())]);
+        assert_eq!(app.location_icon(&recent), Some("recent"));
+        app.navigate(pane, &recent).unwrap();
         assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
         {
             let ws = app.workspace.read();

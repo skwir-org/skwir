@@ -591,11 +591,13 @@ pub fn more_popup(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
 
 /// What the address field shows.
 enum Address {
-    /// A folder, or a location that reads as one (a tag's, `trail.rs`), as
-    /// a trail of places, then what narrows it, each with what its ×
-    /// runs: a folder's narrowing (`query.narrow`), or going where the
-    /// location leads without it.
-    Trail(Vec<Crumb>, Vec<Pill>),
+    /// A folder, or a location that is none (a tag's, the trash:
+    /// `trail.rs`), as a trail of places, then what narrows it, each with
+    /// what its × runs: a folder's narrowing (`query.narrow`), or going
+    /// where the location leads without it. `true` when the last place
+    /// holds places, which a chevron after it lists (`Trail::holds_places`;
+    /// a folder's folders).
+    Trail(Vec<Crumb>, Vec<Pill>, bool),
     /// A search, as pills (`search_bar::pills`).
     Pills,
     /// The text: while it is being edited (Ctrl+L, or a click beside the
@@ -659,6 +661,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
                     pane.and_then(|p| p.narrowed())
                         .map(|n| n.pills.clone())
                         .unwrap_or_default(),
+                    true,
                 ),
                 None if !shell.ui().chips.chips.is_empty() => Address::Pills,
                 None => match &shell.ui().place.trail {
@@ -677,6 +680,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
                                 ),
                             })
                             .collect(),
+                        trail.holds_places,
                     ),
                     None => Address::Text,
                 },
@@ -918,7 +922,7 @@ fn pane_row(
     let address = match &row.address {
         Address::Pills => crate::search_bar::pills(shell, chip_anchor, cx)
             .unwrap_or_else(|| div().into_any_element()),
-        Address::Trail(segments, filters) => div()
+        Address::Trail(segments, filters, holds_places) => div()
             .flex_1()
             .w(px(0.))
             .min_w_0()
@@ -942,6 +946,7 @@ fn pane_row(
                     .child(breadcrumbs(
                         shell,
                         segments,
+                        *holds_places,
                         row.nav.as_ref(),
                         nav_anchor,
                         &theme,
@@ -1128,11 +1133,13 @@ pub fn crumbs(path: &std::path::Path, home: Option<&std::path::Path>) -> Vec<(St
 ///
 /// A chevron lists the places inside the segment before it (a folder's
 /// folders, a tag's tags), the one the trail goes on into marked; one more
-/// after the last lists those inside the place shown. `open` is the menu of
-/// places open from this row, whose chevron hangs it from `anchor`.
+/// after the last lists those inside the place shown, when it `holds`
+/// places (not the trash's files). `open` is the menu of places open from
+/// this row, whose chevron hangs it from `anchor`.
 fn breadcrumbs(
     shell: &Shell,
     crumbs: &[Crumb],
+    holds: bool,
     open: Option<&crate::nav_menu::NavWhat>,
     anchor: &PopoverAnchor,
     theme: &Theme,
@@ -1259,7 +1266,7 @@ fn breadcrumbs(
         let before = index
             .checked_sub(1)
             .map(|parent| chevron(index, &crumbs[parent], Some(&crumb.location), cx));
-        let after = (index == last).then(|| chevron(index + 1, crumb, None, cx));
+        let after = (index == last && holds).then(|| chevron(index + 1, crumb, None, cx));
         trail = trail.child(
             div()
                 .flex()
