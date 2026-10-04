@@ -1639,19 +1639,6 @@ impl Shell {
                 window,
                 cx,
             ),
-            "shelf_move_here" | "shelf_copy_here" => {
-                let cmd = if name == "shelf_move_here" {
-                    "shelf.move_here"
-                } else {
-                    "shelf.copy_here"
-                };
-                match self.other_pane() {
-                    Some(other) => self.run(cmd, serde_json::json!({ "pane": other }), window, cx),
-                    None => {
-                        self.set_status("split the window to choose a destination pane", true, cx);
-                    }
-                }
-            }
             "confirm_delete" => {
                 // The plan is built now, from what is selected now, so Enter
                 // deletes what the question named even if the selection or

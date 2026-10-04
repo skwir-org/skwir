@@ -319,7 +319,12 @@ current source before assuming a planned crate, command, or API exists.
   up to the folder it looks in). What gestures mean there is the location's
   (`LocationProvider::verbs`): a drop or a paste (`drop`), Delete
   (`remove`, run by the core `take_out`), New Folder's key and item
-  (`create`, `ui.create_here`), F2 on a place (`rename`). A gesture it
+  (`create`, `ui.create_here`), F2 on a place (`rename`), and buttons of
+  its own in its pane's row (`tools`: the shelf's Move and Copy to the
+  other pane, the trash's Empty Trash), each run with the pane it names
+  (`ToolPane`: the one shown, or the other pane's folder) and pressed
+  only while the location lists something and that pane can take it
+  (never the shelf into the shelf). A gesture it
   does not give keeps a folder's meaning or does nothing. Keys follow the
   place, commands and menu items keep their meaning: on the shelf Delete
   unshelves, beside a Move to Trash that still trashes. The menu adds the
@@ -328,10 +333,10 @@ current source before assuming a planned crate, command, or API exists.
   How such a location is shown is its provider's alone: its name
   (`title`), the bundled glyph that stands for it (`icon`: its tab, the
   history, its pane when empty) and what it says with nothing to list
-  (`empty_state`). The shell never picks a word, a glyph or a trail by a
-  location's scheme: a new kind of location (a flat one, as the trash,
-  the shelf and Recent are, gives `title`, `icon` and `empty_state`) is
-  shown as the others are, with no branch in the UI.
+  (`empty_state`). The shell never picks a word, a glyph, a trail or a
+  button by a location's scheme: a new kind of location (a flat one, as
+  the trash, the shelf and Recent are, gives `title`, `icon` and
+  `empty_state`) is shown as the others are, with no branch in the UI.
 - **Tags are places** (ADR-032). The tags plugin provides `tags:`
   locations (`location.rs`): `tags:/Places/France` is the tag
   `Places/France` of the home folder (`in` names another folder), its

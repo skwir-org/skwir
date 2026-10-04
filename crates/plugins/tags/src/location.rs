@@ -385,6 +385,7 @@ impl Address {
                 Invocation::with_args("tags.export", &serde_json::json!({ "location": location }))
             }),
             restore: None,
+            tools: Vec::new(),
         }
     }
 }

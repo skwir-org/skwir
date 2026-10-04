@@ -14,7 +14,7 @@ use bibli_core::fs::hydrate_paths;
 use bibli_core::fs::stat::stat_path;
 use bibli_core::location::{
     EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
-    Verb, Verbs,
+    Tool, ToolPane, Verb, Verbs,
 };
 use bibli_core::op::{Change, Copy, EntryRef, Followed, Move, Operation, Plan, Trash};
 use bibli_core::plugin::Plugin;
@@ -453,7 +453,8 @@ impl LocationProvider for ShelfProvider {
     }
 
     /// The shelf holds files kept where they are: Delete takes them off
-    /// it, and files dropped or pasted on it are shelved (ADR-032).
+    /// it, and files dropped or pasted on it are shelved (ADR-032). Its
+    /// buttons move or copy them all into the folder of the other pane.
     fn verbs(&self, _location: &Location) -> Verbs {
         Verbs {
             drop: Some(Invocation::new("shelf.add")),
@@ -461,6 +462,20 @@ impl LocationProvider for ShelfProvider {
                 "Remove from Shelf",
                 Invocation::new("shelf.remove"),
             )),
+            tools: vec![
+                Tool::new(
+                    "move",
+                    "Move shelf files to the other pane",
+                    Invocation::new("shelf.move_here"),
+                    ToolPane::OtherFolder,
+                ),
+                Tool::new(
+                    "copy",
+                    "Copy shelf files to the other pane",
+                    Invocation::new("shelf.copy_here"),
+                    ToolPane::OtherFolder,
+                ),
+            ],
             ..Verbs::default()
         }
     }
@@ -886,6 +901,26 @@ mod tests {
         let crumbs = app.trail(&shelf).unwrap().crumbs;
         assert_eq!(crumbs, [bibli_core::Crumb::new("Shelf", shelf.clone())]);
         assert_eq!(app.location_icon(&shelf), Some("shelf"));
+        // Its buttons put its files in the other pane's folder.
+        let tools: Vec<_> = app
+            .verbs(&shelf)
+            .tools
+            .into_iter()
+            .map(|t| (t.command.name.to_string(), t.pane))
+            .collect();
+        assert_eq!(
+            tools,
+            [
+                (
+                    "shelf.move_here".to_owned(),
+                    bibli_core::ToolPane::OtherFolder
+                ),
+                (
+                    "shelf.copy_here".to_owned(),
+                    bibli_core::ToolPane::OtherFolder
+                ),
+            ]
+        );
         let open = app.open_location(&shelf).unwrap();
         let mut listing = bibli_core::Listing::default();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);

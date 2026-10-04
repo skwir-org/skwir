@@ -183,7 +183,17 @@ fn emptying_the_trash_deletes_its_files_and_what_it_said_of_them() {
             ("folder".to_owned(), tmp.path().join("volume/docs/folder")),
         ]
     );
-    let empty = plan(&app, "trash.empty", &serde_json::json!({}));
+    // Its button in its pane's row empties it, run with that pane.
+    let tools = app.verbs(&Location::parse("trash:")).tools;
+    assert_eq!(
+        tools
+            .iter()
+            .map(|t| (t.command.name.as_ref(), t.pane))
+            .collect::<Vec<_>>(),
+        [("trash.empty", bibli_core::ToolPane::Shown)]
+    );
+    let pane = app.workspace.read().active_id();
+    let empty = plan(&app, "trash.empty", &serde_json::json!({ "pane": pane }));
     assert_eq!(empty.len(), 2);
     assert!(!empty.undoable(), "the shell asks before applying it");
     let r = app.executor.execute_blocking(&empty, app.lifetime());

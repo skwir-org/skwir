@@ -354,7 +354,9 @@ fn invoke(
         shell.close_search_chip(window);
     }
     shell.note_pointer_use(command, &args, cx);
-    if !command.starts_with("ui.") {
+    // A command acts on the button's pane, unless the button names the
+    // pane it acts on (a location's tool for the other pane's folder).
+    if !command.starts_with("ui.") && args.get("pane").is_none() {
         args["pane"] = serde_json::json!(pane);
     }
     shell.run(command, args, window, cx);

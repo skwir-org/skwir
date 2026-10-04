@@ -414,6 +414,50 @@ pub struct Verbs {
     /// (run with `pane`): a menu item for them. Move to Trash does not
     /// apply to them, and Delete deletes them for good, after asking.
     pub restore: Option<crate::command::Invocation>,
+    /// Buttons of its own in its pane's row, after the view's: the shelf's
+    /// Move and Copy to the other pane, the trash's Empty Trash.
+    pub tools: Vec<Tool>,
+}
+
+/// A button a location puts in its pane's row (`Verbs::tools`). It acts
+/// on what the location lists, so it can be pressed only while that is
+/// something, and where its `pane` says it can.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Tool {
+    /// The bundled symbolic glyph it shows (as `LocationProvider::icon`).
+    pub icon: &'static str,
+    /// What it does, its tooltip: "Empty Trash…".
+    pub title: String,
+    pub command: crate::command::Invocation,
+    /// The pane it is run with, as `pane`.
+    pub pane: ToolPane,
+}
+
+/// The pane a `Tool` is run with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolPane {
+    /// The pane showing the location.
+    Shown,
+    /// The other pane of the split, a folder its files go to: pressed only
+    /// while the window is split and that pane shows a folder, so never
+    /// when both show the shelf.
+    OtherFolder,
+}
+
+impl Tool {
+    pub fn new(
+        icon: &'static str,
+        title: impl Into<String>,
+        command: crate::command::Invocation,
+        pane: ToolPane,
+    ) -> Self {
+        Tool {
+            icon,
+            title: title.into(),
+            command,
+            pane,
+        }
+    }
 }
 
 /// What narrowing a location runs (the Narrow by bar's choices), and what

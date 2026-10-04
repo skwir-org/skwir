@@ -173,6 +173,15 @@ files. The shell reads these once per location (`trail.rs`) and keeps
 no words or glyphs of its own for a scheme, so a new kind of location
 is shown like the others by what its provider answers.
 
+A location's buttons are its own too (`Verbs::tools`): the shelf's
+Move and Copy to the other pane, drawn by the shell for the `shelf`
+scheme, are the shelf's tools, and the trash's Empty Trash is one. A
+tool names the pane it is run with (`ToolPane`): the one showing the
+location, or the other pane, whose folder its files go to. It acts on
+what the location lists, so it can be pressed only while that is
+something, and a tool for the other pane only while that pane shows a
+folder: with the shelf on both sides, Move and Copy are not offered.
+
 A search's "Nothing found" now quotes what that search looks for, read
 from its location. The shell kept the text last typed in the pane's
 field, so a search reached by Back or from a saved search quoted another

@@ -22,7 +22,7 @@ use bibli_core::entry::{Entry, EntryId, keys};
 use bibli_core::fs::stat::stat_path;
 use bibli_core::location::{
     EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
-    Verbs,
+    Tool, ToolPane, Verbs,
 };
 use bibli_core::op::{Change, Delete, EntryRef, Operation, Plan, Restore, Trash, trash_info_of};
 use bibli_core::os_path::PathArg;
@@ -37,6 +37,9 @@ use crossbeam_channel::Receiver;
 use parking_lot::Mutex;
 
 const ID: &str = "trash";
+/// What emptying the trash is called, in its place's menu and on its
+/// button: it asks first.
+const EMPTY_TRASH: &str = "Empty Trash…";
 /// The location scheme of the trash.
 pub const SCHEME: &str = "trash";
 /// Changes this close together (a folder of files put in the trash at
@@ -281,7 +284,7 @@ fn place(full: bool) -> Place {
     let menu = if full {
         vec![MenuItem {
             menu: "place".into(),
-            title: "Empty Trash…".into(),
+            title: EMPTY_TRASH.into(),
             command: Invocation::new("trash.empty"),
             when: None,
             order: 300,
@@ -348,11 +351,18 @@ impl LocationProvider for TrashProvider {
     }
 
     /// Files dropped or pasted here are put in the trash; its own are
-    /// restored (`Verbs::restore`), and deleted for good by Delete.
+    /// restored (`Verbs::restore`), and deleted for good by Delete or all
+    /// at once by its button.
     fn verbs(&self, _location: &Location) -> Verbs {
         Verbs {
             drop: Some(Invocation::new("trash.put")),
             restore: Some(Invocation::new("trash.restore")),
+            tools: vec![Tool::new(
+                "trash",
+                EMPTY_TRASH,
+                Invocation::new("trash.empty"),
+                ToolPane::Shown,
+            )],
             ..Verbs::default()
         }
     }

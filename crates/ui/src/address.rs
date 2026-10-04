@@ -9,9 +9,9 @@ use crate::{
     toolbar::{self, Button},
 };
 use bibli_core::command::Invocation;
-use bibli_core::location::{Crumb, Location};
+use bibli_core::location::{Crumb, Location, Tool, ToolPane};
 use bibli_core::registry::{ViewRole, ViewSpec};
-use bibli_core::workspace::Pill;
+use bibli_core::workspace::{PaneId, Pill};
 use gpui::{AnyElement, Context, Window, div, prelude::*, px};
 use std::path::PathBuf;
 
@@ -620,6 +620,9 @@ struct PaneRow {
     nav: Option<crate::nav_menu::NavWhat>,
     /// The window's tools this row holds (see `corner`).
     ends: Ends,
+    /// The location's own buttons (`Verbs::tools`), each with the pane it
+    /// is run with, `None` while it cannot be pressed (`tool_pane`).
+    tools: Vec<(Tool, Option<PaneId>)>,
 }
 
 /// The window's tools a pane's row holds: the sidebar toggle and More at
@@ -642,13 +645,14 @@ struct Ends {
 pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    let row = {
-        let ws = shell.app.workspace.read();
-        let pane = ws.pane(shell.pane);
-        let location = pane.and_then(|p| p.location()).cloned();
-        let active = ws.active_id() == shell.pane;
-        let focused = shell.ui().address.read(cx).is_focused(window);
-        PaneRow {
+    let row =
+        {
+            let ws = shell.app.workspace.read();
+            let pane = ws.pane(shell.pane);
+            let location = pane.and_then(|p| p.location()).cloned();
+            let active = ws.active_id() == shell.pane;
+            let focused = shell.ui().address.read(cx).is_focused(window);
+            PaneRow {
             back: pane.is_some_and(|p| p.history_pos > 0),
             forward: pane.is_some_and(|p| p.history_pos + 1 < p.history.len()),
             address: match location.as_ref().and_then(bibli_core::Location::path) {
@@ -710,8 +714,22 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
                 corner: shell.corner_pane() == Some(shell.pane),
                 toggles: shell.toggles_at() == crate::shell::TogglesAt::Pane(shell.pane),
             },
+            tools: {
+                let listed = pane.is_some_and(|p| !p.listing.is_empty());
+                let other = shell
+                    .other_pane()
+                    .map(|other| (other, ws.pane(other).and_then(|p| p.location())));
+                shell
+                    .ui()
+                    .place
+                    .verbs
+                    .tools
+                    .iter()
+                    .map(|tool| (tool.clone(), tool_pane(tool.pane, shell.pane, listed, other)))
+                    .collect()
+            },
         }
-    };
+        };
     let anchor = PopoverAnchor::default();
     let nav_anchor = PopoverAnchor::default();
     let chip_anchor = PopoverAnchor::default();
@@ -1068,27 +1086,22 @@ fn pane_row(
         .child(history_button(shell, row, true, nav_anchor, cx))
         .child(field)
         .child(view_control(shell, wide, anchor, row.menu_open, cx));
-    if row.location.as_ref().is_some_and(|l| &*l.scheme == "shelf") {
-        for (id, icon, title, command) in [
-            (
-                "shelf-move",
-                "move",
-                "Move shelf files to the other pane",
-                "ui.shelf_move_here",
-            ),
-            (
-                "shelf-copy",
-                "copy",
-                "Copy shelf files to the other pane",
-                "ui.shelf_copy_here",
-            ),
-        ] {
-            line = line.child(
-                Button::new(id, icon, title, command)
-                    .enabled(shell.is_split())
-                    .render(shell, cx),
-            );
+    for (i, (tool, pane)) in row.tools.iter().enumerate() {
+        let mut args = tool.command.args.clone();
+        if let (Some(args), Some(pane)) = (args.as_object_mut(), pane) {
+            args.insert("pane".into(), serde_json::json!(pane));
         }
+        line = line.child(
+            Button::new(
+                format!("location-tool-{}-{i}", shell.pane.0),
+                tool.icon,
+                tool.title.clone(),
+                tool.command.name.to_string(),
+            )
+            .args(args)
+            .enabled(pane.is_some())
+            .render(shell, cx),
+        );
     }
     if row.ends.toggles {
         let [split, preview] = panel_toggles(shell, labeled, cx);
@@ -1098,6 +1111,25 @@ fn pane_row(
             .child(preview);
     }
     line.into_any_element()
+}
+
+/// The pane a location's tool is run with (`ToolPane`), or `None` while
+/// it cannot be pressed: the location `shown` lists nothing for it to act
+/// on, or it puts files in the other pane's folder and there is none (no
+/// split, or the `other` pane shows the shelf too, a search, a tag).
+fn tool_pane(
+    to: ToolPane,
+    shown: PaneId,
+    listed: bool,
+    other: Option<(PaneId, Option<&Location>)>,
+) -> Option<PaneId> {
+    let pane = match to {
+        ToolPane::Shown => Some(shown),
+        ToolPane::OtherFolder => other
+            .filter(|(_, location)| location.is_some_and(Location::is_path))
+            .map(|(other, _)| other),
+    };
+    pane.filter(|_| listed)
 }
 
 /// The folders leading to `path`, outermost first, each with the path it
@@ -1282,9 +1314,35 @@ fn breadcrumbs(
 
 #[cfg(test)]
 mod tests {
-    use super::{ViewSpec, crumbs, toolbar_views};
+    use super::{ViewSpec, crumbs, tool_pane, toolbar_views};
+    use bibli_core::location::{Location, ToolPane};
+    use bibli_core::workspace::PaneId;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
+
+    /// The shelf's Move and Copy go to the other pane's folder: not
+    /// without a split, nor when the other pane shows the shelf too; the
+    /// trash's Empty runs in its own pane; neither with nothing listed.
+    #[test]
+    fn a_location_tool_is_pressed_only_where_it_can_act() {
+        let (shown, other) = (PaneId(1), PaneId(2));
+        let folder = Location::from_path("/x/dest");
+        let shelf = Location::parse("shelf:");
+        let to_other = |listed, beside: Option<&Location>| {
+            tool_pane(
+                ToolPane::OtherFolder,
+                shown,
+                listed,
+                beside.map(|l| (other, Some(l))),
+            )
+        };
+        assert_eq!(to_other(true, Some(&folder)), Some(other));
+        assert_eq!(to_other(true, None), None, "no split");
+        assert_eq!(to_other(true, Some(&shelf)), None, "both show the shelf");
+        assert_eq!(to_other(false, Some(&folder)), None, "nothing to move");
+        assert_eq!(tool_pane(ToolPane::Shown, shown, true, None), Some(shown));
+        assert_eq!(tool_pane(ToolPane::Shown, shown, false, None), None);
+    }
 
     fn shown(current: &str) -> Vec<String> {
         let views = vec![

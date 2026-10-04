@@ -1032,8 +1032,22 @@ opens an empty menu. Recent has a glyph and words of its own. Checked in
 a window on Xvfb with a synthetic home: Recent, the Shelf and the Trash
 in the address, the empty Shelf and Recent, the history's glyphs, a tag
 location's trail and words, and an empty search. Left by scheme in the
-shell: the search's pills (the query plugin's `query.describe`), and the
-shelf's two buttons that move or copy its files to the other pane.
+shell: the search's pills (the query plugin's `query.describe`).
+
+A location's buttons are its own (2026-10-04, `Verbs::tools`): the
+shelf's Move and Copy to the other pane, which the shell drew by scheme,
+are the shelf's tools, and the trash has one, Empty Trash, in its pane's
+row. A tool says the pane it runs with (`ToolPane`: the one shown, or
+the other pane's folder) and can be pressed only while its location
+lists something and, for the other pane's folder, while the other pane
+shows a folder: not when both panes show the shelf, where they did
+nothing but fail. A button names the pane it acts on when it has to
+(`toolbar::invoke` adds its own only when none is named). Checked in a
+window on Xvfb with a synthetic home: the shelf's buttons without a
+split, with both panes on the Shelf and with a folder beside it, Copy
+into that folder, and the trash's button and its words. Not pressed in a
+window: Empty Trash, as the machine's own volume trash is listed beside
+the fixture (its plan, run with a pane, in tests).
 
 ## Phase 0 — Foundations and toolkit spike (~2 weeks)
 
