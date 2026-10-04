@@ -808,9 +808,12 @@ mod tests {
             file("picture.cfg", b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR"),
             Some("image/png".into())
         );
+        // A shell script, by the name the installed database gives it:
+        // `application/x-shellscript` until shared-mime-info renamed it
+        // `text/x-shellscript` (2.5.1 has the new name, the old one an alias).
         assert_eq!(
             file("script.cfg", b"#!/bin/sh\necho hi\n"),
-            Some("application/x-shellscript".into())
+            Some(unalias(&Mime("application/x-shellscript".into())).0)
         );
         assert_eq!(
             file("empty.cfg", b""),

@@ -44,9 +44,9 @@ asked for a frame callback in every one; vendored patch 0012: it draws when aske
 114.5 ms back to back, ADR-002's addendum). Found with them: the places plugin rescanned and
 woke the window about twice a second for as long as the GTK bookmarks file existed, once
 anything had opened it (notify reports opens; it now drops access events, with a test).
-`bibli-platform`'s `the_bytes_decide_for_a_name_that_says_nothing` fails on this machine:
-its shared-mime-info now names shell scripts `text/x-shellscript`, the test expects the
-older `application/x-shellscript`. The per-change validation history that used to sit here
+`bibli-platform`'s `the_bytes_decide_for_a_name_that_says_nothing` expected shell scripts'
+old MIME name; shared-mime-info 2.5.1 names them `text/x-shellscript`, so it now asks the
+database for the name (`unalias`). The per-change validation history that used to sit here
 is in `docs/STATUS-LOG.md`.
 
 Sidebar tags as pills (2026-10-01): a place with a color is drawn as a
