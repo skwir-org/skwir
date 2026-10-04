@@ -834,6 +834,10 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   draw at all, on Wayland or X11, and a media key's request or a track that
   ended must not wait for the window to be looked at. `render` syncs too,
   for what the user did since; a sync that finds nothing is cheap.
+- A watcher acts on changes, never on access: notify reports a file opened
+  (`IN_OPEN`), so a watcher that rescans on any event rescans forever on its
+  own reads (the places plugin did, from the first time anything opened the
+  GTK bookmarks). Drop `EventKind::Access`, as `fs/watch.rs` and Usage do.
 - The scheduler skips cancelled jobs before they start; running jobs must
   check their token themselves. Use child tokens for work tied to the app or
   an open location, and cancel superseded requests. Only accept results for the

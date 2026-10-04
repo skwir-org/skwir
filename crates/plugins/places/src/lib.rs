@@ -634,8 +634,14 @@ impl PlacesPlugin {
             path.file_name().is_some_and(|name| name == "bookmarks")
                 || !settings.iter().any(|folder| path.parent() == Some(folder))
         };
+        // Only a change counts: notify also reports a file opened, and every
+        // rescan reads the bookmarks, so each would start the next for as
+        // long as the file exists.
         let handler = move |event: notify::Result<notify::Event>| {
-            if event.is_ok_and(|event| event.paths.iter().any(&relevant)) {
+            if event.is_ok_and(|event| {
+                !matches!(event.kind, notify::EventKind::Access(_))
+                    && event.paths.iter().any(&relevant)
+            }) {
                 let _ = tx.send(());
             }
         };
@@ -1571,5 +1577,63 @@ mod tests {
         .unwrap();
         let error = app.dispatch(&invocation).unwrap_err().to_string();
         assert!(error.contains("not a removable volume"), "{error}");
+    }
+
+    /// Every rescan reads the bookmarks file. notify reports a file opened
+    /// too: a watcher counting it rescanned for as long as the file
+    /// existed, waking the window at every pass. Once the first scans have
+    /// published, the plugin is quiet; another program's edit still counts.
+    #[test]
+    #[allow(unsafe_code)]
+    fn reading_the_bookmarks_rescans_nothing() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let tmp = tempfile::tempdir().unwrap();
+        let config = tmp.path().join("config");
+        // SAFETY: one test per process under nextest, set before the app
+        // starts any thread; the bookmarks file is then this test's own.
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", &config) };
+        // Names a `file://` URI holds as they are.
+        let (a, b) = (tmp.path().join("alpha"), tmp.path().join("beta"));
+        let uri = |path: &Path| format!("file://{}", path.display());
+        std::fs::create_dir(&a).unwrap();
+        std::fs::create_dir(&b).unwrap();
+        let file = config.join("gtk-3.0/bookmarks");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, format!("{}\n", uri(&a))).unwrap();
+
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&wakes);
+        app.set_waker(Some(Arc::new(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+        })));
+        app.plugins.add(Arc::new(PlacesPlugin::default()), &app);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while titles(&app) != ["alpha"] {
+            assert!(std::time::Instant::now() < deadline, "{:?}", titles(&app));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // Quiet: no wake for three settling times, after the first scans
+        // (the quick one and the worker's measured one) end.
+        let quiet = SETTLE * 3;
+        let mut last = (wakes.load(Ordering::SeqCst), std::time::Instant::now());
+        while last.1.elapsed() < quiet {
+            assert!(std::time::Instant::now() < deadline, "never quiet");
+            std::thread::sleep(Duration::from_millis(20));
+            let now = wakes.load(Ordering::SeqCst);
+            if now != last.0 {
+                last = (now, std::time::Instant::now());
+            }
+        }
+        std::fs::read_to_string(&file).unwrap();
+        std::thread::sleep(quiet);
+        assert_eq!(wakes.load(Ordering::SeqCst), last.0, "a read rescanned");
+
+        // Another file manager adds a bookmark: it appears.
+        std::fs::write(&file, format!("{}\n{}\n", uri(&a), uri(&b))).unwrap();
+        while titles(&app) != ["alpha", "beta"] {
+            assert!(std::time::Instant::now() < deadline, "{:?}", titles(&app));
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 }
