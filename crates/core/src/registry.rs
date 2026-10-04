@@ -249,6 +249,29 @@ pub struct Place {
     /// Offered by its owner rather than kept by the user (a tag used
     /// often, while none is pinned): drawn fainter than the places kept.
     pub suggested: bool,
+    /// What names the place among its group's for the user's arrangement
+    /// of the sidebar (hidden, moved, renamed): a volume's filesystem, so
+    /// that it is the same place mounted or not. Its location when `None`
+    /// ([`Place::key`]).
+    pub key: Option<String>,
+    /// Offered but left out of the sidebar until the user shows it, from
+    /// its group's menu: what udisks says not to show (an EFI partition).
+    /// The user's choice wins either way.
+    pub hidden: bool,
+    /// How the user renames a place its owner keeps (a bookmark, a saved
+    /// search, a tag): F2 in the sidebar runs it, as the place's menu item
+    /// of the same command does.
+    pub rename: Option<Invocation>,
+}
+
+impl Place {
+    /// What names it in the user's arrangement of its group: its `key`,
+    /// else its location.
+    pub fn key(&self) -> String {
+        self.key
+            .clone()
+            .unwrap_or_else(|| self.location.to_string())
+    }
 }
 
 /// How a place moves among the places of its group that have one: `command`

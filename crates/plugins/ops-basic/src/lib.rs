@@ -233,12 +233,15 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
     (
         "ctrl-alt-o",
         "show_in_folder",
-        Some("pane single !folder !place"),
+        Some("pane single !folder !place !restores"),
     ),
-    ("delete", "trash", Some("pane selection !refs")),
+    ("delete", "trash", Some("pane selection !refs !restores")),
     ("delete", "take_out", Some("pane selection refs")),
+    // In the trash, Delete deletes for good: the shell asks first, as for
+    // any plan Undo cannot take back.
+    ("delete", "delete", Some("pane selection restores")),
     ("ctrl-c", "clipboard_copy", Some("pane selection")),
-    ("ctrl-x", "clipboard_cut", Some("pane selection")),
+    ("ctrl-x", "clipboard_cut", Some("pane selection !restores")),
     // Into the folder shown, or a place that takes files (a tag gives
     // them itself): a search has neither.
     ("ctrl-v", "clipboard_paste", Some("pane folder|drops")),
@@ -294,14 +297,27 @@ const MENU: &[(&str, &str, Option<&str>, i32, &str)] = &[
     (
         "Show in Folder",
         "show_in_folder",
-        Some("single !folder !place"),
+        Some("single !folder !place !restores"),
         3,
         "folder",
     ),
-    ("Rename", "ui.rename_prompt", Some("single"), 100, "rename"),
+    // Not a file of the trash, which goes elsewhere only restored.
+    (
+        "Rename",
+        "ui.rename_prompt",
+        Some("single !restores"),
+        100,
+        "rename",
+    ),
     // A place too: a tag copied into a folder is a folder of its files,
     // cut and pasted in a tag it goes inside.
-    ("Cut", "clipboard_cut", Some("selection"), 110, "cut"),
+    (
+        "Cut",
+        "clipboard_cut",
+        Some("selection !restores"),
+        110,
+        "cut",
+    ),
     ("Copy", "clipboard_copy", Some("selection"), 120, "copy"),
     (
         "Paste",
@@ -325,11 +341,12 @@ const MENU: &[(&str, &str, Option<&str>, i32, &str)] = &[
         201,
         "file-plus",
     ),
-    // Files, never places (a tag's has no file to trash).
+    // Files, never places (a tag's has no file to trash), nor what is in
+    // the trash already.
     (
         "Move to Trash",
         "trash",
-        Some("selection !place"),
+        Some("selection !place !restores"),
         300,
         "trash",
     ),
@@ -495,7 +512,7 @@ mod tests {
                 .menus
                 .all()
                 .iter()
-                .any(|m| m.title == "Rename" && m.when.as_deref() == Some("single"))
+                .any(|m| m.title == "Rename" && m.when.as_deref() == Some("single !restores"))
         );
         assert!(app.commands.get("clipboard_paste").is_some());
         app.plugins.set_enabled(ID, false, &app);

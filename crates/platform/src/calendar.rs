@@ -103,6 +103,16 @@ impl Calendar {
         day - (weekday - start).rem_euclid(7)
     }
 
+    /// The instant a date and time of day written without a zone
+    /// (`2026-10-04T09:30:00`, as the trash's `.trashinfo` says when a
+    /// file was put there) names in the zone; in a daylight saving time
+    /// gap or overlap, the instant the clock showed it first.
+    pub fn local_time(&self, text: &str) -> Option<SystemTime> {
+        let civil: jiff::civil::DateTime = text.trim().parse().ok()?;
+        let zoned = civil.to_zoned(self.tz.clone()).ok()?;
+        Some(SystemTime::from(zoned.timestamp()))
+    }
+
     /// `now` less a duration read as a calendar reads it: `7d` is this time
     /// of day seven days ago whatever daylight saving time did in between,
     /// `1mo` the same day a month ago. `None` when `text` is not a duration

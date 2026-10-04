@@ -336,6 +336,8 @@ pub struct Shell {
     pub(crate) stored_session: Option<crate::session::Session>,
     /// Scroll position of the sidebar, so it can have a scrollbar.
     pub sidebar_scroll: gpui::ScrollHandle,
+    /// The sidebar's keyboard (F6): its focus and its cursor.
+    pub sidebar_keys: crate::sidebar::Keys,
     started: Instant,
     first_frame_logged: bool,
     _subscriptions: Vec<Subscription>,
@@ -547,6 +549,7 @@ impl Shell {
             links: crate::links::LinkState::default(),
             stored_session: None,
             sidebar_scroll: gpui::ScrollHandle::new(),
+            sidebar_keys: crate::sidebar::Keys::new(cx.focus_handle()),
             started,
             first_frame_logged: false,
             _subscriptions: subs,
@@ -1370,7 +1373,7 @@ impl Shell {
         match self.app.dispatch(&inv) {
             Ok(Outcome::Done) => {}
             Ok(Outcome::Value(v)) => self.on_value(name, v, cx),
-            Ok(Outcome::Plan(plan)) => self.apply_user_plan(plan, cx),
+            Ok(Outcome::Plan(plan)) => self.apply_user_plan(plan, window, cx),
             Err(e) => self.report_error(&e, cx),
         }
         cx.notify();
@@ -1378,8 +1381,21 @@ impl Shell {
 
     /// A user-initiated plan applies immediately (it is undoable), as a
     /// whole: the executor checks every step first, on its lane, and a
-    /// conflict applies nothing and comes back as the toast's error.
-    pub fn apply_user_plan(&mut self, plan: Plan, cx: &mut Context<Self>) {
+    /// conflict applies nothing and comes back as the toast's error. One
+    /// that Undo could not take back (deleting permanently, from anywhere:
+    /// Shift+Delete, the trash's Delete, Empty Trash) asks first.
+    pub fn apply_user_plan(&mut self, plan: Plan, window: &mut Window, cx: &mut Context<Self>) {
+        if !plan.undoable() && !plan.is_empty() {
+            let n = plan.len();
+            let noun = if n == 1 { "item" } else { "items" };
+            self.open_confirm(
+                format!("Delete {n} {noun} permanently? This cannot be undone."),
+                plan,
+                window,
+                cx,
+            );
+            return;
+        }
         self.app.apply_whole(plan);
         cx.notify();
     }
@@ -1642,21 +1658,15 @@ impl Shell {
             "confirm_delete" => {
                 // The plan is built now, from what is selected now, so Enter
                 // deletes what the question named even if the selection or
-                // the active pane changes before it is answered.
+                // the active pane changes before it is answered. Applying it
+                // asks first (`apply_user_plan`).
                 let pane = self.pane;
                 match self.app.dispatch(&Invocation::with_args(
                     "delete",
                     &serde_json::json!({ "pane": pane }),
                 )) {
                     Ok(Outcome::Plan(plan)) if !plan.is_empty() => {
-                        let n = plan.len();
-                        let noun = if n == 1 { "item" } else { "items" };
-                        self.open_confirm(
-                            format!("Delete {n} {noun} permanently? This cannot be undone."),
-                            plan,
-                            window,
-                            cx,
-                        );
+                        self.apply_user_plan(plan, window, cx);
                     }
                     Ok(_) => self.set_status(NOTHING_SELECTED, false, cx),
                     Err(error) => self.set_status(format!("{error:#}"), true, cx),
@@ -1667,6 +1677,13 @@ impl Shell {
             "toggle_hidden" => self.toggle_hidden(cx),
             "toggle_sidebar" => self.toggle_sidebar(window, cx),
             "sidebar_section" => self.sidebar_section(args, cx),
+            "sidebar_place" => self.sidebar_place(args, cx),
+            "focus_sidebar" => self.focus_sidebar(window, cx),
+            "sidebar_key" => {
+                if let Some(key) = arg("key") {
+                    self.sidebar_key(&key, window, cx);
+                }
+            }
             "context_menu" => self.open_context_menu_here(window, cx),
             "open_in_tab" => self.open_selection_in_tabs(window, cx),
             "sort" => {
@@ -2377,7 +2394,7 @@ impl Render for Shell {
         // the sidebar's header, or the first pane's row.
         self.sidebar_drawn = sidebar_width;
         self.more_anchor = crate::elements::popover::PopoverAnchor::default();
-        let side = (sidebar_width > 0.).then(|| sidebar::render(self, sidebar_width, cx));
+        let side = (sidebar_width > 0.).then(|| sidebar::render(self, sidebar_width, window, cx));
         let strip = crate::tabs::render(self, cx);
         let pane_ids: Vec<PaneId> = self.panes.iter().map(|p| p.id).collect();
         let split = pane_ids.len() == 2;

@@ -17,7 +17,7 @@ Each phase has a **Done when** gate. Do not start the next phase before the gate
 
 Status (2026-10-04): Phases 0 to 4 are built and their gates pass. Phase 2's gate, one
 week of daily use as the only file manager, passed, followed by two weeks of improvements
-from it. Phase 4's gate holds: every plugin (now 35, 14 of them previews) is proven by
+from it. Phase 4's gate holds: every plugin (now 36, 14 of them previews) is proven by
 `crates/bibli/tests/plugins_toggle.rs` to disable at runtime with no trace and to
 re-enable. Beyond the plan, the tree now has: a settings dialog
 (ADR-010: category column, search, controls chosen by the schema, changes applied
@@ -992,6 +992,32 @@ clipboard), the board's keys, and the Narrow by bar over a very large
 folder, which reads every file's metadata as the timeline does. The bench
 check of tags now goes through a tag location (1.5 s against its 4 s
 budget).
+
+The sidebar's places and the trash (2026-10-04, ADR-034): the places a
+plugin offers (Home, the desktop's folders, Recent, the Shelf, the Trash,
+a volume) are the user's to move, rename and hide in the sidebar
+(`ui.sidebar_place`, kept with the window's shape), those it suggests to
+hide, those the user keeps their owners' as before; a group's header
+lists its places with a check while shown. A volume is named by its
+filesystem, so its arrangement holds mounted or not, and one udisks says
+not to show (an EFI partition, a recovery one) is offered hidden. F6
+gives the sidebar the keyboard (arrows, Enter, Menu, Alt+arrows, F2,
+Delete). The trash plugin's `trash:` lists the home trash and the
+volumes', each file under its old name from its old folder: Restore,
+Delete for good (the core's Delete takes the `.trashinfo` along), Empty
+Trash, files dropped on it or its place trashed; Move to Trash, Rename,
+Cut and Show in Folder are not offered there, and rename, move and swap
+refuse a trashed file. Any user plan Undo cannot take back now asks
+first. Checked in a window on Xvfb with a synthetic home: hiding from
+the header's checklist and the place's menu, Undo, renaming, a drag
+reordering Places, the arrangement after a restart, the keys (F6, the
+arrows, folding, Enter, Menu, Alt+Up), F1's list, the EFI partition
+hidden, the Trash listing, Restore, Delete with its question, and a file
+dropped on the Trash. Not checked in a window: Empty Trash (in tests
+only, as the machine's own volume trash was listed beside the fixture),
+a drag between groups refused. Not done: a Deleted column or sort, and
+restoring a file by dragging it out of the trash (refused: restore it
+first).
 
 ## Phase 0 — Foundations and toolkit spike (~2 weeks)
 

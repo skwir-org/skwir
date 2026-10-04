@@ -394,23 +394,19 @@ fn menu_item(title: &str, command: Invocation, order: i32, icon: &str) -> MenuIt
 
 fn place(search: SavedQuery) -> Place {
     let expr = serde_json::json!(search.expr);
+    let rename = Invocation::with_args(
+        "ui.ask",
+        &serde_json::json!({
+            "title": "Rename saved search",
+            "placeholder": "Name (empty: made from the search)",
+            "text": search.name,
+            "command": "query.rename",
+            "args": { "expr": expr },
+            "field": "name",
+        }),
+    );
     let menu = vec![
-        menu_item(
-            "Rename…",
-            Invocation::with_args(
-                "ui.ask",
-                &serde_json::json!({
-                    "title": "Rename saved search",
-                    "placeholder": "Name (empty: made from the search)",
-                    "text": search.name,
-                    "command": "query.rename",
-                    "args": { "expr": expr },
-                    "field": "name",
-                }),
-            ),
-            100,
-            "rename",
-        ),
+        menu_item("Rename…", rename.clone(), 100, "rename"),
         menu_item(
             "Edit Search…",
             Invocation::with_args(
@@ -456,6 +452,9 @@ fn place(search: SavedQuery) -> Place {
         color: None,
         drop: None,
         suggested: false,
+        key: None,
+        hidden: false,
+        rename: Some(rename),
     }
 }
 

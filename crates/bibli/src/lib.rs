@@ -21,6 +21,7 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
         Arc::new(bibli_plugin_rename_bulk::RenameBulkPlugin),
         Arc::new(bibli_plugin_edit_as_buffer::EditAsBufferPlugin::default()),
         Arc::new(bibli_plugin_jump::JumpPlugin::default()),
+        Arc::new(bibli_plugin_trash::TrashPlugin::default()),
         Arc::new(bibli_plugin_tags::TagsPlugin::default()),
         Arc::new(bibli_plugin_xmp::XmpPlugin),
         Arc::new(bibli_plugin_tagspaces::TagSpacesPlugin),

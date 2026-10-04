@@ -68,6 +68,11 @@ pub fn empty(scheme: &str, query: Option<&str>, new_folder_keys: Option<&str>) -
             "No file here has this tag".to_owned(),
             "Drop files here to give them the tag.".to_owned(),
         ),
+        "trash" => (
+            "trash",
+            "The trash is empty".to_owned(),
+            "Files moved to the trash wait here until it is emptied: restore them from their menu.".to_owned(),
+        ),
         bibli_core::location::PATH_SCHEME => (
             "folder-plus",
             "This folder is empty".to_owned(),

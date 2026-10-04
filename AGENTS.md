@@ -402,7 +402,23 @@ current source before assuming a planned crate, command, or API exists.
   the window's shape): a click on a header folds its group, a drag moves
   it, and the sidebar's menu lists every group with a check while it is
   shown, as the list header's does columns (`ui.sidebar_section`).
-  A plugin names a place's group, never where the group goes.
+  A plugin names a place's group, never where the group goes. So are
+  the places (ADR-034), by who keeps them (`sidebar::Role`): one the
+  user keeps (`forget`, `reorder`) is its owner's to order, rename
+  (`Place::rename`) and take out; one its owner suggests can be hidden;
+  one it offers (Home, Recent, the Trash, a volume) is moved, renamed
+  and hidden in the sidebar (`ui.sidebar_place`, kept per group in
+  `Sections::places` by `Place::key`), never written to the owner's
+  files. A place moves only among those the same command moves
+  (`sidebar::mover`). `arrange` is the one reading of it, for the rows,
+  the menus and the keys; a group whose places are all hidden keeps its
+  header, whose menu lists its places with a check while shown. A place
+  its owner offers hidden (`Place::hidden`) is listed there unchecked.
+  F6 (`ui.focus_sidebar`) gives it the keyboard (`Sidebar` context,
+  `ui.sidebar_key`): the arrows walk headers and places, Enter opens
+  and gives the keyboard back to the files, Menu opens the place's
+  menu, Alt+arrows move, F2 renames, Delete takes out or hides; a click
+  never takes the keyboard (`prevent_default` on the column).
   A plugin that needs a line of text from the user dispatches
   `ui.ask` with the command to complete, not a prompt kind of its own;
   one that needs a choice dispatches `ui.choose` with its choices or the
@@ -604,8 +620,25 @@ current source before assuming a planned crate, command, or API exists.
   (`end_busy`), rather than waiting for it to run again. An unlocked
   container is listed as its cleartext volume (`Volume::container`):
   what is said of the container holds for it. Unmounting locks the container under the
-  filesystem. Test this with fake `lsblk`/`udisksctl` scripts first on PATH,
+  filesystem. A volume is named by its filesystem (`places::identity`:
+  its UUID from udev's database, the container's for a cleartext volume,
+  and the subvolume mounted), so the user's arrangement of it holds
+  mounted or not; one udisks says not to show (`UDISKS_IGNORE`: EFI,
+  recovery) is offered hidden, the size guess only where udev says
+  nothing. Test this with fake `lsblk`/`udisksctl` scripts first on PATH,
   never on a real drive.
+- **The trash is a place** (ADR-034): the trash plugin's `trash:` lists
+  what every trash holds (`bibli_platform::trash`: the home trash and
+  the volumes' the sidebar shows), each file under the name it had,
+  where it came from in `keys::TRASHED_FROM` (the Folder column) and
+  when in `keys::TRASHED`. The trash plugin reads; the core acts: Restore
+  names the item (`Restore::item`), Delete takes the `.trashinfo` along
+  wherever a trashed file is deleted from, and Trash refuses a file in a
+  trash. A location whose files are the trash's says `Verbs::restore`
+  (the `restores` token): Restore in their menu, no Move to Trash, and
+  Delete deletes for good. A step Undo cannot take back
+  (`Operation::undoable`: deleting for good) makes its plan ask before a
+  gesture applies it (`Shell::apply_user_plan`), whatever the gesture.
 - **Search chips.** A pane showing a search draws it in its address field
   as pills (`search_bar.rs`): where it looks first, then each facet
   `query.describe` says is set, then "+ Filter", which lists the facets
@@ -731,7 +764,7 @@ current source before assuming a planned crate, command, or API exists.
   Shift+G, `g g` for a sequence); `when` is
   a space-separated list of tokens that must all hold (`selection`, `single`,
   `dir`, `file`, `empty`, `folder`, `sweep`, `place`, `refs`, `drops`,
-  `creates`; `pane`/`address`/`palette` for context);
+  `creates`, `restores`; `pane`/`address`/`palette`/`sidebar` for context);
   `a|b` holds when either does, `!a` when it does not. A command that works in a folder but can
   run from a search uses `App::work_dir`, not `pane_dir`. Menu `order` groups
   by the hundreds digit (0xx open, 1xx edit, 2xx create, 3xx destructive,

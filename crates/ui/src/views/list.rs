@@ -320,14 +320,22 @@ impl Shell {
             if !compact {
                 let [size, modified, kind, rating, folder] = columns;
                 if folder && !e.is_place() {
-                    row.folder = pane.path_of(id).and_then(|path| {
-                        let dir = path.parent()?;
-                        let name = dir.file_name().map_or_else(
-                            || dir.display().to_string(),
-                            |n| n.to_string_lossy().into_owned(),
-                        );
-                        Some((name, dir.display().to_string()))
-                    });
+                    // A file of the trash is from the folder it was put
+                    // there from, which restoring it puts it back in.
+                    let from = e
+                        .metadata
+                        .value(keys::TRASHED_FROM)
+                        .and_then(bibli_core::Value::as_str)
+                        .map(std::path::PathBuf::from);
+                    row.folder = from
+                        .or_else(|| pane.path_of(id)?.parent().map(ToOwned::to_owned))
+                        .map(|dir| {
+                            let name = dir.file_name().map_or_else(
+                                || dir.display().to_string(),
+                                |n| n.to_string_lossy().into_owned(),
+                            );
+                            (name, dir.display().to_string())
+                        });
                 }
                 if rating {
                     row.rating = e

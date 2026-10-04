@@ -370,6 +370,10 @@ pub struct Verbs {
     /// dropped or pasted there: run with `dest`. A tag's makes a folder of
     /// its files there.
     pub export: Option<crate::command::Invocation>,
+    /// Its files are the trash's, put back where they came from by this
+    /// (run with `pane`): a menu item for them. Move to Trash does not
+    /// apply to them, and Delete deletes them for good, after asking.
+    pub restore: Option<crate::command::Invocation>,
 }
 
 /// What narrowing a location runs (the Narrow by bar's choices), and what

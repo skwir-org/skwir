@@ -50,6 +50,9 @@ pub const MEMBERS: &str = "PreviewMembers";
 /// closes the member (`members.rs`).
 pub const MEMBER: &str = "PreviewMember";
 pub const MENU: &str = "ContextMenu";
+/// The sidebar while it has the keyboard (F6): the arrows walk its groups
+/// and places (`sidebar.rs`).
+pub const SIDEBAR: &str = "Sidebar";
 
 /// A binding as the palette shows it: keys and command name. Only the
 /// bindings that can run are hints: one a later layer hides is not.
@@ -68,7 +71,7 @@ pub struct KeyHint {
 /// takes the palette or Quit with it. Keys for core and plugin commands are
 /// the plugins' (ops-basic binds the file operations).
 const BUILTIN: &[(&str, &str, Option<&str>)] = &[
-    ("f2", "ui.rename_prompt", Some("pane single")),
+    ("f2", "ui.rename_prompt", Some("pane single !restores")),
     (
         "shift-delete",
         "ui.confirm_delete",
@@ -85,6 +88,9 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     // Dolphin's key for it, beside GNOME's.
     ("alt-.", "ui.toggle_hidden", None),
     ("f9", "ui.toggle_sidebar", None),
+    // The keyboard into the sidebar, and back to the files.
+    ("f6", "ui.focus_sidebar", None),
+    ("escape", "ui.focus_pane", Some("sidebar")),
     ("tab", "ui.toolbar_next", None),
     ("shift-tab", "ui.toolbar_prev", None),
     ("enter", "ui.toolbar_activate", Some("ToolbarButton")),
@@ -198,6 +204,92 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         "ui.omnibox_submit",
         r#"{"everywhere":true}"#,
         Some("address"),
+    ),
+    // The sidebar's keys, its places walked as the file list's rows.
+    ("up", "ui.sidebar_key", r#"{"key":"up"}"#, Some("sidebar")),
+    (
+        "down",
+        "ui.sidebar_key",
+        r#"{"key":"down"}"#,
+        Some("sidebar"),
+    ),
+    (
+        "home",
+        "ui.sidebar_key",
+        r#"{"key":"first"}"#,
+        Some("sidebar"),
+    ),
+    (
+        "end",
+        "ui.sidebar_key",
+        r#"{"key":"last"}"#,
+        Some("sidebar"),
+    ),
+    (
+        "left",
+        "ui.sidebar_key",
+        r#"{"key":"left"}"#,
+        Some("sidebar"),
+    ),
+    (
+        "right",
+        "ui.sidebar_key",
+        r#"{"key":"right"}"#,
+        Some("sidebar"),
+    ),
+    (
+        "enter",
+        "ui.sidebar_key",
+        r#"{"key":"open"}"#,
+        Some("sidebar"),
+    ),
+    (
+        "space",
+        "ui.sidebar_key",
+        r#"{"key":"open"}"#,
+        Some("sidebar"),
+    ),
+    (
+        "ctrl-enter",
+        "ui.sidebar_key",
+        r#"{"key":"tab"}"#,
+        Some("sidebar"),
+    ),
+    (
+        "menu",
+        "ui.sidebar_key",
+        r#"{"key":"menu"}"#,
+        Some("sidebar"),
+    ),
+    (
+        "shift-f10",
+        "ui.sidebar_key",
+        r#"{"key":"menu"}"#,
+        Some("sidebar"),
+    ),
+    (
+        "alt-up",
+        "ui.sidebar_key",
+        r#"{"key":"move_up"}"#,
+        Some("sidebar"),
+    ),
+    (
+        "alt-down",
+        "ui.sidebar_key",
+        r#"{"key":"move_down"}"#,
+        Some("sidebar"),
+    ),
+    (
+        "f2",
+        "ui.sidebar_key",
+        r#"{"key":"rename"}"#,
+        Some("sidebar"),
+    ),
+    (
+        "delete",
+        "ui.sidebar_key",
+        r#"{"key":"remove"}"#,
+        Some("sidebar"),
     ),
     // Shift+F3 splits the other way from F3, for this split only.
     ("shift-f3", "ui.split", r#"{"axis":"other"}"#, None),
@@ -561,6 +653,7 @@ pub fn context_of(when: Option<&str>) -> String {
         "tag_editor" => TAG_EDITOR.to_owned(),
         "bulk" => BULK.to_owned(),
         "terminal" => TERMINAL.to_owned(),
+        "sidebar" => SIDEBAR.to_owned(),
         other => crate::menu::canonical_token(other).to_owned(),
     };
     let parts: Vec<String> = when
@@ -599,6 +692,7 @@ fn condition(flag: &str) -> String {
         "refs" => "where removing leaves files where they are",
         "drops" => "where files can be dropped",
         "creates" => "where new places can be made",
+        "restores" => "in the trash",
         "filtered" => "filtered by name",
         "labelling" => "while links are labelled",
         other => other,
@@ -642,6 +736,7 @@ pub fn context_label(context: &str) -> String {
             "PreviewMember" => place = "A file shown from an archive or a message",
             "ToolbarButton" | "ToolbarPopup" => place = "Toolbars",
             "ContextMenu" => place = "Context menu",
+            "Sidebar" => place = "Sidebar",
             "Shortcuts" => place = "Shortcut overview",
             "Settings" | "SettingsNav" | "SettingControl" | "SettingNumber" | "SettingRecord" => {
                 place = "Settings";
@@ -726,6 +821,25 @@ fn move_title(command: &str, args: &serde_json::Value) -> Option<String> {
             } else {
                 "Pick or unpick, then go to the next".to_owned()
             },
+        ),
+        "ui.sidebar_key" => Some(
+            match text("key")? {
+                "up" => "Go to the place above",
+                "down" => "Go to the place below",
+                "first" => "Go to the first place",
+                "last" => "Go to the last place",
+                "left" => "Go to its group, or fold the group",
+                "right" => "Unfold the group, or go into it",
+                "open" => "Open the place, or fold the group",
+                "tab" => "Open the place in a new tab",
+                "menu" => "Open its menu",
+                "move_up" => "Move it up",
+                "move_down" => "Move it down",
+                "rename" => "Rename it",
+                "remove" => "Remove or hide it",
+                _ => return None,
+            }
+            .to_owned(),
         ),
         "ui.cursor" => {
             let verb = match text("step") {

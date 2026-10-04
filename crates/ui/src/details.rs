@@ -138,7 +138,7 @@ fn label_of(key: &str) -> String {
 }
 
 /// The fields Details names itself; any other is shown under More.
-const CORE: [&str; 17] = [
+const CORE: [&str; 19] = [
     keys::SIZE,
     keys::MODIFIED,
     keys::CREATED,
@@ -156,6 +156,8 @@ const CORE: [&str; 17] = [
     keys::REFERRER,
     keys::NOTES_KEPT,
     keys::NOTES_DIFFER,
+    keys::TRASHED,
+    keys::TRASHED_FROM,
 ];
 
 /// Who took a note, when it was not the user: notes are theirs, so only a
@@ -328,6 +330,13 @@ pub fn entry_groups(entry: &Entry, path: &std::path::Path, notes: Option<&[Strin
         .collect();
 
     let mut location = Vec::new();
+    // A file of the trash: where restoring it puts it back.
+    if let Some(from) = meta.value(keys::TRASHED_FROM).and_then(Value::as_str) {
+        location.push(Row::new("Deleted from", from.to_owned()).action(
+            "Show",
+            Invocation::with_args("navigate", &serde_json::json!({ "location": from })),
+        ));
+    }
     if let Some(parent) = path.parent() {
         location.push(Row::new("Folder", parent.to_string_lossy().into_owned()));
     }
@@ -360,6 +369,7 @@ pub fn entry_groups(entry: &Entry, path: &std::path::Path, notes: Option<&[Strin
     }
 
     let times = [
+        ("Deleted", keys::TRASHED),
         ("Modified", keys::MODIFIED),
         ("Created", keys::CREATED),
         ("Accessed", keys::ACCESSED),

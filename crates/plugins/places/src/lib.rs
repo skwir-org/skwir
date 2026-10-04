@@ -159,10 +159,26 @@ fn size_label(bytes: u64) -> String {
     format!("{value:.0} {}", UNITS[unit])
 }
 
+/// What names a volume in the user's arrangement of the sidebar
+/// (`Place::key`): its filesystem, and what of it is mounted (`root`, a
+/// subvolume: `/` and `/home` can be one filesystem's), so that it is one
+/// place mounted or not, wherever it is mounted.
+fn volume_key(identity: &bibli_platform::places::Identity, root: &Path) -> Option<String> {
+    let uuid = identity.uuid.as_deref()?;
+    Some(if root == Path::new("/") {
+        format!("volume:{uuid}")
+    } else {
+        format!("volume:{uuid}{}", root.display())
+    })
+}
+
 /// A present but unmounted volume as a sidebar entry: activating it mounts
-/// it, asking for the passphrase first when it is locked.
+/// it, asking for the passphrase first when it is locked. One udisks says
+/// not to show (an EFI partition) is offered hidden, as is a small FAT or
+/// NTFS partition where udev says nothing.
 fn volume_place(volume: &bibli_platform::places::Volume) -> Place {
     use bibli_core::command::Invocation;
+    let identity = bibli_platform::places::identity(&volume.device);
     let title = match (volume.label.is_empty(), volume.locked) {
         (false, _) => volume.label.clone(),
         (true, true) => format!("{} encrypted", size_label(volume.size)),
@@ -210,6 +226,9 @@ fn volume_place(volume: &bibli_platform::places::Volume) -> Place {
         color: None,
         drop: None,
         suggested: false,
+        key: volume_key(&identity, Path::new("/")),
+        hidden: identity.ignored.unwrap_or(volume.system),
+        rename: None,
     }
 }
 
@@ -253,26 +272,26 @@ fn folder_menu(path: &Path) -> Vec<MenuItem> {
     )]
 }
 
+/// Asking for a bookmark's new name: its menu's Rename…, and F2.
+fn bookmark_rename(bookmark: &bibli_platform::places::Bookmark) -> Invocation {
+    Invocation::with_args(
+        "ui.ask",
+        &serde_json::json!({
+            "title": "Rename bookmark",
+            "placeholder": "Name (empty: the folder's own)",
+            "text": bookmark.title,
+            "command": "places.rename_bookmark",
+            "args": { "path": PathArg::from(bookmark.path.as_path()) },
+            "field": "title",
+        }),
+    )
+}
+
 /// The menu of a bookmark: rename it, remove it.
 fn bookmark_menu(bookmark: &bibli_platform::places::Bookmark) -> Vec<MenuItem> {
     let path = PathArg::from(bookmark.path.as_path());
     vec![
-        menu_item(
-            "Rename…",
-            Invocation::with_args(
-                "ui.ask",
-                &serde_json::json!({
-                    "title": "Rename bookmark",
-                    "placeholder": "Name (empty: the folder's own)",
-                    "text": bookmark.title,
-                    "command": "places.rename_bookmark",
-                    "args": { "path": path },
-                    "field": "title",
-                }),
-            ),
-            100,
-            "rename",
-        ),
+        menu_item("Rename…", bookmark_rename(bookmark), 100, "rename"),
         menu_item(
             "Remove from Bookmarks",
             Invocation::with_args("places.unbookmark", &serde_json::json!({ "path": path })),
@@ -300,6 +319,9 @@ pub fn scan() -> Vec<Place> {
         color: None,
         drop: None,
         suggested: false,
+        key: None,
+        hidden: false,
+        rename: None,
     };
     let mut out = Vec::new();
     if let Some(home) = bibli_platform::places::home() {
@@ -312,6 +334,7 @@ pub fn scan() -> Vec<Place> {
         let path = serde_json::json!(PathArg::from(b.path.as_path()));
         out.push(Place {
             menu: bookmark_menu(&b),
+            rename: Some(bookmark_rename(&b)),
             forget: Some(Invocation::with_args(
                 "places.unbookmark",
                 &serde_json::json!({ "path": path }),
@@ -332,7 +355,12 @@ pub fn scan() -> Vec<Place> {
         } else {
             "drive-harddisk"
         };
+        // What udisks says of it: an EFI partition mounted at /boot is
+        // offered hidden. Read from memory (sysfs, udev's database).
+        let identity = bibli_platform::places::identity(&m.source);
         out.push(Place {
+            key: volume_key(&identity, &m.root),
+            hidden: identity.ignored == Some(true),
             // Only what the user mounted: system volumes are not ours to detach.
             eject: m.removable.then(|| {
                 Invocation::with_args(
@@ -1155,6 +1183,7 @@ mod tests {
             locked: false,
             hotplug: true,
             container: None,
+            system: false,
         };
         let mut places = vec![volume_place(&volume)];
         mark_busy(&mut places, &busy, &[]);
@@ -1205,6 +1234,9 @@ mod tests {
             color: None,
             drop: None,
             suggested: false,
+            key: None,
+            hidden: false,
+            rename: None,
         };
         places.0.lock().lifetime = Some(CancelToken::new());
         places.0.lock().generation = 2;
@@ -1242,6 +1274,9 @@ mod tests {
             color: None,
             drop: None,
             suggested: false,
+            key: None,
+            hidden: false,
+            rename: None,
         };
         let mut disk = place("devices", "/run/media/example/disk");
         disk.space = Some((1, 2));

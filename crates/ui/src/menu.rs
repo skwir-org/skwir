@@ -42,13 +42,16 @@ pub struct SelectionCtx {
     pub drops: bool,
     /// The location shown makes new places (`Verbs::create`).
     pub creates: bool,
+    /// The location shown lists the trash's files, which it restores
+    /// (`Verbs::restore`): Move to Trash does not apply there.
+    pub restores: bool,
 }
 
 /// What `when` can say about the selection, for menu items and key bindings
 /// alike: one vocabulary, one table. `empty` is nothing selected; `folder`
 /// is the pane showing a folder, which an item about the folder shown (New
 /// Folder, Bookmark This Folder) needs beside `empty`.
-pub const SELECTION_TOKENS: [&str; 10] = [
+pub const SELECTION_TOKENS: [&str; 11] = [
     "empty",
     "selection",
     "single",
@@ -59,6 +62,7 @@ pub const SELECTION_TOKENS: [&str; 10] = [
     "refs",
     "drops",
     "creates",
+    "restores",
 ];
 
 /// A token as the table spells it: `none` is the old spelling of `empty`.
@@ -80,6 +84,7 @@ impl SelectionCtx {
             "refs" => self.refs,
             "drops" => self.drops,
             "creates" => self.creates,
+            "restores" => self.restores,
             _ => false,
         }
     }
@@ -236,12 +241,31 @@ pub struct MenuState {
 }
 
 /// Where a menu opened with the Menu key or Shift+F10 is drawn: under the
-/// pane's cursor row when it is on screen, else at the top of the pane.
-/// Both are measured in the frame's prepaint (`elements::popover`).
+/// cursor's row of the pane or the sidebar it was opened in, when that
+/// row is on screen, else at the top of the area. Both are measured in
+/// the frame's prepaint (`elements::popover`).
 pub struct KeyboardAnchor {
-    pub pane: bibli_core::workspace::PaneId,
+    pub host: MenuHost,
     pub row: PopoverAnchor,
     pub area: PopoverAnchor,
+}
+
+/// What a menu opened from the keyboard was opened in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuHost {
+    Pane(bibli_core::workspace::PaneId),
+    Sidebar,
+}
+
+impl KeyboardAnchor {
+    /// Anchors for a menu opened in `host`, measured when next drawn.
+    pub fn new(host: MenuHost) -> Self {
+        KeyboardAnchor {
+            host,
+            row: PopoverAnchor::default(),
+            area: PopoverAnchor::default(),
+        }
+    }
 }
 
 impl MenuState {
@@ -462,6 +486,18 @@ impl Shell {
         if let Some(create) = verbs.create.as_ref().filter(|_| ctx.count == 0) {
             items.push(item(&create.title, "ui.create_here", 200, "folder-plus"));
         }
+        // The trash's files go back where they came from.
+        if let Some(restore) = verbs.restore.as_ref().filter(|_| ctx.count > 0) {
+            let mut command = restore.clone();
+            if !command.args.is_object() {
+                command.args = serde_json::json!({});
+            }
+            command.args["pane"] = serde_json::json!(self.pane);
+            items.push(MenuItem {
+                command,
+                ..item("Restore", "", 1, "revert")
+            });
+        }
         items
     }
 
@@ -474,11 +510,7 @@ impl Shell {
         let pane = self.pane;
         if let Some(menu) = &mut self.menu {
             menu.highlighted = Some(0);
-            menu.keyboard = Some(KeyboardAnchor {
-                pane,
-                row: PopoverAnchor::default(),
-                area: PopoverAnchor::default(),
-            });
+            menu.keyboard = Some(KeyboardAnchor::new(MenuHost::Pane(pane)));
         }
     }
 
@@ -489,17 +521,27 @@ impl Shell {
         pane: bibli_core::workspace::PaneId,
         cursor: bool,
     ) -> Option<AnyElement> {
-        let anchor = self.menu.as_ref()?.keyboard.as_ref()?;
-        (anchor.pane == pane && cursor).then(|| anchor.row.marker())
+        self.host_marker(MenuHost::Pane(pane), cursor)
     }
 
     pub fn menu_area_marker(&self, pane: bibli_core::workspace::PaneId) -> Option<AnyElement> {
-        let anchor = self.menu.as_ref()?.keyboard.as_ref()?;
-        (anchor.pane == pane).then(|| anchor.area.marker())
+        self.host_area_marker(MenuHost::Pane(pane))
     }
 
-    /// A sidebar place's menu: Open, what its owner lists for it (rename
-    /// or remove a bookmark, bookmark a folder), and Eject for a volume.
+    /// Where the keyboard's menu hangs from in `host`: the cursor's row
+    /// there (`cursor`).
+    pub fn host_marker(&self, host: MenuHost, cursor: bool) -> Option<AnyElement> {
+        let anchor = self.menu.as_ref()?.keyboard.as_ref()?;
+        (anchor.host == host && cursor).then(|| anchor.row.marker())
+    }
+
+    /// Where the keyboard's menu hangs from in `host` when its cursor's
+    /// row is not drawn: the area itself.
+    pub fn host_area_marker(&self, host: MenuHost) -> Option<AnyElement> {
+        let anchor = self.menu.as_ref()?.keyboard.as_ref()?;
+        (anchor.host == host).then(|| anchor.area.marker())
+    }
+
     /// The menu of a tab of the strip.
     pub fn open_tab_menu(
         &mut self,
@@ -542,13 +584,23 @@ impl Shell {
         cx.notify();
     }
 
+    /// A sidebar place's menu, for the place of `group` named `key`: Open
+    /// and Open in New Tab, the place's own items (`Place::menu`: rename or
+    /// remove a bookmark), then how the sidebar arranges it: a place its
+    /// owner offers is renamed, moved and hidden here, one suggested
+    /// hidden, one kept moved through its owner. Eject last.
     pub fn open_place_menu(
         &mut self,
-        place: &bibli_core::registry::Place,
+        group: &str,
+        key: &str,
         position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(arranged) = self.sidebar_place_of(group, key) else {
+            return;
+        };
+        let place = &arranged.place;
         let item = |title: &str, command, order, icon: &str| MenuItem {
             menu: "place".into(),
             title: title.into(),
@@ -578,6 +630,28 @@ impl Shell {
             ));
         }
         items.extend(place.menu.iter().cloned());
+        if arranged.role == crate::sidebar::Role::Offered
+            && let Some(rename) = self.sidebar_rename(&arranged)
+        {
+            items.push(item("Rename…", rename, 100, "rename"));
+        }
+        if let Some(up) = self.sidebar_move(&arranged, -1) {
+            items.push(item("Move Up", up, 140, "up"));
+        }
+        if let Some(down) = self.sidebar_move(&arranged, 1) {
+            items.push(item("Move Down", down, 141, "down"));
+        }
+        if arranged.role.hides() {
+            items.push(item(
+                "Hide From Sidebar",
+                bibli_core::command::Invocation::with_args(
+                    "ui.sidebar_place",
+                    &serde_json::json!({ "group": group, "key": key, "hidden": true }),
+                ),
+                320,
+                "eye-off",
+            ));
+        }
         if let Some(eject) = place.eject.as_ref().filter(|_| !busy) {
             items.push(item("Eject", eject.clone(), 350, "eject"));
         }

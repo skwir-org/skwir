@@ -209,6 +209,12 @@ pub mod keys {
     /// (`Value::Text`), device and inode (`Value::UInt`) and modification
     /// time (`Value::Time`), what a thumbnail is asked with.
     pub const PLACE_PICTURES: &str = "place_pictures";
+    /// When a file of the trash was put there, `Value::Time`, as its
+    /// `.trashinfo` says.
+    pub const TRASHED: &str = "trashed";
+    /// The folder a file of the trash was put there from, where restoring
+    /// it puts it back: `Value::Text`, its path, for showing.
+    pub const TRASHED_FROM: &str = "trashed_from";
 }
 
 /// The metadata bag. Keys are sorted for deterministic serialization.

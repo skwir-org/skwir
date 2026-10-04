@@ -639,6 +639,9 @@ impl Plugin for ShelfPlugin {
                 color: None,
                 drop: None,
                 suggested: false,
+                key: None,
+                hidden: false,
+                rename: None,
             },
         );
         for (keys, command, when) in BINDINGS {

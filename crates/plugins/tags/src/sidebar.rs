@@ -61,6 +61,22 @@ fn menu_item(title: &str, command: Invocation, order: i32, icon: &str) -> MenuIt
     }
 }
 
+/// Asking for a tag's new name on every file: its menu's Rename Tag…,
+/// and F2 on its pill.
+fn rename(tag: &str) -> Invocation {
+    Invocation::with_args(
+        "ui.ask",
+        &serde_json::json!({
+            "title": format!("Rename the tag “{tag}” on every file"),
+            "placeholder": "New name (an existing tag's merges them)",
+            "text": tag,
+            "command": "tags.rename",
+            "args": { "tag": tag },
+            "field": "to",
+        }),
+    )
+}
+
 /// A tag row's own items: pin or unpin it, rename it or take it from
 /// every file (each a plan to review), or choose its color.
 fn menu(tag: &str, pinned: bool) -> Vec<MenuItem> {
@@ -80,22 +96,7 @@ fn menu(tag: &str, pinned: bool) -> Vec<MenuItem> {
                 "pin",
             )
         },
-        menu_item(
-            "Rename Tag…",
-            Invocation::with_args(
-                "ui.ask",
-                &serde_json::json!({
-                    "title": format!("Rename the tag “{tag}” on every file"),
-                    "placeholder": "New name (an existing tag's merges them)",
-                    "text": tag,
-                    "command": "tags.rename",
-                    "args": { "tag": tag },
-                    "field": "to",
-                }),
-            ),
-            100,
-            "rename",
-        ),
+        menu_item("Rename Tag…", rename(tag), 100, "rename"),
         menu_item(
             "Remove Tag From Every File…",
             Invocation::with_args("tags.delete", &serde_json::json!({ "tag": tag })),
@@ -362,6 +363,9 @@ pub fn publish(app: &App, index: &Arc<TagIndex>, vocabulary: &Vocabulary, shown:
                 before: serde_json::json!(&r.tag),
             }),
             suggested: !r.pinned,
+            key: None,
+            hidden: false,
+            rename: Some(rename(&r.tag)),
             title: r.tag,
             location: Location::parse(&r.location),
             icon: None,
@@ -391,6 +395,9 @@ pub fn publish(app: &App, index: &Arc<TagIndex>, vocabulary: &Vocabulary, shown:
         color: None,
         drop: None,
         suggested: false,
+        key: None,
+        hidden: false,
+        rename: None,
     });
     let places = places.chain(all);
     if app.registry.places.replace_owner(crate::ID, places) {

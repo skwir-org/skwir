@@ -1,0 +1,24 @@
+[package]
+name = "bibli-plugin-trash"
+description = "bibli plugin: the trash as a place, its files restored or deleted for good"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bibli-core.workspace = true
+bibli-platform.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+parking_lot.workspace = true
+crossbeam-channel.workspace = true
+notify.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

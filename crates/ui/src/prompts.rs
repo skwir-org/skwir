@@ -306,7 +306,8 @@ impl Shell {
     pub fn confirm_accept(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(c) = self.confirm.take() {
             c.back.restore(window, &self.ui().focus);
-            self.apply_user_plan(c.plan, cx);
+            // Asked and answered: applied as it is.
+            self.app.apply_whole(c.plan);
             cx.notify();
         }
     }

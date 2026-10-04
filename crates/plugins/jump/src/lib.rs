@@ -274,6 +274,9 @@ impl Plugin for JumpPlugin {
                 color: None,
                 drop: None,
                 suggested: false,
+                key: None,
+                hidden: false,
+                rename: None,
             },
         );
         app.registry.keymap.add(

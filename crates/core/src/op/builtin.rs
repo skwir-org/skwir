@@ -239,6 +239,9 @@ impl Operation for Rename {
         if let Some(invalid) = invalid_name(&self.new_name) {
             return invalid;
         }
+        if let Some(trashed) = trashed(&self.entry.path) {
+            return trashed;
+        }
         let target = self.target();
         match self.entry.resolve() {
             Ok(src) if src == target => StepStatus::AlreadyDone,
@@ -319,6 +322,9 @@ impl Operation for Move {
     fn check(&self, ctx: &StepContext) -> StepStatus {
         if !self.dest_dir.is_dir() {
             return conflict(format!("{} is not a directory", self.dest_dir.display()));
+        }
+        if let Some(trashed) = trashed(&self.entry.path) {
+            return trashed;
         }
         match self.entry.resolve() {
             Ok(src) if src.parent() == Some(self.dest_dir.as_path()) => StepStatus::AlreadyDone,
@@ -1018,6 +1024,9 @@ impl Operation for Swap {
         if id_of(&self.a.path) == Some(self.b.id) && id_of(&self.b.path) == Some(self.a.id) {
             return StepStatus::AlreadyDone;
         }
+        if let Some(trashed) = trashed(&self.a.path).or_else(|| trashed(&self.b.path)) {
+            return trashed;
+        }
         match (self.a.resolve(), self.b.resolve()) {
             (Ok(_), Ok(_)) => pending(true),
             (Err(e), _) | (_, Err(e)) => conflict(e.to_string()),
@@ -1088,6 +1097,12 @@ impl Operation for Trash {
         }
     }
     fn check(&self, _ctx: &StepContext) -> StepStatus {
+        if trash_info_of(&self.entry.path).is_some() {
+            return conflict(format!(
+                "{} is in the trash already",
+                self.entry.path.display()
+            ));
+        }
         match self.entry.resolve() {
             Ok(_) => pending(true),
             Err(ResolveError::Gone(_)) => StepStatus::AlreadyDone,
@@ -1096,6 +1111,11 @@ impl Operation for Trash {
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let src = self.entry.resolve()?;
+        anyhow::ensure!(
+            trash_info_of(&src).is_none(),
+            "{} is in the trash already",
+            src.display()
+        );
         ctx.forget_trash();
         let companions: Vec<PathBuf> = ctx
             .companions()
@@ -1108,24 +1128,67 @@ impl Operation for Trash {
         for companion in companions {
             let _ = trash::delete(&companion);
         }
-        Ok(Some(Box::new(Restore { path: src })))
+        Ok(Some(Box::new(Restore {
+            path: src,
+            item: None,
+        })))
     }
 }
 
 /// How far apart, in seconds, a file and its companions are trashed.
 const COMPANION_TRASHED_WITHIN: i64 = 5;
 
-/// Restore the most recently trashed item that had this original path.
+/// Where the trash keeps what it says of the file at `path` (where it came
+/// from, when), for a file of a trash's `files` folder: its
+/// `info/<name>.trashinfo`, beside. A trash is `$XDG_DATA_HOME/Trash`, or
+/// on another volume `.Trash/<uid>` or `.Trash-<uid>` at its top
+/// (freedesktop.org's trash specification). Read from the path alone.
+pub fn trash_info_of(path: &Path) -> Option<PathBuf> {
+    let name = path.file_name()?;
+    let files = path.parent()?;
+    if files.file_name()? != "files" {
+        return None;
+    }
+    let trash = files.parent()?;
+    let named = trash.file_name()?.to_str()?;
+    let is_trash = named == "Trash"
+        || named
+            .strip_prefix(".Trash-")
+            .is_some_and(|uid| uid.parse::<u32>().is_ok())
+        || (named.parse::<u32>().is_ok()
+            && trash.parent().and_then(Path::file_name) == Some(".Trash".as_ref()));
+    if !is_trash {
+        return None;
+    }
+    let mut info = name.to_owned();
+    info.push(".trashinfo");
+    Some(trash.join("info").join(info))
+}
+
+/// Restore the trashed item that had this original path: the one whose
+/// `.trashinfo` is `item` (the trash's own listing names it), else the
+/// most recently trashed.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Restore {
     #[serde(with = "crate::os_path")]
     #[schemars(with = "PathArg")]
     pub path: PathBuf,
+    /// The item's `.trashinfo`, when one item is meant: undoing a trash
+    /// leaves it out, and restores what was trashed last from `path`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<PathArg>,
 }
 
 impl Restore {
-    /// Index of the item to restore in the plan's trash listing.
+    /// Index of the item to restore in the plan's trash listing: the one
+    /// named, else (it was restored and trashed again since, under
+    /// another name) the most recent from the path.
     fn find(&self, items: &[trash::TrashItem]) -> Option<usize> {
+        if let Some(item) = self.item.as_deref()
+            && let Some(n) = items.iter().position(|i| Path::new(&i.id) == item)
+        {
+            return Some(n);
+        }
         items
             .iter()
             .enumerate()
@@ -1152,6 +1215,14 @@ impl Operation for Restore {
     }
     fn check(&self, ctx: &StepContext) -> StepStatus {
         if exists(&self.path) {
+            // The item named still in the trash: another file took its
+            // place since, which restoring it would not overwrite.
+            if self.item.as_deref().is_some_and(Path::exists) {
+                return conflict(format!(
+                    "{} is there again: rename or move it first",
+                    self.path.display()
+                ));
+            }
             return StepStatus::AlreadyDone;
         }
         match ctx.with_trash(|items| self.find(items)) {
@@ -1243,10 +1314,36 @@ impl Operation for Delete {
         let src = self.entry.resolve()?;
         let companions = ctx.companions().existing(&src);
         remove_recursive(&src)?;
+        forget_trashed(&src);
         for companion in companions {
-            let _ = remove_recursive(&companion.path);
+            if remove_recursive(&companion.path).is_ok() {
+                forget_trashed(&companion.path);
+            }
         }
         Ok(None)
+    }
+    fn undoable(&self) -> bool {
+        false
+    }
+}
+
+/// A file of a trash is moved or renamed only by being restored: under
+/// another name, or elsewhere, its `.trashinfo` would speak of nothing and
+/// the trash would hold a file it says nothing of.
+fn trashed(path: &Path) -> Option<StepStatus> {
+    trash_info_of(path).map(|_| {
+        conflict(format!(
+            "“{}” is in the trash: restore it first",
+            path.file_name().unwrap_or(path.as_os_str()).display()
+        ))
+    })
+}
+
+/// A file deleted from the trash takes what the trash said of it along:
+/// left behind, its `.trashinfo` would list a file that is not there.
+fn forget_trashed(path: &Path) {
+    if let Some(info) = trash_info_of(path) {
+        let _ = std::fs::remove_file(info);
     }
 }
 
@@ -1466,6 +1563,73 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    /// Where a trash keeps what it says of a file, from the file's path:
+    /// the home trash's and a volume's two kinds, nothing elsewhere.
+    #[test]
+    fn a_file_of_a_trash_is_known_by_its_path() {
+        let info = |p: &str| trash_info_of(Path::new(p));
+        assert_eq!(
+            info("/home/u/.local/share/Trash/files/a b.txt"),
+            Some(PathBuf::from(
+                "/home/u/.local/share/Trash/info/a b.txt.trashinfo"
+            ))
+        );
+        assert_eq!(
+            info("/media/stick/.Trash-1000/files/a"),
+            Some(PathBuf::from("/media/stick/.Trash-1000/info/a.trashinfo"))
+        );
+        assert_eq!(
+            info("/media/stick/.Trash/1000/files/a"),
+            Some(PathBuf::from("/media/stick/.Trash/1000/info/a.trashinfo"))
+        );
+        // Inside a folder of the trash, or a folder merely named so.
+        assert_eq!(info("/home/u/.local/share/Trash/files/dir/a"), None);
+        assert_eq!(info("/home/u/projects/files/a"), None);
+        assert_eq!(info("/media/stick/.Trash-me/files/a"), None);
+        assert_eq!(info("/media/stick/1000/files/a"), None);
+    }
+
+    /// A file deleted from a trash takes its `.trashinfo` along, and one
+    /// in a trash is not put there again.
+    #[test]
+    fn deleting_from_the_trash_forgets_what_it_said() {
+        let tmp = tempfile::tempdir().unwrap();
+        let trash = tmp.path().join(".Trash-1000");
+        std::fs::create_dir_all(trash.join("files")).unwrap();
+        std::fs::create_dir_all(trash.join("info")).unwrap();
+        let file = trash.join("files/a.txt");
+        std::fs::write(&file, "a").unwrap();
+        std::fs::write(
+            trash.join("info/a.txt.trashinfo"),
+            "[Trash Info]\nPath=a.txt\n",
+        )
+        .unwrap();
+        let entry = EntryRef::from_path(&file).unwrap();
+        let ctx = StepContext::detached();
+        assert!(matches!(
+            Trash {
+                entry: entry.clone()
+            }
+            .check(&ctx),
+            StepStatus::Conflict { .. }
+        ));
+        let renamed = Rename {
+            entry: entry.clone(),
+            new_name: "b.txt".into(),
+        };
+        assert!(matches!(renamed.check(&ctx), StepStatus::Conflict { .. }));
+        let moved = Move {
+            entry: entry.clone(),
+            dest_dir: tmp.path().to_path_buf(),
+        };
+        assert!(matches!(moved.check(&ctx), StepStatus::Conflict { .. }));
+        let delete = Delete { entry };
+        assert!(!delete.undoable());
+        assert!(delete.apply(&ctx).unwrap().is_none());
+        assert!(!file.exists());
+        assert!(!trash.join("info/a.txt.trashinfo").exists());
+    }
 
     #[test]
     fn a_chunk_written_through_takes_about_a_step() {

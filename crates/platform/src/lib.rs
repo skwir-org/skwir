@@ -43,6 +43,7 @@ pub mod process;
 pub mod sandbox;
 pub mod thumb_providers;
 pub mod thumbnails;
+pub mod trash;
 pub mod uri;
 pub mod users;
 pub mod xdg;

@@ -62,6 +62,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.confirm_delete", "{}", "Delete permanently…"),
     ("ui.toggle_hidden", "{}", "Toggle hidden files"),
     ("ui.toggle_sidebar", "{}", "Toggle sidebar"),
+    ("ui.focus_sidebar", "{}", "Focus sidebar"),
     (
         "ui.sidebar_section",
         r#"{"reset":true}"#,

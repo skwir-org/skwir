@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 
 pub use builtin::{
     Copy, Delete, Mkdir, Move, NewFile, RemoveEmptyFile, Rename, Restore, Rmdir, Swap, Trash,
-    register_builtin,
+    register_builtin, trash_info_of,
 };
 pub use context::{Cancelled, StepContext};
 pub use entry_ref::{EntryRef, ResolveError};
@@ -248,6 +248,13 @@ pub trait Operation: Send + Sync + fmt::Debug {
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>>;
     /// Clone into a box (plans are cloned into the journal).
     fn clone_box(&self) -> Box<dyn Operation>;
+    /// Whether its inverse can undo it: false for what `apply` never
+    /// returns an inverse for (deleting permanently). A plan with such a
+    /// step is asked about before the user's gesture applies it
+    /// ([`Plan::undoable`]).
+    fn undoable(&self) -> bool {
+        true
+    }
 }
 
 impl Clone for Box<dyn Operation> {
@@ -380,6 +387,12 @@ impl Plan {
 
     pub fn is_empty(&self) -> bool {
         self.steps.is_empty()
+    }
+
+    /// Whether Undo can take it back: no step is irreversible
+    /// ([`Operation::undoable`]).
+    pub fn undoable(&self) -> bool {
+        self.steps.iter().all(|s| s.undoable())
     }
 
     pub fn len(&self) -> usize {

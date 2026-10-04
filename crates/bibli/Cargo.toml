@@ -33,6 +33,7 @@ bibli-plugin-jump.workspace = true
 bibli-plugin-edit-as-buffer.workspace = true
 bibli-plugin-rename-bulk.workspace = true
 bibli-plugin-shelf.workspace = true
+bibli-plugin-trash.workspace = true
 bibli-plugin-query.workspace = true
 bibli-plugin-preview-media.workspace = true
 bibli-plugin-preview-hex.workspace = true

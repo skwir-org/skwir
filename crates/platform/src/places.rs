@@ -34,6 +34,9 @@ pub struct Mount {
     pub removable: bool,
     /// The mounted device (`/dev/sdb1`), as the kernel reports it.
     pub source: String,
+    /// What of its filesystem is mounted there: `/` for all of it, a
+    /// subvolume or a folder of it otherwise (`/@home`).
+    pub root: PathBuf,
 }
 
 /// Free and total bytes of the filesystem holding `path`. Asks the
@@ -59,6 +62,90 @@ pub struct Volume {
     /// `/dev/mapper/luks-…`), as `lsblk` names it: once unlocked, a
     /// container is listed as this volume instead.
     pub container: Option<String>,
+    /// A small FAT or NTFS partition: a boot or recovery one, by the
+    /// judgement desktops make where udisks says nothing (`Identity`).
+    pub system: bool,
+}
+
+/// What udev knows of a block device, read from sysfs and udev's
+/// database: both in memory, never a drive, so it can be asked anywhere.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Identity {
+    /// Its filesystem's UUID; for a container's cleartext volume the
+    /// container's, so that the volume is one, locked or not.
+    pub uuid: Option<String>,
+    /// Whether udisks says not to show it (`UDISKS_IGNORE`, which its
+    /// rules set for EFI, BIOS boot, recovery and reserved partitions);
+    /// `None` when udev has no record of it.
+    pub ignored: Option<bool>,
+}
+
+/// What udev knows of `device` (`/dev/sdb1`, `/dev/mapper/luks-…`).
+pub fn identity(device: &str) -> Identity {
+    // The kernel's name for it: `/dev/mapper/luks-…` leads to `/dev/dm-3`.
+    if !device.starts_with("/dev/") {
+        return Identity::default();
+    }
+    let Some(name) = std::fs::canonicalize(device)
+        .ok()
+        .and_then(|node| node.file_name().map(ToOwned::to_owned))
+    else {
+        return Identity::default();
+    };
+    block_identity(
+        Path::new("/sys/class/block"),
+        Path::new("/run/udev/data"),
+        &name,
+    )
+}
+
+/// [`identity`] of the block device the kernel names `name`, from the
+/// sysfs and udev trees at `sys` and `udev`.
+fn block_identity(sys: &Path, udev: &Path, name: &std::ffi::OsStr) -> Identity {
+    let dir = sys.join(name);
+    let own = std::fs::read_to_string(dir.join("dev"))
+        .ok()
+        .and_then(|dev| std::fs::read_to_string(udev.join(format!("b{}", dev.trim()))).ok())
+        .map(|record| udev_identity(&record))
+        .unwrap_or_default();
+    // A container's cleartext volume (device mapper's `CRYPT-…`) is the
+    // container under it: the one device it is made of.
+    let crypt =
+        std::fs::read_to_string(dir.join("dm/uuid")).is_ok_and(|uuid| uuid.starts_with("CRYPT-"));
+    let container = crypt
+        .then(|| std::fs::read_dir(dir.join("slaves")).ok()?.flatten().next())
+        .flatten()
+        .map(|slave| block_identity(sys, udev, &slave.file_name()));
+    match container {
+        Some(container) => Identity {
+            uuid: container.uuid.or(own.uuid),
+            ignored: match (container.ignored, own.ignored) {
+                (None, None) => None,
+                (a, b) => Some(a == Some(true) || b == Some(true)),
+            },
+        },
+        None => own,
+    }
+}
+
+/// The properties of a udev record (`E:ID_FS_UUID=…` lines) that say
+/// what a volume is: a record without `UDISKS_IGNORE` says to show it.
+fn udev_identity(record: &str) -> Identity {
+    let mut identity = Identity {
+        uuid: None,
+        ignored: Some(false),
+    };
+    for (key, value) in record
+        .lines()
+        .filter_map(|line| line.strip_prefix("E:")?.split_once('='))
+    {
+        match key {
+            "ID_FS_UUID" if !value.is_empty() => identity.uuid = Some(value.to_owned()),
+            "UDISKS_IGNORE" => identity.ignored = Some(value == "1"),
+            _ => {}
+        }
+    }
+    identity
 }
 
 #[derive(serde::Deserialize)]
@@ -87,7 +174,7 @@ const LSBLK_ARGS: [&str; 5] = [
 ];
 
 /// Below this a FAT or NTFS partition is a boot or recovery partition, which
-/// desktops hide too.
+/// desktops hide too, where udisks does not say (`Identity::ignored`).
 const SYSTEM_PARTITION_MAX: u64 = 2 << 30;
 
 fn device_name(path: &str) -> &str {
@@ -96,8 +183,8 @@ fn device_name(path: &str) -> &str {
 
 /// Volumes from `lsblk --json --list` that could be mounted and are not:
 /// filesystems without a mount point, and locked encrypted containers.
-/// Members of something else (swap, RAID, LVM, an unlocked container) and
-/// small system partitions are left out.
+/// Members of something else (swap, RAID, LVM, an unlocked container) are
+/// left out; small system partitions are marked (`Volume::system`).
 pub fn parse_lsblk(json: &str) -> Vec<Volume> {
     let Ok(listing) = serde_json::from_str::<BlockDevices>(json) else {
         return Vec::new();
@@ -116,9 +203,7 @@ pub fn parse_lsblk(json: &str) -> Vec<Volume> {
                 return None;
             }
             let size = device.size.unwrap_or(0);
-            if matches!(fstype, "vfat" | "ntfs") && size < SYSTEM_PARTITION_MAX {
-                return None;
-            }
+            let system = matches!(fstype, "vfat" | "ntfs") && size < SYSTEM_PARTITION_MAX;
             let locked = fstype == "crypto_LUKS";
             // An unlocked container shows up again as its cleartext device.
             let name = device_name(&device.path);
@@ -152,6 +237,7 @@ pub fn parse_lsblk(json: &str) -> Vec<Volume> {
                 locked,
                 hotplug,
                 container,
+                system,
             })
         })
         .collect()
@@ -676,6 +762,7 @@ pub fn parse_mountinfo(text: &str) -> Vec<Mount> {
                 .get(1)
                 .map(|s| unescape_mountinfo(s).to_string_lossy().into_owned())
                 .unwrap_or_default(),
+            root: PathBuf::from(unescape_mountinfo(lf[3])),
         });
     }
     out
@@ -749,14 +836,22 @@ mod tests {
     ]}"#;
 
     #[test]
-    fn unmounted_volumes_are_listed_without_members_and_system_partitions() {
+    fn unmounted_volumes_are_listed_without_members_and_system_partitions_marked() {
         let volumes = super::parse_lsblk(LSBLK);
         let devices: Vec<&str> = volumes.iter().map(|v| v.device.as_str()).collect();
         assert_eq!(
             devices,
-            ["/dev/sda3", "/dev/sdc", "/dev/mapper/luks-example"],
-            "no EFI partition, no unlocked or in-use container, no swap, nothing mounted"
+            [
+                "/dev/sda1",
+                "/dev/sda3",
+                "/dev/sdc",
+                "/dev/mapper/luks-example"
+            ],
+            "no unlocked or in-use container, no swap, nothing mounted"
         );
+        let (efi, volumes) = volumes.split_first().unwrap();
+        assert!(efi.system, "a small FAT partition, where udev says nothing");
+        assert!(volumes.iter().all(|v| !v.system));
         assert!(volumes[1].locked && !volumes[0].locked);
         assert!(
             volumes[2].hotplug,
@@ -766,6 +861,61 @@ mod tests {
         assert_eq!(volumes[2].container.as_deref(), Some("/dev/sdb2"));
         assert_eq!(volumes[0].container, None);
         assert!(super::parse_lsblk("not json").is_empty());
+    }
+
+    /// udisks's word on a volume is read where udev keeps it, and a
+    /// container's cleartext volume is known by the container: one
+    /// volume, locked or not.
+    #[test]
+    fn a_volume_is_known_by_its_filesystem_and_what_udisks_says_of_it() {
+        let root = tempfile::tempdir().unwrap();
+        let (sys, udev) = (root.path().join("sys"), root.path().join("udev"));
+        let block = |name: &str, dev: &str, record: Option<&str>| {
+            std::fs::create_dir_all(sys.join(name)).unwrap();
+            std::fs::write(sys.join(name).join("dev"), format!("{dev}\n")).unwrap();
+            if let Some(record) = record {
+                std::fs::create_dir_all(&udev).unwrap();
+                std::fs::write(udev.join(format!("b{dev}")), record).unwrap();
+            }
+        };
+        block(
+            "sda1",
+            "8:1",
+            Some(
+                "S:disk/by-uuid/0A1B\nE:ID_FS_UUID=0A1B-2C3D\nE:UDISKS_IGNORE=1\nE:ID_FS_TYPE=vfat\n",
+            ),
+        );
+        block("sda3", "8:3", Some("E:ID_FS_UUID=ABC\n"));
+        block("sdb2", "8:18", Some("E:ID_FS_UUID=1111-luks\n"));
+        block("dm-3", "254:3", Some("E:ID_FS_UUID=2222-ext4\n"));
+        std::fs::create_dir_all(sys.join("dm-3/dm")).unwrap();
+        std::fs::write(sys.join("dm-3/dm/uuid"), "CRYPT-LUKS2-1111-luks-x\n").unwrap();
+        std::fs::create_dir_all(sys.join("dm-3/slaves/sdb2")).unwrap();
+        block("sdc1", "8:33", None);
+        let of = |name: &str| super::block_identity(&sys, &udev, std::ffi::OsStr::new(name));
+        assert_eq!(
+            of("sda1"),
+            super::Identity {
+                uuid: Some("0A1B-2C3D".into()),
+                ignored: Some(true)
+            }
+        );
+        assert_eq!(
+            of("sda3").ignored,
+            Some(false),
+            "a record that says nothing"
+        );
+        assert_eq!(
+            of("dm-3"),
+            super::Identity {
+                uuid: Some("1111-luks".into()),
+                ignored: Some(false)
+            },
+            "the container's"
+        );
+        assert_eq!(of("sdc1"), super::Identity::default(), "no record");
+        assert_eq!(of("nothing"), super::Identity::default());
+        assert_eq!(super::identity("not a device"), super::Identity::default());
     }
 
     #[test]
@@ -1004,6 +1154,8 @@ mod tests {
         assert_eq!(v[2].label, "my disk");
         assert!(v[2].removable);
         assert_eq!(v[3].fstype, "fuse.sshfs");
+        assert_eq!(v[0].root, Path::new("/root"), "a subvolume");
+        assert_eq!(v[2].root, Path::new("/"));
     }
 
     #[test]

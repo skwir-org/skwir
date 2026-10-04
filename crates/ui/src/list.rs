@@ -219,6 +219,7 @@ impl Shell {
             refs: verbs.remove.is_some(),
             drops: verbs.drop.is_some(),
             creates: verbs.create.is_some(),
+            restores: verbs.restore.is_some(),
             ..ctx
         };
         let key = (

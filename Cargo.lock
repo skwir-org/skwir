@@ -561,6 +561,7 @@ dependencies = [
  "bibli-plugin-terminal",
  "bibli-plugin-thumbnails",
  "bibli-plugin-timeline",
+ "bibli-plugin-trash",
  "bibli-plugin-usage",
  "bibli-plugin-vim",
  "bibli-plugin-xmp",
@@ -1211,6 +1212,22 @@ dependencies = [
  "bibli-platform",
  "parking_lot",
  "rayon",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "bibli-plugin-trash"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "bibli-core",
+ "bibli-platform",
+ "crossbeam-channel",
+ "notify",
+ "parking_lot",
  "schemars",
  "serde",
  "serde_json",
