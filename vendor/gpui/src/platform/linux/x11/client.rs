@@ -302,6 +302,7 @@ pub(crate) struct X11Client(Rc<RefCell<X11ClientState>>);
 
 impl X11Client {
     pub(crate) fn new() -> anyhow::Result<Self> {
+        let gpu_context = BladeContext::spawn();
         let event_loop = EventLoop::try_new()?;
 
         let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
@@ -411,7 +412,7 @@ impl X11Client {
             .to_string();
         let keyboard_layout = LinuxKeyboardLayout::new(layout_name.into());
 
-        let gpu_context = BladeContext::new().context("Unable to init GPU context")?;
+        let gpu_context = gpu_context.join().context("Unable to init GPU context")?;
 
         let resource_database = x11rb::resource_manager::new_from_default(&xcb_connection)
             .context("Failed to create resource database")?;

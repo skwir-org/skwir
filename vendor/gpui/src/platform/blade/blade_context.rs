@@ -34,6 +34,38 @@ impl BladeContext {
         );
         Ok(Self { gpu })
     }
+
+    /// Starts creating the context on a thread of its own. Loading the GPU
+    /// drivers takes longer than anything else a platform client sets up
+    /// (fonts, the display connection), which goes on meanwhile;
+    /// [`PendingBladeContext::join`] waits for it.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    pub fn spawn() -> PendingBladeContext {
+        PendingBladeContext(
+            std::thread::Builder::new()
+                .name("gpu-init".into())
+                .spawn(Self::new),
+        )
+    }
+}
+
+/// A [`BladeContext`] being created, from [`BladeContext::spawn`].
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+pub struct PendingBladeContext(
+    std::io::Result<std::thread::JoinHandle<anyhow::Result<BladeContext>>>,
+);
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+impl PendingBladeContext {
+    pub fn join(self) -> anyhow::Result<BladeContext> {
+        match self.0 {
+            Ok(thread) => thread
+                .join()
+                .map_err(|_| anyhow::anyhow!("GPU initialization panicked"))?,
+            // No thread to create it on: here, then.
+            Err(_) => BladeContext::new(),
+        }
+    }
 }
 
 fn parse_pci_id(id: &str) -> anyhow::Result<u32> {

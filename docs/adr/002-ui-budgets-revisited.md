@@ -92,3 +92,35 @@ same binary read 120 MB with several GPU clients alive and 162 MB on a quiet
 desktop, with identical heap (25.6 MB) and binary (25.4 MB) shares. Compare
 builds back to back under the same desktop state, and report the heap and
 binary mappings next to the total.
+
+## Addendum, 2026-10-04: the first frame
+
+On the reference machine (Hyprland on the NVIDIA eGPU, release build, warm
+caches), the first frame read 116 to 169 ms (median 146 ms, nine starts),
+three of the nine above 150. Where it went, from the shell's log and
+timers placed in gpui for the measurement:
+
+- our `main` until gpui starts: 3 ms;
+- fonts: 7 ms. No longer the 100 ms found above: with a warm page cache
+  fontdb reads the 338 font files in that time;
+- the GPU context (`BladeContext::new`): 58 to 95 ms, nearly all of it the
+  NVIDIA driver. With only Intel's driver visible the whole first frame
+  read 36 ms;
+- our share: the window's surface and swapchain 13 ms, the shader 3 to
+  4 ms, the pipelines 7 to 14 ms, and they were built twice: the renderer
+  started transparent and the window then set itself opaque.
+
+Two changes to gpui. The Wayland renderer starts with the transparency the
+window will have, so its surface and pipelines are built once (vendored
+patch 0013, about 10 ms), and the GPU context is created on a thread while
+the fonts and the display connection are set up (0014, about the fonts'
+7 ms here). Ten warm starts of each build, alternated back to back on a
+quiet machine: median 134.6 to 114.5 ms, maximum 144.9 to 131.0 ms. Our
+share read 28 to 56 ms over thirteen starts: the 50 ms holds on most, not
+all. The budgets are unchanged.
+
+Which GPU draws is the environment's, not bibli's: Blade takes the first
+device the Vulkan loader lists, in the order Mesa's device-select layer
+gives (`DRI_PRIME`, `MESA_VK_DEVICE_SELECT`). Choosing the integrated GPU
+would start faster on this machine and is not done for it (AGENTS.md, "No
+tuning for the machine it was measured on").

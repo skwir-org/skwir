@@ -36,12 +36,18 @@ Poppler, GStreamer or libarchive. The idle memory gate, open since ADR-002's add
 118 to 120 MB of PSS against 100, is closed by ADR-033 (2026-10-04): the budget counts
 bibli's own share of PSS, without the GPU driver's code, whose share depends on the GPU
 vendor and on the other programs mapping it. Measured by `just idle-pss`: 89.2 MiB own
-share against 100 (133.7 MiB in all, 44.6 of them the driver's), first frame 116 to 169 ms
-over nine warm starts (median 146, budget 150). Found while measuring: on Wayland the idle
-main thread wakes at the display's refresh rate (about 1% of a core), because gpui's
-Wayland backend asks for a frame callback in every frame callback, drawn or not; open, for
-a vendored patch. The per-change validation history that used to sit here is in
-`docs/STATUS-LOG.md`.
+share against 100 (133.7 MiB in all, 44.6 of them the driver's). Two findings of that
+measurement, fixed the same day: an idle Wayland window woke at the display's rate (gpui
+asked for a frame callback in every one; vendored patch 0012: it draws when asked, idle CPU
+1.0 to 0.2 %), and the first frame read a median of 146 ms against 150 (patches 0013 and
+0014: pipelines built once, the GPU context created beside the fonts; median 134.6 to
+114.5 ms back to back, ADR-002's addendum). Found with them: the places plugin rescanned and
+woke the window about twice a second for as long as the GTK bookmarks file existed, once
+anything had opened it (notify reports opens; it now drops access events, with a test).
+`bibli-platform`'s `the_bytes_decide_for_a_name_that_says_nothing` fails on this machine:
+its shared-mime-info now names shell scripts `text/x-shellscript`, the test expects the
+older `application/x-shellscript`. The per-change validation history that used to sit here
+is in `docs/STATUS-LOG.md`.
 
 Sidebar tags as pills (2026-10-01): a place with a color is drawn as a
 pill of it, and a group's pills wrap together left-aligned (a justified

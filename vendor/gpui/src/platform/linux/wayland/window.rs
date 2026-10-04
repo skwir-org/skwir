@@ -179,13 +179,22 @@ impl WaylandWindowState {
                     .display_ptr()
                     .cast::<c_void>(),
             };
+            // As `is_transparent` will say once the window has asked for its
+            // decorations and set its background: starting otherwise, the
+            // renderer would configure its surface and build its pipelines
+            // again before the first frame.
+            let transparent = options
+                .window_decorations
+                .unwrap_or(WindowDecorations::Server)
+                == WindowDecorations::Client
+                || options.window_background != WindowBackgroundAppearance::Opaque;
             let config = BladeSurfaceConfig {
                 size: gpu::Extent {
                     width: options.bounds.size.width.0 as u32,
                     height: options.bounds.size.height.0 as u32,
                     depth: 1,
                 },
-                transparent: true,
+                transparent,
             };
             BladeRenderer::new(gpu_context, &raw_window, config)?
         };

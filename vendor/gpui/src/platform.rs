@@ -1214,6 +1214,15 @@ pub(crate) struct WindowParams {
     pub display_id: Option<DisplayId>,
 
     pub window_min_size: Option<Size<Pixels>>,
+
+    /// The background the window opens with and the decorations it asks
+    /// for, which the window sets once it is open: a renderer can start
+    /// with the transparency they give instead of switching to it.
+    #[cfg_attr(not(feature = "wayland"), allow(dead_code))]
+    pub window_background: WindowBackgroundAppearance,
+    #[cfg_attr(not(feature = "wayland"), allow(dead_code))]
+    pub window_decorations: Option<WindowDecorations>,
+
     #[cfg(target_os = "macos")]
     pub tabbing_identifier: Option<String>,
 }

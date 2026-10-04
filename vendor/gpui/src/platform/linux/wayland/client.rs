@@ -611,6 +611,7 @@ fn wl_output_version(version: u32) -> u32 {
 
 impl WaylandClient {
     pub(crate) fn new() -> Self {
+        let gpu_context = BladeContext::spawn();
         let conn = Connection::connect_to_env().unwrap();
 
         let (globals, mut event_queue) =
@@ -663,7 +664,7 @@ impl WaylandClient {
             })
             .unwrap();
 
-        let gpu_context = BladeContext::new().expect("Unable to init GPU context");
+        let gpu_context = gpu_context.join().expect("Unable to init GPU context");
 
         let seat = seat.unwrap();
         let globals = Globals::new(

@@ -199,6 +199,31 @@ layout (`crates/gpui/...`) so they apply there with `git apply -p1`.
   workspace (shown when it came back; 0 CPU while hidden), a resize, and a
   toast's entrance animation, each drawn without input.
 
+- `0013-renderer-starts-with-its-transparency.patch`: the Wayland window
+  created its renderer transparent whatever it would be, and `Window::new`
+  then asked for server decorations and set an opaque background, which
+  reconfigured the surface and built every pipeline again before the first
+  frame (about 10 ms on the reference machine's NVIDIA driver).
+  `WindowParams` now carries `window_background` and `window_decorations`,
+  and the renderer starts with the transparency `is_transparent` will give
+  once the window has set them. A compositor that answers with client-side
+  decorations still switches it, as before. The mac edit is mechanical and
+  not compiled here.
+
+- `0014-gpu-context-on-a-thread.patch`: `BladeContext::spawn` creates the
+  GPU context on a thread of its own and `PendingBladeContext::join`
+  waits for it; the Wayland and X11 clients start it first, so loading the
+  drivers (the longest step of their setup) overlaps the fonts and the
+  display connection instead of following them. Without a thread it is
+  created in place. On the reference machine, with a warm page cache, the
+  fonts take about 7 ms, which is what it saves there; after a boot both
+  come from disk.
+
+With 0012 to 0014, bibli's first frame went from a median of 134.6 ms to
+114.5 ms on the reference machine (ten warm starts of each build,
+alternated back to back on a quiet machine); 0013 and 0014 are the ones on
+that path.
+
 ## Regenerating a patch
 
     G=$(ls -d ~/.cargo/registry/src/*/gpui-0.2.2)
