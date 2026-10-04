@@ -1171,8 +1171,11 @@ pub fn crumbs(path: &std::path::Path, roots: &[crate::sidebar::Root]) -> Vec<(St
 /// A chevron lists the places inside the segment before it (a folder's
 /// folders, a tag's tags), the one the trail goes on into marked; one more
 /// after the last lists those inside the place shown, when it `holds`
-/// places (not the trash's files). `open` is the menu of places open from
-/// this row, whose chevron hangs it from `anchor`.
+/// places (not the trash's files). The outermost has one too when the
+/// trail leaves folders out above it (it starts at a folder of the
+/// sidebar, Home or a drive, not at `/`), which lists them from the root
+/// down (`ui.parents_menu`), and wraps out of sight with it. `open` is the menu of places open from this row, whose
+/// chevron hangs it from `anchor`.
 fn breadcrumbs(
     shell: &Shell,
     crumbs: &[Crumb],
@@ -1196,55 +1199,74 @@ fn breadcrumbs(
         // `Start`/`End` follow the writing mode, not the flex direction).
         .justify_start()
         .line_height(px(24.));
-    let chevron =
-        |index: usize, of: &Crumb, current: Option<&Location>, cx: &mut Context<Shell>| {
-            let shown = open
-                == Some(&crate::nav_menu::NavWhat::Subfolders {
-                    of: of.location.clone(),
-                });
-            let args = serde_json::json!({
+    // `index` names it among the row's: the segment it stands before, and
+    // one past the last for the chevron after it.
+    let chevron = |index: usize,
+                   menu: &'static str,
+                   what: crate::nav_menu::NavWhat,
+                   args: serde_json::Value,
+                   tip: gpui::SharedString,
+                   cx: &mut Context<Shell>| {
+        let shown = open == Some(&what);
+        let font = shell.font.clone();
+        let hover = theme.hover;
+        div()
+            .id(("crumb-folders", index))
+            .relative()
+            .flex_none()
+            .h(px(24.))
+            .w(px(16.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_sm()
+            .cursor_pointer()
+            .hover(move |s| s.bg(hover))
+            .when(shown, |d| d.bg(theme.hover))
+            .tooltip(move |_, cx| toolbar::tooltip(tip.clone(), font.clone(), cx))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.activate_pane(pane, cx);
+                this.run(menu, args.clone(), window, cx);
+            }))
+            .child(
+                gpui::svg()
+                    .path(if shown {
+                        "toolbar/chevron.svg"
+                    } else {
+                        "toolbar/chevron-right.svg"
+                    })
+                    .size(px(12.))
+                    .flex_none()
+                    .text_color(theme.text_muted),
+            )
+            .when(shown, |d| d.child(anchor.marker()))
+    };
+    // The places inside `of`, `current` the one the trail goes on into.
+    let inside = |index: usize, of: &Crumb, current: Option<&Location>, cx: &mut Context<Shell>| {
+        chevron(
+            index,
+            "ui.subfolder_menu",
+            crate::nav_menu::NavWhat::Subfolders {
+                of: of.location.clone(),
+            },
+            serde_json::json!({
                 "location": crate::trail::location_arg(&of.location),
                 "current": current.map(crate::trail::location_arg),
-            });
-            let font = shell.font.clone();
-            let tip: gpui::SharedString = if of.location.is_path() {
+            }),
+            if of.location.is_path() {
                 format!("Folders in {}", of.label).into()
             } else {
                 format!("In {}", of.label).into()
-            };
-            let hover = theme.hover;
-            div()
-                .id(("crumb-folders", index))
-                .relative()
-                .flex_none()
-                .h(px(24.))
-                .w(px(16.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_sm()
-                .cursor_pointer()
-                .hover(move |s| s.bg(hover))
-                .when(shown, |d| d.bg(theme.hover))
-                .tooltip(move |_, cx| toolbar::tooltip(tip.clone(), font.clone(), cx))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    cx.stop_propagation();
-                    this.activate_pane(pane, cx);
-                    this.run("ui.subfolder_menu", args.clone(), window, cx);
-                }))
-                .child(
-                    gpui::svg()
-                        .path(if shown {
-                            "toolbar/chevron.svg"
-                        } else {
-                            "toolbar/chevron-right.svg"
-                        })
-                        .size(px(12.))
-                        .flex_none()
-                        .text_color(theme.text_muted),
-                )
-                .when(shown, |d| d.child(anchor.marker()))
-        };
+            },
+            cx,
+        )
+    };
+    // The folders above the first, when the trail leaves them out.
+    let above = crumbs.first().and_then(|first| {
+        let path = first.location.path()?;
+        path.parent().is_some().then(|| (first.label.clone(), path))
+    });
     for (index, crumb) in crumbs.iter().enumerate().rev() {
         let hover = theme.hover;
         let open = crate::trail::location_arg(&crumb.location);
@@ -1300,10 +1322,20 @@ fn breadcrumbs(
             }
             None => segment,
         };
-        let before = index
-            .checked_sub(1)
-            .map(|parent| chevron(index, &crumbs[parent], Some(&crumb.location), cx));
-        let after = (index == last && holds).then(|| chevron(index + 1, crumb, None, cx));
+        let before = match index.checked_sub(1) {
+            Some(parent) => Some(inside(index, &crumbs[parent], Some(&crumb.location), cx)),
+            None => above.as_ref().map(|(label, path)| {
+                chevron(
+                    index,
+                    "ui.parents_menu",
+                    crate::nav_menu::NavWhat::Parents { of: path.clone() },
+                    serde_json::json!({ "location": bibli_core::os_path::PathArg::from(path.as_path()) }),
+                    format!("Folders above {label}").into(),
+                    cx,
+                )
+            }),
+        };
+        let after = (index == last && holds).then(|| inside(index + 1, crumb, None, cx));
         trail = trail.child(
             div()
                 .flex()

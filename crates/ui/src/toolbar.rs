@@ -336,7 +336,10 @@ fn invoke(
         return;
     }
     shell.activate_pane(pane, cx);
-    if !matches!(command, "ui.history_menu" | "ui.subfolder_menu") {
+    if !matches!(
+        command,
+        "ui.history_menu" | "ui.subfolder_menu" | "ui.parents_menu"
+    ) {
         shell.close_nav_menu(window);
     }
     if !matches!(

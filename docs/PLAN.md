@@ -1073,6 +1073,22 @@ a drive's trail (in tests: the machine's drives are real ones). Left: a
 folder restored by merging leaves the companions trashed beside it in
 the trash; the CLI and agents do not see the sidebar's names.
 
+Up the tree from a trail (2026-10-05): with no Up button, the folders a
+trail leaves out above its first place were reached only by Alt+Up. A
+trail that starts at a folder of the sidebar (Home, a bookmark, a drive:
+anything but `/`) now leads with a chevron whose menu lists every folder
+from the root down to it, as a tree, each under its own name as the
+other chevrons list folders (`/ › home › example`, not the sidebar's
+Home; `ui.parents_menu`). A drive's shows where it is mounted
+(`/ › run › media › …`); leaving drives out, as first built, needed the
+mount table read on a worker and hid the chevron from a drive mounted
+inside the home folder. The chevron is the first segment's own, so a
+narrow pane wraps it out of sight with that segment. Checked on Xvfb
+with a synthetic home: the chevron, its menu and a row opening its
+folder, none at `/`, a second click closing it, and the narrow pane.
+Left: the segments a narrow pane wraps out of sight are not in that
+menu, as they are in Dolphin's.
+
 ## Phase 0 — Foundations and toolkit spike (~2 weeks)
 
 Goal: a repo that can measure itself, and a toolkit decision backed by numbers.

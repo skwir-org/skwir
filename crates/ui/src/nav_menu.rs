@@ -1,12 +1,15 @@
 //! The pane row's menus of places: the history behind Back or ahead of
-//! Forward (their right-click, `ui.history_menu`), and the places inside
-//! a place of the trail (the chevron after it, `ui.subfolder_menu`): a
-//! folder's folders, a tag's tags (`LocationProvider::places`).
+//! Forward (their right-click, `ui.history_menu`), the places inside a
+//! place of the trail (the chevron after it, `ui.subfolder_menu`): a
+//! folder's folders, a tag's tags (`LocationProvider::places`), and the
+//! folders a trail leaves out above its first place (the chevron before
+//! it, `ui.parents_menu`), which there is no Up button to reach.
 //!
-//! Both hang from what opened them in the pane's row, which draws their
+//! All hang from what opened them in the pane's row, which draws their
 //! anchor (`address::render_address`). A folder is read on a worker, since
 //! a sleeping disk can block it, and so are a provider's places; the menu
-//! opens when the answer arrives, if it is still wanted.
+//! opens when the answer arrives, if it is still wanted. The folders above
+//! one are known from its path alone.
 
 use std::path::{Path, PathBuf};
 
@@ -33,6 +36,10 @@ pub enum NavWhat {
     Subfolders {
         of: bibli_core::Location,
     },
+    /// The folders that hold `of`, where a trail starts.
+    Parents {
+        of: PathBuf,
+    },
 }
 
 /// A place in the menu: what it runs, and whether the pane is there
@@ -45,6 +52,8 @@ struct NavRow {
     args: serde_json::Value,
     current: bool,
     enabled: bool,
+    /// How far in the row stands: the folders above a trail are a tree.
+    depth: usize,
 }
 
 /// The open menu of places.
@@ -123,6 +132,7 @@ impl Shell {
                 args: serde_json::json!({ "steps": steps }),
                 current: false,
                 enabled: true,
+                depth: 0,
             })
             .collect();
         self.nav_menu = Some(NavMenu {
@@ -251,6 +261,7 @@ impl Shell {
                         args: navigate(&place.location),
                         current: current.as_ref() == Some(&place.location),
                         enabled: true,
+                        depth: 0,
                     })
                     .collect();
                 if rows.is_empty() {
@@ -262,6 +273,7 @@ impl Shell {
                         args: navigate(&of),
                         current: false,
                         enabled: false,
+                        depth: 0,
                     });
                 }
                 shell.close_nav_menu(window);
@@ -276,6 +288,43 @@ impl Shell {
             window,
             cx,
         );
+    }
+}
+
+impl Shell {
+    /// `ui.parents_menu { location }`: the folders that hold `location`,
+    /// the folder a trail starts at, from the root down to it (marked);
+    /// `{ close: true }` closes it. Known from the path: nothing is read.
+    pub fn toggle_parents_menu(
+        &mut self,
+        args: &serde_json::Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let was = self.close_nav_menu(window);
+        cx.notify();
+        // A folder's menu on its way is no longer wanted.
+        self.nav_asked += 1;
+        if self.nav_closing(args, was.as_ref()) {
+            return;
+        }
+        let Some(top) = args
+            .get("location")
+            .and_then(|v| serde_json::from_value::<PathArg>(v.clone()).ok())
+            .and_then(|arg| bibli_core::Location::parse_os(arg.as_os_str()).path())
+        else {
+            return;
+        };
+        let what = NavWhat::Parents { of: top.clone() };
+        if was.as_ref() == Some(&what) || self.just_dismissed(&what.key()) {
+            return;
+        }
+        self.nav_menu = Some(NavMenu {
+            pane: self.pane,
+            what,
+            rows: parent_rows(&top),
+            popup: Popup::new("nav", window, cx),
+        });
     }
 }
 
@@ -318,6 +367,7 @@ fn folder_rows(folder: &Path, dirs: Vec<PathBuf>, current: Option<&Path>) -> Vec
             args: navigate(&dir),
             current: current == Some(dir.as_path()),
             enabled: true,
+            depth: 0,
         })
         .collect();
     if total == 0 {
@@ -329,6 +379,7 @@ fn folder_rows(folder: &Path, dirs: Vec<PathBuf>, current: Option<&Path>) -> Vec
             args: navigate(folder),
             current: false,
             enabled: false,
+            depth: 0,
         });
     } else if total > FOLDER_ROWS {
         let more = format!("{} more: open the folder", total - FOLDER_ROWS);
@@ -340,9 +391,40 @@ fn folder_rows(folder: &Path, dirs: Vec<PathBuf>, current: Option<&Path>) -> Vec
             args: navigate(folder),
             current: false,
             enabled: true,
+            depth: 0,
         });
     }
     rows
+}
+
+/// The rows of the menu of what a trail leaves out above `top`, its
+/// first folder: every folder from the root down to `top` itself
+/// (marked), each a step further in, under its own name as the other
+/// chevrons' menus list folders: `/ › home › example`, never the
+/// sidebar's `Home`.
+fn parent_rows(top: &Path) -> Vec<NavRow> {
+    let mut folders: Vec<&Path> = top.ancestors().collect();
+    folders.reverse();
+    folders
+        .into_iter()
+        .enumerate()
+        .map(|(depth, folder)| NavRow {
+            label: folder
+                .file_name()
+                .map_or_else(
+                    || folder.display().to_string(),
+                    |name| name.to_string_lossy().into_owned(),
+                )
+                .into(),
+            tip: folder.display().to_string().into(),
+            icon: "folder",
+            command: "navigate",
+            args: serde_json::json!({ "location": PathArg::from(folder) }),
+            current: folder == top,
+            enabled: true,
+            depth,
+        })
+        .collect()
 }
 
 /// The folders inside `folder` in the panes' name order, links to folders
@@ -378,6 +460,7 @@ pub fn panel(shell: &Shell, pane: PaneId, cx: &mut Context<Shell>) -> Option<Any
     let close = match menu.what {
         NavWhat::History { .. } => "ui.history_menu",
         NavWhat::Subfolders { .. } => "ui.subfolder_menu",
+        NavWhat::Parents { .. } => "ui.parents_menu",
     };
     let mut panel = toolbar::popup_panel(&menu.popup, close, &theme, cx)
         .w_auto()
@@ -396,7 +479,10 @@ pub fn panel(shell: &Shell, pane: PaneId, cx: &mut Context<Shell>) -> Option<Any
             .menu()
             .active(row.current)
             .enabled(row.enabled)
-            .render(shell, cx),
+            .render(shell, cx)
+            .when(row.depth > 0, |d| {
+                d.pl(gpui::px(8. + 12. * row.depth as f32))
+            }),
         );
     }
     Some(panel.into_any_element())
@@ -404,7 +490,32 @@ pub fn panel(shell: &Shell, pane: PaneId, cx: &mut Context<Shell>) -> Option<Any
 
 #[cfg(test)]
 mod tests {
-    use super::subfolders;
+    use super::{parent_rows, subfolders};
+    use std::path::Path;
+
+    /// From the root down to the folder the trail starts at, which is
+    /// marked, each by its own name, whatever the sidebar calls it.
+    #[test]
+    fn the_folders_above_a_trail_go_from_the_root_down_to_it() {
+        let rows = parent_rows(Path::new("/home/example/Documents"));
+        let labels: Vec<&str> = rows.iter().map(|r| r.label.as_ref()).collect();
+        assert_eq!(labels, ["/", "home", "example", "Documents"]);
+        assert_eq!(
+            rows.iter().map(|r| r.depth).collect::<Vec<_>>(),
+            [0, 1, 2, 3]
+        );
+        assert_eq!(
+            rows.iter().map(|r| r.current).collect::<Vec<_>>(),
+            [false, false, false, true]
+        );
+        assert_eq!(
+            rows[1].args,
+            serde_json::json!({ "location": bibli_core::os_path::PathArg::from(Path::new("/home")) })
+        );
+        let rows = parent_rows(Path::new("/srv/it's data"));
+        let labels: Vec<&str> = rows.iter().map(|r| r.label.as_ref()).collect();
+        assert_eq!(labels, ["/", "srv", "it's data"]);
+    }
 
     #[test]
     fn a_folder_s_menu_lists_its_folders_in_name_order() {

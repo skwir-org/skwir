@@ -1453,6 +1453,7 @@ impl Shell {
             "toolbar_menu" => self.toggle_toolbar_menu(args, window, cx),
             "history_menu" => self.toggle_history_menu(args, window, cx),
             "subfolder_menu" => self.toggle_subfolder_menu(args, window, cx),
+            "parents_menu" => self.toggle_parents_menu(args, window, cx),
             "search_chip" => self.toggle_search_chip(args, window, cx),
             name if name.starts_with("settings_") => self.settings_command(name, args, window, cx),
             "shortcuts" => self.toggle_shortcuts(window, cx),

@@ -146,7 +146,10 @@ current source before assuming a planned crate, command, or API exists.
   (`ui.history_menu`, `back`/`forward` with `steps`); each chevron of the
   trail lists the folders inside the segment before it, and one after the
   last those inside the folder shown (`ui.subfolder_menu`, read on a
-  worker, `nav_menu.rs`). A popup closed by a press outside it says so
+  worker, `nav_menu.rs`); one before the first, when the trail starts at
+  a folder of the sidebar (Home, a drive: anything but `/`), lists the
+  folders above it from the root down, by their own names as every
+  chevron's menu does (`ui.parents_menu`). A popup closed by a press outside it says so
   (`pointer` in its close command) and the toggle notes it
   (`Shell::note_dismissed`), so the click that press begins on its own
   button leaves it closed instead of opening it again. The
