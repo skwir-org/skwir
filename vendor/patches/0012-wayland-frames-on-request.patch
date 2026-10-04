@@ -1,0 +1,287 @@
+diff --git a/crates/gpui/src/platform/linux/wayland/client.rs b/crates/gpui/src/platform/linux/wayland/client.rs
+index 8b23e50..fadc4c6 100644
+--- a/crates/gpui/src/platform/linux/wayland/client.rs
++++ b/crates/gpui/src/platform/linux/wayland/client.rs
+@@ -863,6 +863,10 @@ impl LinuxClient for WaylandClient {
+ 
+         let parent = state.keyboard_focused_window.as_ref().map(|w| w.toplevel());
+ 
++        // The window asks for frames only when it needs them; the ping wakes the
++        // event loop to ask the compositor (`FrameSchedule`). The source goes
++        // when the window and its requester have dropped their pings.
++        let (frame_ping, frame_source) = calloop::ping::make_ping()?;
+         let (window, surface_id) = WaylandWindow::new(
+             handle,
+             state.globals.clone(),
+@@ -871,7 +875,17 @@ impl LinuxClient for WaylandClient {
+             params,
+             state.common.appearance,
+             parent,
++            frame_ping,
+         )?;
++        let frames_of = window.0.downgrade();
++        state
++            .loop_handle
++            .insert_source(frame_source, move |_, _, _| {
++                if let Some(window) = frames_of.upgrade() {
++                    window.request_frame_callback();
++                }
++            })
++            .map_err(|err| err.error)?;
+         state.windows.insert(surface_id, window.0.clone());
+ 
+         Ok(Box::new(window))
+diff --git a/crates/gpui/src/platform/linux/wayland/window.rs b/crates/gpui/src/platform/linux/wayland/window.rs
+index 99e2394..21c069b 100644
+--- a/crates/gpui/src/platform/linux/wayland/window.rs
++++ b/crates/gpui/src/platform/linux/wayland/window.rs
+@@ -1,12 +1,13 @@
+ use std::{
+-    cell::{Ref, RefCell, RefMut},
++    cell::{Cell, Ref, RefCell, RefMut},
+     ffi::c_void,
+     ptr::NonNull,
+-    rc::Rc,
++    rc::{Rc, Weak},
+     sync::Arc,
+ };
+ 
+ use blade_graphics as gpu;
++use calloop::ping::Ping;
+ use collections::HashMap;
+ use futures::channel::oneshot::Receiver;
+ 
+@@ -114,6 +115,22 @@ pub struct WaylandWindowState {
+     in_progress_window_controls: Option<WindowControls>,
+     window_controls: WindowControls,
+     client_inset: Option<Pixels>,
++    frames: Rc<FrameSchedule>,
++}
++
++/// When the window draws. A frame is drawn when a frame callback arrives,
++/// and a callback is asked for only when the window needs a frame
++/// ([`PlatformWindow::frame_requester`]) or has just drawn one, so an idle
++/// window sleeps instead of waking at the display's refresh rate.
++pub(crate) struct FrameSchedule {
++    /// A frame callback is on its way: the next frame comes with it.
++    pending: Cell<bool>,
++    /// The window needs a frame and the event loop has yet to ask for a
++    /// callback ([`WaylandWindowStatePtr::request_frame_callback`]).
++    requested: Cell<bool>,
++    /// Wakes the event loop to ask, wherever the request is made: in a
++    /// task, a listener or another window's frame.
++    ping: Ping,
+ }
+ 
+ #[derive(Clone)]
+@@ -122,6 +139,21 @@ pub struct WaylandWindowStatePtr {
+     callbacks: Rc<RefCell<Callbacks>>,
+ }
+ 
++/// A [`WaylandWindowStatePtr`] that does not keep the window alive.
++pub(crate) struct WaylandWindowStateWeak {
++    state: Weak<RefCell<WaylandWindowState>>,
++    callbacks: Weak<RefCell<Callbacks>>,
++}
++
++impl WaylandWindowStateWeak {
++    pub fn upgrade(&self) -> Option<WaylandWindowStatePtr> {
++        Some(WaylandWindowStatePtr {
++            state: self.state.upgrade()?,
++            callbacks: self.callbacks.upgrade()?,
++        })
++    }
++}
++
+ impl WaylandWindowState {
+     pub(crate) fn new(
+         handle: AnyWindowHandle,
+@@ -135,6 +167,7 @@ impl WaylandWindowState {
+         globals: Globals,
+         gpu_context: &BladeContext,
+         options: WindowParams,
++        frame_ping: Ping,
+     ) -> anyhow::Result<Self> {
+         let renderer = {
+             let raw_window = RawWindow {
+@@ -189,6 +222,11 @@ impl WaylandWindowState {
+             in_progress_window_controls: None,
+             window_controls: WindowControls::default(),
+             client_inset: None,
++            frames: Rc::new(FrameSchedule {
++                pending: Cell::new(false),
++                requested: Cell::new(false),
++                ping: frame_ping,
++            }),
+         })
+     }
+ 
+@@ -280,6 +318,7 @@ impl WaylandWindow {
+         params: WindowParams,
+         appearance: WindowAppearance,
+         parent: Option<XdgToplevel>,
++        frame_ping: Ping,
+     ) -> anyhow::Result<(Self, ObjectId)> {
+         let surface = globals.compositor.create_surface(&globals.qh, ());
+         let xdg_surface = globals
+@@ -325,6 +364,7 @@ impl WaylandWindow {
+                 globals,
+                 gpu_context,
+                 params,
++                frame_ping,
+             )?)),
+             callbacks: Rc::new(RefCell::new(Callbacks::default())),
+         });
+@@ -353,9 +393,30 @@ impl WaylandWindowStatePtr {
+         Rc::ptr_eq(&self.state, &other.state)
+     }
+ 
++    pub fn downgrade(&self) -> WaylandWindowStateWeak {
++        WaylandWindowStateWeak {
++            state: Rc::downgrade(&self.state),
++            callbacks: Rc::downgrade(&self.callbacks),
++        }
++    }
++
++    /// Asks the compositor for a frame callback, unless one is on its way.
++    /// Runs from the event loop, woken by the window's frame requester.
++    pub fn request_frame_callback(&self) {
++        let state = self.state.borrow();
++        state.frames.requested.set(false);
++        // Before the first configure the surface has no content to show: the
++        // configure draws the first frame itself.
++        if !state.acknowledged_first_configure || state.frames.pending.replace(true) {
++            return;
++        }
++        state.surface.frame(&state.globals.qh, state.surface.id());
++        state.surface.commit();
++    }
++
+     pub fn frame(&self) {
+         let mut state = self.state.borrow_mut();
+-        state.surface.frame(&state.globals.qh, state.surface.id());
++        state.frames.pending.set(false);
+         state.resize_throttle = false;
+         drop(state);
+ 
+@@ -1019,6 +1080,12 @@ impl PlatformWindow for WaylandWindow {
+ 
+     fn draw(&self, scene: &Scene) {
+         let mut state = self.borrow_mut();
++        // The commit that presents this frame carries a callback for the next:
++        // frames that follow one another come once per refresh, and the first
++        // with nothing to draw lets the window sleep.
++        if !state.frames.pending.replace(true) {
++            state.surface.frame(&state.globals.qh, state.surface.id());
++        }
+         state.renderer.draw(scene);
+     }
+ 
+@@ -1027,6 +1094,15 @@ impl PlatformWindow for WaylandWindow {
+         state.surface.commit();
+     }
+ 
++    fn frame_requester(&self) -> Option<Rc<dyn Fn()>> {
++        let frames = self.borrow().frames.clone();
++        Some(Rc::new(move || {
++            if !frames.pending.get() && !frames.requested.replace(true) {
++                frames.ping.ping();
++            }
++        }))
++    }
++
+     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+         let state = self.borrow();
+         state.renderer.sprite_atlas().clone()
+diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
+index 0bc1248..64a53cc 100644
+--- a/crates/gpui/src/platform.rs
++++ b/crates/gpui/src/platform.rs
+@@ -516,6 +516,14 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
+     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
+     fn draw(&self, scene: &Scene);
+     fn completed_frame(&self) {}
++    /// What the window calls when it needs a frame: a view was invalidated,
++    /// the window was refreshed, or a callback waits for the next frame. A
++    /// platform that asks for frames at the display's rate while the window
++    /// is visible returns `None`; one that asks only when told, so that an
++    /// idle window sleeps, returns the callback that schedules a frame.
++    fn frame_requester(&self) -> Option<std::rc::Rc<dyn Fn()>> {
++        None
++    }
+     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+ 
+     // macOS specific methods
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index 386e8a5..dfdb285 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -95,6 +95,9 @@ struct WindowInvalidatorInner {
+     pub dirty: bool,
+     pub draw_phase: DrawPhase,
+     pub dirty_views: FxHashSet<EntityId>,
++    /// The platform's [`PlatformWindow::frame_requester`], told whenever the
++    /// window needs a frame, on a platform that does not poll for them.
++    pub request_frame: Option<Rc<dyn Fn()>>,
+ }
+ 
+ #[derive(Clone)]
+@@ -109,15 +112,30 @@ impl WindowInvalidator {
+                 dirty: true,
+                 draw_phase: DrawPhase::None,
+                 dirty_views: FxHashSet::default(),
++                request_frame: None,
+             })),
+         }
+     }
+ 
++    pub fn set_frame_requester(&self, request_frame: Option<Rc<dyn Fn()>>) {
++        self.inner.borrow_mut().request_frame = request_frame;
++    }
++
++    /// Tells the platform that the window needs a frame.
++    pub fn request_frame(&self) {
++        let request_frame = self.inner.borrow().request_frame.clone();
++        if let Some(request_frame) = request_frame {
++            request_frame();
++        }
++    }
++
+     pub fn invalidate_view(&self, entity: EntityId, cx: &mut App) -> bool {
+         let mut inner = self.inner.borrow_mut();
+         inner.dirty_views.insert(entity);
+         if inner.draw_phase == DrawPhase::None {
+             inner.dirty = true;
++            drop(inner);
++            self.request_frame();
+             cx.push_effect(Effect::Notify { emitter: entity });
+             true
+         } else {
+@@ -130,7 +148,10 @@ impl WindowInvalidator {
+     }
+ 
+     pub fn set_dirty(&self, dirty: bool) {
+-        self.inner.borrow_mut().dirty = dirty
++        self.inner.borrow_mut().dirty = dirty;
++        if dirty {
++            self.request_frame();
++        }
+     }
+ 
+     pub fn set_phase(&self, phase: DrawPhase) {
+@@ -992,6 +1013,7 @@ impl Window {
+         let appearance = platform_window.appearance();
+         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
+         let invalidator = WindowInvalidator::new();
++        invalidator.set_frame_requester(platform_window.frame_requester());
+         let active = Rc::new(Cell::new(platform_window.is_active()));
+         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
+         let needs_present = Rc::new(Cell::new(false));
+@@ -1649,6 +1671,7 @@ impl Window {
+     /// Schedule the given closure to be run directly after the current frame is rendered.
+     pub fn on_next_frame(&self, callback: impl FnOnce(&mut Window, &mut App) + 'static) {
+         RefCell::borrow_mut(&self.next_frame_callbacks).push(Box::new(callback));
++        self.invalidator.request_frame();
+     }
+ 
+     /// Schedule a frame to be drawn on the next animation frame.

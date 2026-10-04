@@ -516,6 +516,14 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn draw(&self, scene: &Scene);
     fn completed_frame(&self) {}
+    /// What the window calls when it needs a frame: a view was invalidated,
+    /// the window was refreshed, or a callback waits for the next frame. A
+    /// platform that asks for frames at the display's rate while the window
+    /// is visible returns `None`; one that asks only when told, so that an
+    /// idle window sleeps, returns the callback that schedules a frame.
+    fn frame_requester(&self) -> Option<std::rc::Rc<dyn Fn()>> {
+        None
+    }
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 
     // macOS specific methods

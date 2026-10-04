@@ -833,7 +833,12 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   not showing (a workspace off screen, a minimized window) is not asked to
   draw at all, on Wayland or X11, and a media key's request or a track that
   ended must not wait for the window to be looked at. `render` syncs too,
-  for what the user did since; a sync that finds nothing is cheap.
+  for what the user did since; a sync that finds nothing is cheap. A window
+  draws only when something asks for a frame (a notify, a refresh,
+  `on_next_frame`; vendored patch 0012 on Wayland, where an idle window
+  otherwise woke at the display's rate); the X11 backend still polls at
+  that rate. Each wake notifies the shell, so it costs a draw: a source
+  that wakes the core with nothing new is a redraw loop, idle.
 - A watcher acts on changes, never on access: notify reports a file opened
   (`IN_OPEN`), so a watcher that rescans on any event rescans forever on its
   own reads (the places plugin did, from the first time anything opened the

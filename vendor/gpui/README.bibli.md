@@ -170,6 +170,35 @@ layout (`crates/gpui/...`) so they apply there with `git apply -p1`.
   columns, one per cell) about 0.3 ms per draw (median 7.55 to 7.86 ms)
   and 0.03 ms per mouse move.
 
+- `0012-wayland-frames-on-request.patch`: a Wayland window draws when it
+  needs a frame, not at the display's rate. 0.2.2 asked for the next
+  frame callback in every frame callback and committed the surface each
+  time, drawn or not, so a visible idle window woke its main thread every
+  refresh (60 times a second, about 1% of a core on the reference
+  machine, and the compositor's time too); every platform polls
+  `WindowInvalidator::is_dirty` that way. `PlatformWindow::frame_requester`
+  (default `None`: a platform that polls, X11 still among them) gives the
+  window a callback, which `WindowInvalidator` calls whenever it marks the
+  window dirty (`set_dirty`, `invalidate_view`) and `Window::on_next_frame`
+  when a callback waits for the next frame. On Wayland it pings a calloop
+  source (`FrameSchedule`), and the event loop asks the compositor for a
+  callback unless one is on its way: a ping, not an idle, because gpui
+  runs its foreground tasks inside calloop idles and 0.13 does not wake
+  for an idle queued from one, so the request would wait for the next
+  event. `draw` asks for the next callback on the commit that presents
+  the frame, so frames that follow one another (an animation, the second
+  of presenting after input) come once per refresh, and the first frame
+  with nothing to draw lets the window sleep. Dropping the window and its
+  requester drops the ping, which removes the source. Before the first
+  configure no callback is asked for: the configure draws the first frame
+  itself. Measured on Hyprland: the idle main thread went from 60 wakes a
+  second to the compositor's liveness ping (`xdg_wm_base.ping`, every
+  1.5 s), idle CPU from 1.0 to 0.2 %. Checked in a headless sway
+  (lavapipe) on a socket of its own: keys, a file created by another
+  program with no input, a file created while the window was on another
+  workspace (shown when it came back; 0 CPU while hidden), a resize, and a
+  toast's entrance animation, each drawn without input.
+
 ## Regenerating a patch
 
     G=$(ls -d ~/.cargo/registry/src/*/gpui-0.2.2)

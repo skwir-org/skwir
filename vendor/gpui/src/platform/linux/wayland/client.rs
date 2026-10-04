@@ -863,6 +863,10 @@ impl LinuxClient for WaylandClient {
 
         let parent = state.keyboard_focused_window.as_ref().map(|w| w.toplevel());
 
+        // The window asks for frames only when it needs them; the ping wakes the
+        // event loop to ask the compositor (`FrameSchedule`). The source goes
+        // when the window and its requester have dropped their pings.
+        let (frame_ping, frame_source) = calloop::ping::make_ping()?;
         let (window, surface_id) = WaylandWindow::new(
             handle,
             state.globals.clone(),
@@ -871,7 +875,17 @@ impl LinuxClient for WaylandClient {
             params,
             state.common.appearance,
             parent,
+            frame_ping,
         )?;
+        let frames_of = window.0.downgrade();
+        state
+            .loop_handle
+            .insert_source(frame_source, move |_, _, _| {
+                if let Some(window) = frames_of.upgrade() {
+                    window.request_frame_callback();
+                }
+            })
+            .map_err(|err| err.error)?;
         state.windows.insert(surface_id, window.0.clone());
 
         Ok(Box::new(window))
