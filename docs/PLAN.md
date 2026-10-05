@@ -1366,6 +1366,17 @@ lead nowhere). Checked on Xvfb with a synthetic home: End, Up and Home in
 a menu of sixty folders, the padding kept at both ends, and a trashed
 folder's menu.
 
+The Map view chooses its background (2026-10-05): only the map preview
+had a Background button. The Map view's row ends with one too, naming
+the background shown and opening the same rows (`map_preview::
+background_rows`: each background, Manage backgrounds…) in the pane's
+toolbar menu (`ui.toolbar_menu`, `map_backgrounds`), so one popup at a
+time, Escape and the keys work as everywhere. Checked on Xvfb with a
+synthetic GPX track: the button and its popup, a switch to a local test
+server (refused, its toast) and back to Outline from the keyboard, and
+the preview's own popup unchanged. Not chosen in a window:
+OpenStreetMap, which downloads.
+
 ## Phase 0 — Foundations and toolkit spike (~2 weeks)
 
 Goal: a repo that can measure itself, and a toolkit decision backed by numbers.

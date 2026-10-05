@@ -15,6 +15,7 @@ use gpui::{AnyElement, Context, MouseButton, Window, div, prelude::*};
 
 use crate::elements::map::{self, Colors, Handles, Shapes, View};
 use crate::inspector::Display;
+use crate::map_tiles::Backgrounds;
 use crate::preview::PreviewContent;
 use crate::preview_bar::{Bar, Item, Slot, label};
 use crate::shell::Shell;
@@ -129,6 +130,60 @@ const PROFILE_HEIGHT: f32 = 96.;
 /// The popup that chooses the background.
 pub const BACKGROUND_POPUP: &str = "background";
 
+/// The button that opens the popup choosing the background, which it
+/// names: the preview's (`ui.preview_menu`) and the Map view's
+/// (`ui.toolbar_menu`), each with the popup's `kind`.
+pub fn background_button(
+    id: impl Into<gpui::SharedString>,
+    backgrounds: &Backgrounds,
+    command: &'static str,
+    kind: &str,
+) -> Button {
+    Button::new(id, "layers", "Map background", command)
+        .args(serde_json::json!({ "kind": kind }))
+        .label(backgrounds.label().to_owned())
+}
+
+/// The rows of the popup that chooses the background, in a preview or a
+/// Map view: each background, the one shown checked, chosen as in
+/// Settings (`settings.apply`), then Manage backgrounds….
+pub fn background_rows(
+    shell: &Shell,
+    backgrounds: &Backgrounds,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> gpui::Div {
+    let mut list = div().flex().flex_col().gap_1();
+    for (value, label) in &backgrounds.choices {
+        let chosen = *value == backgrounds.current;
+        list = list.child(
+            Button::new(
+                format!("map-background-{value}"),
+                if chosen { "check" } else { "" },
+                label.clone(),
+                "settings.apply",
+            )
+            .args(serde_json::json!({ "changes": { backgrounds.setting.clone(): value } }))
+            .label(label.clone())
+            .active(chosen)
+            .menu()
+            .render(shell, cx),
+        );
+    }
+    list.child(crate::preview_bar::separator(theme)).child(
+        Button::new(
+            "map-backgrounds-manage",
+            "settings",
+            "Manage backgrounds",
+            "ui.settings",
+        )
+        .args(serde_json::json!({ "key": backgrounds.setting }))
+        .label("Manage backgrounds…")
+        .menu()
+        .render(shell, cx),
+    )
+}
+
 /// The map's tools, in the bar's View slot: zoom out, in, and fit, then
 /// the background, chosen here as in Settings.
 pub fn tools(bar: &mut Bar, shell: &Shell) {
@@ -157,14 +212,12 @@ pub fn tools(bar: &mut Bar, shell: &Shell) {
             Item::button(
                 Slot::View,
                 1,
-                Button::new(
+                background_button(
                     "map-background",
-                    "layers",
-                    "Map background",
+                    &backgrounds,
                     "ui.preview_menu",
-                )
-                .args(serde_json::json!({ "kind": BACKGROUND_POPUP }))
-                .label(backgrounds.label().to_owned()),
+                    BACKGROUND_POPUP,
+                ),
             )
             .opens(BACKGROUND_POPUP),
         );
@@ -172,33 +225,9 @@ pub fn tools(bar: &mut Bar, shell: &Shell) {
             BACKGROUND_POPUP,
             Rc::new(move |shell, theme, cx| {
                 let popup = shell.preview.menu.as_ref()?;
-                let mut list = div().flex().flex_col().gap_1();
-                for (value, label) in &backgrounds.choices {
-                    let chosen = *value == backgrounds.current;
-                    list = list.child(
-                        Button::new(
-                            format!("map-background-{value}"),
-                            if chosen { "check" } else { "" },
-                            label.clone(),
-                            "settings.apply",
-                        )
-                        .args(serde_json::json!({ "changes": { backgrounds.setting.clone(): value } }))
-                        .label(label.clone())
-                        .active(chosen)
-                        .menu()
-                        .render(shell, cx),
-                    );
-                }
-                list = list.child(crate::preview_bar::separator(theme)).child(
-                    Button::new("map-backgrounds-manage", "settings", "Manage backgrounds", "ui.settings")
-                        .args(serde_json::json!({ "key": backgrounds.setting }))
-                        .label("Manage backgrounds…")
-                        .menu()
-                        .render(shell, cx),
-                );
                 Some(
                     crate::toolbar::popup_panel(popup, "ui.preview_menu", theme, cx)
-                        .child(list)
+                        .child(background_rows(shell, &backgrounds, theme, cx))
                         .into_any_element(),
                 )
             }),

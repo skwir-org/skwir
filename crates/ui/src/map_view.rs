@@ -13,7 +13,8 @@
 //! (`ui.map_view_spread`) does that for every place at once, instead of
 //! bubbles. A marker standing alone for a picture shows the picture. The
 //! arrows move the map and the zoom keys zoom it; Home fits it to its
-//! files again.
+//! files again. The last button of its row chooses the background, as the
+//! map preview's does (`map_preview::background_rows`).
 use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -33,6 +34,9 @@ use crate::toolbar::{self, Button};
 use crate::view::{Nav, PaneView};
 
 pub const ID: &str = "map";
+/// The popup that chooses the map's background (`ui.toolbar_menu`'s
+/// `kind`), from the button in the view's row.
+pub const BACKGROUNDS: &str = "map_backgrounds";
 /// A key moves the map by this many pixels.
 const PAN_STEP: f64 = 120.;
 /// The map opened on a file shows the streets around it.
@@ -66,6 +70,8 @@ struct Batch {
 #[derive(Default)]
 pub struct MapView {
     handles: Handles,
+    /// Where the background button is, for its popup to hang from.
+    background: crate::elements::popover::PopoverAnchor,
     /// What the scan was asked for: the location, its listing, its names
     /// and its modification times (a picture changed is looked at again;
     /// the plugin keeps what it showed until something moved), and whether
@@ -437,6 +443,35 @@ impl PaneView for MapView {
             .active(self.handles.view.get().is_none())
             .render(shell, cx),
         );
+        // The background, chosen here as in the map preview and Settings;
+        // its popup hangs from the active pane's, the pane that opened it.
+        let backgrounds = shell.map_tiles.borrow_mut().backgrounds();
+        let open = shell.app.workspace.read().active_id() == pane
+            && shell
+                .toolbar_menu
+                .as_ref()
+                .is_some_and(|menu| menu.kind == BACKGROUNDS);
+        if let Some(backgrounds) = &backgrounds {
+            header = header.child(
+                crate::map_preview::background_button(
+                    format!("map-view-background-{}", pane.0),
+                    backgrounds,
+                    "ui.toolbar_menu",
+                    BACKGROUNDS,
+                )
+                .anchor_if(&self.background, true)
+                .active(open)
+                .dropdown()
+                .render(shell, cx),
+            );
+        }
+        let popup = backgrounds.filter(|_| open).and_then(|backgrounds| {
+            let popup = shell.toolbar_menu.as_ref()?;
+            let panel = toolbar::popup_panel(popup, "ui.toolbar_menu", &theme, cx).child(
+                crate::map_preview::background_rows(shell, &backgrounds, &theme, cx),
+            );
+            Some(self.background.popup(panel))
+        });
 
         if nothing {
             return div()
@@ -446,6 +481,7 @@ impl PaneView for MapView {
                 .flex_col()
                 .child(header)
                 .child(div().flex_1().bg(theme.bg))
+                .children(popup)
                 .into_any_element();
         }
         let weak = cx.entity().downgrade();
@@ -515,6 +551,7 @@ impl PaneView for MapView {
             .flex_col()
             .child(header)
             .child(div().flex_1().min_h_0().child(element))
+            .children(popup)
             .into_any_element()
     }
 }

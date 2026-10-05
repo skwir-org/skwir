@@ -209,7 +209,10 @@ a real network, and OpenStreetMap's own server.
   placeholder's action and the header's Subfolders button dispatch
   `query.search` with `(kind:image OR ext:gpx,kml,kmz,geojson)`, and the
   view scans that search's listing like any other.
-- **Drawn by `elements/map.rs`**, over the same backgrounds as the preview.
+- **Drawn by `elements/map.rs`**, over the same backgrounds as the preview,
+  chosen from the last button of its header as there (since 2026-10-05:
+  the same rows, `map_preview::background_rows`, in the pane's toolbar
+  menu, `ui.toolbar_menu` with `kind: map_backgrounds`).
   Markers closer than 48 px merge greedily into a bubble with their count,
   which a click opens (the map zooms to fit its members, or selects them
   when they cannot be told apart). While at most 60 markers stand alone in
