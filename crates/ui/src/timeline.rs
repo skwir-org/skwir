@@ -7,6 +7,7 @@ use serde::Deserialize;
 use crate::format;
 use crate::shell::Shell;
 use crate::theme::Theme;
+use crate::toolbar::Button;
 
 pub const BUCKETS: [&str; 4] = ["day", "week", "month", "year"];
 const BAR_AREA_H: f32 = 64.0;
@@ -55,6 +56,9 @@ pub struct TimelineState {
     pub histogram: Option<Histogram>,
     pub hover: Option<usize>,
     computed_for: Option<(PaneId, u64, usize, bool)>,
+    /// The pane's order it counted (`Pane::order`): a filter or a
+    /// narrowing changes it, not the listing's version.
+    counted: Option<std::sync::Arc<[bibli_core::EntryId]>>,
 }
 
 /// Bar heights in px for `counts`, the tallest reaching `max_h`; a non-zero
@@ -73,16 +77,9 @@ pub fn bar_heights(counts: &[u64], max_h: f32) -> Vec<f32> {
         .collect()
 }
 
-/// `YYYY-MM-DD` for an epoch second.
-pub fn day_label(epoch: u64) -> String {
-    jiff::Timestamp::from_second(epoch as i64).map_or_else(
-        |_| "?".into(),
-        |t| {
-            t.to_zoned(jiff::tz::TimeZone::system())
-                .strftime("%Y-%m-%d")
-                .to_string()
-        },
-    )
+/// An epoch second as a time.
+fn epoch(seconds: u64) -> std::time::SystemTime {
+    std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds)
 }
 
 impl Shell {
@@ -101,24 +98,8 @@ impl Shell {
     /// Only those: asking for all of them again on every listing change
     /// would re-stat the folder for as long as the timeline is open.
     fn hydrate_for_timeline(&mut self) {
-        let need: Vec<bibli_core::EntryId> = {
-            let ws = self.app.workspace.read();
-            let Some(pane) = ws.pane(self.pane) else {
-                return;
-            };
-            self.ui()
-                .list
-                .sorted
-                .iter()
-                .copied()
-                .filter(|id| {
-                    pane.listing
-                        .get(*id)
-                        .is_some_and(|e| !e.metadata.is_hydrated())
-                })
-                .collect()
-        };
-        self.request_hydrate(need);
+        let shown = self.ui().list.sorted.clone();
+        self.request_hydrate(shown.iter().copied());
     }
 
     pub fn timeline_set_bucket(&mut self, bucket: &str, cx: &mut Context<Self>) {
@@ -148,7 +129,14 @@ impl Shell {
             self.timeline.bucket,
             self.timeline.subtree,
         );
-        if self.timeline.computed_for != Some(key) {
+        let shown = &self.ui().list.sorted;
+        let other_files = self
+            .timeline
+            .counted
+            .as_ref()
+            .is_none_or(|counted| !std::sync::Arc::ptr_eq(counted, shown));
+        if self.timeline.computed_for != Some(key) || other_files {
+            self.timeline.counted = Some(std::sync::Arc::clone(shown));
             // Entries without metadata need it before they count.
             self.hydrate_for_timeline();
             let args = serde_json::json!({
@@ -195,30 +183,6 @@ impl Shell {
     }
 }
 
-fn chip(
-    id: &'static str,
-    label: String,
-    active: bool,
-    theme: &Theme,
-    cx: &mut Context<Shell>,
-    on: impl Fn(&mut Shell, &mut gpui::Window, &mut Context<Shell>) + 'static,
-) -> AnyElement {
-    div()
-        .id(id)
-        .px_2()
-        .py_0p5()
-        .rounded_md()
-        .text_xs()
-        .cursor_pointer()
-        .when(active, |d| {
-            d.bg(theme.selection_bg).text_color(theme.selection_text)
-        })
-        .when(!active, |d| d.hover(|s| s.bg(theme.hover)))
-        .on_click(cx.listener(move |this, _, window, cx| on(this, window, cx)))
-        .child(label)
-        .into_any_element()
-}
-
 pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     if !shell.timeline.open {
         return None;
@@ -233,33 +197,46 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .gap_1()
         .text_xs()
         .child(div().text_color(theme.text_muted).child("Timeline"));
-    for (i, b) in BUCKETS.iter().enumerate() {
-        let name = (*b).to_owned();
-        controls = controls.child(chip(
-            ["tl-day", "tl-week", "tl-month", "tl-year"][i],
-            name.clone(),
-            i == t.bucket,
-            &theme,
-            cx,
-            move |this, _, cx| this.timeline_set_bucket(&name, cx),
-        ));
+    // The strip's own commands, through the shared button: a tooltip,
+    // focus, and the keys a button answers.
+    for (i, bucket) in BUCKETS.iter().enumerate() {
+        controls = controls.child(
+            Button::new(
+                format!("tl-{bucket}"),
+                "",
+                format!("A bar for each {bucket}"),
+                "ui.timeline_bucket",
+            )
+            .args(serde_json::json!({ "bucket": bucket }))
+            .label(*bucket)
+            .active(i == t.bucket)
+            .render(shell, cx)
+            .h(px(22.)),
+        );
     }
-    controls = controls.child(chip(
-        "tl-subtree",
-        format!("subtree{}", if t.scanning { " (scanning…)" } else { "" }),
-        t.subtree,
-        &theme,
-        cx,
-        |this, _, cx| this.timeline_toggle_subtree(cx),
-    ));
+    controls = controls.child(
+        Button::new(
+            "tl-subtree",
+            "",
+            "Count the files of the folders inside too",
+            "ui.timeline_subtree",
+        )
+        .label(format!(
+            "subtree{}",
+            if t.scanning { " (scanning…)" } else { "" }
+        ))
+        .active(t.subtree)
+        .render(shell, cx)
+        .h(px(22.)),
+    );
     let info = match (&t.histogram, t.hover) {
         (Some(h), Some(i)) if i < h.bars.len() => {
             let b = &h.bars[i];
             format!(
-                "{} → {} · {} files · {}",
-                day_label(b.start),
-                day_label(b.end),
-                format::thousands(b.count as usize),
+                "{} → {} · {} · {}",
+                format::day(epoch(b.start)),
+                format::day(epoch(b.end)),
+                format::count(usize::try_from(b.count).unwrap_or(usize::MAX), "file"),
                 format::size(b.bytes)
             )
         }

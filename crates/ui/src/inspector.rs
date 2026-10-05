@@ -158,6 +158,19 @@ impl Display {
         hit(start.min(self.folded.len())..self.folded.len())
             .or_else(|| wrap.then(|| hit(0..start.min(self.folded.len()))).flatten())
     }
+
+    /// The last block before `before` that contains `query`, wrapping to
+    /// the end when `wrap`: Shift+F3, as [`Display::find`] is F3.
+    pub fn find_back(&self, query: &str, before: Option<usize>, wrap: bool) -> Option<usize> {
+        if query.is_empty() || self.folded.is_empty() {
+            return None;
+        }
+        let len = self.folded.len();
+        let end = before.unwrap_or(len).min(len);
+        let hit =
+            |range: std::ops::Range<usize>| range.rev().find(|&i| self.folded[i].contains(query));
+        hit(0..end).or_else(|| wrap.then(|| hit(end..len)).flatten())
+    }
 }
 /// Whether the book's position counts its printed pages: the preference,
 /// when the book lists them.
@@ -720,10 +733,11 @@ impl State {
     fn visible(&self) -> &[usize] {
         &self.visible
     }
-    /// Whether the hex provider owns the shown file, which it searches
-    /// whole: explicitly selected, or the automatic byte view.
-    fn hex_file(&self, kind: InspectionKind) -> bool {
-        self.request.provider.as_deref() == Some("preview-hex") || kind == InspectionKind::Hex
+    /// Whether the byte view shows the file, which it searches whole:
+    /// chosen (View as hex) or the automatic one, which both answer as
+    /// bytes (`InspectionKind::Hex`).
+    fn hex_file(kind: InspectionKind) -> bool {
+        kind == InspectionKind::Hex
     }
     /// What a row is worth before it has been drawn. A list only measures
     /// what it renders, so without an estimate for the rest the scrollbar
@@ -767,7 +781,9 @@ impl State {
 const VIEW_ONLY: &[&str] = &[
     "search",
     "find_next",
+    "find_previous",
     "find_close",
+    "select_all",
     "find",
     "text_down",
     "text_move",
@@ -913,13 +929,14 @@ impl Shell {
         }
         match action {
             "search" => return self.inspect_find_open(window, cx),
-            "find_next" => {
+            "find_next" | "find_previous" => {
                 let Some(find) = &self.preview.inspection.find else {
                     return self.inspect_find_open(window, cx);
                 };
                 let value = find.text(cx);
                 if !value.is_empty() {
-                    let args = serde_json::json!({"action":"find","value":value});
+                    let back = action == "find_previous";
+                    let args = serde_json::json!({"action":"find","value":value,"back":back});
                     self.inspect_here(&args, window, cx);
                 }
                 return;
@@ -1119,6 +1136,17 @@ impl Shell {
                     self.preview.inspection.dragging = false;
                     return;
                 }
+                "select_all" => {
+                    if let Some(last) = display.data.blocks.len().checked_sub(1) {
+                        self.preview.inspection.selection =
+                            Some(crate::inspector_text::Selection {
+                                start: (0, 0),
+                                end: (last, display.data.blocks[last].text.len()),
+                            });
+                        cx.notify();
+                    }
+                    return;
+                }
                 "copy" => {
                     if let Some(text) = self
                         .preview
@@ -1256,24 +1284,43 @@ impl Shell {
                     cx.notify();
                     return;
                 }
-                // The hex provider searches the whole file itself; Find sets a
-                // font's specimen text. Everything else searches the loaded
-                // section after the selected item. A book falls back to its
-                // provider for the following chapters.
+                // The hex provider searches the whole file itself, forward
+                // only; Find sets a font's specimen text. Everything else
+                // searches the loaded section after the selected item (before
+                // it, `back`). A book falls back to its provider for the
+                // following chapters.
                 "find"
-                    if !self.preview.inspection.hex_file(display.data.kind)
+                    if args["back"].as_bool() == Some(true)
+                        && State::hex_file(display.data.kind) =>
+                {
+                    self.set_status("The hex view searches forward only", false, cx);
+                    return;
+                }
+                "find"
+                    if !State::hex_file(display.data.kind)
                         && display.data.kind != InspectionKind::Font =>
                 {
                     let query = args["value"].as_str().unwrap_or("").to_lowercase();
                     let book = display.data.kind == InspectionKind::Book;
+                    let back = args["back"].as_bool() == Some(true);
                     let state = &mut self.preview.inspection;
-                    if let Some(i) = display.find(&query, state.selected, !book) {
+                    let found = if back {
+                        display.find_back(&query, state.selected, !book)
+                    } else {
+                        display.find(&query, state.selected, !book)
+                    };
+                    if let Some(i) = found {
                         state.reveal(&display.data, i);
                         cx.notify();
                         return;
                     }
-                    if !book {
-                        self.set_status("No match in this preview section", false, cx);
+                    if !book || back {
+                        let none = if book {
+                            "No earlier match in this chapter"
+                        } else {
+                            "No match in this preview section"
+                        };
+                        self.set_status(none, false, cx);
                         cx.notify();
                         return;
                     }
@@ -1320,43 +1367,12 @@ impl Shell {
                 return;
             }
             let href = args["target"].as_str().unwrap_or("");
-            // An address goes to the desktop through the one gate.
-            if crate::links::is_address(href) {
-                self.run(
-                    "ui.open_url",
-                    serde_json::json!({ "url": href }),
-                    window,
-                    cx,
-                );
-                return;
-            }
-            // A link to a neighbouring file or folder is a place in the
-            // filesystem: go there, select it, and let the preview follow the
-            // selection; with Shift, in a tab of its own. Only a book's links
-            // mean something inside a container, so those fall through to the
-            // provider below.
-            if kind != Some(InspectionKind::Book) {
-                match self
-                    .preview
-                    .path()
-                    .and_then(|from| document_link(from, href))
-                {
-                    Some(target) => {
-                        let pane = self.pane;
-                        let at = crate::links::RevealAt {
-                            tab: args["tab"].as_bool() == Some(true),
-                            line: None,
-                        };
-                        if !self.reveal_path_at(pane, &target, at, window, cx) {
-                            let name = target.file_name().map_or_else(
-                                || target.display().to_string(),
-                                |name| name.to_string_lossy().into_owned(),
-                            );
-                            self.set_status(format!("{name} is not there any more"), true, cx);
-                        }
-                    }
-                    None => self.set_status("This link goes nowhere we can open", false, cx),
-                }
+            // Only a book's links to its own pages mean something inside
+            // a container: those fall through to the provider below.
+            if kind != Some(InspectionKind::Book) || crate::links::is_address(href) {
+                let from = self.preview.path().map(std::path::Path::to_path_buf);
+                let tab = args["tab"].as_bool() == Some(true);
+                self.follow_document_link(href, from.as_deref(), tab, window, cx);
                 return;
             }
         }
@@ -1470,17 +1486,17 @@ impl Shell {
             // A track stepped to by the player says so after this.
             self.preview.autoplay = None;
         }
-        let hex = crate::preview_toolbar::hex_available(self);
+        let hex = self.app.previews.bytes_view();
         let state = &mut self.preview.inspection;
         let previous_query = state.request.query.take();
         match action {
             _ if nested => {}
             "hex" => {
-                if !hex {
+                let Some(hex) = hex else {
                     return;
-                }
+                };
                 state.request = InspectRequest {
-                    provider: Some("preview-hex".into()),
+                    provider: Some(hex.into()),
                     ..InspectRequest::default()
                 };
             }
@@ -1510,7 +1526,7 @@ impl Shell {
                 // chapter has no further match, so always move on.
                 let resume = match kind {
                     Some(InspectionKind::Book) => true,
-                    Some(kind) if state.hex_file(kind) => {
+                    Some(kind) if State::hex_file(kind) => {
                         query.is_some() && query == previous_query
                     }
                     _ => false,
@@ -1650,8 +1666,8 @@ impl Shell {
             };
             self.preview.inspection.find = Some(crate::preview_bar::Field::new(
                 placeholder,
-                "ui.inspect find_next",
-                "ui.inspect find_close",
+                "ui.preview_match",
+                "ui.preview_find_close",
                 window,
                 cx,
             ));
@@ -1675,55 +1691,6 @@ fn edge_step(resting: i8, toward: i8, here: bool) -> (i8, bool) {
         (true, false) => (toward, false),
         (true, true) => (toward, true),
     }
-}
-
-/// Whether the link names a URI scheme (`mailto:`, `irc:`, `https:`) rather
-/// than a path. A colon after a slash belongs to a file name, not a scheme.
-fn has_scheme(href: &str) -> bool {
-    let Some(colon) = href.find(':') else {
-        return false;
-    };
-    let scheme = &href[..colon];
-    !scheme.is_empty()
-        && !scheme.contains('/')
-        && scheme.starts_with(|c: char| c.is_ascii_alphabetic())
-        && scheme
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
-}
-
-/// Where a document's link points on this machine, or `None` when it names
-/// something we cannot resolve (another scheme, or a path that escapes into
-/// nothing). `from` is the document holding the link, so a relative link is
-/// read the way the author wrote it: next to their file.
-fn document_link(from: &std::path::Path, href: &str) -> Option<std::path::PathBuf> {
-    let href = href.split(['#', '?']).next().filter(|h| !h.is_empty())?;
-    let href = String::from_utf8_lossy(&bibli_platform::uri::percent_decode(href)).into_owned();
-    let path = if let Some(rest) = href.strip_prefix("file://") {
-        // file://host/path is not ours to resolve; file:///path is.
-        std::path::PathBuf::from(rest.strip_prefix('/').map(|p| format!("/{p}"))?)
-    } else if has_scheme(&href) {
-        return None;
-    } else if href.starts_with('/') {
-        std::path::PathBuf::from(href)
-    } else {
-        from.parent()?.join(href)
-    };
-    // Resolve `.` and `..` by text only. Canonicalizing would follow symlinks
-    // and show the user a folder whose name their link never mentioned.
-    let mut out = std::path::PathBuf::new();
-    for part in path.components() {
-        match part {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                if !out.pop() {
-                    out.push("..");
-                }
-            }
-            other => out.push(other),
-        }
-    }
-    Some(out)
 }
 
 fn button(id: &'static str, icon: &'static str, title: &'static str, action: &str) -> Button {
@@ -1852,7 +1819,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         crate::preview_bar::number_tool(
             &mut bar,
             ("inspect-section", titles.2),
-            ("ui.inspect", serde_json::json!({"action":"section_edit"})),
+            ("ui.preview_goto", serde_json::json!({})),
             (value, total),
             |shell| shell.preview.inspection.section_input.as_ref(),
             unit,
@@ -1871,7 +1838,13 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         bar.push(Item::button(
             Slot::Lead,
             1,
-            button("inspect-outline", "contents", label::CONTENTS, "outline").active(state.outline),
+            Button::new(
+                "inspect-outline",
+                "contents",
+                label::CONTENTS,
+                "ui.preview_contents",
+            )
+            .active(state.outline),
         ));
     }
 
@@ -2010,7 +1983,8 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
             Item::button(
                 Slot::Tools,
                 2,
-                button("inspect-search", "search", label::FIND, "search").active(state.finding()),
+                Button::new("inspect-search", "search", label::FIND, "ui.preview_find")
+                    .active(state.finding()),
             )
             .opens("find"),
         );
@@ -2084,13 +2058,22 @@ pub fn find_panel(
     cx: &mut Context<Shell>,
 ) -> Option<AnyElement> {
     let find = view(shell, parked)?.state.find.as_ref()?;
+    let matches = |id, icon, title, delta: i32| {
+        Button::new(id, icon, title, "ui.preview_match").args(serde_json::json!({ "delta": delta }))
+    };
     let buttons = vec![
-        button("inspect-next-match", "right", "Next match", "find_next"),
-        button("inspect-close-find", "close", "Close find", "find_close"),
+        matches("inspect-previous-match", "left", "Previous match", -1),
+        matches("inspect-next-match", "right", "Next match", 1),
+        Button::new(
+            "inspect-close-find",
+            "close",
+            "Close find",
+            "ui.preview_find_close",
+        ),
     ];
     Some(crate::preview_bar::find_popup(
         find,
-        "InspectorFind",
+        crate::keymap::PREVIEW_FIND,
         "Enter for the next match".into(),
         buttons,
         shell,
@@ -2146,7 +2129,7 @@ pub fn outline_drawer(
     }
     Some(crate::outline::drawer(
         entries,
-        ("ui.inspect", serde_json::json!({"action":"outline"})),
+        ("ui.preview_contents", serde_json::json!({})),
         shell,
         theme,
         cx,
@@ -2690,33 +2673,6 @@ mod tests {
 
     use super::*;
     use bibli_core::inspection::{Block, Row};
-
-    #[test]
-    fn a_documents_links_resolve_next_to_it() {
-        let dir = std::path::Path::new("/notes/trip");
-        let from = dir.join("Day one.md");
-        let at = |href| document_link(&from, href);
-        assert_eq!(at("Day two.md"), Some(dir.join("Day two.md")));
-        assert_eq!(at("Day%20two.md"), Some(dir.join("Day two.md")));
-        assert_eq!(at("photos/"), Some(dir.join("photos")));
-        assert_eq!(at("notes.md#later"), Some(dir.join("notes.md")));
-        assert_eq!(
-            at("file:///etc/hostname"),
-            Some(std::path::PathBuf::from("/etc/hostname"))
-        );
-        assert_eq!(
-            at("/srv/shared/plan.md"),
-            Some("/srv/shared/plan.md".into())
-        );
-        assert_eq!(at("../gear/list.md"), Some("/notes/gear/list.md".into()));
-        assert_eq!(at("./same.md"), Some(dir.join("same.md")));
-        // Other schemes and empty targets are not places on this machine.
-        assert_eq!(at("https://example.invalid/x"), None);
-        assert_eq!(at("mailto:someone@example.invalid"), None);
-        assert_eq!(at("file://host/share/x"), None);
-        assert_eq!(at(""), None);
-        assert_eq!(at("#section"), None);
-    }
 
     fn archive() -> Display {
         let rows = [

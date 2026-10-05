@@ -159,16 +159,18 @@ impl Plugin for ShellPlugin {
             ID,
             "shell.copy_paths",
             "Copy paths",
-            "The selected paths, shell-quoted (the UI puts the value on the clipboard)",
+            "The selected paths, shell-quoted, for the clipboard",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let paths = selected_paths(app, pane);
                 if paths.is_empty() {
-                    anyhow::bail!("nothing selected");
+                    return Err(bibli_core::command::NothingSelected.into());
                 }
-                Ok(Outcome::Value(serde_json::Value::String(quote_paths(
-                    &paths,
-                ))))
+                let n = paths.len();
+                Ok(Outcome::Clipboard {
+                    text: quote_paths(&paths),
+                    said: format!("Copied {n} path{}", if n == 1 { "" } else { "s" }),
+                })
             },
         );
         app.commands.register::<RunArgs, _>(
@@ -195,15 +197,15 @@ impl Plugin for ShellPlugin {
         );
         app.registry.menus.add(
             ID,
-            MenuItem {
-                menu: "context".into(),
-                title: "Copy Paths".into(),
-                command: Invocation::new("shell.copy_paths"),
-                when: Some("selection !place".into()),
-                order: 135,
-                icon: Some("copy".into()),
-                submenu: Some("More".into()),
-            },
+            MenuItem::new(
+                "context",
+                "Copy Paths",
+                "copy",
+                135,
+                Invocation::new("shell.copy_paths"),
+            )
+            .when("selection !place")
+            .submenu("More"),
         );
         app.registry.menus.add(
             ID,
@@ -338,13 +340,13 @@ mod tests {
         ))
         .unwrap();
 
-        let Outcome::Value(v) = app.dispatch(&Invocation::new("shell.copy_paths")).unwrap() else {
+        let Outcome::Clipboard { text, said } =
+            app.dispatch(&Invocation::new("shell.copy_paths")).unwrap()
+        else {
             panic!()
         };
-        assert_eq!(
-            v.as_str().unwrap(),
-            format!("'{}'", dir.join("a b.txt").display())
-        );
+        assert_eq!(text, format!("'{}'", dir.join("a b.txt").display()));
+        assert_eq!(said, "Copied 1 path");
 
         app.dispatch(&Invocation::with_args(
             "shell.run",

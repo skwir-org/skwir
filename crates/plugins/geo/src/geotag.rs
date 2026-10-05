@@ -49,7 +49,7 @@ const MISSING: &str = "Install ExifTool to write pictures' locations";
 
 /// The operation kind, the commands and their menu items (owner `geo`).
 pub(crate) fn register(app: &App) {
-    app.ops.register::<SetPosition>(ID, KIND);
+    app.ops.register::<SetPosition>(ID);
     app.commands.register::<GeotagArgs, _>(
         ID,
         "geo.geotag",
@@ -917,16 +917,11 @@ impl SetPosition {
     }
 }
 
-impl Operation for SetPosition {
-    fn kind(&self) -> &'static str {
-        KIND
-    }
-    fn clone_box(&self) -> Box<dyn Operation> {
-        Box::new(self.clone())
-    }
-    fn args(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("serializable")
-    }
+impl bibli_core::op::Kind for SetPosition {
+    const KIND: &'static str = KIND;
+}
+
+impl bibli_core::op::Effect for SetPosition {
     fn describe(&self) -> Change {
         let name = display_name(&self.entry.path);
         let (will, did) = match &self.to {

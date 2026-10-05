@@ -15,7 +15,7 @@ pub struct Recent {
 
 /// The default file location.
 pub fn default_path() -> Option<PathBuf> {
-    dirs::data_dir().map(|d| d.join("recently-used.xbel"))
+    bibli_platform::xdg::data_home().map(|d| d.join("recently-used.xbel"))
 }
 
 /// Parse the document. Entries are returned most recently visited first.

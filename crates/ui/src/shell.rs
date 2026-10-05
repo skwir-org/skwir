@@ -30,7 +30,7 @@ use crate::theme::Theme;
 use crate::thumbs::ThumbCache;
 use crate::timeline::TimelineState;
 use crate::usage::UsageState;
-use crate::view::{self, Nav, PaneView};
+use crate::view::{self, PaneView};
 use crate::views::grid::{DEFAULT_ZOOM, ZOOMS};
 use crate::{
     address, jump, menu, palette, preview, prompts, renamebulk, review, sidebar, status, timeline,
@@ -38,9 +38,6 @@ use crate::{
 
 /// What the shell says when a command needs a selection and there is none.
 pub const NOTHING_SELECTED: &str = "Select a file or folder first";
-
-/// What the shelf publishes in `App::tallies`: how many items it holds.
-pub const SHELF_ITEMS: &str = "shelf.items";
 
 /// UI state of one pane: focus, address bar, cached order, views.
 pub struct PaneUi {
@@ -223,9 +220,9 @@ pub struct Shell {
     pub sidebar_sections: crate::sidebar::Sections,
     /// The folders the sidebar shows, where trails start.
     pub roots: crate::sidebar::Roots,
-    /// Size, Modified, Type, Rating: which detail columns the list shows
-    /// (`settings::COLUMN_KEYS`). Read through `shown_columns`.
-    pub columns: [bool; 5],
+    /// Which detail columns the list shows (`views::list::COLUMNS`), as
+    /// chosen. Read through `shown_columns`.
+    pub columns: crate::views::list::PerColumn<bool>,
     /// `reading.width`: the reading column's widest, in ems, or `None`
     /// for the whole panel (`markdown::measure`).
     pub reading_measure: Option<f32>,
@@ -236,9 +233,11 @@ pub struct Shell {
     pub zoom_wheel: crate::reader_scroll::WheelTurn,
     /// The wheel over the tab strip, counted in notches like the zoom's.
     pub tab_wheel: crate::reader_scroll::WheelTurn,
-    pub column_widths: [f32; 5],
-    /// A header edge being dragged: column, pointer x and width at the start.
-    pub column_drag: Option<(usize, f32, f32)>,
+    pub column_widths: crate::views::list::PerColumn<f32>,
+    /// Where the pointer and the size were as an edge's drag began, for an
+    /// edge whose area grows by the pointer's travel (a list column's).
+    /// Every edge's drag clears it as it starts (`elements::edge`).
+    pub edge_start: Option<(f32, f32)>,
     pub preview: PreviewState,
     /// A track kept playing while the selection moves (`player.rs`).
     pub player: crate::player::PlayerState,
@@ -313,8 +312,9 @@ pub struct Shell {
     pub last_find: Option<(String, bool)>,
     /// Keys typed that wait for the next, and what can follow.
     pub(crate) sequence: Option<crate::sequence::Sequence>,
-    pub shelf_count: usize,
-    /// `App::tallies` revision `shelf_count` was read at.
+    /// What plugins count for the footer (`App::tallies`).
+    pub tallies: Vec<bibli_core::tally::Tally>,
+    /// The `App::tallies` revision they were read at.
     tallies_revision: Option<u64>,
     /// A plain press on a row of a multi-selection, waiting for its
     /// release to make the selection that row (unless a drag starts).
@@ -494,13 +494,17 @@ impl Shell {
             backlog: false,
             sidebar_sections: crate::sidebar::Sections::default(),
             roots: crate::sidebar::Roots::default(),
-            columns: [true, true, true, false, true],
+            columns: crate::views::list::PerColumn(
+                crate::views::list::COLUMNS
+                    .each_ref()
+                    .map(|column| column.shown),
+            ),
             reading_measure: crate::markdown::measure("comfortable"),
             reading_width_before: None,
             zoom_wheel: crate::reader_scroll::WheelTurn::default(),
             tab_wheel: crate::reader_scroll::WheelTurn::default(),
-            column_widths: crate::views::list::DEFAULT_WIDTHS,
-            column_drag: None,
+            column_widths: crate::views::list::default_widths(),
+            edge_start: None,
             preview: PreviewState::default(),
             player: crate::player::PlayerState::default(),
             palette: None,
@@ -542,7 +546,7 @@ impl Shell {
             nudges: crate::shortcuts::Nudges::default(),
             last_find: None,
             sequence: None,
-            shelf_count: 0,
+            tallies: Vec::new(),
             tallies_revision: None,
             press_collapse: None,
             reveal: None,
@@ -625,6 +629,11 @@ impl Shell {
         self.terminal.open = session.terminal && self.app.terminals.provider().is_some();
         if session.terminal_height > 0. {
             self.terminal.height = Some(session.terminal_height);
+        }
+        for column in &crate::views::list::COLUMNS {
+            if let Some(width) = session.column_widths.get(column.key) {
+                self.column_widths[column.detail] = crate::views::list::clamp_width(*width);
+            }
         }
         // Restored tabs bring their own splits. One made here starts even:
         // the remembered share is put back after it.
@@ -1028,23 +1037,20 @@ impl Shell {
     }
 
     /// Directory shown by the other pane, for Shift+F5/F6 and the shelf buttons.
-    pub fn other_pane_dir(&self) -> Option<std::path::PathBuf> {
-        let other = self.other_pane()?;
-        let ws = self.app.workspace.read();
-        ws.pane(other)
-            .and_then(|p| p.location().and_then(Location::path))
-    }
-
+    /// Shift+F5 and Shift+F6: the selection given to the other pane, as a
+    /// drag onto it would be (`give_to_pane`), copied or moved as the key
+    /// says.
     fn send_to_other_pane(&mut self, cmd: &str, window: &mut Window, cx: &mut Context<Self>) {
-        match self.other_pane_dir() {
-            Some(dest) => self.run(
-                cmd,
-                serde_json::json!({ "dest": PathArg::from(dest), "pane": self.pane }),
-                window,
-                cx,
-            ),
-            None => self.set_status("the other pane is not showing a directory", true, cx),
-        }
+        let Some(other) = self.other_pane() else {
+            self.set_status("There is no other pane: split the window first", false, cx);
+            return;
+        };
+        let how = if cmd == "move" {
+            crate::dnd::DropOp::Move
+        } else {
+            crate::dnd::DropOp::Copy
+        };
+        self.give_to_pane(self.pane, other, Some(how), window, cx);
     }
 
     // ------------------------------------------------------------ views
@@ -1136,7 +1142,7 @@ impl Shell {
             }
             pane.views_revision = revision;
             let replaced = view::reconcile(&mut pane.views, &mut pane.view_registrations, &specs);
-            if replaced.iter().any(|id| id == "usage") {
+            if replaced.iter().any(|id| id == view::USAGE) {
                 pane.usage = UsageState::default();
             }
             if !pane.views.contains_key(pane.view_id) {
@@ -1259,13 +1265,16 @@ impl Shell {
     pub fn zoom_wheel(&mut self, delta: f32, lines: bool, cx: &mut Context<Self>) {
         match self.zoom_wheel.turn(delta, lines, false) {
             0 => {}
-            turn => self.zoom_to(if turn < 0 { "in" } else { "out" }, cx),
+            turn => {
+                self.zoom_to(if turn < 0 { "in" } else { "out" }, cx);
+            }
         }
     }
 
-    /// Zoom what the pane shows: the grid's tiles, or the rows of the list
-    /// and the columns, each keeping its own size. Other views have none.
-    fn zoom_to(&mut self, dir: &str, cx: &mut Context<Self>) {
+    /// Zoom what the pane's view sizes (`PaneView::zooms`): the grid's
+    /// tiles, the rows of the list and the columns, each keeping its own
+    /// size, or the view's own scale. Returns whether something changed.
+    fn zoom_to(&mut self, dir: &str, cx: &mut Context<Self>) -> bool {
         fn step(levels: &[u32], current: u32, default: u32, dir: &str) -> u32 {
             let at = |zoom| levels.iter().position(|z| *z == zoom);
             let pos = at(current).or_else(|| at(default)).unwrap_or(0);
@@ -1276,23 +1285,35 @@ impl Shell {
             }
         }
         use crate::views::list::{DEFAULT_ROW_ZOOM, ROW_ZOOMS};
-        match self.ui().view_id {
-            view::GRID => self.zoom = step(&ZOOMS, self.zoom, DEFAULT_ZOOM, dir),
-            view::LIST | view::TREE | view::COLUMNS => {
+        match self.view_zooms() {
+            view::Zooms::Tiles => self.zoom = step(&ZOOMS, self.zoom, DEFAULT_ZOOM, dir),
+            view::Zooms::Rows => {
                 self.row_zoom = step(&ROW_ZOOMS, self.row_zoom, DEFAULT_ROW_ZOOM, dir);
             }
-            _ => return,
+            view::Zooms::Own => {
+                self.with_view(|v, _| v.zoom(dir));
+                cx.notify();
+                return false;
+            }
+            view::Zooms::Nothing => return false,
         }
         self.remember_session();
         cx.notify();
+        true
+    }
+
+    /// What the active pane's view zooms.
+    pub fn view_zooms(&self) -> view::Zooms {
+        let ui = self.ui();
+        ui.views
+            .get(ui.view_id)
+            .map_or(view::Zooms::Nothing, |v| v.zooms())
     }
 
     fn zoom_step(&mut self, dir: &str, cx: &mut Context<Self>) {
-        if self.with_view(|v, _| v.zoom(dir)).unwrap_or(false) {
-            cx.notify();
+        if !self.zoom_to(dir, cx) {
             return;
         }
-        self.zoom_to(dir, cx);
         let ix = self.cursor_index();
         self.with_view(|v, _| {
             if let Some(ix) = ix {
@@ -1332,26 +1353,17 @@ impl Shell {
         if self.presented.is_some() && !name.starts_with("tab.") {
             self.present(false, window, cx);
         }
-        // Ctrl+D on a tag's search pins the tag, as the button does.
-        if name == "keep"
-            && self.app.commands.get("tags.pin").is_some()
-            && let Some(shown) = self.app.pane_location(self.pane)
-            && let Some(tag) = self.ui().chips.only_tag(&shown.to_string())
-        {
-            let tag = tag.to_owned();
-            let pinned = self.app.registry.places.find(|p| {
-                p.color.is_some()
-                    && p.forget.is_some()
-                    && bibli_core::metadata::same_tag(&p.title, &tag)
-            });
-            if pinned.is_some() {
-                self.set_status(format!("The tag “{tag}” is already pinned"), false, cx);
-            } else {
-                self.run("tags.pin", serde_json::json!({ "tag": tag }), window, cx);
-            }
-            return;
-        }
         if let Some(ui) = name.strip_prefix("ui.") {
+            // Declared as every command is (`commands.rs`): a name or
+            // arguments it does not know are refused, never guessed.
+            let checked = self.app.commands.check(&Invocation {
+                name: name.into(),
+                args: args.clone(),
+            });
+            if let Err(error) = checked {
+                self.set_status(error.to_string(), true, cx);
+                return;
+            }
             self.run_ui(ui, &args, window, cx);
             cx.notify();
             return;
@@ -1361,9 +1373,7 @@ impl Shell {
             return;
         }
         if name == "refresh" {
-            if self.ui().view_id == "usage" {
-                self.refresh_usage(cx);
-            }
+            self.with_view(|view, shell| view.refresh(shell, cx));
             self.reader_retry_pages();
         }
         let inv = Invocation {
@@ -1371,8 +1381,11 @@ impl Shell {
             args,
         };
         match self.app.dispatch(&inv) {
-            Ok(Outcome::Done) => {}
-            Ok(Outcome::Value(v)) => self.on_value(name, v, cx),
+            Ok(Outcome::Done | Outcome::Value(_)) => {}
+            Ok(Outcome::Clipboard { text, said }) => {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+                self.set_status(said, false, cx);
+            }
             Ok(Outcome::Plan(plan)) => self.apply_user_plan(plan, window, cx),
             Err(e) => self.report_error(&e, cx),
         }
@@ -1398,21 +1411,6 @@ impl Shell {
         }
         self.app.apply_whole(plan);
         cx.notify();
-    }
-
-    /// Values from commands the shell knows how to present; others are ignored.
-    fn on_value(&mut self, name: &str, v: serde_json::Value, cx: &mut Context<Self>) {
-        if name == "shell.copy_paths"
-            && let Some(s) = v.as_str()
-        {
-            let n = self.selection_ctx().count;
-            cx.write_to_clipboard(ClipboardItem::new_string(s.to_owned()));
-            self.set_status(
-                format!("Copied {n} path{}", if n == 1 { "" } else { "s" }),
-                false,
-                cx,
-            );
-        }
     }
 
     /// Dispatch and hand back a `Value` (for plugin queries the UI renders).
@@ -1444,10 +1442,12 @@ impl Shell {
     ) {
         let arg = |k: &str| args.get(k).and_then(|v| v.as_str()).map(str::to_owned);
         match name {
-            "open" => self.open_selection(window, cx),
             "focus_address" => self.omnibox_begin(false, None, window, cx),
             "focus_pane" => window.focus(&self.ui().focus),
             "settings" => self.open_settings(args, window, cx),
+            // The focused button and the open popup answer these; one
+            // that reaches here found neither.
+            "toolbar_activate" | "toolbar_close" => {}
             "toolbar_next" => window.focus_next(),
             "toolbar_prev" => window.focus_prev(),
             "toolbar_menu" => self.toggle_toolbar_menu(args, window, cx),
@@ -1459,8 +1459,6 @@ impl Shell {
             "shortcuts" => self.toggle_shortcuts(window, cx),
             "ask" => self.open_ask(args, window, cx),
             "choose" => self.open_choose(args, window, cx),
-            "choose_up" => self.choose_move(-1, cx),
-            "choose_down" => self.choose_move(1, cx),
             "choose_option" => self.choose_toggle_option(window, cx),
             "unlock_prompt" => {
                 if let Some(device) = arg("device") {
@@ -1479,8 +1477,22 @@ impl Shell {
             }
             name if name.starts_with("menu_") => self.menu_command(name, window, cx),
             "palette" => self.open_palette(window, cx),
-            "palette_up" => self.palette_move(-1, cx),
-            "palette_down" => self.palette_move(1, cx),
+            // Up and Down in whichever list has the keyboard: the palette,
+            // a choice, Jump, the tag editor, the address's suggestions.
+            "list_move" => {
+                let mv = crate::modal::ListMove::of(args);
+                if self.palette.is_some() {
+                    self.palette_move(mv, cx);
+                } else if self.choose.is_some() {
+                    self.choose_move(mv, cx);
+                } else if self.jump.is_some() {
+                    self.jump_move(mv, cx);
+                } else if self.tag_editor.is_some() {
+                    self.tag_editor_move(mv, cx);
+                } else {
+                    self.omnibox_move(mv, cx);
+                }
+            }
             "rename_prompt" => {
                 let (single, place) = {
                     let ws = self.app.workspace.read();
@@ -1508,21 +1520,33 @@ impl Shell {
                 }
                 match single {
                     Some(name) => {
+                        // The stem selected, so typing keeps the extension.
                         let stem = name.rfind('.').filter(|&i| i > 0).unwrap_or(name.len());
-                        self.open_prompt(
-                            PromptKind::Rename,
-                            "Rename",
-                            &name,
-                            Some(0..stem),
-                            window,
-                            cx,
-                        );
+                        let pane = self.pane;
+                        let ask = serde_json::json!({
+                            "title": "Rename",
+                            "placeholder": "New name",
+                            "text": name,
+                            "select": [0, stem],
+                            "command": "rename",
+                            "args": { "pane": pane },
+                            "field": "new_name",
+                        });
+                        self.open_ask(&ask, window, cx);
                     }
                     None => self.set_status("select exactly one entry to rename", true, cx),
                 }
             }
             "new_file_prompt" => {
-                self.open_prompt(PromptKind::NewFile, "New file", "", None, window, cx);
+                let pane = self.pane;
+                let ask = serde_json::json!({
+                    "title": "New file",
+                    "placeholder": "File name, or a folder name ending in /",
+                    "command": "new_file",
+                    "args": { "pane": pane },
+                    "field": "name",
+                });
+                self.open_ask(&ask, window, cx);
             }
             "find" => {
                 let backward = args
@@ -1562,7 +1586,15 @@ impl Shell {
                 self.pick_cursor(advance, window, cx);
             }
             "mkdir_prompt" => {
-                self.open_prompt(PromptKind::Mkdir, "New folder", "", None, window, cx);
+                let pane = self.pane;
+                let ask = serde_json::json!({
+                    "title": "New folder",
+                    "placeholder": "Folder name",
+                    "command": "mkdir",
+                    "args": { "pane": pane },
+                    "field": "name",
+                });
+                self.open_ask(&ask, window, cx);
             }
             // A new place where the location shown makes them (a tag in
             // the one shown), as it says (`Verbs::create`).
@@ -1573,13 +1605,6 @@ impl Shell {
             // The address field, in search: where it looks as a pill, and a
             // text to start from (`content:`) typed after.
             "search" => self.omnibox_begin(true, arg("text"), window, cx),
-            "omnibox_move" => {
-                let delta = args
-                    .get("delta")
-                    .and_then(serde_json::Value::as_i64)
-                    .unwrap_or(1);
-                self.omnibox_move(isize::try_from(delta).unwrap_or(1), cx);
-            }
             "omnibox_submit" => {
                 let everywhere =
                     args.get("everywhere").and_then(serde_json::Value::as_bool) == Some(true);
@@ -1600,8 +1625,6 @@ impl Shell {
                     self.set_status(format!("Copied {what}"), false, cx);
                 }
             }
-            "tag_editor_up" => self.tag_editor_move(-1, cx),
-            "tag_editor_down" => self.tag_editor_move(1, cx),
             "tag_editor_apply" => self.tag_editor_apply(window, cx),
             // An address followed (a document's link, one found in text,
             // where a file was downloaded from), opened by the desktop when
@@ -1610,16 +1633,12 @@ impl Shell {
             // A file shown in its folder, from a link.
             "reveal" => self.reveal_command(args, window, cx),
             "jump" => self.open_jump(window, cx),
-            "jump_up" => self.jump_move(-1, cx),
-            "jump_down" => self.jump_move(1, cx),
             "rename_bulk_prompt" => self.open_bulk(window, cx),
             "rename_bulk_next" => self.bulk_focus_next(1, window, cx),
             "rename_bulk_prev" => self.bulk_focus_next(-1, window, cx),
             "rename_bulk_case" => self.bulk_cycle_case(window, cx),
             "review_apply" => self.review_apply(cx),
             "review_cancel" => self.review_cancel(cx),
-            "usage" => self.set_view("usage", cx),
-            "usage_close" => self.set_view(view::LIST, cx),
             "usage_refresh" => self.refresh_usage(cx),
             "timeline" => self.toggle_timeline(cx),
             "terminal" => self.toggle_terminal(window, cx),
@@ -1637,29 +1656,6 @@ impl Shell {
             "focus_other_pane" => self.focus_other_pane(window, cx),
             "copy_other" => self.send_to_other_pane("copy", window, cx),
             "move_other" => self.send_to_other_pane("move", window, cx),
-            "shelf_open" => self.run(
-                "navigate",
-                serde_json::json!({ "location": "shelf:" }),
-                window,
-                cx,
-            ),
-            "confirm_delete" => {
-                // The plan is built now, from what is selected now, so Enter
-                // deletes what the question named even if the selection or
-                // the active pane changes before it is answered. Applying it
-                // asks first (`apply_user_plan`).
-                let pane = self.pane;
-                match self.app.dispatch(&Invocation::with_args(
-                    "delete",
-                    &serde_json::json!({ "pane": pane }),
-                )) {
-                    Ok(Outcome::Plan(plan)) if !plan.is_empty() => {
-                        self.apply_user_plan(plan, window, cx);
-                    }
-                    Ok(_) => self.set_status(NOTHING_SELECTED, false, cx),
-                    Err(error) => self.set_status(format!("{error:#}"), true, cx),
-                }
-            }
             "accept" => self.confirm_accept(window, cx),
             "dismiss" => self.confirm_dismiss(window, cx),
             "toggle_hidden" => self.toggle_hidden(cx),
@@ -1676,13 +1672,11 @@ impl Shell {
             "open_in_tab" => self.open_selection_in_tabs(window, cx),
             "sort" => {
                 let ascending = args.get("ascending").and_then(serde_json::Value::as_bool);
-                let key = match arg("key").as_deref() {
-                    None if ascending.is_some() => None,
-                    Some("size") => Some(SortKey::Size),
-                    Some("modified") => Some(SortKey::Modified),
-                    Some("rating") => Some(SortKey::Rating),
-                    _ => Some(SortKey::Name),
-                };
+                // Without a key, the direction alone turns.
+                let key = args
+                    .get("key")
+                    .and_then(|key| serde_json::from_value::<SortKey>(key.clone()).ok())
+                    .or(ascending.is_none().then_some(SortKey::Name));
                 self.sort(key, ascending, cx);
             }
             "view" => {
@@ -1739,7 +1733,6 @@ impl Shell {
                     );
                 self.set_continue(mode, window, cx);
             }
-            "player_mute" => self.player_mute(cx),
             "player_volume" => {
                 let delta = args.get("delta").and_then(serde_json::Value::as_f64);
                 self.player_volume_by(delta.unwrap_or(0.), window, cx);
@@ -1826,25 +1819,26 @@ impl Shell {
                     .unwrap_or(1),
                 cx,
             ),
-            "reader_menu" | "preview_menu" => self.preview_menu(args, window, cx),
+            "preview_menu" => self.preview_menu(args, window, cx),
             "note" => self.note_command(args, window, cx),
-            "reader_page_edit" => self.reader_page_edit(window, cx),
+            "preview_goto" => self.preview_goto(window, cx),
             "reader_page_submit" => self.reader_page_submit(window, cx),
             "reader_page_cancel" => self.reader_page_cancel(window, cx),
-            "reader_open_external" | "preview_open_external" => self.preview_open_external(cx),
+            "preview_open_external" => self.preview_open_external(cx),
             "preview_copy_path" => self.preview_copy_path(cx),
             "preview_details" => self.preview_details(cx),
-            "reader_copy" => self.reader_copy(cx),
-            "reader_select_all" => self.reader_select_all(cx),
-            "reader_outline" => self.reader_outline(window, cx),
-            "reader_find" => self.reader_find(window, cx),
-            "reader_find_close" => self.reader_find_close(window, cx),
+            "preview_copy" => self.preview_copy(window, cx),
+            "preview_select_all" => self.preview_select_all(window, cx),
+            "preview_contents" => self.preview_contents(window, cx),
+            "preview_find" => self.preview_find(window, cx),
+            "preview_find_close" => self.preview_find_close(window, cx),
             "reader_search" => self.reader_search(cx),
-            "reader_match" => self.reader_match(
+            "preview_match" => self.preview_match(
                 args.get("delta")
                     .and_then(serde_json::Value::as_i64)
                     .unwrap_or(1)
                     .clamp(-1, 1) as i32,
+                window,
                 cx,
             ),
             "reader_link" => self.reader_link(
@@ -1852,40 +1846,22 @@ impl Shell {
                     .and_then(serde_json::Value::as_u64)
                     .and_then(|n| usize::try_from(n).ok())
                     .unwrap_or(usize::MAX),
+                args.get("tab").and_then(serde_json::Value::as_bool) == Some(true),
+                window,
                 cx,
             ),
+            "cursor_toggle" => self.toggle_cursor(window, cx),
             "peek" => self.toggle_peek(window, cx),
             "peek_close" => self.close_peek(window, cx),
-            "peek_prev" => self.cursor_move(-1, Step::Select, window, cx),
-            "peek_next" => self.cursor_move(1, Step::Select, window, cx),
-            "cursor_up" => self.navigate_by(Nav::Up, Step::Select, window, cx),
-            "cursor_down" => self.navigate_by(Nav::Down, Step::Select, window, cx),
-            "cursor_left" => self.navigate_by(Nav::Left, Step::Select, window, cx),
-            "cursor_right" => self.navigate_by(Nav::Right, Step::Select, window, cx),
-            "cursor_extend_up" => self.navigate_by(Nav::Up, Step::Extend, window, cx),
-            "cursor_extend_down" => self.navigate_by(Nav::Down, Step::Extend, window, cx),
-            "cursor_extend_left" => self.navigate_by(Nav::Left, Step::Extend, window, cx),
-            "cursor_extend_right" => self.navigate_by(Nav::Right, Step::Extend, window, cx),
-            "cursor_home" => self.navigate_by(Nav::Home, Step::Select, window, cx),
-            "cursor_end" => self.navigate_by(Nav::End, Step::Select, window, cx),
-            "cursor_extend_home" => self.navigate_by(Nav::Home, Step::Extend, window, cx),
-            "cursor_extend_end" => self.navigate_by(Nav::End, Step::Extend, window, cx),
-            "cursor_move_up" => self.navigate_by(Nav::Up, Step::Cursor, window, cx),
-            "cursor_move_down" => self.navigate_by(Nav::Down, Step::Cursor, window, cx),
-            "cursor_move_left" => self.navigate_by(Nav::Left, Step::Cursor, window, cx),
-            "cursor_move_right" => self.navigate_by(Nav::Right, Step::Cursor, window, cx),
-            "cursor_move_home" => self.navigate_by(Nav::Home, Step::Cursor, window, cx),
-            "cursor_move_end" => self.navigate_by(Nav::End, Step::Cursor, window, cx),
-            "cursor_toggle" => self.toggle_cursor(window, cx),
-            "page_up" => self.navigate_by(Nav::PageUp, Step::Select, window, cx),
-            "page_down" => self.navigate_by(Nav::PageDown, Step::Select, window, cx),
             "quit" => {
                 crate::remember_location(&self.app);
                 let (decoded, skipped, bytes) = self.app.thumbnails.stats();
                 tracing::info!(decoded, skipped, cached_bytes = bytes, "thumbnail stats");
                 cx.quit();
             }
-            other => self.set_status(format!("unknown ui command `ui.{other}`"), true, cx),
+            // Declared (`commands.rs`) but carried out nowhere: a mistake
+            // the test of the declarations catches.
+            other => self.set_status(format!("ui.{other} is not carried out here"), true, cx),
         }
     }
 
@@ -1967,6 +1943,11 @@ impl Shell {
                 _ => self.set_status(n.text, error, cx),
             }
         }
+        // The window's commands asked from elsewhere (an agent, a
+        // script): run as if pressed, on the active pane.
+        for request in self.app.take_front_requests() {
+            self.run(&request.name, request.args, window, cx);
+        }
         self.pending = self.app.pending.get();
         let revision = self.app.settings.revision();
         if revision != self.theme_revision {
@@ -2011,21 +1992,14 @@ impl Shell {
                 .get::<bool>(crate::settings::PRINTED_PAGES_KEY)
                 .unwrap_or(false);
             self.read_player_prefs();
-            self.columns = crate::settings::COLUMN_KEYS
-                .map(|key| self.app.settings.get::<bool>(key).unwrap_or(false));
-            if self.column_drag.is_none()
-                && let Some(widths) = self
-                    .app
-                    .settings
-                    .get::<Vec<f32>>(crate::settings::COLUMN_WIDTHS_KEY)
-            {
-                // Widths saved before a column was added leave it its own.
-                let mut all = crate::views::list::DEFAULT_WIDTHS;
-                for (width, saved) in all.iter_mut().zip(widths) {
-                    *width = crate::views::list::clamp_width(saved);
-                }
-                self.column_widths = all;
-            }
+            self.columns = crate::views::list::PerColumn(
+                crate::views::list::COLUMNS.each_ref().map(|column| {
+                    self.app
+                        .settings
+                        .get::<bool>(column.setting)
+                        .unwrap_or(column.shown)
+                }),
+            );
         }
         if self.type_names.absorb() | self.icons.absorb() {
             cx.notify();
@@ -2142,25 +2116,21 @@ impl Shell {
             });
         }
         self.sync_timeline(cx);
-        self.sync_shelf(cx);
+        self.sync_tallies(cx);
         self.sync_terminal(window, cx);
     }
 
-    /// The shelf publishes how many items it holds in `App::tallies`; read
-    /// it when that moved, never by asking the shelf each frame.
-    fn sync_shelf(&mut self, cx: &mut Context<Self>) {
+    /// What plugins count for the footer (`App::tallies`: the shelf's
+    /// items); read when that moved, never by asking them each frame.
+    fn sync_tallies(&mut self, cx: &mut Context<Self>) {
         let revision = self.app.tallies.revision();
         if self.tallies_revision == Some(revision) {
             return;
         }
         self.tallies_revision = Some(revision);
-        let n = self
-            .app
-            .tallies
-            .get(SHELF_ITEMS)
-            .map_or(0, |n| usize::try_from(n).unwrap_or(usize::MAX));
-        if n != self.shelf_count {
-            self.shelf_count = n;
+        let tallies = self.app.tallies.shown();
+        if tallies != self.tallies {
+            self.tallies = tallies;
             cx.notify();
         }
     }
@@ -2181,12 +2151,18 @@ impl Shell {
         let theme = cx.global::<Theme>().clone();
         // The pane commands act on among those drawn.
         let active = saved == id;
-        crate::search_bar::sync(self, window);
-        crate::trail::sync(self);
         self.sync_roots();
+        crate::trail::sync(self);
+        // After the trail's sync, which says whether it is a search.
+        crate::search_bar::sync(self, window);
         let address_bar = address::render_address(self, window, cx);
-        // The Usage view draws its own scanning and empty states.
-        let placeholder = (self.ui().view_id != "usage")
+        // A view that draws its own empty states (Usage) keeps them.
+        let draws_empty = self
+            .ui()
+            .views
+            .get(self.ui().view_id)
+            .is_some_and(|view| view.draws_empty());
+        let placeholder = (!draws_empty)
             .then(|| crate::placeholder::of(self, id))
             .flatten();
         let body = if let Some(placeholder) = placeholder {
@@ -2222,7 +2198,7 @@ impl Shell {
         // Split panes are told apart by the edge they share: the left one
         // side by side, the top one stacked. The active pane's is the accent.
         let stacked = self.layout.stacked();
-        let edge = divider.then(|| split_edge(stacked, theme.handle, cx));
+        let edge = divider.then(|| split_edge(stacked, cx));
         div()
             .relative()
             .flex_1()
@@ -2295,8 +2271,10 @@ impl Shell {
         } else {
             crate::preview::PANE_KEEP
         };
-        self.split_share = split_share(f32::from(along), f32::from(size), keep);
-        cx.notify();
+        if let Some(share) = crate::elements::edge::share(f32::from(along), f32::from(size), keep) {
+            self.split_share = share;
+            cx.notify();
+        }
     }
 }
 
@@ -2308,45 +2286,19 @@ pub(crate) const SPLIT_SHARE: f32 = 0.5;
 #[derive(Clone)]
 pub struct SplitResize;
 
-/// The first pane's share when the edge between the panes is `along` px
-/// into `size` px of room, each pane keeping at least `keep` px. A room too
-/// small for two panes that size is shared evenly.
-fn split_share(along: f32, size: f32, keep: f32) -> f32 {
-    if size.is_nan() || size <= 2. * keep || !along.is_finite() {
-        return SPLIT_SHARE;
-    }
-    (along.clamp(keep, size - keep)) / size
-}
-
 /// The draggable edge a split's second pane has at its start: its left edge
 /// side by side, its top edge stacked, over the border that tells the panes
 /// apart.
-fn split_edge(stacked: bool, hover: gpui::Hsla, cx: &mut Context<Shell>) -> gpui::AnyElement {
-    let edge = div()
-        .id("split-resize")
-        .absolute()
-        .top_0()
-        .left_0()
-        .hover(move |style| style.bg(hover))
-        .on_click(cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
-            if event.click_count() == 2 {
-                this.split_share = SPLIT_SHARE;
-                this.remember_session();
-                cx.notify();
-            }
-        }))
-        .on_drag(SplitResize, |_, _, _, cx| {
-            cx.new(|_| crate::preview::NoDragView)
-        });
-    if stacked {
-        edge.w_full()
-            .h(px(6.))
-            .cursor(gpui::CursorStyle::ResizeUpDown)
-    } else {
-        edge.h_full()
-            .w(px(6.))
-            .cursor(gpui::CursorStyle::ResizeLeftRight)
-    }
+fn split_edge(stacked: bool, cx: &mut Context<Shell>) -> gpui::AnyElement {
+    use crate::elements::edge::{Side, edge};
+    let side = if stacked { Side::Top } else { Side::Left };
+    edge(
+        "split-resize",
+        side,
+        SplitResize,
+        |this| this.split_share = SPLIT_SHARE,
+        cx,
+    )
     .into_any_element()
 }
 
@@ -2520,21 +2472,5 @@ impl Render for Shell {
             self.pane = pane;
         }
         self.resize_hook(root, cx)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{SPLIT_SHARE, split_share};
-
-    #[test]
-    fn the_split_follows_the_pointer_and_each_pane_keeps_its_room() {
-        // A quarter of 1000 px of room.
-        assert!((split_share(250., 1000., 240.) - 0.25).abs() < 1e-6);
-        // Past what the other pane keeps, or before what this one keeps.
-        assert!((split_share(900., 1000., 240.) - 0.76).abs() < 1e-6);
-        assert!((split_share(-50., 1000., 240.) - 0.24).abs() < 1e-6);
-        // Room for less than two panes: shared evenly.
-        assert!((split_share(100., 400., 240.) - SPLIT_SHARE).abs() < f32::EPSILON);
     }
 }

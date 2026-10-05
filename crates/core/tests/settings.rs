@@ -402,7 +402,10 @@ fn startup_opens_the_chosen_folder_or_the_last_one_and_falls_back_to_home() {
         std::path::Path::new("/srv/it's shared")
     );
     // Not remembered unless asked for: the file is not rewritten at every exit.
-    remember_location(&app.settings, std::path::Path::new("/example/work"));
+    assert!(!remember_location(
+        &app.settings,
+        std::path::Path::new("/example/work")
+    ));
     assert_eq!(
         app.settings.get::<String>(LAST_LOCATION).as_deref(),
         Some("")
@@ -414,7 +417,12 @@ fn startup_opens_the_chosen_folder_or_the_last_one_and_falls_back_to_home() {
         home,
         "nothing remembered yet"
     );
-    remember_location(&app.settings, std::path::Path::new("/example/work"));
+    // Recorded, the caller saving (`tabs::remember`, at exit).
+    assert!(remember_location(
+        &app.settings,
+        std::path::Path::new("/example/work")
+    ));
+    app.settings.save().unwrap();
     assert_eq!(
         startup_folder(&app.settings, home),
         std::path::Path::new("/example/work")

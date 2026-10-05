@@ -178,26 +178,21 @@ fn ancestor_column(
             for (ix, row) in range.zip(rows) {
                 let target = path.as_ref().map(|dir| dir.join(&row.name));
                 let is_on_path = row.name == child;
-                let icon: AnyElement = match row.icon {
-                    Some(p) => icons::element(&p, f32::from(icon_px)),
-                    None => div()
-                        .size(px(f32::from(icon_px)))
-                        .rounded_sm()
-                        .bg(theme.text_muted)
-                        .into_any_element(),
-                };
-                let icon = match &row.place {
-                    Some((_, Some(color))) => {
-                        icons::with_tag(icon, f32::from(icon_px), *color, &theme)
-                    }
-                    _ => icons::with_link(icon, f32::from(icon_px), row.link, &theme),
-                };
+                let mark =
+                    icons::Mark::of(row.link, row.place.as_ref().and_then(|(_, color)| *color));
+                let icon = icons::entry_picture(
+                    row.icon.as_deref(),
+                    row.is_dir,
+                    f32::from(icon_px),
+                    mark,
+                    &theme,
+                );
                 // What a press opens: a folder, or where a place leads.
                 let leads = match (&row.place, &target) {
-                    (Some((place, _)), _) => Some(crate::trail::location_arg(place)),
-                    (None, Some(target)) if row.is_dir => {
-                        Some(crate::trail::location_arg(&Location::from_path(target)))
-                    }
+                    (Some((place, _)), _) => Some(serde_json::json!(place.arg())),
+                    (None, Some(target)) if row.is_dir => Some(serde_json::json!(
+                        bibli_core::os_path::PathArg::from(target.as_path())
+                    )),
                     _ => None,
                 };
                 let mut el = div()
@@ -212,6 +207,18 @@ fn ancestor_column(
                         d.bg(theme.selection_bg).text_color(theme.selection_text)
                     })
                     .when(!is_on_path, |d| d.hover(|s| s.bg(theme.hover)))
+                    // Cut, it is dimmed here as in the pane's own column.
+                    .when(
+                        this.pending.cut && this.pending.entries.contains(&row.id),
+                        |d| d.opacity(crate::views::list::CUT_OPACITY),
+                    )
+                    // Not the pane's entry, so not its selection's menu: a
+                    // right press here opens nothing, rather than the menu
+                    // of the folder shown.
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|_, _, _, cx| cx.stop_propagation()),
+                    )
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _, window, cx| {
@@ -289,6 +296,10 @@ fn ancestor_column(
 }
 
 impl PaneView for ColumnsView {
+    fn zooms(&self) -> crate::view::Zooms {
+        crate::view::Zooms::Rows
+    }
+
     fn id(&self) -> &'static str {
         crate::view::COLUMNS
     }
@@ -339,12 +350,10 @@ impl PaneView for ColumnsView {
                 .collect()
         };
 
-        let mut columns = div()
-            .relative()
-            .size_full()
-            .flex()
-            .flex_row()
-            .overflow_hidden();
+        // At least as wide as the pane, the columns from its left; wider,
+        // set against its right edge, so a narrow pane cuts the folders
+        // farthest up and keeps the one shown (layout only).
+        let mut columns = div().h_full().min_w_full().flex_none().flex().flex_row();
         for (k, ids) in orders.into_iter().enumerate() {
             columns = columns.child(ancestor_column(self, k, ids, shell.pane, &theme, cx));
         }
@@ -359,9 +368,7 @@ impl PaneView for ColumnsView {
                     this.ui_mut().list.visible_rows = range.len().max(1);
                     let icon_px = u16::try_from(this.row_zoom).unwrap_or(u16::MAX);
                     let rows = this.rows(range, icon_px, true);
-                    let need: Vec<EntryId> =
-                        rows.iter().filter(|r| !r.hydrated).map(|r| r.id).collect();
-                    this.request_hydrate(need);
+                    this.request_hydrate(rows.iter().map(|r| r.look.id).collect::<Vec<_>>());
                     rows.iter()
                         .map(|r| row(this, &theme, r, true, false, cx))
                         .collect::<Vec<_>>()
@@ -391,8 +398,15 @@ impl PaneView for ColumnsView {
             None => {}
         }
         columns = columns.child(last_col);
-        // Ctrl and the wheel size the rows, over any column.
-        columns
+        div()
+            .relative()
+            .size_full()
+            .flex()
+            .flex_row()
+            .justify_end()
+            .overflow_hidden()
+            .child(columns)
+            // Ctrl and the wheel size the rows, over any column.
             .child(crate::views::zoom_wheel(cx))
             .into_any_element()
     }
@@ -413,18 +427,7 @@ impl PaneView for ColumnsView {
     }
 
     fn nav_delta(&self, nav: Nav, shell: &Shell) -> Option<isize> {
-        let rows = shell.ui().list.visible_rows;
-        let page = rows.saturating_sub(1).max(1) as isize;
-        let half = (rows / 2).max(1) as isize;
-        match nav {
-            Nav::Up => Some(-1),
-            Nav::Down => Some(1),
-            Nav::PageUp => Some(-page),
-            Nav::PageDown => Some(page),
-            Nav::HalfPageUp => Some(-half),
-            Nav::HalfPageDown => Some(half),
-            _ => None,
-        }
+        crate::views::list::rows_nav(nav, shell)
     }
 
     fn nav(

@@ -11,6 +11,7 @@ use bibli_core::{
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
 };
+use bibli_platform::mime::Types;
 use bibli_platform::{inspection, rich_preview};
 use std::sync::Arc;
 pub struct PreviewPlugin;
@@ -28,11 +29,7 @@ impl Plugin for PreviewPlugin {
         bibli_core::plugin::Category::Previews
     }
     fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
-        vec![bibli_core::plugin::Requirement::new(
-            "bibli-mermaid-worker",
-            "Mermaid diagrams drawn in Markdown",
-            || bibli_platform::diagram::worker_path().is_some(),
-        )]
+        vec![bibli_platform::diagram::WORKER.requirement("Mermaid diagrams drawn in Markdown")]
     }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
@@ -67,16 +64,40 @@ fn measured(
     data.blocks = page.blocks;
     data
 }
+/// What it reads, by the type the MIME database gives the file.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Format {
+    Markdown,
+    Html,
+    Xhtml,
+    Notebook,
+}
+
+static MARKDOWN: Types = Types::new(&["text/markdown"]);
+static HTML: Types = Types::new(&["text/html"]);
+static XHTML: Types = Types::new(&["application/xhtml+xml"]);
+static NOTEBOOK: Types = Types::new(&["application/x-ipynb+json"]);
+
+fn format_of(req: &PreviewRequest) -> Option<Format> {
+    let (path, mime) = (&req.entry.path, req.mime.as_deref());
+    [
+        (&MARKDOWN, Format::Markdown),
+        (&HTML, Format::Html),
+        (&XHTML, Format::Xhtml),
+        (&NOTEBOOK, Format::Notebook),
+    ]
+    .into_iter()
+    .find(|(types, _)| types.holds(path, mime))
+    .map(|(_, format)| format)
+}
+
 struct Provider;
 impl PreviewProvider for Provider {
     fn id(&self) -> &'static str {
         "preview-markdown"
     }
     fn accepts(&self, req: &PreviewRequest) -> bool {
-        matches!(
-            inspection::extension(&req.entry.path).as_str(),
-            "md" | "markdown" | "mdown" | "html" | "htm" | "xhtml" | "ipynb"
-        )
+        format_of(req).is_some()
     }
     /// A picture the document named, beside it: the same containment as
     /// when it was named.
@@ -88,7 +109,7 @@ impl PreviewProvider for Provider {
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<bibli_core::thumbs::Image>> {
         let path = req.entry.resolve()?;
-        if key.starts_with(notebook::OUTPUT) && inspection::extension(&path) == "ipynb" {
+        if key.starts_with(notebook::OUTPUT) && format_of(req) == Some(Format::Notebook) {
             return Ok(notebook::decoded(&notebook::read(&path, cancel)?, key));
         }
         let base = path.parent().unwrap_or(std::path::Path::new("."));
@@ -104,18 +125,20 @@ impl PreviewProvider for Provider {
         if view.source {
             return Ok(None);
         }
+        let Some(format) = format_of(req) else {
+            return Ok(None);
+        };
         let path = req.entry.resolve()?;
-        if inspection::extension(&path) == "ipynb" {
+        if format == Format::Notebook {
             return notebook(&path, cancel).map(Some);
         }
         let (source, encoding) = inspection::read_text(&path, cancel)?;
         let base = path.parent().unwrap_or(std::path::Path::new("."));
         let image = |href: &str| rich_preview::local_picture(base, href, cancel);
-        let extension = inspection::extension(&path);
-        let (title, page, notice) = if matches!(extension.as_str(), "md" | "markdown" | "mdown") {
+        let (title, page, notice) = if format == Format::Markdown {
             ("Markdown", markdown::parse(&source, cancel, image)?, "")
         } else {
-            let markup = if extension == "xhtml" {
+            let markup = if format == Format::Xhtml {
                 rich_preview::Markup::Xhtml
             } else {
                 rich_preview::Markup::Html
@@ -184,6 +207,26 @@ fn notebook(path: &std::path::Path, cancel: &CancelToken) -> anyhow::Result<Insp
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formats_are_known_by_type() {
+        let format = |name: &str| {
+            format_of(&PreviewRequest {
+                entry: bibli_core::op::EntryRef::new(bibli_core::EntryId { dev: 1, ino: 1 }, name),
+                mime: None,
+                page: 1,
+                seconds: None,
+                max_side: 64,
+                text_size: None,
+            })
+        };
+        assert!(format("a.md") == Some(Format::Markdown));
+        assert!(format("a.mkd") == Some(Format::Markdown));
+        assert!(format("a.htm") == Some(Format::Html));
+        assert!(format("a.xhtml") == Some(Format::Xhtml));
+        assert!(format("a.ipynb") == Some(Format::Notebook));
+        assert!(format("a.txt").is_none());
+    }
 
     fn read_as(name: &str, bytes: &[u8], view: &InspectRequest) -> Option<Inspection> {
         let dir = tempfile::tempdir().unwrap();

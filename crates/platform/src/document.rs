@@ -57,15 +57,34 @@ pub enum Engine {
     Mupdf,
 }
 
+impl Engine {
+    /// Its name, as the Documents page says it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Engine::Pdfium => "PDFium",
+            Engine::Poppler => "Poppler",
+            Engine::Mupdf => "MuPDF",
+        }
+    }
+}
+
 /// The engine's worker executable: its environment override, beside our
 /// binary, or on `PATH`. Plugins that require it name this, not the literals.
 pub fn worker_path(engine: Engine) -> Option<PathBuf> {
+    worker(engine).find()
+}
+
+/// The engine's worker.
+pub fn worker(engine: Engine) -> crate::process::Worker {
     let (variable, executable) = match engine {
         Engine::Pdfium => ("BIBLI_PDF_WORKER", "bibli-pdf-worker"),
         Engine::Poppler => ("BIBLI_POPPLER_WORKER", "bibli-poppler-worker"),
         Engine::Mupdf => ("BIBLI_MUPDF_WORKER", "bibli-mupdf-worker"),
     };
-    crate::process::find_worker(variable, executable)
+    crate::process::Worker {
+        variable,
+        executable,
+    }
 }
 
 /// What the manager starts a worker with.
@@ -473,6 +492,11 @@ impl Worker {
         match worker.wait(0, &cancelled, &deadline) {
             Ok(greeting) => Ok((worker, greeting)),
             Err(Failure::Cancelled) => anyhow::bail!("document open cancelled"),
+            // Its library is not there: the engine is not installed, and
+            // one chosen automatically gives way to the next.
+            Err(Failure::Broken(_)) if worker.channel.missing_runtime() => {
+                Err(Unavailable("the engine's library is missing".into()).into())
+            }
             Err(Failure::Broken(error)) => Err(error),
         }
     }

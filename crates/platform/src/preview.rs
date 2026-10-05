@@ -3,7 +3,6 @@
 
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use anyhow::Context;
@@ -14,6 +13,7 @@ use parking_lot::{Mutex, MutexGuard};
 
 use crate::inspection::{check, extension};
 use crate::process;
+use crate::sandbox::{self, Otherwise};
 
 const MAX_SIDE: u32 = 2048;
 const MAX_VIDEO_SIDE: u32 = 8192;
@@ -199,10 +199,19 @@ impl PreviewProvider for MediaPreviews {
             lifetime,
             wake,
         )?;
-        anyhow::ensure!(
-            session.is_some() || self.backend == "auto",
-            "Install bibli-media-worker and GStreamer playback plugins, or select the stills backend"
-        );
+        if session.is_none() && self.backend != "auto" {
+            // In the words of the Video page: audio has no still to fall
+            // back to.
+            let instead = if self.audio {
+                ""
+            } else {
+                ", or choose Still frames as the Video engine"
+            };
+            anyhow::bail!(
+                "Install {} and GStreamer's playback plugins to play this{instead}",
+                crate::media::WORKER.executable
+            );
+        }
         Ok(session)
     }
     fn id(&self) -> &'static str {
@@ -213,22 +222,13 @@ impl PreviewProvider for MediaPreviews {
         }
     }
     fn accepts(&self, req: &PreviewRequest) -> bool {
-        // A playlist has an `audio/` type and is not a recording: it is a list
-        // of them, and the playlist preview's to read.
-        let playlist = matches!(
-            extension(&req.entry.path).as_str(),
-            "m3u" | "m3u8" | "pls" | "xspf" | "cue"
-        );
+        let playlist = playlist(&req.entry.path, req.mime.as_deref()).is_some();
         (!playlist
             && req
                 .mime
                 .as_deref()
                 .is_some_and(|m| m.starts_with(if self.audio { "audio/" } else { "video/" })))
-            || (!self.audio
-                && (matches!(
-                    req.mime.as_deref(),
-                    Some("application/vnd.ms-asf" | "application/x-ms-asf")
-                ) || extension(&req.entry.path) == "asf"))
+            || (!self.audio && ASF.holds(&req.entry.path, req.mime.as_deref()))
     }
     fn render(&self, req: &PreviewRequest, cancel: &CancelToken) -> anyhow::Result<Preview> {
         let _guard = acquire(&self.gate, cancel)?;
@@ -249,20 +249,20 @@ impl PreviewProvider for MediaPreviews {
         if let Some(preview) = cached(&self.cache, &key, req.max_side) {
             return Ok(preview);
         }
-        let probe = process::run(
-            Command::new(ffprobe)
-                .args([
-                    "-v",
-                    "error",
-                    "-show_entries",
-                    "format=duration",
-                    "-of",
-                    "json",
-                ])
-                .arg(&path),
-            cancel,
-            RENDER_TIMEOUT,
-        )?;
+        let tmp = tempfile::tempdir()?;
+        let mut probe = sandbox::untrusted(&ffprobe, &path, tmp.path(), Otherwise::Run)?;
+        probe
+            .command
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "json",
+            ])
+            .arg(&probe.input);
+        let probe = process::run(&mut probe.command, cancel, RENDER_TIMEOUT)?;
         let value: serde_json::Value = serde_json::from_slice(&probe)?;
         let duration = value["format"]["duration"]
             .as_str()
@@ -277,7 +277,6 @@ impl PreviewProvider for MediaPreviews {
                 .max(0.0)
                 .min(duration.map_or(f64::MAX, |d| (d - 0.1).max(0.0)))
         };
-        let tmp = tempfile::tempdir()?;
         let png = ffmpeg_picture(
             &ffmpeg,
             &path,
@@ -407,37 +406,107 @@ pub(crate) fn converted_pdf(
     Ok(Some(pdf))
 }
 
+/// Windows Media's container, a film whatever its tracks: its type is no
+/// `video/` one (`video/x-ms-asf` is another name for it, and some
+/// databases call it `application/x-ms-asf`).
+static ASF: crate::mime::Types =
+    crate::mime::Types::new(&["application/vnd.ms-asf", "application/x-ms-asf"]);
+
+/// What a list of recordings is written in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlaylistFormat {
+    M3u,
+    Pls,
+    Xspf,
+    Cue,
+    Asx,
+}
+
+/// Lists of recordings, by type: their types say `audio/` or `video/`
+/// (an `.m3u`, a `.pls`), yet they are no recording, so the player never
+/// takes one; the playlist preview reads those it parses.
+const PLAYLISTS: [(&str, PlaylistFormat); 7] = [
+    ("audio/x-mpegurl", PlaylistFormat::M3u),
+    ("application/vnd.apple.mpegurl", PlaylistFormat::M3u),
+    ("video/vnd.mpegurl", PlaylistFormat::M3u),
+    ("audio/x-scpls", PlaylistFormat::Pls),
+    ("application/xspf+xml", PlaylistFormat::Xspf),
+    ("application/x-cue", PlaylistFormat::Cue),
+    ("audio/x-ms-asx", PlaylistFormat::Asx),
+];
+
+/// The list of recordings a file of type `mime` (else named `path`) is,
+/// if it is one. No I/O once the MIME database is loaded.
+pub fn playlist(path: &Path, mime: Option<&str>) -> Option<PlaylistFormat> {
+    let mime = crate::mime::unalias(&crate::mime::of_request(path, mime)?);
+    PLAYLISTS
+        .iter()
+        .find(|(name, _)| {
+            crate::mime::unalias(&crate::mime::Mime((*name).to_owned()))
+                .as_str()
+                .eq_ignore_ascii_case(mime.as_str())
+        })
+        .map(|&(_, format)| format)
+}
+
 fn is_pdf(req: &PreviewRequest) -> bool {
     req.mime.as_deref() == Some("application/pdf") || extension(&req.entry.path) == "pdf"
 }
 
-/// A document `LibreOffice` converts to PDF for its preview.
-pub fn is_office(path: &Path) -> bool {
-    matches!(
-        extension(path).as_str(),
-        "doc"
-            | "docx"
-            | "docm"
-            | "dotx"
-            | "dotm"
-            | "odt"
-            | "ott"
-            | "rtf"
-            | "fodt"
-            | "xls"
-            | "xlsx"
-            | "xlsm"
-            | "ods"
-            | "ots"
-            | "fods"
-            | "ppt"
-            | "pptx"
-            | "pptm"
-            | "odp"
-            | "otp"
-            | "fodp"
-            | "odg"
-    )
+/// Office documents, by type: what `LibreOffice` converts to PDF for a
+/// preview, and an office package's stored picture is looked for in. Not
+/// all it opens: its desktop entries also claim plain text, CSV and PDF,
+/// which bibli reads itself.
+static OFFICE: crate::mime::Types = crate::mime::Types::new(&[
+    "application/msword",
+    "application/msword-template",
+    "application/rtf",
+    "application/vnd.ms-word.document.macroEnabled.12",
+    "application/vnd.ms-word.template.macroEnabled.12",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
+    "application/vnd.oasis.opendocument.text",
+    "application/vnd.oasis.opendocument.text-template",
+    "application/vnd.oasis.opendocument.text-flat-xml",
+    "application/vnd.ms-excel",
+    "application/vnd.ms-excel.sheet.macroEnabled.12",
+    "application/vnd.ms-excel.sheet.binary.macroEnabled.12",
+    "application/vnd.ms-excel.template.macroEnabled.12",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.template",
+    "application/vnd.oasis.opendocument.spreadsheet",
+    "application/vnd.oasis.opendocument.spreadsheet-template",
+    "application/vnd.oasis.opendocument.spreadsheet-flat-xml",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.ms-powerpoint.presentation.macroEnabled.12",
+    "application/vnd.ms-powerpoint.slideshow.macroEnabled.12",
+    "application/vnd.ms-powerpoint.template.macroEnabled.12",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.openxmlformats-officedocument.presentationml.slideshow",
+    "application/vnd.openxmlformats-officedocument.presentationml.template",
+    "application/vnd.oasis.opendocument.presentation",
+    "application/vnd.oasis.opendocument.presentation-template",
+    "application/vnd.oasis.opendocument.presentation-flat-xml",
+    "application/vnd.oasis.opendocument.graphics",
+    "application/vnd.oasis.opendocument.graphics-template",
+    "application/vnd.oasis.opendocument.graphics-flat-xml",
+]);
+
+/// Whether a file asked about (`mime::of_request`) is an office document.
+/// The one list every reader of office files asks: the previews, the
+/// thumbnails and the stored pictures cannot disagree. No I/O once the
+/// MIME database is loaded.
+pub fn is_office(path: &Path, mime: Option<&str>) -> bool {
+    OFFICE.holds(path, mime)
+}
+
+/// Whether `path` is shown as `LibreOffice` prints it here: an office
+/// type (`is_office`), `LibreOffice` installed and the converters' sandbox
+/// there. Every reader that would show it otherwise asks this one
+/// question, so two never both cede a file, nor both claim it. Looks on
+/// `PATH`: call from a worker.
+pub fn shown_as_pages(path: &Path, mime: Option<&str>) -> bool {
+    is_office(path, mime) && sandbox::available() && process::required("libreoffice").is_ok()
 }
 
 impl PreviewProvider for DocumentPreviews {
@@ -512,11 +581,15 @@ impl PreviewProvider for DocumentPreviews {
                 return Ok(Some(session));
             }
         }
-        anyhow::ensure!(
-            self.backend == "auto",
-            "Install the {} document worker and its native library (see README)",
-            self.backend
-        );
+        // The engine chosen is missing, or would not start: what it needs,
+        // in the words every worker's absence is said in.
+        if let [engine] = engines {
+            anyhow::bail!(
+                "Install {} and its library to read documents with {}",
+                crate::document::worker(*engine).executable,
+                engine.label()
+            );
+        }
         Ok(None)
     }
 
@@ -524,7 +597,7 @@ impl PreviewProvider for DocumentPreviews {
         "preview-documents"
     }
     fn accepts(&self, req: &PreviewRequest) -> bool {
-        is_pdf(req) || is_office(&req.entry.path)
+        is_pdf(req) || is_office(&req.entry.path, req.mime.as_deref())
     }
     fn render(&self, req: &PreviewRequest, cancel: &CancelToken) -> anyhow::Result<Preview> {
         let started = Instant::now();
@@ -568,11 +641,9 @@ impl PreviewProvider for DocumentPreviews {
         let pages = match document.as_ref() {
             Some((key, pages)) if key == &metadata_key => *pages,
             _ => {
-                let info = process::run(
-                    Command::new(pdfinfo).env("LC_ALL", "C").arg(&pdf),
-                    cancel,
-                    RENDER_TIMEOUT,
-                )?;
+                let mut info = sandbox::untrusted(&pdfinfo, &pdf, tmp.path(), Otherwise::Run)?;
+                info.command.env("LC_ALL", "C").arg(&info.input);
+                let info = process::run(&mut info.command, cancel, RENDER_TIMEOUT)?;
                 let pages = String::from_utf8_lossy(&info)
                     .lines()
                     .find_map(|line| {
@@ -630,15 +701,15 @@ pub(crate) fn ffmpeg_picture(
     scratch: &Path,
     cancel: &CancelToken,
 ) -> anyhow::Result<Vec<u8>> {
-    let output = scratch.join("frame.png");
-    let mut command = Command::new(ffmpeg);
+    let mut run = sandbox::untrusted(ffmpeg, path, scratch, Otherwise::Run)?;
+    let command = &mut run.command;
     command.args(["-nostdin", "-v", "error", "-threads", "1"]);
     if let Some(seconds) = seconds {
         command.arg("-ss").arg(format!("{seconds:.3}"));
     }
     command
         .args(["-protocol_whitelist", "file", "-i"])
-        .arg(path)
+        .arg(&run.input)
         .args([
             "-map",
             "0:v:0",
@@ -654,9 +725,9 @@ pub(crate) fn ffmpeg_picture(
             "scale='min(iw,{side})':'min(ih,{side})':force_original_aspect_ratio=decrease,setsar=1"
         ))
         .args(["-threads", "1", "-compression_level", "1"])
-        .arg(&output);
-    process::run(&mut command, cancel, RENDER_TIMEOUT)?;
-    read_artifact(&output)
+        .arg(run.work.join("frame.png"));
+    process::run(command, cancel, RENDER_TIMEOUT)?;
+    read_artifact(&scratch.join("frame.png"))
 }
 
 /// One page of `pdf` rendered by Poppler's `pdftoppm` (`renderer`), its
@@ -672,25 +743,22 @@ pub(crate) fn render_pdf_page(
     cancel: &CancelToken,
 ) -> anyhow::Result<Image> {
     let side = side.clamp(64, MAX_SIDE);
-    let prefix = scratch.join("page");
-    process::run(
-        Command::new(renderer)
-            .args([
-                "-f",
-                &page.to_string(),
-                "-l",
-                &page.to_string(),
-                "-singlefile",
-                "-scale-to",
-                &side.to_string(),
-            ])
-            .arg(pdf)
-            .arg(&prefix),
-        cancel,
-        RENDER_TIMEOUT,
-    )?;
+    let mut run = sandbox::untrusted(renderer, pdf, scratch, Otherwise::Run)?;
+    run.command
+        .args([
+            "-f",
+            &page.to_string(),
+            "-l",
+            &page.to_string(),
+            "-singlefile",
+            "-scale-to",
+            &side.to_string(),
+        ])
+        .arg(&run.input)
+        .arg(run.work.join("page"));
+    process::run(&mut run.command, cancel, RENDER_TIMEOUT)?;
     check(cancel)?;
-    decode_preview(&read_artifact(&prefix.with_extension("ppm"))?, side)
+    decode_preview(&read_artifact(&scratch.join("page.ppm"))?, side)
 }
 
 /// Conversion is isolated from the user's `LibreOffice` session and files
@@ -738,6 +806,7 @@ mod tests {
     use super::*;
     use bibli_core::{cache::Cache, op::EntryRef};
     use std::io::Write;
+    use std::process::Command;
 
     fn request(path: &Path) -> PreviewRequest {
         PreviewRequest {
@@ -759,22 +828,39 @@ mod tests {
         let path = tmp.path().join("Synthetic clip.ASF");
         std::fs::write(&path, b"synthetic container marker").unwrap();
         let mut req = request(&path);
+        // Its type by any of its names, or, untyped, its name's.
         for mime in [
             Some("application/vnd.ms-asf"),
             Some("application/x-ms-asf"),
             Some("video/x-ms-asf"),
-            Some("application/octet-stream"),
             None,
         ] {
             req.mime = mime.map(str::to_owned);
             assert!(video.accepts(&req));
             assert!(!audio.accepts(&req));
         }
+        // Bytes that said nothing are not a film by their name.
+        req.mime = Some("application/octet-stream".into());
+        assert!(!video.accepts(&req));
         req.entry.path = tmp.path().join("clip.data");
         req.mime = Some("application/vnd.ms-asf".into());
         assert!(video.accepts(&req));
-        req.mime = Some("application/octet-stream".into());
-        assert!(!video.accepts(&req));
+    }
+
+    #[test]
+    fn office_documents_are_known_by_type() {
+        let office = |name: &str| super::is_office(Path::new(name), None);
+        for name in [
+            "a.doc", "a.docx", "a.rtf", "a.fodt", "a.xlsb", "a.ods", "a.ppsx", "a.odg",
+        ] {
+            assert!(office(name), "{name} is an office document");
+        }
+        // `LibreOffice` opens these too; bibli reads them itself.
+        for name in ["a.txt", "a.csv", "a.pdf", "a.epub", "a.png"] {
+            assert!(!office(name), "{name} is no office document");
+        }
+        // The type a request was asked with, not its name.
+        assert!(!super::is_office(Path::new("a.docx"), Some("text/plain")));
     }
 
     #[test]

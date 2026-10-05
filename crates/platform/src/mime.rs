@@ -346,6 +346,55 @@ pub fn unalias(mime: &Mime) -> Mime {
     imp::unalias(mime)
 }
 
+/// Types named by hand (what a decoder reads), matched as the database
+/// knows them: a type is one of them when it or the type it is another
+/// name for is, or is what one of them is another name for. One name per
+/// type is enough, whichever a database's version calls canonical: list
+/// the older one (`audio/x-matroska`), which a newer database aliases.
+pub struct Types {
+    names: &'static [&'static str],
+    canonical: std::sync::OnceLock<std::collections::HashSet<String>>,
+}
+
+impl Types {
+    pub const fn new(names: &'static [&'static str]) -> Self {
+        Self {
+            names,
+            canonical: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Compared without case, as types are (the database's
+    /// `…macroEnabled.12` is read back as `…macroenabled.12`). No I/O
+    /// once the database is loaded.
+    pub fn contains(&self, mime: &str) -> bool {
+        let both = |name: &str| {
+            let name = name.to_ascii_lowercase();
+            let canonical = unalias(&Mime(name.clone())).0.to_ascii_lowercase();
+            [name, canonical]
+        };
+        let known = self
+            .canonical
+            .get_or_init(|| self.names.iter().flat_map(|&name| both(name)).collect());
+        both(mime).iter().any(|name| known.contains(name))
+    }
+
+    /// Whether a file asked about is of one of these types (`of_request`).
+    pub fn holds(&self, path: &Path, mime: Option<&str>) -> bool {
+        of_request(path, mime).is_some_and(|mime| self.contains(mime.as_str()))
+    }
+}
+
+/// The type of a file asked about (a preview's or a thumbnail's request):
+/// the one it was asked with, read from its bytes where its name is
+/// ambiguous (an `.otf` font or formula template), else its name's.
+pub fn of_request(path: &Path, mime: Option<&str>) -> Option<Mime> {
+    match mime {
+        Some(mime) => Some(Mime(mime.to_owned())),
+        None => by_name(path.file_name()?),
+    }
+}
+
 /// The extensions the MIME database names files of type `mime` by, from
 /// its plain `*.ext` globs, lowercase, in the database's order (heaviest
 /// first, the most specific folder first). Aliases are resolved. No I/O
@@ -850,6 +899,18 @@ mod tests {
             <comment xml:lang="fr">document</comment></mime-type>"#;
         assert_eq!(comment_of(xml).as_deref(), Some("Plain & simple document"));
         assert_eq!(comment_of("<mime-type/>"), None);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn types_named_by_hand_match_through_aliases() {
+        let types = super::Types::new(&["image/x-icon", "audio/mp4"]);
+        // What a listed alias stands for, and another alias of it.
+        assert!(types.contains("image/vnd.microsoft.icon"));
+        assert!(types.contains("image/x-ico"));
+        // Another name of a listed type.
+        assert!(types.contains("audio/x-m4a"));
+        assert!(!types.contains("audio/mpeg"));
     }
 
     #[test]

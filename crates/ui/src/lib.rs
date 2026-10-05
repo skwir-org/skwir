@@ -18,6 +18,7 @@ pub mod address;
 mod archive_preview;
 pub mod choose;
 mod code_preview;
+pub mod commands;
 pub mod controls;
 mod details;
 pub mod dnd;
@@ -33,6 +34,7 @@ mod inspector_rows;
 mod inspector_text;
 pub mod jump;
 pub mod keymap;
+mod latest;
 pub mod layout;
 mod links;
 pub mod list;
@@ -192,6 +194,8 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
     for spec in views::specs() {
         app.registry.views.add("ui", spec);
     }
+    // The shell's own commands, known to every surface as the others are.
+    commands::declare_all(&app);
 
     Application::new()
         .with_assets(icons::FsAssets)

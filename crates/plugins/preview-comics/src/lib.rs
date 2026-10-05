@@ -8,7 +8,7 @@ use bibli_core::{
     preview::{PreviewProvider, PreviewRequest},
     thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider},
 };
-use bibli_platform::{archive, inspection};
+use bibli_platform::{archive, inspection, mime, thumb_providers};
 use std::sync::Arc;
 pub struct PreviewPlugin;
 impl Plugin for PreviewPlugin {
@@ -26,12 +26,9 @@ impl Plugin for PreviewPlugin {
     }
     fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
         vec![
-            bibli_core::plugin::Requirement::new(
-                "bibli-archive-worker",
-                "Reading the pages of a comic book",
-                || archive::worker_path().is_some(),
-            )
-            .required(),
+            archive::WORKER
+                .requirement("Reading the pages of a comic book")
+                .required(),
         ]
     }
     fn register(&self, app: &App) {
@@ -39,12 +36,13 @@ impl Plugin for PreviewPlugin {
         app.thumbnails.register(self.id(), Arc::new(Cover));
     }
 }
-fn is_comic(path: &std::path::Path) -> bool {
-    matches!(
-        inspection::extension(path).as_str(),
-        "cbz" | "cbr" | "cb7" | "cbt"
-    )
-}
+/// Comic book archives, by type.
+static COMICS: mime::Types = mime::Types::new(&[
+    "application/vnd.comicbook+zip",
+    "application/vnd.comicbook-rar",
+    "application/x-cb7",
+    "application/x-cbt",
+]);
 /// A comic's pictures in reading order.
 fn pages(path: &std::path::Path, cancel: &CancelToken) -> anyhow::Result<Vec<archive::Member>> {
     let mut pages: Vec<_> = archive::list(path, cancel)?
@@ -67,7 +65,7 @@ impl ThumbnailProvider for Cover {
         Stage::Fallback
     }
     fn accepts(&self, req: &ThumbRequest) -> bool {
-        is_comic(&req.entry.path)
+        COMICS.holds(&req.entry.path, req.mime.as_deref())
     }
     fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
         let path = req.entry.resolve()?;
@@ -87,7 +85,7 @@ impl PreviewProvider for Provider {
         "preview-comics"
     }
     fn accepts(&self, req: &PreviewRequest) -> bool {
-        is_comic(&req.entry.path)
+        COMICS.holds(&req.entry.path, req.mime.as_deref())
     }
     /// A comic is a document of pages: read continuously or a page at a
     /// time in the reader, each page decoded at the side it is shown at.
@@ -161,10 +159,11 @@ fn is_page(member: &archive::Member) -> bool {
             .name
             .split('/')
             .any(|part| part.starts_with('.') || part == "__MACOSX")
-        && matches!(
-            inspection::extension(std::path::Path::new(&member.name)).as_str(),
-            "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp"
-        )
+        // A picture the decoder reads, as a thumbnail's is.
+        && std::path::Path::new(&member.name)
+            .file_name()
+            .and_then(mime::by_name)
+            .is_some_and(|mime| thumb_providers::decodes(mime.as_str()))
 }
 #[cfg(test)]
 mod tests {
@@ -192,6 +191,8 @@ mod tests {
             member(5, "Book/page1.png", false),
             member(6, "Book/secret.png", true),
             member(7, "Book/notes.txt", false),
+            // Any picture the decoder reads, as a thumbnail's.
+            member(8, "Book/page3.tif", false),
         ]
         .into_iter()
         .filter(is_page)
@@ -200,7 +201,12 @@ mod tests {
         let names: Vec<_> = pages.iter().map(|m| m.name.as_str()).collect();
         assert_eq!(
             names,
-            ["Book/page1.png", "Book/page2.png", "Book/page10.png"]
+            [
+                "Book/page1.png",
+                "Book/page2.png",
+                "Book/page3.tif",
+                "Book/page10.png"
+            ]
         );
     }
 }

@@ -34,22 +34,20 @@ impl Plugin for PreviewPlugin {
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Previews
     }
-    fn on_settings_changed(&self, app: &App, _keys: &[String]) {
-        app.previews.unregister_owner(self.id());
-        app.thumbnails.unregister_owner(self.id());
-        self.register(app);
+    /// A new engine reads books from now on; covers are the same either way.
+    fn on_settings_changed(&self, app: &App, keys: &[String]) {
+        if keys.iter().any(|key| key == BACKEND) {
+            app.previews.unregister(self.id(), self.id());
+            register_books(app);
+        }
     }
     fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
-        use bibli_platform::document::{Engine as Worker, worker_path};
-        vec![bibli_core::plugin::Requirement::new(
-            "bibli-mupdf-worker",
-            "Books laid out into pages by MuPDF",
-            || worker_path(Worker::Mupdf).is_some(),
-        )]
+        use bibli_platform::document::{Engine, worker};
+        vec![worker(Engine::Mupdf).requirement("Books laid out into pages by MuPDF")]
     }
     fn register(&self, app: &App) {
         app.settings.declare(bibli_core::settings::SettingSpec::choice(
-            "preview-epub.backend",
+            BACKEND,
             "Book engine",
             "Automatic reads books with the built-in engine: text that reflows in the theme, fixed-layout pages drawn as their book lays them out. MuPDF lays every book out into pages, with its own styles.",
             "auto",
@@ -59,18 +57,22 @@ impl Plugin for PreviewPlugin {
                 ("mupdf", "MuPDF"),
             ],
         ));
-        let engine = match app
-            .settings
-            .get::<String>("preview-epub.backend")
-            .as_deref()
-        {
-            Some("mupdf") => Engine::Mupdf,
-            _ => Engine::BuiltIn,
-        };
-        app.previews
-            .register(self.id(), Arc::new(Provider { engine }));
+        register_books(app);
         app.thumbnails.register(self.id(), Arc::new(Cover));
     }
+}
+
+/// Which engine reads books.
+const BACKEND: &str = "preview-epub.backend";
+
+/// The books provider, with the engine the setting chooses.
+fn register_books(app: &App) {
+    let engine = match app.settings.get::<String>(BACKEND).as_deref() {
+        Some("mupdf") => Engine::Mupdf,
+        _ => Engine::BuiltIn,
+    };
+    app.previews
+        .register("preview-epub", Arc::new(Provider { engine }));
 }
 /// A book's cover for the grid: the picture its package names, read through
 /// the bounded container. A fallback: a thumbnailer the desktop installed
@@ -439,13 +441,12 @@ fn resolve(base: &str, href: &str) -> String {
     }
 }
 
-/// The ZIP container with every read bounded by the actual decompressed
-/// bytes, not the size a central directory declares.
+/// The ZIP container, read as every package is
+/// (`bibli_platform::package`: bounded, members by normalized name, so
+/// hrefs never become archive lookups through a path the ZIP library
+/// interprets).
 struct Container {
-    archive: zip::ZipArchive<std::fs::File>,
-    /// Normalized member path → index, so hrefs never become archive lookups
-    /// through a path the ZIP library interprets.
-    members: HashMap<String, usize>,
+    package: bibli_platform::package::Package,
     /// Members `META-INF/encryption.xml` lists, by the algorithm named.
     encrypted: HashMap<String, String>,
     /// The package's unique identifier, which obfuscated fonts are keyed by.
@@ -497,26 +498,11 @@ fn deobfuscate(bytes: &mut [u8], algorithm: &str, identifier: &str) -> Option<()
 }
 impl Container {
     fn open(path: &std::path::Path, cancel: &CancelToken) -> anyhow::Result<Self> {
-        let mut archive = zip::ZipArchive::new(inspection::open(path)?)?;
-        anyhow::ensure!(
-            archive.len() <= limits::CONTAINER_MEMBERS,
-            "EPUB exceeds {} resources",
-            limits::CONTAINER_MEMBERS
-        );
         // Declared sizes are not checked here: a book's pictures, audio or
         // video are never read unless a chapter shows them, and `read`
         // bounds the bytes each read actually produces.
-        let mut members = HashMap::new();
-        for i in 0..archive.len() {
-            inspection::check(cancel)?;
-            let file = archive.by_index_raw(i)?;
-            if let Some(name) = normalize(file.name()) {
-                members.entry(name).or_insert(i);
-            }
-        }
         let mut container = Self {
-            archive,
-            members,
+            package: bibli_platform::package::Package::open(path, "This EPUB", false, cancel)?,
             encrypted: HashMap::new(),
             identifier: String::new(),
         };
@@ -561,25 +547,17 @@ impl Container {
         limit: usize,
         cancel: &CancelToken,
     ) -> anyhow::Result<Vec<u8>> {
-        use std::io::Read;
-        let index = member_key(href)
-            .and_then(|name| self.members.get(&name).copied())
-            .ok_or_else(|| anyhow::anyhow!("Missing EPUB resource {href}"))?;
         inspection::check(cancel)?;
-        let mut head = Vec::new();
-        self.archive
-            .by_index(index)?
-            .take(limit as u64)
-            .read_to_end(&mut head)?;
-        Ok(head)
+        member_key(href)
+            .and_then(|name| self.package.head(&name, limit))
+            .ok_or_else(|| anyhow::anyhow!("Missing EPUB resource {href}"))
     }
     /// Read one resource by container href (absolute or root-relative, percent-encoded or not).
     fn read(&mut self, href: &str, what: &str, cancel: &CancelToken) -> anyhow::Result<Vec<u8>> {
-        let index = member_key(href)
-            .and_then(|name| self.members.get(&name).copied())
-            .ok_or_else(|| anyhow::anyhow!("Missing EPUB resource {href}"))?;
-        let file = self.archive.by_index(index)?;
-        inspection::copy_bounded(file, limits::BINARY_INPUT, what, cancel)
+        let name =
+            member_key(href).ok_or_else(|| anyhow::anyhow!("Missing EPUB resource {href}"))?;
+        anyhow::ensure!(self.package.has(&name), "Missing EPUB resource {href}");
+        self.package.read(&name, limits::BINARY_INPUT, what, cancel)
     }
 }
 /// The member an href names: without its fragment or query, unescaped and
@@ -591,20 +569,7 @@ fn member_key(href: &str) -> Option<String> {
         .ok()?;
     normalize(&decoded)
 }
-/// Collapse `.`/`..`/empty segments; a path escaping the root is not a member.
-fn normalize(path: &str) -> Option<String> {
-    let mut parts: Vec<&str> = Vec::new();
-    for part in path.split('/') {
-        match part {
-            "" | "." => {}
-            ".." => {
-                parts.pop()?;
-            }
-            _ => parts.push(part),
-        }
-    }
-    (!parts.is_empty()).then(|| parts.join("/"))
-}
+use bibli_platform::package::normalize;
 const CONTAINER: &str = "META-INF/container.xml";
 /// The container document, the package document's path, and the package
 /// document (the OPF) it names.

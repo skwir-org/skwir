@@ -32,25 +32,34 @@ fn main() -> anyhow::Result<()> {
         app.plugins.add(plugin, &app);
     }
 
-    // A folder on the command line wins; otherwise the startup preference:
-    // a chosen folder, or the folders and tabs left open.
+    // A location on the command line wins: one a plugin opens (`trash:`,
+    // `tags:/family`), else a folder. Otherwise the startup preference: a
+    // chosen folder, or the folders and tabs left open.
+    let folder =
+        |path: std::path::PathBuf| Location::from_path(std::path::absolute(&path).unwrap_or(path));
     let initial = match std::env::args_os().nth(1) {
         Some(arg) => {
-            let path = std::path::PathBuf::from(arg);
-            Some(std::path::absolute(&path).unwrap_or(path))
+            let location = Location::parse_os(&arg);
+            if !location.is_path() && app.provider(&location.scheme).is_some() {
+                Some(location)
+            } else {
+                Some(folder(arg.into()))
+            }
         }
         None => match bibli_core::tabs::last_tabs(&app.settings) {
             Some(saved) if app.restore_tabs(&saved) => None,
             _ => {
                 let home =
                     std::env::var_os("HOME").map_or_else(|| "/".into(), std::path::PathBuf::from);
-                let path = bibli_core::settings::startup_folder(&app.settings, &home);
-                Some(std::path::absolute(&path).unwrap_or(path))
+                Some(folder(bibli_core::settings::startup_folder(
+                    &app.settings,
+                    &home,
+                )))
             }
         },
     };
     // The folder is not logged: it can come from a preference, and paths
     // are private.
     tracing::info!("starting");
-    bibli_ui::run_from(app, initial.map(Location::from_path), started)
+    bibli_ui::run_from(app, initial, started)
 }

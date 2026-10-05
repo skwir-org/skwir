@@ -39,8 +39,8 @@ pub struct Omni {
     /// Where a search looks, drawn as a pill before the text; `None` while
     /// a path is edited (the folder shown is then where words search).
     pub scope: Option<PathBuf>,
-    /// The text changed since the field took the keyboard: until then it
-    /// is what the field showed, and Enter goes there as before.
+    /// The text changed since the field took the keyboard: until then no
+    /// dropdown hangs under it.
     edited: bool,
     highlighted: usize,
     /// Jump's places for `asked`.
@@ -57,8 +57,8 @@ enum Suggestion {
     Search { everywhere: bool },
     /// Files whose contents hold the text, where the pill says.
     Contains,
-    /// A place Jump knows.
-    Place(PathBuf),
+    /// A place Jump knows, and whether Jump said it is a folder.
+    Place { path: PathBuf, dir: bool },
 }
 
 /// Whether `text` is a path: absolute, from home, or relative.
@@ -79,18 +79,13 @@ fn scheme_of(text: &str) -> Option<&str> {
 }
 
 fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
+    bibli_core::os_path::home()
 }
 
-/// A folder as the pill and the rows say it.
-fn folder_name(path: &Path) -> String {
-    if home().as_deref() == Some(path) {
-        return "Home".to_owned();
-    }
-    path.file_name().map_or_else(
-        || path.display().to_string(),
-        |name| name.to_string_lossy().into_owned(),
-    )
+/// A folder as the pill and the rows say it: as everything names it
+/// (`App::location_title`), the sidebar's name for one it shows.
+fn folder_name(app: &bibli_core::App, path: &Path) -> String {
+    app.location_title(&bibli_core::Location::from_path(path))
 }
 
 impl Shell {
@@ -130,7 +125,7 @@ impl Shell {
             (None, self.ui().address_shown.clone(), true)
         };
         let placeholder = match &scope {
-            Some(root) => format!("Search in {}", folder_name(root)),
+            Some(root) => format!("Search in {}", folder_name(&self.app, root)),
             None => "A path, or words to search".to_owned(),
         };
         self.ui_mut().omni = Some(Omni {
@@ -215,7 +210,7 @@ impl Shell {
         let filters = self
             .app
             .pane_location(pane)
-            .is_some_and(|l| &*l.scheme != "query");
+            .is_some_and(|l| !self.app.is_search(&l));
         if !filters {
             return;
         }
@@ -243,20 +238,21 @@ impl Shell {
         }
     }
 
-    /// Up or Down in the dropdown (`ui.omnibox_move { delta }`).
-    pub fn omnibox_move(&mut self, delta: isize, cx: &mut Context<Self>) {
+    /// Up or Down in the dropdown (`ui.list_move`).
+    pub fn omnibox_move(&mut self, mv: crate::modal::ListMove, cx: &mut Context<Self>) {
         let count = self.suggestions(cx).len();
         if let Some(omni) = self.ui_mut().omni.as_mut()
             && count > 0
         {
-            let at = omni.highlighted.cast_signed() + delta;
-            omni.highlighted = at.rem_euclid(count.cast_signed()).cast_unsigned();
+            omni.highlighted = mv.from(omni.highlighted, count);
             cx.notify();
         }
     }
 
     /// Enter (the row highlighted) or Alt+Enter (`everywhere`: a search of
-    /// the home folder). Text not edited goes where it says, as before.
+    /// the home folder). Text not edited does what its first row would:
+    /// the location shown goes there again, a search's words search again,
+    /// a filter's words search; never words taken for a path.
     pub fn omnibox_submit(
         &mut self,
         everywhere: bool,
@@ -264,7 +260,11 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let text = self.ui().address.read(cx).text().trim().to_owned();
-        let suggestions = self.suggestions(cx);
+        let suggestions = if text == self.ui().address_shown.trim() {
+            vec![Suggestion::Go]
+        } else {
+            self.omni_rows(&text)
+        };
         let chosen = if everywhere {
             suggestions
                 .iter()
@@ -314,7 +314,7 @@ impl Shell {
                     cx,
                 );
             }
-            Some(Suggestion::Place(path)) => {
+            Some(Suggestion::Place { path, .. }) => {
                 self.reveal_path(pane, &path, window, cx);
             }
         }
@@ -343,16 +343,21 @@ impl Shell {
     }
 
     /// The dropdown's rows for the active pane's text, first the one Enter
-    /// runs. Nothing until the text is edited.
+    /// runs. Nothing shown until the text is edited.
     fn suggestions(&self, cx: &gpui::App) -> Vec<Suggestion> {
-        let Some(omni) = self.ui().omni.as_ref().filter(|o| o.edited) else {
+        if !self.ui().omni.as_ref().is_some_and(|o| o.edited) {
             return Vec::new();
-        };
+        }
         let text = self.ui().address.read(cx).text().trim().to_owned();
+        self.omni_rows(&text)
+    }
+
+    /// What `text` offers, first what Enter runs.
+    fn omni_rows(&self, text: &str) -> Vec<Suggestion> {
         if text.is_empty() {
             return Vec::new();
         }
-        if self.names_location(&text) {
+        if self.names_location(text) {
             return vec![Suggestion::Go];
         }
         let mut rows = Vec::new();
@@ -367,10 +372,15 @@ impl Shell {
                 rows.push(Suggestion::Contains);
             }
         }
+        let places = self.ui().omni.as_ref().map(|o| o.places.as_slice());
         rows.extend(
-            omni.places
+            places
+                .unwrap_or_default()
                 .iter()
-                .map(|c| Suggestion::Place(c.path.clone())),
+                .map(|c| Suggestion::Place {
+                    path: c.path.clone(),
+                    dir: c.kind == "dir",
+                }),
         );
         if rows.is_empty() {
             rows.push(Suggestion::Go);
@@ -405,7 +415,7 @@ pub fn scope_pill(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                     .flex_none()
                     .text_color(theme.text_muted),
             )
-            .child(format!("In {}", folder_name(scope)))
+            .child(format!("In {}", folder_name(&shell.app, scope)))
             .into_any_element(),
     )
 }
@@ -450,8 +460,10 @@ pub fn dropdown(
                     "search",
                     format!(
                         "“{text}” in {} and its folders",
-                        root.as_deref()
-                            .map_or_else(|| "this folder".to_owned(), folder_name)
+                        root.as_deref().map_or_else(
+                            || "this folder".to_owned(),
+                            |root| folder_name(&shell.app, root)
+                        )
                     ),
                     None,
                     None,
@@ -465,8 +477,8 @@ pub fn dropdown(
                 Suggestion::Contains => {
                     ("contents", format!("Files containing “{text}”"), None, None)
                 }
-                Suggestion::Place(path) => (
-                    if path.is_dir() { "folder" } else { "open" },
+                Suggestion::Place { path, dir } => (
+                    if *dir { "folder" } else { "open" },
                     path.file_name().map_or_else(
                         || path.display().to_string(),
                         |n| n.to_string_lossy().into_owned(),
@@ -475,7 +487,7 @@ pub fn dropdown(
                     None,
                 ),
             };
-        if matches!(suggestion, Suggestion::Place(_)) && !places_titled {
+        if matches!(suggestion, Suggestion::Place { .. }) && !places_titled {
             places_titled = true;
             panel = panel.child(
                 div()

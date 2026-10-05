@@ -1,7 +1,8 @@
 //! A scrollbar for anything that scrolls.
 //!
-//! It overlays the right edge of a scroll area rather than taking a column of
-//! its own, so adding one never reflows the view under it. Like every element
+//! It overlays the right edge of a scroll area (the bottom edge, for one
+//! that scrolls sideways) rather than taking a column of its own, so
+//! adding one never reflows the view under it. Like every element
 //! here it reads sizes where they are real: the thumb is placed in `prepaint`
 //! from the scroll handle's own numbers, never from a size measured while
 //! rendering.
@@ -13,9 +14,9 @@
 //! speaks pixels to the rest of the code.
 
 use gpui::{
-    App, Bounds, Element, ElementId, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId,
-    IntoElement, LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, ScrollHandle, Style, Window, point, px, relative, size,
+    Along, App, Axis, Bounds, Element, ElementId, GlobalElementId, Hitbox, HitboxBehavior,
+    InspectorElementId, IntoElement, LayoutId, ListState, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, ScrollHandle, Style, Window, px, relative,
 };
 use std::cell::Cell;
 use std::rc::Rc;
@@ -30,7 +31,7 @@ const BAR_HOVER: f32 = 9.;
 /// However long the content, the thumb stays grabbable.
 const MIN_THUMB: f32 = 24.;
 
-/// The scroll position of a view, in pixels from the top.
+/// The scroll position of a view along the bar, in pixels from its start.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Metrics {
     offset: f32,
@@ -49,12 +50,12 @@ pub enum Scrolls {
 }
 
 impl Scrolls {
-    fn metrics(&self) -> Metrics {
+    fn metrics(&self, axis: Axis) -> Metrics {
         match self {
             Scrolls::Offset(handle) => Metrics {
-                offset: -f32::from(handle.offset().y),
-                max: f32::from(handle.max_offset().height),
-                viewport: f32::from(handle.bounds().size.height),
+                offset: -f32::from(handle.offset().along(axis)),
+                max: f32::from(handle.max_offset().along(axis)),
+                viewport: f32::from(handle.bounds().size.along(axis)),
             },
             Scrolls::Items(list) => Metrics {
                 offset: -f32::from(list.scroll_px_offset_for_scrollbar().y),
@@ -64,13 +65,12 @@ impl Scrolls {
         }
     }
 
-    fn scroll_to(&self, y: f32) {
+    fn scroll_to(&self, axis: Axis, to: f32) {
         match self {
             Scrolls::Offset(handle) => {
-                let offset = handle.offset();
-                handle.set_offset(point(offset.x, px(-y)));
+                handle.set_offset(handle.offset().apply_along(axis, |_| px(-to)));
             }
-            Scrolls::Items(list) => list.set_offset_from_scrollbar(point(px(0.), px(-y))),
+            Scrolls::Items(list) => list.set_offset_from_scrollbar(gpui::point(px(0.), px(-to))),
         }
     }
 
@@ -94,6 +94,7 @@ struct Grab(Rc<Cell<Option<f32>>>);
 pub struct Scrollbar {
     id: ElementId,
     scrolls: Scrolls,
+    axis: Axis,
 }
 
 /// A vertical scrollbar over `scrolls`. The id must be stable across frames,
@@ -102,6 +103,17 @@ pub fn vertical(id: impl Into<ElementId>, scrolls: Scrolls) -> Scrollbar {
     Scrollbar {
         id: id.into(),
         scrolls,
+        axis: Axis::Vertical,
+    }
+}
+
+/// A horizontal scrollbar over the bottom edge of what `handle` scrolls
+/// sideways (`overflow_x_scroll`).
+pub fn horizontal(id: impl Into<ElementId>, handle: ScrollHandle) -> Scrollbar {
+    Scrollbar {
+        id: id.into(),
+        scrolls: Scrolls::Offset(handle),
+        axis: Axis::Horizontal,
     }
 }
 
@@ -112,19 +124,21 @@ impl IntoElement for Scrollbar {
     }
 }
 
-/// The thumb inside `track`, or `None` when everything fits.
-fn thumb(track: Bounds<Pixels>, metrics: Metrics) -> Option<Bounds<Pixels>> {
-    let height = f32::from(track.size.height);
-    if metrics.max <= 1. || metrics.viewport <= 0. || height <= MIN_THUMB {
+/// The thumb inside `track`, along `axis`, or `None` when everything fits.
+fn thumb(track: Bounds<Pixels>, metrics: Metrics, axis: Axis) -> Option<Bounds<Pixels>> {
+    let length = f32::from(track.size.along(axis));
+    if metrics.max <= 1. || metrics.viewport <= 0. || length <= MIN_THUMB {
         return None;
     }
     let content = metrics.viewport + metrics.max;
-    let thumb = (height * metrics.viewport / content).clamp(MIN_THUMB, height);
-    let travel = height - thumb;
+    let thumb = (length * metrics.viewport / content).clamp(MIN_THUMB, length);
+    let travel = length - thumb;
     let progress = (metrics.offset / metrics.max).clamp(0., 1.);
     Some(Bounds::new(
-        point(track.origin.x, track.origin.y + px(travel * progress)),
-        size(track.size.width, px(thumb)),
+        track
+            .origin
+            .apply_along(axis, |start| start + px(travel * progress)),
+        track.size.apply_along(axis, |_| px(thumb)),
     ))
 }
 
@@ -151,10 +165,20 @@ impl Element for Scrollbar {
             position: gpui::Position::Absolute,
             ..Style::default()
         };
-        style.inset.top = px(0.).into();
-        style.inset.right = px(0.).into();
-        style.size.width = px(GUTTER).into();
-        style.size.height = relative(1.).into();
+        match self.axis {
+            Axis::Vertical => {
+                style.inset.top = px(0.).into();
+                style.inset.right = px(0.).into();
+                style.size.width = px(GUTTER).into();
+                style.size.height = relative(1.).into();
+            }
+            Axis::Horizontal => {
+                style.inset.left = px(0.).into();
+                style.inset.bottom = px(0.).into();
+                style.size.width = relative(1.).into();
+                style.size.height = px(GUTTER).into();
+            }
+        }
         (window.request_layout(style, [], cx), ())
     }
 
@@ -167,8 +191,8 @@ impl Element for Scrollbar {
         window: &mut Window,
         _: &mut App,
     ) -> Self::PrepaintState {
-        let metrics = self.scrolls.metrics();
-        let thumb = thumb(bounds, metrics);
+        let metrics = self.scrolls.metrics(self.axis);
+        let thumb = thumb(bounds, metrics, self.axis);
         // The gutter takes the pointer only while there is a bar in it: a
         // press here must scroll, not select the row underneath. With
         // nothing to scroll it is not there at all.
@@ -195,25 +219,27 @@ impl Element for Scrollbar {
         };
         let metrics = *metrics;
         let scrolls = self.scrolls.clone();
+        let axis = self.axis;
+        // Across the bar: the thickness drawn, against the far side of
+        // the gutter, so the bar hugs the area's edge.
+        let across = axis.invert();
+        let hug = move |area: Bounds<Pixels>, thickness: Pixels| {
+            Bounds::new(
+                area.origin.apply_along(across, |start| {
+                    start + bounds.size.along(across) - thickness
+                }),
+                area.size.apply_along(across, |_| thickness),
+            )
+        };
         window.with_element_state::<Grab, _>(global_id, |grab, window| {
             let grab: Grab = grab.unwrap_or_default();
             let held = grab.0.get().is_some();
             let hovered = hitbox.is_hovered(window);
             let theme = cx.global::<Theme>();
             let width = px(if held || hovered { BAR_HOVER } else { BAR });
-            // Right-aligned inside the gutter, so the bar hugs the edge.
-            let bar = Bounds::new(
-                point(bounds.origin.x + bounds.size.width - width, thumb.origin.y),
-                size(width, thumb.size.height),
-            );
+            let bar = hug(thumb, width);
             if held || hovered {
-                window.paint_quad(gpui::fill(
-                    Bounds::new(
-                        point(bounds.origin.x + bounds.size.width - width, bounds.origin.y),
-                        size(width, bounds.size.height),
-                    ),
-                    theme.hover,
-                ));
+                window.paint_quad(gpui::fill(hug(bounds, width), theme.hover));
             }
             window.paint_quad(gpui::quad(
                 bar,
@@ -226,13 +252,13 @@ impl Element for Scrollbar {
                 gpui::BorderStyle::default(),
             ));
 
-            let travel = f32::from(bounds.size.height - thumb.size.height);
-            let top = bounds.origin.y;
-            let to_offset = move |y: Pixels, grabbed: f32| {
+            let travel = f32::from(bounds.size.along(axis) - thumb.size.along(axis));
+            let start = bounds.origin.along(axis);
+            let to_offset = move |at: gpui::Point<Pixels>, grabbed: f32| {
                 if travel <= 0. {
                     return 0.;
                 }
-                let position = f32::from(y - top) - grabbed;
+                let position = f32::from(at.along(axis) - start) - grabbed;
                 (position / travel).clamp(0., 1.) * metrics.max
             };
 
@@ -246,10 +272,10 @@ impl Element for Scrollbar {
                 // On the thumb: drag from where it was grabbed. Beside it:
                 // jump there, then keep dragging from its middle.
                 let grabbed = if thumb.contains(&event.position) {
-                    f32::from(event.position.y - thumb.origin.y)
+                    f32::from(event.position.along(axis) - thumb.origin.along(axis))
                 } else {
-                    let middle = f32::from(thumb.size.height) / 2.;
-                    handle.scroll_to(to_offset(event.position.y, middle));
+                    let middle = f32::from(thumb.size.along(axis)) / 2.;
+                    handle.scroll_to(axis, to_offset(event.position, middle));
                     middle
                 };
                 down.0.set(Some(grabbed));
@@ -272,7 +298,7 @@ impl Element for Scrollbar {
                     handle.dragging(false);
                     return;
                 }
-                handle.scroll_to(to_offset(event.position.y, grabbed));
+                handle.scroll_to(axis, to_offset(event.position, grabbed));
                 window.refresh();
             });
 
@@ -292,7 +318,7 @@ impl Element for Scrollbar {
 #[cfg(test)]
 mod tests {
     use super::{MIN_THUMB, Metrics, thumb};
-    use gpui::{Bounds, point, px, size};
+    use gpui::{Axis, Bounds, point, px, size};
 
     fn track() -> Bounds<gpui::Pixels> {
         Bounds::new(point(px(0.), px(0.)), size(px(10.), px(200.)))
@@ -308,6 +334,7 @@ mod tests {
                 max: 200.,
                 viewport: 200.,
             },
+            Axis::Vertical,
         )
         .expect("a thumb");
         assert_eq!(half.size.height, px(100.));
@@ -320,6 +347,7 @@ mod tests {
                 max: 200.,
                 viewport: 200.,
             },
+            Axis::Vertical,
         )
         .expect("a thumb");
         assert_eq!(end.origin.y + end.size.height, px(200.));
@@ -334,7 +362,8 @@ mod tests {
                     offset: 0.,
                     max: 0.,
                     viewport: 500.,
-                }
+                },
+                Axis::Vertical,
             )
             .is_none()
         );
@@ -349,10 +378,29 @@ mod tests {
                 max: 1_000_000.,
                 viewport: 200.,
             },
+            Axis::Vertical,
         )
         .expect("a thumb");
         assert_eq!(long.size.height, px(MIN_THUMB));
         // Half way down the content, half way down the travel.
         assert_eq!(long.origin.y, px((200. - MIN_THUMB) / 2.));
+    }
+
+    #[test]
+    fn a_bar_across_runs_along_the_bottom() {
+        let track = Bounds::new(point(px(0.), px(300.)), size(px(400.), px(10.)));
+        let thumb = thumb(
+            track,
+            Metrics {
+                offset: 400.,
+                max: 400.,
+                viewport: 400.,
+            },
+            Axis::Horizontal,
+        )
+        .expect("a thumb");
+        // Half the content seen, scrolled to its end: the right half.
+        assert_eq!(thumb.origin, point(px(200.), px(300.)));
+        assert_eq!(thumb.size, size(px(200.), px(10.)));
     }
 }

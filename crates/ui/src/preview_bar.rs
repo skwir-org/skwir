@@ -532,7 +532,7 @@ fn split(command: &'static str) -> (&'static str, serde_json::Value) {
 /// The find field under its button, the same in the reader and in a
 /// structured preview: the field, a line saying where the search stands,
 /// and the buttons that step through the matches and close it. `context`
-/// names its keys (`DocumentFind`, `InspectorFind`).
+/// names its keys (`keymap::PREVIEW_FIND`).
 pub fn find_popup(
     field: &Field,
     context: &'static str,

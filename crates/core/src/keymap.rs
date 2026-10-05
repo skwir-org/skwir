@@ -11,6 +11,13 @@ use crate::settings::{RecordField, SettingSpec, Settings};
 
 /// The settings namespace, shown as the Keyboard page.
 pub const OWNER: &str = "keyboard";
+
+/// A binding to this does what other keys (`{"keys": "delete"}`) do by
+/// default, wherever they do it: a key scheme's `d` is Delete, which trashes,
+/// takes out of a tag or the shelf, or deletes in the trash, as the place
+/// says. The keymap copies those keys' bindings, conditions and all, so a
+/// scheme never copies a condition that could drift.
+pub const LIKE: &str = "keys.like";
 pub const BINDINGS_KEY: &str = "keyboard.bindings";
 
 /// One of the user's bindings. Without a command it unbinds the keys where
@@ -22,7 +29,10 @@ pub struct UserBinding {
     pub when: Option<String>,
 }
 
-pub fn declare(settings: &Settings) {
+/// Declare the setting. `app` checks each binding's command when the
+/// user saves it: a name no command has, or arguments it does not take,
+/// are refused then, never at the press.
+pub fn declare(settings: &Settings, app: std::sync::Weak<crate::App>) {
     settings.declare(
         SettingSpec::records(
             BINDINGS_KEY,
@@ -57,7 +67,7 @@ pub fn declare(settings: &Settings) {
                 ),
             ],
         )
-        .validate_with(check),
+        .validate_with(move |value| check(value, app.upgrade().as_deref())),
     );
 }
 
@@ -100,11 +110,28 @@ fn binding(record: &toml::Value) -> anyhow::Result<UserBinding> {
     })
 }
 
-fn check(value: &toml::Value) -> anyhow::Result<()> {
+fn check(value: &toml::Value, app: Option<&crate::App>) -> anyhow::Result<()> {
     let Some(records) = value.as_array() else {
         return Ok(());
     };
-    records.iter().try_for_each(|r| binding(r).map(drop))
+    records.iter().try_for_each(|r| {
+        let binding = binding(r)?;
+        let Some(command) = binding.command.filter(|c| &*c.name != LIKE) else {
+            return Ok(());
+        };
+        let Some(app) = app else {
+            return Ok(());
+        };
+        app.commands.check(&command).map_err(|error| match error {
+            crate::command::CommandError::Unknown(name) => anyhow::anyhow!(
+                "{} runs {name}, which no command is called (is its plugin on?)",
+                binding.keys
+            ),
+            error @ crate::command::CommandError::InvalidArgs { .. } => {
+                anyhow::anyhow!("{}: {error}", binding.keys)
+            }
+        })
+    })
 }
 
 const MODIFIERS: [&str; 9] = [
@@ -177,7 +204,7 @@ mod tests {
     #[test]
     fn records_become_bindings_and_an_empty_command_frees_the_keys() {
         let settings = Settings::in_memory();
-        declare(&settings);
+        declare(&settings, std::sync::Weak::new());
         let spec = settings.spec(BINDINGS_KEY).unwrap();
         let text = r#"[
             {"id": "1", "keys": "g  h", "command": "navigate", "args": "{\"location\": \"~\"}", "when": "pane"},
@@ -204,7 +231,7 @@ mod tests {
     #[test]
     fn a_record_that_does_not_hold_together_is_refused_with_its_reason() {
         let settings = Settings::in_memory();
-        declare(&settings);
+        declare(&settings, std::sync::Weak::new());
         let spec = settings.spec(BINDINGS_KEY).unwrap();
         let refused = |text: &str| spec.parse(text).unwrap_err().to_string();
         assert!(refused(r#"[{"id": "1", "keys": "hyper-x", "command": "x"}]"#).contains("hyper"));

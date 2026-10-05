@@ -18,24 +18,51 @@ use anyhow::Context;
 use bibli_core::CancelToken;
 use bibli_core::os_path::find_program;
 
-/// Locate one of our optional worker executables: an explicit override in
-/// `variable`, then next to the running binary, then `PATH`.
-pub fn find_worker(variable: &str, executable: &str) -> Option<PathBuf> {
-    std::env::var_os(variable)
-        .map(PathBuf::from)
-        .or_else(|| {
-            let sibling = std::env::current_exe().ok()?.parent()?.join(executable);
-            sibling.is_file().then_some(sibling)
-        })
-        .or_else(|| find_program(executable))
+/// One of our optional worker executables: its name, and the variable
+/// that says where it is instead.
+#[derive(Clone, Copy)]
+pub struct Worker {
+    pub variable: &'static str,
+    pub executable: &'static str,
 }
 
-/// The installed `program` a preview needs, as its real path: a sandbox
+impl Worker {
+    /// Where it is, if it can run there: the variable's choice, else
+    /// beside the running binary, else on `PATH`. A choice naming nothing
+    /// that runs is no worker: a probe says it is missing rather than
+    /// installed, and an engine chosen automatically goes on to the next.
+    pub fn find(&self) -> Option<PathBuf> {
+        if let Some(chosen) = std::env::var_os(self.variable) {
+            return find_program(chosen);
+        }
+        std::env::current_exe()
+            .ok()
+            .and_then(|bin| find_program(bin.parent()?.join(self.executable)))
+            .or_else(|| find_program(self.executable))
+    }
+
+    /// [`Worker::find`], or what to do without it, in one wording for
+    /// every worker: "Install bibli-archive-worker to open archives".
+    pub fn require(&self, purpose: &str) -> anyhow::Result<PathBuf> {
+        self.find()
+            .with_context(|| format!("Install {} to {purpose}", self.executable))
+    }
+
+    /// What a plugin needing it lists (`Plugin::requirements`), probed as
+    /// it is found.
+    pub fn requirement(self, purpose: &str) -> bibli_core::plugin::Requirement {
+        bibli_core::plugin::Requirement::new(self.executable, purpose, move || {
+            self.find().is_some()
+        })
+    }
+}
+
+/// The installed `program` something needs, as its real path: a sandbox
 /// binds the store it lives in, not the profile's symlink farm.
 pub fn required(program: &str) -> anyhow::Result<PathBuf> {
     find_program(program)
         .and_then(|path| std::fs::canonicalize(path).ok())
-        .with_context(|| format!("Install {program} to preview this file"))
+        .with_context(|| format!("{program} is not installed"))
 }
 
 /// A child that is killed, with its process group, and reaped when dropped.
@@ -130,7 +157,25 @@ pub fn run_to_exit(
     cancel: &CancelToken,
     timeout: Duration,
 ) -> anyhow::Result<Finished> {
-    const OUTPUT_LIMIT: u64 = crate::inspection::limits::HELPER_OUTPUT;
+    run_capped(
+        command,
+        input,
+        cancel,
+        timeout,
+        crate::inspection::limits::HELPER_OUTPUT,
+    )
+}
+
+/// [`run_to_exit`] for a program whose output is bounded otherwise than a
+/// helper's (a database's answer): more than `output` bytes on either
+/// stream is an error, and stops it.
+pub fn run_capped(
+    command: &mut Command,
+    input: Option<&[u8]>,
+    cancel: &CancelToken,
+    timeout: Duration,
+    output: u64,
+) -> anyhow::Result<Finished> {
     let program = Path::new(command.get_program())
         .file_name()
         .unwrap_or(command.get_program())
@@ -169,7 +214,7 @@ pub fn run_to_exit(
         anyhow::ensure!(!cancel.is_cancelled(), "{program} was cancelled");
         anyhow::ensure!(start.elapsed() < timeout, "{program} timed out");
         anyhow::ensure!(
-            stdout.metadata()?.len() <= OUTPUT_LIMIT && stderr.metadata()?.len() <= OUTPUT_LIMIT,
+            stdout.metadata()?.len() <= output && stderr.metadata()?.len() <= output,
             "{program}: excessive output"
         );
         if child.exited()? {
@@ -183,7 +228,7 @@ pub fn run_to_exit(
     stderr.take(DIAGNOSTIC).read_to_end(&mut diagnostic)?;
     stdout.rewind()?;
     let mut bytes = Vec::new();
-    stdout.take(OUTPUT_LIMIT).read_to_end(&mut bytes)?;
+    stdout.take(output).read_to_end(&mut bytes)?;
     Ok(Finished {
         status,
         stdout: bytes,

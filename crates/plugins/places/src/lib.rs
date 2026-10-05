@@ -38,16 +38,15 @@ pub struct PlacesPlugin {
 /// The plugin's watcher, shared with the bookmark commands: the first
 /// bookmark can create the folder that is then to be watched.
 #[derive(Clone, Default)]
-struct Watcher(Arc<Mutex<Option<notify::RecommendedWatcher>>>);
+struct Watcher(Arc<Mutex<Option<bibli_core::fs::Settled>>>);
 
 impl Watcher {
     /// Watch the bookmarks' folders that exist; watching one again is
     /// harmless.
     fn watch_bookmarks(&self) {
-        use notify::Watcher as _;
         if let Some(watcher) = self.0.lock().as_mut() {
             for folder in bibli_platform::places::bookmarks_folders() {
-                let _ = watcher.watch(&folder, notify::RecursiveMode::NonRecursive);
+                watcher.watch(&folder);
             }
         }
     }
@@ -201,34 +200,19 @@ fn volume_place(volume: &bibli_platform::places::Volume) -> Place {
     } else {
         "Not mounted. Click to mount and open it."
     };
+    let icon = if volume.locked {
+        "drive-harddisk-encrypted"
+    } else if volume.hotplug {
+        "drive-removable-media"
+    } else {
+        "drive-harddisk"
+    };
     Place {
-        title,
-        location: device_location(&volume.device),
-        icon: Some(
-            if volume.locked {
-                "drive-harddisk-encrypted"
-            } else if volume.hotplug {
-                "drive-removable-media"
-            } else {
-                "drive-harddisk"
-            }
-            .into(),
-        ),
-        group: "devices".into(),
-        space: None,
-        eject: None,
         activate: Some(activate),
         unavailable: Some(unavailable.into()),
-        busy: None,
-        menu: Vec::new(),
-        forget: None,
-        reorder: None,
-        color: None,
-        drop: None,
-        suggested: false,
         key: volume_key(&identity, Path::new("/")),
         hidden: identity.ignored.unwrap_or(volume.system),
-        rename: None,
+        ..Place::new("devices", title, icon, device_location(&volume.device))
     }
 }
 
@@ -248,15 +232,7 @@ fn icon_for_user_dir(kind: &str) -> &'static str {
 
 /// An item of a place's own menu.
 fn menu_item(title: &str, command: Invocation, order: i32, icon: &str) -> MenuItem {
-    MenuItem {
-        menu: "place".into(),
-        title: title.into(),
-        command,
-        when: None,
-        order,
-        icon: Some(icon.into()),
-        submenu: None,
-    }
+    MenuItem::new("place", title, icon, order, command)
 }
 
 /// The menu of a folder that is not a bookmark: it can become one.
@@ -287,41 +263,11 @@ fn bookmark_rename(bookmark: &bibli_platform::places::Bookmark) -> Invocation {
     )
 }
 
-/// The menu of a bookmark: rename it, remove it.
-fn bookmark_menu(bookmark: &bibli_platform::places::Bookmark) -> Vec<MenuItem> {
-    let path = PathArg::from(bookmark.path.as_path());
-    vec![
-        menu_item("Rename…", bookmark_rename(bookmark), 100, "rename"),
-        menu_item(
-            "Remove from Bookmarks",
-            Invocation::with_args("places.unbookmark", &serde_json::json!({ "path": path })),
-            300,
-            "minus",
-        ),
-    ]
-}
-
 /// Scan the environment and return every place, in sidebar order.
 pub fn scan() -> Vec<Place> {
     let folder = |title: String, path: PathBuf, icon: &str, group: &str| Place {
-        title,
         menu: folder_menu(&path),
-        location: Location::from_path(path),
-        icon: Some(icon.into()),
-        group: group.into(),
-        space: None,
-        eject: None,
-        activate: None,
-        unavailable: None,
-        busy: None,
-        forget: None,
-        reorder: None,
-        color: None,
-        drop: None,
-        suggested: false,
-        key: None,
-        hidden: false,
-        rename: None,
+        ..Place::new(group, title, icon, Location::from_path(path))
     };
     let mut out = Vec::new();
     if let Some(home) = bibli_platform::places::home() {
@@ -332,8 +278,10 @@ pub fn scan() -> Vec<Place> {
     }
     for b in bibli_platform::places::bookmarks() {
         let path = serde_json::json!(PathArg::from(b.path.as_path()));
+        // Rename… and the item that removes it are the sidebar's, from
+        // `rename` and `forget`.
         out.push(Place {
-            menu: bookmark_menu(&b),
+            menu: Vec::new(),
             rename: Some(bookmark_rename(&b)),
             forget: Some(Invocation::with_args(
                 "places.unbookmark",
@@ -362,7 +310,7 @@ pub fn scan() -> Vec<Place> {
             key: volume_key(&identity, &m.root),
             hidden: identity.ignored == Some(true),
             // Only what the user mounted: system volumes are not ours to detach.
-            eject: m.removable.then(|| {
+            eject: m.udisks.then(|| {
                 Invocation::with_args(
                     "places.unmount",
                     &serde_json::json!({ "path": PathArg::from(m.path.as_path()) }),
@@ -649,53 +597,34 @@ impl PlacesPlugin {
     /// Republish when a volume appears, disappears, or is mounted by anyone:
     /// udev keeps `/dev/disk/by-uuid` and udisks keeps `/run/media/<user>`;
     /// and when the bookmarks change, from here or another file manager.
-    /// Bursts (a disk brings several partitions) collapse into one refresh:
-    /// the plugin's own thread waits for the events to settle, so no shared
-    /// worker sleeps. It ends when the watcher (and its sender) is dropped.
+    /// Bursts collapse into one refresh (`fs::Settled`).
     fn watch(&self, app: &App) {
-        use notify::Watcher as _;
-        let (tx, rx) = crossbeam_channel::unbounded::<()>();
         // The bookmarks' folder holds other settings: only the file counts
         // (writers replace it, so its name is among the event's paths).
         let settings = bibli_platform::places::bookmarks_folders();
-        let relevant = move |path: &PathBuf| {
+        let relevant = move |path: &std::path::Path| {
             path.file_name().is_some_and(|name| name == "bookmarks")
                 || !settings.iter().any(|folder| path.parent() == Some(folder))
         };
-        // Only a change counts: notify also reports a file opened, and every
-        // rescan reads the bookmarks, so each would start the next for as
-        // long as the file exists.
-        let handler = move |event: notify::Result<notify::Event>| {
-            if event.is_ok_and(|event| {
-                !matches!(event.kind, notify::EventKind::Access(_))
-                    && event.paths.iter().any(&relevant)
-            }) {
-                let _ = tx.send(());
-            }
-        };
-        let Ok(mut watcher) = notify::recommended_watcher(handler) else {
-            return;
-        };
         let (places, weak) = (self.places.clone(), app.weak());
-        let settle = std::thread::Builder::new()
-            .name("bibli-places".into())
-            .spawn(move || {
-                while rx.recv().is_ok() {
-                    while rx.recv_timeout(SETTLE).is_ok() {}
-                    let Some(app) = weak.upgrade() else { return };
-                    places.populate(&app);
-                }
-            });
-        if settle.is_err() {
+        let Some(mut watcher) =
+            bibli_core::fs::Settled::start("bibli-places", SETTLE, relevant, move || {
+                let Some(app) = weak.upgrade() else {
+                    return false;
+                };
+                places.populate(&app);
+                true
+            })
+        else {
             return;
-        }
+        };
         let mut folders = vec![PathBuf::from("/dev/disk/by-uuid")];
         if let Some(user) = std::env::var_os("USER") {
             folders.push(std::path::Path::new("/run/media").join(user));
         }
         for folder in folders {
             // A folder that does not exist yet is simply not watched.
-            let _ = watcher.watch(&folder, notify::RecursiveMode::NonRecursive);
+            watcher.watch(&folder);
         }
         *self.watcher.0.lock() = Some(watcher);
         self.watcher.watch_bookmarks();
@@ -876,12 +805,7 @@ impl Places {
                     watcher.watch_bookmarks();
                     this.populate(app);
                     if let Some(text) = describe(&edit, shown.as_deref(), true) {
-                        app.notify_with_action(
-                            NotifyLevel::Info,
-                            text,
-                            if undo { "Redo" } else { "Undo" },
-                            invocation(&inverse, !undo),
-                        );
+                        app.notify_undoable(text, undo, invocation(&inverse, !undo));
                     }
                 }
                 Ok(None) => {
@@ -1024,7 +948,7 @@ impl Plugin for PlacesPlugin {
                     .ok_or_else(|| anyhow::anyhow!("which volume? pass its mount point"))?;
                 let mount = bibli_platform::places::mounts()
                     .into_iter()
-                    .find(|mount| mount.path == *path && mount.removable)
+                    .find(|mount| mount.path == *path && mount.udisks)
                     .ok_or_else(|| anyhow::anyhow!("not a removable volume"))?;
                 let this = places.clone();
                 let location = Location::from_path(&mount.path);
@@ -1136,15 +1060,7 @@ impl Plugin for PlacesPlugin {
         ] {
             app.registry.menus.add(
                 ID,
-                MenuItem {
-                    menu: "context".into(),
-                    title: title.into(),
-                    command,
-                    when: Some(when.into()),
-                    order: 250,
-                    icon: Some("bookmark".into()),
-                    submenu: None,
-                },
+                MenuItem::new("context", title, "bookmark", 250, command).when(when),
             );
         }
         // Ctrl+D and the pane's button (the core `keep` command) bookmark
@@ -1156,6 +1072,7 @@ impl Plugin for PlacesPlugin {
                 save: shown(),
                 save_title: "Bookmark this folder".into(),
                 forget_title: "Remove from bookmarks".into(),
+                keeps: None,
             },
         );
     }
@@ -1218,26 +1135,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
         let places = Places::default();
-        let place = |title: &str| Place {
-            title: title.into(),
-            location: Location::from_path("/"),
-            icon: None,
-            group: "places".into(),
-            space: None,
-            eject: None,
-            activate: None,
-            unavailable: None,
-            busy: None,
-            menu: Vec::new(),
-            forget: None,
-            reorder: None,
-            color: None,
-            drop: None,
-            suggested: false,
-            key: None,
-            hidden: false,
-            rename: None,
-        };
+        let place = |title: &str| Place::new("places", title, "", Location::from_path("/"));
         places.0.lock().lifetime = Some(CancelToken::new());
         places.0.lock().generation = 2;
         places.publish(&app, 2, vec![place("new")], Some(Vec::new()));
@@ -1258,26 +1156,8 @@ mod tests {
 
     #[test]
     fn a_rescan_keeps_what_was_measured_until_it_is_measured_again() {
-        let place = |group: &str, path: &str| Place {
-            title: path.into(),
-            location: Location::from_path(path),
-            icon: None,
-            group: group.into(),
-            space: None,
-            eject: None,
-            activate: None,
-            unavailable: None,
-            busy: None,
-            menu: Vec::new(),
-            forget: None,
-            reorder: None,
-            color: None,
-            drop: None,
-            suggested: false,
-            key: None,
-            hidden: false,
-            rename: None,
-        };
+        let place =
+            |group: &str, path: &str| Place::new(group, path, "", Location::from_path(path));
         let mut disk = place("devices", "/run/media/example/disk");
         disk.space = Some((1, 2));
         let mut gone = place("bookmarks", "/example/gone");
@@ -1533,8 +1413,14 @@ mod tests {
             serde_json::json!({ "path": path(&b), "title": "Bee" }),
         );
         assert_eq!(titles(&app), ["it's 100% a folder", "Bee"]);
-        let menu = &bookmarks(&app)[0].menu;
-        assert!(menu.iter().any(|m| m.title == "Remove from Bookmarks"));
+        // The sidebar removes and renames it through `forget` and
+        // `rename`, which its own menu does not repeat.
+        let first = &bookmarks(&app)[0];
+        assert_eq!(
+            first.forget.as_ref().map(|f| f.name.to_string()).as_deref(),
+            Some("places.unbookmark")
+        );
+        assert!(first.rename.is_some() && first.menu.is_empty());
 
         // Dragged before the first, as the sidebar does: the dragged
         // place's move command, with the other's `before`.

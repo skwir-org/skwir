@@ -32,17 +32,7 @@ impl Shell {
             Some("view_options") => VIEW_OPTIONS,
             _ => MORE,
         };
-        let close = args.get("close").and_then(serde_json::Value::as_bool) == Some(true);
-        let open = self.toolbar_menu.take().map(|menu| {
-            let kind = menu.kind;
-            menu.restore(window);
-            kind
-        });
-        if close {
-            if let Some(open) = open {
-                self.note_dismissed(args, open.to_owned());
-            }
-        } else if open != Some(kind) && !self.just_dismissed(kind) {
+        if self.toggle_popup(kind, args, window) {
             self.toolbar_menu = Some(toolbar::Popup::new(kind, window, cx));
         }
         cx.notify();
@@ -169,37 +159,35 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
         })
         .collect();
     let spec = shell.sort_spec();
-    // Ratings are the tags plugin's: no sort by them while it is off.
-    let rated = shell.app.commands.get("tags.rate").is_some();
-    let order: Vec<Button> = [
-        ("name", "Name", SortKey::Name),
-        ("size", "Size", SortKey::Size),
-        ("modified", "Date modified", SortKey::Modified),
-        ("rating", "Rating", SortKey::Rating),
-    ]
-    .into_iter()
-    .filter(|(_, _, sort_key)| rated || *sort_key != SortKey::Rating)
-    .map(|(key, label, sort_key)| {
-        let current = spec.key == sort_key;
-        // The current key again keeps its direction: the next group says it.
-        let args = if current {
-            serde_json::json!({"key": key, "ascending": spec.ascending})
-        } else {
-            serde_json::json!({"key": key})
-        };
-        menu_item(
-            Button::new(
-                format!("sort-{key}"),
-                if current { "check" } else { "" },
-                format!("Sort by {}", label.to_lowercase()),
-                "ui.sort",
-            )
-            .args(args)
-            .active(current),
-            label,
+    // By name, then by what each column that sorts shows, in its words.
+    let order: Vec<Button> = std::iter::once(("Name", SortKey::Name))
+        .chain(
+            crate::views::list::COLUMNS
+                .iter()
+                .filter(|column| shell.column_applies(column.detail))
+                .filter_map(|column| Some((column.label, column.sort?))),
         )
-    })
-    .collect();
+        .map(|(label, sort_key)| {
+            let current = spec.key == sort_key;
+            // The current key again keeps its direction: the next group says it.
+            let args = if current {
+                serde_json::json!({"key": sort_key, "ascending": spec.ascending})
+            } else {
+                serde_json::json!({"key": sort_key})
+            };
+            menu_item(
+                Button::new(
+                    format!("sort-{sort_key:?}"),
+                    if current { "check" } else { "" },
+                    format!("Sort by {}", label.to_lowercase()),
+                    "ui.sort",
+                )
+                .args(args)
+                .active(current),
+                label,
+            )
+        })
+        .collect();
     // Each key names its directions in its own words.
     let (up, down) = match spec.key {
         SortKey::Name => ("A to Z", "Z to A"),
@@ -270,7 +258,7 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
                     "navigate",
                 )
                 .args(serde_json::json!({
-                    "location": crate::trail::location_arg(&toggle.location),
+                    "location": serde_json::json!(toggle.location.arg()),
                     "pane": pane,
                 }))
                 .active(toggle.on),
@@ -317,17 +305,20 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
             "Collapse all",
         ));
     }
+    // Only where the view sizes something (`PaneView::zooms`).
     let mut size = Vec::new();
-    for (dir, icon, label, tip) in [
-        ("in", "plus", "Larger", "Larger (or Ctrl and the wheel)"),
-        ("out", "minus", "Smaller", "Smaller (or Ctrl and the wheel)"),
-        ("reset", "fit", "Default size", "Default size"),
-    ] {
-        size.push(menu_item(
-            Button::new(format!("zoom-{dir}"), icon, tip, "ui.zoom")
-                .args(serde_json::json!({"dir": dir})),
-            label,
-        ));
+    if shell.view_zooms() != crate::view::Zooms::Nothing {
+        for (dir, icon, label, tip) in [
+            ("in", "plus", "Larger", "Larger (or Ctrl and the wheel)"),
+            ("out", "minus", "Smaller", "Smaller (or Ctrl and the wheel)"),
+            ("reset", "fit", "Default size", "Default size"),
+        ] {
+            size.push(menu_item(
+                Button::new(format!("zoom-{dir}"), icon, tip, "ui.zoom")
+                    .args(serde_json::json!({"dir": dir})),
+                label,
+            ));
+        }
     }
     vec![
         ("Views", views),
@@ -486,7 +477,7 @@ fn more_panel(
         .map(|(button, label)| menu_item(button, label))
         .collect(),
     ));
-    for (title, items) in groups {
+    for (title, items) in groups.into_iter().filter(|(_, items)| !items.is_empty()) {
         panel = panel.child(group_title(title, theme));
         for item in items {
             panel = panel.child(item.render(shell, cx));
@@ -645,49 +636,40 @@ struct Ends {
 pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let roots = &shell.roots.roots;
-    let row =
-        {
-            let ws = shell.app.workspace.read();
-            let pane = ws.pane(shell.pane);
-            let location = pane.and_then(|p| p.location()).cloned();
-            let active = ws.active_id() == shell.pane;
-            let focused = shell.ui().address.read(cx).is_focused(window);
-            PaneRow {
+    let row = {
+        let ws = shell.app.workspace.read();
+        let pane = ws.pane(shell.pane);
+        let location = pane.and_then(|p| p.location()).cloned();
+        let active = ws.active_id() == shell.pane;
+        let focused = shell.ui().address.read(cx).is_focused(window);
+        PaneRow {
             back: pane.is_some_and(|p| p.history_pos > 0),
             forward: pane.is_some_and(|p| p.history_pos + 1 < p.history.len()),
-            address: match location.as_ref().and_then(bibli_core::Location::path) {
+            // Every location as a trail (a folder's from the sidebar's
+            // place that holds it), a search as its pills.
+            address: match &shell.ui().place.trail {
                 _ if focused => Address::Text,
-                Some(path) => Address::Trail(
-                    crumbs(&path, roots)
-                        .into_iter()
-                        .map(|(label, path)| Crumb::new(label, Location::from_path(path)))
+                _ if !shell.ui().chips.chips.is_empty() => Address::Pills,
+                Some(trail) => Address::Trail(
+                    crate::trail::segments(trail, roots),
+                    // What narrows it: its location's own words (a tag's
+                    // `with`), and a folder's narrowing (pane state).
+                    trail
+                        .filters
+                        .iter()
+                        .map(|filter| Pill {
+                            label: filter.label.clone(),
+                            remove: Invocation::navigate(&filter.location),
+                        })
+                        .chain(
+                            pane.and_then(|p| p.narrowed())
+                                .map(|n| n.pills.clone())
+                                .unwrap_or_default(),
+                        )
                         .collect(),
-                    pane.and_then(|p| p.narrowed())
-                        .map(|n| n.pills.clone())
-                        .unwrap_or_default(),
-                    true,
+                    trail.holds_places,
                 ),
-                None if !shell.ui().chips.chips.is_empty() => Address::Pills,
-                None => match &shell.ui().place.trail {
-                    Some(trail) => Address::Trail(
-                        crate::trail::segments(trail, roots),
-                        trail
-                            .filters
-                            .iter()
-                            .map(|filter| Pill {
-                                label: filter.label.clone(),
-                                remove: Invocation::with_args(
-                                    "navigate",
-                                    &serde_json::json!({
-                                        "location": crate::trail::location_arg(&filter.location),
-                                    }),
-                                ),
-                            })
-                            .collect(),
-                        trail.holds_places,
-                    ),
-                    None => Address::Text,
-                },
+                None => Address::Text,
             },
             edge: if focused {
                 theme.accent
@@ -725,11 +707,16 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
                     .verbs
                     .tools
                     .iter()
-                    .map(|tool| (tool.clone(), tool_pane(tool.pane, shell.pane, listed, other)))
+                    .map(|tool| {
+                        (
+                            tool.clone(),
+                            tool_pane(tool.pane, shell.pane, listed, other),
+                        )
+                    })
                     .collect()
             },
         }
-        };
+    };
     let anchor = PopoverAnchor::default();
     let nav_anchor = PopoverAnchor::default();
     let chip_anchor = PopoverAnchor::default();
@@ -761,7 +748,11 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         && let Some(popup) = &shell.toolbar_menu
     {
         let mut panel = toolbar::popup_panel(popup, "ui.toolbar_menu", &theme, cx);
-        for (title, items) in view_options(shell) {
+        // A group with nothing to offer here is left out, title and all.
+        for (title, items) in view_options(shell)
+            .into_iter()
+            .filter(|(_, items)| !items.is_empty())
+        {
             panel = panel.child(group_title(title, &theme));
             for item in items {
                 panel = panel.child(item.render(shell, cx));
@@ -787,10 +778,8 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
 /// The filter typed in the field, once the field let go of the keyboard:
 /// pressed, it is typed in again (Enter then searches the folders inside);
 /// its × shows everything, as Escape in the pane does.
-fn filter_pill(shell: &Shell, filter: &str, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
-    let pane = shell.pane;
-    let hover = theme.hover;
-    Button::new(
+fn filter_pill(shell: &Shell, filter: &str, cx: &mut Context<Shell>) -> AnyElement {
+    let button = Button::new(
         "filter-pill",
         "search",
         format!("Only the names holding “{filter}”"),
@@ -798,87 +787,30 @@ fn filter_pill(shell: &Shell, filter: &str, theme: &Theme, cx: &mut Context<Shel
     )
     .args(serde_json::json!({ "text": filter }))
     .label(format!("“{filter}”"))
-    .active(true)
-    .render(shell, cx)
-    .h(px(22.))
-    .max_w(px(200.))
-    .rounded_full()
-    .pr(px(2.))
-    .mr(px(2.))
-    .child(
-        div()
-            .id("filter-clear")
-            .size(px(18.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_full()
-            .cursor_pointer()
-            .hover(move |s| s.bg(hover))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                cx.stop_propagation();
-                this.activate_pane(pane, cx);
-                this.set_filter(None);
-                cx.notify();
-            }))
-            .child(crate::controls::glyph("close", theme.selection_text, 10.)),
-    )
-    .into_any_element()
+    .active(true);
+    // The core's `filter` with no text shows everything, as Escape does.
+    let remove = Invocation::new("filter");
+    crate::elements::pill::pill(shell, button, Some((remove, "Show every name".into())), cx)
+        .into_any_element()
 }
 
 /// What narrows a folder ("Images", `query.narrow`) or a location that
-/// reads as a trail ("with family", a tag location's): its × takes it
-/// off. Kept while the trail is walked up and down, so it is drawn like
-/// the filter typed in the field, after the trail.
-fn narrowing_pill(
-    shell: &Shell,
-    i: usize,
-    filter: &Pill,
-    theme: &Theme,
-    cx: &mut Context<Shell>,
-) -> AnyElement {
-    let pane = shell.pane;
-    let hover = theme.hover;
-    let remove = filter.remove.clone();
-    div()
-        .id(("narrowing", i))
-        .flex_none()
-        .h(px(22.))
-        .max_w(px(200.))
-        .pl(px(9.))
-        .pr(px(2.))
-        .mr(px(2.))
-        .flex()
-        .items_center()
-        .gap(px(2.))
-        .rounded_full()
-        .bg(theme.selection_bg)
-        .text_color(theme.selection_text)
-        .text_sm()
-        .child(div().truncate().child(filter.label.clone()))
-        .child(
-            div()
-                .id(("narrowing-clear", i))
-                .size(px(18.))
-                .flex()
-                .flex_none()
-                .items_center()
-                .justify_center()
-                .rounded_full()
-                .cursor_pointer()
-                .hover(move |s| s.bg(hover))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    cx.stop_propagation();
-                    this.activate_pane(pane, cx);
-                    let mut args = remove.args.clone();
-                    if !args.is_object() {
-                        args = serde_json::json!({});
-                    }
-                    args["pane"] = serde_json::json!(pane);
-                    this.run(&remove.name, args, window, cx);
-                }))
-                .child(crate::controls::glyph("close", theme.selection_text, 10.)),
-        )
+/// reads as a trail ("with family", a tag location's), a pill after the
+/// trail: pressed (or Enter on it) or its ×, it is taken off. Kept while
+/// the trail is walked up and down, so it is drawn like the filter typed
+/// in the field.
+fn narrowing_pill(shell: &Shell, i: usize, filter: &Pill, cx: &mut Context<Shell>) -> AnyElement {
+    let tip = format!("Not only {}: show the rest too", filter.label);
+    let button = Button::new(
+        gpui::SharedString::from(format!("narrowing-{i}")),
+        "",
+        tip.clone(),
+        filter.remove.name.to_string(),
+    )
+    .args(filter.remove.args.clone())
+    .label(filter.label.clone())
+    .active(true);
+    crate::elements::pill::pill(shell, button, Some((filter.remove.clone(), tip.into())), cx)
         .into_any_element()
 }
 
@@ -975,12 +907,12 @@ fn pane_row(
                 filters
                     .iter()
                     .enumerate()
-                    .map(|(i, filter)| narrowing_pill(shell, i, filter, &theme, cx)),
+                    .map(|(i, filter)| narrowing_pill(shell, i, filter, cx)),
             )
             .children(
                 row.filter
                     .as_deref()
-                    .map(|filter| filter_pill(shell, filter, &theme, cx)),
+                    .map(|filter| filter_pill(shell, filter, cx)),
             )
             .into_any_element(),
         // While a search is typed, where it looks stands before the text.
@@ -1023,43 +955,24 @@ fn pane_row(
     // shows.
     if let Some(location) = &row.location {
         let registry = &shell.app.registry;
-        let keeper = registry.keepers.find(|k| *k.scheme == *location.scheme);
+        // Offered only where its keeper keeps what is shown (`keep`).
+        let keeper = registry.keepers.find(|k| k.keeps(location));
         let kept = registry
             .places
-            .find(|p| p.forget.is_some() && crate::sidebar::same_place(&p.location, location));
-        // A tag's search from the home folder is kept as the tag's pin.
-        let tag = shell
-            .ui()
-            .chips
-            .only_tag(&location.to_string())
-            .filter(|_| shell.app.commands.get("tags.pin").is_some())
-            .map(str::to_owned);
-        let button = match (kept, keeper, tag) {
-            (Some(place), keeper, _) => {
+            .find(|p| p.forget.is_some() && location.same_place(&p.location));
+        let button = match (kept, keeper) {
+            (Some(place), keeper) => {
                 let forget = place.forget.expect("kept");
-                let title = if place.color.is_some() {
-                    "Unpin this tag from the sidebar".into()
-                } else {
-                    keeper.map_or_else(|| "Remove from sidebar".into(), |k| k.forget_title)
-                };
+                let title = keeper.map_or_else(|| "Remove from sidebar".into(), |k| k.forget_title);
                 Some(
                     Button::new("keep", "bookmark-filled", title, forget.name.to_string())
                         .args(forget.args),
                 )
             }
-            (None, _, Some(tag)) => Some(
-                Button::new(
-                    "keep",
-                    "bookmark",
-                    "Pin this tag to the sidebar",
-                    "tags.pin",
-                )
-                .args(serde_json::json!({ "tag": tag })),
-            ),
-            (None, Some(keeper), None) => {
+            (None, Some(keeper)) => {
                 Some(Button::new("keep", "bookmark", keeper.save_title, "keep"))
             }
-            (None, None, None) => None,
+            (None, None) => None,
         };
         if let Some(button) = button {
             field = field.child(
@@ -1251,8 +1164,8 @@ fn breadcrumbs(
                 of: of.location.clone(),
             },
             serde_json::json!({
-                "location": crate::trail::location_arg(&of.location),
-                "current": current.map(crate::trail::location_arg),
+                "location": serde_json::json!(of.location.arg()),
+                "current": current.map(bibli_core::Location::arg),
             }),
             if of.location.is_path() {
                 format!("Folders in {}", of.label).into()
@@ -1269,7 +1182,7 @@ fn breadcrumbs(
     });
     for (index, crumb) in crumbs.iter().enumerate().rev() {
         let hover = theme.hover;
-        let open = crate::trail::location_arg(&crumb.location);
+        let open = serde_json::json!(crumb.location.arg());
         let in_tab = open.clone();
         let (text, clip) = crate::elements::clip::text(crumb.label.clone());
         let segment = div()

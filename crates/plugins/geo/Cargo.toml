@@ -18,11 +18,12 @@ tracing.workspace = true
 # Streaming XML: a day of GPS logging is tens of megabytes; the version
 # already in the tree.
 quick-xml = "0.42"
-zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 # Track thumbnails, as map-tiles draws its outline.
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
 
 [dev-dependencies]
+# The tests write KMZ files.
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 tempfile.workspace = true
 
 [lints]

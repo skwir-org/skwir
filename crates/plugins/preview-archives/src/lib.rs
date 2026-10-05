@@ -8,6 +8,7 @@ use bibli_core::{
 use bibli_platform::{
     archive,
     inspection::{self, limits},
+    mime,
 };
 use std::{collections::BTreeMap, sync::Arc};
 pub struct PreviewPlugin;
@@ -26,44 +27,30 @@ impl Plugin for PreviewPlugin {
     }
     fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
         vec![
-            bibli_core::plugin::Requirement::new(
-                "bibli-archive-worker",
-                "Listing and reading archive members",
-                || archive::worker_path().is_some(),
-            )
-            .required(),
+            archive::WORKER
+                .requirement("Listing and reading archive members")
+                .required(),
         ]
     }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
     }
 }
+/// Disc images, which the database does not call archives.
+static DISC_IMAGES: mime::Types = mime::Types::new(&["application/x-cd-image"]);
+
 struct Provider;
 impl PreviewProvider for Provider {
     fn id(&self) -> &'static str {
         "preview-archives"
     }
+    /// What the MIME database calls an archive (`mime::Kind::Archive`:
+    /// a compressed tar, a package, a Java archive), and a disc image,
+    /// which libarchive reads too.
     fn accepts(&self, req: &PreviewRequest) -> bool {
-        matches!(
-            inspection::extension(&req.entry.path).as_str(),
-            "zip"
-                | "7z"
-                | "rar"
-                | "tar"
-                | "gz"
-                | "bz2"
-                | "xz"
-                | "zst"
-                | "tgz"
-                | "tbz2"
-                | "txz"
-                | "cpio"
-                | "iso"
-                | "cab"
-                | "ar"
-                | "deb"
-                | "rpm"
-        )
+        mime::of_request(&req.entry.path, req.mime.as_deref()).is_some_and(|mime| {
+            mime::is_kind(&mime, mime::Kind::Archive) || DISC_IMAGES.contains(mime.as_str())
+        })
     }
     fn extract(
         &self,
@@ -208,6 +195,27 @@ fn member_rows(members: &[archive::Member], cancel: &CancelToken) -> anyhow::Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn archives_are_what_the_database_calls_archives() {
+        let accepts = |name: &str| {
+            Provider.accepts(&PreviewRequest {
+                entry: bibli_core::op::EntryRef::new(bibli_core::EntryId { dev: 1, ino: 1 }, name),
+                mime: None,
+                page: 1,
+                seconds: None,
+                max_side: 64,
+                text_size: None,
+            })
+        };
+        for name in ["a.zip", "a.tar.gz", "a.7z", "a.deb", "a.jar", "a.iso"] {
+            assert!(accepts(name), "{name} is an archive");
+        }
+        // Packages of documents are their readers'.
+        for name in ["a.docx", "a.epub", "a.cbz", "a.txt"] {
+            assert!(!accepts(name), "{name} is no archive");
+        }
+    }
 
     #[test]
     fn folder_first_order_keeps_subtrees_and_member_identity() {

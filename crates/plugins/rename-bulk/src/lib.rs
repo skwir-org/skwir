@@ -402,7 +402,7 @@ fn plan_selection(
         items.push((EntryRef::new(id, path), e.name.clone(), mtime));
     }
     if items.is_empty() {
-        anyhow::bail!("nothing selected");
+        return Err(bibli_core::command::NothingSelected.into());
     }
     let exists = |path: &Path| {
         dir.as_deref().is_some_and(|dir| path.parent() == Some(dir))
@@ -477,15 +477,15 @@ impl Plugin for RenameBulkPlugin {
         );
         app.registry.menus.add(
             ID,
-            MenuItem {
-                menu: "context".into(),
-                title: "Rename Several…".into(),
-                command: Invocation::new("ui.rename_bulk_prompt"),
-                when: Some("selection !place".into()),
-                order: 105,
-                icon: Some("rename".into()),
-                submenu: Some("More".into()),
-            },
+            MenuItem::new(
+                "context",
+                "Rename Several…",
+                "rename",
+                105,
+                Invocation::new("ui.rename_bulk_prompt"),
+            )
+            .when("selection !place")
+            .submenu("More"),
         );
     }
 }

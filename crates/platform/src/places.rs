@@ -1,6 +1,5 @@
 //! Places the user already knows: home, XDG user dirs, GTK bookmarks, mounts.
 
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -31,6 +30,12 @@ pub struct Mount {
     pub label: String,
     pub path: PathBuf,
     pub fstype: String,
+    /// Mounted by udisks for the user (under `/run/media` or `/media`):
+    /// what Eject lets go of. System volumes are not ours to detach.
+    pub udisks: bool,
+    /// On a drive the user can unplug (`fs::volume::device_removable`:
+    /// sysfs, as `lsblk` says HOTPLUG), wherever it is mounted; filled by
+    /// `mounts`, false from the parser alone.
     pub removable: bool,
     /// The mounted device (`/dev/sdb1`), as the kernel reports it.
     pub source: String,
@@ -403,7 +408,7 @@ pub fn unmount(source: &str) -> anyhow::Result<()> {
 }
 
 pub fn home() -> Option<PathBuf> {
-    dirs::home_dir()
+    bibli_core::os_path::home()
 }
 
 /// XDG user dirs from `~/.config/user-dirs.dirs`, existing ones only, `$HOME` itself excluded.
@@ -411,7 +416,7 @@ pub fn user_dirs() -> Vec<UserDir> {
     let Some(home) = home() else {
         return Vec::new();
     };
-    let Some(cfg) = dirs::config_dir() else {
+    let Some(cfg) = crate::xdg::config_home() else {
         return Vec::new();
     };
     let text = std::fs::read_to_string(cfg.join("user-dirs.dirs")).unwrap_or_default();
@@ -658,7 +663,7 @@ pub fn edit_text(text: &str, edit: &BookmarkEdit) -> Option<(String, BookmarkEdi
 /// The GTK bookmarks file every file manager and file dialog on the desktop
 /// shares, as it is named (it may be a link).
 pub fn bookmarks_file() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("gtk-3.0").join("bookmarks"))
+    Some(crate::xdg::config_home()?.join("gtk-3.0").join("bookmarks"))
 }
 
 /// The folders to watch to see the bookmarks change: the file's own, and
@@ -723,22 +728,13 @@ fn is_interesting_mountpoint(p: &Path) -> bool {
         || p.starts_with("/mnt")
 }
 
-/// Parse `/proc/self/mountinfo` content.
+/// The volumes worth showing among `/proc/self/mountinfo`'s mounts
+/// (`fs::volume::mountinfo`, the one reading of it).
 pub fn parse_mountinfo(text: &str) -> Vec<Mount> {
     let mut out: Vec<Mount> = Vec::new();
-    for line in text.lines() {
-        // 36 35 98:0 /mnt1 /mnt2 rw,noatime master:1 - ext3 /dev/root rw,errors=continue
-        let Some((left, right)) = line.split_once(" - ") else {
-            continue;
-        };
-        let lf: Vec<&str> = left.split(' ').collect();
-        let rf: Vec<&str> = right.split(' ').collect();
-        if lf.len() < 5 || rf.is_empty() {
-            continue;
-        }
-        let mountpoint = PathBuf::from(unescape_mountinfo(lf[4]));
-        let fstype = rf[0].to_owned();
-        if !is_user_fs(&fstype) || !is_interesting_mountpoint(&mountpoint) {
+    for mounted in bibli_core::fs::volume::mountinfo(text) {
+        let mountpoint = mounted.point;
+        if !is_user_fs(&mounted.fstype) || !is_interesting_mountpoint(&mountpoint) {
             continue;
         }
         if out.iter().any(|m| m.path == mountpoint) {
@@ -752,62 +748,34 @@ pub fn parse_mountinfo(text: &str) -> Vec<Mount> {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default()
         };
-        let removable = mountpoint.starts_with("/run/media") || mountpoint.starts_with("/media");
+        let udisks = mountpoint.starts_with("/run/media") || mountpoint.starts_with("/media");
         out.push(Mount {
             label,
             path: mountpoint,
-            fstype,
-            removable,
-            source: rf
-                .get(1)
-                .map(|s| unescape_mountinfo(s).to_string_lossy().into_owned())
-                .unwrap_or_default(),
-            root: PathBuf::from(unescape_mountinfo(lf[3])),
+            fstype: mounted.fstype,
+            udisks,
+            removable: false,
+            source: mounted.source.to_string_lossy().into_owned(),
+            root: mounted.root,
         });
     }
     out
-}
-
-/// mountinfo escapes space, tab, newline and backslash as octal `\040` etc.
-/// Every other byte is the path's own, UTF-8 or not.
-fn unescape_mountinfo(s: &str) -> OsString {
-    let mut out = Vec::with_capacity(s.len());
-    let b = s.as_bytes();
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'\\'
-            && i + 3 < b.len()
-            && let Ok(v) =
-                u8::from_str_radix(std::str::from_utf8(&b[i + 1..i + 4]).unwrap_or("zzz"), 8)
-        {
-            out.push(v);
-            i += 4;
-            continue;
-        }
-        out.push(b[i]);
-        i += 1;
-    }
-    os_string(out)
-}
-
-#[cfg(unix)]
-fn os_string(bytes: Vec<u8>) -> OsString {
-    std::os::unix::ffi::OsStringExt::from_vec(bytes)
-}
-
-#[cfg(not(unix))]
-fn os_string(bytes: Vec<u8>) -> OsString {
-    String::from_utf8_lossy(&bytes).into_owned().into()
 }
 
 #[cfg(target_os = "linux")]
 mod imp {
     use super::{Mount, parse_mountinfo};
 
+    /// Reads procfs, `/dev` and sysfs, never a volume itself.
     pub fn mounts() -> Vec<Mount> {
-        std::fs::read_to_string("/proc/self/mountinfo")
+        let mut mounts = std::fs::read_to_string("/proc/self/mountinfo")
             .map(|t| parse_mountinfo(&t))
-            .unwrap_or_default()
+            .unwrap_or_default();
+        for mount in &mut mounts {
+            mount.removable =
+                bibli_core::fs::volume::device_removable(std::path::Path::new(&mount.source));
+        }
+        mounts
     }
 }
 
@@ -1090,7 +1058,7 @@ mod tests {
         let line = "36 35 98:0 / /run/media/example/USB\\040stick rw - vfat /dev/sdb1 rw";
         let mounts = super::parse_mountinfo(line);
         assert_eq!(mounts[0].source, "/dev/sdb1");
-        assert!(mounts[0].removable);
+        assert!(mounts[0].udisks);
     }
 
     use super::*;
@@ -1150,9 +1118,9 @@ mod tests {
         let paths: Vec<String> = v.iter().map(|m| m.path.display().to_string()).collect();
         assert_eq!(paths, ["/", "/home", "/run/media/u/my disk", "/mnt/backup"]);
         assert_eq!(v[0].label, "Root");
-        assert!(!v[0].removable);
+        assert!(!v[0].udisks);
         assert_eq!(v[2].label, "my disk");
-        assert!(v[2].removable);
+        assert!(v[2].udisks);
         assert_eq!(v[3].fstype, "fuse.sshfs");
         assert_eq!(v[0].root, Path::new("/root"), "a subvolume");
         assert_eq!(v[2].root, Path::new("/"));

@@ -12,11 +12,12 @@ use std::collections::VecDeque;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::app::{App, NotifyLevel, PaneArg};
+use crate::app::{App, NotifyLevel};
 use crate::command::{Invocation, Outcome};
+use crate::entry::EntryId;
 use crate::location::{Location, SortSpec};
 use crate::os_path::PathArg;
-use crate::settings::{LAST_LOCATION, STARTUP, SettingSpec};
+use crate::settings::{STARTUP, SettingSpec};
 use crate::workspace::{PaneId, Selection, TabId};
 
 /// Application data: the tabs the window showed when it closed.
@@ -91,17 +92,14 @@ pub struct PaneInfo {
 }
 
 impl App {
-    /// A name for `location`, as a tab or a message says it: the title of
-    /// the sidebar place it is, else the folder's name, else what its
+    /// A name for `location`, as a tab, the history or a message says it:
+    /// the sidebar place it is, under the name the user gave it there
+    /// (`Registry::place_title`), else the folder's name, else what its
     /// provider calls it (`LocationProvider::title`), else the text after
     /// the scheme.
     pub fn location_title(&self, location: &Location) -> String {
-        if let Some(place) = self
-            .registry
-            .places
-            .find(|p| p.location.same_place(location))
-        {
-            return place.title;
+        if let Some(title) = self.registry.place_title(location) {
+            return title;
         }
         if let Some(path) = location.path() {
             return path.file_name().map_or_else(
@@ -129,28 +127,19 @@ impl App {
     /// can keep drawing them until the tab shown is ready.
     pub fn select_tab(&self, tab: TabId) -> anyhow::Result<()> {
         let sleep = self.tabs_sleep();
-        let released: Vec<_> = {
+        {
             let mut ws = self.workspace.write();
-            if ws.active_tab().id == tab {
-                Vec::new()
-            } else {
+            if ws.active_tab().id != tab {
                 let left = ws.active_tab().panes.clone();
                 anyhow::ensure!(ws.set_active_tab(tab), "no such tab");
-                if !sleep {
-                    // Every tab stays listed: nothing to let go of.
-                    Vec::new()
-                } else if ws.holding {
+                // Without sleep every tab stays listed: nothing to let go of.
+                if sleep && ws.holding {
                     ws.leaving.extend(left);
-                    Vec::new()
-                } else {
-                    left.into_iter()
-                        .filter_map(|id| ws.pane_mut(id)?.suspend())
-                        .collect()
+                } else if sleep {
+                    suspend(&mut ws, left);
                 }
             }
-        };
-        // Closed outside the lock: closing runs the location's own code.
-        drop(released);
+        }
         self.resume_shown()
     }
 
@@ -168,17 +157,13 @@ impl App {
     /// tab shown excepted (it may be the one left, shown again).
     pub fn settle_tabs(&self) {
         let sleep = self.tabs_sleep();
-        let released: Vec<_> = {
-            let mut ws = self.workspace.write();
-            let shown = ws.active_tab().panes.clone();
-            let leaving = std::mem::take(&mut ws.leaving);
-            leaving
-                .into_iter()
-                .filter(|id| sleep && !shown.contains(id))
-                .filter_map(|id| ws.pane_mut(id)?.suspend())
-                .collect()
-        };
-        drop(released);
+        let mut ws = self.workspace.write();
+        let shown = ws.active_tab().panes.clone();
+        let leaving = std::mem::take(&mut ws.leaving);
+        let asleep = leaving
+            .into_iter()
+            .filter(|id| sleep && !shown.contains(id));
+        suspend(&mut ws, asleep);
     }
 
     /// Whether tabs not shown let go of their listings (`SLEEP_KEY`, on
@@ -203,27 +188,21 @@ impl App {
     pub fn apply_tabs_sleep(&self) {
         let sleep = self.tabs_sleep();
         if sleep {
-            let released: Vec<_> = {
-                let mut ws = self.workspace.write();
-                let keep: Vec<PaneId> = ws
-                    .active_tab()
-                    .panes
-                    .iter()
-                    .chain(ws.leaving.iter())
-                    .copied()
-                    .collect();
-                let asleep: Vec<PaneId> = ws
-                    .panes()
-                    .iter()
-                    .map(|p| p.id)
-                    .filter(|id| !keep.contains(id))
-                    .collect();
-                asleep
-                    .into_iter()
-                    .filter_map(|id| ws.pane_mut(id)?.suspend())
-                    .collect()
-            };
-            drop(released);
+            let mut ws = self.workspace.write();
+            let keep: Vec<PaneId> = ws
+                .active_tab()
+                .panes
+                .iter()
+                .chain(ws.leaving.iter())
+                .copied()
+                .collect();
+            let asleep: Vec<PaneId> = ws
+                .panes()
+                .iter()
+                .map(|p| p.id)
+                .filter(|id| !keep.contains(id))
+                .collect();
+            suspend(&mut ws, asleep);
         } else {
             let dormant: Vec<PaneId> = self
                 .workspace
@@ -495,9 +474,8 @@ impl App {
             return false;
         };
         ws.set_active_tab(shown);
-        let released = ws.close_tab(first);
+        ws.close_tab(first);
         drop(ws);
-        drop(released);
         tracing::debug!(tabs = restored, "restored the last window's tabs");
         true
     }
@@ -531,6 +509,15 @@ impl App {
     }
 }
 
+/// Let `panes` go to sleep (`Pane::suspend`), under the lock.
+fn suspend(ws: &mut crate::workspace::Workspace, panes: impl IntoIterator<Item = PaneId>) {
+    for id in panes {
+        if let Some(pane) = ws.pane_mut(id) {
+            pane.suspend();
+        }
+    }
+}
+
 /// The tabs to open at startup: the last window's, when the startup
 /// preference is to come back to it and it had any.
 pub fn last_tabs(settings: &crate::settings::Settings) -> Option<SavedTabs> {
@@ -550,20 +537,14 @@ pub fn remember(app: &App) {
     if settings.get::<String>(STARTUP).as_deref() != Some("last") {
         return;
     }
-    let mut changed = false;
     let folder = app
         .workspace
         .read()
         .active()
         .location()
         .and_then(Location::path);
-    if let Some(folder) = folder
-        && settings.get::<PathArg>(LAST_LOCATION).as_deref() != Some(folder.as_path())
-        && let Ok(value) = toml::Value::try_from(PathArg::from(folder))
-    {
-        settings.set(LAST_LOCATION, value);
-        changed = true;
-    }
+    let mut changed =
+        folder.is_some_and(|folder| crate::settings::remember_location(settings, &folder));
     let saved = app.saved_tabs();
     if settings.get::<SavedTabs>(LAST_TABS).as_ref() != Some(&saved)
         && let Ok(value) = toml::Value::try_from(&saved)
@@ -594,6 +575,16 @@ pub struct NewTabArgs {
 
 fn shown_by_default() -> bool {
     true
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct OpenTabsArgs {
+    /// The entries to open, folders or places; the pane's selection when
+    /// empty.
+    #[serde(default)]
+    pub ids: Vec<EntryId>,
+    #[serde(default)]
+    pub pane: Option<PaneId>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -680,7 +671,7 @@ pub(crate) fn register(app: &App) {
         },
     );
 
-    c.register::<PaneArg, _>(
+    c.register::<OpenTabsArgs, _>(
         "core",
         "tab.open",
         "Open in new tab",
@@ -688,26 +679,24 @@ pub(crate) fn register(app: &App) {
         |a, app| {
             let pane = app.pane_or_active(a.pane);
             let folders: Vec<Location> = {
-                let refs = app.selected_refs(pane);
                 let ws = app.workspace.read();
                 let Some(p) = ws.pane(pane) else {
                     anyhow::bail!("no such pane");
                 };
-                let places: Vec<Location> = p
-                    .selection
-                    .iter()
-                    .filter_map(|id| p.location_of(id))
-                    .collect();
-                refs.into_iter()
-                    .filter(|r| {
-                        p.entry(r.id).is_some_and(crate::Entry::is_dir)
-                            && p.location_of(r.id).is_none()
-                    })
-                    .map(|r| Location::from_path(r.path))
-                    // A place (a tag's), or a folder that does not open at
-                    // its path (a trashed one), opens where it leads.
-                    .chain(places)
-                    .collect()
+                // In the order the pane shows them, so the tabs line up
+                // the same.
+                let ids: Vec<EntryId> = if a.ids.is_empty() {
+                    p.order()
+                        .iter()
+                        .copied()
+                        .filter(|id| p.selection.contains(*id))
+                        .collect()
+                } else {
+                    a.ids
+                };
+                // A place (a tag's), or a folder that does not open at its
+                // path (a trashed one), opens where it leads.
+                ids.into_iter().filter_map(|id| p.leads_to(id)).collect()
             };
             if folders.is_empty() {
                 return Err(crate::command::NothingSelected.into());

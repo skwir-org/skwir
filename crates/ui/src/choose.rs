@@ -18,8 +18,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use bibli_core::command::{Invocation, Outcome};
 use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*, px};
-use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
-use nucleo_matcher::{Config, Matcher, Utf32Str};
 use serde::Deserialize;
 
 use crate::input::{InputEvent, TextInput};
@@ -198,9 +196,9 @@ impl Shell {
         cx.notify();
     }
 
-    pub fn choose_move(&mut self, delta: isize, cx: &mut Context<Self>) {
+    pub fn choose_move(&mut self, mv: crate::modal::ListMove, cx: &mut Context<Self>) {
         if let Some(c) = &mut self.choose {
-            c.picker.step(delta, c.filtered.len());
+            c.picker.go(mv, c.filtered.len());
             cx.notify();
         }
     }
@@ -251,27 +249,10 @@ impl Shell {
 /// Indices of the choices matching `query`, best first; all of them in
 /// their order for an empty query.
 fn filter(choices: &[Choice], query: &str) -> Vec<usize> {
-    if query.trim().is_empty() {
-        return (0..choices.len()).collect();
-    }
-    let mut matcher = Matcher::new(Config::DEFAULT);
-    let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
-    let mut buf = Vec::new();
-    let mut scored: Vec<(u32, usize)> = choices
-        .iter()
-        .enumerate()
-        .filter_map(|(i, c)| {
-            let hay = match &c.detail {
-                Some(detail) => format!("{} {detail}", c.title),
-                None => c.title.clone(),
-            };
-            pattern
-                .score(Utf32Str::new(&hay, &mut buf), &mut matcher)
-                .map(|s| (s, i))
-        })
-        .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-    scored.into_iter().map(|(_, i)| i).collect()
+    crate::modal::fuzzy(choices, query, |c| match &c.detail {
+        Some(detail) => format!("{} {detail}", c.title),
+        None => c.title.clone(),
+    })
 }
 
 pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {

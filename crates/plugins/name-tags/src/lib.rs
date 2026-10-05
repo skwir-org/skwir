@@ -20,7 +20,7 @@ use bibli_core::command::Outcome;
 use bibli_core::metadata::{Listed, same_tag};
 use bibli_core::notes::raw::RawKey;
 use bibli_core::notes::{Holds, Kept, Notes, NotesStore, Probe, Tag, Write, Wrote};
-use bibli_core::op::{EntryRef, Plan, Rename};
+use bibli_core::op::{EntryRef, Plan, Rename, RenameOrderError, RenameRequest, order_renames};
 use bibli_core::plugin::{Category, Plugin};
 use bibli_core::registry::MenuItem;
 use bibli_core::workspace::PaneId;
@@ -205,14 +205,6 @@ struct NameArgs {
     convention: Convention,
 }
 
-fn targets(app: &App, pane: Option<PaneId>, entries: Vec<EntryRef>) -> Vec<EntryRef> {
-    if entries.is_empty() {
-        app.selected_refs(app.pane_or_active(pane))
-    } else {
-        entries
-    }
-}
-
 fn store_id(convention: Convention) -> &'static str {
     NameStore(convention).id()
 }
@@ -220,9 +212,9 @@ fn store_id(convention: Convention) -> &'static str {
 /// "Tags into Name": each entry renamed to hold its tags (all stores'),
 /// those the convention can hold.
 fn tag_names(app: &App, a: NameArgs) -> anyhow::Result<Outcome> {
-    let refs = targets(app, a.pane, a.entries);
-    anyhow::ensure!(!refs.is_empty(), "nothing selected");
+    let refs = app.targets(a.pane, a.entries)?;
     let mut plan = Plan::new("put tags in names");
+    let mut renames: Vec<RenameRequest> = Vec::new();
     let mut left_out: Vec<String> = Vec::new();
     let policy = app.notes.policy();
     for r in refs {
@@ -244,11 +236,14 @@ fn tag_names(app: &App, a: NameArgs) -> anyhow::Result<Outcome> {
             .collect();
         let new_name = a.convention.join(&base, &tags, ext.as_deref());
         if new_name != name {
-            plan.push(Rename {
+            renames.push(RenameRequest {
                 entry: r,
                 new_name: new_name.into(),
             });
         }
+    }
+    for rename in ordered(&renames)? {
+        plan.push(rename);
     }
     if !left_out.is_empty() {
         plan = plan.with_note(format!(
@@ -262,9 +257,9 @@ fn tag_names(app: &App, a: NameArgs) -> anyhow::Result<Outcome> {
 /// "Tags out of Name": each entry renamed without its tags, which the
 /// other stores keep first (a step before the rename), so none is lost.
 fn untag_names(app: &App, a: NameArgs) -> anyhow::Result<Outcome> {
-    let refs = targets(app, a.pane, a.entries);
-    anyhow::ensure!(!refs.is_empty(), "nothing selected");
+    let refs = app.targets(a.pane, a.entries)?;
     let mut plan = Plan::new("take tags out of names");
+    let mut renames: Vec<RenameRequest> = Vec::new();
     let policy = app.notes.policy();
     let name_store = store_id(a.convention);
     for r in refs {
@@ -286,12 +281,37 @@ fn untag_names(app: &App, a: NameArgs) -> anyhow::Result<Outcome> {
         let mut keep = app.notes.edit(r.clone()).tags(all);
         keep.policy.read.retain(|s| s != name_store);
         plan.push(keep);
-        plan.push(Rename {
+        renames.push(RenameRequest {
             entry: r,
             new_name: a.convention.join(&base, &[], ext.as_deref()).into(),
         });
     }
+    // Every file's tags are kept before any name changes.
+    for rename in ordered(&renames)? {
+        plan.push(rename);
+    }
     Ok(Outcome::Plan(plan))
+}
+
+/// The renames in an order that never renames onto a name still taken,
+/// refused when two files would get one name (`a[x].jpg` and `a[y].jpg`
+/// both `a.jpg`) or a name is taken by a file that is not renamed.
+fn ordered(requests: &[RenameRequest]) -> anyhow::Result<Vec<Rename>> {
+    let name = |path: &Path| {
+        path.file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
+    };
+    order_renames(requests, |path| path.symlink_metadata().is_ok()).map_err(|e| match e {
+        RenameOrderError::Duplicate { target, .. } => {
+            anyhow::anyhow!("Several files would be named “{}”", name(&target))
+        }
+        RenameOrderError::Conflict { item, target } => anyhow::anyhow!(
+            "“{}” would be named “{}”, which already exists",
+            name(&requests[item].entry.path),
+            name(&target)
+        ),
+        RenameOrderError::InvalidName { reason, .. } => anyhow::anyhow!(reason),
+    })
 }
 
 fn menu_item(title: &str, command: &str, order: i32, icon: &str) -> MenuItem {

@@ -547,6 +547,10 @@ impl OpenLocation for PathLocation {
         &self.location
     }
 
+    fn holds(&self) -> Option<&Path> {
+        Some(&self.dir)
+    }
+
     fn events(&self) -> &Receiver<ListingEvent> {
         &self.rx
     }

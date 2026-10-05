@@ -84,7 +84,10 @@ Read this before touching `crates/pdf-worker`, `crates/poppler-worker`, `crates/
   previous and next still turn the file's pages. PDFium reads labels
   without loading pages (`FPDF_GetPageLabel`); `MuPDF` reads them through
   its PDF document.
-- `auto` may fall back when the worker/library is absent. Report document
+- `auto` may fall back when the worker/library is absent: the worker not
+  found where it can run (`process::Worker`), saying `Unavailable`, or
+  exiting 127 before its greeting, the dynamic loader's word for a missing
+  library (`LineChannel::missing_runtime`, as the player's). Report document
   errors directly; do not conceal malformed files by silently trying engines.
   Poppler provides the same reader features. CLI image fallback is for `auto`
   only when neither reader worker is available. Measurements must distinguish

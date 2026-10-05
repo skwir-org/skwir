@@ -177,3 +177,30 @@ fn tagspaces_names_are_read_where_it_is_used_and_moved_in_and_out_of_names() {
     assert!(r.error.is_none(), "{:?}", r.error);
     assert!(used.join("sub/IMG[vacation alps new].jpg").exists());
 }
+
+/// Two files that differ only by their tags would get one name: the plan
+/// is refused before anything is renamed, never half applied.
+#[test]
+fn tags_out_of_names_refuse_two_files_one_name() {
+    let tmp = home_tempdir();
+    let dir = tmp.path().join("location");
+    std::fs::create_dir_all(dir.join(".ts")).unwrap();
+    let first = dir.join("a[x].jpg");
+    let second = dir.join("a[y].jpg");
+    std::fs::write(&first, b"x").unwrap();
+    std::fs::write(&second, b"y").unwrap();
+    let app = app(tmp.path());
+    app.register_notes_store("test", Arc::new(Attributes));
+    let entries = serde_json::json!([
+        EntryRef::from_path(&first).unwrap(),
+        EntryRef::from_path(&second).unwrap()
+    ]);
+    let refused = app
+        .dispatch(&Invocation::with_args(
+            "names.untag",
+            &serde_json::json!({ "entries": entries }),
+        ))
+        .expect_err("refused");
+    assert!(refused.to_string().contains("“a.jpg”"), "{refused}");
+    assert!(first.exists() && second.exists());
+}

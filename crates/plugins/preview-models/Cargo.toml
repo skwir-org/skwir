@@ -14,9 +14,6 @@ image.workspace = true
 # are decoded as a stream, only as far as the picture near their start.
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 ruzstd = { version = "0.9", default-features = false, features = ["std"] }
-# 3MF packages and FreeCAD documents are zips; the version and inflater
-# already in the tree.
-zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 quick-xml = "0.42"
 # G-code carries its pictures in base64 comments.
 base64 = "0.22"
@@ -25,6 +22,9 @@ base64 = "0.22"
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
 
 [dev-dependencies]
+# 3MF packages and FreeCAD documents are zips (read by
+# `bibli_platform::package`); the tests write some.
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 tempfile.workspace = true
 
 [lints]

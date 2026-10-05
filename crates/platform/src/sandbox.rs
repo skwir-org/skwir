@@ -4,7 +4,7 @@
 //! and only a disposable working folder writable. A sandbox that cannot
 //! start is an error: a conversion is never retried without it.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
@@ -81,12 +81,77 @@ pub fn inside_name(input: &Path) -> String {
     }
 }
 
+/// What becomes of a program run on a file nobody vouched for where
+/// bubblewrap cannot isolate it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Otherwise {
+    /// It does not run: a converter (`LibreOffice`, Pandoc) or `ImageMagick`,
+    /// which a file can make do anything they can.
+    Refuse,
+    /// It runs as it would without bibli: a decoder the desktop runs on
+    /// the same files all the same (`ffmpeg`, Poppler's tools, bibli's
+    /// own helpers, a desktop thumbnailer).
+    Run,
+}
+
+/// A program set to read a file nobody vouched for, and the paths to give
+/// it, which inside the sandbox are not the real ones.
+pub struct Untrusted {
+    pub command: Command,
+    /// Where it reads the input.
+    pub input: PathBuf,
+    /// Its working folder, where it may write: what it writes there is in
+    /// the real `work` folder.
+    pub work: PathBuf,
+    /// Whether it runs isolated.
+    pub isolated: bool,
+}
+
+/// `program` set to read `input`, a file nobody vouched for, and to write
+/// in `work` (its current folder): isolated where bubblewrap can
+/// (`command`), else as `otherwise` says. The one way bibli runs a program
+/// on a file that is not ours; the caller adds the program's arguments,
+/// naming the input and the folder as returned.
+pub fn untrusted(
+    program: &Path,
+    input: &Path,
+    work: &Path,
+    otherwise: Otherwise,
+) -> anyhow::Result<Untrusted> {
+    if available() {
+        let (command, inside) = command(program, input, work)?;
+        return Ok(Untrusted {
+            command,
+            input: inside.into(),
+            work: "/work".into(),
+            isolated: true,
+        });
+    }
+    anyhow::ensure!(
+        otherwise == Otherwise::Run,
+        "This needs bubblewrap, to run isolated from your files"
+    );
+    let mut command = Command::new(program);
+    command.current_dir(work);
+    Ok(Untrusted {
+        command,
+        input: input.to_owned(),
+        work: work.to_owned(),
+        isolated: false,
+    })
+}
+
 /// `program` set to run isolated: `input` readable at the path returned
 /// (`inside_name`), and `work` writable at `/work`, also its home, cache
 /// and current folder. A program outside the system's folders is bound
 /// at its own path. The caller adds the program's own arguments and runs
 /// it with `process::run`, whose cancellation kills the sandbox with it.
+/// An error where bubblewrap cannot isolate (`available`).
 pub fn command(program: &Path, input: &Path, work: &Path) -> anyhow::Result<(Command, String)> {
+    anyhow::ensure!(
+        available(),
+        "This needs bubblewrap, to run isolated from your files"
+    );
     #[cfg(target_os = "linux")]
     {
         let bwrap = crate::process::required("bwrap")?;

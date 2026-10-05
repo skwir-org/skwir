@@ -72,7 +72,8 @@ impl PreviewProvider for Provider {
     fn accepts(&self, req: &PreviewRequest) -> bool {
         let extension = inspection::extension(&req.entry.path);
         if spreadsheet::EXTENSIONS.contains(&extension.as_str()) {
-            return !(self.pages && bibli_platform::process::required("libreoffice").is_ok());
+            return !(self.pages
+                && bibli_platform::preview::shown_as_pages(&req.entry.path, req.mime.as_deref()));
         }
         matches!(extension.as_str(), "csv" | "tsv" | "jsonl" | "ndjson")
             || sqlite::EXTENSIONS.contains(&extension.as_str())

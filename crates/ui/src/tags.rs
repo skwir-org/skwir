@@ -106,10 +106,22 @@ pub fn given_colors(e: &bibli_core::Entry) -> Vec<(String, usize)> {
         .collect()
 }
 
+/// Tags from the entry's `tags` metadata field (a list of text values).
+pub fn tags_of(e: &bibli_core::Entry) -> Vec<String> {
+    match e.metadata.value(bibli_core::entry::keys::TAGS) {
+        Some(bibli_core::Value::List(items)) => items
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect(),
+        Some(bibli_core::Value::Text(t)) => vec![t.to_string()],
+        _ => Vec::new(),
+    }
+}
+
 /// An entry's tags, each with the color it wears.
 pub fn entry_tags(e: &bibli_core::Entry, colors: &TagColors) -> Vec<(String, usize)> {
     let given = given_colors(e);
-    crate::views::list::tags_of(e)
+    tags_of(e)
         .into_iter()
         .map(|t| {
             let color = colors.of_given(&t, &given);
@@ -214,7 +226,7 @@ pub fn tile_dots(
                             .rounded_full()
                             .border_2()
                             .border_color(ring)
-                            .bg(theme.tags[color % theme.tags.len()])
+                            .bg(theme.tag(*color))
                     }),
             )
             .when(more > 0, |d| {
@@ -241,7 +253,7 @@ pub(crate) fn dot(color: usize, theme: &Theme) -> Div {
         .flex_none()
         .size(px(10.))
         .rounded_full()
-        .bg(theme.tags[color % theme.tags.len()])
+        .bg(theme.tag(color))
 }
 
 /// Star `n` of five for a rating in half stars: filled, half, or empty.
@@ -597,10 +609,10 @@ impl Shell {
     }
 
     /// `ui.tag_editor_move`.
-    pub fn tag_editor_move(&mut self, delta: isize, cx: &mut Context<Self>) {
+    pub fn tag_editor_move(&mut self, mv: crate::modal::ListMove, cx: &mut Context<Self>) {
         self.tag_editor_refilter(cx);
         if let Some(e) = &mut self.tag_editor {
-            e.picker.step(delta, e.shown.len());
+            e.picker.go(mv, e.shown.len());
             cx.notify();
         }
     }

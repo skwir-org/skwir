@@ -63,18 +63,12 @@ pub fn element(
     let tiles = map::TileLayer {
         store: Rc::clone(&shell.map_tiles),
         palette: crate::map_tiles::palette(theme),
+        // The attribution's link reaches the desktop as every address does.
         on_link: Rc::new(move |url: String, _: &mut Window, _: &mut gpui::App| {
-            let notify = Arc::clone(&app);
-            app.scheduler.spawn(
-                bibli_core::scheduler::Priority::Visible,
-                "map-attribution",
-                app.lifetime().child(),
-                move || {
-                    if let Err(error) = bibli_platform::open::open_web_uri(&url) {
-                        notify.notify(bibli_core::app::NotifyLevel::Error, error.to_string());
-                    }
-                },
-            );
+            app.request_front(bibli_core::command::Invocation::with_args(
+                "ui.open_url",
+                &serde_json::json!({ "url": url }),
+            ));
         }),
     };
     map::map(id, shapes, handles, colors(theme), Some(tiles))

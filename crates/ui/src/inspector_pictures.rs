@@ -11,11 +11,11 @@
 //!
 //! Decoded pictures are kept by key up to `CACHE_BYTES`; past it, those
 //! farthest from the view go, and their atlas entries with them
-//! (`cx.drop_image`), like the reader's pages. A result is accepted only for
-//! the generation it was asked in: a new page, or a file read again, starts
-//! another.
-use crate::{preview::PreviewContent, shell::Shell};
-use bibli_core::{CancelToken, inspection::Picture, scheduler::Priority};
+//! (`cx.drop_image`), like the reader's pages. A result is accepted only
+//! for what is asked now (`Latest`): a new page, or a file read again,
+//! forgets what was asked before.
+use crate::{latest::Latest, preview::PreviewContent, shell::Shell};
+use bibli_core::{inspection::Picture, scheduler::Priority};
 use gpui::{Context, RenderImage, Window};
 use std::{
     collections::{HashMap, HashSet},
@@ -33,11 +33,11 @@ pub(crate) struct Decoded {
 }
 
 struct Reply {
-    generation: u64,
     key: String,
     result: Result<Decoded, String>,
 }
 
+#[derive(Default)]
 pub struct Pictures {
     /// Shared with each frame's rows, which only read it.
     pub(crate) loaded: Rc<HashMap<String, Decoded>>,
@@ -48,38 +48,14 @@ pub struct Pictures {
     wanted: Vec<String>,
     /// How far each picture is from the view, in blocks, for eviction.
     distance: HashMap<String, usize>,
-    pending: Option<(String, CancelToken)>,
-    generation: u64,
-    tx: flume::Sender<Reply>,
-    rx: flume::Receiver<Reply>,
-}
-impl Default for Pictures {
-    fn default() -> Self {
-        let (tx, rx) = flume::unbounded();
-        Self {
-            loaded: Rc::default(),
-            failed: HashSet::new(),
-            seen: Vec::new(),
-            wanted: Vec::new(),
-            distance: HashMap::new(),
-            pending: None,
-            generation: 0,
-            tx,
-            rx,
-        }
-    }
-}
-impl Drop for Pictures {
-    fn drop(&mut self) {
-        self.cancel();
-    }
+    /// The picture on its way, one at a time.
+    asking: Option<String>,
+    asked: Latest<Reply>,
 }
 impl Pictures {
     fn cancel(&mut self) {
-        if let Some((_, token)) = self.pending.take() {
-            token.cancel();
-        }
-        self.generation = self.generation.wrapping_add(1);
+        self.asking = None;
+        self.asked.forget();
     }
     /// Forget every picture, for a page that replaces the one they were of.
     /// The caller drops what is returned from the atlas.
@@ -199,9 +175,9 @@ impl Shell {
         }
         pictures.wanted = wanted;
         if pictures
-            .pending
+            .asking
             .as_ref()
-            .is_some_and(|(key, _)| !pictures.wanted.contains(key))
+            .is_some_and(|key| !pictures.wanted.contains(key))
         {
             pictures.cancel();
         }
@@ -221,7 +197,7 @@ impl Shell {
             return;
         };
         let pictures = &mut self.preview.inspection.pictures;
-        if pictures.pending.is_some() {
+        if pictures.asked.is_pending() {
             return;
         }
         let Some(key) = pictures
@@ -232,19 +208,16 @@ impl Shell {
         else {
             return;
         };
-        let cancel = self.app.lifetime().child();
-        pictures.pending = Some((key.clone(), cancel.clone()));
-        let generation = pictures.generation;
-        let tx = pictures.tx.clone();
+        pictures.asking = Some(key.clone());
         let previews = Arc::clone(&self.app.previews);
-        let wake = self.app.waker_handle();
-        self.app.scheduler.spawn(
+        pictures.asked.ask(
+            &self.app,
+            self.app.lifetime(),
             Priority::Visible,
             "preview-picture",
-            cancel.clone(),
-            move || {
+            move |cancel| {
                 let result = previews
-                    .picture(&request, &view, &key, &cancel)
+                    .picture(&request, &view, &key, cancel)
                     .and_then(|image| {
                         let image =
                             image.ok_or_else(|| anyhow::anyhow!("the picture is not there"))?;
@@ -254,27 +227,16 @@ impl Shell {
                         Ok(Decoded { image, bytes })
                     })
                     .map_err(|error| format!("{error:#}"));
-                if !cancel.is_cancelled() {
-                    let _ = tx.send(Reply {
-                        generation,
-                        key,
-                        result,
-                    });
-                    wake();
-                }
+                Reply { key, result }
             },
         );
     }
 
     /// Take the pictures that arrived, as the core wakes the UI.
     pub(crate) fn sync_pictures(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let mut arrived = false;
-        while let Ok(reply) = self.preview.inspection.pictures.rx.try_recv() {
-            let pictures = &mut self.preview.inspection.pictures;
-            if reply.generation != pictures.generation {
-                continue;
-            }
-            pictures.pending = None;
+        let pictures = &mut self.preview.inspection.pictures;
+        if let Some(reply) = pictures.asked.take() {
+            pictures.asking = None;
             match reply.result {
                 Ok(decoded) => {
                     if let Some(old) = Rc::make_mut(&mut pictures.loaded).insert(reply.key, decoded)
@@ -287,13 +249,10 @@ impl Shell {
                     pictures.failed.insert(reply.key);
                 }
             }
-            arrived = true;
             for decoded in pictures.evict() {
                 cx.drop_image(decoded.image, Some(window));
             }
             self.request_picture();
-        }
-        if arrived {
             cx.notify();
         }
     }

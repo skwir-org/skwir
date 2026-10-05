@@ -43,6 +43,8 @@ struct Open {
     location: Location,
     rx: Receiver<ListingEvent>,
     _sink: EventSink,
+    /// The folder it lists, as a trashed folder's location does.
+    holds: Option<PathBuf>,
 }
 
 impl OpenLocation for Open {
@@ -61,6 +63,9 @@ impl OpenLocation for Open {
             .into_iter()
             .find(|name| id == EntryId::place(name.len() as u64))
             .map(|name| Location::new(SCHEME, format!("/{name}")))
+    }
+    fn holds(&self) -> Option<&Path> {
+        self.holds.as_deref()
     }
     fn refresh(&self) {}
     fn close(&self) {}
@@ -88,6 +93,7 @@ impl LocationProvider for Fake {
             location: location.clone(),
             rx,
             _sink: sink,
+            holds: (location.rest == "/few").then(|| self.base.join("few")),
         }))
     }
 
@@ -139,6 +145,21 @@ fn with_fake(base: &Path) -> Arc<bibli_core::App> {
         }),
     );
     app
+}
+
+#[test]
+fn a_volume_let_go_of_takes_what_lists_a_folder_on_it_whatever_its_scheme() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = with_fake(tmp.path());
+    let pane = active(&app);
+    go(&app, "fake:/few");
+    let home = Location::from_path(tmp.path().join("elsewhere"));
+    // Another volume: nothing moves.
+    app.release(Path::new("/nowhere"), &home).unwrap();
+    assert_eq!(shows(&app, pane), Some(Location::new(SCHEME, "/few")));
+    // Its own: the pane goes, as a folder's would.
+    app.release(tmp.path(), &home).unwrap();
+    assert_eq!(shows(&app, pane), Some(home));
 }
 
 #[test]

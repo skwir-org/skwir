@@ -11,6 +11,7 @@
 //! every store its policy allows, and its inverse puts back the exact
 //! bytes each store held ([`raw`]), whatever the format.
 
+pub(crate) mod commands;
 mod edit;
 pub mod raw;
 
@@ -67,6 +68,13 @@ pub struct Notes {
 }
 
 impl Notes {
+    /// Whether it holds what the user gives a file (tags, a rating, a
+    /// comment): what a store creates a file for. Where a download came
+    /// from is the system's, read only.
+    pub fn has_user_notes(&self) -> bool {
+        !self.tags.is_empty() || self.rating.is_some() || self.comment.is_some()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.tags.is_empty()
             && self.rating.is_none()
@@ -402,6 +410,8 @@ pub type Named<'a> = (&'a OsStr, Option<EntryId>, bool);
 #[derive(Default)]
 pub struct NoteStores {
     list: RwLock<Vec<(Arc<str>, Arc<dyn NotesStore>)>>,
+    /// What the stores hold together, kept as they come and go.
+    held: RwLock<Holds>,
     /// The user's choices, `None` until the settings are read: then each
     /// store's default.
     chosen: RwLock<Option<Policy>>,
@@ -431,11 +441,36 @@ fn snapshot_key(id: EntryId) -> Vec<u8> {
 
 impl NoteStores {
     pub fn register(&self, owner: &str, store: Arc<dyn NotesStore>) {
-        self.list.write().push((owner.into(), store));
+        let mut list = self.list.write();
+        list.push((owner.into(), store));
+        *self.held.write() = Self::together(&list);
     }
 
     pub fn unregister_owner(&self, owner: &str) {
-        self.list.write().retain(|(o, _)| &**o != owner);
+        let mut list = self.list.write();
+        list.retain(|(o, _)| &**o != owner);
+        *self.held.write() = Self::together(&list);
+    }
+
+    /// What the stores registered hold together: whether bibli keeps a
+    /// rating or a comment anywhere, for the surfaces that show one. From
+    /// memory, cheap enough to ask as they are drawn.
+    pub fn held(&self) -> Holds {
+        *self.held.read()
+    }
+
+    fn together(list: &[(Arc<str>, Arc<dyn NotesStore>)]) -> Holds {
+        list.iter().fold(Holds::default(), |all, (_, store)| {
+            let holds = store.holds();
+            Holds {
+                tags: all.tags || holds.tags,
+                tag_colors: all.tag_colors || holds.tag_colors,
+                rating: all.rating || holds.rating,
+                comment: all.comment || holds.comment,
+                origin: all.origin || holds.origin,
+                limits: "",
+            }
+        })
     }
 
     /// Record that `key` was declared for `owner`'s store.

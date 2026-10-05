@@ -1,9 +1,9 @@
 //! Small native helper for archive metadata and bounded member reads.
 use crate::inspection::{self, limits};
-use anyhow::Context;
+use crate::sandbox::{self, Otherwise};
 use bibli_core::CancelToken;
 use serde::Deserialize;
-use std::{path::Path, process::Command};
+use std::path::Path;
 #[derive(Clone, Debug, Deserialize)]
 pub struct Member {
     pub index: u64,
@@ -19,13 +19,18 @@ impl Member {
         self.name.rsplit('/').next().unwrap_or(&self.name)
     }
 }
-/// The helper's executable: `BIBLI_ARCHIVE_WORKER`, beside our binary, or
-/// on `PATH`. Plugins that require it name this, not the literals.
+/// The helper. Plugins that require it name this, not the literals.
+pub const WORKER: crate::process::Worker = crate::process::Worker {
+    variable: "BIBLI_ARCHIVE_WORKER",
+    executable: "bibli-archive-worker",
+};
+
+/// Where the helper is, if it is.
 pub fn worker_path() -> Option<std::path::PathBuf> {
-    crate::process::find_worker("BIBLI_ARCHIVE_WORKER", "bibli-archive-worker")
+    WORKER.find()
 }
 fn worker() -> anyhow::Result<std::path::PathBuf> {
-    worker_path().context("Install bibli-archive-worker to preview this file")
+    WORKER.require("open archives")
 }
 /// An archive's members as the helper listed them: the first
 /// `limits::CONTAINER_MEMBERS`, within `limits::MEMBER_NAMES` bytes of names.
@@ -36,17 +41,25 @@ pub struct Listing {
     pub complete: bool,
 }
 pub fn list(path: &Path, cancel: &CancelToken) -> anyhow::Result<Listing> {
-    let bytes = crate::process::run(
-        Command::new(worker()?)
-            .arg(path)
-            .arg("--members")
-            .arg(limits::CONTAINER_MEMBERS.to_string())
-            .arg("--names")
-            .arg(limits::MEMBER_NAMES.to_string()),
-        cancel,
-        limits::HELPER_TIMEOUT,
-    )?;
+    let work = tempfile::tempdir()?;
+    let mut run = sandbox::untrusted(&worker()?, path, work.path(), Otherwise::Run)?;
+    run.command
+        .arg(&run.input)
+        .args(stem(path))
+        .arg("--members")
+        .arg(limits::CONTAINER_MEMBERS.to_string())
+        .arg("--names")
+        .arg(limits::MEMBER_NAMES.to_string());
+    let bytes = crate::process::run(&mut run.command, cancel, limits::HELPER_TIMEOUT)?;
     Ok(serde_json::from_slice(&bytes)?)
+}
+/// The file's own stem, which a file only compressed (`notes.txt.gz`)
+/// names its one member after: the helper reads it under another name in
+/// its sandbox.
+fn stem(path: &Path) -> Vec<std::ffi::OsString> {
+    path.file_stem()
+        .map(|stem| vec!["--stem".into(), stem.to_owned()])
+        .unwrap_or_default()
 }
 /// Where a member named `name` is written inside `into`: a fixed file name,
 /// plus an extension reduced to letters and digits so that previews, which
@@ -82,18 +95,21 @@ fn write_member(
         "Member preview exceeds {} limit",
         limits::describe(limits::BINARY_INPUT)
     );
-    crate::process::run(
-        Command::new(worker()?)
-            .arg(path)
-            .arg(member.index.to_string())
-            .arg(output)
-            .arg("--name")
-            .arg(&member.name)
-            .arg("--bytes")
-            .arg(limits::BINARY_INPUT.to_string()),
-        cancel,
-        limits::HELPER_TIMEOUT,
-    )?;
+    // It writes in the folder that will hold the member, and nowhere else.
+    let (Some(into), Some(name)) = (output.parent(), output.file_name()) else {
+        anyhow::bail!("Nowhere to write the member");
+    };
+    let mut run = sandbox::untrusted(&worker()?, path, into, Otherwise::Run)?;
+    run.command
+        .arg(&run.input)
+        .args(stem(path))
+        .arg(member.index.to_string())
+        .arg(run.work.join(name))
+        .arg("--name")
+        .arg(&member.name)
+        .arg("--bytes")
+        .arg(limits::BINARY_INPUT.to_string());
+    crate::process::run(&mut run.command, cancel, limits::HELPER_TIMEOUT)?;
     Ok(())
 }
 /// Write one member of an archive as a file of its own, named by

@@ -63,12 +63,20 @@ fn look_up(path: &Path, device: u64) -> bool {
     }
     // btrfs numbers its files' device apart from its disks: the disk is
     // the device mounted.
-    mounted_from(path)
-        .and_then(|device| rustix::fs::stat(&device).ok())
+    mounted_from(path).is_some_and(|device| device_removable(&device))
+}
+
+/// [`is_removable`] for the block device `source` (`/dev/sdb1`, as
+/// mountinfo names what a mount holds). Reads `/dev` and sysfs only, never
+/// the filesystem mounted, so a sleeping or unreachable volume cannot hold
+/// the caller.
+pub fn device_removable(source: &Path) -> bool {
+    rustix::fs::stat(source)
+        .ok()
         .filter(|d| {
             rustix::fs::FileType::from_raw_mode(d.st_mode) == rustix::fs::FileType::BlockDevice
         })
-        .is_some_and(|d| removable_in(sys, &number(d.st_rdev)))
+        .is_some_and(|d| removable_in(Path::new("/sys"), &number(d.st_rdev)))
 }
 
 fn number(device: u64) -> String {
@@ -86,23 +94,55 @@ fn mounted_from(path: &Path) -> Option<PathBuf> {
     source_of(&path, &mountinfo)
 }
 
+/// One line of `/proc/self/mountinfo`: a mount.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Mounted {
+    /// What of its filesystem is mounted: `/` for all of it, a subvolume
+    /// or a folder of it otherwise (`/@home`).
+    pub root: PathBuf,
+    /// Where it is mounted.
+    pub point: PathBuf,
+    pub fstype: String,
+    /// What is mounted (`/dev/sdb1`, `user@host:/`), as the kernel says.
+    pub source: std::ffi::OsString,
+}
+
+/// Every mount `mountinfo` (the text of `/proc/self/mountinfo`) lists, in
+/// its order, its paths exact whatever bytes they hold. The one reading of
+/// it: the places plugin's volumes and the write-through's devices.
+pub fn mountinfo(text: &str) -> Vec<Mounted> {
+    text.lines()
+        .filter_map(|line| {
+            // 36 35 98:0 /mnt1 /mnt2 rw,noatime master:1 - ext3 /dev/root rw
+            let (own, rest) = line.split_once(" - ")?;
+            let mut own = own.split(' ');
+            let root = own.nth(3)?;
+            let point = own.next()?;
+            let mut rest = rest.split(' ');
+            Some(Mounted {
+                root: PathBuf::from(unescape(root)),
+                point: PathBuf::from(unescape(point)),
+                fstype: rest.next()?.to_owned(),
+                source: unescape(rest.next().unwrap_or_default()),
+            })
+        })
+        .collect()
+}
+
 /// In `mountinfo`, the source of the mount that holds `path`: the last of
 /// the deepest, as the kernel stacks them.
 fn source_of(path: &Path, mountinfo: &str) -> Option<PathBuf> {
-    let mut best: Option<(PathBuf, &str)> = None;
-    for line in mountinfo.lines() {
-        let (own, rest) = line.split_once(" - ")?;
-        let point = PathBuf::from(unescape(own.split(' ').nth(4)?));
-        let source = rest.split(' ').nth(1)?;
-        if path.starts_with(&point)
+    let mut best: Option<Mounted> = None;
+    for mount in self::mountinfo(mountinfo) {
+        if path.starts_with(&mount.point)
             && best
                 .as_ref()
-                .is_none_or(|(b, _)| point.as_os_str().len() >= b.as_os_str().len())
+                .is_none_or(|b| mount.point.as_os_str().len() >= b.point.as_os_str().len())
         {
-            best = Some((point, source));
+            best = Some(mount);
         }
     }
-    let source = PathBuf::from(unescape(best?.1));
+    let source = PathBuf::from(best?.source);
     source.starts_with("/dev/").then_some(source)
 }
 

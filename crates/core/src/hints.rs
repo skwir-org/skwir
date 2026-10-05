@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use parking_lot::RwLock;
+use crate::registry::{Contributions, OwnerGate};
 
 use crate::cancel::CancelToken;
 
@@ -33,20 +33,26 @@ pub trait HintProvider: Send + Sync {
 /// The registered hint providers, in registration order.
 #[derive(Default)]
 pub struct Hints {
-    list: RwLock<Vec<(Arc<str>, Arc<dyn HintProvider>)>>,
+    list: Contributions<Arc<dyn HintProvider>>,
 }
 
 impl Hints {
+    pub fn gated(gate: Arc<OwnerGate>) -> Self {
+        Hints {
+            list: Contributions::gated(gate),
+        }
+    }
+
     pub fn register(&self, owner: &str, provider: Arc<dyn HintProvider>) {
-        self.list.write().push((owner.into(), provider));
+        self.list.add(owner, provider);
     }
 
     pub fn unregister_owner(&self, owner: &str) {
-        self.list.write().retain(|(o, _)| &**o != owner);
+        self.list.remove_owner(owner);
     }
 
     pub fn ids(&self) -> Vec<&'static str> {
-        self.list.read().iter().map(|(_, p)| p.id()).collect()
+        self.list.all().iter().map(|p| p.id()).collect()
     }
 
     /// Every provider's candidates, once each, only those under `root`;
@@ -58,12 +64,7 @@ impl Hints {
         root: &Path,
         cancel: &CancelToken,
     ) -> Option<Vec<PathBuf>> {
-        let providers: Vec<Arc<dyn HintProvider>> = self
-            .list
-            .read()
-            .iter()
-            .map(|(_, p)| Arc::clone(p))
-            .collect();
+        let providers = self.list.all();
         let mut said = false;
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();

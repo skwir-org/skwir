@@ -3,13 +3,6 @@
 use std::ffi::OsStr;
 use std::path::Path;
 
-/// Follow a user-activated web link; document actions never launch local files
-/// or executable URI schemes through this surface.
-pub fn open_web_uri(uri: &str) -> anyhow::Result<()> {
-    anyhow::ensure!(is_web_uri(uri), "not a web link");
-    open::that_detached(uri).map_err(Into::into)
-}
-
 /// Whether `uri` is a web link this surface follows: `http` or `https`,
 /// with a host, and nothing a handler could take for another argument.
 /// What a file names (a download's origin) comes here, so nothing else
@@ -62,20 +55,6 @@ pub fn open_geo_uri(uri: &str) -> anyhow::Result<()> {
 /// Open `path` with the system default application, detached.
 pub fn open_path(path: &Path) -> anyhow::Result<()> {
     open::that_detached(path).map_err(|e| anyhow::anyhow!("open {}: {e}", path.display()))
-}
-
-/// Open a terminal in `dir` running `argv` (program and arguments) instead
-/// of a shell; the terminal closes when the program exits. Returns the child
-/// for callers that wait for it themselves; prefer [`open_terminal_watched`],
-/// which needs no waiting thread.
-pub fn open_terminal_with<S: AsRef<OsStr>>(
-    dir: &Path,
-    argv: &[S],
-) -> anyhow::Result<std::process::Child> {
-    let mut command = imp::terminal_with(dir, argv)?;
-    command
-        .spawn()
-        .map_err(|e| anyhow::anyhow!("launch {}: {e}", command.get_program().display()))
 }
 
 /// Open a terminal in `dir` running `argv`, and call `on_exit` once the
@@ -182,7 +161,7 @@ mod imp {
     }
 
     pub fn terminal_with<S: AsRef<OsStr>>(_dir: &Path, _argv: &[S]) -> anyhow::Result<Command> {
-        anyhow::bail!("open_terminal_with is not implemented on this platform yet")
+        anyhow::bail!("a terminal running a program is not implemented on this platform yet")
     }
 }
 

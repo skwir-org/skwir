@@ -182,29 +182,6 @@ struct PaneArgs {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-struct RateArgs {
-    /// From 1 to 5 stars; 0 removes the rating.
-    stars: u8,
-    /// The entries to act on; the pane's selection when omitted.
-    #[serde(default)]
-    entries: Vec<EntryRef>,
-    #[serde(default)]
-    pane: Option<PaneId>,
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-struct CommentArgs {
-    /// The comment; empty removes it.
-    #[serde(default)]
-    text: String,
-    /// The entries to act on; the pane's selection when omitted.
-    #[serde(default)]
-    entries: Vec<EntryRef>,
-    #[serde(default)]
-    pane: Option<PaneId>,
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct RenameArgs {
     /// The tag to rename.
     #[serde(default)]
@@ -272,15 +249,6 @@ struct ColorArgs {
     color: Option<String>,
 }
 
-/// The entries a command acts on: those it names, or the pane's selection.
-fn targets(app: &App, pane: Option<PaneId>, entries: Vec<EntryRef>) -> Vec<EntryRef> {
-    if entries.is_empty() {
-        app.selected_refs(app.pane_or_active(pane))
-    } else {
-        entries
-    }
-}
-
 /// A plan of one step per target entry, built from what each entry holds
 /// now (read from the file: the listing's field can be stale), leaving out
 /// the entries it would not change.
@@ -290,7 +258,7 @@ fn per_entry<T: bibli_core::op::Operation + 'static>(
     step: impl Fn(EntryRef) -> Option<T>,
 ) -> anyhow::Result<Outcome> {
     if refs.is_empty() {
-        anyhow::bail!("nothing selected");
+        return Err(bibli_core::command::NothingSelected.into());
     }
     let mut plan = Plan::new(title);
     for r in refs {
@@ -341,7 +309,7 @@ fn edit_plan(app: &App, vocabulary: &Arc<Vocabulary>, a: EditArgs) -> anyhow::Re
     let exclusive = fields::exclusive(app);
     vocabulary.used(&add);
     per_entry(
-        targets(app, a.pane, a.entries),
+        app.targets(a.pane, a.entries).unwrap_or_default(),
         edit_title(&add, &remove),
         |r| {
             let current = notes_of(app, &r.path).tag_names();
@@ -353,7 +321,7 @@ fn edit_plan(app: &App, vocabulary: &Arc<Vocabulary>, a: EditArgs) -> anyhow::Re
 
 /// `tags.selected`: what the tag editor starts from.
 fn selected(app: &App, vocabulary: &Vocabulary, a: PaneArgs) -> serde_json::Value {
-    let refs = targets(app, a.pane, a.entries);
+    let refs = app.targets(a.pane, a.entries).unwrap_or_default();
     // Keyed by the lowercase form, in the order first met, with the color
     // a file gives the tag (a Finder tag's), if one does.
     let mut counts: Vec<(String, usize, Option<String>)> = Vec::new();
@@ -416,7 +384,7 @@ fn ask_comment(text: Option<&str>) -> Invocation {
     let mut args = serde_json::json!({
         "title": "Comment",
         "placeholder": "A comment on the selection (empty removes it)",
-        "command": "tags.comment",
+        "command": "notes.comment",
         "field": "text",
     });
     if let Some(text) = text {
@@ -425,17 +393,10 @@ fn ask_comment(text: Option<&str>) -> Invocation {
     Invocation::with_args("ui.ask", &args)
 }
 
+/// An item of the files' menu: a file's notes; a place (a tag's) has its
+/// own menu.
 fn menu_item(title: &str, command: Invocation, order: i32, icon: &str) -> MenuItem {
-    MenuItem {
-        menu: "context".into(),
-        title: title.into(),
-        command,
-        // A file's notes: a place (a tag's) has its own menu.
-        when: Some("selection !place".into()),
-        order,
-        icon: Some(icon.into()),
-        submenu: None,
-    }
+    MenuItem::new("context", title, icon, order, command).when("selection !place")
 }
 
 /// Record a tag's color (`None`: the one its name gives it) in the
@@ -603,6 +564,7 @@ impl Plugin for TagsPlugin {
                 save: Invocation::new("tags.keep"),
                 save_title: "Pin this tag to the sidebar".into(),
                 forget_title: "Unpin this tag from the sidebar".into(),
+                keeps: Some(browse::keepable),
             },
         );
         app.registry.menu_sources.add(
@@ -614,6 +576,20 @@ impl Plugin for TagsPlugin {
                 replaces: Vec::new(),
             },
         );
+        // A tag's one menu wherever else it is shown: its pill in the
+        // sidebar (asked with the place's location), its chip in Details
+        // (with its name).
+        for menu in ["place", "tag"] {
+            app.registry.menu_sources.add(
+                ID,
+                bibli_core::registry::MenuSource {
+                    menu: menu.into(),
+                    when: None,
+                    command: Invocation::new("tags.tag_menu"),
+                    replaces: Vec::new(),
+                },
+            );
+        }
         // An edit applied is learned by the index at once: a file edited
         // while no pane shows it (a tag renamed everywhere) is not read
         // again soon; a file moved, renamed or trashed takes its tags along
@@ -805,10 +781,14 @@ impl Plugin for TagsPlugin {
                 } else {
                     format!("set tags {}", tags.join(", "))
                 };
-                per_entry(targets(app, a.pane, a.entries), title, |r| {
-                    let current = notes_of(app, &r.path).tag_names();
-                    (current != tags).then(|| app.notes.edit(r).tags(tags.clone()))
-                })
+                per_entry(
+                    app.targets(a.pane, a.entries).unwrap_or_default(),
+                    title,
+                    |r| {
+                        let current = notes_of(app, &r.path).tag_names();
+                        (current != tags).then(|| app.notes.edit(r).tags(tags.clone()))
+                    },
+                )
             },
         );
         let v = Arc::clone(&vocabulary);
@@ -867,7 +847,7 @@ impl Plugin for TagsPlugin {
                 let Some(tag) = parse_tags(&a.tag).pop() else {
                     anyhow::bail!("which tag?");
                 };
-                let refs = targets(app, a.pane, a.entries);
+                let refs = app.targets(a.pane, a.entries).unwrap_or_default();
                 let all = !refs.is_empty()
                     && refs
                         .iter()
@@ -896,66 +876,6 @@ impl Plugin for TagsPlugin {
             "Tags of the selection",
             "`{ items, tags: [{ name, count, color? }], known }`: the selection's tags, read from its files, with how many carry each and the color a file gives one (a Finder tag's), and the tags known, those pinned first, then the most recently used (blocks: dispatch from a worker)",
             move |a, app| Ok(Outcome::Value(selected(app, &v, a))),
-        );
-        app.commands.register::<RateArgs, _>(
-            ID,
-            "tags.rate",
-            "Rate",
-            "Rate the selection from 1 to 5 stars, or remove its rating with 0 (plan)",
-            |a, app| {
-                anyhow::ensure!(a.stars <= 5, "a rating is from 1 to 5 stars");
-                let rating = (a.stars > 0).then_some(u64::from(a.stars) * 2);
-                let title = rating.map_or_else(
-                    || "remove the rating".to_owned(),
-                    |r| format!("rate {}", bibli_core::notes::stars(r)),
-                );
-                per_entry(targets(app, a.pane, a.entries), title, |r| {
-                    (notes_of(app, &r.path).rating != rating)
-                        .then(|| app.notes.edit(r).rating(rating))
-                })
-            },
-        );
-        app.commands.register::<CommentArgs, _>(
-            ID,
-            "tags.comment",
-            "Comment",
-            "Set the selection's comment, or remove it with an empty text (plan)",
-            |a, app| {
-                let text = a.text.trim();
-                let comment = (!text.is_empty()).then(|| text.to_owned());
-                let title = if comment.is_some() {
-                    "set the comment"
-                } else {
-                    "remove the comment"
-                };
-                per_entry(targets(app, a.pane, a.entries), title.to_owned(), |r| {
-                    (notes_of(app, &r.path).comment != comment)
-                        .then(|| app.notes.edit(r).comment(comment.clone()))
-                })
-            },
-        );
-        app.commands.register::<PaneArgs, _>(
-            ID,
-            "tags.agree",
-            "Make notes agree",
-            "Write the selection's notes, as read from every store, to each store that keeps them, so the stores that differ agree again (plan)",
-            |a, app| {
-                per_entry(
-                    targets(app, a.pane, a.entries),
-                    "make the notes agree".to_owned(),
-                    |r| {
-                        let read = app.notes.read_one(&r.path, &app.notes.policy());
-                        (!read.differ.is_empty()).then(|| {
-                            app.notes
-                                .edit(r)
-                                .tags(read.notes.tag_names())
-                                .rating(read.notes.rating)
-                                .comment(read.notes.comment)
-                                .sync()
-                        })
-                    },
-                )
-            },
         );
         // A tag's pin and color follow it renamed on every file.
         let follows = follow::Ctx::new(app, sidebar.clone());
@@ -1079,6 +999,13 @@ impl Plugin for TagsPlugin {
                 },
             );
         }
+        app.commands.register::<browse::TagMenuArgs, _>(
+            ID,
+            "tags.tag_menu",
+            "A tag's menu",
+            "The items of a tag's menu where it is shown: its chip in Details (tags), its pill in the sidebar (location). Answers from memory",
+            |a, app| Ok(browse::tag_menu(app, a)),
+        );
         app.commands.register::<browse::PaneOnly, _>(
             ID,
             "tags.place_menu",
@@ -1191,7 +1118,7 @@ impl Plugin for TagsPlugin {
                     submenu: Some("Notes".into()),
                     ..menu_item(
                         &title,
-                        Invocation::with_args("tags.rate", &serde_json::json!({ "stars": stars })),
+                        Invocation::with_args("notes.rate", &serde_json::json!({ "stars": stars })),
                         151 + i32::from(5 - stars),
                         if stars == 0 { "minus" } else { "star" },
                     )
@@ -1665,7 +1592,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(2));
         }
 
-        let agree = plan(&app, "tags.agree", &serde_json::json!({}));
+        let agree = plan(&app, "notes.agree", &serde_json::json!({}));
         assert_eq!(agree.steps.len(), 1);
         assert!(
             app.executor
@@ -1679,7 +1606,7 @@ mod tests {
         );
         assert!(read().differ.is_empty());
         assert!(
-            plan(&app, "tags.agree", &serde_json::json!({}))
+            plan(&app, "notes.agree", &serde_json::json!({}))
                 .steps
                 .is_empty()
         );
@@ -2121,7 +2048,7 @@ mod tests {
         xattr::set(&f, xdg::ORIGIN, b"https://example.org/pic.jpg").unwrap();
         let (app, pane) = app_in(tmp.path(), &dir, &["pic.jpg"]);
 
-        let rate = plan(&app, "tags.rate", &serde_json::json!({ "stars": 4 }));
+        let rate = plan(&app, "notes.rate", &serde_json::json!({ "stars": 4 }));
         let changes: Vec<String> = rate
             .steps
             .iter()
@@ -2137,7 +2064,7 @@ mod tests {
         );
         let comment = plan(
             &app,
-            "tags.comment",
+            "notes.comment",
             &serde_json::json!({ "text": "  from the “trip”, day 2  " }),
         );
         app.executor.execute_blocking(&comment, app.lifetime());
@@ -2192,7 +2119,7 @@ mod tests {
         assert!(xattr::get(&f, xdg::RATING).unwrap().is_none());
         assert!(
             app.dispatch(&Invocation::with_args(
-                "tags.rate",
+                "notes.rate",
                 &serde_json::json!({ "stars": 6 })
             ))
             .is_err()

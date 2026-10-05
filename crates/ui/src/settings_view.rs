@@ -144,15 +144,7 @@ impl SettingsView {
         let nav_focused = self.nav.is_focused(window);
         let mut plugins_caption = false;
         for page in self.pages() {
-            let icon = match &page {
-                Page::General => "sliders",
-                Page::Appearance => "appearance",
-                Page::Reading => "reading",
-                Page::Notes => "tag",
-                Page::Plugins => "plugin",
-                Page::Keyboard => "keyboard",
-                Page::Plugin(_) => "",
-            };
+            let icon = page.builtin().map_or("", |b| b.icon);
             if matches!(page, Page::Plugin(_)) && !plugins_caption {
                 plugins_caption = true;
                 list = list.child(
@@ -839,7 +831,7 @@ impl SettingsView {
         let location = self.app.settings.path().map_or_else(
             || "Settings are kept in memory for this session.".to_owned(),
             |path| {
-                let shown = std::env::var_os("HOME")
+                let shown = bibli_core::os_path::home()
                     .and_then(|home| {
                         path.strip_prefix(home)
                             .ok()
@@ -1054,23 +1046,7 @@ impl Render for SettingsView {
         let mut items: Vec<AnyElement> = Vec::new();
         let (title, subtitle): (String, String) = if query.is_empty() {
             let page = self.page.clone();
-            let subtitle = match &page {
-                Page::General => "How bibli handles files. Changes apply as you make them.",
-                Page::Appearance => "How bibli looks.",
-                Page::Reading => {
-                    "How documents, books, comics and Markdown read in the preview. Which engine reads each is on its plugin's page."
-                }
-                Page::Notes => {
-                    "Where tags, ratings and comments are kept, so the desktop, a Mac and other applications see them too. Every place is read and merged; each is written as you choose: never, where the file already has notes there, also where a file's volume keeps no attributes (one place is started there, the one its folder already uses first), or for every file edited."
-                }
-                Page::Plugins => {
-                    "Everything beyond the core is a plugin. Turning one off removes its commands, views and settings until it is turned on again."
-                }
-                Page::Keyboard => {
-                    "Your shortcuts, then every shortcut in use, grouped by where it applies. Yours replace the others on the same keys."
-                }
-                Page::Plugin(_) => "",
-            };
+            let subtitle = page.builtin().map_or("", |b| b.intro);
             match &page {
                 Page::General => self.page_general(&mut items, &theme, window, cx),
                 Page::Appearance => {

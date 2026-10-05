@@ -151,28 +151,25 @@ impl ThumbnailProvider for FreedesktopCache {
 #[derive(Debug, Clone, Default)]
 pub struct ImageDecoder;
 
-/// `image/<subtype>` values the crate can decode with our feature set.
-const SUBTYPES: &[&str] = &[
-    "png",
-    "jpeg",
-    "gif",
-    "webp",
-    "bmp",
-    "x-ms-bmp",
-    "tiff",
-    "x-icon",
-    "vnd.microsoft.icon",
-    "qoi",
-    "x-qoi",
-    "x-tga",
-    "x-targa",
-    "x-portable-pixmap",
-    "x-portable-graymap",
-    "x-portable-bitmap",
-    "x-portable-anymap",
-    "x-exr",
-    "x-dds",
-];
+/// The types the crate can decode with our feature set, each by one of
+/// its names (`mime::Types` knows the others).
+static RASTERS: crate::mime::Types = crate::mime::Types::new(&[
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "image/bmp",
+    "image/tiff",
+    "image/vnd.microsoft.icon",
+    "image/qoi",
+    "image/x-tga",
+    "image/x-portable-pixmap",
+    "image/x-portable-graymap",
+    "image/x-portable-bitmap",
+    "image/x-portable-anymap",
+    "image/x-exr",
+    "image/x-dds",
+]);
 
 /// Whether bibli decodes pictures of type `mime` itself: a raster the
 /// `image` crate reads, or a drawing (`inspection::drawing`).
@@ -181,8 +178,7 @@ pub fn decodes(mime: &str) -> bool {
 }
 
 fn raster(mime: &str) -> bool {
-    mime.strip_prefix("image/")
-        .is_some_and(|sub| SUBTYPES.contains(&sub))
+    mime.starts_with("image/") && RASTERS.contains(mime)
 }
 
 /// Refuse to decode anything larger than this many pixels.
@@ -227,36 +223,17 @@ pub struct ThumbnailerEntry {
 
 /// Parse the `[Thumbnailer Entry]` group of a `.thumbnailer` file.
 pub fn parse_thumbnailer(name: &str, text: &str) -> Option<ThumbnailerEntry> {
-    let mut in_group = false;
     let mut exec = None;
     let mut try_exec = None;
     let mut mime_types = Vec::new();
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
+    for (group, key, value) in crate::keyfile::entries(text) {
+        if group != "Thumbnailer Entry" {
             continue;
         }
-        if let Some(group) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            in_group = group == "Thumbnailer Entry";
-            continue;
-        }
-        if !in_group {
-            continue;
-        }
-        let Some((k, v)) = line.split_once('=') else {
-            continue;
-        };
-        match k.trim() {
-            "Exec" => exec = Some(v.trim().to_owned()),
-            "TryExec" => try_exec = Some(v.trim().to_owned()),
-            "MimeType" => {
-                mime_types = v
-                    .split(';')
-                    .map(str::trim)
-                    .filter(|m| !m.is_empty())
-                    .map(str::to_owned)
-                    .collect();
-            }
+        match key {
+            "Exec" => exec = Some(crate::keyfile::unescape(value.trim_end())),
+            "TryExec" => try_exec = Some(crate::keyfile::unescape(value.trim_end())),
+            "MimeType" => mime_types = crate::keyfile::list(value),
             _ => {}
         }
     }
@@ -268,19 +245,15 @@ pub fn parse_thumbnailer(name: &str, text: &str) -> Option<ThumbnailerEntry> {
     })
 }
 
-/// The directories the desktop keeps thumbnailers in, most specific first.
+/// The directories the desktop keeps thumbnailers in, most specific first:
+/// where `XDG_DATA_DIRS` says the system's data is, as for every other
+/// file the desktop shares (a distribution that keeps them elsewhere, as
+/// NixOS does, names its folders there).
 pub fn default_thumbnailer_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    if let Some(d) = crate::xdg::data_home() {
-        dirs.push(d.join("thumbnailers"));
-    }
-    if let Some(h) = dirs::home_dir() {
-        dirs.push(h.join(".nix-profile/share/thumbnailers"));
-    }
-    for d in crate::xdg::data_dirs() {
-        dirs.push(d.join("thumbnailers"));
-    }
-    dirs.push(PathBuf::from("/run/current-system/sw/share/thumbnailers"));
+    let mut dirs: Vec<_> = crate::xdg::data_search()
+        .into_iter()
+        .map(|d| d.join("thumbnailers"))
+        .collect();
     dirs.dedup();
     dirs
 }
@@ -327,59 +300,16 @@ pub fn discover(dirs: &[PathBuf]) -> Vec<ThumbnailerEntry> {
     out
 }
 
-/// Split a command line into words, honoring single and double quotes and
-/// backslash escapes, which is what desktop files expect.
-fn shell_words(s: &str) -> Vec<String> {
-    let mut words = Vec::new();
-    let mut cur = String::new();
-    let mut in_word = false;
-    let mut quote: Option<char> = None;
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        match (quote, c) {
-            (Some(q), c) if c == q => quote = None,
-            (Some('"'), '\\') => {
-                if let Some(n) = chars.next() {
-                    cur.push(n);
-                }
-            }
-            (Some(_), c) => cur.push(c),
-            (None, '\'' | '"') => {
-                quote = Some(c);
-                in_word = true;
-            }
-            (None, '\\') => {
-                if let Some(n) = chars.next() {
-                    cur.push(n);
-                    in_word = true;
-                }
-            }
-            (None, c) if c.is_whitespace() => {
-                if in_word {
-                    words.push(std::mem::take(&mut cur));
-                    in_word = false;
-                }
-            }
-            (None, c) => {
-                cur.push(c);
-                in_word = true;
-            }
-        }
-    }
-    if in_word {
-        words.push(cur);
-    }
-    words
-}
-
 /// Substitute `%i`, `%o`, `%s`, `%u`, `%%` in an `Exec` line, per word.
 /// Paths go in as they are, bytes and all: a name that is not UTF-8 must
 /// reach the thumbnailer as the file that exists.
 pub fn substitute_exec(exec: &str, input: &Path, output: &Path, size: u32) -> Vec<OsString> {
     let uri = crate::uri::file_uri(input);
-    shell_words(exec)
+    // Every word is expanded, quoted or not: GNOME's thumbnailers expand
+    // codes wherever they are, and a thumbnailer is written for them.
+    crate::keyfile::exec_words(exec)
         .into_iter()
-        .map(|w| {
+        .map(|(w, _)| {
             let mut out = OsString::with_capacity(w.len());
             let mut literal = String::new();
             let mut it = w.chars();
@@ -415,26 +345,26 @@ pub fn substitute_exec(exec: &str, input: &Path, output: &Path, size: u32) -> Ve
 /// What a thumbnailer writes, in its private folder.
 const THUMBNAIL: &str = "thumbnail.png";
 
-/// `entry`'s command for `path`, isolated (ADR-031): the file read at its
-/// name inside the sandbox (`%i`, and `%u` as its URI), the picture
-/// written in `work` (`%o`), the program found as the desktop would find
-/// it and run from where it really is.
-fn isolated(
+/// `entry`'s command for `path`, isolated where bubblewrap can (ADR-031):
+/// the file read at its name inside the sandbox (`%i`, and `%u` as its
+/// URI), the picture written in `work` (`%o`), the program found as the
+/// desktop would find it and run from where it really is. Where nothing
+/// isolates, it runs as the desktop would run it.
+fn thumbnailer(
     entry: &ThumbnailerEntry,
     path: &Path,
     work: &Path,
     pixels: u32,
 ) -> anyhow::Result<std::process::Command> {
-    let inside = crate::sandbox::inside_name(path);
-    let output = Path::new("/work").join(THUMBNAIL);
-    let argv = substitute_exec(&entry.exec, Path::new(&inside), &output, pixels);
-    let Some((exe, exe_args)) = argv.split_first() else {
+    let words = substitute_exec(&entry.exec, path, &work.join(THUMBNAIL), pixels);
+    let Some(exe) = words.first() else {
         anyhow::bail!("empty Exec in {}", entry.name)
     };
     let program = crate::process::required(&exe.to_string_lossy())?;
-    let (mut command, _) = crate::sandbox::command(&program, path, work)?;
-    command.args(exe_args);
-    Ok(command)
+    let mut run = crate::sandbox::untrusted(&program, path, work, crate::sandbox::Otherwise::Run)?;
+    let argv = substitute_exec(&entry.exec, &run.input, &run.work.join(THUMBNAIL), pixels);
+    run.command.args(&argv[1..]);
+    Ok(run.command)
 }
 
 /// Runs the desktop's `*.thumbnailer` programs for the MIME types they claim.
@@ -509,18 +439,7 @@ impl Thumbnailers {
         // A FIFO named `x.mp4` would hold the thumbnailer until its timeout.
         ensure_file(path)?;
         let scratch = tempfile::tempdir()?;
-        let mut command = if crate::sandbox::available() {
-            isolated(entry, path, scratch.path(), pixels)?
-        } else {
-            let output = scratch.path().join(THUMBNAIL);
-            let argv = substitute_exec(&entry.exec, path, &output, pixels);
-            let Some((exe, exe_args)) = argv.split_first() else {
-                anyhow::bail!("empty Exec in {}", entry.name)
-            };
-            let mut command = std::process::Command::new(exe);
-            command.args(exe_args);
-            command
-        };
+        let mut command = thumbnailer(entry, path, scratch.path(), pixels)?;
         let result = crate::process::run(&mut command, cancel, self.timeout);
         if cancel.is_cancelled() {
             return Ok(None);
@@ -626,7 +545,7 @@ impl ThumbnailProvider for OfficePages {
     }
 
     fn accepts(&self, req: &ThumbRequest) -> bool {
-        crate::preview::is_office(&req.entry.path)
+        crate::preview::is_office(&req.entry.path, req.mime.as_deref())
     }
 
     fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
@@ -658,13 +577,10 @@ impl ThumbnailProvider for OfficePages {
 // ------------------------------------------------------------- audio covers
 
 /// Audio containers that carry a cover picture.
-const COVERED_AUDIO: &[&str] = &[
+static COVERED_AUDIO: crate::mime::Types = crate::mime::Types::new(&[
     "audio/mpeg",
-    "audio/flac",
     "audio/x-flac",
     "audio/mp4",
-    "audio/m4a",
-    "audio/x-m4a",
     "audio/aac",
     "audio/ogg",
     "audio/x-vorbis+ogg",
@@ -676,7 +592,7 @@ const COVERED_AUDIO: &[&str] = &[
     "audio/x-aiff",
     "audio/x-matroska",
     "audio/webm",
-];
+]);
 
 /// A recording's cover, as `ffmpeg` reads it for the audio preview. A
 /// fallback: the desktop's audio thumbnailer, when installed, comes first.
@@ -695,7 +611,7 @@ impl ThumbnailProvider for AudioCovers {
     }
 
     fn accepts(&self, req: &ThumbRequest) -> bool {
-        mime_of(req).is_some_and(|m| COVERED_AUDIO.contains(&&*m))
+        mime_of(req).is_some_and(|m| COVERED_AUDIO.contains(&m))
     }
 
     fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {

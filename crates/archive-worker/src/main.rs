@@ -95,9 +95,12 @@ mod native {
     /// streams the member at `index`, provided it is still called `NAME`, so
     /// an archive rewritten since its listing never yields another member.
     /// Every bound arrives from the caller so the UI process and this helper
-    /// can never disagree on a limit.
+    /// can never disagree on a limit. `--stem STEM` is the file's own name
+    /// less its last extension, which a file only compressed names its one
+    /// member after: in a sandbox the archive is read under another name.
     pub struct Args {
         pub path: std::ffi::OsString,
+        pub stem: Option<std::ffi::OsString>,
         pub member: Option<u64>,
         pub output: Option<std::ffi::OsString>,
         pub name: Option<std::ffi::OsString>,
@@ -108,6 +111,7 @@ mod native {
     pub fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result<Args> {
         let mut positional = Vec::new();
         let mut name = None;
+        let mut stem = None;
         let mut bytes = None;
         let mut members = None;
         let mut names = None;
@@ -121,6 +125,13 @@ mod native {
                     name = Some(
                         args.next()
                             .ok_or_else(|| anyhow::anyhow!("missing value for --name"))?,
+                    );
+                    continue;
+                }
+                Some("--stem") => {
+                    stem = Some(
+                        args.next()
+                            .ok_or_else(|| anyhow::anyhow!("missing value for --stem"))?,
                     );
                     continue;
                 }
@@ -156,6 +167,7 @@ mod native {
         }
         Ok(Args {
             path,
+            stem,
             member,
             output,
             name,
@@ -180,11 +192,7 @@ mod native {
     /// as an archive of one member, which libarchive calls `data`; it is
     /// named after the file instead, less its compression suffix. Anything
     /// raw that was not decompressed is not an archive at all.
-    fn member_name(
-        reader: &Reader,
-        entry: *mut c_void,
-        archive: &std::path::Path,
-    ) -> anyhow::Result<String> {
+    fn member_name(reader: &Reader, entry: *mut c_void, stem: &str) -> anyhow::Result<String> {
         if unsafe { archive_format(reader.0) } != ARCHIVE_FORMAT_RAW {
             return entry_name(entry);
         }
@@ -193,13 +201,12 @@ mod native {
             unsafe { archive_filter_count(reader.0) } > 1,
             "Unrecognized archive format"
         );
-        Ok(archive
-            .file_stem()
-            .map_or_else(|| "data".into(), |stem| stem.to_string_lossy().into_owned()))
+        Ok(stem.to_owned())
     }
     pub fn run() -> anyhow::Result<()> {
         let Args {
             path,
+            stem,
             member,
             output,
             name: expected,
@@ -208,7 +215,12 @@ mod native {
             names: name_limit,
         } = parse_args(std::env::args_os().skip(1))?;
         utf8_locale();
-        let archive = std::path::PathBuf::from(&path);
+        // What a file only compressed calls its member: the stem given, else
+        // the file's own.
+        let stem = stem
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::path::Path::new(&path).file_stem().map(Into::into))
+            .map_or_else(|| "data".into(), |s| s.to_string_lossy().into_owned());
         #[cfg(unix)]
         let path = {
             use std::os::unix::ffi::OsStrExt;
@@ -244,7 +256,7 @@ mod native {
             if member == Some(index) {
                 anyhow::ensure!(
                     expected.as_deref().and_then(|e| e.to_str())
-                        == Some(member_name(&reader, entry, &archive)?.as_str()),
+                        == Some(member_name(&reader, entry, &stem)?.as_str()),
                     "Archive changed since it was listed; select it again"
                 );
                 anyhow::ensure!(
@@ -286,7 +298,7 @@ mod native {
                 return Ok(());
             }
             if member.is_none() {
-                let name = member_name(&reader, entry, &archive)?;
+                let name = member_name(&reader, entry, &stem)?;
                 names += name.len();
                 // Past either bound the listing ends there: what was
                 // listed is shown, with a word that it is not all.

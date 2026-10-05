@@ -874,6 +874,13 @@ impl Open {
         let provenance = Provenance::Plugin {
             name: crate::ID.into(),
         };
+        // A category holding one tag at a time is a field.
+        let fields = self
+            .places
+            .app
+            .upgrade()
+            .map(|app| crate::fields::exclusive(&app))
+            .unwrap_or_default();
         // The places whose pictures changed: those stat-ed for their tiles,
         // outside the lock.
         let tiles: HashMap<EntryId, Value> = {
@@ -916,6 +923,16 @@ impl Open {
             entry.metadata.set(
                 keys::PLACE_TAG,
                 Value::Text(tag.as_str().into()),
+                provenance.clone(),
+            );
+            let kind = if fields.iter().any(|f| same_tag(f, tag)) {
+                "Field"
+            } else {
+                "Tag"
+            };
+            entry.metadata.set(
+                keys::PLACE_KIND,
+                Value::Text(kind.into()),
                 provenance.clone(),
             );
             // Pictures unchanged: the tile sent with them.

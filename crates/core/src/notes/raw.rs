@@ -55,7 +55,10 @@ pub fn read(path: &Path, key: &RawKey) -> std::io::Result<Raw> {
             Err(e) if missing(&e) => None,
             Err(e) => return Err(e),
         },
-        RawKey::Beside { path: relative } => match std::fs::read(beside(path, relative)) {
+        RawKey::Beside { path: relative } => match crate::fs::file::read_regular(
+            &beside(path, relative),
+            crate::fs::file::SIDE_FILE_LIMIT,
+        ) {
             Ok(value) => Some(value),
             Err(e) if missing(&e) => None,
             Err(e) => return Err(e),

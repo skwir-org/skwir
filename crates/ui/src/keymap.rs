@@ -22,6 +22,11 @@ pub const PALETTE: &str = "Palette";
 pub const CONFIRM: &str = "Confirm";
 pub const PEEK: &str = "Peek";
 pub const READER: &str = "DocumentReader";
+/// A preview with something to find in and copy from (a document, a
+/// structured preview): the same keys, one command each, whichever.
+pub const PREVIEW: &str = "Preview";
+/// A preview's find field and its buttons.
+pub const PREVIEW_FIND: &str = "PreviewFind";
 pub const IMAGE: &str = "ImagePreview";
 /// A map preview, once clicked: arrows move it, the zoom keys zoom it.
 pub const MAP: &str = "MapPreview";
@@ -50,6 +55,10 @@ pub const MEMBERS: &str = "PreviewMembers";
 /// closes the member (`members.rs`).
 pub const MEMBER: &str = "PreviewMember";
 pub const MENU: &str = "ContextMenu";
+/// A structured preview's content (`inspector.rs`).
+pub const INSPECTOR: &str = "Inspector";
+/// What the preview plays.
+pub const MEDIA: &str = "MediaPlayer";
 /// The sidebar while it has the keyboard (F6): the arrows walk its groups
 /// and places (`sidebar.rs`).
 pub const SIDEBAR: &str = "Sidebar";
@@ -72,11 +81,6 @@ pub struct KeyHint {
 /// the plugins' (ops-basic binds the file operations).
 const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("f2", "ui.rename_prompt", Some("pane single !restores")),
-    (
-        "shift-delete",
-        "ui.confirm_delete",
-        Some("pane selection !place"),
-    ),
     // Into the folder shown, like Ctrl+V: a search or the shelf has none.
     ("ctrl-shift-n", "ui.mkdir_prompt", Some("pane folder")),
     // A new place where the location makes them (a tag's: a tag in it).
@@ -93,65 +97,45 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("escape", "ui.focus_pane", Some("sidebar")),
     ("tab", "ui.toolbar_next", None),
     ("shift-tab", "ui.toolbar_prev", None),
-    ("enter", "ui.toolbar_activate", Some("ToolbarButton")),
-    ("space", "ui.toolbar_activate", Some("ToolbarButton")),
-    ("escape", "ui.toolbar_close", Some("ToolbarPopup")),
-    ("escape", "ui.reader_find_close", Some("DocumentFind")),
+    ("enter", "ui.toolbar_activate", Some("toolbar_button")),
+    ("space", "ui.toolbar_activate", Some("toolbar_button")),
+    ("escape", "ui.toolbar_close", Some("toolbar_popup")),
+    // A popup's rows are buttons: the arrows walk them as Tab does.
+    ("down", "ui.toolbar_next", Some("toolbar_popup")),
+    ("up", "ui.toolbar_prev", Some("toolbar_popup")),
+    ("escape", "ui.preview_find_close", Some("preview_find")),
     ("ctrl-,", "ui.settings", None),
     ("f1", "ui.shortcuts", None),
     // GNOME's key for the shortcuts window. GPUI leaves out the Shift a
     // symbol took, so Ctrl+Shift+/ (or wherever `?` is) arrives as `ctrl-?`.
     ("ctrl-?", "ui.shortcuts", None),
-    ("escape", "ui.shortcuts", Some("Shortcuts")),
-    ("escape", "ui.menu_close", Some("ContextMenu")),
-    ("up", "ui.menu_up", Some("ContextMenu")),
-    ("down", "ui.menu_down", Some("ContextMenu")),
-    ("home", "ui.menu_first", Some("ContextMenu")),
-    ("end", "ui.menu_last", Some("ContextMenu")),
-    ("right", "ui.menu_expand", Some("ContextMenu")),
-    ("left", "ui.menu_collapse", Some("ContextMenu")),
-    ("enter", "ui.menu_activate", Some("ContextMenu")),
-    ("space", "ui.menu_activate", Some("ContextMenu")),
-    ("escape", "ui.settings_close", Some("Settings")),
-    ("tab", "ui.settings_next", Some("Settings")),
-    ("shift-tab", "ui.settings_prev", Some("Settings")),
-    ("ctrl-f", "ui.settings_search", Some("Settings")),
-    ("enter", "ui.settings_enter", Some("SettingsNav")),
-    ("right", "ui.settings_enter", Some("SettingsNav")),
-    ("ctrl-c", "ui.reader_copy", Some("reader")),
-    ("ctrl-a", "ui.reader_select_all", Some("reader")),
-    ("ctrl-f", "ui.reader_find", Some("reader")),
-    ("up", "ui.cursor_up", Some("pane")),
-    ("down", "ui.cursor_down", Some("pane")),
-    ("shift-up", "ui.cursor_extend_up", Some("pane")),
-    ("shift-down", "ui.cursor_extend_down", Some("pane")),
-    ("home", "ui.cursor_home", Some("pane")),
-    ("end", "ui.cursor_end", Some("pane")),
-    ("shift-home", "ui.cursor_extend_home", Some("pane")),
-    ("shift-end", "ui.cursor_extend_end", Some("pane")),
-    // Ctrl moves the cursor and leaves the selection; Ctrl+Space picks.
-    ("ctrl-up", "ui.cursor_move_up", Some("pane")),
-    ("ctrl-down", "ui.cursor_move_down", Some("pane")),
-    ("ctrl-left", "ui.cursor_move_left", Some("pane")),
-    ("ctrl-right", "ui.cursor_move_right", Some("pane")),
-    ("ctrl-home", "ui.cursor_move_home", Some("pane")),
-    ("ctrl-end", "ui.cursor_move_end", Some("pane")),
+    ("escape", "ui.shortcuts", Some("shortcuts")),
+    ("escape", "ui.menu_close", Some("menu")),
+    ("up", "ui.menu_up", Some("menu")),
+    ("down", "ui.menu_down", Some("menu")),
+    ("home", "ui.menu_first", Some("menu")),
+    ("end", "ui.menu_last", Some("menu")),
+    ("right", "ui.menu_expand", Some("menu")),
+    ("left", "ui.menu_collapse", Some("menu")),
+    ("enter", "ui.menu_activate", Some("menu")),
+    ("space", "ui.menu_activate", Some("menu")),
+    ("escape", "ui.settings_close", Some("settings")),
+    ("tab", "ui.settings_next", Some("settings")),
+    ("shift-tab", "ui.settings_prev", Some("settings")),
+    ("ctrl-f", "ui.settings_search", Some("settings")),
+    ("enter", "ui.settings_enter", Some("settings_nav")),
+    ("right", "ui.settings_enter", Some("settings_nav")),
+    ("ctrl-c", "ui.preview_copy", Some("preview")),
+    ("ctrl-a", "ui.preview_select_all", Some("preview")),
+    ("ctrl-f", "ui.preview_find", Some("preview")),
     ("ctrl-space", "ui.cursor_toggle", Some("pane")),
     // The keyboard's way to what a right-click opens.
     ("shift-f10", "ui.context_menu", Some("pane")),
     ("menu", "ui.context_menu", Some("pane")),
     // What the middle button does to a folder: a tab behind this one.
     ("ctrl-enter", "ui.open_in_tab", Some("pane selection")),
-    ("pageup", "ui.page_up", Some("pane")),
-    ("pagedown", "ui.page_down", Some("pane")),
-    ("up", "ui.palette_up", Some("palette")),
-    ("down", "ui.palette_down", Some("palette")),
     ("enter", "ui.accept", Some("confirm")),
     ("escape", "ui.dismiss", Some("confirm")),
-    ("left", "ui.cursor_left", Some("pane")),
-    ("right", "ui.cursor_right", Some("pane")),
-    ("shift-left", "ui.cursor_extend_left", Some("pane")),
-    ("shift-right", "ui.cursor_extend_right", Some("pane")),
     ("space", "ui.peek", Some("pane")),
     ("ctrl-shift-space", "ui.toggle_preview", None),
     // Layouts where shift+space types a character (fr: U+202F) never
@@ -164,10 +148,6 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("f3", "ui.split", None),
     ("space", "ui.peek_close", Some("peek")),
     ("escape", "ui.peek_close", Some("peek")),
-    ("left", "ui.peek_prev", Some("peek")),
-    ("up", "ui.peek_prev", Some("peek")),
-    ("right", "ui.peek_next", Some("peek")),
-    ("down", "ui.peek_next", Some("peek")),
     ("ctrl-shift-d", "ui.split", None),
     ("tab", "ui.focus_other_pane", Some("pane split")),
     ("shift-tab", "ui.focus_other_pane", Some("pane split")),
@@ -178,13 +158,7 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("ctrl-shift-o", "ui.terminal_links", Some("terminal")),
     ("enter", "ui.review_apply", Some("review")),
     ("escape", "ui.review_cancel", Some("review")),
-    ("up", "ui.jump_up", Some("jump")),
-    ("down", "ui.jump_down", Some("jump")),
-    ("up", "ui.choose_up", Some("choose")),
-    ("down", "ui.choose_down", Some("choose")),
     ("alt-a", "ui.choose_option", Some("choose")),
-    ("up", "ui.tag_editor_up", Some("tag_editor")),
-    ("down", "ui.tag_editor_down", Some("tag_editor")),
     ("ctrl-enter", "ui.tag_editor_apply", Some("tag_editor")),
     ("tab", "ui.rename_bulk_next", Some("bulk")),
     ("shift-tab", "ui.rename_bulk_prev", Some("bulk")),
@@ -193,12 +167,130 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
 
 /// Builtin bindings that carry arguments (`keys, command, args json, when`).
 const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
+    // The lists one picks from while typing (the palette, a choice, Jump,
+    // the tag editor, the address's suggestions): one command, the same
+    // keys, the arrows round their ends, the page keys a page at a time.
+    (
+        "up",
+        "ui.list_move",
+        r#"{"delta":-1}"#,
+        Some("palette|jump|choose|tag_editor|address"),
+    ),
+    (
+        "down",
+        "ui.list_move",
+        r#"{"delta":1}"#,
+        Some("palette|jump|choose|tag_editor|address"),
+    ),
+    (
+        "pageup",
+        "ui.list_move",
+        r#"{"to":"page_up"}"#,
+        Some("palette|jump|choose|tag_editor|address"),
+    ),
+    (
+        "pagedown",
+        "ui.list_move",
+        r#"{"to":"page_down"}"#,
+        Some("palette|jump|choose|tag_editor|address"),
+    ),
+    // The cursor in the file list (`ui.cursor`): the arrows select what
+    // they reach, Shift extends, Ctrl moves the cursor alone (and
+    // Ctrl+Space, `ui.cursor_toggle`, selects or deselects what it is on).
+    ("up", "ui.cursor", r#"{"to":"up"}"#, Some("pane")),
+    ("down", "ui.cursor", r#"{"to":"down"}"#, Some("pane")),
+    ("left", "ui.cursor", r#"{"to":"left"}"#, Some("pane")),
+    ("right", "ui.cursor", r#"{"to":"right"}"#, Some("pane")),
+    ("home", "ui.cursor", r#"{"to":"home"}"#, Some("pane")),
+    ("end", "ui.cursor", r#"{"to":"end"}"#, Some("pane")),
+    ("pageup", "ui.cursor", r#"{"to":"page_up"}"#, Some("pane")),
+    (
+        "pagedown",
+        "ui.cursor",
+        r#"{"to":"page_down"}"#,
+        Some("pane"),
+    ),
+    (
+        "shift-up",
+        "ui.cursor",
+        r#"{"to":"up","step":"extend"}"#,
+        Some("pane"),
+    ),
+    (
+        "shift-down",
+        "ui.cursor",
+        r#"{"to":"down","step":"extend"}"#,
+        Some("pane"),
+    ),
+    (
+        "shift-left",
+        "ui.cursor",
+        r#"{"to":"left","step":"extend"}"#,
+        Some("pane"),
+    ),
+    (
+        "shift-right",
+        "ui.cursor",
+        r#"{"to":"right","step":"extend"}"#,
+        Some("pane"),
+    ),
+    (
+        "shift-home",
+        "ui.cursor",
+        r#"{"to":"home","step":"extend"}"#,
+        Some("pane"),
+    ),
+    (
+        "shift-end",
+        "ui.cursor",
+        r#"{"to":"end","step":"extend"}"#,
+        Some("pane"),
+    ),
+    (
+        "ctrl-up",
+        "ui.cursor",
+        r#"{"to":"up","step":"move"}"#,
+        Some("pane"),
+    ),
+    (
+        "ctrl-down",
+        "ui.cursor",
+        r#"{"to":"down","step":"move"}"#,
+        Some("pane"),
+    ),
+    (
+        "ctrl-left",
+        "ui.cursor",
+        r#"{"to":"left","step":"move"}"#,
+        Some("pane"),
+    ),
+    (
+        "ctrl-right",
+        "ui.cursor",
+        r#"{"to":"right","step":"move"}"#,
+        Some("pane"),
+    ),
+    (
+        "ctrl-home",
+        "ui.cursor",
+        r#"{"to":"home","step":"move"}"#,
+        Some("pane"),
+    ),
+    (
+        "ctrl-end",
+        "ui.cursor",
+        r#"{"to":"end","step":"move"}"#,
+        Some("pane"),
+    ),
+    // Peek walks the files in their order.
+    ("left", "ui.cursor", r#"{"to":"previous"}"#, Some("peek")),
+    ("up", "ui.cursor", r#"{"to":"previous"}"#, Some("peek")),
+    ("right", "ui.cursor", r#"{"to":"next"}"#, Some("peek")),
+    ("down", "ui.cursor", r#"{"to":"next"}"#, Some("peek")),
     // A pane filtered by name shows everything again before Escape
     // deselects (`select_none`, the plugins' binding).
     ("escape", "filter", "{}", Some("pane filtered")),
     // The address field's dropdown: the keyboard stays in the field.
-    ("up", "ui.omnibox_move", r#"{"delta":-1}"#, Some("address")),
-    ("down", "ui.omnibox_move", r#"{"delta":1}"#, Some("address")),
     (
         "alt-enter",
         "ui.omnibox_submit",
@@ -294,65 +386,43 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     // Shift+F3 splits the other way from F3, for this split only.
     ("shift-f3", "ui.split", r#"{"axis":"other"}"#, None),
     (
-        "ctrl-c",
-        "ui.inspect",
-        r#"{"action":"copy"}"#,
-        Some("Inspector"),
-    ),
-    (
-        "ctrl-f",
-        "ui.inspect",
-        r#"{"action":"search"}"#,
-        Some("Inspector"),
-    ),
-    (
         "space",
         "ui.media_control",
         r#"{"action":"play"}"#,
-        Some("MediaPlayer"),
+        Some("media"),
     ),
-    (
-        "left",
-        "ui.preview_seek",
-        r#"{"delta":-5}"#,
-        Some("MediaPlayer"),
-    ),
-    (
-        "right",
-        "ui.preview_seek",
-        r#"{"delta":5}"#,
-        Some("MediaPlayer"),
-    ),
+    ("left", "ui.preview_seek", r#"{"delta":-5}"#, Some("media")),
+    ("right", "ui.preview_seek", r#"{"delta":5}"#, Some("media")),
     (
         "m",
         "ui.media_control",
         r#"{"action":"mute"}"#,
-        Some("MediaPlayer"),
+        Some("media"),
     ),
     (
         "shift-left",
         "ui.media_step",
         r#"{"delta":-1}"#,
-        Some("MediaPlayer"),
+        Some("media"),
     ),
     (
         "shift-right",
         "ui.media_step",
         r#"{"delta":1}"#,
-        Some("MediaPlayer"),
+        Some("media"),
     ),
-    ("f", "ui.media_fullscreen", "{}", Some("MediaPlayer")),
+    ("f", "ui.media_fullscreen", "{}", Some("media")),
     (
         "up",
         "ui.media_control",
         r#"{"action":"volume_by","value":0.05}"#,
-        Some("MediaPlayer"),
+        Some("media"),
     ),
     (
         "down",
         "ui.media_control",
         r#"{"action":"volume_by","value":-0.05}"#,
-        Some("MediaPlayer"),
+        Some("media"),
     ),
     // The dock steers the pinned player through the same requests the
     // desktop's media keys send.
@@ -360,47 +430,47 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         "space",
         "ui.player",
         r#"{"request":"play_pause"}"#,
-        Some("Player"),
+        Some("player"),
     ),
     (
         "left",
         "ui.player",
         r#"{"request":{"seek_by":-5.0}}"#,
-        Some("Player"),
+        Some("player"),
     ),
     (
         "right",
         "ui.player",
         r#"{"request":{"seek_by":5.0}}"#,
-        Some("Player"),
+        Some("player"),
     ),
     (
         "shift-left",
         "ui.player",
         r#"{"request":"previous"}"#,
-        Some("Player"),
+        Some("player"),
     ),
     (
         "shift-right",
         "ui.player",
         r#"{"request":"next"}"#,
-        Some("Player"),
+        Some("player"),
     ),
-    ("m", "ui.player_mute", "{}", Some("Player")),
+    ("m", "ui.player", r#"{"request":"mute"}"#, Some("player")),
     (
         "up",
         "ui.player_volume",
         r#"{"delta":0.05}"#,
-        Some("Player"),
+        Some("player"),
     ),
     (
         "down",
         "ui.player_volume",
         r#"{"delta":-0.05}"#,
-        Some("Player"),
+        Some("player"),
     ),
-    ("c", "ui.media_controls", "{}", Some("MediaPlayer")),
-    ("escape", "ui.media_escape", "{}", Some("MediaPlayer")),
+    ("c", "ui.media_controls", "{}", Some("media")),
+    ("escape", "ui.media_escape", "{}", Some("media")),
     (
         "pageup",
         "ui.preview_page",
@@ -413,27 +483,29 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         r#"{"delta":1}"#,
         Some("reader"),
     ),
-    ("f3", "ui.reader_match", r#"{"delta":1}"#, Some("reader")),
+    // The matches of what a preview's find looks for, from the field or
+    // the preview.
+    ("f3", "ui.preview_match", r#"{"delta":1}"#, Some("preview")),
     (
         "shift-f3",
-        "ui.reader_match",
+        "ui.preview_match",
         r#"{"delta":-1}"#,
-        Some("reader"),
+        Some("preview"),
+    ),
+    (
+        "f3",
+        "ui.preview_match",
+        r#"{"delta":1}"#,
+        Some("preview_find"),
+    ),
+    (
+        "shift-f3",
+        "ui.preview_match",
+        r#"{"delta":-1}"#,
+        Some("preview_find"),
     ),
     // The same keys in every preview: zoom what is looked at, size what is
     // read, step through sections or pages.
-    (
-        "f3",
-        "ui.inspect",
-        r#"{"action":"find_next"}"#,
-        Some("Inspector"),
-    ),
-    (
-        "f3",
-        "ui.inspect",
-        r#"{"action":"find_next"}"#,
-        Some("InspectorFind"),
-    ),
     // The files of an archive or a message: the arrows walk them, the
     // member reached is previewed under them, Left and Right fold a folder
     // (or go up to it), Escape closes the member.
@@ -441,59 +513,39 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         "up",
         "ui.inspect",
         r#"{"action":"step","delta":-1}"#,
-        Some("PreviewMembers"),
+        Some("members"),
     ),
     (
         "down",
         "ui.inspect",
         r#"{"action":"step","delta":1}"#,
-        Some("PreviewMembers"),
+        Some("members"),
     ),
     (
         "left",
         "ui.inspect",
         r#"{"action":"fold","delta":-1}"#,
-        Some("PreviewMembers"),
+        Some("members"),
     ),
     (
         "right",
         "ui.inspect",
         r#"{"action":"fold","delta":1}"#,
-        Some("PreviewMembers"),
+        Some("members"),
     ),
     (
         "escape",
         "ui.inspect",
         r#"{"action":"back"}"#,
-        Some("PreviewMember"),
+        Some("member"),
     ),
     // A map moves under the arrows, as it does under a drag.
-    (
-        "left",
-        "ui.map_pan",
-        r#"{"dx":-1,"dy":0}"#,
-        Some("MapPreview"),
-    ),
-    (
-        "right",
-        "ui.map_pan",
-        r#"{"dx":1,"dy":0}"#,
-        Some("MapPreview"),
-    ),
-    (
-        "up",
-        "ui.map_pan",
-        r#"{"dx":0,"dy":-1}"#,
-        Some("MapPreview"),
-    ),
-    (
-        "down",
-        "ui.map_pan",
-        r#"{"dx":0,"dy":1}"#,
-        Some("MapPreview"),
-    ),
-    ("[", "ui.preview_page", r#"{"delta":-1}"#, Some("Inspector")),
-    ("]", "ui.preview_page", r#"{"delta":1}"#, Some("Inspector")),
+    ("left", "ui.map_pan", r#"{"dx":-1,"dy":0}"#, Some("map")),
+    ("right", "ui.map_pan", r#"{"dx":1,"dy":0}"#, Some("map")),
+    ("up", "ui.map_pan", r#"{"dx":0,"dy":-1}"#, Some("map")),
+    ("down", "ui.map_pan", r#"{"dx":0,"dy":1}"#, Some("map")),
+    ("[", "ui.preview_page", r#"{"delta":-1}"#, Some("inspector")),
+    ("]", "ui.preview_page", r#"{"delta":1}"#, Some("inspector")),
     ("[", "ui.preview_page", r#"{"delta":-1}"#, Some("reader")),
     ("]", "ui.preview_page", r#"{"delta":1}"#, Some("reader")),
     ("alt-pageup", "ui.preview_page", r#"{"delta":-1}"#, None),
@@ -514,13 +566,13 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         "up",
         "ui.settings_page",
         r#"{"delta":-1}"#,
-        Some("SettingsNav"),
+        Some("settings_nav"),
     ),
     (
         "down",
         "ui.settings_page",
         r#"{"delta":1}"#,
-        Some("SettingsNav"),
+        Some("settings_nav"),
     ),
     // A record of a list moves with its buttons' focus, as lines move in
     // an editor.
@@ -528,37 +580,37 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         "alt-up",
         "ui.settings_move",
         r#"{"delta":-1}"#,
-        Some("SettingRecord"),
+        Some("setting_record"),
     ),
     (
         "alt-down",
         "ui.settings_move",
         r#"{"delta":1}"#,
-        Some("SettingRecord"),
+        Some("setting_record"),
     ),
     (
         "left",
         "ui.settings_adjust",
         r#"{"delta":-1}"#,
-        Some("SettingControl"),
+        Some("setting_control"),
     ),
     (
         "right",
         "ui.settings_adjust",
         r#"{"delta":1}"#,
-        Some("SettingControl"),
+        Some("setting_control"),
     ),
     (
         "down",
         "ui.settings_adjust",
         r#"{"delta":-1}"#,
-        Some("SettingNumber"),
+        Some("setting_number"),
     ),
     (
         "up",
         "ui.settings_adjust",
         r#"{"delta":1}"#,
-        Some("SettingNumber"),
+        Some("setting_number"),
     ),
     // The links in view labelled, for the keyboard to follow, as foot's
     // and kitty's hints label a terminal's.
@@ -566,13 +618,13 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         "ctrl-shift-o",
         "ui.inspect",
         r#"{"action":"links"}"#,
-        Some("Inspector"),
+        Some("inspector"),
     ),
     (
         "escape",
         "ui.inspect",
         r#"{"action":"links_close"}"#,
-        Some("Inspector labelling"),
+        Some("inspector labelling"),
     ),
     (
         "shift-pageup",
@@ -608,10 +660,26 @@ const ZOOM_KEYS: [(&str, &str); 6] = [
 const ZOOMS: [(&str, &str, Option<&str>); 5] = [
     ("ui.zoom", "dir", None),
     ("ui.preview_zoom", "dir", Some("reader")),
-    ("ui.preview_zoom", "dir", Some("ImagePreview")),
-    ("ui.preview_zoom", "dir", Some("MapPreview")),
-    ("ui.inspect", "action", Some("Inspector")),
+    ("ui.preview_zoom", "dir", Some("image")),
+    ("ui.preview_zoom", "dir", Some("map")),
+    ("ui.inspect", "action", Some("inspector")),
 ];
+
+/// Every command the shell's own keys run, with its arguments.
+#[cfg(test)]
+pub(crate) fn shell_invocations() -> Vec<(String, serde_json::Value)> {
+    BUILTIN
+        .iter()
+        .map(|(_, command, _)| ((*command).to_owned(), serde_json::json!({})))
+        .chain(BUILTIN_ARGS.iter().map(|(_, command, args, _)| {
+            (
+                (*command).to_owned(),
+                serde_json::from_str(args).expect("valid builtin args"),
+            )
+        }))
+        .chain(zoom_specs().map(|(_, command, args, _)| (command, args)))
+        .collect()
+}
 
 fn zoom_specs() -> impl Iterator<Item = (String, String, serde_json::Value, String)> {
     ZOOMS.into_iter().flat_map(|(command, arg, when)| {
@@ -631,30 +699,61 @@ fn zoom_specs() -> impl Iterator<Item = (String, String, serde_json::Value, Stri
     })
 }
 
-/// Map a registry `when` string to a GPUI context predicate.
-/// Tokens: `pane`, `address`, `palette`, `confirm` name a context; anything
-/// else is a flag the pane sets on its key context (the tokens of
-/// `menu::SELECTION_TOKENS`, `folder` among them, `split`, `usage`). All
-/// tokens must hold.
+/// Every place a binding can name, once: its `when` token, the key
+/// context it is, and what F1 calls it. `context_of` and `context_label`
+/// read it, so a new place is one row. A context named as it is
+/// (`ContextMenu`) is taken too, as plugins wrote them before.
+const PLACES: &[(&str, &str, &str)] = &[
+    ("pane", PANE, "File list"),
+    ("address", ADDRESS, "Address bar"),
+    ("palette", PALETTE, "Command palette"),
+    ("confirm", CONFIRM, "Confirmation dialogs"),
+    ("peek", PEEK, "Peek"),
+    ("reader", READER, "Document reader"),
+    ("preview", PREVIEW, "Documents and structured previews"),
+    ("preview_find", PREVIEW_FIND, "Preview search"),
+    ("inspector", INSPECTOR, "Structured previews"),
+    ("members", MEMBERS, "Files of an archive or a message"),
+    (
+        "member",
+        MEMBER,
+        "A file shown from an archive or a message",
+    ),
+    ("image", IMAGE, "Picture preview"),
+    ("map", MAP, "Map preview"),
+    ("media", MEDIA, "Media player"),
+    ("player", PLAYER, "Pinned player"),
+    ("review", REVIEW, "Plan review"),
+    ("jump", JUMP, "Jump"),
+    ("choose", CHOOSE, "Choosing from a list"),
+    ("tag_editor", TAG_EDITOR, "Tag editor"),
+    ("bulk", BULK, "Bulk rename"),
+    ("terminal", TERMINAL, "Terminal"),
+    ("sidebar", SIDEBAR, "Sidebar"),
+    ("menu", MENU, "Context menu"),
+    ("toolbar_button", "ToolbarButton", "Toolbars"),
+    ("toolbar_popup", "ToolbarPopup", "Toolbars"),
+    ("shortcuts", "Shortcuts", "Shortcut overview"),
+    ("settings", "Settings", "Settings"),
+    ("settings_nav", "SettingsNav", "Settings"),
+    ("setting_control", "SettingControl", "Settings"),
+    ("setting_number", "SettingNumber", "Settings"),
+    ("setting_record", "SettingRecord", "Settings"),
+];
+
+/// Map a registry `when` string to a GPUI context predicate. A token of
+/// `PLACES` names a place; anything else is a flag the pane sets on its
+/// key context (the tokens of `menu::SELECTION_TOKENS`, `folder` among
+/// them, `split`, `usage`). All tokens must hold.
 pub fn context_of(when: Option<&str>) -> String {
     let Some(when) = when else {
         return ROOT.to_owned();
     };
-    let one = |t: &str| match t {
-        "pane" => PANE.to_owned(),
-        "address" => ADDRESS.to_owned(),
-        "palette" => PALETTE.to_owned(),
-        "confirm" => CONFIRM.to_owned(),
-        "peek" => PEEK.to_owned(),
-        "reader" => READER.to_owned(),
-        "review" => REVIEW.to_owned(),
-        "jump" => JUMP.to_owned(),
-        "choose" => CHOOSE.to_owned(),
-        "tag_editor" => TAG_EDITOR.to_owned(),
-        "bulk" => BULK.to_owned(),
-        "terminal" => TERMINAL.to_owned(),
-        "sidebar" => SIDEBAR.to_owned(),
-        other => crate::menu::canonical_token(other).to_owned(),
+    let one = |t: &str| {
+        PLACES.iter().find(|(token, _, _)| *token == t).map_or_else(
+            || crate::menu::canonical_token(t).to_owned(),
+            |(_, context, _)| (*context).to_owned(),
+        )
     };
     let parts: Vec<String> = when
         .split_whitespace()
@@ -672,6 +771,23 @@ pub fn context_of(when: Option<&str>) -> String {
     } else {
         parts.join(" && ")
     }
+}
+
+/// Whether a context predicate (`Pane && (split || single) && !restores`)
+/// holds: `holds` says whether a place or a flag does, `None` when it
+/// cannot tell, which then holds. The one reading of a binding's
+/// condition: F1, the key-sequence strip and the keys a menu names.
+pub fn predicate_holds(context: &str, holds: &dyn Fn(&str) -> Option<bool>) -> bool {
+    let one = |atom: &str| match atom.strip_prefix('!') {
+        Some(not) => holds(not.trim()).map(|h| !h),
+        None => holds(atom),
+    };
+    conditions(context).into_iter().all(|atom| {
+        match atom.strip_prefix('(').and_then(|a| a.strip_suffix(')')) {
+            Some(alts) => alts.split("||").any(|alt| one(alt.trim()).unwrap_or(true)),
+            None => one(atom).unwrap_or(true),
+        }
+    })
 }
 
 /// A flag of the pane's key context in plain words.
@@ -713,35 +829,10 @@ pub fn context_label(context: &str) -> String {
         }
         match token {
             "Shell" | "" => {}
-            "Pane" => place = "File list",
-            "AddressBar" => place = "Address bar",
-            "Palette" => place = "Command palette",
-            "Confirm" => place = "Confirmation dialogs",
-            "Peek" => place = "Peek",
-            "DocumentReader" => place = "Document reader",
-            "ImagePreview" => place = "Picture preview",
-            "MapPreview" => place = "Map preview",
-            "DocumentFind" => place = "Document search",
-            "InspectorFind" => place = "Preview search",
-            "Review" => place = "Plan review",
-            "Jump" => place = "Jump",
-            "Choose" => place = "Choosing from a list",
-            "TagEditor" => place = "Tag editor",
-            "BulkRename" => place = "Bulk rename",
-            "Terminal" => place = "Terminal",
-            "MediaPlayer" => place = "Media player",
-            "Player" => place = "Pinned player",
-            "Inspector" => place = "Structured previews",
-            "PreviewMembers" => place = "Files of an archive or a message",
-            "PreviewMember" => place = "A file shown from an archive or a message",
-            "ToolbarButton" | "ToolbarPopup" => place = "Toolbars",
-            "ContextMenu" => place = "Context menu",
-            "Sidebar" => place = "Sidebar",
-            "Shortcuts" => place = "Shortcut overview",
-            "Settings" | "SettingsNav" | "SettingControl" | "SettingNumber" | "SettingRecord" => {
-                place = "Settings";
-            }
-            other => conditions.push(condition(other)),
+            context => match PLACES.iter().find(|(_, c, _)| *c == context) {
+                Some((_, _, label)) => place = label,
+                None => conditions.push(condition(context)),
+            },
         }
     }
     if conditions.is_empty() {
@@ -1009,18 +1100,7 @@ pub fn keys_for_where(
     args: &serde_json::Value,
     holds: impl Fn(&str) -> Option<bool>,
 ) -> Option<String> {
-    let flag = |atom: &str| match atom.strip_prefix('!') {
-        Some(not) => holds(not).map(|h| !h),
-        None => holds(atom),
-    };
-    let applies = |context: &str| {
-        conditions(context).into_iter().all(|atom| {
-            match atom.strip_prefix('(').and_then(|a| a.strip_suffix(')')) {
-                Some(alts) => alts.split("||").any(|alt| flag(alt.trim()).unwrap_or(true)),
-                None => flag(atom).unwrap_or(true),
-            }
-        })
-    };
+    let applies = |context: &str| predicate_holds(context, &holds);
     let empty = serde_json::Value::Object(serde_json::Map::new());
     let args = if args.is_null() { &empty } else { args };
     hints
@@ -1077,11 +1157,14 @@ fn specs(app: &App, user: &[UserBinding]) -> Vec<Spec> {
         context: context_of(b.when.as_deref()),
         layer: Layer::User,
     });
-    let specs: Vec<Spec> = registered(app.registry.keymap.all(), Layer::Plugin)
+    let standard: Vec<Spec> = registered(app.registry.keymap.all(), Layer::Plugin)
         .chain(shell)
-        .chain(registered(app.registry.schemes.all(), Layer::Scheme))
-        .chain(mine)
         .collect();
+    let above: Vec<Spec> = registered(app.registry.schemes.all(), Layer::Scheme)
+        .chain(mine)
+        .flat_map(|spec| like(spec, &standard))
+        .collect();
+    let specs: Vec<Spec> = standard.into_iter().chain(above).collect();
     let mut seen = std::collections::HashSet::new();
     let mut kept: Vec<Spec> = specs
         .into_iter()
@@ -1098,6 +1181,34 @@ fn specs(app: &App, user: &[UserBinding]) -> Vec<Spec> {
         .collect();
     kept.reverse();
     kept
+}
+
+/// A binding to `keys.like` as the bindings of the keys it names, under
+/// its own keys and in its layer, where they apply within its own place
+/// (`pane`): a scheme's `d` does what Delete does in the file list, and
+/// not Delete's meaning in the sidebar. Any other binding as it is.
+fn like(spec: Spec, standard: &[Spec]) -> Vec<Spec> {
+    let target = match &spec.command {
+        Some((name, args)) if name == bibli_core::keymap::LIKE => {
+            args["keys"].as_str().unwrap_or_default().to_owned()
+        }
+        _ => return vec![spec],
+    };
+    let within = conditions(&spec.context);
+    standard
+        .iter()
+        .filter(|s| s.keys == target && s.command.is_some())
+        .filter(|s| {
+            let theirs = conditions(&s.context);
+            within.iter().all(|atom| theirs.contains(atom))
+        })
+        .map(|s| Spec {
+            keys: spec.keys.clone(),
+            command: s.command.clone(),
+            context: s.context.clone(),
+            layer: spec.layer,
+        })
+        .collect()
 }
 
 /// The conditions of a context predicate (`Pane && single`), each an
@@ -1225,6 +1336,61 @@ mod tests {
             context: context_of(when),
             layer,
         }
+    }
+
+    /// A scheme's key that does what Delete does takes each of Delete's
+    /// bindings in the file list, conditions and all, and none of its
+    /// meanings elsewhere (the sidebar's).
+    #[test]
+    fn a_key_like_another_takes_its_bindings_where_they_apply() {
+        let standard = vec![
+            spec(
+                "delete",
+                "trash",
+                Some("pane selection !refs !restores"),
+                Layer::Plugin,
+            ),
+            spec(
+                "delete",
+                "take_out",
+                Some("pane selection refs"),
+                Layer::Plugin,
+            ),
+            spec("delete", "ui.sidebar_key", Some("sidebar"), Layer::Shell),
+            spec("f2", "ui.rename_prompt", Some("pane single"), Layer::Shell),
+        ];
+        let d = Spec {
+            keys: "d".into(),
+            command: Some((
+                bibli_core::keymap::LIKE.into(),
+                serde_json::json!({"keys": "delete"}),
+            )),
+            context: context_of(Some("pane")),
+            layer: Layer::Scheme,
+        };
+        let got: Vec<(String, String, String, Layer)> = super::like(d, &standard)
+            .into_iter()
+            .map(|s| (s.keys, s.command.unwrap().0, s.context, s.layer))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (
+                    "d".to_owned(),
+                    "trash".to_owned(),
+                    standard[0].context.clone(),
+                    Layer::Scheme
+                ),
+                (
+                    "d".to_owned(),
+                    "take_out".to_owned(),
+                    standard[1].context.clone(),
+                    Layer::Scheme
+                ),
+            ]
+        );
+        let plain = spec("q", "ui.quit", Some("pane"), Layer::Scheme);
+        assert_eq!(super::like(plain, &standard).len(), 1);
     }
 
     /// A later binding hides an earlier one of the same keys when it asks

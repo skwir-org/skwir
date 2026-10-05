@@ -41,13 +41,28 @@ pub fn file_uri(path: &Path) -> String {
     format!("file://{encoded}")
 }
 
-/// The local path a `file://` URI names: `file:///x` or
-/// `file://localhost/x`. `None` for another scheme or another host.
+/// The path a `file://` URI names on this machine: with no host,
+/// `localhost`, or this machine's name, as `ls --hyperlink` writes it.
+/// `None` for another scheme or another host.
 pub fn path_of(uri: &str) -> Option<PathBuf> {
     let rest = uri.strip_prefix("file://")?;
-    let rest = rest.strip_prefix("localhost").unwrap_or(rest);
-    rest.starts_with('/')
-        .then(|| PathBuf::from(os_string(percent_decode(rest))))
+    let (host, path) = rest.split_at(rest.find('/')?);
+    (host.is_empty()
+        || host.eq_ignore_ascii_case("localhost")
+        || hostname().is_some_and(|name| host.eq_ignore_ascii_case(name)))
+    .then(|| PathBuf::from(os_string(percent_decode(path))))
+}
+
+/// This machine's name, as `file://` URIs name it: the kernel's, read once.
+fn hostname() -> Option<&'static str> {
+    static NAME: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    NAME.get_or_init(|| {
+        std::fs::read_to_string("/proc/sys/kernel/hostname")
+            .ok()
+            .map(|name| name.trim().to_owned())
+            .filter(|name| !name.is_empty())
+    })
+    .as_deref()
 }
 
 /// Decode `%XX` escapes into the bytes they stand for; a `%` not followed by
@@ -79,6 +94,20 @@ fn os_string(bytes: Vec<u8>) -> OsString {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_file_uri_of_this_machine_is_a_path() {
+        assert_eq!(path_of("file:///etc/hosts"), Some("/etc/hosts".into()));
+        assert_eq!(path_of("file://localhost/a%20b"), Some("/a b".into()));
+        if let Some(host) = hostname() {
+            assert_eq!(
+                path_of(&format!("file://{host}/srv/x")),
+                Some("/srv/x".into())
+            );
+        }
+        assert_eq!(path_of("file://elsewhere.invalid/srv/x"), None);
+        assert_eq!(path_of("https://a.b/c"), None);
+    }
 
     #[test]
     fn punctuation_is_escaped_as_glib_does() {

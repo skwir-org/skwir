@@ -160,7 +160,8 @@ impl fmt::Display for Change {
                 path,
                 directory: false,
             } => write!(f, "create {}", path.display()),
-            Change::Remove { path } => write!(f, "rmdir {}", path.display()),
+            // An empty folder, or a file made empty and left so.
+            Change::Remove { path } => write!(f, "remove {}", path.display()),
             Change::Metadata {
                 words: Some(words), ..
             } => f.write_str(&words.will),
@@ -263,6 +264,53 @@ impl Clone for Box<dyn Operation> {
     }
 }
 
+/// What an operation does, for one that is its own data: with [`Kind`]
+/// beside it, it is an [`Operation`], whose kind, arguments and clone it
+/// need not write.
+pub trait Effect: Send + Sync + fmt::Debug {
+    /// What this will do.
+    fn describe(&self) -> Change;
+    /// Dry run (`Operation::check`).
+    fn check(&self, ctx: &StepContext) -> StepStatus;
+    /// Do it (`Operation::apply`).
+    fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>>;
+    /// `Operation::undoable`.
+    fn undoable(&self) -> bool {
+        true
+    }
+}
+
+/// An operation that is its own data: the kind it is registered and
+/// serialized under, said once (`OpRegistry::register`), its arguments
+/// itself.
+pub trait Kind: Effect + Clone + Serialize + serde::de::DeserializeOwned + 'static {
+    const KIND: &'static str;
+}
+
+impl<T: Kind> Operation for T {
+    fn kind(&self) -> &'static str {
+        T::KIND
+    }
+    fn args(&self) -> serde_json::Value {
+        serde_json::to_value(self).expect("serializable")
+    }
+    fn describe(&self) -> Change {
+        Effect::describe(self)
+    }
+    fn check(&self, ctx: &StepContext) -> StepStatus {
+        Effect::check(self, ctx)
+    }
+    fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+        Effect::apply(self, ctx)
+    }
+    fn clone_box(&self) -> Box<dyn Operation> {
+        Box::new(self.clone())
+    }
+    fn undoable(&self) -> bool {
+        Effect::undoable(self)
+    }
+}
+
 /// Serialized form of an operation.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OpData {
@@ -280,12 +328,10 @@ pub struct OpRegistry {
 }
 
 impl OpRegistry {
-    pub fn register<O>(&self, owner: &str, kind: &'static str)
-    where
-        O: Operation + serde::de::DeserializeOwned + 'static,
-    {
+    /// Register an operation that is its own data, under its kind.
+    pub fn register<O: Kind>(&self, owner: &str) {
         let d: OpDeserializer = Arc::new(|v| Ok(Box::new(serde_json::from_value::<O>(v)?)));
-        self.kinds.write().insert(kind, (owner.into(), d));
+        self.kinds.write().insert(O::KIND, (owner.into(), d));
     }
 
     /// Register `kind` with a builder of its own: for an operation that

@@ -26,12 +26,11 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui::{AnyElement, Context, CursorStyle, DragMoveEvent, Window, div, prelude::*, px};
+use gpui::{AnyElement, Context, DragMoveEvent, Window, div, prelude::*, px};
 
 use crate::media::{Flash, Scrub};
 use crate::shell::Shell;
 use crate::theme::Theme;
-use crate::toolbar::Button;
 
 /// The dock's height until it is dragged: one row and the transport.
 pub const COMPACT: f32 = 108.;
@@ -140,25 +139,13 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
         .join(" · ");
     let tint = crate::media::cover_tint(pinned.cover.as_ref(), &shell.player.tint, &theme);
 
-    let handle = div()
-        .id("dock-resize")
-        .absolute()
-        .top_0()
-        .left_0()
-        .right_0()
-        .h(px(6.))
-        .cursor(CursorStyle::ResizeUpDown)
-        .hover(|style| style.bg(theme.handle))
-        .on_drag(DockHandle, |_, _, _, cx| {
-            cx.new(|_| crate::preview::NoDragView)
-        })
-        .on_click(cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
-            if event.click_count() == 2 {
-                this.player.height = COMPACT;
-                this.remember_session();
-                cx.notify();
-            }
-        }));
+    let handle = crate::elements::edge::edge(
+        "dock-resize",
+        crate::elements::edge::Side::Top,
+        DockHandle,
+        |this| this.player.height = COMPACT,
+        cx,
+    );
 
     // What is shown above the transport: the film, the figure, or the row.
     // The picture answers clicks as a player (`media::clickable`); the rest
@@ -315,11 +302,11 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
         })
         .child(time(crate::media::duration(state), true))
         .child(
-            Button::new(
+            request(
                 "dock-mute",
                 if state.muted { "muted" } else { "volume" },
                 if state.muted { "Unmute" } else { "Mute" },
-                "ui.player_mute",
+                "mute",
             )
             .render(shell, cx),
         )

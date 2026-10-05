@@ -7,8 +7,8 @@
 //! here ever waits on the UI thread. The worker's standard error goes
 //! nowhere: what it has to say travels as replies.
 
-use std::io::{BufRead, BufReader, Read, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::io::{BufReader, Write};
+use std::process::{ChildStdin, Command, Stdio};
 
 use anyhow::Context;
 use crossbeam_channel::Receiver;
@@ -56,22 +56,7 @@ impl<Reply: DeserializeOwned + Send + 'static> LineChannel<Reply> {
             .name(format!("{name}-replies"))
             .spawn(move || {
                 let mut reader = BufReader::new(output);
-                loop {
-                    let mut bytes = Vec::new();
-                    let read = Read::by_ref(&mut reader)
-                        .take((max_reply + 1) as u64)
-                        .read_until(b'\n', &mut bytes);
-                    if matches!(read, Ok(0)) {
-                        break;
-                    }
-                    let result = (|| {
-                        read?;
-                        anyhow::ensure!(
-                            bytes.len() <= max_reply && bytes.last() == Some(&b'\n'),
-                            "worker reply exceeds limit"
-                        );
-                        Ok(serde_json::from_slice(&bytes)?)
-                    })();
+                while let Some(result) = bibli_core::jsonl::read(&mut reader, max_reply) {
                     let failed = result.is_err();
                     if tx.send(result).is_err() || failed {
                         break;
@@ -88,8 +73,7 @@ impl<Reply: DeserializeOwned + Send + 'static> LineChannel<Reply> {
     /// Write one request as one line in a single buffer, so a request is
     /// never left half written between two calls.
     pub(crate) fn send(&mut self, request: &impl Serialize) -> anyhow::Result<()> {
-        let mut line = serde_json::to_vec(request)?;
-        line.push(b'\n');
+        let line = bibli_core::jsonl::encode(request)?;
         self.input
             .write_all(&line)
             .context("worker is not reading its requests")
@@ -99,7 +83,22 @@ impl<Reply: DeserializeOwned + Send + 'static> LineChannel<Reply> {
         &self.replies
     }
 
-    pub(crate) fn child(&mut self) -> &mut Child {
-        &mut self.child.0
+    /// Whether the worker ended with 127, the dynamic loader's word for a
+    /// shared library it could not find: its runtime is missing, which a
+    /// caller takes as "not installed" (an engine chosen automatically goes
+    /// on to the next) rather than as the file's fault. Asked once the
+    /// replies ended before a greeting; the worker that closed its output
+    /// is given a moment to exit.
+    pub(crate) fn missing_runtime(&mut self) -> bool {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
+        loop {
+            match self.child.0.try_wait() {
+                Ok(Some(status)) => return status.code() == Some(127),
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                _ => return false,
+            }
+        }
     }
 }

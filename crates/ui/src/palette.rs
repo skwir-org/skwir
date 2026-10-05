@@ -4,8 +4,6 @@
 use std::sync::OnceLock;
 
 use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*, px};
-use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
-use nucleo_matcher::{Config, Matcher, Utf32Str};
 
 use crate::input::{InputEvent, TextInput};
 use crate::keymap;
@@ -41,9 +39,10 @@ pub struct PaletteState {
     _sub: Subscription,
 }
 
-/// The shell's own commands, shown alongside the core's.
+/// The shell's own commands the palette offers, each with the arguments
+/// that make it one thing to do, alongside the core's and the plugins'.
+/// Every one is declared (`commands.rs`); a test checks its arguments.
 pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
-    ("ui.open", "{}", "Open"),
     ("ui.focus_address", "{}", "Focus address bar"),
     ("ui.focus_pane", "{}", "Focus file list"),
     ("ui.palette", "{}", "Command palette"),
@@ -59,7 +58,6 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ),
     ("ui.find_next", r#"{"delta":1}"#, "Find the next name"),
     ("ui.find_next", r#"{"delta":-1}"#, "Find the previous name"),
-    ("ui.confirm_delete", "{}", "Delete permanently…"),
     ("ui.toggle_hidden", "{}", "Toggle hidden files"),
     ("ui.toggle_sidebar", "{}", "Toggle sidebar"),
     ("ui.focus_sidebar", "{}", "Focus sidebar"),
@@ -72,6 +70,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.sort", r#"{"key":"name"}"#, "Sort by name"),
     ("ui.sort", r#"{"key":"size"}"#, "Sort by size"),
     ("ui.sort", r#"{"key":"modified"}"#, "Sort by date modified"),
+    ("ui.sort", r#"{"key":"rating"}"#, "Sort by rating"),
     ("ui.sort", r#"{"ascending":true}"#, "Sort ascending"),
     ("ui.sort", r#"{"ascending":false}"#, "Sort descending"),
     ("ui.grid_fill", "{}", "Toggle filled thumbnails"),
@@ -111,12 +110,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
         "Preview: previous page",
     ),
     ("ui.preview_page", r#"{"delta":1}"#, "Preview: next page"),
-    ("ui.reader_page_edit", "{}", "Document: go to page…"),
-    (
-        "ui.inspect",
-        r#"{"action":"section_edit"}"#,
-        "Book: go to chapter…",
-    ),
+    ("ui.preview_goto", "{}", "Preview: go to page or chapter…"),
     ("ui.preview_open_external", "{}", "Preview: open externally"),
     ("ui.preview_copy_path", "{}", "Preview: copy path"),
     ("ui.media_pin", "{}", "Player: pin or let go of this track"),
@@ -160,26 +154,25 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
         r#"{"action":"auto"}"#,
         "Preview: default presentation",
     ),
+    ("ui.preview_find", "{}", "Preview: find text"),
     (
-        "ui.inspect",
-        r#"{"action":"search"}"#,
-        "Preview: find content",
+        "ui.preview_match",
+        r#"{"delta":1}"#,
+        "Preview: next search match",
+    ),
+    (
+        "ui.preview_match",
+        r#"{"delta":-1}"#,
+        "Preview: previous search match",
     ),
     (
         "ui.inspect",
         r#"{"action":"source"}"#,
         "Preview: source / rendered",
     ),
-    (
-        "ui.inspect",
-        r#"{"action":"outline"}"#,
-        "Preview: headings and contents",
-    ),
-    (
-        "ui.inspect",
-        r#"{"action":"copy"}"#,
-        "Preview: copy content",
-    ),
+    ("ui.preview_contents", "{}", "Preview: contents"),
+    ("ui.preview_copy", "{}", "Preview: copy"),
+    ("ui.preview_select_all", "{}", "Preview: select all"),
     ("ui.preview_close", "{}", "Preview: close"),
     (
         "ui.preview_zoom",
@@ -191,24 +184,10 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
         r#"{"dir":"1"}"#,
         "Preview: actual size (100%)",
     ),
-    ("ui.reader_find", "{}", "Document: find text"),
     (
         "ui.reader_continuous",
         "{}",
         "Document: toggle continuous scrolling",
-    ),
-    ("ui.reader_outline", "{}", "Document: contents"),
-    ("ui.reader_copy", "{}", "Document: copy selected text"),
-    ("ui.reader_select_all", "{}", "Document: select page text"),
-    (
-        "ui.reader_match",
-        r#"{"delta":1}"#,
-        "Document: next search match",
-    ),
-    (
-        "ui.reader_match",
-        r#"{"delta":-1}"#,
-        "Document: previous search match",
     ),
     (
         "ui.preview_seek",
@@ -284,7 +263,6 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
         "File in an archive: at the bottom",
     ),
     ("ui.focus_other_pane", "{}", "Focus other pane"),
-    ("ui.shelf_open", "{}", "Open shelf"),
     ("ui.quit", "{}", "Quit"),
 ];
 
@@ -315,6 +293,10 @@ impl Shell {
             .into_iter()
             // Structured preference batches are edited by the Settings dialog.
             .filter(|c| !matches!(&*c.name, "settings.apply" | "plugins.set_enabled"))
+            // The shell's own are offered as `UI_COMMANDS` says, with the
+            // arguments that make each a thing to do; most are keys of a
+            // place (a menu's arrows), nothing to run from here.
+            .filter(|c| &*c.owner != crate::commands::OWNER)
             .map(|c| PaletteItem {
                 keys: self.keys_for(&c.name, &no_args),
                 name: c.name.to_string(),
@@ -430,9 +412,9 @@ impl Shell {
         cx.notify();
     }
 
-    pub fn palette_move(&mut self, delta: isize, cx: &mut Context<Self>) {
+    pub fn palette_move(&mut self, mv: modal::ListMove, cx: &mut Context<Self>) {
         if let Some(p) = &mut self.palette {
-            p.picker.step(delta, p.filtered.len());
+            p.picker.go(mv, p.filtered.len());
             cx.notify();
         }
     }
@@ -484,26 +466,7 @@ impl Shell {
         if p.query.as_deref() == Some(q.as_str()) {
             return;
         }
-        if q.trim().is_empty() {
-            p.filtered = (0..p.items.len()).collect();
-        } else {
-            let mut matcher = Matcher::new(Config::DEFAULT);
-            let pattern = Pattern::parse(&q, CaseMatching::Ignore, Normalization::Smart);
-            let mut buf = Vec::new();
-            let mut scored: Vec<(u32, usize)> = p
-                .items
-                .iter()
-                .enumerate()
-                .filter_map(|(i, it)| {
-                    let hay = format!("{} {}", it.title, it.name);
-                    pattern
-                        .score(Utf32Str::new(&hay, &mut buf), &mut matcher)
-                        .map(|s| (s, i))
-                })
-                .collect();
-            scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-            p.filtered = scored.into_iter().map(|(_, i)| i).collect();
-        }
+        p.filtered = modal::fuzzy(&p.items, &q, |it| format!("{} {}", it.title, it.name));
         p.picker = Picker::default();
         p.query = Some(q);
     }

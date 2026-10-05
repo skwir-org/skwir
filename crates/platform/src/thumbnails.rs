@@ -53,15 +53,6 @@ impl ThumbSize {
             bibli_core::thumbs::ThumbSize::Large => ThumbSize::Large,
         }
     }
-
-    /// The core size, for the two sizes the core requests.
-    pub fn to_core(self) -> Option<bibli_core::thumbs::ThumbSize> {
-        match self {
-            ThumbSize::Normal => Some(bibli_core::thumbs::ThumbSize::Normal),
-            ThumbSize::Large => Some(bibli_core::thumbs::ThumbSize::Large),
-            _ => None,
-        }
-    }
 }
 
 /// The spec's cache key for an absolute path: the MD5 of its URI, escaped
@@ -81,7 +72,7 @@ pub struct ThumbCache {
 impl ThumbCache {
     /// `$XDG_CACHE_HOME/thumbnails`.
     pub fn desktop() -> Option<Self> {
-        dirs::cache_dir().map(|cache| Self::at(cache.join("thumbnails")))
+        crate::xdg::cache_home().map(|cache| Self::at(cache.join("thumbnails")))
     }
 
     /// A cache rooted at `root`, which holds the `normal`, `large`, …

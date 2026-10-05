@@ -57,7 +57,7 @@ pub struct UsageState {
 
 impl Shell {
     pub fn sync_usage(&mut self, cx: &mut Context<Self>) {
-        if self.ui().view_id != "usage" {
+        if self.ui().view_id != crate::view::USAGE {
             if self.ui().usage.root.is_some() {
                 let _ = self.app.dispatch(&Invocation::with_args(
                     "usage.release",
@@ -114,7 +114,7 @@ impl Shell {
                 .app
                 .registry
                 .views
-                .find(|s| &*s.id == "usage")
+                .find(|s| &*s.id == crate::view::USAGE)
                 .map(|s| Arc::clone(&s.revision));
             self.ui_mut().usage.source = source;
         }
@@ -137,7 +137,7 @@ impl Shell {
     }
 
     pub fn refresh_usage(&mut self, cx: &mut Context<Self>) {
-        if self.ui().view_id == "usage" {
+        if self.ui().view_id == crate::view::USAGE {
             if let Err(error) = self.app.dispatch(&Invocation::with_args(
                 "usage.scan",
                 &serde_json::json!({"pane":self.pane,"force":true}),
@@ -152,7 +152,14 @@ impl Shell {
 pub struct UsageView;
 impl PaneView for UsageView {
     fn id(&self) -> &'static str {
-        "usage"
+        crate::view::USAGE
+    }
+    fn refresh(&mut self, shell: &mut Shell, cx: &mut Context<Shell>) {
+        shell.refresh_usage(cx);
+    }
+    /// Its scanning and empty states are its own.
+    fn draws_empty(&self) -> bool {
+        true
     }
     fn scroll_to(&mut self, _: usize) {}
     fn nav_delta(&self, nav: Nav, _: &Shell) -> Option<isize> {
@@ -280,8 +287,11 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
         if node.other_count > 0 {
             let key = details.len();
             details.push(format!(
-                "{} smaller items · double-click to see all items in List",
-                node.other_count
+                "{} · double-click to see all items in List",
+                crate::format::count(
+                    usize::try_from(node.other_count).unwrap_or(usize::MAX),
+                    "smaller item"
+                )
             ));
             entry_ids.push(None);
             paths.push(node.path.clone());
@@ -289,8 +299,11 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
                 key,
                 weight: (node.other_alloc as f64).max(1.),
                 label: format!(
-                    "{} other items{}",
-                    node.other_count,
+                    "{}{}",
+                    crate::format::count(
+                        usize::try_from(node.other_count).unwrap_or(usize::MAX),
+                        "other item"
+                    ),
                     if node.other_incomplete > 0 {
                         " · incomplete"
                     } else {
@@ -335,7 +348,7 @@ fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
         move |key, event, window, cx| {
             entity2.update(cx, |shell, cx| {
                 shell.with_pane(pane, |shell| {
-                    if shell.ui().view_id != "usage" || shell.ui().usage.root != root {
+                    if shell.ui().view_id != crate::view::USAGE || shell.ui().usage.root != root {
                         return;
                     }
                     if let Some(id) = entry_ids.get(key).copied().flatten() {

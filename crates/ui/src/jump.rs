@@ -30,6 +30,9 @@ pub struct JumpState {
     pub picker: Picker,
     /// The query asked of the plugin last; its answer may still be coming.
     asked: Option<String>,
+    /// The query its candidates answer: until the one asked is answered,
+    /// an empty list says nothing, rather than "No candidates".
+    answered: Option<String>,
     back: FocusReturn,
     _sub: Subscription,
 }
@@ -53,6 +56,7 @@ impl Shell {
             candidates: Vec::new(),
             picker: Picker::default(),
             asked: None,
+            answered: None,
             back,
             _sub: sub,
         });
@@ -67,9 +71,9 @@ impl Shell {
         cx.notify();
     }
 
-    pub fn jump_move(&mut self, delta: isize, cx: &mut Context<Self>) {
+    pub fn jump_move(&mut self, mv: crate::modal::ListMove, cx: &mut Context<Self>) {
         if let Some(j) = &mut self.jump {
-            j.picker.step(delta, j.candidates.len());
+            j.picker.go(mv, j.candidates.len());
             cx.notify();
         }
     }
@@ -103,9 +107,14 @@ impl Shell {
             "jump-candidates",
             move || app.dispatch(&Invocation::with_args("jump.candidates", &args)),
             move |this, result, _, cx| {
-                let Some(j) = this.jump.as_mut().filter(|j| j.asked == Some(query)) else {
+                let Some(j) = this
+                    .jump
+                    .as_mut()
+                    .filter(|j| j.asked.as_ref() == Some(&query))
+                else {
                     return;
                 };
+                j.answered = Some(query);
                 match result {
                     Ok(Outcome::Value(value)) => {
                         j.candidates = serde_json::from_value(value).unwrap_or_default();
@@ -176,7 +185,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 ),
         );
     }
-    if j.candidates.is_empty() {
+    if j.candidates.is_empty() && j.answered == j.asked {
         list = list.child(
             div()
                 .px_3()

@@ -260,26 +260,12 @@ impl Plugin for JumpPlugin {
         app.register_provider(ID, Arc::new(RecentProvider));
         app.registry.places.add(
             ID,
-            Place {
-                title: RECENT.into(),
-                location: Location::parse("recent:"),
-                icon: Some("document-open-recent".into()),
-                group: "places".into(),
-                space: None,
-                eject: None,
-                activate: None,
-                unavailable: None,
-                busy: None,
-                menu: Vec::new(),
-                forget: None,
-                reorder: None,
-                color: None,
-                drop: None,
-                suggested: false,
-                key: None,
-                hidden: false,
-                rename: None,
-            },
+            Place::new(
+                "places",
+                RECENT,
+                "document-open-recent",
+                Location::parse("recent:"),
+            ),
         );
         app.registry.keymap.add(
             ID,

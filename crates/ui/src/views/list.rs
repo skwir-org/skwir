@@ -5,18 +5,15 @@
 //! so selection, commands and drags need nothing of their own.
 
 use std::ops::Range;
-use std::path::PathBuf;
 
+use bibli_core::SortKey;
 use bibli_core::entry::keys;
-use bibli_core::{EntryId, SortKey};
 use gpui::{
     AnyElement, Context, Div, MouseButton, MouseDownEvent, ScrollStrategy, Stateful,
     UniformListScrollHandle, Window, div, prelude::*, px, uniform_list,
 };
 
-use crate::dnd;
 use crate::format;
-use crate::icons;
 use crate::list::Step;
 use crate::shell::Shell;
 use crate::theme::Theme;
@@ -47,8 +44,126 @@ const INDENT: f32 = DISCLOSURE + 4.0;
 /// How much of a cut entry remains visible until it is pasted.
 pub const CUT_OPACITY: f32 = 0.45;
 
-/// Size, Modified, Type, Rating, Folder.
-pub const DEFAULT_WIDTHS: [f32; 5] = [80.0, 136.0, 150.0, 76.0, 180.0];
+/// A detail column of the list: everything about it, once. The header,
+/// the rows, the header's menu, the View menu's sorts and Settings all
+/// read `COLUMNS`.
+pub struct Column {
+    pub detail: Detail,
+    /// Its name where its dragged width is remembered
+    /// (`Session::column_widths`).
+    pub key: &'static str,
+    /// Whether it is shown (`ui.column_*`).
+    pub setting: &'static str,
+    pub label: &'static str,
+    pub description: &'static str,
+    /// Shown until the user says otherwise.
+    pub shown: bool,
+    /// What a click on its header sorts by, if anything.
+    pub sort: Option<SortKey>,
+    pub width: f32,
+    /// A number, set against the right.
+    pub right: bool,
+}
+
+/// The detail columns, by their place in `COLUMNS`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Detail {
+    Folder,
+    Size,
+    Modified,
+    Type,
+    Rating,
+}
+
+impl Detail {
+    pub fn column(self) -> &'static Column {
+        &COLUMNS[self as usize]
+    }
+}
+
+/// The detail columns in the order they stand after the name. A narrow
+/// pane drops them whole from the last (`line`): Folder, first of them
+/// where it is shown at all, is the last to give way.
+pub const COLUMNS: [Column; 5] = [
+    Column {
+        detail: Detail::Folder,
+        key: "folder",
+        setting: "ui.column_folder",
+        label: "Folder",
+        description: "Show the folder each file is in, where files from many folders are listed: a search, a tag, the shelf, Recent. It is the last column to give way.",
+        shown: true,
+        sort: None,
+        width: 180.,
+        right: false,
+    },
+    Column {
+        detail: Detail::Size,
+        key: "size",
+        setting: "ui.column_size",
+        label: "Size",
+        description: "Show the size of files.",
+        shown: true,
+        sort: Some(SortKey::Size),
+        width: 80.,
+        right: true,
+    },
+    Column {
+        detail: Detail::Modified,
+        key: "modified",
+        setting: "ui.column_modified",
+        label: "Modified",
+        description: "Show when each item last changed.",
+        shown: true,
+        sort: Some(SortKey::Modified),
+        width: 136.,
+        right: false,
+    },
+    Column {
+        detail: Detail::Type,
+        key: "type",
+        setting: "ui.column_type",
+        label: "Type",
+        description: "Show the kind of file, such as PDF document.",
+        shown: true,
+        sort: None,
+        width: 150.,
+        right: false,
+    },
+    Column {
+        detail: Detail::Rating,
+        key: "rating",
+        setting: "ui.column_rating",
+        label: "Rating",
+        description: "Show the stars each file was given, where its notes are kept. It is the first column to give way in a narrow pane.",
+        shown: false,
+        sort: Some(SortKey::Rating),
+        width: 76.,
+        right: false,
+    },
+];
+
+/// One value per detail column, read by `Detail`.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct PerColumn<T>(pub [T; 5]);
+
+impl<T> std::ops::Index<Detail> for PerColumn<T> {
+    type Output = T;
+    fn index(&self, detail: Detail) -> &T {
+        &self.0[detail as usize]
+    }
+}
+
+impl<T> std::ops::IndexMut<Detail> for PerColumn<T> {
+    fn index_mut(&mut self, detail: Detail) -> &mut T {
+        &mut self.0[detail as usize]
+    }
+}
+
+/// The widths the columns ship with.
+pub fn default_widths() -> PerColumn<f32> {
+    PerColumn(COLUMNS.each_ref().map(|column| column.width))
+}
+
 const DETAIL_GAP: f32 = 12.0;
 
 pub fn clamp_width(width: f32) -> f32 {
@@ -57,15 +172,7 @@ pub fn clamp_width(width: f32) -> f32 {
 
 /// Payload of a header edge drag.
 #[derive(Clone)]
-pub struct ColumnResize(pub usize);
-
-/// Nothing follows the pointer while an edge is dragged.
-struct NoDragPreview;
-impl gpui::Render for NoDragPreview {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-    }
-}
+pub struct ColumnResize(pub Detail);
 
 impl Shell {
     /// The columns are right-aligned, so a column grows as its left edge
@@ -77,47 +184,23 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let x = f32::from(ev.event.position.x);
-        let column = ev.drag(cx).0;
-        // A drag starts clean (`resize_edge` clears the state), so a release
-        // missed outside the window cannot leave another edge's start here.
-        let (_, start_x, start_width) =
-            *self
-                .column_drag
-                .get_or_insert((column, x, self.column_widths[column]));
-        self.column_widths[column] = clamp_width(start_width + (start_x - x));
+        let detail = ev.drag(cx).0;
+        let (start_x, start_width) = *self
+            .edge_start
+            .get_or_insert((x, self.column_widths[detail]));
+        self.column_widths[detail] = clamp_width(start_width + (start_x - x));
         cx.notify();
-    }
-
-    /// The drag ended: remember the widths. Saved on a worker.
-    pub fn finish_column_drag(&mut self) {
-        if self.column_drag.take().is_none() {
-            return;
-        }
-        self.store_column_widths();
-    }
-
-    fn store_column_widths(&self) {
-        self.app.settings.set(
-            crate::settings::COLUMN_WIDTHS_KEY,
-            toml::Value::Array(
-                self.column_widths
-                    .iter()
-                    .map(|width| toml::Value::Integer(width.round() as i64))
-                    .collect(),
-            ),
-        );
-        self.save_settings_later();
     }
 
     /// `ui.columns`: show or hide one detail column, from the header's menu.
     /// It goes through `settings.apply` like any other preference, so the
     /// dialog and the header always agree and the choice outlives the window.
     pub fn toggle_column(&mut self, key: &str, cx: &mut Context<Self>) {
-        let Some(index) = crate::settings::COLUMN_KEYS.iter().position(|k| *k == key) else {
+        let Some(column) = COLUMNS.iter().find(|column| column.setting == key) else {
             return;
         };
-        let shown = !self.columns[index];
-        self.columns[index] = shown;
+        let shown = !self.columns[column.detail];
+        self.columns[column.detail] = shown;
         cx.notify();
         if let Err(error) = self
             .app
@@ -130,45 +213,55 @@ impl Shell {
         }
     }
 
-    /// The detail columns drawn: those chosen, but Rating only while the
-    /// tags plugin, whose ratings they are, is on.
-    pub fn shown_columns(&self) -> [bool; 5] {
-        let [size, modified, kind, rating, folder] = self.columns;
-        let rated = rating && self.app.commands.get("tags.rate").is_some();
-        // Where files from many folders are listed: a folder's are in it,
-        // as a trashed folder's are.
-        let place = &self.ui().place;
-        let elsewhere =
-            folder && !place.folder && !place.trail.as_ref().is_some_and(|trail| trail.one_folder);
-        [size, modified, kind, rated, elsewhere]
+    /// Whether `detail` can be shown here: Rating only while ratings are
+    /// kept, Folder only where files from many folders are listed (a
+    /// folder's are in it, as a trashed folder's are).
+    pub fn column_applies(&self, detail: Detail) -> bool {
+        match detail {
+            Detail::Rating => self.rated(),
+            Detail::Folder => {
+                let place = &self.ui().place;
+                !place.folder && !place.trail.as_ref().is_some_and(|trail| trail.one_folder)
+            }
+            Detail::Size | Detail::Modified | Detail::Type => true,
+        }
+    }
+
+    /// Whether a store keeps ratings (`NoteStores::held`): no column,
+    /// sort or star while none does.
+    pub fn rated(&self) -> bool {
+        self.app.notes.held().rating
+    }
+
+    /// The detail columns drawn: those chosen that apply here.
+    pub fn shown_columns(&self) -> PerColumn<bool> {
+        PerColumn(
+            COLUMNS
+                .each_ref()
+                .map(|column| self.columns[column.detail] && self.column_applies(column.detail)),
+        )
     }
 
     /// `ui.columns_reset`: back to the widths the view ships with.
     pub fn reset_column_widths(&mut self, cx: &mut Context<Self>) {
-        self.column_widths = DEFAULT_WIDTHS;
-        self.store_column_widths();
+        self.column_widths = default_widths();
+        self.remember_session();
         cx.notify();
     }
 }
 
-/// The draggable left edge of a header cell.
-fn resize_edge(column: usize, cx: &mut Context<Shell>) -> Stateful<Div> {
-    let shell = cx.weak_entity();
-    div()
-        .id(("column-edge", column))
-        .absolute()
-        .top_0()
-        // Inside the cell: the columns' container clips what leaves it.
-        .left_0()
-        .w(px(7.))
-        .h_full()
-        .cursor(gpui::CursorStyle::ResizeLeftRight)
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_drag(ColumnResize(column), move |_, _, _, cx| {
-            // The first move of this drag records where it starts.
-            shell.update(cx, |shell, _| shell.column_drag = None).ok();
-            cx.new(|_| NoDragPreview)
-        })
+/// The draggable left edge of a header cell, in the gap before it (inside
+/// the line, which clips what leaves it), so it never covers the label. A
+/// double click gives the column back its own width.
+fn resize_edge(detail: Detail, cx: &mut Context<Shell>) -> Stateful<Div> {
+    crate::elements::edge::edge(
+        ("column-edge", detail as usize),
+        crate::elements::edge::Side::Left,
+        ColumnResize(detail),
+        move |shell| shell.column_widths[detail] = detail.column().width,
+        cx,
+    )
+    .left(px(-(DETAIL_GAP + crate::elements::edge::THICKNESS) / 2.))
 }
 
 /// The row at the top of rows `height` tall scrolled to `offset_y`, and how
@@ -212,30 +305,19 @@ impl ListView {
     }
 }
 
-/// Everything a row needs, collected under the workspace lock.
-#[allow(clippy::struct_excessive_bools)]
+/// Everything a row needs, collected under the workspace lock: what every
+/// view draws of the entry (`Look`), and what the list shows besides.
 pub struct RowData {
     pub ix: usize,
-    pub id: EntryId,
-    pub name: String,
-    pub is_dir: bool,
-    pub path: Option<PathBuf>,
+    pub look: crate::views::entry::Look,
+    pub hydrated: bool,
     pub size: String,
     pub modified: String,
     /// Exact timestamp, shown as the date's tooltip.
     pub modified_exact: String,
     pub kind: std::sync::Arc<str>,
-    pub selected: bool,
-    /// Cut and waiting for a paste: drawn dimmed, as the file is on its way out.
-    pub cut: bool,
-    pub is_cursor: bool,
-    pub icon: Option<std::sync::Arc<std::path::Path>>,
-    pub hydrated: bool,
-    /// Each tag with its color (`tags::TagColors`).
-    pub tags: Vec<(String, usize)>,
     /// Half stars, from 1 to 10.
     pub rating: Option<u64>,
-    pub link: icons::Link,
     /// How many opened folders deep it is (`Pane::depth`), and for a
     /// folder whether it is open in place.
     pub depth: usize,
@@ -243,21 +325,6 @@ pub struct RowData {
     /// The folder it is in, and its whole path, where files from many
     /// folders are listed.
     pub folder: Option<(String, String)>,
-    /// A place (a tag's), or a folder that does not open at its path (a
-    /// trashed one): where it leads, and a tag's color.
-    pub place: Option<(bibli_core::Location, Option<usize>)>,
-}
-
-/// Tags from the entry's `tags` metadata field (a list of text values).
-pub fn tags_of(e: &bibli_core::Entry) -> Vec<String> {
-    match e.metadata.value(keys::TAGS) {
-        Some(bibli_core::Value::List(items)) => items
-            .iter()
-            .filter_map(|v| v.as_str().map(str::to_owned))
-            .collect(),
-        Some(bibli_core::Value::Text(t)) => vec![t.to_string()],
-        _ => Vec::new(),
-    }
 }
 
 impl Shell {
@@ -267,62 +334,37 @@ impl Shell {
         let mut out = Vec::with_capacity(range.len());
         let friendly = self.prefs.friendly_dates;
         let columns = self.shown_columns();
-        let now = (!compact && friendly && columns[1]).then(jiff::Zoned::now);
+        let now = (!compact && friendly && columns[Detail::Modified]).then(jiff::Zoned::now);
         let app = std::sync::Arc::clone(&self.app);
         let ws = app.workspace.read();
         let Some(pane) = ws.pane(self.pane) else {
             return out;
         };
-        let cursor = pane.selection.cursor;
         for ix in range {
             let Some(&id) = self.ui().list.sorted.get(ix) else {
                 break;
             };
-            let Some(e) = pane.entry(id) else {
+            let (Some(e), Some(look)) = (pane.entry(id), self.look(pane, id, icon_px)) else {
                 continue;
             };
             let mime = (!e.is_dir())
                 .then(|| bibli_platform::mime::of_entry(e))
                 .flatten();
-            let icon = if e.is_dir() {
-                self.icons.folder(icon_px)
-            } else {
-                self.icons.for_mime(mime.as_ref(), icon_px)
-            };
-            let path = if e.is_dir() { pane.path_of(id) } else { None };
-            let place = pane.location_of(id).map(|place| {
-                let tag = e
-                    .metadata
-                    .value(keys::PLACE_TAG)
-                    .and_then(bibli_core::Value::as_str);
-                (place, tag.map(|tag| self.tag_colors.of(tag)))
-            });
             let mut row = RowData {
                 ix,
-                id,
-                name: e.name_str().into_owned(),
-                is_dir: e.is_dir(),
+                look,
                 expanded: e.is_dir() && pane.is_open_at(id),
                 depth: pane.depth(id),
-                path,
                 size: String::new(),
                 modified: String::new(),
                 modified_exact: String::new(),
                 kind: std::sync::Arc::from(""),
-                selected: pane.selection.contains(id),
-                cut: self.pending.cut && self.pending.entries.contains(&id),
-                is_cursor: cursor == Some(id),
-                icon,
                 hydrated: e.metadata.is_hydrated(),
-                tags: crate::tags::entry_tags(e, &self.tag_colors),
                 rating: None,
-                link: icons::Link::of(e),
-                place,
                 folder: None,
             };
             if !compact {
-                let [size, modified, kind, rating, folder] = columns;
-                if folder && !e.is_place() {
+                if columns[Detail::Folder] && !e.is_place() {
                     // A file of the trash is from the folder it was put
                     // there from, which restoring it puts it back in.
                     let from = e
@@ -340,13 +382,13 @@ impl Shell {
                             (name, dir.display().to_string())
                         });
                 }
-                if rating {
+                if columns[Detail::Rating] {
                     row.rating = e
                         .metadata
                         .value(keys::RATING)
                         .and_then(bibli_core::Value::as_u64);
                 }
-                if size {
+                if columns[Detail::Size] {
                     row.size = match e
                         .metadata
                         .value(keys::SIZE)
@@ -359,13 +401,14 @@ impl Shell {
                             .value(keys::FILES)
                             .and_then(bibli_core::Value::as_u64)
                         {
-                            Some(1) => "1 file".to_owned(),
-                            Some(n) => format!("{n} files"),
+                            Some(n) => {
+                                format::count(usize::try_from(n).unwrap_or(usize::MAX), "file")
+                            }
                             None => "—".to_owned(),
                         },
                     };
                 }
-                if modified {
+                if columns[Detail::Modified] {
                     let time = e
                         .metadata
                         .value(keys::MODIFIED)
@@ -377,9 +420,13 @@ impl Shell {
                         (Some(_), None) => row.modified_exact.clone(),
                     };
                 }
-                if kind {
+                if columns[Detail::Type] {
                     row.kind = if e.is_place() {
-                        place_kind(e, &self.tag_fields).into()
+                        e.metadata
+                            .value(keys::PLACE_KIND)
+                            .and_then(bibli_core::Value::as_str)
+                            .unwrap_or("Place")
+                            .into()
                     } else if e.is_dir() {
                         "Folder".into()
                     } else if e.is_broken_link() {
@@ -400,34 +447,14 @@ impl Shell {
     }
 }
 
-/// What a place is, for its Type column: a tag's is a Tag, or a Field
-/// when its category holds one tag at a time (`tags.exclusive`).
-fn place_kind(e: &bibli_core::Entry, fields: &[String]) -> &'static str {
-    let tag = e
-        .metadata
-        .value(keys::PLACE_TAG)
-        .and_then(bibli_core::Value::as_str);
-    match tag {
-        Some(tag)
-            if fields
-                .iter()
-                .any(|f| bibli_core::metadata::same_tag(f, tag)) =>
-        {
-            "Field"
-        }
-        Some(_) => "Tag",
-        None => "Place",
-    }
-}
-
 /// The triangle that opens or closes folder `r` in place, pointing right
 /// while it is closed. Pressing it does only that: the row is not selected.
 fn disclosure(r: &RowData, color: gpui::Hsla, cx: &mut Context<Shell>) -> Div {
     let slot = div().w(px(DISCLOSURE)).flex_none().flex().items_center();
-    if !r.is_dir {
+    if !r.look.is_dir {
         return slot;
     }
-    let id = r.id;
+    let id = r.look.id;
     slot.child(
         div()
             .id(("disclosure", r.ix))
@@ -470,53 +497,28 @@ pub fn row(
     cx: &mut Context<Shell>,
 ) -> Stateful<Div> {
     let ix = r.ix;
-    let pane = shell.pane;
-    let muted = if r.selected {
+    let look = &r.look;
+    let muted = if look.selected {
         theme.selection_text
     } else {
         theme.text_muted
     };
     let height = row_height(shell.row_zoom);
-    let icon_px = icon_px(shell.row_zoom);
-    let icon: AnyElement = match &r.icon {
-        Some(p) => icons::element(p, icon_px),
-        None => div()
-            .size(px(icon_px))
-            .rounded_sm()
-            .bg(if r.is_dir {
-                theme.accent
-            } else {
-                theme.text_muted
-            })
-            .flex_none()
-            .into_any_element(),
-    };
-    let icon = match &r.place {
-        Some((_, Some(color))) => icons::with_tag(icon, icon_px, *color, theme),
-        _ => icons::with_link(icon, icon_px, r.link, theme),
-    };
-    let el = div()
-        .id(ix)
-        .relative()
-        .h(px(height))
-        .w_full()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_2()
-        .px_2()
-        .border_1()
-        .border_color(if r.is_cursor {
-            theme.accent
-        } else {
-            gpui::transparent_black()
-        })
-        .when(r.selected, |d| {
-            d.bg(theme.selection_bg).text_color(theme.selection_text)
-        })
-        .when(!r.selected, |d| d.hover(|s| s.bg(theme.hover)))
-        .when(r.cut, |d| d.opacity(CUT_OPACITY))
-        .children(shell.menu_marker(pane, r.is_cursor));
+    let icon = look.picture(icon_px(shell.row_zoom), theme);
+    let el = crate::views::entry::highlight(
+        div()
+            .id(ix)
+            .relative()
+            .h(px(height))
+            .w_full()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .px_2(),
+        look,
+        theme,
+    );
     // In the tree the icon is part of the name, indented with it: the
     // detail columns stay aligned at every depth and give way together.
     let (el, icon) = if tree {
@@ -524,7 +526,6 @@ pub fn row(
     } else {
         (el.child(icon), None)
     };
-    let el = crate::list::entry_mouse(el, pane, ix, cx);
     let name = div()
         .flex()
         .items_center()
@@ -534,119 +535,27 @@ pub fn row(
                 .child(disclosure(r, muted, cx))
                 .child(div().flex_none().child(icon))
         })
-        .child(
-            // A name keeps its end: the extension tells files apart.
-            crate::elements::clip::clipped(
-                div()
-                    .id(("name", ix))
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis_middle(),
-                r.name.clone(),
-                shell.font.clone(),
-            ),
-        )
+        // A name keeps its end: the extension tells files apart.
+        .child(crate::views::entry::name(
+            div().id(("name", ix)),
+            look,
+            shell,
+        ))
         // The tags take only what the name leaves (no basis of their own):
         // the chips that do not fit drop whole, last first, "+N" saying how
         // many, and the name never gives way to them.
-        .when(!r.tags.is_empty(), |d| {
-            let text = if r.selected {
-                theme.selection_text
-            } else {
-                theme.text
-            };
-            let muted = if r.selected {
-                theme.selection_text
-            } else {
-                theme.text_muted
-            };
-            d.child(crate::elements::chips::ChipLine {
-                chips: r
-                    .tags
-                    .iter()
-                    .map(|(tag, color)| {
-                        crate::tags::chip(tag, *color, theme)
-                            .text_color(text)
-                            .into_any_element()
-                    })
-                    .collect(),
-                more: Box::new(move |n| crate::tags::more_chip(n, muted).into_any_element()),
-                height: crate::tags::CHIP_HEIGHT,
-                gap: 4.,
-            })
+        .when(!look.tags.is_empty(), |d| {
+            d.child(crate::views::entry::tags(look, theme))
         });
     let mut line = line(name, if compact { 0. } else { NAME_MIN }, height);
     if !compact {
-        let font = shell.font.clone();
-        let exact: gpui::SharedString = r.modified_exact.clone().into();
-        let [size, modified, kind, rating, folder] = shell.shown_columns();
-        let place = r.folder.clone();
-        line = line
-            // First of the details: the last to give way.
-            .when(folder, |d| {
-                let (name, whole) = place.unwrap_or_default();
-                d.child(
-                    column(shell.column_widths[4], muted, height)
-                        .id(("folder", ix))
-                        .truncate()
-                        .when(!whole.is_empty(), |d| {
-                            let font = shell.font.clone();
-                            let whole: gpui::SharedString = whole.into();
-                            d.tooltip(move |_, cx| {
-                                crate::toolbar::tooltip(whole.clone(), font.clone(), cx)
-                            })
-                        })
-                        .child(name),
-                )
-            })
-            .when(size, |d| {
-                d.child(
-                    column(shell.column_widths[0], muted, height)
-                        .text_right()
-                        .child(r.size.clone()),
-                )
-            })
-            .when(modified, |d| {
-                d.child(
-                    column(shell.column_widths[1], muted, height)
-                        .id(("modified", ix))
-                        .truncate()
-                        .when(!exact.is_empty(), |d| {
-                            d.tooltip(move |_, cx| {
-                                crate::toolbar::tooltip(exact.clone(), font.clone(), cx)
-                            })
-                        })
-                        .child(r.modified.clone()),
-                )
-            })
-            .when(kind, |d| {
-                d.child(
-                    column(shell.column_widths[2], muted, height)
-                        .truncate()
-                        .child(gpui::SharedString::from(r.kind.clone())),
-                )
-            })
-            .when(rating, |d| {
-                d.child(
-                    column(shell.column_widths[3], muted, height)
-                        .flex()
-                        .items_center()
-                        .children(r.rating.map(|stars| crate::tags::stars(stars, 12., theme))),
-                )
-            });
+        let shown = shell.shown_columns();
+        for column in COLUMNS.iter().filter(|column| shown[column.detail]) {
+            let cell = cell(shell, column.detail, muted, height);
+            line = line.child(detail(shell, r, column.detail, cell, theme));
+        }
     }
-    let mut el = el.child(line);
-    el = dnd::draggable(el, pane, cx);
-    el = dnd::takes_gifts(el, pane, ix, cx);
-    // Where it leads takes what is dropped on it, a folder of the trash
-    // as the trash does: its path is not the user's to drop into.
-    if let Some((place, _)) = &r.place {
-        el = dnd::droppable_place(el, place.clone(), cx);
-    } else if let Some(p) = &r.path {
-        el = dnd::droppable_dir(el, p.clone(), cx);
-    }
-    el
+    crate::views::entry::behave(el.child(line), look, ix, shell, cx)
 }
 
 /// The name and the detail columns of a row, or of the header. A wrapping
@@ -686,31 +595,102 @@ pub(crate) fn column(width: f32, color: gpui::Hsla, height: f32) -> Div {
         .text_color(color)
 }
 
+/// A detail column's cell, of a row or the header: its width, and set
+/// against the right when it holds a number.
+fn cell(shell: &Shell, detail: Detail, color: gpui::Hsla, height: f32) -> Div {
+    column(shell.column_widths[detail], color, height)
+        .when(detail.column().right, gpui::Styled::text_right)
+}
+
+/// What row `r` shows in its `detail` column. A text cut to fit says itself
+/// whole when pointed at, before what the column adds (a folder's path, the
+/// exact time).
+fn detail(shell: &Shell, r: &RowData, detail: Detail, cell: Div, theme: &Theme) -> AnyElement {
+    let (name, text, also) = match detail {
+        Detail::Rating => {
+            return cell
+                .flex()
+                .items_center()
+                .children(r.rating.map(|stars| crate::tags::stars(stars, 12., theme)))
+                .into_any_element();
+        }
+        Detail::Folder => {
+            let (name, whole) = r.folder.clone().unwrap_or_default();
+            ("folder", name, whole)
+        }
+        Detail::Size => ("size", r.size.clone(), String::new()),
+        Detail::Modified => ("modified", r.modified.clone(), r.modified_exact.clone()),
+        Detail::Type => ("type", r.kind.to_string(), String::new()),
+    };
+    crate::elements::clip::clipped_with(
+        cell.id((name, r.ix)).min_w_0().truncate(),
+        text,
+        (!also.is_empty()).then(|| also.into()),
+        shell.font.clone(),
+    )
+    .into_any_element()
+}
+
+/// A header's label, sorting by `key` when clicked, with the order's
+/// arrow while it is the key.
 fn header_cell(
-    id: &'static str,
+    id: impl Into<gpui::ElementId>,
     label: &'static str,
-    key: SortKey,
+    key: Option<SortKey>,
     shell: &Shell,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> Stateful<Div> {
     let spec = shell.sort_spec();
-    let indicator = if spec.key == key {
-        if spec.ascending { " ▲" } else { " ▼" }
-    } else {
-        ""
+    let indicator = match key {
+        Some(key) if spec.key == key && spec.ascending => " ▲",
+        Some(key) if spec.key == key => " ▼",
+        _ => "",
     };
-    div()
-        .id(id)
-        .cursor_pointer()
-        .hover(|s| s.text_color(theme.text))
-        .on_click(cx.listener(move |this, _, _, cx| this.sort_by(key, cx)))
-        .child(format!("{label}{indicator}"))
+    let el = div().id(id).child(format!("{label}{indicator}"));
+    match key {
+        Some(key) => el
+            .cursor_pointer()
+            .hover(|s| s.text_color(theme.text))
+            .on_click(cx.listener(move |this, _, _, cx| this.sort_by(key, cx))),
+        None => el,
+    }
 }
 
 fn header(shell: &Shell, theme: &Theme, tree: bool, cx: &mut Context<Shell>) -> Div {
     let icon = icon_px(shell.row_zoom);
-    let columns = shell.shown_columns();
+    let shown = shell.shown_columns();
+    let mut line = line(
+        // In the tree, Name stands over the names, past the triangle and
+        // the icon a row begins with.
+        div()
+            .when(tree, |d| d.pl(px(DISCLOSURE + icon + 8.)))
+            .child(header_cell(
+                "h-name",
+                "Name",
+                Some(SortKey::Name),
+                shell,
+                theme,
+                cx,
+            )),
+        NAME_MIN,
+        ROW_HEIGHT,
+    );
+    for column in COLUMNS.iter().filter(|column| shown[column.detail]) {
+        line = line.child(
+            cell(shell, column.detail, theme.text_muted, ROW_HEIGHT)
+                .relative()
+                .child(header_cell(
+                    ("h", column.detail as usize),
+                    column.label,
+                    column.sort,
+                    shell,
+                    theme,
+                    cx,
+                ))
+                .child(resize_edge(column.detail, cx)),
+        );
+    }
     div()
         .h(px(24.))
         .w_full()
@@ -732,90 +712,31 @@ fn header(shell: &Shell, theme: &Theme, tree: bool, cx: &mut Context<Shell>) -> 
             }),
         )
         .when(!tree, |d| d.child(div().w(px(icon)).flex_none()))
-        .child(
-            line(
-                // In the tree, Name stands over the names, past the
-                // triangle and the icon a row begins with.
-                div()
-                    .when(tree, |d| d.pl(px(DISCLOSURE + icon + 8.)))
-                    .child(header_cell(
-                        "h-name",
-                        "Name",
-                        SortKey::Name,
-                        shell,
-                        theme,
-                        cx,
-                    )),
-                NAME_MIN,
-                ROW_HEIGHT,
-            )
-            .when(columns[4], |d| {
-                d.child(
-                    column(shell.column_widths[4], theme.text_muted, ROW_HEIGHT)
-                        .relative()
-                        .child("Folder")
-                        .child(resize_edge(4, cx)),
-                )
-            })
-            .when(columns[0], |d| {
-                d.child(
-                    column(shell.column_widths[0], theme.text_muted, ROW_HEIGHT)
-                        .relative()
-                        .flex()
-                        .justify_end()
-                        .child(header_cell(
-                            "h-size",
-                            "Size",
-                            SortKey::Size,
-                            shell,
-                            theme,
-                            cx,
-                        ))
-                        .child(resize_edge(0, cx)),
-                )
-            })
-            .when(columns[1], |d| {
-                d.child(
-                    column(shell.column_widths[1], theme.text_muted, ROW_HEIGHT)
-                        .relative()
-                        .child(header_cell(
-                            "h-mod",
-                            "Modified",
-                            SortKey::Modified,
-                            shell,
-                            theme,
-                            cx,
-                        ))
-                        .child(resize_edge(1, cx)),
-                )
-            })
-            .when(columns[2], |d| {
-                d.child(
-                    column(shell.column_widths[2], theme.text_muted, ROW_HEIGHT)
-                        .relative()
-                        .child("Type")
-                        .child(resize_edge(2, cx)),
-                )
-            })
-            .when(columns[3], |d| {
-                d.child(
-                    column(shell.column_widths[3], theme.text_muted, ROW_HEIGHT)
-                        .relative()
-                        .child(header_cell(
-                            "h-rating",
-                            "Rating",
-                            SortKey::Rating,
-                            shell,
-                            theme,
-                            cx,
-                        ))
-                        .child(resize_edge(3, cx)),
-                )
-            }),
-        )
+        .child(line)
+}
+
+/// The keys of a view of rows (the list, the tree, the columns' last):
+/// up and down a row, a page of the rows drawn, half of one.
+pub(crate) fn rows_nav(nav: Nav, shell: &Shell) -> Option<isize> {
+    let rows = shell.ui().list.visible_rows;
+    let page = rows.saturating_sub(1).max(1) as isize;
+    let half = (rows / 2).max(1) as isize;
+    match nav {
+        Nav::Up => Some(-1),
+        Nav::Down => Some(1),
+        Nav::PageUp => Some(-page),
+        Nav::PageDown => Some(page),
+        Nav::HalfPageUp => Some(-half),
+        Nav::HalfPageDown => Some(half),
+        Nav::Left | Nav::Right | Nav::Home | Nav::End => None,
+    }
 }
 
 impl PaneView for ListView {
+    fn zooms(&self) -> crate::view::Zooms {
+        crate::view::Zooms::Rows
+    }
+
     fn id(&self) -> &'static str {
         if self.tree {
             crate::view::TREE
@@ -855,9 +776,7 @@ impl PaneView for ListView {
                     list.visible_rows = range.len().max(1);
                     list.visible_items = range.len();
                     let rows = this.rows(range, icon_px, false);
-                    let need: Vec<EntryId> =
-                        rows.iter().filter(|r| !r.hydrated).map(|r| r.id).collect();
-                    this.request_hydrate(need);
+                    this.request_hydrate(rows.iter().map(|r| r.look.id).collect::<Vec<_>>());
                     rows.iter()
                         .map(|r| row(this, &theme, r, false, tree, cx))
                         .collect::<Vec<_>>()
@@ -920,18 +839,7 @@ impl PaneView for ListView {
     }
 
     fn nav_delta(&self, nav: Nav, shell: &Shell) -> Option<isize> {
-        let rows = shell.ui().list.visible_rows;
-        let page = rows.saturating_sub(1).max(1) as isize;
-        let half = (rows / 2).max(1) as isize;
-        match nav {
-            Nav::Up => Some(-1),
-            Nav::Down => Some(1),
-            Nav::PageUp => Some(-page),
-            Nav::PageDown => Some(page),
-            Nav::HalfPageUp => Some(-half),
-            Nav::HalfPageDown => Some(half),
-            Nav::Left | Nav::Right | Nav::Home | Nav::End => None,
-        }
+        rows_nav(nav, shell)
     }
 
     /// In the tree, Right opens the folder under the cursor, or goes into

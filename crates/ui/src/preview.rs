@@ -15,8 +15,8 @@ use bibli_core::entry::keys;
 use bibli_core::scheduler::Priority;
 use bibli_core::{CancelToken, EntryId};
 use gpui::{
-    AnyElement, Context, CursorStyle, DragMoveEvent, FocusHandle, MouseButton, ObjectFit, Render,
-    RenderImage, Window, div, img, prelude::*, px,
+    AnyElement, Context, DragMoveEvent, FocusHandle, MouseButton, ObjectFit, RenderImage, Window,
+    div, img, prelude::*, px,
 };
 
 use crate::format;
@@ -159,16 +159,6 @@ pub struct ResizeHandle;
 /// Marker type for dragging the panel's top edge (panel at the bottom).
 #[derive(Clone)]
 pub struct ResizeHeightHandle;
-
-/// What an edge being dragged shows under the pointer: nothing, the edge
-/// itself follows. Shared by every drag handle of the panel and the dock.
-pub(crate) struct NoDragView;
-
-impl Render for NoDragView {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-    }
-}
 
 /// Which preview the panel shows. A change is another preview: everything
 /// about the last one (page, zoom, find, folds, its player) goes with it.
@@ -868,6 +858,85 @@ fn read_head(path: &Path) -> std::io::Result<Vec<u8>> {
 }
 
 impl Shell {
+    /// Whether the preview shows a structured preview (`inspector.rs`);
+    /// a document is the reader's (`reader.rs`).
+    fn preview_inspects(&self) -> bool {
+        matches!(&self.preview.content, Some(PreviewContent::Inspection(_)))
+    }
+
+    /// `ui.preview_find`: find in what the preview shows, a document or
+    /// a structured preview, each its way: one command, one key.
+    pub fn preview_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.preview_inspects() {
+            self.inspect_command(&serde_json::json!({"action":"search"}), window, cx);
+        } else {
+            self.reader_find(window, cx);
+        }
+    }
+
+    /// `ui.preview_match { delta }`: the next match of what the find
+    /// looks for, or the previous.
+    pub fn preview_match(&mut self, delta: i32, window: &mut Window, cx: &mut Context<Self>) {
+        if self.preview_inspects() {
+            let action = if delta < 0 {
+                "find_previous"
+            } else {
+                "find_next"
+            };
+            self.inspect_command(&serde_json::json!({ "action": action }), window, cx);
+        } else {
+            self.reader_match(delta, cx);
+        }
+    }
+
+    /// `ui.preview_find_close`: close the find field.
+    pub fn preview_find_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.preview_inspects() {
+            self.inspect_command(&serde_json::json!({"action":"find_close"}), window, cx);
+        } else {
+            self.reader_find_close(window, cx);
+        }
+    }
+
+    /// `ui.preview_copy`: the text selected, else what the preview has
+    /// selected (a structured preview's block), else all it shows (the
+    /// page, the section).
+    pub fn preview_copy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.preview_inspects() {
+            self.inspect_command(&serde_json::json!({"action":"copy"}), window, cx);
+        } else {
+            self.reader_copy(cx);
+        }
+    }
+
+    /// `ui.preview_select_all`: select all the text shown.
+    pub fn preview_select_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.preview_inspects() {
+            self.inspect_command(&serde_json::json!({"action":"select_all"}), window, cx);
+        } else {
+            self.reader_select_all(cx);
+        }
+    }
+
+    /// `ui.preview_goto`: type the page to show, or a book's chapter.
+    pub fn preview_goto(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.preview_inspects() {
+            self.inspect_command(&serde_json::json!({"action":"section_edit"}), window, cx);
+        } else {
+            self.reader_page_edit(window, cx);
+        }
+    }
+
+    /// `ui.preview_contents`: show or hide the contents, a document's or a
+    /// structured preview's headings.
+    pub fn preview_contents(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.preview_inspects() {
+            self.inspect_command(&serde_json::json!({"action":"outline"}), window, cx);
+        } else {
+            self.reader_outline(window, cx);
+        }
+    }
+
     pub fn preview_menu(
         &mut self,
         args: &serde_json::Value,
@@ -882,12 +951,7 @@ impl Shell {
             Some(crate::media::CONTINUE_POPUP) => crate::media::CONTINUE_POPUP,
             _ => "preview",
         };
-        let previous = self.preview.menu.take();
-        let was_open = previous.as_ref().is_some_and(|p| p.kind == kind);
-        if let Some(popup) = previous {
-            popup.restore(window);
-        }
-        if !was_open && args.get("close").and_then(serde_json::Value::as_bool) != Some(true) {
+        if self.toggle_popup(&format!("preview {kind}"), args, window) {
             // Whose bar it is: the side that has the keyboard, which the
             // press on its button gave it.
             self.preview.menu_parked = self.container_has_keyboard(window, cx);
@@ -1043,7 +1107,9 @@ impl Shell {
         }
         if self.preview.details_at != Some(seen) {
             self.preview.details_at = Some(seen);
-            let notes = self.app.commands.get("tags.rate").is_some();
+            // Notes while a store keeps some (`NoteStores::held`).
+            let held = self.app.notes.held();
+            let notes = held.tags || held.rating || held.comment;
             self.preview.details = crate::details::entry_groups(
                 &entry,
                 &key.path,
@@ -1204,7 +1270,7 @@ impl Shell {
         };
         self.preview.info.name = self.app.location_title(&location);
         let count = self.ui().list.sorted.len();
-        self.preview.info.size = Some(if &*location.scheme == "query" {
+        self.preview.info.size = Some(if self.app.is_search(&location) {
             format::count(count, "result")
         } else {
             format::count(count, "item")
@@ -2654,8 +2720,7 @@ impl Shell {
             .on_mouse_up(
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, _, _| {
-                    this.finish_column_drag();
-                    // The panel's edge has no drag-end of its own; this is it.
+                    // An edge has no drag-end of its own; this is it.
                     this.remember_session();
                 }),
             )
@@ -2727,6 +2792,7 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
             ..
         })
     );
+    let inspection = matches!(&shell.preview.content, Some(PreviewContent::Inspection(_)));
     // With nothing to preview Details gives way first: the toolbar and
     // what the content says (why the preview failed) keep their height.
     let alone = crate::details::alone(shell);
@@ -2735,7 +2801,14 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
         .when(!alone, gpui::Styled::min_h_0)
         .flex()
         .flex_col()
-        .when(document && interactive, |d| d.key_context(keymap::READER));
+        // What can be found in and copied from takes the same keys, one
+        // command each (`ui.preview_find`…), whichever shows it.
+        .when(document && interactive, |d| {
+            d.key_context(format!("{} {}", keymap::PREVIEW, keymap::READER).as_str())
+        })
+        .when(inspection && interactive, |d| {
+            d.key_context(keymap::PREVIEW)
+        });
     // A location named with nothing to preview (a search, the shelf, with
     // nothing selected) has no tools.
     if interactive && !shell.preview.info.name.is_empty() && shell.preview.key.is_some() {
@@ -3151,11 +3224,14 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
                     this.run("ui.preview_details", serde_json::json!({}), window, cx);
                 }))
         })
-        .children(
-            info.icon
-                .as_ref()
-                .map(|icon| icons::with_link(icons::element(icon, ICON), ICON, info.link, theme)),
-        )
+        .children(info.icon.as_ref().map(|icon| {
+            icons::marked(
+                icons::element(icon, ICON),
+                ICON,
+                icons::Mark::Link(info.link),
+                theme,
+            )
+        }))
         .child(
             div()
                 .flex_1()
@@ -3459,36 +3535,23 @@ pub fn render_panel(
         return None;
     }
     let theme = cx.global::<Theme>().clone();
-    let reset = cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
-        if event.click_count() == 2 {
-            if bottom {
-                this.preview.height = None;
-            } else {
-                this.preview.width = DEFAULT_WIDTH;
-            }
-            this.remember_session();
-            cx.notify();
-        }
-    });
-    let handle = div()
-        .id("preview-resize")
-        .absolute()
-        .left_0()
-        .top_0()
-        .hover(|style| style.bg(theme.handle))
-        .on_click(reset);
+    // Its edge toward the panes; a double click gives it its own size back.
     let handle = if bottom {
-        handle
-            .w_full()
-            .h(px(6.))
-            .cursor(CursorStyle::ResizeUpDown)
-            .on_drag(ResizeHeightHandle, |_, _, _, cx| cx.new(|_| NoDragView))
+        crate::elements::edge::edge(
+            "preview-resize",
+            crate::elements::edge::Side::Top,
+            ResizeHeightHandle,
+            |this| this.preview.height = None,
+            cx,
+        )
     } else {
-        handle
-            .h_full()
-            .w(px(6.))
-            .cursor(CursorStyle::ResizeLeftRight)
-            .on_drag(ResizeHandle, |_, _, _, cx| cx.new(|_| NoDragView))
+        crate::elements::edge::edge(
+            "preview-resize",
+            crate::elements::edge::Side::Left,
+            ResizeHandle,
+            |this| this.preview.width = DEFAULT_WIDTH,
+            cx,
+        )
     };
     // While peek shows the preview, the panel is only a picture of it: the
     // kept rows, which take the keyboard, are drawn in peek alone.

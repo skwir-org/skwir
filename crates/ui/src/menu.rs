@@ -433,10 +433,7 @@ impl Shell {
         struct Answer {
             items: Vec<MenuItem>,
         }
-        let mut command = source.command.clone();
-        if let Some(args) = command.args.as_object_mut() {
-            args.insert("pane".into(), serde_json::json!(self.pane));
-        }
+        let command = source.command.clone().with("pane", self.pane);
         match self.app.dispatch(&command) {
             Ok(bibli_core::command::Outcome::Value(value)) => {
                 match serde_json::from_value::<Answer>(value) {
@@ -464,14 +461,14 @@ impl Shell {
     /// new place, on the background.
     fn verb_items(&self, ctx: SelectionCtx) -> Vec<MenuItem> {
         let verbs = &self.ui().place.verbs;
-        let item = |title: &str, command: &str, order: i32, icon: &str| MenuItem {
-            menu: "context".into(),
-            title: title.into(),
-            command: bibli_core::command::Invocation::new(command),
-            when: None,
-            order,
-            icon: Some(icon.into()),
-            submenu: None,
+        let item = |title: &str, command: &str, order: i32, icon: &str| {
+            MenuItem::new(
+                "context",
+                title,
+                icon,
+                order,
+                bibli_core::command::Invocation::new(command),
+            )
         };
         let mut items = Vec::new();
         // A place selected alone has items of its own (a tag's: Remove Tag
@@ -488,13 +485,8 @@ impl Shell {
         }
         // The trash's files go back where they came from.
         if let Some(restore) = verbs.restore.as_ref().filter(|_| ctx.count > 0) {
-            let mut command = restore.clone();
-            if !command.args.is_object() {
-                command.args = serde_json::json!({});
-            }
-            command.args["pane"] = serde_json::json!(self.pane);
             items.push(MenuItem {
-                command,
+                command: restore.clone().with("pane", self.pane),
                 ..item("Restore", "", 1, "revert")
             });
         }
@@ -550,14 +542,8 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let item = |title: &str, command, order, icon: &str| MenuItem {
-            menu: "tab".into(),
-            title: title.into(),
-            command,
-            when: None,
-            order,
-            icon: Some(icon.into()),
-            submenu: None,
+        let item = |title: &str, command, order, icon: &str| {
+            MenuItem::new("tab", title, icon, order, command)
         };
         let tab_args = serde_json::json!({ "tab": tab });
         let items = vec![
@@ -585,10 +571,12 @@ impl Shell {
     }
 
     /// A sidebar place's menu, for the place of `group` named `key`: Open
-    /// and Open in New Tab, the place's own items (`Place::menu`: rename or
-    /// remove a bookmark), then how the sidebar arranges it: a place its
-    /// owner offers is renamed, moved and hidden here, one suggested
-    /// hidden, one kept moved through its owner. Eject last.
+    /// and Open in New Tab, the place's own items (`Place::menu`: edit a
+    /// saved search, a tag's color), Rename… and Remove From Sidebar from
+    /// `Place::rename` and `Place::forget` for every place that has them,
+    /// then how the sidebar arranges it: a place its owner offers is
+    /// renamed, moved and hidden here, one suggested hidden, one kept
+    /// moved through its owner. Eject last.
     pub fn open_place_menu(
         &mut self,
         group: &str,
@@ -601,14 +589,8 @@ impl Shell {
             return;
         };
         let place = &arranged.place;
-        let item = |title: &str, command, order, icon: &str| MenuItem {
-            menu: "place".into(),
-            title: title.into(),
-            command,
-            when: None,
-            order,
-            icon: Some(icon.into()),
-            submenu: None,
+        let item = |title: &str, command, order, icon: &str| {
+            MenuItem::new("place", title, icon, order, command)
         };
         // While its owner works on it (unlocking, unmounting), the menu
         // offers nothing that would start over or race with that work,
@@ -630,10 +612,22 @@ impl Shell {
             ));
         }
         items.extend(place.menu.iter().cloned());
-        if arranged.role == crate::sidebar::Role::Offered
-            && let Some(rename) = self.sidebar_rename(&arranged)
-        {
+        // What the sources of places' menus answer for it (a tag's pill:
+        // the tag's own menu).
+        items.extend(self.sourced(
+            "place",
+            serde_json::json!({ "location": place.location.arg() }),
+        ));
+        // Renamed by its owner (a bookmark, a saved search, a tag on every
+        // file) or here, for one offered: F2 does the same.
+        if let Some(rename) = self.sidebar_rename(&arranged) {
             items.push(item("Rename…", rename, 100, "rename"));
+        }
+        // A place the user kept is taken out by its owner (the bookmark
+        // removed, the search forgotten, the tag unpinned), as the pane's
+        // keep button does; one offered or suggested is hidden here.
+        if let Some(forget) = place.forget.clone() {
+            items.push(item("Remove From Sidebar", forget, 320, "minus"));
         }
         if let Some(up) = self.sidebar_move(&arranged, -1) {
             items.push(item("Move Up", up, 140, "up"));
@@ -663,10 +657,9 @@ impl Shell {
         cx.notify();
     }
 
-    /// A tag's menu where a file shows it (Details): search for it where
-    /// the pane is, and pin it to the sidebar or unpin it. Whether it is
-    /// pinned is what the sidebar shows: a tag's place the user kept
-    /// carries `forget`.
+    /// A tag's menu where a file shows it (Details): the tag's own menu,
+    /// as the sources of tags' menus answer it (the tags plugin's: the same
+    /// as its pill's and its place's in a tag location).
     pub fn open_tag_menu(
         &mut self,
         tag: &str,
@@ -674,41 +667,33 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let item = |title: &str, name: &str, args: serde_json::Value, order, icon: &str| MenuItem {
-            menu: "tag".into(),
-            title: title.into(),
-            command: bibli_core::command::Invocation::with_args(name, &args),
-            when: None,
-            order,
-            icon: Some(icon.into()),
-            submenu: None,
-        };
-        let mut items = vec![item(
-            "Search Here",
-            "query.refine",
-            serde_json::json!({ "facet": "tag", "value": tag, "pane": self.pane }),
-            0,
-            "search",
-        )];
-        let pinned = self.app.registry.places.all().iter().any(|p| {
-            p.color.is_some() && p.forget.is_some() && bibli_core::metadata::same_tag(&p.title, tag)
-        });
-        let pin = if pinned {
-            ("Unpin From Sidebar", "tags.unpin")
-        } else {
-            ("Pin to Sidebar", "tags.pin")
-        };
-        if self.app.commands.get(pin.1).is_some() {
-            items.push(item(
-                pin.0,
-                pin.1,
-                serde_json::json!({ "tag": tag }),
-                50,
-                "pin",
-            ));
+        let mut items = self.sourced("tag", serde_json::json!({ "tags": [tag] }));
+        if items.is_empty() {
+            return;
         }
+        items.sort_by_key(|m| m.order);
         self.menu = Some(MenuState::open(position, items, window, cx));
         cx.notify();
+    }
+
+    /// What every source of the menu `menu` answers, each asked with
+    /// `args` beside its own (`MenuSource`).
+    fn sourced(&self, menu: &str, args: serde_json::Value) -> Vec<MenuItem> {
+        self.app
+            .registry
+            .menu_sources
+            .all()
+            .into_iter()
+            .filter(|source| source.menu == menu)
+            .flat_map(|mut source| {
+                if let (Some(own), Some(given)) =
+                    (source.command.args.as_object_mut(), args.as_object())
+                {
+                    own.extend(given.clone());
+                }
+                self.source_items(&source)
+            })
+            .collect()
     }
 
     /// The list header's own menu: which detail columns it shows. Choosing
@@ -720,41 +705,32 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let rated = self.app.commands.get("tags.rate").is_some();
-        let mut items: Vec<MenuItem> = crate::settings::COLUMN_KEYS
+        let mut items: Vec<MenuItem> = crate::views::list::COLUMNS
             .iter()
+            // Rating only while ratings are kept; Folder is offered
+            // everywhere, for where files from many folders are listed.
+            .filter(|column| column.detail != crate::views::list::Detail::Rating || self.rated())
             .enumerate()
-            // Ratings are the tags plugin's: no column for them while it is off.
-            .filter(|(i, _)| *i != 3 || rated)
-            .map(|(i, key)| {
-                let shown = self.columns[i];
-                MenuItem {
-                    menu: "columns".into(),
-                    title: self
-                        .app
-                        .settings
-                        .spec(key)
-                        .map_or_else(|| (*key).to_owned(), |spec| spec.title.clone()),
-                    command: bibli_core::command::Invocation::with_args(
-                        "ui.columns",
-                        &serde_json::json!({ "key": key }),
-                    ),
-                    when: None,
-                    order: i as i32,
-                    icon: shown.then(|| "check".to_owned()),
-                    submenu: None,
-                }
+            .map(|(i, column)| MenuItem {
+                menu: "columns".into(),
+                title: column.label.to_owned(),
+                command: bibli_core::command::Invocation::with_args(
+                    "ui.columns",
+                    &serde_json::json!({ "key": column.setting }),
+                ),
+                when: None,
+                order: i as i32,
+                icon: self.columns[column.detail].then(|| "check".to_owned()),
+                submenu: None,
             })
             .collect();
-        items.push(MenuItem {
-            menu: "columns".into(),
-            title: "Reset widths".into(),
-            command: bibli_core::command::Invocation::new("ui.columns_reset"),
-            when: None,
-            order: 100,
-            icon: Some("revert".into()),
-            submenu: None,
-        });
+        items.push(MenuItem::new(
+            "columns",
+            "Reset widths",
+            "revert",
+            100,
+            bibli_core::command::Invocation::new("ui.columns_reset"),
+        ));
         self.menu = Some(MenuState::open(position, items, window, cx));
         cx.notify();
     }
@@ -768,46 +744,34 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         use crate::preview::PreviewContent;
-        let item = |order, title: &str, icon: &str, name: &str, args: serde_json::Value| MenuItem {
-            menu: "preview".into(),
-            title: title.into(),
-            command: bibli_core::command::Invocation::with_args(name, &args),
-            when: None,
-            order,
-            icon: Some(icon.into()),
-            submenu: None,
+        let item = |order, title: &str, icon: &str, name: &str, args: serde_json::Value| {
+            MenuItem::new(
+                "preview",
+                title,
+                icon,
+                order,
+                bibli_core::command::Invocation::with_args(name, &args),
+            )
         };
         let none = serde_json::json!({});
+        // What a document and a structured preview are both asked, one
+        // command each (`ui.preview_copy`…), as their keys are.
         let items = match &self.preview.content {
-            Some(PreviewContent::Inspection(_)) => vec![
-                item(
-                    0,
-                    "Copy",
-                    "copy",
-                    "ui.inspect",
-                    serde_json::json!({"action":"copy"}),
-                ),
-                item(
-                    1,
-                    "Find…",
-                    "search",
-                    "ui.inspect",
-                    serde_json::json!({"action":"search"}),
-                ),
-                item(100, "Copy path", "copy", "ui.preview_copy_path", none),
-            ],
-            Some(PreviewContent::Image {
-                document: Some(_), ..
-            }) => vec![
-                item(0, "Copy", "copy", "ui.reader_copy", none.clone()),
+            Some(
+                PreviewContent::Inspection(_)
+                | PreviewContent::Image {
+                    document: Some(_), ..
+                },
+            ) => vec![
+                item(0, "Copy", "copy", "ui.preview_copy", none.clone()),
                 item(
                     1,
                     "Select all",
                     "check",
-                    "ui.reader_select_all",
+                    "ui.preview_select_all",
                     none.clone(),
                 ),
-                item(2, "Find…", "search", "ui.reader_find", none.clone()),
+                item(2, "Find…", "search", "ui.preview_find", none.clone()),
                 item(100, "Copy path", "copy", "ui.preview_copy_path", none),
             ],
             Some(_) => vec![item(100, "Copy path", "copy", "ui.preview_copy_path", none)],

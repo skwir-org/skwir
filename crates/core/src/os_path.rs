@@ -155,6 +155,13 @@ impl schemars::JsonSchema for PathArg {
     }
 }
 
+/// The user's home folder: `$HOME`, else the system's account record.
+/// The one reading of it, for `~`, Home in the sidebar and the trail, the
+/// search's root, the terminal's start.
+pub fn home() -> Option<PathBuf> {
+    dirs::home_dir()
+}
+
 /// The executable `program` would run as: a path containing `/` is taken as
 /// is, anything else is searched on `PATH`. Only regular files with an
 /// execute bit count.

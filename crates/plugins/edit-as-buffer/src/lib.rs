@@ -553,7 +553,7 @@ fn editor_argv(editor: &str, file: &Path) -> Vec<OsString> {
 /// user alone, in the runtime directory when there is one.
 fn buffer_file(text: &str) -> anyhow::Result<tempfile::TempPath> {
     use std::io::Write as _;
-    let dir = dirs::runtime_dir().unwrap_or_else(std::env::temp_dir);
+    let dir = bibli_platform::xdg::runtime_dir().unwrap_or_else(std::env::temp_dir);
     let mut file = tempfile::Builder::new()
         .prefix("bibli-edit-")
         .suffix(".txt")
@@ -676,15 +676,14 @@ impl Plugin for EditAsBufferPlugin {
         );
         app.registry.menus.add(
             ID,
-            MenuItem {
-                menu: "context".into(),
-                title: "Edit as Text…".into(),
-                command: Invocation::new("edit_as_buffer"),
-                when: Some("empty folder".into()),
-                order: 108,
-                icon: Some("rename".into()),
-                submenu: None,
-            },
+            MenuItem::new(
+                "context",
+                "Edit as Text…",
+                "rename",
+                108,
+                Invocation::new("edit_as_buffer"),
+            )
+            .when("empty folder"),
         );
     }
 

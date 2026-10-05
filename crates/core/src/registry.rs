@@ -54,7 +54,10 @@ impl<T> Default for Contributions<T> {
 }
 
 impl<T> Contributions<T> {
-    fn gated(gate: Arc<OwnerGate>) -> Self {
+    /// A list refusing what `gate` refuses: a store of the app's builds
+    /// its own with the app's gate (`Registry::gate`), so a disabled
+    /// plugin's worker cannot publish into it.
+    pub fn gated(gate: Arc<OwnerGate>) -> Self {
         Contributions {
             items: RwLock::new(Vec::new()),
             revision: AtomicU64::new(0),
@@ -116,6 +119,10 @@ impl<T: Clone> Contributions<T> {
 
     pub fn all(&self) -> Vec<T> {
         self.items.read().iter().map(|(_, t)| t.clone()).collect()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.read().is_empty()
     }
 
     pub fn find(&self, pred: impl Fn(&T) -> bool) -> Option<T> {
@@ -242,10 +249,6 @@ pub struct Place {
     /// name): the place is a tag's, drawn as a pill of that color, the
     /// pills of a group wrapping together.
     pub color: Option<String>,
-    /// What dropping files on the place does (a tag's: give them the
-    /// tag), run with the dropped entries: `pane` for a drag from a pane
-    /// (its selection), `entries` for files from another application.
-    pub drop: Option<Invocation>,
     /// Offered by its owner rather than kept by the user (a tag used
     /// often, while none is pinned): drawn fainter than the places kept.
     pub suggested: bool,
@@ -262,9 +265,52 @@ pub struct Place {
     /// search, a tag): F2 in the sidebar runs it, as the place's menu item
     /// of the same command does.
     pub rename: Option<Invocation>,
+    /// What a click with a modifier runs instead of opening it (a tag's
+    /// pill: Shift narrows what is shown to its files too, Alt shows them
+    /// in the folder shown), given the pane it acts on.
+    pub clicks: Vec<Click>,
+}
+
+/// A click on a place with modifiers held, and what it runs.
+#[derive(Clone, Debug, Serialize)]
+pub struct Click {
+    /// `shift` or `alt`.
+    pub modifier: String,
+    pub command: Invocation,
 }
 
 impl Place {
+    /// A place of `group` named `title`, with the theme icon `icon`
+    /// (empty for none), leading to `location`: what every place says. One
+    /// that says more sets it beside (`Place { eject, ..Place::new(…) }`).
+    pub fn new(
+        group: impl Into<String>,
+        title: impl Into<String>,
+        icon: &str,
+        location: Location,
+    ) -> Self {
+        Place {
+            title: title.into(),
+            location,
+            icon: (!icon.is_empty()).then(|| icon.to_owned()),
+            group: group.into(),
+            space: None,
+            eject: None,
+            activate: None,
+            unavailable: None,
+            busy: None,
+            menu: Vec::new(),
+            forget: None,
+            reorder: None,
+            color: None,
+            suggested: false,
+            key: None,
+            hidden: false,
+            rename: None,
+            clicks: Vec::new(),
+        }
+    }
+
     /// What names it in the user's arrangement of its group: its `key`,
     /// else its location.
     pub fn key(&self) -> String {
@@ -298,6 +344,18 @@ pub struct Keeper {
     pub save_title: String,
     /// "Remove from bookmarks".
     pub forget_title: String,
+    /// Which of its scheme's locations it keeps (a tag folder of the home
+    /// folder, not narrowed); all of them when `None`. The pane's button
+    /// is offered, and `keep` runs, only where it does.
+    #[serde(skip)]
+    pub keeps: Option<fn(&Location) -> bool>,
+}
+
+impl Keeper {
+    /// Whether it keeps `location`.
+    pub fn keeps(&self, location: &Location) -> bool {
+        *self.scheme == *location.scheme && self.keeps.is_none_or(|keeps| keeps(location))
+    }
 }
 
 /// A menu contribution. `when` is a space-separated list of tokens that must
@@ -338,6 +396,42 @@ pub struct MenuItem {
     pub submenu: Option<String>,
 }
 
+impl MenuItem {
+    /// An item of `menu` titled `title`, with the bundled `icon` (empty for
+    /// none), at `order`, running `command`: shown wherever its menu is.
+    pub fn new(
+        menu: &str,
+        title: impl Into<String>,
+        icon: &str,
+        order: i32,
+        command: Invocation,
+    ) -> Self {
+        MenuItem {
+            menu: menu.to_owned(),
+            title: title.into(),
+            command,
+            when: None,
+            order,
+            icon: (!icon.is_empty()).then(|| icon.to_owned()),
+            submenu: None,
+        }
+    }
+
+    /// Shown only where `when` holds.
+    #[must_use]
+    pub fn when(mut self, when: &str) -> Self {
+        self.when = Some(when.to_owned());
+        self
+    }
+
+    /// Folded into the group `submenu`, which the menu expands in place.
+    #[must_use]
+    pub fn submenu(mut self, submenu: &str) -> Self {
+        self.submenu = Some(submenu.to_owned());
+        self
+    }
+}
+
 /// Items of a menu that depend on what the owner knows when it opens
 /// ("Open With Image Viewer"): the UI dispatches `command` with the pane
 /// (`{"pane": id}`) each time the menu opens where `when` holds (the same
@@ -352,7 +446,9 @@ pub struct MenuItem {
 /// the palette.
 #[derive(Clone, Debug, Serialize)]
 pub struct MenuSource {
-    /// `context`, like [`MenuItem::menu`].
+    /// Which menu: `context` (the files', like [`MenuItem::menu`]),
+    /// `place` (a sidebar place's, asked with its `location`), `tag` (a
+    /// tag's where it is shown outside a tag location, asked with `tags`).
     pub menu: String,
     pub when: Option<String>,
     pub command: Invocation,
@@ -382,6 +478,10 @@ pub struct Registry {
     /// and every plugin's defaults, whatever order plugins were enabled in.
     pub schemes: Contributions<KeyBinding>,
     pub keepers: Contributions<Keeper>,
+    /// The names the user gave sidebar places (ADR-034), by group and
+    /// `Place::key`: the sidebar publishes its arrangement's, so a tab, a
+    /// toast and `tab.list` name a place as the sidebar does.
+    titles: RwLock<std::collections::HashMap<(String, String), String>>,
     gate: Arc<OwnerGate>,
 }
 
@@ -397,6 +497,7 @@ impl Default for Registry {
             keymap: Contributions::gated(Arc::clone(&gate)),
             schemes: Contributions::gated(Arc::clone(&gate)),
             keepers: Contributions::gated(Arc::clone(&gate)),
+            titles: RwLock::default(),
             gate,
         }
     }
@@ -408,6 +509,33 @@ impl Registry {
     /// before registering an enabled one.
     pub fn set_owner_enabled(&self, owner: &str, enabled: bool) {
         self.gate.set_open(owner, enabled);
+    }
+
+    /// The gate every owner-tagged store of the app shares.
+    pub fn gate(&self) -> Arc<OwnerGate> {
+        Arc::clone(&self.gate)
+    }
+
+    /// The names the user gave sidebar places, by group and `Place::key`,
+    /// in place of those published before.
+    pub fn set_place_titles(&self, titles: std::collections::HashMap<(String, String), String>) {
+        *self.titles.write() = titles;
+    }
+
+    /// What `location` is called as a sidebar place: the name the user
+    /// gave it, else its owner's (`Place::title`); `None` for a location
+    /// the sidebar does not show.
+    pub fn place_title(&self, location: &Location) -> Option<String> {
+        let place = self.places.find(|p| p.location.same_place(location))?;
+        Some(self.user_title(&place).unwrap_or(place.title))
+    }
+
+    /// The name the user gave `place` in the sidebar, if they renamed it.
+    pub fn user_title(&self, place: &Place) -> Option<String> {
+        self.titles
+            .read()
+            .get(&(place.group.clone(), place.key()))
+            .cloned()
     }
 
     pub fn remove_owner(&self, owner: &str) {

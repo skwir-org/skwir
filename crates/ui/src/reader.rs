@@ -1,7 +1,9 @@
 //! Stateful document reader: selection, search, outline and link navigation.
 //! Engine operations run on the scheduler; this module only owns UI state.
 
-use crate::{preview::PreviewContent, preview_bar::Field, shell::Shell, theme::Theme};
+use crate::{
+    latest::Latest, preview::PreviewContent, preview_bar::Field, shell::Shell, theme::Theme,
+};
 use bibli_core::{
     CancelToken,
     document::{Destination, DocumentSession, PageContent, Rect, SearchHit},
@@ -9,11 +11,6 @@ use bibli_core::{
 };
 use gpui::{AnyElement, ClipboardItem, Context, FocusHandle, RenderImage, Window, div, prelude::*};
 use std::{rc::Rc, sync::Arc};
-
-struct SearchResult {
-    generation: u64,
-    result: Result<Vec<SearchHit>, String>,
-}
 
 /// Where a book laid out again should open: what was read, as the first
 /// words of its page, and how far through the book that page was (0 to 1),
@@ -60,16 +57,12 @@ pub struct ReaderState {
     pub page_input: Option<Field>,
     pub(crate) hits: Vec<SearchHit>,
     pub(crate) active_hit: Option<usize>,
-    search_cancel: Option<CancelToken>,
-    generation: u64,
-    pub(crate) searching: bool,
-    tx: flume::Sender<SearchResult>,
-    rx: flume::Receiver<SearchResult>,
+    /// The search the find field asked for.
+    pub(crate) search: Latest<Result<Vec<SearchHit>, String>>,
     pub down: Option<(f32, f32)>,
 }
 impl Default for ReaderState {
     fn default() -> Self {
-        let (tx, rx) = flume::unbounded();
         Self {
             scroll: crate::reader_scroll::DocumentScroll::default(),
             selection_page: None,
@@ -90,11 +83,7 @@ impl Default for ReaderState {
             page_input: None,
             hits: Vec::new(),
             active_hit: None,
-            search_cancel: None,
-            generation: 0,
-            searching: false,
-            tx,
-            rx,
+            search: Latest::default(),
             down: None,
         }
     }
@@ -122,11 +111,7 @@ impl ReaderState {
                 .any(|field| field.is_focused(window, cx))
     }
     pub fn cancel_search(&mut self) {
-        if let Some(cancel) = self.search_cancel.take() {
-            cancel.cancel();
-        }
-        self.generation = self.generation.wrapping_add(1);
-        self.searching = false;
+        self.search.forget();
     }
 }
 
@@ -307,9 +292,10 @@ impl Shell {
                         .find(|(_, link)| link.bounds.contains(x, y))
                 {
                     self.preview.reader.selection = None;
+                    let tab = window.modifiers().shift;
                     self.run(
                         "ui.reader_link",
-                        serde_json::json!({"index":index}),
+                        serde_json::json!({"index": index, "tab": tab}),
                         window,
                         cx,
                     );
@@ -321,9 +307,15 @@ impl Shell {
         cx.notify();
     }
 
+    /// The text selected, else the page's, as a structured preview
+    /// copies what it shows when nothing is selected.
     pub fn reader_copy(&mut self, cx: &mut Context<Self>) {
         if let Some(page) = page(self) {
-            let text = selected_text(page, self.preview.reader.selection);
+            let mut text = selected_text(page, self.preview.reader.selection);
+            if text.is_empty() {
+                let all = page.chars.len().checked_sub(1).map(|last| (0, last));
+                text = selected_text(page, all);
+            }
             if !text.is_empty() {
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
             }
@@ -335,30 +327,24 @@ impl Shell {
             page(self).and_then(|p| p.chars.len().checked_sub(1).map(|last| (0, last)));
         cx.notify();
     }
-    pub fn reader_link(&mut self, index: usize, cx: &mut Context<Self>) {
+    /// A page's link: a page of this document, or where any document's
+    /// link goes (`Shell::follow_document_link`).
+    pub fn reader_link(
+        &mut self,
+        index: usize,
+        tab: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let target = page(self)
             .and_then(|p| p.links.get(index))
             .map(|l| l.destination.clone());
         match target {
             Some(Destination::Page(page)) => self.preview_go_page(page, cx),
-            Some(Destination::Uri(uri))
-                if uri.starts_with("https://") || uri.starts_with("http://") =>
-            {
-                let app = Arc::clone(&self.app);
-                let cancel = self.app.lifetime().child();
-                self.app
-                    .scheduler
-                    .spawn(Priority::Visible, "document-link", cancel, move || {
-                        if let Err(error) = bibli_platform::open::open_web_uri(&uri) {
-                            app.notify(bibli_core::app::NotifyLevel::Error, error.to_string());
-                        }
-                    });
+            Some(Destination::Uri(uri)) => {
+                let from = self.preview.path().map(std::path::Path::to_path_buf);
+                self.follow_document_link(&uri, from.as_deref(), tab, window, cx);
             }
-            Some(Destination::Uri(_)) => self.set_status(
-                "Only web links and links within this document are supported",
-                true,
-                cx,
-            ),
             None => {}
         }
     }
@@ -383,7 +369,7 @@ impl Shell {
             self.preview.reader.find = Some(Field::new(
                 "Find in document…",
                 "ui.reader_search",
-                "ui.reader_find_close",
+                "ui.preview_find_close",
                 window,
                 cx,
             ));
@@ -395,11 +381,7 @@ impl Shell {
     }
     pub fn reader_find_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let reader = &mut self.preview.reader;
-        if let Some(cancel) = reader.search_cancel.take() {
-            cancel.cancel();
-        }
-        reader.generation = reader.generation.wrapping_add(1);
-        reader.searching = false;
+        reader.search.forget();
         reader.find = None;
         reader.hits.clear();
         reader.active_hit = None;
@@ -417,31 +399,15 @@ impl Shell {
             return;
         };
         let query = find.text(cx);
-        if let Some(cancel) = reader.search_cancel.take() {
-            cancel.cancel();
-        }
-        let cancel = reader.lifetime.child();
-        reader.search_cancel = Some(cancel.clone());
-        reader.generation = reader.generation.wrapping_add(1);
-        let generation = reader.generation;
-        let tx = reader.tx.clone();
-        let wake = self.app.waker_handle();
-        reader.searching = true;
         reader.hits.clear();
         reader.active_hit = None;
-        self.app.scheduler.spawn(
+        let lifetime = reader.lifetime.clone();
+        reader.search.ask(
+            &self.app,
+            &lifetime,
             Priority::Normal,
             "document-search",
-            cancel.clone(),
-            move || {
-                let result = session
-                    .search(&query, &cancel)
-                    .map_err(|e| format!("{e:#}"));
-                if !cancel.is_cancelled() {
-                    let _ = tx.send(SearchResult { generation, result });
-                    wake();
-                }
-            },
+            move |cancel| session.search(&query, cancel).map_err(|e| format!("{e:#}")),
         );
         cx.notify();
     }
@@ -526,13 +492,9 @@ impl Shell {
                 self.preview_go_page(page, cx);
             }
         }
-        while let Ok(reply) = self.preview.reader.rx.try_recv() {
-            if reply.generation != self.preview.reader.generation {
-                continue;
-            }
-            self.preview.reader.searching = false;
+        if let Some(result) = self.preview.reader.search.take() {
             cx.notify();
-            match reply.result {
+            match result {
                 Ok(hits) => {
                     let first = hits.first().map(|h| h.page);
                     self.preview.reader.hits = hits;
@@ -811,7 +773,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
             "reader-outline",
             "contents",
             label::CONTENTS,
-            "ui.reader_outline",
+            "ui.preview_contents",
         )
         .active(reader.outlines)
         // A document without contents (a comic) has none to show.
@@ -861,7 +823,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     crate::preview_bar::number_tool(
         &mut bar,
         ("reader-page-number", "Go to page"),
-        ("ui.reader_page_edit", serde_json::json!({})),
+        ("ui.preview_goto", serde_json::json!({})),
         (value, total),
         |shell| shell.preview.reader.page_input.as_ref(),
         unit,
@@ -893,7 +855,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         Item::button(
             Slot::Tools,
             1,
-            Button::new("reader-find", "search", label::FIND, "ui.reader_find")
+            Button::new("reader-find", "search", label::FIND, "ui.preview_find")
                 .enabled(native)
                 .active(reader.find.is_some()),
         )
@@ -914,7 +876,7 @@ fn find_panel(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
     use crate::toolbar::Button;
     let reader = &shell.preview.reader;
     let find = reader.find.as_ref()?;
-    let count = if reader.searching {
+    let count = if reader.search.is_pending() {
         "Searching…".to_owned()
     } else {
         format!(
@@ -929,7 +891,7 @@ fn find_panel(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
         )
     };
     let matches = |id, icon, title, delta: i32| {
-        Button::new(id, icon, title, "ui.reader_match")
+        Button::new(id, icon, title, "ui.preview_match")
             .args(serde_json::json!({"delta":delta}))
             .enabled(!reader.hits.is_empty())
     };
@@ -940,12 +902,12 @@ fn find_panel(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
             "reader-close-find",
             "close",
             "Close find",
-            "ui.reader_find_close",
+            "ui.preview_find_close",
         ),
     ];
     Some(crate::preview_bar::find_popup(
         find,
-        "DocumentFind",
+        crate::keymap::PREVIEW_FIND,
         count,
         buttons,
         shell,
@@ -975,7 +937,7 @@ pub fn outline_drawer(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> 
         .collect();
     Some(crate::outline::drawer(
         entries,
-        ("ui.reader_outline", serde_json::json!({})),
+        ("ui.preview_contents", serde_json::json!({})),
         shell,
         theme,
         cx,

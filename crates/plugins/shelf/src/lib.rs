@@ -71,7 +71,15 @@ impl State {
 
     fn publish_count(&self) {
         if let Some(app) = self.app.upgrade() {
-            app.tallies.set(ID, TALLY, self.items.len() as u64);
+            app.tallies.set(
+                ID,
+                TALLY,
+                bibli_core::tally::Tally {
+                    label: TITLE.into(),
+                    count: self.items.len() as u64,
+                    open: Some(Invocation::new("shelf.open")),
+                },
+            );
             app.wake();
         }
     }
@@ -264,7 +272,7 @@ fn selection_items(
         ids.to_vec()
     };
     if chosen.is_empty() {
-        anyhow::bail!("nothing selected");
+        return Err(bibli_core::command::NothingSelected.into());
     }
     Ok(chosen
         .into_iter()
@@ -595,6 +603,16 @@ impl Plugin for ShelfPlugin {
                 Ok(Outcome::Done)
             },
         );
+        app.commands.register::<PaneArg, _>(
+            ID,
+            "shelf.open",
+            "Open shelf",
+            "Show the shelf in the pane",
+            |a, app| {
+                app.navigate(app.pane_or_active(a.pane), &Location::parse("shelf:"))?;
+                Ok(Outcome::Done)
+            },
+        );
         let st = Arc::clone(&self.state);
         app.commands.register::<NoArgs, _>(
             ID,
@@ -656,26 +674,12 @@ impl Plugin for ShelfPlugin {
 
         app.registry.places.add(
             ID,
-            Place {
-                title: TITLE.into(),
-                location: Location::parse("shelf:"),
-                icon: Some("folder-drag-accept".into()),
-                group: "places".into(),
-                space: None,
-                eject: None,
-                activate: None,
-                unavailable: None,
-                busy: None,
-                menu: Vec::new(),
-                forget: None,
-                reorder: None,
-                color: None,
-                drop: None,
-                suggested: false,
-                key: None,
-                hidden: false,
-                rename: None,
-            },
+            Place::new(
+                "places",
+                TITLE,
+                "folder-drag-accept",
+                Location::parse("shelf:"),
+            ),
         );
         for (keys, command, when) in BINDINGS {
             app.registry.keymap.add(

@@ -11,7 +11,9 @@
 //! - color: the fields of [`Theme`]. State colors are tokens too: `hover` for
 //!   whatever is under the pointer, `selection_*` for what is chosen,
 //!   `success`/`warning`/`error` for outcomes, `scrim` behind a dialog,
-//!   `drop_target` under a drag, `on_fill` for text on a saturated fill.
+//!   `drop_target` under a drag, `on_fill` for text on a saturated fill,
+//!   `handle` for an edge being dragged, `band` and `band_edge` for the
+//!   rubber band.
 //!   `map_*` draw a map: its graticule, a track, and a route with the
 //!   places and areas of a file; land, water and borders are the offline
 //!   background's.
@@ -57,6 +59,9 @@ pub struct Theme {
     /// An edge that is dragged (the preview panel's side, the dock's top)
     /// under the pointer.
     pub handle: Hsla,
+    /// The rubber band sweeping files: its fill and its edge.
+    pub band: Hsla,
+    pub band_edge: Hsla,
     /// Laid over a picture of a page: selected text, and a search match.
     pub page_selection: Hsla,
     pub page_match: Hsla,
@@ -117,6 +122,8 @@ impl Theme {
             scrim: gpui::hsla(0., 0., 0., 0.25),
             highlight: Hsla::from(rgb(0xd6e4ff)).opacity(0.5),
             handle: Hsla::from(rgb(0x2f6feb)).opacity(0.35),
+            band: Hsla::from(rgb(0x2f6feb)).opacity(0.14),
+            band_edge: Hsla::from(rgb(0x2f6feb)).opacity(0.8),
             page_selection: Hsla::from(rgb(0x2f6feb)).opacity(0.35),
             page_match: Hsla::from(rgb(0xffce33)).opacity(0.4),
             drop_target: Hsla::from(rgb(0xd6e4ff)).opacity(0.6),
@@ -161,6 +168,8 @@ impl Theme {
             scrim: gpui::hsla(0., 0., 0., 0.5),
             highlight: Hsla::from(rgb(0x2c4f8a)).opacity(0.5),
             handle: Hsla::from(rgb(0x6ea8fe)).opacity(0.35),
+            band: Hsla::from(rgb(0x6ea8fe)).opacity(0.14),
+            band_edge: Hsla::from(rgb(0x6ea8fe)).opacity(0.8),
             page_selection: Hsla::from(rgb(0x6ea8fe)).opacity(0.35),
             page_match: Hsla::from(rgb(0xffce33)).opacity(0.4),
             drop_target: Hsla::from(rgb(0x2c4f8a)).opacity(0.6),
@@ -200,8 +209,13 @@ impl Theme {
 
     /// The fill of a chip of a tag wearing color `index` (see `tags`),
     /// under text in `text`.
+    /// The tag color of palette index `index` (`metadata::TAG_COLORS`).
+    pub fn tag(&self, index: usize) -> Hsla {
+        self.tags[index % self.tags.len()]
+    }
+
     pub fn tag_fill(&self, index: usize) -> Hsla {
-        let color = self.tags[index % self.tags.len()];
+        let color = self.tag(index);
         color.opacity(if self.is_dark { 0.3 } else { 0.18 })
     }
 

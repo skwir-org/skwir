@@ -96,11 +96,9 @@ pub fn message(shell: &Shell, pane: PaneId) -> Option<String> {
     if !pending(shell, pane) {
         return None;
     }
-    Some(
-        if pane_state.location().is_some_and(|l| &*l.scheme == "query") {
-            "Searching…".into()
-        } else {
-            "Loading location…".into()
-        },
-    )
+    Some(if shell.ui().place.search {
+        "Searching…".into()
+    } else {
+        "Loading location…".into()
+    })
 }

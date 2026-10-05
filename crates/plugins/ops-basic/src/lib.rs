@@ -74,7 +74,7 @@ fn take_selection(
             .unwrap_or_default()
     };
     if refs.is_empty() && places.is_empty() {
-        anyhow::bail!("nothing selected");
+        return Err(bibli_core::command::NothingSelected.into());
     }
     Ok((refs, places))
 }
@@ -240,6 +240,9 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
     // In the trash, Delete deletes for good: the shell asks first, as for
     // any plan Undo cannot take back.
     ("delete", "delete", Some("pane selection restores")),
+    // Deleting for good from anywhere: the shell asks first, as for any
+    // plan Undo cannot take back (`Shell::apply_user_plan`).
+    ("shift-delete", "delete", Some("pane selection !place")),
     ("ctrl-c", "clipboard_copy", Some("pane selection")),
     ("ctrl-x", "clipboard_cut", Some("pane selection !restores")),
     // Into the folder shown, or a place that takes files (a tag gives
@@ -352,7 +355,7 @@ const MENU: &[(&str, &str, Option<&str>, i32, &str)] = &[
     ),
     (
         "Delete Permanently",
-        "ui.confirm_delete",
+        "delete",
         Some("selection !place"),
         310,
         "close",

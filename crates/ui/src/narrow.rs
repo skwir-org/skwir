@@ -230,7 +230,7 @@ impl Shell {
                 // its folders whatever it offers.
                 .filter(|e| !(e.is_place() || folder.is_some() && e.is_dir()))
                 .map(|e| File {
-                    tags: crate::views::list::tags_of(e),
+                    tags: crate::tags::tags_of(e),
                     kinds: if complete {
                         bibli_platform::mime::of_entry(e)
                             .map(|m| bibli_platform::mime::kinds(&m))
@@ -372,14 +372,12 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                     facet
                 };
                 this.activate_pane(pane, cx);
-                let mut args = command.args.clone();
-                if !args.is_object() {
-                    args = serde_json::json!({});
-                }
-                args["facet"] = serde_json::json!(facet);
-                args["value"] = serde_json::json!(value);
-                args["pane"] = serde_json::json!(pane);
-                this.run(&command.name, args, window, cx);
+                let command = command
+                    .clone()
+                    .with("facet", facet)
+                    .with("value", &value)
+                    .with("pane", pane);
+                this.run(&command.name, command.args, window, cx);
             }))
             .child(text)
             .child(

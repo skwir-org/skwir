@@ -734,6 +734,7 @@ dependencies = [
  "ttf-parser 0.25.1",
  "xattr 1.6.1",
  "xdg-mime",
+ "zip",
 ]
 
 [[package]]
@@ -743,7 +744,6 @@ dependencies = [
  "anyhow",
  "bibli-core",
  "bibli-platform",
- "dirs 7.0.0",
  "parking_lot",
  "schemars",
  "serde",
@@ -879,8 +879,6 @@ dependencies = [
  "anyhow",
  "bibli-core",
  "bibli-platform",
- "crossbeam-channel",
- "notify",
  "parking_lot",
  "schemars",
  "serde",
@@ -1226,7 +1224,6 @@ dependencies = [
  "bibli-core",
  "bibli-platform",
  "crossbeam-channel",
- "notify",
  "parking_lot",
  "schemars",
  "serde",

@@ -10,7 +10,7 @@ use gstreamer_app::AppSink;
 use gstreamer_video::{VideoFrameExt, VideoFrameRef, VideoInfo};
 use std::{
     fs::OpenOptions,
-    io::{BufRead, Read, Seek, SeekFrom, Write},
+    io::{Seek, SeekFrom, Write},
     sync::{
         Arc, Mutex, PoisonError,
         atomic::{AtomicBool, Ordering},
@@ -21,10 +21,9 @@ use std::{
 
 fn reply(message: &Reply) -> anyhow::Result<()> {
     let mut out = std::io::stdout().lock();
-    let bytes = serde_json::to_vec(message)?;
-    anyhow::ensure!(bytes.len() < MAX_MESSAGE, "video message exceeds limit");
-    out.write_all(&bytes)?;
-    out.write_all(b"\n")?;
+    let line = bibli_core::jsonl::encode(message)?;
+    anyhow::ensure!(line.len() <= MAX_MESSAGE, "video message exceeds limit");
+    out.write_all(&line)?;
     out.flush()?;
     Ok(())
 }
@@ -508,22 +507,7 @@ fn run() -> anyhow::Result<()> {
     let input_tx = events.tx.clone();
     std::thread::spawn(move || {
         let mut input = std::io::stdin().lock();
-        loop {
-            let mut line = Vec::new();
-            if Read::by_ref(&mut input)
-                .take((MAX_MESSAGE + 1) as u64)
-                .read_until(b'\n', &mut line)
-                .ok()
-                == Some(0)
-            {
-                break;
-            }
-            if line.len() > MAX_MESSAGE {
-                break;
-            }
-            let Ok(request) = serde_json::from_slice::<Request>(&line) else {
-                break;
-            };
+        while let Some(Ok(request)) = bibli_core::jsonl::read::<Request>(&mut input, MAX_MESSAGE) {
             if input_tx.send(Event::Request(request)).is_err() {
                 break;
             }

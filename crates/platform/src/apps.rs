@@ -6,6 +6,7 @@
 //! worker, keep it, and ask [`Stamp::current`] (a few `stat`s) whether an
 //! install or a changed default made it stale.
 
+use crate::keyfile;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -210,7 +211,7 @@ impl Catalog {
     /// One `mimeapps.list`, less important than those read before it.
     fn read_list(&mut self, text: &str) {
         let mut removed_here: Vec<(String, String)> = Vec::new();
-        for (group, key, value) in key_file(text) {
+        for (group, key, value) in keyfile::entries(text) {
             let ids = value
                 .split(';')
                 .map(str::trim)
@@ -378,61 +379,6 @@ impl Locale {
     }
 }
 
-/// `(group, key, value)` for every entry of a key file, comments and blank
-/// lines skipped, the value untrimmed on the right as written.
-fn key_file(text: &str) -> impl Iterator<Item = (&str, &str, &str)> {
-    let mut group = "";
-    text.lines().filter_map(move |line| {
-        let line = line.trim_start();
-        if line.is_empty() || line.starts_with('#') {
-            return None;
-        }
-        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            group = name;
-            return None;
-        }
-        let (key, value) = line.split_once('=')?;
-        Some((group, key.trim_end(), value.trim_start()))
-    })
-}
-
-/// A string value's escapes: `\s`, `\n`, `\t`, `\r`, `\\`.
-fn unescape(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    let mut chars = value.chars();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        match chars.next() {
-            Some('s') => out.push(' '),
-            Some('n') => out.push('\n'),
-            Some('t') => out.push('\t'),
-            Some('r') => out.push('\r'),
-            Some(other) => {
-                out.push('\\');
-                out.push(other);
-            }
-            None => out.push('\\'),
-        }
-    }
-    out
-}
-
-fn is_true(value: &str) -> bool {
-    value.trim() == "true"
-}
-
-fn list(value: &str) -> Vec<String> {
-    value
-        .split(';')
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(str::to_owned)
-        .collect()
-}
-
 /// The `[Desktop Entry]` group of an application. `None` for another type,
 /// a `Hidden` entry, one without `Exec`, or one whose `TryExec` is not
 /// installed.
@@ -444,7 +390,7 @@ fn parse_entry(
     desktops: &[String],
 ) -> Option<Application> {
     let mut values: HashMap<&str, &str> = HashMap::new();
-    for (group, key, value) in key_file(text) {
+    for (group, key, value) in keyfile::entries(text) {
         if group == "Desktop Entry" {
             values.entry(key).or_insert(value);
         }
@@ -455,28 +401,31 @@ fn parse_entry(
             .iter()
             .find_map(|l| values.get(format!("{key}[{l}]").as_str()))
             .or_else(|| values.get(key))
-            .map(|v| unescape(v))
+            .map(|v| keyfile::unescape(v))
             .filter(|v| !v.is_empty())
     };
     if values.get("Type").copied() != Some("Application")
-        || values.get("Hidden").is_some_and(|v| is_true(v))
+        || values.get("Hidden").is_some_and(|v| keyfile::is_true(v))
     {
         return None;
     }
-    let exec = unescape(values.get("Exec")?);
+    let exec = keyfile::unescape(values.get("Exec")?);
     if exec.trim().is_empty() {
         return None;
     }
-    if let Some(try_exec) = values.get("TryExec").map(|v| unescape(v))
+    if let Some(try_exec) = values.get("TryExec").map(|v| keyfile::unescape(v))
         && !try_exec.is_empty()
         && bibli_core::os_path::find_program(&try_exec).is_none()
     {
         return None;
     }
-    let only = values.get("OnlyShowIn").map(|v| list(v));
-    let not = values.get("NotShowIn").map(|v| list(v)).unwrap_or_default();
+    let only = values.get("OnlyShowIn").map(|v| keyfile::list(v));
+    let not = values
+        .get("NotShowIn")
+        .map(|v| keyfile::list(v))
+        .unwrap_or_default();
     let here = |names: &[String]| desktops.iter().any(|d| names.contains(d));
-    let shown = !values.get("NoDisplay").is_some_and(|v| is_true(v))
+    let shown = !values.get("NoDisplay").is_some_and(|v| keyfile::is_true(v))
         && only.is_none_or(|only| here(&only))
         && !here(&not);
     Some(Application {
@@ -485,62 +434,18 @@ fn parse_entry(
         generic_name: localized("GenericName"),
         icon: localized("Icon"),
         exec,
-        terminal: values.get("Terminal").is_some_and(|v| is_true(v)),
+        terminal: values.get("Terminal").is_some_and(|v| keyfile::is_true(v)),
         working_dir: values
             .get("Path")
-            .map(|p| PathBuf::from(unescape(p)))
+            .map(|p| PathBuf::from(keyfile::unescape(p)))
             .filter(|p| p.is_absolute()),
-        mime_types: values.get("MimeType").map(|v| list(v)).unwrap_or_default(),
+        mime_types: values
+            .get("MimeType")
+            .map(|v| keyfile::list(v))
+            .unwrap_or_default(),
         shown,
         source: path.to_path_buf(),
     })
-}
-
-/// Split an `Exec` value into arguments: double quotes group, and inside
-/// them a backslash escapes `"`, `` ` ``, `$` and `\`. Each argument says
-/// whether any of it was quoted: field codes are only expanded outside
-/// quotes.
-fn exec_words(exec: &str) -> Vec<(String, bool)> {
-    let mut words = Vec::new();
-    let mut current = String::new();
-    let mut quoted = false;
-    let mut in_word = false;
-    let mut in_quotes = false;
-    let mut chars = exec.chars();
-    while let Some(c) = chars.next() {
-        match (in_quotes, c) {
-            (true, '"') => in_quotes = false,
-            (true, '\\') => {
-                if let Some(next) = chars.next() {
-                    if !matches!(next, '"' | '`' | '$' | '\\') {
-                        current.push('\\');
-                    }
-                    current.push(next);
-                }
-            }
-            (true, c) => current.push(c),
-            (false, '"') => {
-                in_quotes = true;
-                quoted = true;
-                in_word = true;
-            }
-            (false, c) if c.is_whitespace() => {
-                if in_word {
-                    words.push((std::mem::take(&mut current), quoted));
-                    quoted = false;
-                    in_word = false;
-                }
-            }
-            (false, c) => {
-                current.push(c);
-                in_word = true;
-            }
-        }
-    }
-    if in_word {
-        words.push((current, quoted));
-    }
-    words
 }
 
 /// What one run of an application is given.
@@ -554,7 +459,7 @@ enum Takes {
 
 impl Application {
     fn takes(&self) -> Takes {
-        let many = exec_words(&self.exec)
+        let many = keyfile::exec_words(&self.exec)
             .iter()
             .any(|(w, quoted)| !quoted && (w == "%F" || w == "%U"));
         if many { Takes::Many } else { Takes::One }
@@ -579,7 +484,7 @@ impl Application {
     fn expand(&self, files: &[PathBuf]) -> Vec<OsString> {
         let mut argv: Vec<OsString> = Vec::new();
         let mut used_files = false;
-        for (word, quoted) in exec_words(&self.exec) {
+        for (word, quoted) in keyfile::exec_words(&self.exec) {
             if quoted {
                 argv.push(word.replace("%%", "%").into());
                 continue;
@@ -654,7 +559,7 @@ impl Application {
                     .and_then(|f| f.parent())
                     .map(Path::to_path_buf)
             })
-            .or_else(dirs::home_dir)
+            .or_else(bibli_core::os_path::home)
             .unwrap_or_else(|| PathBuf::from("/"));
         for argv in self.command_lines(files) {
             let Some((program, args)) = argv.split_first() else {
@@ -686,15 +591,19 @@ fn file_arg(path: &Path, uri: bool) -> OsString {
     }
 }
 
-/// The type `path` is opened as: a folder is `inode/directory`; a file is
-/// what [`mime::identify`] says, `application/octet-stream` when nothing
-/// does. Reads the head of the file: call from a worker.
-pub fn type_of(path: &Path, is_dir: bool) -> Mime {
-    if is_dir {
-        return Mime("inode/directory".into());
+/// The type `entry`, at `path`, is opened as: what it is when that is no
+/// file (a folder is `inode/directory`, a pipe `inode/fifo`, a link that
+/// leads nowhere `inode/symlink`), never read; else what [`mime::identify`]
+/// says of what it opens (a link's target, by the target's name), and
+/// `application/octet-stream` when nothing does. Reads the head of the
+/// file: call from a worker.
+pub fn type_of(entry: &bibli_core::Entry, path: &Path) -> Mime {
+    if let Some(mime) = entry.inode_type() {
+        return Mime(mime.to_owned());
     }
-    path.file_name()
-        .and_then(|name| mime::identify(name, path))
+    entry
+        .content(path)
+        .and_then(|content| mime::identify(entry.type_name(), &content.path))
         .unwrap_or_else(|| Mime("application/octet-stream".into()))
 }
 
@@ -776,7 +685,7 @@ impl AssociationEdit {
     /// [`AssociationEdit::make_default`] in `file`, whose text is `text`.
     fn making_default(file: PathBuf, text: &str, mime: &str, app: &str) -> Self {
         let ids = |value: Option<String>| -> Vec<String> {
-            value.as_deref().map(list).unwrap_or_default()
+            value.as_deref().map(keyfile::list).unwrap_or_default()
         };
         let joined = |ids: Vec<String>| {
             (!ids.is_empty()).then(|| {
@@ -802,7 +711,7 @@ impl AssociationEdit {
 
 /// The value of `key` in `group`, the first if written twice.
 fn line(text: &str, group: &str, key: &str) -> Option<String> {
-    key_file(text)
+    keyfile::entries(text)
         .find(|&(g, k, _)| g == group && k == key)
         .map(|(_, _, v)| v.trim_end().to_owned())
 }

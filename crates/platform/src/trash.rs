@@ -111,7 +111,9 @@ pub fn list(trash: &Path, calendar: &Calendar) -> Vec<Trashed> {
         if std::fs::symlink_metadata(&file).is_err() {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(&info) else {
+        // A volume's trash is anyone's to write in: a pipe named like an
+        // info file must not hold the listing.
+        let Ok(text) = crate::file::read_regular_text(&info, crate::file::SIDE_FILE_LIMIT) else {
             continue;
         };
         let Some((original, deleted)) = parse_info(&text, top) else {

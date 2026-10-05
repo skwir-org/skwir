@@ -135,7 +135,7 @@ struct State {
     lifetime: Option<CancelToken>,
     /// Watches each trash's `info`; dropped on disable, which ends the
     /// thread that waits for it.
-    watcher: Option<notify::RecommendedWatcher>,
+    watcher: Option<bibli_core::fs::Settled>,
     /// The `info` folders watched.
     watched: Vec<PathBuf>,
     /// Whether the place said last that the trash holds something.
@@ -251,14 +251,8 @@ impl Trashes {
             }
         }
         if let Some(watcher) = s.watcher.as_mut() {
-            use notify::Watcher as _;
             for info in trashes.iter().map(|t| t.join("info")) {
-                if !s.watched.contains(&info)
-                    && info.is_dir()
-                    && watcher
-                        .watch(&info, notify::RecursiveMode::NonRecursive)
-                        .is_ok()
-                {
+                if !s.watched.contains(&info) && info.is_dir() && watcher.watch(&info) {
                     s.watched.push(info);
                 }
             }
@@ -277,27 +271,20 @@ impl Trashes {
     /// changes settle, on a thread of the plugin's own that ends with the
     /// watcher (so no shared worker waits).
     fn watch(&self, app: &App) {
-        let (tx, rx) = crossbeam_channel::unbounded::<()>();
-        // Reading a `.trashinfo` is no change to the trash.
-        let handler = move |event: notify::Result<notify::Event>| {
-            if event.is_ok_and(|event| !matches!(event.kind, notify::EventKind::Access(_))) {
-                let _ = tx.send(());
-            }
-        };
-        let Ok(watcher) = notify::recommended_watcher(handler) else {
-            return;
-        };
         let (this, weak) = (self.clone(), app.weak());
-        let settle = std::thread::Builder::new()
-            .name("bibli-trash".into())
-            .spawn(move || {
-                while rx.recv().is_ok() {
-                    while rx.recv_timeout(SETTLE).is_ok() {}
-                    let Some(app) = weak.upgrade() else { return };
-                    this.refresh(&app);
-                }
-            });
-        if settle.is_ok() {
+        let watcher = bibli_core::fs::Settled::start(
+            "bibli-trash",
+            SETTLE,
+            |_| true,
+            move || {
+                let Some(app) = weak.upgrade() else {
+                    return false;
+                };
+                this.refresh(&app);
+                true
+            },
+        );
+        if let Some(watcher) = watcher {
             let mut s = self.state.lock();
             s.watcher = Some(watcher);
             s.watched.clear();
@@ -315,44 +302,24 @@ impl Trashes {
 /// files dropped on it are put in the trash, and its menu empties it.
 fn place(full: bool) -> Place {
     let menu = if full {
-        vec![MenuItem {
-            menu: "place".into(),
-            title: EMPTY_TRASH.into(),
-            command: Invocation::new("trash.empty"),
-            when: None,
-            order: 300,
-            icon: Some("trash".into()),
-            submenu: None,
-        }]
+        vec![MenuItem::new(
+            "place",
+            EMPTY_TRASH,
+            "trash",
+            300,
+            Invocation::new("trash.empty"),
+        )]
     } else {
         Vec::new()
     };
+    let icon = if full {
+        "user-trash-full"
+    } else {
+        "user-trash"
+    };
     Place {
-        title: "Trash".into(),
-        location: Location::new(SCHEME, ""),
-        icon: Some(
-            if full {
-                "user-trash-full"
-            } else {
-                "user-trash"
-            }
-            .into(),
-        ),
-        group: "places".into(),
-        space: None,
-        eject: None,
-        activate: None,
-        unavailable: None,
-        busy: None,
         menu,
-        forget: None,
-        reorder: None,
-        color: None,
-        drop: Some(Invocation::new("trash.put")),
-        suggested: false,
-        key: None,
-        hidden: false,
-        rename: None,
+        ..Place::new("places", "Trash", icon, Location::new(SCHEME, ""))
     }
 }
 
@@ -390,9 +357,17 @@ impl LocationProvider for TrashProvider {
     }
 
     /// The trash, then a trashed folder under its own name, then the
-    /// folders inside it, each where it is in the trash.
+    /// folders inside it, each where it is in the trash. Each holds
+    /// places, the trash's top its trashed folders: the chevron after the
+    /// last lists them, as a folder's lists its folders.
     fn trail(&self, location: &Location) -> Option<Trail> {
-        let folder = folder_of(location)?;
+        let Some(folder) = folder_of(location) else {
+            return Some(Trail {
+                crumbs: vec![Crumb::new("Trash", Location::new(SCHEME, ""))],
+                holds_places: true,
+                ..Trail::default()
+            });
+        };
         let inside = in_trash(&folder)?;
         let mut crumbs = vec![
             Crumb::new("Trash", Location::new(SCHEME, "")),
@@ -427,12 +402,18 @@ impl LocationProvider for TrashProvider {
                 .filter(|i| i.entry.is_dir())
                 .map(|i| Crumb::new(i.entry.name_str(), folder_location(&i.trashed.file)))
                 .collect(),
-            Some(folder) => std::fs::read_dir(&folder)
+            // As a folder's: hidden ones too, a trash holds what it was given.
+            Some(folder) => bibli_core::fs::subfolders(&folder, true)
+                .unwrap_or_default()
                 .into_iter()
-                .flatten()
-                .flatten()
-                .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
-                .map(|e| Crumb::new(e.file_name().to_string_lossy(), folder_location(&e.path())))
+                .map(|dir| {
+                    let name = dir
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned();
+                    Crumb::new(name, folder_location(&dir))
+                })
                 .collect(),
         };
         places
@@ -568,6 +549,10 @@ impl OpenLocation for TrashFolder {
     /// A folder inside it stays in the trash too.
     fn location_of(&self, id: EntryId) -> Option<Location> {
         self.inner.path_of(id).map(|path| folder_location(&path))
+    }
+
+    fn holds(&self) -> Option<&std::path::Path> {
+        self.inner.holds()
     }
 
     fn refresh(&self) {

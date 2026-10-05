@@ -11,7 +11,6 @@
 
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
-use std::sync::OnceLock;
 
 use bibli_core::inspection::{Block, Run};
 
@@ -271,7 +270,7 @@ pub fn resolve(word: &str, base: &Path) -> Option<PathBuf> {
         return there(path.to_owned());
     }
     if let Some(rest) = word.strip_prefix("~/") {
-        return there(dirs::home_dir()?.join(rest));
+        return there(bibli_core::os_path::home()?.join(rest));
     }
     if !base.is_absolute() {
         return None;
@@ -283,33 +282,7 @@ pub fn resolve(word: &str, base: &Path) -> Option<PathBuf> {
     base.ancestors().find_map(|dir| there(dir.join(path)))
 }
 
-/// This machine's name, as `file://` URIs name it: the kernel's, read once.
-fn hostname() -> Option<&'static str> {
-    static NAME: OnceLock<Option<String>> = OnceLock::new();
-    NAME.get_or_init(|| {
-        std::fs::read_to_string("/proc/sys/kernel/hostname")
-            .ok()
-            .map(|name| name.trim().to_owned())
-            .filter(|name| !name.is_empty())
-    })
-    .as_deref()
-}
-
-/// The path a `file://` URI names on this machine: with no host,
-/// `localhost`, or this machine's name, as `ls --hyperlink` writes it.
-/// `None` for another machine or another scheme.
-pub fn file_path(uri: &str) -> Option<PathBuf> {
-    if let Some(path) = crate::uri::path_of(uri) {
-        return Some(path);
-    }
-    let rest = uri.strip_prefix("file://")?;
-    let (host, path) = rest.split_at(rest.find('/')?);
-    host.eq_ignore_ascii_case(hostname()?)
-        .then(|| crate::uri::path_of(&format!("file://{path}")))
-        .flatten()
-}
-
-/// Give `block` the addresses in its text as links, where no run links
+/// Give `block` the addresses in its text as links/// Give `block` the addresses in its text as links, where no run links
 /// already or is code: a link the text was written with stays as it was.
 /// `found` says how they are followed (`Run::found`): with Ctrl in raw
 /// text, where a click selects; on a click in a document read as a page.
@@ -502,20 +475,6 @@ mod tests {
         assert_eq!(resolve("./x.rs", &deep), None);
         assert_eq!(resolve(file.to_str().unwrap(), Path::new("/")), Some(file));
         assert_eq!(resolve("x.rs", Path::new("relative")), None);
-    }
-
-    #[test]
-    fn a_file_uri_of_this_machine_is_a_path() {
-        assert_eq!(file_path("file:///etc/hosts"), Some("/etc/hosts".into()));
-        assert_eq!(file_path("file://localhost/a%20b"), Some("/a b".into()));
-        if let Some(host) = hostname() {
-            assert_eq!(
-                file_path(&format!("file://{host}/srv/x")),
-                Some("/srv/x".into())
-            );
-        }
-        assert_eq!(file_path("file://elsewhere.invalid/srv/x"), None);
-        assert_eq!(file_path("https://a.b/c"), None);
     }
 
     fn run(range: Range<usize>, color: u8) -> Run {

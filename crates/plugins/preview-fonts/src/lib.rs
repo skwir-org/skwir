@@ -41,16 +41,24 @@ const PASS_PIXELS: usize = 16 * GLYPH_PIXELS;
 /// Outline bounds are legitimate up to a few ems; beyond that a font is
 /// malformed and would only produce oversized glyphs.
 const BOUNDS_EMS: f32 = 8.;
+/// What the font parser reads, by type: an `.otf` name is also an
+/// `OpenDocument` formula template's, which the request's type, read from
+/// the bytes, tells apart.
+static FONTS: bibli_platform::mime::Types = bibli_platform::mime::Types::new(&[
+    "font/ttf",
+    "font/otf",
+    "font/collection",
+    "font/woff",
+    "font/woff2",
+]);
+
 struct Provider;
 impl PreviewProvider for Provider {
     fn id(&self) -> &'static str {
         "preview-fonts"
     }
     fn accepts(&self, req: &PreviewRequest) -> bool {
-        matches!(
-            inspection::extension(&req.entry.path).as_str(),
-            "ttf" | "otf" | "ttc" | "woff" | "woff2"
-        )
+        FONTS.holds(&req.entry.path, req.mime.as_deref())
     }
     fn inspect(
         &self,
@@ -284,6 +292,29 @@ fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fonts_are_known_by_type() {
+        let accepts = |name: &str, mime: Option<&str>| {
+            Provider.accepts(&PreviewRequest {
+                entry: bibli_core::op::EntryRef::new(bibli_core::EntryId { dev: 1, ino: 1 }, name),
+                mime: mime.map(str::to_owned),
+                page: 1,
+                seconds: None,
+                max_side: 64,
+                text_size: None,
+            })
+        };
+        assert!(accepts("a.ttf", None));
+        assert!(accepts("a.woff2", None));
+        // `.otf` names a font and a formula template: the bytes say which.
+        assert!(accepts("a.otf", Some("font/otf")));
+        assert!(!accepts(
+            "a.otf",
+            Some("application/vnd.oasis.opendocument.formula-template")
+        ));
+        assert!(!accepts("a.pcf", None));
+    }
 
     /// A minimal TrueType font with two glyphs: `.notdef` and `A`, a square
     /// spanning ±`half` units. `declared` is the head table's bounding box

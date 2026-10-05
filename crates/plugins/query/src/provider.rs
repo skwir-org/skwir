@@ -103,6 +103,9 @@ impl LocationProvider for QueryProvider {
         })
     }
 
+    fn searches(&self, _location: &Location) -> bool {
+        true
+    }
     fn icon(&self, _location: &Location) -> Option<&'static str> {
         Some("search")
     }
@@ -489,7 +492,7 @@ impl Shared {
             batcher.flush();
             hinted
         };
-        if let Some(paths) = crate::plocate::try_locate(q) {
+        if let Some(paths) = crate::plocate::try_locate(q, cancel) {
             let mut deferred = deferred();
             for p in paths {
                 if cancel.is_cancelled() {

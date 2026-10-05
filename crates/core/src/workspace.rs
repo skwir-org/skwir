@@ -331,18 +331,6 @@ impl Drop for Kept {
     }
 }
 
-/// What a suspended pane let go of; closed when dropped.
-pub(crate) struct Released {
-    open: Arc<dyn OpenLocation>,
-    _kept: Vec<Kept>,
-}
-
-impl Drop for Released {
-    fn drop(&mut self) {
-        self.open.close();
-    }
-}
-
 /// A folder, or a place (a tag's), opened in place under the one shown
 /// (ADR-025): where it leads, the entry it opens at, and the one opened
 /// whose listing has that entry (`None`: the shown listing's).
@@ -632,11 +620,13 @@ impl Pane {
     /// the open location, its listing and watcher, the locations kept
     /// beside it, and the work tied to it. The history, the sort and the
     /// selection stay; the selection comes back when the pane is shown
-    /// again and its listing is complete. What it let go of closes when
-    /// the returned value drops: after the workspace lock, since closing
-    /// runs the location's code.
-    pub(crate) fn suspend(&mut self) -> Option<Released> {
-        let open = self.open.take()?;
+    /// again and its listing is complete. What it let go of closes here
+    /// (`OpenLocation::close`, under the lock).
+    pub(crate) fn suspend(&mut self) {
+        let Some(open) = self.open.take() else {
+            return;
+        };
+        open.close();
         self.location_lifetime.cancel();
         self.location_lifetime = CancelToken::new();
         let selection = std::mem::take(&mut self.selection);
@@ -645,9 +635,9 @@ impl Pane {
         }
         self.listing = Listing::default();
         self.reveal = None;
-        let mut kept = std::mem::take(&mut self.kept);
-        kept.extend(self.left.take());
-        Some(Released { open, _kept: kept })
+        // Each closes as it drops.
+        self.kept.clear();
+        self.left = None;
     }
 
     /// The selection to give back once the listing is complete.
@@ -957,18 +947,30 @@ impl Pane {
 
     /// Let go of the folders under `path` it keeps beside the one shown,
     /// has opened in place or has just left: their volume is about to be
-    /// unmounted. Returns them, to be closed once the lock is released.
-    pub(crate) fn release_under(&mut self, path: &Path) -> Vec<Kept> {
-        let under = |k: &Kept| k.path.as_ref().is_some_and(|p| p.starts_with(path));
-        self.close_where(|o| o.location.path().is_some_and(|p| p.starts_with(path)));
-        let mut released = Vec::new();
+    /// unmounted. Each closes as it drops.
+    pub(crate) fn release_under(&mut self, path: &Path) {
+        // What each holds open (`OpenLocation::holds`), whatever its
+        // scheme: a trashed folder opened in place is listed by its own.
+        let under = |k: &Kept| {
+            k.open
+                .as_ref()
+                .and_then(|open| open.holds())
+                .or(k.path.as_deref())
+                .is_some_and(|p| p.starts_with(path))
+        };
+        let held: Vec<Location> = self
+            .kept
+            .iter()
+            .filter(|k| under(k))
+            .map(|k| k.location.clone())
+            .collect();
+        self.close_where(|o| {
+            held.contains(&o.location) || o.location.path().is_some_and(|p| p.starts_with(path))
+        });
         if self.left.as_ref().is_some_and(under) {
-            released.extend(self.left.take());
+            self.left = None;
         }
-        let (gone, kept) = std::mem::take(&mut self.kept).into_iter().partition(under);
-        self.kept = kept;
-        released.extend::<Vec<Kept>>(gone);
-        released
+        self.kept.retain(|k| !under(k));
     }
 
     /// Close every folder opened in place.
@@ -993,6 +995,17 @@ impl Pane {
     /// or an opened folder's. An entry that moves from one to another (a
     /// file dragged between two tags opened in place) arrives bare in the
     /// other, to be hydrated again.
+    /// The location whose listing holds entry `id`: the one shown, or a
+    /// folder or a place opened in place (the tree's, the board's columns).
+    pub fn holder(&self, id: EntryId) -> Option<&Location> {
+        if self.listing.get(id).is_some() {
+            return self.location();
+        }
+        opened(&self.kept, &self.expanded)
+            .find(|(_, k)| k.listing.get(id).is_some())
+            .map(|(o, _)| &o.location)
+    }
+
     pub fn listing_of(&self, id: EntryId) -> Option<u64> {
         if self.listing.get(id).is_some() {
             return Some(self.listing.id());
@@ -1038,6 +1051,17 @@ impl Pane {
         opened(&self.kept, &self.expanded)
             .find(|(_, k)| k.listing.get(id).is_some())
             .and_then(|(_, k)| k.open.as_ref()?.location_of(id))
+    }
+
+    /// The location opening entry `id` shows: where a place leads, or a
+    /// folder that does not open at its path (`location_of`), else a
+    /// folder's own path; `None` for a file. Plugin code, called under the
+    /// caller's lock, like `path_of`.
+    pub fn leads_to(&self, id: EntryId) -> Option<Location> {
+        self.location_of(id).or_else(|| {
+            self.entry(id).filter(|e| e.is_dir())?;
+            self.path_of(id).map(Location::from_path)
+        })
     }
 
     /// How many opened folders deep entry `id` is: 0 for the shown
@@ -1362,7 +1386,7 @@ impl Workspace {
 
     /// Take tab `id` and its panes out, in the tab's order, with the index
     /// it had. Refused for the last tab. Dropping the panes closes what
-    /// they show: do it after releasing the workspace lock.
+    /// they show.
     pub(crate) fn close_tab(&mut self, id: TabId) -> Option<(usize, Tab, Vec<Pane>)> {
         if self.tabs.len() <= 1 {
             return None;

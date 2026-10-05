@@ -49,11 +49,10 @@ impl Plugin for PreviewPlugin {
         bibli_core::plugin::Category::Previews
     }
     fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
-        vec![bibli_core::plugin::Requirement::new(
-            "bibli-model-worker",
-            "3D models without a stored picture drawn and measured",
-            || bibli_platform::model::worker_path().is_some(),
-        )]
+        vec![
+            bibli_platform::model::WORKER
+                .requirement("3D models without a stored picture drawn and measured"),
+        ]
     }
     fn register(&self, app: &App) {
         app.previews.register(ID, Arc::new(Provider));

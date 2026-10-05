@@ -97,24 +97,6 @@ pub struct Chips {
 }
 
 impl Chips {
-    /// The tag `shown` (a search's location) looks for, when that is all
-    /// it does and it looks from the home folder: the search a tag's pill
-    /// opens, which is kept by pinning the tag.
-    pub fn only_tag(&self, shown: &str) -> Option<&str> {
-        if self.location != shown || std::env::home_dir().as_deref() != Some(self.root.as_path()) {
-            return None;
-        }
-        let mut tag = None;
-        for chip in &self.chips {
-            match (chip.id.as_str(), chip.value.as_deref()) {
-                (_, None) => {}
-                ("tag", Some(t)) if tag.is_none() => tag = Some(t),
-                _ => return None,
-            }
-        }
-        tag
-    }
-
     /// The tags every match of the search has, and those none has.
     pub fn tags(&self) -> (Vec<String>, Vec<String>) {
         let of = |id: &str| {
@@ -148,6 +130,11 @@ pub struct ChipMenu {
     popup: Popup,
 }
 
+/// What a chip's toggle names its choices (`Shell::toggle_popup`).
+fn chip_key(at: (PaneId, Target)) -> String {
+    format!("chip {at:?}")
+}
+
 impl Shell {
     /// `ui.search_chip { pane, chip }` opens a chip's choices, or closes
     /// them when they are open; `{ pane, facets: true }` lists the facets
@@ -171,18 +158,9 @@ impl Shell {
                 Some((pane, target))
             })
             .flatten();
-        let open = self.search_menu.take().map(|menu| {
-            let at = (menu.pane, menu.target);
-            menu.popup.restore(window);
-            at
-        });
-        if close {
-            if let Some(open) = open {
-                self.note_dismissed(args, format!("chip {open:?}"));
-            }
-        } else if let Some((pane, target)) = wanted
-            && open != Some((pane, target))
-            && !self.just_dismissed(&format!("chip {:?}", (pane, target)))
+        let key = wanted.map(chip_key).unwrap_or_default();
+        if self.toggle_popup(&key, args, window)
+            && let Some((pane, target)) = wanted
         {
             self.search_menu = Some(ChipMenu {
                 pane,
@@ -193,11 +171,12 @@ impl Shell {
         cx.notify();
     }
 
-    /// Close the open chip's choices, giving the focus back.
-    pub fn close_search_chip(&mut self, window: &mut Window) {
-        if let Some(menu) = self.search_menu.take() {
-            menu.popup.restore(window);
-        }
+    /// Close the open chip's choices, giving the focus back; what its
+    /// toggle names them.
+    pub fn close_search_chip(&mut self, window: &mut Window) -> Option<String> {
+        let menu = self.search_menu.take()?;
+        menu.popup.restore(window);
+        Some(chip_key((menu.pane, menu.target)))
     }
 }
 
@@ -208,7 +187,7 @@ pub fn sync(shell: &mut Shell, window: &mut Window) {
     let location = shell
         .app
         .pane_location(pane)
-        .filter(|l| &*l.scheme == "query");
+        .filter(|_| shell.ui().place.search);
     let shown = location
         .as_ref()
         .map(ToString::to_string)
@@ -339,31 +318,12 @@ pub fn pills(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> 
         // it removes, and a focused element that goes takes the keyboard
         // with it. The chip's own menu ends with Remove for the keyboard.
         let pill = match chip.clear.clone() {
-            Some(clear) => {
-                let hover = theme.hover;
-                let font = shell.font.clone();
-                let tip: SharedString = format!("Remove {}", chip.label()).into();
-                pill.child(
-                    div()
-                        .id(SharedString::from(format!("chip-clear-{i}")))
-                        .size(px(18.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded_full()
-                        .cursor_pointer()
-                        .hover(move |s| s.bg(hover))
-                        .tooltip(move |_, cx| toolbar::tooltip(tip.clone(), font.clone(), cx))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            cx.stop_propagation();
-                            this.activate_pane(pane, cx);
-                            let mut args = clear.args.clone();
-                            args["pane"] = serde_json::json!(pane);
-                            this.run(&clear.name, args, window, cx);
-                        }))
-                        .child(crate::controls::glyph("close", theme.selection_text, 10.)),
-                )
-            }
+            Some(clear) => pill.child(crate::elements::pill::clear(
+                shell,
+                clear,
+                format!("Remove {}", chip.label()).into(),
+                cx,
+            )),
             None => pill,
         };
         line = line.child(pill);
@@ -431,9 +391,8 @@ fn tag_segments(
                         .on_click(cx.listener(move |this, _, window, cx| {
                             cx.stop_propagation();
                             this.activate_pane(pane, cx);
-                            let mut args = up.args.clone();
-                            args["pane"] = serde_json::json!(pane);
-                            this.run(&up.name, args, window, cx);
+                            let up = up.clone().with("pane", pane);
+                            this.run(&up.name, up.args, window, cx);
                         }))
                         .child(segment.label.clone()),
                 )
@@ -503,45 +462,4 @@ pub fn popup(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> 
         }
     }
     Some(anchor.popup(panel))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Chip, Chips};
-
-    fn chip(id: &str, value: Option<&str>) -> Chip {
-        Chip {
-            id: id.into(),
-            title: String::new(),
-            value: value.map(str::to_owned),
-            icon: String::new(),
-            choices: Vec::new(),
-            clear: None,
-            segments: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn a_tags_search_from_home_is_one_to_pin() {
-        let Some(home) = std::env::home_dir() else {
-            return;
-        };
-        let mut chips = Chips {
-            location: "query:tag:a".into(),
-            chips: vec![
-                chip("words", None),
-                chip("tag", Some("a")),
-                chip("where", None),
-            ],
-            root: home.clone(),
-            text: "tag:a".into(),
-        };
-        assert_eq!(chips.only_tag("query:tag:a"), Some("a"));
-        assert_eq!(chips.only_tag("query:tag:b"), None, "read for another");
-        chips.chips.push(chip("kind", Some("Images")));
-        assert_eq!(chips.only_tag("query:tag:a"), None, "more than a tag");
-        chips.chips.pop();
-        chips.root = home.join("sub");
-        assert_eq!(chips.only_tag("query:tag:a"), None, "not from home");
-    }
 }

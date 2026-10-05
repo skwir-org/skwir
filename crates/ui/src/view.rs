@@ -1,4 +1,5 @@
-//! Pane views: list, tree, grid, columns. One trait, registered as `ViewSpec`s.
+//! Pane views: list, tree, grid, columns, board, and the plugins' (the
+//! map, Usage). One trait, registered as `ViewSpec`s.
 //!
 //! Rule: never derive layout from a measured size in `render`; size-dependent
 //! layout lives in an element's `prepaint`, where the bounds are real (see
@@ -34,6 +35,20 @@ pub enum Nav {
     End,
 }
 
+/// What a view's zoom sizes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Zooms {
+    /// The grid's tiles.
+    Tiles,
+    /// The rows of the list, the tree and the columns, each view keeping
+    /// its own size.
+    Rows,
+    /// Its own way (`PaneView::zoom`): the map's scale.
+    Own,
+    /// Nothing: a board, a lens.
+    Nothing,
+}
+
 /// A way to render the active pane's listing.
 pub trait PaneView {
     fn id(&self) -> &'static str;
@@ -58,8 +73,10 @@ pub trait PaneView {
     fn restore_anchor(&mut self, anchor: (usize, f32)) {
         self.scroll_to(anchor.0);
     }
-    /// Index delta for a navigation key (`None`: the view handles it in `nav`
-    /// or ignores it).
+    /// Index delta along the pane's order for a navigation key, which the
+    /// shell moves the cursor by with the key's step (`None`: the view
+    /// handles it in `nav` or ignores it, and Home and End go to the
+    /// order's ends).
     fn nav_delta(&self, nav: Nav, shell: &Shell) -> Option<isize>;
     /// A chance to handle navigation the view's own way. Returns true if handled.
     fn nav(
@@ -73,11 +90,22 @@ pub trait PaneView {
     }
     /// The pane's location changed.
     fn reset(&mut self) {}
-    /// The zoom keys (`ui.zoom`, `in`, `out` or `reset`), for a view that
-    /// zooms its own way (the map). False leaves them to the item sizes.
-    fn zoom(&mut self, _dir: &str) -> bool {
+    /// F5 (`refresh`), besides listing the location again: a lens gathers
+    /// its own data again (Usage measures).
+    fn refresh(&mut self, _shell: &mut Shell, _cx: &mut Context<Shell>) {}
+    /// Whether it draws its own empty, failed and gathering states, so the
+    /// pane's placeholder (`placeholder.rs`) stays out of its way.
+    fn draws_empty(&self) -> bool {
         false
     }
+    /// What the zoom keys, Ctrl and the wheel, and the View menu's Zoom
+    /// group size here; a view that sizes nothing has none of them.
+    fn zooms(&self) -> Zooms {
+        Zooms::Nothing
+    }
+    /// The zoom keys (`ui.zoom`, `in`, `out` or `reset`) for a view that
+    /// zooms its own way (`Zooms::Own`: the map).
+    fn zoom(&mut self, _dir: &str) {}
     /// Locations the pane should keep open beside `shown`, listed and
     /// current, because this view shows them too (the columns view's
     /// ancestors; `trail` is `shown`'s, for one that is no folder). Asked
@@ -136,6 +164,7 @@ pub const GRID: &str = "grid";
 pub const COLUMNS: &str = "columns";
 pub const TREE: &str = "tree";
 pub const BOARD: &str = "board";
+pub const USAGE: &str = "usage";
 
 /// Reconcile by registration identity, including disable/re-enable between two frames.
 /// Returns removed/replaced ids so their associated pane state can be discarded.

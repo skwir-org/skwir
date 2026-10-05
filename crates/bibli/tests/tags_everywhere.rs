@@ -115,10 +115,13 @@ fn a_tag_is_renamed_on_every_file_after_review_and_the_sidebar_follows() {
     // It opens the tag's folder of the home folder (ADR-032).
     assert_eq!(job.location.to_string(), "tags:/Job");
     assert!(job.color.is_some());
-    // Files dropped on it get it.
-    let drop = job.drop.expect("a tag takes files dropped on it");
-    assert_eq!(&*drop.name, "tags.add");
-    assert_eq!(drop.args["tags"], serde_json::json!(["Job"]));
+    // Files dropped on it get it: what its tag folder takes.
+    let drop = app
+        .verbs(&job.location)
+        .drop
+        .expect("a tag takes files dropped on it");
+    assert_eq!(&*drop.name, "tags.drop");
+    assert_eq!(drop.args["location"], serde_json::json!("tags:/Job"));
 
     app.executor.undo_blocking(app.lifetime()).unwrap();
     assert_eq!(at("a.txt"), ["Work", "x"]);

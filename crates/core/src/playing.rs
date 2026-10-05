@@ -108,6 +108,8 @@ pub enum PlayerRequest {
     SeekBy(f64),
     SeekTo(f64),
     Volume(f64),
+    /// Its sound off, or on again.
+    Mute,
     /// Bring the window forward and show the track.
     Raise,
 }
@@ -180,6 +182,8 @@ pub struct Player {
     /// Who listens, by owner: a contribution like any other, withdrawn when
     /// its plugin is disabled.
     listeners: Mutex<Vec<(String, mpsc::Sender<()>)>>,
+    /// Refuses a disabled plugin's listener.
+    gate: Arc<crate::registry::OwnerGate>,
 }
 
 /// Requests kept for a player that does not wake: more is a flood, not intent.
@@ -217,11 +221,22 @@ impl Player {
         }
     }
 
+    pub fn gated(gate: Arc<crate::registry::OwnerGate>) -> Self {
+        Player {
+            gate,
+            ..Player::default()
+        }
+    }
+
     /// A message each time the revision advances, until the receiver is
-    /// dropped or `owner` is withdrawn.
+    /// dropped or `owner` is withdrawn. A disabled owner's receiver is
+    /// closed at once.
     pub fn subscribe(&self, owner: &str) -> mpsc::Receiver<()> {
         let (tx, rx) = mpsc::channel();
-        self.listeners.lock().push((owner.to_owned(), tx));
+        let mut listeners = self.listeners.lock();
+        if self.gate.is_open(owner) {
+            listeners.push((owner.to_owned(), tx));
+        }
         rx
     }
 

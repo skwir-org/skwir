@@ -248,23 +248,47 @@ impl Link {
     }
 }
 
-/// `picture` (an icon or a thumbnail about `size` px) with a link's emblem
-/// on its bottom-right corner: a bent arrow on a badge, in the error color
-/// for a link that leads nowhere. Every view marks a link this one way;
-/// what is not a link is returned as it is.
-pub fn with_link(
+/// What an entry's picture is marked with on its corner: a link, leading
+/// somewhere or nowhere, or a place that is a tag's, in its color (a place
+/// is a folder holding files kept elsewhere). Every view marks entries
+/// this one way (`marked`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mark {
+    None,
+    Link(Link),
+    /// A tag's place, the tag's color.
+    Tag(usize),
+}
+
+impl Mark {
+    /// An entry's: the tag of a place that is a tag's, else its link.
+    pub fn of(link: Link, tag: Option<usize>) -> Mark {
+        match (tag, link) {
+            (Some(color), _) => Mark::Tag(color),
+            (None, Link::None) => Mark::None,
+            (None, link) => Mark::Link(link),
+        }
+    }
+}
+
+/// `picture` (an icon or a thumbnail about `size` px) with `mark` on its
+/// bottom-right corner, on a badge: a bent arrow for a link (in the error
+/// color for one that leads nowhere), the tag's mark in its color for a
+/// tag's place. Unmarked, it is returned as it is.
+pub fn marked(
     picture: AnyElement,
     size: f32,
-    link: Link,
+    mark: Mark,
     theme: &crate::theme::Theme,
 ) -> AnyElement {
-    let color = match link {
-        Link::None => return picture,
-        Link::Leads => theme.text,
-        Link::Broken => theme.error,
+    let (glyph, color) = match mark {
+        Mark::None | Mark::Link(Link::None) => return picture,
+        Mark::Link(Link::Leads) => ("link", theme.text),
+        Mark::Link(Link::Broken) => ("link", theme.error),
+        Mark::Tag(color) => ("tag", theme.tag(color)),
     };
-    // Large enough to read as an arrow on a list's 16 px icons, and
-    // growing slower than the picture: a corner, never a cover.
+    // Large enough to read on a list's 16 px icons, and growing slower
+    // than the picture: a corner, never a cover.
     let badge = (size * 0.3 + 6.).round().clamp(11., 22.);
     div()
         .relative()
@@ -283,43 +307,35 @@ pub fn with_link(
                 .bg(theme.bg)
                 .border_1()
                 .border_color(theme.border)
-                .child(crate::controls::glyph("link", color, badge - 2.)),
+                .child(crate::controls::glyph(glyph, color, badge - 2.)),
         )
         .into_any_element()
 }
 
-/// `picture` (a folder's icon) marked as a place that is a tag's
-/// (`EntryId::is_place`), with the tag's mark in its color on its
-/// bottom-right corner, where a link has its arrow: a place is a folder
-/// that holds files kept elsewhere.
-pub fn with_tag(
-    picture: AnyElement,
+/// An entry's picture at `size` px when it has no thumbnail: its theme
+/// icon, else a square (a folder's in the accent) until the theme answers;
+/// marked (`marked`). The one every view draws.
+pub fn entry_picture(
+    icon: Option<&Path>,
+    is_dir: bool,
     size: f32,
-    color: usize,
+    mark: Mark,
     theme: &crate::theme::Theme,
 ) -> AnyElement {
-    let tone = theme.tags[color % theme.tags.len()];
-    let badge = (size * 0.3 + 6.).round().clamp(11., 22.);
-    div()
-        .relative()
-        .flex_none()
-        .child(picture)
-        .child(
-            div()
-                .absolute()
-                .right(px(-1.))
-                .bottom(px(-1.))
-                .size(px(badge))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_sm()
-                .bg(theme.bg)
-                .border_1()
-                .border_color(theme.border)
-                .child(crate::controls::glyph("tag", tone, badge - 2.)),
-        )
-        .into_any_element()
+    let picture = match icon {
+        Some(icon) => element(icon, size),
+        None => div()
+            .size(px(size))
+            .flex_none()
+            .rounded_sm()
+            .bg(if is_dir {
+                theme.accent
+            } else {
+                theme.text_muted
+            })
+            .into_any_element(),
+    };
+    marked(picture, size, mark, theme)
 }
 
 /// A named theme icon at `size` px: in full color, or tinted with `color`

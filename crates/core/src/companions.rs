@@ -8,7 +8,7 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use parking_lot::RwLock;
+use crate::registry::{Contributions, OwnerGate};
 
 /// One kind of companion.
 pub trait Companion: Send + Sync {
@@ -67,10 +67,79 @@ pub struct Found {
 /// The setting that shows companions with hidden files.
 pub const SHOW: &str = "core.show_companions";
 
+/// The names of the companions in the folders a store's batches were in
+/// (`._x`, `x.xmp`, `.ts/x.json`): a folder is read once for its batch, not
+/// once per file, and again when it changes. A few folders are kept at
+/// once (a search walks several in parallel), each trusted a moment while
+/// its time says it did not change: FAT stores times to two seconds.
+pub struct FolderNames {
+    folders: parking_lot::Mutex<Vec<Seen>>,
+    /// Which names of a folder are kept, and as what (`._x` as `x`).
+    keep: fn(&OsStr) -> Option<OsString>,
+}
+
+struct Seen {
+    dir: PathBuf,
+    modified: Option<std::time::SystemTime>,
+    at: std::time::Instant,
+    names: Arc<std::collections::HashSet<OsString>>,
+}
+
+impl FolderNames {
+    /// Folders remembered at once.
+    const FOLDERS: usize = 16;
+    /// How long a folder's names are trusted while its time is unchanged.
+    const FRESH: std::time::Duration = std::time::Duration::from_secs(5);
+
+    pub fn new(keep: fn(&OsStr) -> Option<OsString>) -> Self {
+        FolderNames {
+            folders: parking_lot::Mutex::default(),
+            keep,
+        }
+    }
+
+    /// What `keep` takes of `dir`'s names; none when it cannot be read
+    /// (it is not there). Reads the folder: on a worker.
+    pub fn of(&self, dir: &Path) -> Arc<std::collections::HashSet<OsString>> {
+        let modified = std::fs::metadata(dir).ok().and_then(|m| m.modified().ok());
+        let known = self
+            .folders
+            .lock()
+            .iter()
+            .find(|s| s.dir == dir && s.modified == modified && s.at.elapsed() < Self::FRESH)
+            .map(|s| Arc::clone(&s.names));
+        if let Some(names) = known {
+            return names;
+        }
+        let names = Arc::new(
+            std::fs::read_dir(dir)
+                .map(|entries| {
+                    entries
+                        .flatten()
+                        .filter_map(|e| (self.keep)(&e.file_name()))
+                        .collect()
+                })
+                .unwrap_or_default(),
+        );
+        let mut folders = self.folders.lock();
+        folders.retain(|s| s.dir != dir);
+        if folders.len() >= Self::FOLDERS {
+            folders.remove(0);
+        }
+        folders.push(Seen {
+            dir: dir.to_path_buf(),
+            modified,
+            at: std::time::Instant::now(),
+            names: Arc::clone(&names),
+        });
+        names
+    }
+}
+
 /// The registered kinds, in registration order.
 #[derive(Default)]
 pub struct Companions {
-    list: RwLock<Vec<(Arc<str>, Arc<dyn Companion>)>>,
+    list: Contributions<Arc<dyn Companion>>,
     /// Shown with hidden files ([`SHOW`]).
     shown: std::sync::atomic::AtomicBool,
 }
@@ -94,28 +163,31 @@ impl Companions {
             .store(shown, std::sync::atomic::Ordering::Relaxed);
     }
 
+    pub fn gated(gate: Arc<OwnerGate>) -> Self {
+        Companions {
+            list: Contributions::gated(gate),
+            shown: std::sync::atomic::AtomicBool::default(),
+        }
+    }
+
     pub fn register(&self, owner: &str, rule: Arc<dyn Companion>) {
-        self.list.write().push((owner.into(), rule));
+        self.list.add(owner, rule);
     }
 
     pub fn unregister_owner(&self, owner: &str) {
-        self.list.write().retain(|(o, _)| &**o != owner);
+        self.list.remove_owner(owner);
     }
 
     pub fn ids(&self) -> Vec<&'static str> {
-        self.list.read().iter().map(|(_, r)| r.id()).collect()
+        self.rules().iter().map(|r| r.id()).collect()
     }
 
     fn rules(&self) -> Vec<Arc<dyn Companion>> {
-        self.list
-            .read()
-            .iter()
-            .map(|(_, r)| Arc::clone(r))
-            .collect()
+        self.list.all()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.list.read().is_empty()
+        self.list.is_empty()
     }
 
     /// Where the companions of a file named `name` would be, relative to

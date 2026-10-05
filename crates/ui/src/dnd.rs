@@ -120,7 +120,7 @@ impl Render for DragPreview {
         let text = if self.count == 1 {
             self.label.clone()
         } else {
-            format!("{} items", self.count)
+            crate::format::count(self.count, "item")
         };
         // A key held says what the drop will do wherever it lands; without
         // one it depends on where, and the label does not guess.
@@ -200,7 +200,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         if self.is_own_drag(paths) {
-            self.drop_into(self.pane, dest, window, cx);
+            self.drop_into(self.pane, dest, None, window, cx);
             return;
         }
         let paths: Vec<PathBuf> = paths
@@ -220,10 +220,12 @@ impl Shell {
             Priority::Visible,
             "drop-plan",
             self.app.lifetime().child(),
+            // As a whole, as a drop from a pane is: a conflict applies
+            // nothing and says why, never some of the files.
             move || match dropped_plan(&paths, &dest, how, &app.settings) {
                 Ok(plan) => {
                     tracing::debug!(?pane, steps = plan.steps.len(), "apply dropped paths");
-                    app.apply(plan);
+                    app.apply_whole(plan);
                 }
                 Err(reason) => app.notify(NotifyLevel::Error, reason),
             },
@@ -239,12 +241,24 @@ impl Shell {
         &mut self,
         from: PaneId,
         dest: &Path,
+        how: Option<DropOp>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         // A place dragged into a folder is copied there as its location
         // says (`Verbs::export`: a tag's, a folder of its files); files go
         // as files do.
+        // Dropped back on the folder that holds them: nothing to do.
+        let home = {
+            let ws = self.app.workspace.read();
+            ws.pane(from).is_some_and(|p| {
+                let dest = bibli_core::Location::from_path(dest);
+                !p.selection.is_empty() && p.selection.iter().all(|id| p.holder(id) == Some(&dest))
+            })
+        };
+        if home {
+            return;
+        }
         let (places, files) = {
             let ws = self.app.workspace.read();
             ws.pane(from).map_or((Vec::new(), 0), |p| {
@@ -274,6 +288,10 @@ impl Shell {
         }
         let modifiers = window.modifiers();
         let args = serde_json::json!({ "dest": PathArg::from(dest), "pane": from });
+        // Said (Shift+F5, Shift+F6), or by the keys held.
+        if let Some(how) = how {
+            return self.run(how.command(), args, window, cx);
+        }
         if modifiers.control || modifiers.shift {
             let how = drop_op(modifiers, None);
             return self.run(how.command(), args, window, cx);
@@ -298,6 +316,32 @@ impl Shell {
         );
     }
 
+    /// `from`'s selection given to what pane `to` shows, as a drag onto
+    /// it does and Shift+F5 and Shift+F6 do: into its folder, or to its
+    /// location as its provider says a drop means there (`Verbs::drop`: a
+    /// tag's gives its tag). `how` says copy or move; `None` lets the keys
+    /// held decide, as a drag does.
+    pub fn give_to_pane(
+        &mut self,
+        from: PaneId,
+        to: PaneId,
+        how: Option<DropOp>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(dest) = self.pane_folder(to) {
+            self.drop_into(from, &dest, how, window, cx);
+            return;
+        }
+        let taken = self
+            .app
+            .pane_location(to)
+            .is_some_and(|place| self.drop_on_place(from, &place, how, window, cx));
+        if !taken {
+            self.set_status("Files cannot be dropped here", true, cx);
+        }
+    }
+
     /// The folder `pane` shows, if it is one.
     pub fn pane_folder(&self, pane: PaneId) -> Option<PathBuf> {
         let ws = self.app.workspace.read();
@@ -316,7 +360,7 @@ impl Shell {
             // A location that takes files (a tag's) says what a drop does.
             let shown = self.app.pane_location(self.pane);
             if !shown.is_some_and(|place| self.drop_paths_on_place(paths, &place, window, cx)) {
-                self.set_status("drop target is not a directory", true, cx);
+                self.set_status("Files cannot be dropped here", true, cx);
             }
             return;
         };
@@ -372,7 +416,7 @@ pub fn droppable_dir<E: InteractiveElement>(el: E, dir: PathBuf, cx: &mut Contex
     let dir2 = dir.clone();
     el.drag_over::<DragPayload>(move |s, _, _, _| s.bg(tint).border_color(edge))
         .on_drop(cx.listener(move |this, payload: &DragPayload, window, cx| {
-            this.drop_into(payload.pane, &dir, window, cx);
+            this.drop_into(payload.pane, &dir, None, window, cx);
         }))
         .drag_over::<ExternalPaths>(move |s, _, _, _| s.bg(tint).border_color(edge))
         .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
@@ -394,7 +438,7 @@ pub fn droppable_place<E: InteractiveElement>(
     el.drag_over::<DragPayload>(move |s, _, _, _| s.bg(tint).border_color(edge))
         .on_drop(cx.listener(move |this, payload: &DragPayload, window, cx| {
             cx.stop_propagation();
-            this.drop_on_place(payload.pane, &place, window, cx);
+            this.drop_on_place(payload.pane, &place, None, window, cx);
         }))
         .drag_over::<ExternalPaths>(move |s, _, _, _| s.bg(tint).border_color(edge))
         .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
@@ -413,19 +457,36 @@ impl Shell {
         &mut self,
         from: PaneId,
         place: &bibli_core::Location,
+        how: Option<DropOp>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         let Some(drop) = self.app.verbs(place).drop else {
             return false;
         };
-        let mut args = drop.args.clone();
-        if !args.is_object() {
-            args = serde_json::json!({});
+        // Where the files come from, when it is not the place the pane
+        // shows: a folder or a place opened in it (a board's column), which
+        // a move takes them out of.
+        let held = {
+            let ws = self.app.workspace.read();
+            ws.pane(from).and_then(|p| {
+                let first = p.selection.iter().next()?;
+                let holder = p.holder(first)?.clone();
+                Some((p.location() == Some(&holder), holder))
+            })
+        };
+        if held.as_ref().is_some_and(|(_, holder)| holder == place) {
+            // Back where it came from.
+            return true;
         }
-        args["pane"] = serde_json::json!(from);
-        args["move"] = serde_json::json!(!window.modifiers().control);
-        self.run(&drop.name, args, window, cx);
+        let mut drop = drop.clone().with("pane", from).with(
+            "move",
+            how.map_or(!window.modifiers().control, |how| how == DropOp::Move),
+        );
+        if let Some((false, holder)) = held {
+            drop = drop.with("from", holder.to_string());
+        }
+        self.run(&drop.name, drop.args, window, cx);
         true
     }
 
@@ -439,7 +500,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> bool {
         if self.is_own_drag(paths) {
-            return self.drop_on_place(self.pane, place, window, cx);
+            return self.drop_on_place(self.pane, place, None, window, cx);
         }
         let Some(drop) = self.app.verbs(place).drop else {
             return false;

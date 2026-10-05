@@ -11,9 +11,11 @@ bibli-core.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 tracing.workspace = true
+# Zip packages (`package`): Word and OpenDocument files, EPUB, 3MF, KMZ,
+# workbooks; the version and inflater already in the tree.
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 open.workspace = true
-dirs.workspace = true
 md5.workspace = true
 image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff", "ico", "qoi", "tga", "pnm", "exr", "dds"] }
 png.workspace = true
@@ -55,6 +57,7 @@ freedesktop-icons.workspace = true
 mime.workspace = true
 
 [dev-dependencies]
+dirs.workspace = true
 tempfile.workspace = true
 
 [lints]

@@ -76,7 +76,11 @@ pub struct MapView {
     seen: Option<u64>,
     generation: u64,
     places: Vec<Place>,
+    /// What is drawn: the places of the files the pane shows, its order
+    /// (`Pane::order`: filtered by name, narrowed, companions hidden)
+    /// when drawn last.
     shapes: Arc<Shapes>,
+    shown: Arc<[EntryId]>,
     counts: (usize, usize, usize, bool),
     selection: (u64, Arc<HashSet<EntryId>>),
     /// The file the map opens on, once it is placed: the one selected
@@ -92,6 +96,12 @@ impl MapView {
     /// Take what the scan found since the last batch.
     fn receive(&mut self, shell: &mut Shell, cx: &mut Context<Shell>) {
         let pane = shell.pane;
+        // The pane shows other files (a filter, a narrowing): the places
+        // drawn follow, with nothing asked again.
+        if !Arc::ptr_eq(&shell.ui().list.sorted, &self.shown) {
+            self.shown = Arc::clone(&shell.ui().list.sorted);
+            self.redraw();
+        }
         let source = self.source.get_or_insert_with(|| {
             shell
                 .app
@@ -127,13 +137,12 @@ impl MapView {
         }
         let names: Vec<SharedString> = {
             let ws = shell.app.workspace.read();
-            let listing = ws.pane(pane).map(|p| &p.listing);
+            let pane = ws.pane(pane);
             points
                 .points
                 .iter()
                 .map(|p| {
-                    listing
-                        .and_then(|l| l.get(p.id))
+                    pane.and_then(|pane| pane.entry(p.id))
                         .map(|e| SharedString::from(e.name_str().into_owned()))
                         .unwrap_or_default()
                 })
@@ -167,7 +176,19 @@ impl MapView {
             points.candidates,
             points.complete,
         );
-        self.shapes = Arc::new(Shapes::places(&self.places));
+        self.redraw();
+    }
+
+    /// The shapes of the places of the files the pane shows.
+    fn redraw(&mut self) {
+        let shown: HashSet<EntryId> = self.shown.iter().copied().collect();
+        let places: Vec<Place> = self
+            .places
+            .iter()
+            .filter(|place| shown.contains(&place.entry))
+            .cloned()
+            .collect();
+        self.shapes = Arc::new(Shapes::places(&places));
     }
 
     /// What the header says about the scan.
@@ -224,23 +245,26 @@ impl PaneView for MapView {
         true
     }
 
-    fn zoom(&mut self, dir: &str) -> bool {
+    fn zooms(&self) -> crate::view::Zooms {
+        crate::view::Zooms::Own
+    }
+
+    fn zoom(&mut self, dir: &str) {
         let Some(view) = self.handles.view.get().or_else(|| self.handles.shown.get()) else {
-            return true;
+            return;
         };
         let levels = match dir {
             "in" => 1.,
             "out" => -1.,
             _ => {
                 self.handles.view.set(None);
-                return true;
+                return;
             }
         };
         self.handles.view.set(Some(View {
             zoom: (view.zoom + levels).clamp(0., map::MAX_ZOOM),
             ..view
         }));
-        true
     }
 
     fn reset(&mut self) {

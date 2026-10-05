@@ -831,14 +831,6 @@ impl Shell {
         self.publish_now_playing();
     }
 
-    /// `ui.player_mute`: the pinned player's sound, on or off.
-    pub fn player_mute(&mut self, cx: &mut Context<Self>) {
-        if let Some(pinned) = &self.player.pinned {
-            let _ = pinned.session.control(Control::Mute(!pinned.state.muted));
-            cx.notify();
-        }
-    }
-
     /// ↑ and ↓ over the player: the volume, a step at a time, of whatever
     /// the transport keys steer (the pinned track, else the panel's audio).
     pub fn player_volume_by(&mut self, delta: f64, window: &mut Window, cx: &mut Context<Self>) {
@@ -896,6 +888,7 @@ impl Shell {
             }
             PlayerRequest::SeekTo(seconds) if seekable => Some(Control::Seek(seconds)),
             PlayerRequest::Volume(volume) => Some(Control::Volume(volume)),
+            PlayerRequest::Mute => Some(Control::Mute(!state.muted)),
             PlayerRequest::SeekBy(_) | PlayerRequest::SeekTo(_) => None,
             PlayerRequest::Next => return self.player_step(1, window, cx),
             PlayerRequest::Previous => return self.player_step(-1, window, cx),

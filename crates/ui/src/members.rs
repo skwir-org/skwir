@@ -150,7 +150,7 @@ pub fn split(body: AnyElement, wide: bool, shell: &Shell, cx: &mut Context<Shell
         .flex()
         .flex_col()
         .child(body)
-        .child(edge(beside, &theme, cx));
+        .child(edge(beside, cx));
     div()
         .key_context(keymap::MEMBER)
         .flex_1()
@@ -166,35 +166,16 @@ pub fn split(body: AnyElement, wide: bool, shell: &Shell, cx: &mut Context<Shell
 
 /// The draggable edge at the start of the member's preview, over the
 /// border that sets it apart from the container.
-fn edge(beside: bool, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
-    let edge = div()
-        .id("preview-members-resize")
-        .absolute()
-        .top_0()
-        .left_0()
-        .hover({
-            let hover = theme.handle;
-            move |style| style.bg(hover)
-        })
-        .on_click(cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
-            if event.click_count() == 2 {
-                this.preview.members_share.set(beside, SHARE);
-                this.remember_session();
-                cx.notify();
-            }
-        }))
-        .on_drag(MembersResize { beside }, |_, _, _, cx| {
-            cx.new(|_| crate::preview::NoDragView)
-        });
-    if beside {
-        edge.h_full()
-            .w(px(6.))
-            .cursor(gpui::CursorStyle::ResizeLeftRight)
-    } else {
-        edge.w_full()
-            .h(px(6.))
-            .cursor(gpui::CursorStyle::ResizeUpDown)
-    }
+fn edge(beside: bool, cx: &mut Context<Shell>) -> AnyElement {
+    use crate::elements::edge::{Side, edge};
+    let side = if beside { Side::Left } else { Side::Top };
+    edge(
+        "preview-members-resize",
+        side,
+        MembersResize { beside },
+        move |this| this.preview.members_share.set(beside, SHARE),
+        cx,
+    )
     .into_any_element()
 }
 
@@ -222,33 +203,9 @@ impl Shell {
                 KEEP_HEIGHT,
             )
         };
-        if let Some(share) = share(f32::from(along), f32::from(size), keep) {
+        if let Some(share) = crate::elements::edge::share(f32::from(along), f32::from(size), keep) {
             self.preview.members_share.set(beside, share);
             cx.notify();
         }
-    }
-}
-
-/// The container's share when their edge is `along` px into `size` px of room,
-/// each side keeping `keep` px; `None` in a room too small to share.
-fn share(along: f32, size: f32, keep: f32) -> Option<f32> {
-    if !size.is_finite() || size <= 2. * keep || !along.is_finite() {
-        return None;
-    }
-    Some(along.clamp(keep, size - keep) / size)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::share;
-
-    #[test]
-    fn the_edge_follows_the_pointer_and_leaves_each_side_its_room() {
-        assert_eq!(share(300., 1000., 160.), Some(0.3));
-        assert_eq!(share(50., 1000., 160.), Some(0.16));
-        assert_eq!(share(990., 1000., 160.), Some(0.84));
-        // Too small to share: the edge stays where it was.
-        assert_eq!(share(100., 300., 160.), None);
-        assert_eq!(share(f32::NAN, 1000., 160.), None);
     }
 }

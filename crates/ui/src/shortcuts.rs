@@ -38,15 +38,10 @@ pub struct Nudges {
 
 /// Whether a binding's context predicate (`Pane && single`) holds for the
 /// contexts on the focus path. Conditions such as `single` are keys of the
-/// pane's own context, so one rule covers places and conditions.
+/// pane's own context, so one rule covers places and conditions
+/// (`keymap::predicate_holds`).
 pub fn applies(predicate: &str, holds: &dyn Fn(&str) -> bool) -> bool {
-    predicate.split("&&").map(str::trim).all(|token| {
-        // Alternatives, `(selection || folder)`: one of them is enough.
-        match token.strip_prefix('(').and_then(|t| t.strip_suffix(')')) {
-            Some(alts) => alts.split("||").map(str::trim).any(holds),
-            None => token.is_empty() || holds(token),
-        }
-    })
+    crate::keymap::predicate_holds(predicate, &|token| Some(holds(token)))
 }
 
 impl Shell {
@@ -58,9 +53,26 @@ impl Shell {
         }
         let stack = window.context_stack();
         let holds = |token: &str| stack.iter().any(|context| context.contains(token));
+        // Of the bindings of one key that apply here, the one GPUI runs:
+        // the deepest place's, then the latest (a later layer).
+        let depth = |hint: &KeyHint| {
+            let place = hint.context.split("&&").next().unwrap_or_default().trim();
+            stack.iter().rposition(|context| context.contains(place))
+        };
+        let applying: Vec<(usize, &KeyHint)> = self
+            .key_hints
+            .iter()
+            .enumerate()
+            .filter(|(_, hint)| applies(&hint.context, &holds))
+            .collect();
+        let wins = |i: usize, hint: &KeyHint| {
+            !applying.iter().any(|(j, other)| {
+                *j != i && other.keys == hint.keys && (depth(other), *j) > (depth(hint), i)
+            })
+        };
         let mut groups: Vec<(String, Vec<(KeyHint, String)>)> = Vec::new();
-        for hint in &self.key_hints {
-            if !applies(&hint.context, &holds) {
+        for &(i, hint) in &applying {
+            if !wins(i, hint) {
                 continue;
             }
             // Conditions narrow a place; the overview groups by the place.
@@ -269,5 +281,20 @@ mod tests {
         assert!(!applies("DocumentReader", &pane_with_one_file));
         assert!(applies("Pane && (split || single)", &pane_with_one_file));
         assert!(!applies("Pane && (split || empty)", &pane_with_one_file));
+    }
+
+    /// Rename, Delete and Cut say what must not hold (`!refs !restores`):
+    /// F1 lists them where it does not.
+    #[test]
+    fn a_negated_token_holds_where_its_token_does_not() {
+        let pane_with_one_file =
+            |token: &str| ["Shell", "Pane", "selection", "single"].contains(&token);
+        assert!(applies(
+            "Pane && selection && !restores",
+            &pane_with_one_file
+        ));
+        assert!(!applies("Pane && !single", &pane_with_one_file));
+        assert!(applies("Pane && (!single || split)", &|t| t == "Pane"
+            || t == "split"));
     }
 }

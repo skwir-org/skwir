@@ -219,16 +219,11 @@ impl Rename {
     }
 }
 
-impl Operation for Rename {
-    fn kind(&self) -> &'static str {
-        "rename"
-    }
-    fn clone_box(&self) -> Box<dyn Operation> {
-        Box::new(self.clone())
-    }
-    fn args(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("serializable")
-    }
+impl super::Kind for Rename {
+    const KIND: &'static str = "rename";
+}
+
+impl super::Effect for Rename {
     fn describe(&self) -> Change {
         Change::Rename {
             from: self.entry.path.clone(),
@@ -303,16 +298,11 @@ impl Move {
     }
 }
 
-impl Operation for Move {
-    fn kind(&self) -> &'static str {
-        "move"
-    }
-    fn clone_box(&self) -> Box<dyn Operation> {
-        Box::new(self.clone())
-    }
-    fn args(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("serializable")
-    }
+impl super::Kind for Move {
+    const KIND: &'static str = "move";
+}
+
+impl super::Effect for Move {
     fn describe(&self) -> Change {
         Change::Move {
             from: self.entry.path.clone(),
@@ -453,16 +443,11 @@ impl Copy {
     }
 }
 
-impl Operation for Copy {
-    fn kind(&self) -> &'static str {
-        "copy"
-    }
-    fn clone_box(&self) -> Box<dyn Operation> {
-        Box::new(self.clone())
-    }
-    fn args(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("serializable")
-    }
+impl super::Kind for Copy {
+    const KIND: &'static str = "copy";
+}
+
+impl super::Effect for Copy {
     fn describe(&self) -> Change {
         Change::Copy {
             from: self.entry.path.clone(),
@@ -760,19 +745,8 @@ fn copy_file(
 ) -> anyhow::Result<()> {
     // Non-blocking, then checked: a file swapped for a FIFO since it was
     // listed must not block the executor in open(2).
-    let mut sf = {
-        use std::os::unix::fs::OpenOptionsExt;
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(rustix::fs::OFlags::NONBLOCK.bits().cast_signed())
-            .open(src)?;
-        anyhow::ensure!(
-            file.metadata()?.is_file(),
-            "{} is no longer a regular file",
-            src.display()
-        );
-        file
-    };
+    let mut sf = crate::fs::file::open_regular(src)
+        .with_context(|| format!("{} is no longer a regular file", src.display()))?;
     let mut df = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -1003,16 +977,11 @@ pub struct Swap {
     pub b: EntryRef,
 }
 
-impl Operation for Swap {
-    fn kind(&self) -> &'static str {
-        "swap"
-    }
-    fn clone_box(&self) -> Box<dyn Operation> {
-        Box::new(self.clone())
-    }
-    fn args(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("serializable")
-    }
+impl super::Kind for Swap {
+    const KIND: &'static str = "swap";
+}
+
+impl super::Effect for Swap {
     fn describe(&self) -> Change {
         Change::Swap {
             a: self.a.path.clone(),
@@ -1081,16 +1050,11 @@ pub struct Trash {
     pub entry: EntryRef,
 }
 
-impl Operation for Trash {
-    fn kind(&self) -> &'static str {
-        "trash"
-    }
-    fn clone_box(&self) -> Box<dyn Operation> {
-        Box::new(self.clone())
-    }
-    fn args(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("serializable")
-    }
+impl super::Kind for Trash {
+    const KIND: &'static str = "trash";
+}
+
+impl super::Effect for Trash {
     fn describe(&self) -> Change {
         Change::Trash {
             path: self.entry.path.clone(),
@@ -1302,16 +1266,11 @@ fn merge(from: &Path, into: &Path, rel: &Path, merged: &mut Merged) -> anyhow::R
     Ok(())
 }
 
-impl Operation for Restore {
-    fn kind(&self) -> &'static str {
-        "restore"
-    }
-    fn clone_box(&self) -> Box<dyn Operation> {
-        Box::new(self.clone())
-    }
-    fn args(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("serializable")
-    }
+impl super::Kind for Restore {
+    const KIND: &'static str = "restore";
+}
+
+impl super::Effect for Restore {
     fn describe(&self) -> Change {
         Change::Restore {
             path: self.path.clone(),
@@ -1455,16 +1414,11 @@ pub struct Unmerge {
     pub folders: Vec<PathArg>,
 }
 
-impl Operation for Unmerge {
-    fn kind(&self) -> &'static str {
-        "unmerge"
-    }
-    fn clone_box(&self) -> Box<dyn Operation> {
-        Box::new(self.clone())
-    }
-    fn args(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("serializable")
-    }
+impl super::Kind for Unmerge {
+    const KIND: &'static str = "unmerge";
+}
+
+impl super::Effect for Unmerge {
     fn describe(&self) -> Change {
         Change::Trash {
             path: self.path.clone(),
@@ -1582,16 +1536,11 @@ fn made_like(dir: &Path, like: &Path) {
     let _ = std::fs::set_permissions(dir, meta.permissions());
 }
 
-impl Operation for RestorePart {
-    fn kind(&self) -> &'static str {
-        "restore_part"
-    }
-    fn clone_box(&self) -> Box<dyn Operation> {
-        Box::new(self.clone())
-    }
-    fn args(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("serializable")
-    }
+impl super::Kind for RestorePart {
+    const KIND: &'static str = "restore_part";
+}
+
+impl super::Effect for RestorePart {
     fn describe(&self) -> Change {
         Change::Restore {
             path: self.path.clone(),
@@ -1691,16 +1640,11 @@ pub struct ReturnPart {
     pub made: Vec<PathArg>,
 }
 
-impl Operation for ReturnPart {
-    fn kind(&self) -> &'static str {
-        "return_part"
-    }
-    fn clone_box(&self) -> Box<dyn Operation> {
-        Box::new(self.clone())
-    }
-    fn args(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("serializable")
-    }
+impl super::Kind for ReturnPart {
+    const KIND: &'static str = "return_part";
+}
+
+impl super::Effect for ReturnPart {
     fn describe(&self) -> Change {
         Change::Trash {
             path: self.path.clone(),
@@ -1757,16 +1701,11 @@ pub struct Delete {
     pub entry: EntryRef,
 }
 
-impl Operation for Delete {
-    fn kind(&self) -> &'static str {
-        "delete"
-    }
-    fn clone_box(&self) -> Box<dyn Operation> {
-        Box::new(self.clone())
-    }
-    fn args(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("serializable")
-    }
+impl super::Kind for Delete {
+    const KIND: &'static str = "delete";
+}
+
+impl super::Effect for Delete {
     fn describe(&self) -> Change {
         Change::Delete {
             path: self.entry.path.clone(),
@@ -1826,16 +1765,23 @@ pub struct Mkdir {
     pub path: PathBuf,
 }
 
-impl Operation for Mkdir {
-    fn kind(&self) -> &'static str {
-        "mkdir"
+impl super::Kind for Mkdir {
+    const KIND: &'static str = "mkdir";
+}
+
+/// Why a new folder or file cannot be made at `path`, whatever is there:
+/// a name climbing out of its folder, none, or one not valid.
+fn refuse_new(path: &Path) -> Option<StepStatus> {
+    if path.components().any(|c| c == Component::ParentDir) {
+        return Some(conflict(format!("{} contains “..”", path.display())));
     }
-    fn clone_box(&self) -> Box<dyn Operation> {
-        Box::new(self.clone())
+    match path.file_name().map(invalid_name) {
+        None => Some(conflict(format!("{} has no name", path.display()))),
+        Some(invalid) => invalid,
     }
-    fn args(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("serializable")
-    }
+}
+
+impl super::Effect for Mkdir {
     fn describe(&self) -> Change {
         Change::Create {
             path: self.path.clone(),
@@ -1843,13 +1789,8 @@ impl Operation for Mkdir {
         }
     }
     fn check(&self, _ctx: &StepContext) -> StepStatus {
-        if self.path.components().any(|c| c == Component::ParentDir) {
-            return conflict(format!("{} contains “..”", self.path.display()));
-        }
-        match self.path.file_name().map(invalid_name) {
-            None => return conflict(format!("{} has no name", self.path.display())),
-            Some(Some(invalid)) => return invalid,
-            Some(None) => {}
+        if let Some(refused) = refuse_new(&self.path) {
+            return refused;
         }
         match std::fs::symlink_metadata(&self.path) {
             Ok(m) if m.is_dir() => StepStatus::AlreadyDone,
@@ -1878,16 +1819,11 @@ pub struct Rmdir {
     pub path: PathBuf,
 }
 
-impl Operation for Rmdir {
-    fn kind(&self) -> &'static str {
-        "rmdir"
-    }
-    fn clone_box(&self) -> Box<dyn Operation> {
-        Box::new(self.clone())
-    }
-    fn args(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("serializable")
-    }
+impl super::Kind for Rmdir {
+    const KIND: &'static str = "rmdir";
+}
+
+impl super::Effect for Rmdir {
     fn describe(&self) -> Change {
         Change::Remove {
             path: self.path.clone(),
@@ -1925,16 +1861,11 @@ pub struct NewFile {
     pub path: PathBuf,
 }
 
-impl Operation for NewFile {
-    fn kind(&self) -> &'static str {
-        "new_file"
-    }
-    fn clone_box(&self) -> Box<dyn Operation> {
-        Box::new(self.clone())
-    }
-    fn args(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("serializable")
-    }
+impl super::Kind for NewFile {
+    const KIND: &'static str = "new_file";
+}
+
+impl super::Effect for NewFile {
     fn describe(&self) -> Change {
         Change::Create {
             path: self.path.clone(),
@@ -1942,13 +1873,8 @@ impl Operation for NewFile {
         }
     }
     fn check(&self, _ctx: &StepContext) -> StepStatus {
-        if self.path.components().any(|c| c == Component::ParentDir) {
-            return conflict(format!("{} contains “..”", self.path.display()));
-        }
-        match self.path.file_name().map(invalid_name) {
-            None => return conflict(format!("{} has no name", self.path.display())),
-            Some(Some(invalid)) => return invalid,
-            Some(None) => {}
+        if let Some(refused) = refuse_new(&self.path) {
+            return refused;
         }
         match std::fs::symlink_metadata(&self.path) {
             // What this step makes: applied already.
@@ -1979,16 +1905,11 @@ pub struct RemoveEmptyFile {
     pub path: PathBuf,
 }
 
-impl Operation for RemoveEmptyFile {
-    fn kind(&self) -> &'static str {
-        "remove_empty_file"
-    }
-    fn clone_box(&self) -> Box<dyn Operation> {
-        Box::new(self.clone())
-    }
-    fn args(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("serializable")
-    }
+impl super::Kind for RemoveEmptyFile {
+    const KIND: &'static str = "remove_empty_file";
+}
+
+impl super::Effect for RemoveEmptyFile {
     fn describe(&self) -> Change {
         Change::Remove {
             path: self.path.clone(),
@@ -2014,20 +1935,20 @@ impl Operation for RemoveEmptyFile {
 
 /// Register every built-in operation kind under the `core` owner.
 pub fn register_builtin(reg: &OpRegistry) {
-    reg.register::<Rename>("core", "rename");
-    reg.register::<Move>("core", "move");
-    reg.register::<Copy>("core", "copy");
-    reg.register::<Swap>("core", "swap");
-    reg.register::<Trash>("core", "trash");
-    reg.register::<Restore>("core", "restore");
-    reg.register::<Unmerge>("core", "unmerge");
-    reg.register::<RestorePart>("core", "restore_part");
-    reg.register::<ReturnPart>("core", "return_part");
-    reg.register::<Delete>("core", "delete");
-    reg.register::<Mkdir>("core", "mkdir");
-    reg.register::<Rmdir>("core", "rmdir");
-    reg.register::<NewFile>("core", "new_file");
-    reg.register::<RemoveEmptyFile>("core", "remove_empty_file");
+    reg.register::<Rename>("core");
+    reg.register::<Move>("core");
+    reg.register::<Copy>("core");
+    reg.register::<Swap>("core");
+    reg.register::<Trash>("core");
+    reg.register::<Restore>("core");
+    reg.register::<Unmerge>("core");
+    reg.register::<RestorePart>("core");
+    reg.register::<ReturnPart>("core");
+    reg.register::<Delete>("core");
+    reg.register::<Mkdir>("core");
+    reg.register::<Rmdir>("core");
+    reg.register::<NewFile>("core");
+    reg.register::<RemoveEmptyFile>("core");
 }
 
 #[cfg(test)]

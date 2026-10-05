@@ -11,11 +11,10 @@
 //! it takes the keyboard and gives it back, Escape or a click outside closes
 //! it, and so do scrolling the text and replacing it.
 use crate::{
-    inspector_text, markdown::MarkdownStyle, preview::PreviewContent, shell::Shell, theme::Theme,
-    toolbar,
+    inspector_text, latest::Latest, markdown::MarkdownStyle, preview::PreviewContent, shell::Shell,
+    theme::Theme, toolbar,
 };
 use bibli_core::{
-    CancelToken,
     inspection::{Block, InspectRequest, InspectionKind},
     scheduler::Priority,
 };
@@ -36,37 +35,16 @@ pub struct Open {
 }
 
 struct Reply {
-    generation: u64,
     target: String,
     at: Point<Pixels>,
     blocks: Option<Vec<Block>>,
 }
 
+#[derive(Default)]
 pub struct Notes {
     pub(crate) open: Option<Open>,
-    pending: Option<CancelToken>,
-    generation: u64,
-    tx: flume::Sender<Reply>,
-    rx: flume::Receiver<Reply>,
-}
-impl Default for Notes {
-    fn default() -> Self {
-        let (tx, rx) = flume::unbounded();
-        Self {
-            open: None,
-            pending: None,
-            generation: 0,
-            tx,
-            rx,
-        }
-    }
-}
-impl Drop for Notes {
-    fn drop(&mut self) {
-        if let Some(pending) = self.pending.take() {
-            pending.cancel();
-        }
-    }
+    /// A note read from another chapter.
+    asked: Latest<Reply>,
 }
 impl Notes {
     pub(crate) fn holds_focus(&self, window: &Window, cx: &gpui::App) -> bool {
@@ -76,10 +54,7 @@ impl Notes {
     }
     /// Close the note and forget one on its way, giving the keyboard back.
     pub(crate) fn close(&mut self, window: &mut Window) {
-        if let Some(pending) = self.pending.take() {
-            pending.cancel();
-        }
-        self.generation = self.generation.wrapping_add(1);
+        self.asked.forget();
         if let Some(open) = self.open.take() {
             open.popup.restore(window);
         }
@@ -143,38 +118,25 @@ impl Shell {
             return false;
         };
         self.preview.inspection.notes.close(window);
-        let notes = &mut self.preview.inspection.notes;
-        let cancel = self.app.lifetime().child();
-        notes.pending = Some(cancel.clone());
-        let generation = notes.generation;
-        let tx = notes.tx.clone();
         let previews = Arc::clone(&self.app.previews);
-        let wake = self.app.waker_handle();
         let (target, fragment) = (target.to_owned(), fragment.to_owned());
-        self.app.scheduler.spawn(
+        self.preview.inspection.notes.asked.ask(
+            &self.app,
+            self.app.lifetime(),
             Priority::Visible,
             "preview-note",
-            cancel.clone(),
-            move || {
+            move |cancel| {
                 let chapter = InspectRequest {
                     provider: view.provider,
                     target: Some(target.clone()),
                     ..InspectRequest::default()
                 };
                 let blocks = previews
-                    .inspect(&request, &chapter, &cancel)
+                    .inspect(&request, &chapter, cancel)
                     .ok()
                     .flatten()
                     .and_then(|data| note_blocks(&data.blocks, &fragment));
-                if !cancel.is_cancelled() {
-                    let _ = tx.send(Reply {
-                        generation,
-                        target,
-                        at,
-                        blocks,
-                    });
-                    wake();
-                }
+                Reply { target, at, blocks }
             },
         );
         true
@@ -182,12 +144,7 @@ impl Shell {
 
     /// Take a note read from another chapter, as the core wakes the UI.
     pub(crate) fn sync_notes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        while let Ok(reply) = self.preview.inspection.notes.rx.try_recv() {
-            let notes = &mut self.preview.inspection.notes;
-            if reply.generation != notes.generation {
-                continue;
-            }
-            notes.pending = None;
+        if let Some(reply) = self.preview.inspection.notes.asked.take() {
             match reply.blocks {
                 Some(blocks) => self.show_note(&reply.target, reply.at, blocks, window, cx),
                 // Not a note after all: the link goes where it says.

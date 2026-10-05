@@ -86,7 +86,9 @@ impl Shell {
             let Some(pane) = ws.pane(self.pane) else {
                 return ThumbView::Unavailable;
             };
-            let Some(e) = pane.listing.get(id) else {
+            // An entry of the pane, shown or of a folder opened in place
+            // (the tree's, the board's cards).
+            let Some(e) = pane.entry(id) else {
                 return ThumbView::Unavailable;
             };
             if e.is_dir() {
@@ -103,7 +105,7 @@ impl Shell {
             if !e.metadata.is_hydrated() {
                 return ThumbView::Pending;
             }
-            let Some(path) = pane.open.as_ref().and_then(|o| o.path_of(id)) else {
+            let Some(path) = pane.path_of(id) else {
                 return ThumbView::Unavailable;
             };
             // A link's picture is its target's; a pipe or a device has none.

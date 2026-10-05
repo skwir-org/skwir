@@ -494,7 +494,7 @@ impl Shell {
         };
         // Speculative neighbours must not interrupt an explicitly started find.
         // A missing current page still has priority over background searching.
-        if self.preview.reader.searching && number != self.preview.page {
+        if self.preview.reader.search.is_pending() && number != self.preview.page {
             return;
         }
         self.preview.reader.cancel_search();

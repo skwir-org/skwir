@@ -42,17 +42,6 @@ pub const NOTES_OWNER: &str = bibli_core::notes::SETTINGS;
 
 pub const THEME_KEY: &str = "ui.theme";
 pub const DATES_KEY: &str = "ui.date_format";
-/// Widths of the detail columns, set by dragging their header edges.
-pub const COLUMN_WIDTHS_KEY: &str = "ui.column_widths";
-/// Detail columns of the list view, in the order they give way when a pane
-/// gets narrow (the last one first).
-pub const COLUMN_KEYS: [&str; 5] = [
-    "ui.column_size",
-    "ui.column_modified",
-    "ui.column_type",
-    "ui.column_rating",
-    "ui.column_folder",
-];
 /// Whether the grid crops thumbnails to fill their box.
 pub const GRID_FILL_KEY: &str = "ui.grid_fill";
 /// Whether a folder has the Narrow by bar above its files (`narrow.rs`).
@@ -177,45 +166,17 @@ pub fn declare(app: &App) {
         "Commands whose shortcut hint was already shown",
         toml::Value::Array(Vec::new()),
     ));
-    app.settings.declare(SettingSpec::data(
-        COLUMN_WIDTHS_KEY,
-        "Widths of the Size, Modified, Type, Rating and Folder columns, in pixels",
-        toml::Value::Array(
-            crate::views::list::DEFAULT_WIDTHS
-                .iter()
-                .map(|width| toml::Value::Integer(*width as i64))
-                .collect(),
-        ),
-    ));
-    for (key, title, description, shown) in [
-        (COLUMN_KEYS[0], "Size", "Show the size of files.", true),
-        (
-            COLUMN_KEYS[1],
-            "Modified",
-            "Show when each item last changed.",
-            true,
-        ),
-        (
-            COLUMN_KEYS[2],
-            "Type",
-            "Show the kind of file, such as PDF document.",
-            true,
-        ),
-        (
-            COLUMN_KEYS[3],
-            "Rating",
-            "Show the stars each file was given, with the Tags plugin. It is the first column to give way in a narrow pane.",
-            false,
-        ),
-        (
-            COLUMN_KEYS[4],
-            "Folder",
-            "Show the folder each file is in, where files from many folders are listed: a search, a tag, the shelf, Recent. It is the last column to give way.",
-            true,
-        ),
-    ] {
-        app.settings
-            .declare(SettingSpec::toggle(key, title, description, shown).section("List columns"));
+    // The list's detail columns, in the order they stand (`COLUMNS`).
+    for column in &crate::views::list::COLUMNS {
+        app.settings.declare(
+            SettingSpec::toggle(
+                column.setting,
+                column.label,
+                column.description,
+                column.shown,
+            )
+            .section("List columns"),
+        );
     }
 }
 
@@ -296,28 +257,100 @@ pub enum Page {
     Plugin(String),
 }
 
+/// One of the dialog's own pages: the word `ui.settings` names it by, the
+/// namespace whose settings it shows (none for Plugins), its title, glyph
+/// and introduction. Every reading of a page (by owner, by name, its
+/// title, glyph and words, the sidebar's order) is `BUILTIN`'s.
+pub(crate) struct Builtin {
+    page: Page,
+    name: &'static str,
+    owner: Option<&'static str>,
+    title: &'static str,
+    pub(crate) icon: &'static str,
+    pub(crate) intro: &'static str,
+    /// Listed only while a setting is on it.
+    when_used: bool,
+}
+
+/// The dialog's own pages, in the sidebar's order; plugins' follow.
+static BUILTIN: [Builtin; 6] = [
+    Builtin {
+        page: Page::General,
+        name: "general",
+        owner: Some(CORE_OWNER),
+        title: "General",
+        icon: "sliders",
+        intro: "How bibli handles files. Changes apply as you make them.",
+        when_used: false,
+    },
+    Builtin {
+        page: Page::Appearance,
+        name: "appearance",
+        owner: Some(UI_OWNER),
+        title: "Appearance",
+        icon: "appearance",
+        intro: "How bibli looks.",
+        when_used: false,
+    },
+    Builtin {
+        page: Page::Reading,
+        name: "reading",
+        owner: Some(READING_OWNER),
+        title: "Reading",
+        icon: "reading",
+        intro: "How documents, books, comics and Markdown read in the preview. Which engine reads each is on its plugin's page.",
+        when_used: false,
+    },
+    Builtin {
+        page: Page::Notes,
+        name: "notes",
+        owner: Some(NOTES_OWNER),
+        title: "Notes",
+        icon: "tag",
+        intro: "Where tags, ratings and comments are kept, so the desktop, a Mac and other applications see them too. Every place is read and merged; each is written as you choose: never, where the file already has notes there, also where a file's volume keeps no attributes (one place is started there, the one its folder already uses first), or for every file edited.",
+        // Only while a plugin keeps notes somewhere.
+        when_used: true,
+    },
+    Builtin {
+        page: Page::Plugins,
+        name: "plugins",
+        owner: None,
+        title: "Plugins",
+        icon: "plugin",
+        intro: "Everything beyond the core is a plugin. Turning one off removes its commands, views and settings until it is turned on again.",
+        when_used: false,
+    },
+    Builtin {
+        page: Page::Keyboard,
+        name: "keyboard",
+        owner: Some(bibli_core::keymap::OWNER),
+        title: "Keyboard",
+        icon: "keyboard",
+        intro: "Your shortcuts, then every shortcut in use, grouped by where it applies. Yours replace the others on the same keys.",
+        when_used: false,
+    },
+];
+
 impl Page {
     pub fn of_owner(owner: &str) -> Page {
-        match owner {
-            CORE_OWNER => Page::General,
-            bibli_core::keymap::OWNER => Page::Keyboard,
-            UI_OWNER => Page::Appearance,
-            READING_OWNER => Page::Reading,
-            NOTES_OWNER => Page::Notes,
-            other => Page::Plugin(other.to_owned()),
-        }
+        BUILTIN
+            .iter()
+            .find(|b| b.owner == Some(owner))
+            .map_or_else(|| Page::Plugin(owner.to_owned()), |b| b.page.clone())
     }
 
+    /// A page by its word, or by the namespace it shows (`core` is
+    /// General), else the plugin of that id.
     fn parse(name: &str) -> Page {
-        match name {
-            "general" => Page::General,
-            "appearance" => Page::Appearance,
-            "reading" => Page::Reading,
-            "notes" => Page::Notes,
-            "plugins" => Page::Plugins,
-            "keyboard" => Page::Keyboard,
-            other => Page::Plugin(other.to_owned()),
-        }
+        BUILTIN
+            .iter()
+            .find(|b| b.name == name || b.owner == Some(name))
+            .map_or_else(|| Page::Plugin(name.to_owned()), |b| b.page.clone())
+    }
+
+    /// The dialog's own page this is; `None` for a plugin's.
+    pub(crate) fn builtin(&self) -> Option<&'static Builtin> {
+        BUILTIN.iter().find(|b| &b.page == self)
     }
 }
 
@@ -503,25 +536,20 @@ impl SettingsView {
     }
 
     pub(crate) fn page_title(&self, page: &Page) -> String {
-        match page {
-            Page::General => "General".into(),
-            Page::Appearance => "Appearance".into(),
-            Page::Reading => "Reading".into(),
-            Page::Notes => "Notes".into(),
-            Page::Plugins => "Plugins".into(),
-            Page::Keyboard => "Keyboard".into(),
-            Page::Plugin(id) => self.plugin_title(id),
+        match (page.builtin(), page) {
+            (Some(builtin), _) => builtin.title.into(),
+            (None, Page::Plugin(id)) => self.plugin_title(id),
+            (None, _) => String::new(),
         }
     }
 
     /// Sidebar entries: the fixed pages, then every plugin that has settings.
     pub(crate) fn pages(&self) -> Vec<Page> {
-        let mut pages = vec![Page::General, Page::Appearance, Page::Reading];
-        // Only while a plugin keeps notes somewhere.
-        if self.rows.iter().any(|row| row.page() == Page::Notes) {
-            pages.push(Page::Notes);
-        }
-        pages.extend([Page::Plugins, Page::Keyboard]);
+        let mut pages: Vec<Page> = BUILTIN
+            .iter()
+            .filter(|b| !b.when_used || self.rows.iter().any(|row| row.page() == b.page))
+            .map(|b| b.page.clone())
+            .collect();
         let mut owners: Vec<Page> = self
             .rows
             .iter()
@@ -1152,5 +1180,21 @@ impl crate::shell::Shell {
         if let Some(settings) = self.settings.clone() {
             settings.update(cx, |settings, cx| settings.command(name, args, window, cx));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Page;
+
+    #[test]
+    fn a_page_is_named_by_its_word_or_its_namespace() {
+        assert_eq!(Page::parse("general"), Page::General);
+        assert_eq!(Page::parse("core"), Page::General);
+        assert_eq!(Page::parse("ui"), Page::Appearance);
+        assert_eq!(Page::parse("plugins"), Page::Plugins);
+        assert_eq!(Page::parse("tags"), Page::Plugin("tags".into()));
+        assert_eq!(Page::of_owner(bibli_core::keymap::OWNER), Page::Keyboard);
+        assert!(Page::Plugin("tags".into()).builtin().is_none());
     }
 }

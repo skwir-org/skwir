@@ -204,6 +204,10 @@ pub mod keys {
     /// The tag a place of a tag location stands for, `Value::Text`, its
     /// full name (`Places/France`): what its color and its menu are of.
     pub const PLACE_TAG: &str = "place_tag";
+    /// What a place is, in its provider's words, `Value::Text`: the Type
+    /// column's ("Tag", "Field" for a category holding one tag at a time).
+    /// A place without one is a "Place".
+    pub const PLACE_KIND: &str = "place_kind";
     /// A few of the pictures a place holds, what the grid draws on its
     /// tile: a `Value::List` of one `Value::List` each, its path
     /// (`Value::Text`), device and inode (`Value::UInt`) and modification

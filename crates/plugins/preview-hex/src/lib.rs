@@ -30,6 +30,9 @@ impl PreviewProvider for Provider {
     fn priority(&self) -> i32 {
         -100
     }
+    fn shows_bytes(&self) -> bool {
+        true
+    }
     fn id(&self) -> &'static str {
         "preview-hex"
     }

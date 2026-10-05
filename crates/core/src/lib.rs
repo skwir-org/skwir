@@ -35,6 +35,7 @@ pub mod fields;
 pub mod fs;
 pub mod geo;
 pub mod hints;
+pub mod jsonl;
 pub mod keymap;
 pub mod location;
 pub mod lru;
@@ -56,6 +57,7 @@ pub mod terminal;
 pub mod thumbs;
 pub mod tiles;
 pub mod workspace;
+pub mod xdg;
 
 pub use app::App;
 pub use cancel::CancelToken;

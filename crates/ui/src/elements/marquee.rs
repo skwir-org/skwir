@@ -200,9 +200,9 @@ impl Element for Marquee {
                 window.paint_quad(gpui::quad(
                     band,
                     px(2.),
-                    theme.accent.opacity(0.14),
+                    theme.band,
                     px(1.),
-                    theme.accent.opacity(0.8),
+                    theme.band_edge,
                     gpui::BorderStyle::default(),
                 ));
             }

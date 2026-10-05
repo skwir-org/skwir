@@ -288,3 +288,57 @@ mod imp {
         }
     }
 }
+
+/// Files a plugin reads, followed: their changes (never their reads:
+/// notify reports a file opened, and a watcher that rescans on that
+/// rescans forever on its own reads) are let settle, then `then` runs
+/// once, on a thread of the watcher's own that ends when it is dropped, so
+/// no shared worker waits. A burst (a disk bringing several partitions)
+/// makes one call.
+pub struct Settled {
+    watcher: notify::RecommendedWatcher,
+}
+
+impl Settled {
+    /// Watch nothing yet: `relevant` says which of an event's paths count,
+    /// and `then` answers whether to go on (false once the app is gone).
+    /// `None` when the system gives no watcher.
+    pub fn start(
+        name: &str,
+        settle: Duration,
+        relevant: impl Fn(&Path) -> bool + Send + 'static,
+        then: impl Fn() -> bool + Send + 'static,
+    ) -> Option<Self> {
+        let (tx, rx) = crossbeam_channel::unbounded::<()>();
+        let handler = move |event: notify::Result<notify::Event>| {
+            if event.is_ok_and(|event| {
+                !matches!(event.kind, notify::EventKind::Access(_))
+                    && event.paths.iter().any(|path| relevant(path))
+            }) {
+                let _ = tx.send(());
+            }
+        };
+        let watcher = notify::recommended_watcher(handler).ok()?;
+        std::thread::Builder::new()
+            .name(name.to_owned())
+            .spawn(move || {
+                while rx.recv().is_ok() {
+                    while rx.recv_timeout(settle).is_ok() {}
+                    if !then() {
+                        return;
+                    }
+                }
+            })
+            .ok()?;
+        Some(Settled { watcher })
+    }
+
+    /// Follow `path` (what is in it, not below). Whether it is followed: one
+    /// not there yet is not.
+    pub fn watch(&mut self, path: &Path) -> bool {
+        use notify::Watcher as _;
+        self.watcher
+            .watch(path, notify::RecursiveMode::NonRecursive)
+            .is_ok()
+    }
+}

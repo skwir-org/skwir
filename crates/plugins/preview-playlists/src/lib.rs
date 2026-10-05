@@ -14,6 +14,7 @@ use bibli_core::{
     preview::{Member, PreviewProvider, PreviewRequest},
 };
 use bibli_platform::inspection::{self, limits};
+use bibli_platform::preview::{self, PlaylistFormat};
 use parse::Track;
 
 pub struct PreviewPlugin;
@@ -80,14 +81,19 @@ struct Playlist {
     /// Locations are URIs (XSPF).
     uri: bool,
 }
-fn tracks(path: &Path, cancel: &CancelToken) -> anyhow::Result<Playlist> {
+/// The format of the playlist `req` names, if it is one this reads.
+fn format_of(req: &PreviewRequest) -> Option<PlaylistFormat> {
+    preview::playlist(&req.entry.path, req.mime.as_deref())
+        .filter(|format| *format != PlaylistFormat::Asx)
+}
+
+fn tracks(path: &Path, format: PlaylistFormat, cancel: &CancelToken) -> anyhow::Result<Playlist> {
     let (source, encoding) = inspection::read_text(path, cancel)?;
-    let format = inspection::extension(path);
-    let mut tracks = match format.as_str() {
-        "pls" => parse::pls(&source),
-        "xspf" => parse::xspf(&source)?,
-        "cue" => parse::cue(&source),
-        _ => parse::m3u(&source),
+    let mut tracks = match format {
+        PlaylistFormat::Pls => parse::pls(&source),
+        PlaylistFormat::Xspf => parse::xspf(&source)?,
+        PlaylistFormat::Cue => parse::cue(&source),
+        PlaylistFormat::M3u | PlaylistFormat::Asx => parse::m3u(&source),
     };
     let more = tracks.len() > limits::BLOCKS;
     tracks.truncate(limits::BLOCKS);
@@ -95,7 +101,7 @@ fn tracks(path: &Path, cancel: &CancelToken) -> anyhow::Result<Playlist> {
         tracks,
         more,
         encoding,
-        uri: format == "xspf",
+        uri: format == PlaylistFormat::Xspf,
     })
 }
 
@@ -114,10 +120,7 @@ impl PreviewProvider for Provider {
         "preview-playlists"
     }
     fn accepts(&self, req: &PreviewRequest) -> bool {
-        matches!(
-            inspection::extension(&req.entry.path).as_str(),
-            "m3u" | "m3u8" | "pls" | "xspf" | "cue"
-        )
+        format_of(req).is_some()
     }
     fn extract(
         &self,
@@ -126,9 +129,12 @@ impl PreviewProvider for Provider {
         _into: &Path,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Member>> {
+        let Some(format) = format_of(req) else {
+            return Ok(None);
+        };
         let path = req.entry.resolve()?;
         let base = path.parent().unwrap_or(Path::new("."));
-        let list = tracks(&path, cancel)?;
+        let list = tracks(&path, format, cancel)?;
         let track = list
             .tracks
             .get(target.parse::<usize>()?)
@@ -157,9 +163,12 @@ impl PreviewProvider for Provider {
         if view.source {
             return Ok(None);
         }
+        let Some(format) = format_of(req) else {
+            return Ok(None);
+        };
         let path = req.entry.resolve()?;
         let base = path.parent().unwrap_or(Path::new("."));
-        let list = tracks(&path, cancel)?;
+        let list = tracks(&path, format, cancel)?;
         let mut rows = Vec::with_capacity(list.tracks.len());
         let (mut total, mut missing, mut remote) = (0., 0, 0);
         for (index, track) in list.tracks.iter().enumerate() {

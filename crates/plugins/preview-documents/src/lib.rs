@@ -23,8 +23,8 @@ use bibli_core::{
 };
 use bibli_platform::inspection::{self, limits};
 use bibli_platform::preview::DocumentPreviews;
+use bibli_platform::rich_preview;
 use bibli_platform::thumb_providers::{OfficePages, PdfPages};
-use bibli_platform::{process, rich_preview, sandbox};
 use pandoc::Pandoc;
 use std::path::Path;
 use std::sync::Arc;
@@ -32,6 +32,14 @@ use std::sync::Arc;
 const ID: &str = "preview-documents";
 /// How Word, `OpenDocument` and RTF files are shown.
 const TEXT_DOCUMENTS: &str = "preview-documents.text_documents";
+/// Which engine reads PDFs.
+const BACKEND: &str = "preview-documents.backend";
+/// Where the `PDFium` library is, when not in the usual places.
+const PDFIUM_LIBRARY: &str = "preview-documents.pdfium_library";
+/// The provider that reads text documents as text.
+const READING_PROVIDER: &str = "preview-documents.reading";
+/// The document reader (`DocumentPreviews`), which shows pages.
+const READER_PROVIDER: &str = "preview-documents";
 
 pub struct PreviewPlugin;
 
@@ -48,25 +56,29 @@ impl Plugin for PreviewPlugin {
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Previews
     }
-    fn on_settings_changed(&self, app: &App, _keys: &[String]) {
-        app.previews.unregister_owner(self.id());
-        app.thumbnails.unregister_owner(self.id());
-        self.register(app);
+    /// Only the provider a key is about starts again: changing how text
+    /// documents are shown leaves a PDF open in the reader as it is.
+    fn on_settings_changed(&self, app: &App, keys: &[String]) {
+        if keys.iter().any(|key| key == TEXT_DOCUMENTS) {
+            app.previews.unregister(ID, READING_PROVIDER);
+            register_reading(app);
+        }
+        if keys
+            .iter()
+            .any(|key| key == BACKEND || key == PDFIUM_LIBRARY)
+        {
+            app.previews.unregister(ID, READER_PROVIDER);
+            register_reader(app);
+        }
     }
 
     fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
         use bibli_core::plugin::Requirement;
-        use bibli_platform::document::{Engine, worker_path};
+        use bibli_platform::document::{Engine, worker};
         vec![
-            Requirement::new("bibli-pdf-worker", "PDF reading with PDFium", || {
-                worker_path(Engine::Pdfium).is_some()
-            }),
-            Requirement::new("bibli-poppler-worker", "PDF reading with Poppler", || {
-                worker_path(Engine::Poppler).is_some()
-            }),
-            Requirement::new("bibli-mupdf-worker", "PDF reading with MuPDF", || {
-                worker_path(Engine::Mupdf).is_some()
-            }),
+            worker(Engine::Pdfium).requirement("PDF reading with PDFium"),
+            worker(Engine::Poppler).requirement("PDF reading with Poppler"),
+            worker(Engine::Mupdf).requirement("PDF reading with MuPDF"),
             Requirement::program("libreoffice", "Office documents shown as pages"),
             Requirement::program(
                 "pandoc",
@@ -82,7 +94,7 @@ impl Plugin for PreviewPlugin {
     fn register(&self, app: &App) {
         use bibli_core::settings::SettingSpec;
         app.settings.declare(SettingSpec::choice(
-            "preview-documents.backend",
+            BACKEND,
             "Document engine",
             "Automatic prefers PDFium and falls back to Poppler; MuPDF is used only when chosen.",
             "auto",
@@ -94,7 +106,7 @@ impl Plugin for PreviewPlugin {
             ],
         ));
         app.settings.declare(SettingSpec::path(
-            "preview-documents.pdfium_library",
+            PDFIUM_LIBRARY,
             "PDFium library",
             "Path to the PDFium shared library. Leave empty to search the usual locations.",
             "",
@@ -110,48 +122,58 @@ impl Plugin for PreviewPlugin {
                 ("pandoc", "Pandoc"),
             ],
         ));
-        let backend = app
-            .settings
-            .get::<String>("preview-documents.backend")
-            .unwrap_or_else(|| "auto".into());
-        let library = app
-            .settings
-            .get::<String>("preview-documents.pdfium_library")
-            .filter(|s| !s.is_empty())
-            .map(Into::into);
-        let choice = match app.settings.get::<String>(TEXT_DOCUMENTS).as_deref() {
-            Some("pages") => Choice::Pages,
-            Some("pandoc") => Choice::Pandoc,
-            _ => Choice::Reading,
-        };
-        let cache = app.cache.namespace(self.id());
-        app.previews.register(
-            self.id(),
-            Arc::new(Reading {
-                choice,
-                cache: cache.clone(),
-            }),
-        );
-        // A document converted for its preview has a thumbnail from then on:
-        // a tile that had none asks again.
-        let thumbnails = Arc::clone(&app.thumbnails);
-        app.previews.register(
-            self.id(),
-            Arc::new(
-                DocumentPreviews::new(cache.clone())
-                    .with_reader(backend, library)
-                    .on_converted(Arc::new(move |id| thumbnails.retry(id))),
-            ),
-        );
+        register_reading(app);
+        register_reader(app);
+        let cache = app.cache.namespace(ID);
         // A fallback stage: the desktop's cache and thumbnailers come first
         // whichever plugin registers first. The picture a document keeps
         // comes before the first page of one converted.
-        app.thumbnails.register(self.id(), Arc::new(PdfPages));
+        app.thumbnails.register(ID, Arc::new(PdfPages));
         app.thumbnails
-            .register(self.id(), Arc::new(stored::StoredPictures));
+            .register(ID, Arc::new(stored::StoredPictures));
         app.thumbnails
-            .register(self.id(), Arc::new(OfficePages::new(cache)));
+            .register(ID, Arc::new(OfficePages::new(cache)));
     }
+}
+
+/// Text documents read as text, as the Text documents setting says.
+fn register_reading(app: &App) {
+    let choice = match app.settings.get::<String>(TEXT_DOCUMENTS).as_deref() {
+        Some("pages") => Choice::Pages,
+        Some("pandoc") => Choice::Pandoc,
+        _ => Choice::Reading,
+    };
+    app.previews.register(
+        ID,
+        Arc::new(Reading {
+            choice,
+            cache: app.cache.namespace(ID),
+        }),
+    );
+}
+
+/// The document reader, with the engine the settings choose.
+fn register_reader(app: &App) {
+    let backend = app
+        .settings
+        .get::<String>(BACKEND)
+        .unwrap_or_else(|| "auto".into());
+    let library = app
+        .settings
+        .get::<String>(PDFIUM_LIBRARY)
+        .filter(|s| !s.is_empty())
+        .map(Into::into);
+    // A document converted for its preview has a thumbnail from then on:
+    // a tile that had none asks again.
+    let thumbnails = Arc::clone(&app.thumbnails);
+    app.previews.register(
+        ID,
+        Arc::new(
+            DocumentPreviews::new(app.cache.namespace(ID))
+                .with_reader(backend, library)
+                .on_converted(Arc::new(move |id| thumbnails.retry(id))),
+        ),
+    );
 }
 
 /// How the user asked text documents to be shown.
@@ -176,13 +198,6 @@ struct Reading {
     choice: Choice,
     /// The plugin's cache, where Pandoc's pictures are kept.
     cache: CacheSlot,
-}
-
-/// Whether `LibreOffice` can show `path` as pages here.
-fn as_pages(path: &Path) -> bool {
-    bibli_platform::preview::is_office(path)
-        && sandbox::available()
-        && process::required("libreoffice").is_ok()
 }
 
 /// bibli's own reader for `path`, if it reads its format.
@@ -215,7 +230,7 @@ impl Reading {
     /// next that can; `None` leaves it to the pages.
     fn engine(&self, path: &Path) -> Option<Engine> {
         match self.choice {
-            Choice::Pages if as_pages(path) => None,
+            Choice::Pages if bibli_platform::preview::shown_as_pages(path, None) => None,
             Choice::Pages | Choice::Reading => builtin(path).or_else(|| by_pandoc(path)),
             Choice::Pandoc => by_pandoc(path).or_else(|| builtin(path)),
         }
@@ -349,7 +364,7 @@ fn shown(read: blocks::Read) -> Inspection {
 
 impl PreviewProvider for Reading {
     fn id(&self) -> &'static str {
-        "preview-documents.reading"
+        READING_PROVIDER
     }
     /// Before the document reader, which shows the same files as pages.
     fn priority(&self) -> i32 {

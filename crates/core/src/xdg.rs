@@ -24,7 +24,7 @@ fn home(name: &str, fallback: &str) -> Option<PathBuf> {
     std::env::var_os(name)
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
-        .or_else(|| dirs::home_dir().map(|h| h.join(fallback)))
+        .or_else(|| crate::os_path::home().map(|h| h.join(fallback)))
 }
 
 /// `$XDG_DATA_HOME`, the user's data (`~/.local/share`).
@@ -46,6 +46,19 @@ pub fn data_search() -> Vec<PathBuf> {
 /// `$XDG_CONFIG_HOME`, the user's configuration (`~/.config`).
 pub fn config_home() -> Option<PathBuf> {
     home("XDG_CONFIG_HOME", ".config")
+}
+
+/// `$XDG_CACHE_HOME`, what can be made again (`~/.cache`).
+pub fn cache_home() -> Option<PathBuf> {
+    home("XDG_CACHE_HOME", ".cache")
+}
+
+/// `$XDG_RUNTIME_DIR`, the user's private files for this session, which
+/// has no default.
+pub fn runtime_dir() -> Option<PathBuf> {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
 }
 
 /// `$XDG_CONFIG_DIRS`, the system's configuration (`/etc/xdg`).

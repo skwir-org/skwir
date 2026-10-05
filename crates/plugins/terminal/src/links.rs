@@ -108,7 +108,7 @@ impl Stamps {
     pub fn target(&self, link: &Hyperlink) -> Option<(Target, bool)> {
         if !link.id().starts_with(STAMP) {
             let uri = link.uri();
-            let target = match links::file_path(uri) {
+            let target = match bibli_platform::uri::path_of(uri) {
                 Some(path) => Target::Path {
                     path,
                     line: None,
@@ -253,7 +253,7 @@ impl Finder {
                 continue;
             }
             let id = match path {
-                None => match links::file_path(&text) {
+                None => match bibli_platform::uri::path_of(&text) {
                     // An address of a file is the file.
                     Some(file) => stamps.add(
                         text.clone(),

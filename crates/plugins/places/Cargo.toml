@@ -14,8 +14,6 @@ serde.workspace = true
 schemars.workspace = true
 parking_lot.workspace = true
 serde_json.workspace = true
-notify.workspace = true
-crossbeam-channel.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

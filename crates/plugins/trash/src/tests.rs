@@ -114,10 +114,11 @@ fn a_file_in_the_trash_is_listed_as_it_was_and_restored_where_it_was() {
     };
     assert!(physical.starts_with(home.join("files")), "{physical:?}");
     assert!(app.verbs(&Location::parse("trash:")).restore.is_some());
-    // One place in the address, which holds no places to list.
+    // One place in the address, which holds the trashed folders: the
+    // chevron after it lists them.
     let trail = app.trail(&Location::parse("trash:")).unwrap();
     assert_eq!(trail.crumbs[0].label, "Trash");
-    assert!(!trail.holds_places);
+    assert!(trail.holds_places);
 
     let restore = plan(
         &app,
@@ -210,9 +211,13 @@ fn emptying_the_trash_deletes_its_files_and_what_it_said_of_them() {
     assert_eq!(shown.icon.as_deref(), Some("user-trash"));
     assert!(shown.menu.is_empty(), "nothing to empty");
     assert!(app.dispatch(&Invocation::new("trash.empty")).is_err());
-    // Dropped on its place, files go in the trash.
+    // Dropped on its place, files go in the trash: what its location
+    // takes, which the sidebar's row takes too.
     assert_eq!(
-        place(true).drop.map(|d| d.name.to_string()).as_deref(),
+        app.verbs(&place(true).location)
+            .drop
+            .map(|d| d.name.to_string())
+            .as_deref(),
         Some("trash.put")
     );
 }

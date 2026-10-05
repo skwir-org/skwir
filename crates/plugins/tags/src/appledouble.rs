@@ -23,16 +23,13 @@
 //! laid out otherwise (other entries, an older writer) is read but never
 //! written: what we would write back could lose what we do not know.
 
-use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
-use std::io::{self, Read, Write as _};
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
 
 use bibli_core::notes::raw::RawKey;
 use bibli_core::notes::{Holds, Kept, Notes, NotesStore, Probe, Tag, Write, Wrote, parse_tags};
-use parking_lot::Mutex;
 
 use crate::xdg;
 
@@ -306,11 +303,10 @@ impl AppleDouble {
 }
 
 /// The sidecar of `path`, read; `None` when there is none, or it is not
-/// one. Reads it whole (up to `READ_AT_MOST`), so it can be written back.
+/// one. Reads it whole, so it can be written back: one longer than
+/// `READ_AT_MOST` is not read at all, never cut.
 pub fn read(path: &Path) -> Option<AppleDouble> {
-    let file = bibli_platform::file::open_regular(&sidecar(path)?).ok()?;
-    let mut bytes = Vec::new();
-    file.take(READ_AT_MOST).read_to_end(&mut bytes).ok()?;
+    let bytes = bibli_platform::file::read_regular(&sidecar(path)?, READ_AT_MOST).ok()?;
     AppleDouble::parse(&bytes)
 }
 
@@ -340,26 +336,12 @@ pub fn write(path: &Path, ad: &AppleDouble) -> io::Result<()> {
     Ok(())
 }
 
-/// The names of the `._` files in the folders batches were in (their
-/// files' names): a folder is read once for its listing, not once per
-/// file, and again when it changes.
-#[derive(Default)]
-pub struct AsideNames {
-    folders: Mutex<Vec<Seen>>,
+/// The file a `._` name is the companion of: `x` for `._x`, kept by the
+/// folder's names (`FolderNames`) for the files that have one.
+fn aside_of(name: &OsStr) -> Option<OsString> {
+    let file = name.as_encoded_bytes().strip_prefix(PREFIX.as_bytes())?;
+    Some(os_from_bytes(file))
 }
-
-struct Seen {
-    dir: PathBuf,
-    modified: Option<SystemTime>,
-    at: Instant,
-    names: Arc<HashSet<OsString>>,
-}
-
-/// Folders remembered at once: a search walks several in parallel.
-const FOLDERS: usize = 16;
-/// How long a folder's names are trusted while its time says it did not
-/// change: FAT stores times to two seconds.
-const FRESH: Duration = Duration::from_secs(5);
 
 #[cfg(unix)]
 fn os_from_bytes(bytes: &[u8]) -> OsString {
@@ -370,46 +352,6 @@ fn os_from_bytes(bytes: &[u8]) -> OsString {
 #[cfg(not(unix))]
 fn os_from_bytes(bytes: &[u8]) -> OsString {
     OsString::from(String::from_utf8_lossy(bytes).into_owned())
-}
-
-impl AsideNames {
-    /// The files of `dir` that have a `._` file (maybe none).
-    fn of(&self, dir: &Path) -> Arc<HashSet<OsString>> {
-        let modified = std::fs::metadata(dir).ok().and_then(|m| m.modified().ok());
-        let known = self
-            .folders
-            .lock()
-            .iter()
-            .find(|s| s.dir == dir && s.modified == modified && s.at.elapsed() < FRESH)
-            .map(|s| Arc::clone(&s.names));
-        if let Some(names) = known {
-            return names;
-        }
-        let names: HashSet<OsString> = std::fs::read_dir(dir)
-            .map(|entries| {
-                entries
-                    .filter_map(|e| {
-                        let name = e.ok()?.file_name();
-                        let file = name.as_encoded_bytes().strip_prefix(PREFIX.as_bytes())?;
-                        Some(os_from_bytes(file))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let names = Arc::new(names);
-        let mut folders = self.folders.lock();
-        folders.retain(|s| s.dir != dir);
-        if folders.len() >= FOLDERS {
-            folders.remove(0);
-        }
-        folders.push(Seen {
-            dir: dir.to_path_buf(),
-            modified,
-            at: Instant::now(),
-            names: Arc::clone(&names),
-        });
-        names
-    }
 }
 
 /// The attributes a Mac keeps outside its attribute list, named as
@@ -533,9 +475,17 @@ pub fn notes_of(ad: &AppleDouble) -> Option<Notes> {
 /// A Mac's `._` files, on volumes where a Mac writes them: read, updated,
 /// and created where the file's own attributes cannot keep its notes. It
 /// holds the Mac's attributes and the desktop's alike.
-#[derive(Default)]
 pub struct AppleDoubleStore {
-    aside: AsideNames,
+    /// The files of a folder that have a `._` file.
+    aside: bibli_core::companions::FolderNames,
+}
+
+impl Default for AppleDoubleStore {
+    fn default() -> Self {
+        AppleDoubleStore {
+            aside: bibli_core::companions::FolderNames::new(aside_of),
+        }
+    }
 }
 
 impl NotesStore for AppleDoubleStore {
@@ -611,7 +561,7 @@ impl NotesStore for AppleDoubleStore {
     }
     fn write(&self, file: &Probe<'_>, notes: &Notes, create: bool) -> io::Result<Wrote> {
         let existing = read(file.path);
-        let has_notes = !notes.tags.is_empty() || notes.rating.is_some() || notes.comment.is_some();
+        let has_notes = notes.has_user_notes();
         let mut ad = match existing {
             Some(ad) => ad,
             None if create && has_notes => AppleDouble::empty(),

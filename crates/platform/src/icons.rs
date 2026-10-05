@@ -81,14 +81,11 @@ mod imp {
     use std::path::PathBuf;
 
     fn gtk_setting(file: &str) -> Option<String> {
-        let path = dirs::config_dir()?.join(file);
+        let path = crate::xdg::config_home()?.join(file);
         let text = std::fs::read_to_string(path).ok()?;
-        text.lines()
-            .map(str::trim)
-            .find_map(|l| {
-                l.strip_prefix("gtk-icon-theme-name")
-                    .map(|r| r.trim_start_matches([' ', '=']).trim().to_owned())
-            })
+        crate::keyfile::entries(&text)
+            .find(|(group, key, _)| *group == "Settings" && *key == "gtk-icon-theme-name")
+            .map(|(_, _, value)| value.trim().to_owned())
             .filter(|s| !s.is_empty())
     }
 

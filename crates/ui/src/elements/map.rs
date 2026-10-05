@@ -463,6 +463,7 @@ pub struct Marker {
 }
 
 /// A file the Map view places: where, its name, and a track's line.
+#[derive(Clone)]
 pub struct Place {
     pub entry: EntryId,
     pub at: LatLon,

@@ -120,9 +120,13 @@ fn open(args: OpenArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
             .into_iter()
             .filter(|id| p.location_of(*id).is_none())
             .filter_map(|id| {
-                let kind = p.entry(id)?.kind;
+                let entry = p.entry(id)?;
                 let path = p.path_of(id)?;
-                Some(Target { path, kind })
+                Some(Target {
+                    path,
+                    kind: entry.kind,
+                    entry: Some(entry.clone()),
+                })
             })
             .collect();
         (targets, places, p.location_lifetime())
@@ -139,6 +143,7 @@ fn open(args: OpenArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
             Target {
                 kind: EntryKind::Directory,
                 path,
+                ..
             },
         ] => {
             app.navigate(pane, &Location::from_path(path))?;
@@ -151,6 +156,7 @@ fn open(args: OpenArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
             Target {
                 kind: EntryKind::Symlink | EntryKind::Unknown,
                 path,
+                ..
             },
         ] => {
             let path = path.clone();
@@ -194,6 +200,24 @@ fn launch_defaults(app: &App, cache: &Cached, targets: Vec<Target>) {
     let mut runs: Vec<(&Application, Vec<PathBuf>)> = Vec::new();
     let mut rest: Vec<PathBuf> = Vec::new();
     for target in targets {
+        // A pipe, a socket or a device is never opened: a pipe would wait
+        // for a writer, a device may act.
+        if target
+            .entry
+            .as_ref()
+            .is_some_and(|e| e.opens().is_special())
+        {
+            let name = target
+                .path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy();
+            app.notify(
+                NotifyLevel::Info,
+                format!("“{name}” is not a file: bibli does not open it"),
+            );
+            continue;
+        }
         let lineage = mime::lineage(&target.mime());
         match catalog.default_for_lineage(&lineage) {
             Some(application) => match runs.iter_mut().find(|(a, _)| a.id == application.id) {
@@ -335,18 +359,16 @@ fn menu(pane: Option<PaneId>, cache: &Cached, app: &App) -> anyhow::Result<Outco
     if !defaults.all(|d| d.is_some_and(|d| d.id == default.id)) {
         return nothing();
     }
-    let item = MenuItem {
-        menu: "context".into(),
-        title: format!("Open With {}", default.name),
-        command: Invocation::with_args(
+    let item = MenuItem::new(
+        "context",
+        format!("Open With {}", default.name),
+        "open",
+        0,
+        Invocation::with_args(
             "open_with",
             &serde_json::json!({ "app": default.id, "pane": pane }),
         ),
-        when: None,
-        order: 0,
-        icon: Some("open".into()),
-        submenu: None,
-    };
+    );
     Ok(Outcome::Value(serde_json::json!({ "items": [item] })))
 }
 
@@ -399,11 +421,12 @@ struct EditArgs {
     undo: bool,
 }
 
-/// What is opened: a path, and whether it is known to be a folder (a link
-/// or an entry of unknown kind is asked when its type is).
+/// What is opened: a path, what is known of it, and the entry it is
+/// (none for the folder a pane shows, which is opened as a folder).
 struct Target {
     path: PathBuf,
     kind: EntryKind,
+    entry: Option<bibli_core::Entry>,
 }
 
 /// The pane the targets are in, the entries named (for the command a
@@ -416,6 +439,7 @@ fn targets(args: TargetArgs, app: &App) -> anyhow::Result<(PaneId, Vec<EntryId>,
         let target = Target {
             path,
             kind: EntryKind::Directory,
+            entry: None,
         };
         return Ok((pane, Vec::new(), vec![target]));
     }
@@ -439,6 +463,7 @@ fn targets(args: TargetArgs, app: &App) -> anyhow::Result<(PaneId, Vec<EntryId>,
         targets.push(Target {
             path,
             kind: entry.kind,
+            entry: Some(entry.clone()),
         });
     }
     drop(ws);
@@ -447,14 +472,13 @@ fn targets(args: TargetArgs, app: &App) -> anyhow::Result<(PaneId, Vec<EntryId>,
 }
 
 impl Target {
-    /// Reads the head of a file, and follows a link: call from a worker.
+    /// What the entry is (a pipe is `inode/fifo`, never read), else what
+    /// it opens says; reads the head of a file: call from a worker.
     fn mime(&self) -> Mime {
-        let is_dir = match self.kind {
-            EntryKind::Directory => true,
-            EntryKind::Symlink | EntryKind::Unknown => self.path.is_dir(),
-            _ => false,
-        };
-        bibli_platform::apps::type_of(&self.path, is_dir)
+        match &self.entry {
+            Some(entry) => bibli_platform::apps::type_of(entry, &self.path),
+            None => Mime("inode/directory".into()),
+        }
     }
 }
 
@@ -709,12 +733,7 @@ fn apply_edit(app: &App, cache: &Cached, edit: &AssociationEdit, undo: bool) {
                 (None, _) => format!("No application opens {files}"),
             };
             match changed {
-                Some(inverse) => app.notify_with_action(
-                    NotifyLevel::Info,
-                    text,
-                    if undo { "Redo" } else { "Undo" },
-                    edit_invocation(&inverse, !undo),
-                ),
+                Some(inverse) => app.notify_undoable(text, undo, edit_invocation(&inverse, !undo)),
                 None => app.notify(NotifyLevel::Info, text),
             }
         }
@@ -787,27 +806,18 @@ impl Plugin for OpenWithPlugin {
         );
         app.registry.menus.add(
             ID,
-            MenuItem {
-                menu: "context".into(),
-                title: "Open".into(),
-                command: Invocation::new("open"),
-                when: Some("selection".into()),
-                order: 0,
-                icon: Some("open".into()),
-                submenu: None,
-            },
+            MenuItem::new("context", "Open", "open", 0, Invocation::new("open")).when("selection"),
         );
         app.registry.menus.add(
             ID,
-            MenuItem {
-                menu: "context".into(),
-                title: "Open Terminal Here".into(),
-                command: Invocation::new("open_terminal"),
-                when: Some("selection|folder !place".into()),
-                order: 10,
-                icon: Some("command".into()),
-                submenu: None,
-            },
+            MenuItem::new(
+                "context",
+                "Open Terminal Here",
+                "command",
+                10,
+                Invocation::new("open_terminal"),
+            )
+            .when("selection|folder !place"),
         );
         let cache = Arc::clone(&self.catalog);
         app.commands.register::<TargetArgs, _>(
@@ -868,27 +878,25 @@ impl Plugin for OpenWithPlugin {
         );
         app.registry.menus.add(
             ID,
-            MenuItem {
-                menu: "context".into(),
-                title: "Open With…".into(),
-                command: choose(&serde_json::json!({})),
-                when: Some("selection !place".into()),
-                order: 1,
-                icon: Some("open".into()),
-                submenu: None,
-            },
+            MenuItem::new(
+                "context",
+                "Open With…",
+                "open",
+                1,
+                choose(&serde_json::json!({})),
+            )
+            .when("selection !place"),
         );
         app.registry.menus.add(
             ID,
-            MenuItem {
-                menu: "context".into(),
-                title: "Open Folder With…".into(),
-                command: choose(&serde_json::json!({ "here": true })),
-                when: Some("empty folder".into()),
-                order: 11,
-                icon: Some("open".into()),
-                submenu: None,
-            },
+            MenuItem::new(
+                "context",
+                "Open Folder With…",
+                "open",
+                11,
+                choose(&serde_json::json!({ "here": true })),
+            )
+            .when("empty folder"),
         );
         let cache = Arc::clone(&self.catalog);
         app.commands.register::<PaneArg, _>(
@@ -960,6 +968,32 @@ mod tests {
             root,
             "a selected file does not change the target"
         );
+    }
+
+    /// A socket (as a pipe or a device) is what it is whatever its name
+    /// says: typed by its kind, never read, so no image viewer is offered.
+    #[test]
+    fn a_socket_named_like_a_picture_is_typed_by_its_kind() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let _socket = std::os::unix::net::UnixListener::bind(root.join("x.png")).unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&root)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        let id = {
+            let ws = app.workspace.read();
+            let p = ws.pane(pane).unwrap();
+            p.listing.find_by_name("x.png".as_ref()).unwrap().id
+        };
+        let args = TargetArgs {
+            pane: Some(pane),
+            ids: vec![id],
+            here: false,
+        };
+        let (_, _, targets) = targets(args, &app).unwrap();
+        assert_eq!(targets[0].mime(), Mime("inode/socket".into()));
     }
 
     #[test]

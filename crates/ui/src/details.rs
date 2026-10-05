@@ -9,7 +9,6 @@
 //! changes (`entry_groups`); what the preview already holds in memory (a
 //! picture's size, a document's pages, a film's length); and what the format
 //! itself told us (`Inspection::details`). Details never starts a scan.
-use std::time::SystemTime;
 
 use bibli_core::command::Invocation;
 use bibli_core::entry::{Entry, Provenance, Value, keys};
@@ -93,18 +92,6 @@ fn group(title: &'static str, rows: Vec<Row>) -> Option<Group> {
     })
 }
 
-/// Seconds too: Details is where the exact value is.
-fn exact_time(t: SystemTime) -> String {
-    jiff::Timestamp::try_from(t).map_or_else(
-        |_| "—".into(),
-        |ts| {
-            ts.to_zoned(jiff::tz::TimeZone::system())
-                .strftime("%Y-%m-%d %H:%M:%S")
-                .to_string()
-        },
-    )
-}
-
 fn text_of(value: &Value) -> String {
     match value {
         Value::Bool(v) => if *v { "Yes" } else { "No" }.into(),
@@ -112,7 +99,7 @@ fn text_of(value: &Value) -> String {
         Value::UInt(v) => v.to_string(),
         Value::Float(v) => format!("{v:.3}"),
         Value::Text(v) => v.to_string(),
-        Value::Time(v) => exact_time(*v),
+        Value::Time(v) => crate::format::exact_time(*v),
         Value::List(items) => items.iter().map(text_of).collect::<Vec<_>>().join(", "),
     }
 }
@@ -178,7 +165,7 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Op
     let meta = &entry.metadata;
     let text = |key| meta.value(key).and_then(Value::as_str).map(str::to_owned);
     let target = serde_json::json!([EntryRef::new(entry.id, path)]);
-    let (valued, tags): (Vec<String>, Vec<String>) = crate::views::list::tags_of(entry)
+    let (valued, tags): (Vec<String>, Vec<String>) = crate::tags::tags_of(entry)
         .into_iter()
         .partition(|t| bibli_core::metadata::exclusive_category(t, fields).is_some());
     let field_rows: Vec<Row> = valued
@@ -230,7 +217,7 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Op
     let mut ask = serde_json::json!({
         "title": "Comment",
         "placeholder": "A comment on this item (empty removes it)",
-        "command": "tags.comment",
+        "command": "notes.comment",
         "field": "text",
         "args": { "entries": target },
     });
@@ -298,7 +285,7 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Op
     if !differ.is_empty() {
         rows.push(Row::new("Differs in", differ.join("; ")).action(
             "Make them agree",
-            Invocation::with_args("tags.agree", &serde_json::json!({ "entries": target })),
+            Invocation::with_args("notes.agree", &serde_json::json!({ "entries": target })),
         ));
     }
     [group("Notes", rows), group("Source", source)]
@@ -375,7 +362,7 @@ pub fn entry_groups(entry: &Entry, path: &std::path::Path, notes: Option<&[Strin
         ("Accessed", keys::ACCESSED),
     ]
     .into_iter()
-    .filter_map(|(label, key)| Some(Row::new(label, exact_time(time(key)?))))
+    .filter_map(|(label, key)| Some(Row::new(label, crate::format::exact_time(time(key)?))))
     .collect();
 
     // Whatever else a plugin or the user attached: tags, ratings, suggestions.
@@ -549,7 +536,7 @@ fn star_picker(
                 .on_click(cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();
                     this.run(
-                        "tags.rate",
+                        "notes.rate",
                         serde_json::json!({ "stars": stars, "entries": [target] }),
                         window,
                         cx,

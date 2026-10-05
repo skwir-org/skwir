@@ -127,6 +127,10 @@ pub struct App {
     proposals: parking_lot::Mutex<Vec<Plan>>,
     /// Messages from background work for the UI to show.
     notifications: parking_lot::Mutex<Vec<Notification>>,
+    /// Commands the window carries out (`ui.*`), dispatched from elsewhere
+    /// (an agent, a script): they wait for it, which takes them when it
+    /// next wakes (`take_front_requests`).
+    front: parking_lot::Mutex<Vec<Invocation>>,
     /// The tabs closed last, to reopen (`tab.reopen`).
     pub(crate) closed_tabs: parking_lot::Mutex<crate::tabs::Closed>,
     /// Self reference so background work can keep a `Weak<App>`.
@@ -150,6 +154,10 @@ impl App {
         };
         let cache = Cache::new(config.cache_root);
         let fields = Arc::new(crate::fields::Fields::new(cache.namespace("fields")));
+        // One gate for every store a plugin publishes in: a disabled
+        // plugin's worker publishing late is refused everywhere.
+        let registry = Registry::default();
+        let gate = registry.gate();
         let app = Arc::new_cyclic(|weak| App {
             weak: weak.clone(),
             notifications: parking_lot::Mutex::new(Vec::new()),
@@ -159,25 +167,26 @@ impl App {
                 scheduler.clone(),
                 lifetime.child(),
             ),
-            metadata: Arc::new(crate::metadata::MetadataProviders::default()),
+            metadata: Arc::new(crate::metadata::MetadataProviders::gated(Arc::clone(&gate))),
             fields,
-            hints: Arc::new(crate::hints::Hints::default()),
+            hints: Arc::new(crate::hints::Hints::gated(Arc::clone(&gate))),
             notes: Arc::new(crate::notes::NoteStores::default()),
-            companions: Arc::new(crate::companions::Companions::default()),
+            companions: Arc::new(crate::companions::Companions::gated(Arc::clone(&gate))),
             previews: Arc::new(crate::preview::Previews::default()),
             tiles: Arc::new(crate::tiles::Tiles::default()),
             proposals: parking_lot::Mutex::new(Vec::new()),
+            front: parking_lot::Mutex::new(Vec::new()),
             scheduler,
             commands: CommandRegistry::default(),
             ops: OpRegistry::default(),
-            registry: Registry::default(),
+            registry,
             plugins: PluginHost::default(),
             settings,
             cache,
             workspace: RwLock::new(Workspace::default()),
-            pending: crate::pending::PendingTransfer::default(),
-            player: crate::playing::Player::default(),
-            tallies: crate::tally::Tallies::default(),
+            pending: crate::pending::PendingTransfer::gated(Arc::clone(&gate)),
+            player: crate::playing::Player::gated(Arc::clone(&gate)),
+            tallies: crate::tally::Tallies::gated(gate),
             terminals: crate::terminal::Terminals::default(),
             providers: RwLock::new(HashMap::new()),
             waker: Arc::default(),
@@ -188,21 +197,24 @@ impl App {
         op::register_builtin(&app.ops);
         {
             let notes = Arc::clone(&app.notes);
-            app.ops.register_with("core", "set_notes", move |v| {
-                let edit: crate::notes::SetNotes = serde_json::from_value(v)?;
-                Ok(Box::new(edit.with_stores(Arc::clone(&notes))))
-            });
+            app.ops
+                .register_with("core", crate::notes::SetNotes::KIND, move |v| {
+                    let edit: crate::notes::SetNotes = serde_json::from_value(v)?;
+                    Ok(Box::new(edit.with_stores(Arc::clone(&notes))))
+                });
             let notes = Arc::clone(&app.notes);
-            app.ops.register_with("core", "restore_notes", move |v| {
-                let undo: crate::notes::RestoreNotes = serde_json::from_value(v)?;
-                Ok(Box::new(undo.with_stores(Arc::clone(&notes))))
-            });
+            app.ops
+                .register_with("core", crate::notes::RestoreNotes::KIND, move |v| {
+                    let undo: crate::notes::RestoreNotes = serde_json::from_value(v)?;
+                    Ok(Box::new(undo.with_stores(Arc::clone(&notes))))
+                });
             app.notes.keep_snapshots(app.cache.namespace("notes"));
             app.executor.set_companions(Arc::clone(&app.companions));
         }
         builtin::register(&app);
+        crate::notes::commands::register(&app);
         crate::tabs::register(&app);
-        crate::keymap::declare(&app.settings);
+        crate::keymap::declare(&app.settings, app.weak());
         crate::settings::register(&app);
         crate::plugin::register(&app);
         crate::playing::register(&app);
@@ -418,6 +430,12 @@ impl App {
         self.provider(&location.scheme)?.icon(location)
     }
 
+    /// Whether `location` is a search (`LocationProvider::searches`).
+    pub fn is_search(&self, location: &Location) -> bool {
+        self.provider(&location.scheme)
+            .is_some_and(|provider| provider.searches(location))
+    }
+
     /// What a pane showing `location` says when it lists nothing
     /// (`LocationProvider::empty_state`).
     pub fn empty_state(&self, location: &Location) -> Option<crate::location::EmptyState> {
@@ -441,12 +459,35 @@ impl App {
             .unwrap_or_default()
     }
 
-    /// The places inside `location`, for the trail's menus. Asks the
-    /// provider, which may read: on a worker.
-    pub fn places_in(&self, location: &Location) -> Vec<crate::location::Crumb> {
-        self.provider(&location.scheme)
+    /// What is inside `location`, for the trail's menus: a folder's
+    /// folders (hidden ones with `hidden`), else the places its provider
+    /// says. One answer for both, so the menus list them one way. Reads:
+    /// on a worker.
+    ///
+    /// # Errors
+    /// When a folder cannot be read.
+    pub fn places_in(
+        &self,
+        location: &Location,
+        hidden: bool,
+    ) -> std::io::Result<Vec<crate::location::Crumb>> {
+        if let Some(dir) = location.path() {
+            return Ok(crate::fs::subfolders(&dir, hidden)?
+                .into_iter()
+                .map(|dir| {
+                    let name = dir
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned();
+                    crate::location::Crumb::new(name, Location::from_path(dir))
+                })
+                .collect());
+        }
+        Ok(self
+            .provider(&location.scheme)
             .map(|provider| provider.places(location))
-            .unwrap_or_default()
+            .unwrap_or_default())
     }
 
     /// Open a location in a pane, replacing what it showed. Returns immediately;
@@ -568,6 +609,18 @@ impl App {
         self.executor.execute_whole(plan, self.lifetime.child());
     }
 
+    /// Leave a command the window carries out (`ui.*`) for it, and wake
+    /// it: how one dispatched from elsewhere reaches the window.
+    pub fn request_front(&self, inv: Invocation) {
+        self.front.lock().push(inv);
+        self.wake();
+    }
+
+    /// The window's commands asked for since the last call, oldest first.
+    pub fn take_front_requests(&self) -> Vec<Invocation> {
+        std::mem::take(&mut *self.front.lock())
+    }
+
     /// Offer a plan for the user to review. Never applies anything; wakes the UI.
     pub fn propose(&self, plan: Plan) {
         self.proposals.lock().push(plan);
@@ -622,6 +675,19 @@ impl App {
         self.wake();
     }
 
+    /// Say what a user's edit did, with `inverse` as its Undo, or its Redo
+    /// when the edit was itself an undo (`undo`): how an edit made outside a
+    /// plan answers (a bookmark, a saved search, a pinned tag, a default
+    /// application), `inverse` carrying `!undo` for the next turn.
+    pub fn notify_undoable(&self, text: impl Into<String>, undo: bool, inverse: Invocation) {
+        self.notify_with_action(
+            NotifyLevel::Info,
+            text,
+            if undo { "Redo" } else { "Undo" },
+            inverse,
+        );
+    }
+
     /// Like [`App::notify`], pointing at the setting that fixes the problem.
     pub fn notify_about_setting(&self, level: NotifyLevel, text: impl Into<String>, key: &str) {
         self.notifications.lock().push(Notification {
@@ -638,22 +704,37 @@ impl App {
         std::mem::take(&mut *self.notifications.lock())
     }
 
+    /// What a command acts on: the entries it names (a surface acting on
+    /// what it showed: Details, the tag editor), else the selection of
+    /// `pane`, the active one when `None`. None at all is
+    /// [`NothingSelected`](crate::command::NothingSelected), which a
+    /// surface answers as the hint it is.
+    pub fn targets(
+        &self,
+        pane: Option<PaneId>,
+        entries: Vec<EntryRef>,
+    ) -> Result<Vec<EntryRef>, crate::command::NothingSelected> {
+        let entries = if entries.is_empty() {
+            self.selected_refs(self.pane_or_active(pane))
+        } else {
+            entries
+        };
+        if entries.is_empty() {
+            Err(crate::command::NothingSelected)
+        } else {
+            Ok(entries)
+        }
+    }
+
     /// Entry references for the current selection of a pane, in selection order.
     pub fn selected_refs(&self, pane: PaneId) -> Vec<EntryRef> {
-        let Some((open, ids)) = self.with_open(pane, |p| {
-            p.selection
-                .iter()
-                .map(|id| (id, p.opened_path(id)))
-                .collect::<Vec<_>>()
-        }) else {
+        let ws = self.workspace.read();
+        let Some(p) = ws.pane(pane) else {
             return Vec::new();
         };
-        ids.into_iter()
-            .filter_map(|(id, opened)| {
-                opened
-                    .or_else(|| open.path_of(id))
-                    .map(|path| EntryRef::new(id, path))
-            })
+        p.selection
+            .iter()
+            .filter_map(|id| Some(EntryRef::new(id, p.path_of(id)?)))
             .collect()
     }
 
@@ -664,24 +745,18 @@ impl App {
     /// link that leads nowhere). A worker holding only a path asks
     /// `fs::content_path`.
     pub fn selected_typed(&self, pane: PaneId) -> Vec<(EntryRef, Option<std::ffi::OsString>)> {
-        let Some((open, ids)) = self.with_open(pane, |p| {
-            p.selection
-                .iter()
-                .map(|id| {
-                    let type_name = p
-                        .entry(id)
-                        .map(|e| e.inode_type().is_none().then(|| e.type_name().to_owned()));
-                    (id, p.opened_path(id), type_name)
-                })
-                .collect::<Vec<_>>()
-        }) else {
+        let ws = self.workspace.read();
+        let Some(p) = ws.pane(pane) else {
             return Vec::new();
         };
-        ids.into_iter()
-            .filter_map(|(id, opened, type_name)| {
-                let path = opened.or_else(|| open.path_of(id))?;
-                let type_name = type_name
-                    .unwrap_or_else(|| path.file_name().map(std::ffi::OsStr::to_os_string));
+        p.selection
+            .iter()
+            .filter_map(|id| {
+                let path = p.path_of(id)?;
+                let type_name = match p.entry(id) {
+                    Some(e) => e.inode_type().is_none().then(|| e.type_name().to_owned()),
+                    None => path.file_name().map(std::ffi::OsStr::to_os_string),
+                };
                 Some((EntryRef::new(id, path), type_name))
             })
             .collect()
@@ -717,30 +792,27 @@ impl App {
     /// their directories on a worker, a moment later; a dormant pane holds
     /// nothing.
     pub fn release(&self, path: &Path, to: &Location) -> anyhow::Result<()> {
+        // Whatever its scheme: a trashed folder there is listed by the
+        // folder's own listing (`OpenLocation::holds`).
         let showing: Vec<PaneId> = self
             .workspace
             .read()
             .panes()
             .iter()
             .filter(|p| {
-                p.location()
-                    .and_then(Location::path)
-                    .is_some_and(|shown| shown.starts_with(path))
+                p.open
+                    .as_ref()
+                    .and_then(|open| open.holds())
+                    .is_some_and(|held| held.starts_with(path))
             })
             .map(|p| p.id)
             .collect();
         for pane in showing {
             self.navigate(pane, to)?;
         }
-        let released: Vec<_> = self
-            .workspace
-            .write()
-            .panes_mut()
-            .iter_mut()
-            .flat_map(|p| p.release_under(path))
-            .collect();
-        // Closed here, outside the lock: closing runs the location's code.
-        drop(released);
+        for p in self.workspace.write().panes_mut() {
+            p.release_under(path);
+        }
         self.wake();
         Ok(())
     }
@@ -792,9 +864,9 @@ impl App {
             .ok_or_else(|| anyhow::anyhow!("select something, or open a folder"))
     }
 
-    /// A pane's open location and a snapshot taken with it, outside the
-    /// workspace lock: the location's methods are plugin code that may
-    /// take other locks, send and wake.
+    /// A pane's open location and a snapshot taken with it, for what is
+    /// asked of it without the workspace lock (`refresh`, `hydrate`: see
+    /// `OpenLocation`).
     fn with_open<T>(
         &self,
         pane: PaneId,
@@ -1040,7 +1112,7 @@ mod builtin {
                 let keeper = app
                     .registry
                     .keepers
-                    .find(|k| *k.scheme == *location.scheme)
+                    .find(|k| k.keeps(&location))
                     .ok_or_else(|| anyhow::anyhow!("this location cannot be kept in the sidebar"))?;
                 let mut save = keeper.save;
                 if !save.args.is_object() {
@@ -1385,31 +1457,22 @@ mod builtin {
                     app.collapse_all(pane);
                     return Ok(Outcome::Done);
                 }
-                // Which of them are folders or places, and where they
-                // lead: the shown location's own folders are asked outside
-                // the lock.
-                let Some((open, folders)) = app.with_open(pane, |p| {
+                // Which of them are folders or places, and where they lead.
+                let leads: Vec<(EntryId, Location)> = {
+                    let ws = app.workspace.read();
+                    let p = ws
+                        .pane(pane)
+                        .filter(|p| p.open.is_some())
+                        .ok_or_else(|| anyhow::anyhow!("the pane shows nothing"))?;
                     let ids: Vec<EntryId> = if a.ids.is_empty() {
                         p.selection.iter().collect()
                     } else {
                         a.ids.clone()
                     };
                     ids.into_iter()
-                        .filter(|id| p.entry(*id).is_some_and(crate::Entry::is_dir))
-                        .map(|id| (id, p.location_of(id), p.opened_path(id)))
-                        .collect::<Vec<_>>()
-                }) else {
-                    anyhow::bail!("the pane shows nothing");
+                        .filter_map(|id| Some((id, p.leads_to(id)?)))
+                        .collect()
                 };
-                let leads: Vec<(EntryId, Location)> = folders
-                    .into_iter()
-                    .filter_map(|(id, place, opened)| {
-                        let location = place.or_else(|| {
-                            opened.or_else(|| open.path_of(id)).map(Location::from_path)
-                        })?;
-                        Some((id, location))
-                    })
-                    .collect();
                 if leads.is_empty() {
                     return Err(crate::command::NothingSelected.into());
                 }
@@ -1564,11 +1627,21 @@ mod builtin {
             "core",
             "new_file",
             "New file",
-            "Create an empty file in the current directory (plan)",
+            "Create an empty file in the current directory (plan); a name ending in / makes a folder",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let dir = app.pane_dir(pane)?;
                 let name = a.name.into_inner().into_os_string();
+                // A name ending in `/` is a folder, as yazi makes one.
+                if let Some(folder) = name.to_str().and_then(|n| n.strip_suffix('/')) {
+                    op::valid_file_name(std::ffi::OsStr::new(folder))?;
+                    return Ok(Outcome::Plan(Plan::with_steps(
+                        format!("new folder {folder}"),
+                        vec![Box::new(op::Mkdir {
+                            path: dir.join(folder),
+                        })],
+                    )));
+                }
                 op::valid_file_name(&name)?;
                 Ok(Outcome::Plan(Plan::with_steps(
                     format!("new file {}", name.display()),

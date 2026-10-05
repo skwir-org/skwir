@@ -9,7 +9,9 @@
 //! acted on as the list's rows; at most `MAX_COLUMNS` are. A column
 //! emptied stays while the board shows the place (a tag no file has is
 //! no tag: it would vanish under the card dragged out of it), to take
-//! cards back.
+//! cards back. The keys move along a column (Up, Down, the pages, Home,
+//! End) and across to the card at the same height (Left, Right), each a
+//! move in the pane's order, so Shift extends the selection as anywhere.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -18,14 +20,13 @@ use std::sync::Arc;
 
 use bibli_core::command::Invocation;
 use bibli_core::thumbs::ThumbSize;
-use bibli_core::workspace::PaneId;
 use bibli_core::{EntryId, Location};
 use gpui::{
-    AnyElement, Context, ExternalPaths, ScrollStrategy, UniformListScrollHandle, Window, div, img,
-    prelude::*, px, uniform_list,
+    AnyElement, Context, ExternalPaths, ScrollHandle, ScrollStrategy, UniformListScrollHandle,
+    Window, div, img, prelude::*, px, uniform_list,
 };
 
-use crate::dnd::{self, DragPreview};
+use crate::dnd;
 use crate::shell::Shell;
 use crate::theme::Theme;
 use crate::thumbs::ThumbView;
@@ -36,14 +37,6 @@ pub const MAX_COLUMNS: usize = 12;
 const COLUMN_W: f32 = 240.0;
 const CARD_H: f32 = 48.0;
 const PICTURE: f32 = 36.0;
-
-/// What a card dragged carries: its pane, and the column it leaves, so a
-/// drop on another column moves it from that one.
-#[derive(Clone, Debug)]
-pub struct BoardDrag {
-    pub pane: PaneId,
-    pub from: Location,
-}
 
 /// One column: what it lists, where it leads, and its cards.
 struct Column {
@@ -63,15 +56,30 @@ pub struct BoardView {
     /// The listing and the columns asked to open, so each is asked once.
     asked: Option<(u64, Vec<EntryId>)>,
     scrolls: HashMap<Location, UniformListScrollHandle>,
+    /// The row of columns, scrolled sideways.
+    row: ScrollHandle,
     /// The columns drawn last, by their entry and location, with their
     /// cards: where the keys move.
     drawn: Vec<(Option<EntryId>, Location, Arc<[EntryId]>)>,
+    /// The pane's order when last drawn, to find the card at an index.
+    order: Arc<[EntryId]>,
     /// Every column shown since the board showed this place: one emptied
     /// is still drawn, empty, to take cards back.
     seen: Vec<(String, Location, Option<PathBuf>, Option<usize>)>,
 }
 
 impl BoardView {
+    /// The column drawn holding `id`, and its card there; `None` for the
+    /// card when `id` is the column's own entry.
+    fn find(&self, id: EntryId) -> Option<(usize, Option<usize>)> {
+        self.drawn.iter().enumerate().find_map(|(k, (at, _, ids))| {
+            match ids.iter().position(|card| *card == id) {
+                Some(card) => Some((k, Some(card))),
+                None => (*at == Some(id)).then_some((k, None)),
+            }
+        })
+    }
+
     /// The columns of the place `shell` shows, and those not open yet;
     /// those it showed and that went, empty.
     fn columns(&mut self, shell: &Shell) -> (Vec<Column>, Vec<EntryId>, u64) {
@@ -161,15 +169,11 @@ impl BoardView {
 }
 
 /// What a card shows, read under the workspace lock.
+/// A card: what every view draws of its entry, and where it is in the
+/// pane's order (`Pane::order`), which the tree and the board share.
 struct Card {
-    id: EntryId,
     ix: Option<usize>,
-    name: String,
-    selected: bool,
-    cursor: bool,
-    icon: Option<Arc<std::path::Path>>,
-    picture: Option<(bibli_core::op::EntryRef, Option<std::time::SystemTime>)>,
-    tags: Vec<(String, usize)>,
+    look: crate::views::entry::Look,
 }
 
 fn column(
@@ -183,17 +187,16 @@ fn column(
     let pane = shell.pane;
     let scroll = view.scrolls.get(&c.location).cloned().unwrap_or_default();
     let ids = Arc::clone(&c.ids);
-    let from = c.location.clone();
     let list = uniform_list(
         ("board-column", k),
         ids.len(),
         cx.processor(move |this: &mut Shell, range: Range<usize>, window, cx| {
             this.with_pane(pane, |this| {
                 let theme = cx.global::<Theme>().clone();
-                let cards = cards(this, &ids[range], window, cx);
+                let cards = cards(this, &ids[range]);
                 cards
                     .into_iter()
-                    .map(|card| card_element(this, &card, &from, &theme, window, cx))
+                    .map(|card| card_element(this, &card, &theme, window, cx))
                     .collect::<Vec<_>>()
             })
         }),
@@ -201,7 +204,7 @@ fn column(
     .track_scroll(scroll.clone())
     .size_full();
     let count = c.ids.len();
-    let tone = c.color.map(|color| theme.tags[color % theme.tags.len()]);
+    let tone = c.color.map(|color| theme.tag(color));
     let header = div()
         .flex_none()
         .h(px(32.))
@@ -236,23 +239,9 @@ fn column(
                 crate::elements::scrollbar::Scrolls::Offset(scroll.0.borrow().base_handle.clone()),
             ),
         ));
-    // A card from another column moves here; files from elsewhere come in
-    // as they come in a folder or a tag.
-    let (tint, edge) = (theme.drop_target, theme.accent);
-    let target = c.location.clone();
-    let dir = c.path.clone();
-    col = col
-        .drag_over::<BoardDrag>(move |s, _, _, _| s.bg(tint).border_color(edge))
-        .on_drop(cx.listener(move |this, drag: &BoardDrag, window, cx| {
-            cx.stop_propagation();
-            if drag.from == target {
-                return;
-            }
-            match &dir {
-                Some(dir) => this.drop_into(drag.pane, dir, window, cx),
-                None => this.move_on_board(drag, &target, window, cx),
-            }
-        }));
+    // A card from another column moves here (`drop_on_place` tells the
+    // column it leaves), files from elsewhere come in as they come in a
+    // folder or a tag.
     col = match c.path {
         Some(dir) => dnd::droppable_dir(col, dir, cx),
         None => dnd::droppable_place(col, c.location, cx),
@@ -261,12 +250,7 @@ fn column(
 }
 
 /// What the cards of `ids` show, read under the lock.
-fn cards(
-    shell: &mut Shell,
-    ids: &[EntryId],
-    _window: &mut Window,
-    _cx: &mut Context<Shell>,
-) -> Vec<Card> {
+fn cards(shell: &mut Shell, ids: &[EntryId]) -> Vec<Card> {
     let index: HashMap<EntryId, usize> = shell
         .ui()
         .list
@@ -281,92 +265,62 @@ fn cards(
     let Some(pane) = ws.pane(shell.pane) else {
         return Vec::new();
     };
-    let out = ids
+    let out: Vec<Card> = ids
         .iter()
         .filter_map(|&id| {
-            let e = pane.entry(id)?;
-            let picture = (!e.is_dir())
-                .then(|| bibli_platform::mime::of_entry(e))
-                .flatten()
-                .filter(|m| bibli_platform::mime::is_kind(m, bibli_platform::mime::Kind::Image))
-                .and_then(|_| pane.path_of(id))
-                .map(|path| {
-                    (
-                        bibli_core::op::EntryRef::new(id, path),
-                        e.metadata
-                            .value(bibli_core::entry::keys::MODIFIED)
-                            .and_then(bibli_core::Value::as_time),
-                    )
-                });
             Some(Card {
-                id,
                 ix: index.get(&id).copied(),
-                name: e.name_str().into_owned(),
-                selected: pane.selection.contains(id),
-                cursor: pane.selection.cursor == Some(id),
-                icon: shell.icons.for_entry(e, PICTURE as u16),
-                picture,
-                tags: crate::tags::entry_tags(e, &shell.tag_colors),
+                look: shell.look(pane, id, PICTURE as u16)?,
             })
         })
         .collect();
     drop(ws);
     // What the cards lack is read in a batch, as the list does.
-    let need: Vec<EntryId> = ids
-        .iter()
-        .copied()
-        .filter(|id| {
-            app.workspace
-                .read()
-                .pane(shell.pane)
-                .and_then(|p| p.entry(*id))
-                .is_some_and(|e| !e.metadata.is_hydrated())
-        })
-        .collect();
-    shell.request_hydrate(need);
+    shell.request_hydrate(ids.to_vec());
     shell.icons.request(&app);
     out
 }
 
+/// A card: its picture (a thumbnail of every kind the grid draws one of,
+/// else its icon), its name and its tags, drawn and acting as every view's
+/// entries do (`views::entry`).
 fn card_element(
     shell: &mut Shell,
     card: &Card,
-    from: &Location,
     theme: &Theme,
     window: &mut Window,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
-    let pane = shell.pane;
-    let picture: AnyElement = match &card.picture {
-        Some((entry, mtime)) => {
-            match shell.thumb_of(entry.clone(), *mtime, ThumbSize::Normal, window, cx) {
-                ThumbView::Ready(ri) => div()
-                    .size(px(PICTURE))
-                    .flex_none()
-                    .overflow_hidden()
-                    .rounded_sm()
-                    .child(img(ri).size_full().object_fit(gpui::ObjectFit::Cover))
-                    .into_any_element(),
-                _ => div()
-                    .size(px(PICTURE))
-                    .flex_none()
-                    .rounded_sm()
-                    .bg(theme.placeholder)
-                    .into_any_element(),
-            }
-        }
-        None => match &card.icon {
-            Some(icon) => crate::icons::element(icon, PICTURE),
-            None => div()
+    let look = &card.look;
+    let thumb = if look.is_dir {
+        ThumbView::Unavailable
+    } else {
+        shell.thumb(look.id, ThumbSize::Normal, window, cx)
+    };
+    let picture: AnyElement = match thumb {
+        ThumbView::Ready(ri) => crate::icons::marked(
+            div()
                 .size(px(PICTURE))
                 .flex_none()
+                .overflow_hidden()
                 .rounded_sm()
-                .bg(theme.text_muted)
+                .child(img(ri).size_full().object_fit(gpui::ObjectFit::Cover))
                 .into_any_element(),
-        },
+            PICTURE,
+            look.mark(),
+            theme,
+        ),
+        ThumbView::Pending => div()
+            .size(px(PICTURE))
+            .flex_none()
+            .rounded_sm()
+            .bg(theme.placeholder)
+            .into_any_element(),
+        ThumbView::Unavailable => look.picture(PICTURE, theme),
     };
-    let mut el = div()
-        .id(("card", card.id.ino as usize ^ card.id.dev as usize))
+    let el = div()
+        .id(("card", look.id.ino as usize ^ look.id.dev as usize))
+        .relative()
         .h(px(CARD_H))
         .flex_1()
         .min_w_0()
@@ -376,18 +330,18 @@ fn card_element(
         .gap_2()
         .rounded_md()
         .border_1()
-        .border_color(if card.cursor {
+        .border_color(if look.cursor {
             theme.accent
         } else {
             theme.border
         })
-        .bg(if card.selected {
+        .bg(if look.selected {
             theme.selection_bg
         } else {
             theme.surface
         })
-        .when(card.selected, |d| d.text_color(theme.selection_text))
-        .when(!card.selected, |d| d.hover(|s| s.bg(theme.hover)))
+        .when(look.selected, |d| d.text_color(theme.selection_text))
+        .when(!look.selected, |d| d.hover(|s| s.bg(theme.hover)))
         .child(picture)
         .child(
             div()
@@ -395,28 +349,27 @@ fn card_element(
                 .min_w_0()
                 .flex()
                 .flex_col()
-                .child(div().truncate().text_sm().child(card.name.clone()))
-                .child(
-                    div().flex().gap_1().overflow_hidden().children(
-                        card.tags
-                            .iter()
-                            .take(3)
-                            .map(|(tag, color)| crate::tags::chip(tag, *color, theme)),
-                    ),
-                ),
+                .child(crate::views::entry::name(
+                    div().id(("card-name", look.id.ino as usize)).text_sm(),
+                    look,
+                    shell,
+                ))
+                // A line of chips takes what its row leaves: under the
+                // name, a row of its own.
+                .when(!look.tags.is_empty(), |d| {
+                    d.child(
+                        div()
+                            .flex()
+                            .w_full()
+                            .h(px(crate::tags::CHIP_HEIGHT))
+                            .child(crate::views::entry::tags(look, theme)),
+                    )
+                }),
         );
-    if let Some(ix) = card.ix {
-        el = crate::list::entry_mouse(el, pane, ix, cx);
-    }
-    // Dragged, it says which column it leaves.
-    let drag = BoardDrag {
-        pane,
-        from: from.clone(),
+    let el = match card.ix {
+        Some(ix) => crate::views::entry::behave(el, look, ix, shell, cx),
+        None => el,
     };
-    let name = card.name.clone();
-    let el = el.on_drag(drag, move |_, position, _, cx| {
-        cx.new(|_| DragPreview::named(name.clone(), position))
-    });
     // A gutter around each card, the card as wide as its column.
     div()
         .w_full()
@@ -426,31 +379,6 @@ fn card_element(
         .flex()
         .child(el)
         .into_any_element()
-}
-
-impl Shell {
-    /// A card dragged from a column of places (a tag's) onto another:
-    /// what the target says a drop is (`Verbs::drop`), told the column it
-    /// left, so it moves out of it (Ctrl keeps both).
-    fn move_on_board(
-        &mut self,
-        drag: &BoardDrag,
-        target: &Location,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(drop) = self.app.verbs(target).drop else {
-            return;
-        };
-        let mut args = drop.args.clone();
-        if !args.is_object() {
-            args = serde_json::json!({});
-        }
-        args["pane"] = serde_json::json!(drag.pane);
-        args["move"] = serde_json::json!(!window.modifiers().control);
-        args["from"] = serde_json::json!(drag.from.to_string());
-        self.run(&drop.name, args, window, cx);
-    }
 }
 
 impl PaneView for BoardView {
@@ -480,88 +408,106 @@ impl PaneView for BoardView {
             .iter()
             .map(|c| (c.at, c.location.clone(), Arc::clone(&c.ids)))
             .collect();
+        self.order = Arc::clone(&shell.ui().list.sorted);
         for c in &columns {
             self.scrolls.entry(c.location.clone()).or_default();
         }
         let mut row = div()
             .id(("board", shell.pane.0 as usize))
-            .relative()
             .size_full()
             .flex()
             .flex_row()
-            .overflow_x_scroll();
+            .overflow_x_scroll()
+            .track_scroll(&self.row);
         for (k, c) in columns.into_iter().enumerate() {
             row = row.child(column(shell, self, c, k, &theme, cx));
         }
         // Another application's files dropped beside the columns land in
         // the place shown, as on the list.
         let pane = shell.pane;
-        row.on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
+        let row = row.on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
             this.activate_pane(pane, cx);
             this.drop_external(paths.paths(), window, cx);
-        }))
-        .into_any_element()
+        }));
+        div()
+            .relative()
+            .size_full()
+            .child(row)
+            .child(crate::elements::scrollbar::horizontal(
+                ("board-columns-bar", shell.pane.0 as usize),
+                self.row.clone(),
+            ))
+            .into_any_element()
     }
 
+    /// The card at `ix` of the pane's order, in its column and across.
     fn scroll_to(&mut self, ix: usize) {
-        let _ = ix;
-    }
-
-    fn nav_delta(&self, nav: Nav, _shell: &Shell) -> Option<isize> {
-        match nav {
-            Nav::Up => Some(-1),
-            Nav::Down => Some(1),
-            _ => None,
-        }
-    }
-
-    /// Left and Right go to the card at the same height in the column
-    /// beside.
-    fn nav(
-        &mut self,
-        nav: Nav,
-        shell: &mut Shell,
-        window: &mut Window,
-        cx: &mut Context<Shell>,
-    ) -> bool {
-        let step: isize = match nav {
-            Nav::Left => -1,
-            Nav::Right => 1,
-            _ => return false,
+        let Some(&id) = self.order.get(ix) else {
+            return;
         };
+        let Some((k, card)) = self.find(id) else {
+            return;
+        };
+        let (_, location, _) = &self.drawn[k];
+        if let (Some(card), Some(scroll)) = (card, self.scrolls.get(location)) {
+            scroll.scroll_to_item(card, ScrollStrategy::Top);
+        }
+        self.row.scroll_to_item(k);
+    }
+
+    /// Every key is a move in the pane's order to the card it reaches: up
+    /// and down its column, across to the same height in the column
+    /// beside (or that column's own entry, when it has no card).
+    fn nav_delta(&self, nav: Nav, shell: &Shell) -> Option<isize> {
+        let rows = &shell.ui().list;
         let cursor = shell.cursor_id();
-        let here = self
-            .drawn
-            .iter()
-            .position(|(at, _, ids)| cursor.is_some_and(|c| ids.contains(&c) || *at == Some(c)));
-        let (k, row) = match here {
-            Some(k) => {
-                let row = cursor
-                    .and_then(|c| self.drawn[k].2.iter().position(|id| *id == c))
-                    .unwrap_or(0);
-                (k, row)
-            }
-            None => (0, 0),
+        let here = cursor.and_then(|id| rows.index_of(id));
+        let (k, card) = cursor.and_then(|id| self.find(id)).unwrap_or((0, None));
+        let (at, location, ids) = self.drawn.get(k)?;
+        let last = ids.len().checked_sub(1);
+        // A page is what the column shows, read from its last layout.
+        let page = self.scrolls.get(location).map_or(1, |scroll| {
+            let height = f32::from(scroll.0.borrow().base_handle.bounds().size.height);
+            ((height / CARD_H) as usize).saturating_sub(1).max(1)
+        });
+        let along = |by: isize| {
+            let to = match card {
+                Some(card) => card.saturating_add_signed(by),
+                None if by > 0 => 0,
+                None => return None,
+            };
+            last.map(|last| ids[to.min(last)])
         };
-        let Some(next) = k.checked_add_signed(step).filter(|n| *n < self.drawn.len()) else {
-            return true;
-        };
-        let (at, location, ids) = &self.drawn[next];
-        let target = ids
-            .get(row.min(ids.len().saturating_sub(1)))
-            .copied()
-            .or(*at);
-        if let Some(id) = target
-            && let Some(ix) = shell.ui().list.index_of(id)
-        {
-            shell.cursor_to(ix as isize, crate::list::Step::Select, window, cx);
-            if let Some(scroll) = self.scrolls.get(location)
-                && let Some(pos) = ids.iter().position(|i| *i == id)
-            {
-                scroll.scroll_to_item(pos, ScrollStrategy::Center);
+        let half = (page / 2).max(1) as isize;
+        let target = match nav {
+            Nav::Left | Nav::Right => {
+                let beside = if nav == Nav::Left {
+                    k.checked_sub(1)
+                } else {
+                    Some(k + 1)
+                };
+                let (at, _, ids) = self.drawn.get(beside?)?;
+                ids.get(card.unwrap_or(0).min(ids.len().saturating_sub(1)))
+                    .copied()
+                    .or(*at)
             }
-        }
-        true
+            // In a column with no card, its own entry.
+            _ => match nav {
+                Nav::Up => along(-1),
+                Nav::Down => along(1),
+                Nav::PageUp => along(-(page as isize)),
+                Nav::PageDown => along(page as isize),
+                Nav::HalfPageUp => along(-half),
+                Nav::HalfPageDown => along(half),
+                Nav::Home => ids.first().copied(),
+                _ => ids.last().copied(),
+            }
+            .or(*at),
+        }?;
+        // From the cursor, or from before the first without one
+        // (`Shell::cursor_move`).
+        let to = rows.index_of(target)? as isize;
+        Some(to - here.map_or(-1, |here| here as isize))
     }
 
     fn reset(&mut self) {

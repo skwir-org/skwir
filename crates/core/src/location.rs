@@ -101,6 +101,16 @@ impl Location {
         }
     }
 
+    /// This location as a command's `location` argument, which
+    /// `parse_os` reads back as it: a folder's exact path, whatever bytes
+    /// it holds, anything else its text.
+    pub fn arg(&self) -> PathArg {
+        match self.path() {
+            Some(path) => PathArg(path),
+            None => PathArg(PathBuf::from(self.to_string())),
+        }
+    }
+
     /// The filesystem path, with `~` expanded, for `path` locations.
     pub fn path(&self) -> Option<PathBuf> {
         if !self.is_path() {
@@ -111,7 +121,7 @@ impl Location {
         }
         let r = &self.rest;
         if r == "~" || r.starts_with("~/") {
-            let home = dirs::home_dir()?;
+            let home = crate::os_path::home()?;
             return Some(if r == "~" { home } else { home.join(&r[2..]) });
         }
         Some(PathBuf::from(r))
@@ -251,6 +261,13 @@ impl EventSink {
 }
 
 /// An opened location. Dropping it (or `close`) stops all work for it.
+///
+/// The workspace asks `path_of`, `location_of`, `holds` and `close` while it holds
+/// its lock, as panes are drawn, selected from and let go of: they answer
+/// from what the location already knows, or cancel its work (handing
+/// anything slower to a worker), and never take the workspace lock,
+/// dispatch a command or wait. `hydrate` and `refresh`, which may start
+/// work, are asked without it.
 pub trait OpenLocation: Send + Sync {
     fn location(&self) -> &Location;
 
@@ -269,6 +286,14 @@ pub trait OpenLocation: Send + Sync {
     /// as a folder (a trashed folder stays in the trash, `trash:`); `None`
     /// opens a folder at its path.
     fn location_of(&self, _id: EntryId) -> Option<Location> {
+        None
+    }
+
+    /// The folder it lists, and so holds open (its directory, its
+    /// watches), when it lists one: a folder's own listing, and one a
+    /// location lists through it (a trashed folder's). What `App::release`
+    /// lets go of before a volume is unmounted, whatever its scheme.
+    fn holds(&self) -> Option<&Path> {
         None
     }
 
@@ -307,6 +332,14 @@ pub trait LocationProvider: Send + Sync {
     /// from the text alone, like `title`.
     fn icon(&self, _location: &Location) -> Option<&'static str> {
         None
+    }
+
+    /// Whether `location` is a search: what it lists are results (counted
+    /// so, "Searching…" while it walks), and its text is what the address
+    /// edits (its pills, `query.describe`), words typed there editing it
+    /// rather than filtering it. Answered from the text alone.
+    fn searches(&self, _location: &Location) -> bool {
+        false
     }
 
     /// What a pane showing `location` says when it lists nothing, in the
@@ -362,9 +395,10 @@ pub struct Trail {
     pub filters: Vec<Crumb>,
     /// How it can show otherwise, for the View menu ("Include Sub-Tags").
     pub toggles: Vec<Toggle>,
-    /// The place shown holds places of its own (a tag its tags, which
-    /// `LocationProvider::places` lists): the trail ends with the chevron
-    /// that lists them. A place that holds only files (the trash) has none.
+    /// The place shown holds places of its own (a tag its tags, the
+    /// trash its trashed folders, which `LocationProvider::places`
+    /// lists): the trail ends with the chevron that lists them. A place
+    /// that holds only files (the shelf, Recent) has none.
     pub holds_places: bool,
     /// What it lists is in one folder (a trashed folder's files): the list
     /// has no Folder column, which says where files from many are.
@@ -1204,6 +1238,52 @@ impl Listing {
 mod tests {
     use super::*;
     use crate::entry::EntryKind;
+
+    #[test]
+    fn a_folder_is_the_same_place_by_its_path_anything_else_as_written() {
+        let home = Location::parse("~").path().unwrap();
+        assert!(Location::same_place(
+            &Location::parse("~/a b"),
+            &Location::from_path(home.join("a b"))
+        ));
+        assert!(!Location::same_place(
+            &Location::from_path("/a"),
+            &Location::from_path("/b")
+        ));
+        assert!(Location::same_place(
+            &Location::parse("query:ext:pdf in:/x"),
+            &Location::new("query", "ext:pdf in:/x")
+        ));
+        assert!(!Location::same_place(
+            &Location::parse("query:ext:pdf"),
+            &Location::parse("query:ext:png")
+        ));
+        assert!(!Location::same_place(
+            &Location::parse("/query"),
+            &Location::parse("query:/")
+        ));
+    }
+
+    #[test]
+    fn a_location_argument_reads_back_as_the_location() {
+        use std::os::unix::ffi::OsStrExt;
+        let odd = Path::new(OsStr::from_bytes(b"/x/caf\xe9"));
+        for location in [
+            Location::new("tags", "/Places"),
+            Location::from_path("/x/y"),
+            Location::from_path(odd),
+        ] {
+            let arg = location.arg();
+            assert_eq!(Location::parse_os(arg.as_os_str()), location);
+            let json = serde_json::to_value(&arg).unwrap();
+            let back: PathArg = serde_json::from_value(json).unwrap();
+            assert_eq!(back, arg, "exact through JSON");
+        }
+        assert_eq!(
+            Location::new("tags", "/Places").arg(),
+            PathArg::from(Path::new("tags:/Places"))
+        );
+    }
 
     #[test]
     fn names_version_ignores_hydration() {

@@ -9,11 +9,10 @@
 //! was. `TagSpaces`' index of a location, `.ts/tsi.json`, is a search hint
 //! (ADR-026).
 
-use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::SystemTime;
 
 use bibli_core::app::App;
 use bibli_core::cancel::CancelToken;
@@ -163,48 +162,6 @@ pub fn edit(json: &Value, notes: &Notes) -> Option<Value> {
     Some(Value::Object(object))
 }
 
-/// The sidecars in the `.ts` folders of the folders batches were in: a
-/// `.ts` folder is read once for its folder's listing, and again when it
-/// changes.
-#[derive(Default)]
-struct SidecarNames {
-    folders: Mutex<Vec<(PathBuf, Option<SystemTime>, Instant, Arc<HashSet<OsString>>)>>,
-}
-
-const FOLDERS: usize = 16;
-const FRESH: Duration = Duration::from_secs(5);
-
-impl SidecarNames {
-    fn of(&self, dir: &Path) -> Arc<HashSet<OsString>> {
-        let ts = dir.join(FOLDER);
-        let modified = std::fs::metadata(&ts).ok().and_then(|m| m.modified().ok());
-        if modified.is_none() {
-            return Arc::default();
-        }
-        let known = self
-            .folders
-            .lock()
-            .iter()
-            .find(|(d, m, at, _)| *d == ts && *m == modified && at.elapsed() < FRESH)
-            .map(|(_, _, _, names)| Arc::clone(names));
-        if let Some(names) = known {
-            return names;
-        }
-        let names: Arc<HashSet<OsString>> = Arc::new(
-            std::fs::read_dir(&ts)
-                .map(|entries| entries.flatten().map(|e| e.file_name()).collect())
-                .unwrap_or_default(),
-        );
-        let mut folders = self.folders.lock();
-        folders.retain(|(d, _, _, _)| *d != ts);
-        if folders.len() >= FOLDERS {
-            folders.remove(0);
-        }
-        folders.push((ts, modified, Instant::now(), Arc::clone(&names)));
-        names
-    }
-}
-
 /// A file's sidecar, relative to its folder: `.ts/x.json`, or a folder's
 /// own inside it, `x/.ts/tsm.json`.
 fn sidecar(name: &OsStr, folder: bool) -> PathBuf {
@@ -217,14 +174,25 @@ fn sidecar(name: &OsStr, folder: bool) -> PathBuf {
     }
 }
 
+/// A sidecar's JSON, read as a regular file of a sidecar's size at most.
 fn read_json(path: &Path) -> Option<Value> {
-    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+    let bytes =
+        bibli_core::fs::file::read_regular(path, bibli_core::fs::file::SIDE_FILE_LIMIT).ok()?;
+    serde_json::from_slice(&bytes).ok()
 }
 
 /// `TagSpaces`' sidecars as a notes store.
-#[derive(Default)]
 pub struct TagSpacesStore {
-    names: SidecarNames,
+    /// The names in a folder's `.ts` folder.
+    names: bibli_core::companions::FolderNames,
+}
+
+impl Default for TagSpacesStore {
+    fn default() -> Self {
+        TagSpacesStore {
+            names: bibli_core::companions::FolderNames::new(|name| Some(name.to_owned())),
+        }
+    }
 }
 
 impl NotesStore for TagSpacesStore {
@@ -261,7 +229,7 @@ impl NotesStore for TagSpacesStore {
     ) -> Vec<Option<Notes>> {
         let has_ts = listed.map_or_else(|| dir.join(FOLDER).is_dir(), |l| l(OsStr::new(FOLDER)));
         let names = if has_ts {
-            self.names.of(dir)
+            self.names.of(&dir.join(FOLDER))
         } else {
             Arc::default()
         };
@@ -406,13 +374,16 @@ impl IndexHint {
         let entries = Arc::new(entries);
         let mut cached = self.read.lock();
         cached.retain(|(p, _, _)| p != path);
-        if cached.len() >= FOLDERS {
+        if cached.len() >= INDEXES {
             cached.remove(0);
         }
         cached.push((path.to_path_buf(), modified, Arc::clone(&entries)));
         entries
     }
 }
+
+/// Locations' indexes kept at once.
+const INDEXES: usize = 16;
 
 impl HintProvider for IndexHint {
     fn id(&self) -> &'static str {

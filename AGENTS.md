@@ -102,7 +102,8 @@ current source before assuming a planned crate, command, or API exists.
   its counts and selection size, and with nothing selected what its files
   weigh (`weight.rs`: summed by a worker, the listing knowing only the
   sizes of the rows drawn); the window's state (Undo, what waits for
-  a paste, the shelf, proposals, the player's strip) ends the last pane's
+  a paste, the counts plugins publish (`tally::Tally`: the shelf's),
+  proposals, the player's strip) ends the last pane's
   footer, at the window's bottom right either way a split runs. The side
   panels have no footer: they run to the window's foot. A key whose command needs a selection carries `selection` in its
   `when`, so it does nothing instead of reporting "nothing selected". The only
@@ -149,10 +150,13 @@ current source before assuming a planned crate, command, or API exists.
   worker, `nav_menu.rs`); one before the first, when the trail starts at
   a folder of the sidebar (Home, a drive: anything but `/`), lists the
   folders above it from the root down, by their own names as every
-  chevron's menu does (`ui.parents_menu`). A popup closed by a press outside it says so
-  (`pointer` in its close command) and the toggle notes it
-  (`Shell::note_dismissed`), so the click that press begins on its own
-  button leaves it closed instead of opening it again. The
+  chevron's menu does (`ui.parents_menu`). Every popup's toggle goes
+  through `Shell::toggle_popup`: opening one closes the one open (one at
+  a time, whichever slot), a press outside closes it and says so
+  (`pointer` in its close command, `Shell::note_dismissed`), and the click
+  that press begins on its own button leaves it closed. A button's click
+  closes the popup open the same way, so no list says which command keeps
+  which popup. A toolbar popup's rows are buttons: the arrows walk them. The
   view buttons are the views that show the listing (`ViewRole::Listing`:
   list, grid, columns); a shape chosen now and then (`ViewRole::Alternate`:
   the tree, the board) and a lens, a view that gathers data of its own
@@ -239,7 +243,7 @@ current source before assuming a planned crate, command, or API exists.
   Stores that disagree are merged against what bibli last wrote (a
   snapshot in the cache): another application's later edit wins, and a
   store emptied is not an edit; Details says where notes are kept and
-  which stores differ, and `tags.agree` makes them agree. A
+  which stores differ, and `notes.agree` makes them agree. A
   `._` file is rewritten whole as macOS lays it out, keeping every other
   attribute and its mode; one laid out otherwise is read, never written.
   An edit of several files applies what the user changed
@@ -317,7 +321,7 @@ current source before assuming a planned crate, command, or API exists.
 - **Places, trails and verbs** (ADR-032). A location that is no folder
   can list places, entries that are no files but locations of their own
   (`EntryId::place`): every view shows one as a folder (with its tag's
-  mark, `icons::with_tag`, for a tag's), opening it goes where
+  mark, `icons::Mark`, for a tag's), opening it goes where
   `OpenLocation::location_of` says (`Pane::location_of`), and it has no
   path, so what acts on files says `!place` in its `when`. A folder a
   location does not let open at its path (a trashed folder) leads where
@@ -330,7 +334,7 @@ current source before assuming a planned crate, command, or API exists.
   address draws as a folder's (`trail.rs`, read once per location),
   whose chevrons list `LocationProvider::places` on a worker (after the
   last place only when it holds places, `Trail::holds_places`: a tag,
-  not the trash), and which Up walks back (`App::parent`: a search goes
+  the trash and its folders, not the shelf), and which Up walks back (`App::parent`: a search goes
   up to the folder it looks in). What gestures mean there is the location's
   (`LocationProvider::verbs`): a drop or a paste (`drop`), Delete
   (`remove`, run by the core `take_out`), New Folder's key and item
@@ -352,6 +356,22 @@ current source before assuming a planned crate, command, or API exists.
   button by a location's scheme: a new kind of location (a flat one, as
   the trash, the shelf and Recent are, gives `title`, `icon` and
   `empty_state`) is shown as the others are, with no branch in the UI.
+- **The shell names no plugin.** What the UI needs to know of a
+  location, a provider or a place it asks of it, never of a scheme or a
+  plugin's id: whether a location is a search
+  (`LocationProvider::searches`), whether the notes keep a rating
+  (`NoteStores::held`, the Rating column; rating, comment and
+  `notes.agree` are the core's `notes.*` commands), what a click with a
+  modifier on a place runs (`Place::clicks`), what a command leaves on
+  the clipboard (`Outcome::Clipboard`), a count for the footer
+  (`tally::Tally`: the shelf's), which preview shows a file's bytes
+  (`PreviewProvider::shows_bytes`), what F5 does in a view and whether
+  it draws its own empty state (`PaneView::refresh`, `draws_empty`), a
+  place's kind (`keys::PLACE_KIND`). A folder is a location like the
+  others: its trail is a `Trail`, its chevrons list `App::places_in`,
+  Shift+F5 and Shift+F6 give the selection to what the other pane shows
+  as a drop there does (`Shell::give_to_pane`), and what it holds open
+  is `OpenLocation::holds`.
 - **Tags are places** (ADR-032). The tags plugin provides `tags:`
   locations (`location.rs`): `tags:/Places/France` is the tag
   `Places/France` of the home folder (`in` names another folder), its
@@ -400,7 +420,7 @@ current source before assuming a planned crate, command, or API exists.
   `places.bookmark`, which writes the desktop's shared GTK bookmarks.
   Bookmarks are edited only through `BookmarkEdit` (`bibli_platform::places`):
   each edit returns its inverse, which the notification offers as Undo
-  (then Redo, `App::notify_with_action`), and lines other applications
+  (then Redo, `App::notify_undoable`, as every edit made outside a plan), and lines other applications
   wrote are kept. The plugin watches the file, so other file managers'
   edits appear. Keeping a location is one gesture whatever it is: Ctrl+D
   and the pane's button run the core `keep` command, which hands the
@@ -414,20 +434,27 @@ current source before assuming a planned crate, command, or API exists.
   only): the tags plugin's Tags, those the user pinned (`tags.pin`,
   from a pill's or a Details chip's menu; dragged into order, unpinned
   by the pane's keep button like any kept place; a tag folder of the
-  home folder, or a tag's search from it, is kept as its pin, by the
-  button and Ctrl+D) or, until one is, the
+  home folder, not narrowed, is kept as its pin, by the button and
+  Ctrl+D, which a keeper offers only where it keeps, `Keeper::keeps`)
+  or, until one is, the
   tags on the most files its index knows, as suggestions
   (`Place::suggested`, an outline), each opening its tag folder of the
   home folder (`tags:/family`), and last All Tags (`tags:/`). Shift+click
   on a tag's pill narrows what is shown to the files that have it too,
   or no longer; Alt+click shows its files in the folder shown
   (`tags.pill`, which leaves a search to `query.refine`). The tag
-  editor offers the pinned tags first. A place with a `drop`
-  command runs it with what is dropped on it (`pane` for a pane's
-  selection, `entries` for another application's files): a tag's gives
-  them the tag. Dragged onto a file's row (`dnd::takes_gifts`), it gives
-  the same to that file, or to the selection when the row is in it (a
-  column of the folders above, `takes_gift_for`: to that file).
+  editor offers the pinned tags first. A place takes what its location
+  takes, the same as in a pane: a folder's row is a folder, any other's
+  runs its location's `Verbs::drop` (the Trash trashes, the shelf
+  shelves, a tag gives its tag and, dragged from another tag, takes the
+  files out of that one); one that takes nothing (Recent, a search)
+  swallows the drop, never bookmarking it. The sidebar repeats nothing
+  its location says. Dragged onto a file's row (`dnd::takes_gifts`), it
+  gives that file what it takes, or the selection when the row is in it
+  (a column of the folders above, `takes_gift_for`: that file). Rename…
+  (`Place::rename`, F2) and Remove From Sidebar (`Place::forget`) are
+  the sidebar's items for every place that has them, never its owner's
+  menu's.
   The groups are the user's to arrange (`sidebar::Sections`, part of
   the window's shape): a click on a header folds its group, a drag moves
   it, and the sidebar's menu lists every group with a check while it is
@@ -473,7 +500,10 @@ current source before assuming a planned crate, command, or API exists.
   unmodified character in the file list (`Keymap::typeahead`). A binding
   of several strokes waits for the next without a timeout (vendored patch
   0010) and `sequence.rs` shows what can follow. A plugin that changes
-  standard keys is off until asked (`Plugin::enabled_by_default`).
+  standard keys is off until asked (`Plugin::enabled_by_default`). A
+  scheme's key that means a standard gesture says so (`keys.like` with the
+  standard keys: vim's `d` is Delete) and takes that key's bindings,
+  conditions and all, so it never copies a condition that could drift.
 - **The selection knows whether it was picked.** An arrow or a click
   selects the item reached, which then follows the cursor; toggles, ranges
   and select all pick. A scheme's moves say `follow` (`ui.cursor` with
@@ -495,9 +525,13 @@ current source before assuming a planned crate, command, or API exists.
   (`views/board.rs`, an alternate shape) opens every folder or place of
   the one shown in place, at most `MAX_COLUMNS`, side by side as columns
   of cards, a first column for what the place shown holds itself: a card
-  dragged to another column moves there (`BoardDrag` says the column it
-  leaves, a tag's drop the tag it loses), and a column emptied stays
-  while the board shows the place, to take cards back. A hydration asked
+  is drawn and dragged as any entry (`views::entry`), so one dragged to
+  another column is dropped there as on that folder or place
+  (`Shell::drop_on_place`, told the place it was dragged from: a tag's
+  drop takes the tag it leaves), and a column emptied stays while the
+  board shows the place, to take cards back. Its keys are moves in the
+  pane's order to the card they reach (`PaneView::nav_delta`), so Shift
+  extends there as anywhere. A hydration asked
   for is remembered by the listing that holds the entry
   (`Pane::listing_of`), so one moved between two opened folders is
   asked for again.
@@ -507,6 +541,16 @@ current source before assuming a planned crate, command, or API exists.
   (`views::list::CUT_OPACITY`) and the last pane's footer shows the count, because
   the clipboard is invisible once the pane shows another folder. Escape with
   nothing selected, or a click on that count, forgets it.
+- **An entry is one look in every view** (`views/entry.rs`): what a
+  view draws of an entry is read once under the lock (`Shell::look`:
+  its name, icon, link or tag mark, selection, cursor, cut, tags, where
+  it leads), its picture is `Look::picture`, its highlight `highlight`,
+  its name and chips `name` and `tags`, and what it answers (pressed,
+  clicked, dragged as the selection, dimmed while cut, taking a dragged
+  tag and files dropped where it leads) is `behave`. A row, a tile or a
+  card draws its own shape around these, never its own copy of them; the
+  columns view's folders above are not the pane's entries, and take only
+  the picture (`icons::entry_picture`) and the cut dimming.
 - **Rubber band.** `elements/marquee.rs` sits over a view's scroll area: it
   reads its bounds in prepaint, converts the pointer to content coordinates
   with the view's scroll offset, and asks pure, tested geometry which
@@ -543,8 +587,9 @@ current source before assuming a planned crate, command, or API exists.
   overlay states its `top`/`left`: without them it is laid out after its
   siblings, below the area it was meant to cover.
 - **Scrolling.** Every view that scrolls carries a scrollbar
-  (`elements/scrollbar.rs`) over its right edge: the view hands it whichever
-  handle it already scrolls with, and the thumb is placed in prepaint from
+  (`elements/scrollbar.rs`) over its right edge, and over its bottom edge
+  when it scrolls sideways (`scrollbar::horizontal`: the board's columns):
+  the view hands it whichever handle it already scrolls with, and the thumb is placed in prepaint from
   that handle's numbers. A `gpui::list` measures only what it renders, so a
   view built on one gives its items a height estimate
   (`ListState::reset_with_uniform_height`, vendored patch 0004) or the bar
@@ -556,7 +601,8 @@ current source before assuming a planned crate, command, or API exists.
 - **What the window remembers.** The shape of the last window (view, split
   and its arrangement and share, sidebar width, preview with its place, width
   and height, where a file of an archive goes beside its archive's view and
-  their shares, timeline, zoom) is application data, not preference:
+  their shares, timeline, zoom, the list's column widths) is application
+  data, not preference:
   `session.rs` keeps it under one key, restores it at startup and writes it
   only when it changes, never per frame. A new pane opens in the view the
   current one shows. The preview panel is as wide as the user drags it, up to
@@ -567,7 +613,11 @@ current source before assuming a planned crate, command, or API exists.
   (`preview::max_height`); the pinned player's dock stays at the panel's
   foot, bounded by the panel's height (`Shell::dock_height_limit`), and
   until the edge is dragged the default height adds the dock's, so a pin
-  does not take its room from the preview. The sidebar's right edge is dragged the
+  does not take its room from the preview. Every edge dragged to size an
+  area is one element (`elements/edge.rs`: the handle's color under the
+  pointer, a double click back to the area's own size, nothing following
+  the pointer), its payload telling the area's owner, and a shared room
+  is shared by `edge::share`. The sidebar's right edge is dragged the
   same way (`sidebar::max_width`: the panes keep theirs and the panel its
   minimum; the panel counts the sidebar as drawn, so it gives way first).
   The edge between split panes stores a share, not pixels: the panes' flex
@@ -635,7 +685,8 @@ current source before assuming a planned crate, command, or API exists.
   standard input, is never stored, logged or put on a command line, and its
   argument struct has no `Debug`. Before unmounting, `App::release` lets
   go of everything under the mount point (an open listing holds its
-  folder, and the kernel refuses to unmount a volume anything holds): a
+  folder, `OpenLocation::holds`, and the kernel refuses to unmount a
+  volume anything holds): a
   pane showing it goes home, folders kept or opened there close. Then it
   writes the volume out (`places::flush`, `syncfs`) while still mounted:
   the kernel takes a mount out of mountinfo as its unmount begins, before
@@ -645,7 +696,12 @@ current source before assuming a planned crate, command, or API exists.
   the user can unplug (`fs::volume::is_removable`: removable, or on USB,
   FireWire or an SD card, through LUKS or RAID) is written through
   (`op::builtin::Pace`): every chunk's worth of bytes waits for the drive,
-  so progress is the drive's and the step ends with the copy on it. The end
+  so progress is the drive's and the step ends with the copy on it. That
+  one predicate is also what draws a mounted volume as removable media,
+  wherever it is mounted (`lsblk`'s HOTPLUG says the same of one not
+  mounted); Eject is offered for what udisks mounted for the user
+  (`Mount::udisks`), not system volumes. mountinfo is read one way
+  (`fs::volume::mountinfo`). The end
   of a mount or an unmount corrects the volumes the last `lsblk` saw
   (`end_busy`), rather than waiting for it to run again. An unlocked
   container is listed as its cleartext volume (`Volume::container`):
@@ -739,7 +795,11 @@ current source before assuming a planned crate, command, or API exists.
   from above the shell's root, where nothing is bound, so the shell's
   focus-lost listener gives the keyboard to the pane drawn as active
   (`Shell::drawn_focus`). Do not refocus by hand after closing something.
-- **List columns** give way by layout alone: the name and the detail columns
+- **List columns** are one table (`views::list::COLUMNS`: each column's
+  setting, label, sort, width and alignment), which the header, the rows,
+  the header's menu, the View menu's sorts and Settings read; a column
+  that applies only somewhere says where (`Shell::column_applies`). They
+  give way by layout alone: the name and the detail columns
   sit in one wrapping flex line one row tall (`views/list.rs::line`), so the
   columns drop whole, last first, and the name — the only child that grows —
   takes what they leave instead of sitting at its minimum beside the blank of
@@ -759,7 +819,16 @@ current source before assuming a planned crate, command, or API exists.
   width is known before layout, an element's is not.
 - **Commands are the one surface.** Every user action is a command
   (`bibli_core::command`), so the keymap, palette, CLI, MCP server, and agents
-  all share it. The UI handles `ui.*` names itself and dispatches the rest.
+  all share it. The shell's own (`ui.*`) are declared in the registry like
+  the rest (`commands.rs`, owner `ui`: a title, what it does, the schema of
+  its arguments), checked before they run (`CommandRegistry::check`: a
+  name or an argument a command does not take is refused, never guessed),
+  and carried out by the shell; dispatched from elsewhere (an agent, a
+  script) one waits for the window (`App::request_front`). A user's
+  shortcut is checked against them when saved. A new `ui.*` command is
+  declared there, and the test of the declarations covers its keys and
+  palette entries. The palette offers the shell's as `UI_COMMANDS` lists
+  them, each with the arguments that make it one thing to do.
   Commands that mutate the filesystem return a `Plan`; the caller decides to
   apply it. User-initiated single actions apply immediately and are undoable;
   batch results and anything from a background task or an agent go through
@@ -780,6 +849,9 @@ current source before assuming a planned crate, command, or API exists.
 - **Locks and re-entry.** Snapshot the inputs needed under a lock, then drop
   the guard before dispatching another command, navigating, invoking a plugin,
   or doing I/O. These calls can acquire the same workspace or registry locks.
+  One exception, by contract: an open location's `path_of`, `location_of`
+  and `close` answer from memory or cancel, so the workspace asks them
+  under its lock (`OpenLocation`); a pane let go of closes in place.
 - **Pane ownership.** Resolve the target `PaneId` when work starts and carry it
   through commands and results. Do not redirect a delayed action to whichever
   pane happens to be active when it finishes. Layout callbacks that use shell
@@ -800,7 +872,9 @@ current source before assuming a planned crate, command, or API exists.
   Shift+G, `g g` for a sequence); `when` is
   a space-separated list of tokens that must all hold (`selection`, `single`,
   `dir`, `file`, `empty`, `folder`, `sweep`, `place`, `refs`, `drops`,
-  `creates`, `restores`; `pane`/`address`/`palette`/`sidebar` for context);
+  `creates`, `restores`; a place by its token, `pane`, `address`,
+  `palette`, `sidebar`, `preview`, `menu`…, each once in
+  `keymap::PLACES` with its key context and what F1 calls it);
   `a|b` holds when either does, `!a` when it does not. A command that works in a folder but can
   run from a search uses `App::work_dir`, not `pane_dir`. Menu `order` groups
   by the hundreds digit (0xx open, 1xx edit, 2xx create, 3xx destructive,
@@ -916,7 +990,9 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   check their token themselves. Use child tokens for work tied to the app or
   an open location, and cancel superseded requests. Only accept results for the
   current request (e.g. the generation check in `crates/ui/src/preview.rs`);
-  cancellation alone does not prevent stale results.
+  cancellation alone does not prevent stale results. In the UI, work of
+  which one is asked at a time (a note, a picture, a search) is a
+  `latest::Latest`: ask, forget, take, cancelled on drop.
 - Pane-owned background work links to `Pane::location_lifetime`; navigation,
   Back and pane close cancel it independently of the next UI render. Show
   locations through `App::show` (navigate, Back, Forward) and
@@ -952,7 +1028,7 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   permissions are the target's (a broken link keeps its own). What the
   entry is on disk, what an operation acts on, is `kind`, and a
   selection's `EntryRef` names the link. Every view marks a link with
-  `icons::with_link`.
+  `icons::Mark` (`views::entry::Look::picture`).
 - What is read to show an entry is `Entry::content`: a link's target,
   with its own identity. Preview and thumbnail requests carry it, so a
   provider may type a file by `req.entry.path` and read it. Code holding
@@ -969,7 +1045,11 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   plugin is never asked to read it. Type an entry through
   `mime::of_entry` (its `Entry::inode_type` first, then its type name).
   Code that opens a file it was handed opens it with
-  `file::open_regular`.
+  `file::open_regular` (the core's `fs::file`, which the platform
+  re-exports), and one another application keeps beside a file (a
+  sidecar, a `.trashinfo`, a `._` file) reads it whole with
+  `read_regular`, which refuses one larger than it expects rather than
+  cutting it.
 - Entries arrive before metadata. Treat missing fields as unknown, request
   hydration in batches, and react to `Updated` events instead of stat-ing each
   row during rendering. A fact too costly for every listing (a picture's
@@ -1062,9 +1142,11 @@ are about to touch, in full:
   Copy tags before restoring read-only permissions and publish the staged
   copy only after metadata succeeds; failed copies must not look complete.
 
-- The XDG directories come from `bibli_platform::xdg` (an empty variable
-  takes its default, relative paths are ignored); do not read the
-  variables again elsewhere.
+- The XDG directories come from `bibli_core::xdg` (`bibli_platform::xdg`
+  re-exports it: an empty variable takes its default, relative paths are
+  ignored); do not read the variables again elsewhere, nor add a
+  distribution's folders beside them (NixOS names its own in
+  `XDG_DATA_DIRS`).
 - Keep paths as `Path` / `PathBuf` and process arguments separate for as long
   as possible. Shell quoting, query quoting, and URI encoding are different
   grammars; a display string is not an escaped representation of any of them.
@@ -1085,6 +1167,17 @@ are about to touch, in full:
 - `kind:` groups files as the desktop's MIME database does
   (`bibli_platform::mime::Kind`, from each type's generic icon and its
   descent from `text/plain`); do not keep lists of types beside it.
+  A provider takes files by type, never by an extension list: the
+  request's type (`mime::of_request`, read from the bytes where a name is
+  ambiguous: `.otf`), tested against a kind or a `mime::Types`, the types
+  its reader reads, one name per type, matched through the database's
+  aliases whichever it calls canonical, without case. An application's
+  desktop entries say what it opens, not what its documents are
+  (`LibreOffice` claims plain text, CSV and PDF): office documents are
+  one list (`preview::is_office`), which the previews, the thumbnails
+  and the stored pictures all ask. Two providers that hand a file to
+  each other ask one question (`preview::shown_as_pages`,
+  `preview::playlist`). A code view's language stays the name's.
 
 ## Build, test, lint
 

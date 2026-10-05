@@ -72,6 +72,12 @@ pub trait PreviewProvider: Send + Sync {
     fn priority(&self) -> i32 {
         0
     }
+    /// Whether it shows any file as its bytes, whatever the file is: the
+    /// view a preview offers for every file (View as hex), asked by role,
+    /// never by a plugin's name (`Previews::bytes_view`).
+    fn shows_bytes(&self) -> bool {
+        false
+    }
     fn accepts(&self, request: &PreviewRequest) -> bool;
     fn render(&self, _request: &PreviewRequest, _cancel: &CancelToken) -> anyhow::Result<Preview> {
         anyhow::bail!("This provider uses structured previews")
@@ -315,11 +321,33 @@ impl Previews {
         self.revision.load(Ordering::Acquire)
     }
 
+    /// The provider that shows any file as its bytes (View as hex), if one
+    /// is registered (`PreviewProvider::shows_bytes`).
+    pub fn bytes_view(&self) -> Option<&'static str> {
+        self.providers
+            .read()
+            .iter()
+            .find(|p| p.provider.shows_bytes())
+            .map(|p| p.provider.id())
+    }
+
     pub fn ids(&self) -> Vec<&'static str> {
         self.providers
             .read()
             .iter()
             .map(|p| p.provider.id())
+            .collect()
+    }
+
+    /// Every provider that accepts `request`, first the one that shows it,
+    /// with its owner and priority: which of them competes for a file.
+    /// Reads the file as `accepts` may: call from a worker.
+    pub fn accepting(&self, request: &PreviewRequest) -> Vec<(String, &'static str, i32)> {
+        let providers = self.providers.read().clone();
+        providers
+            .iter()
+            .filter(|p| p.provider.accepts(request))
+            .map(|p| (p.owner.clone(), p.provider.id(), p.provider.priority()))
             .collect()
     }
 }

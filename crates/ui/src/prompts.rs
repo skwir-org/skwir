@@ -1,5 +1,6 @@
-//! Single-line prompts (rename, new folder, search) and the delete
-//! confirmation modal.
+//! Single-line prompts (`ui.ask`: rename, new folder, a plugin's
+//! question; finding a name; a passphrase) and the confirmation of what
+//! Undo cannot take back.
 
 use bibli_core::Plan;
 use bibli_core::command::Invocation;
@@ -23,10 +24,6 @@ pub struct Unlock {
 pub enum PromptKind {
     /// The passphrase of `Shell::unlock`. Masked, never trimmed.
     Passphrase,
-    Rename,
-    Mkdir,
-    /// A new file; a name ending in `/` is a folder, as in yazi.
-    NewFile,
     /// `/`: a name in the pane, found as it is typed from where the cursor
     /// was (`origin`), after it or, `backward`, before it.
     Find {
@@ -82,17 +79,18 @@ impl Shell {
         let placeholder = match kind {
             PromptKind::InspectJump { .. } => "Offset (decimal or 0x hexadecimal)",
             PromptKind::Passphrase => "Passphrase",
-            PromptKind::Rename => "New name",
-            PromptKind::Mkdir => "Folder name",
-            PromptKind::NewFile => "File name, or a folder name ending in /",
             PromptKind::Find { .. } => "Part of a name (capitals: exact case)",
             PromptKind::Ask => "",
         };
         self.open_prompt_with(kind, title, placeholder, initial, select, None, window, cx);
     }
 
-    /// `ui.ask { title, text?, placeholder?, command, args?, field }`: ask
-    /// for a line of text and run `command` with it as `args[field]`.
+    /// `ui.ask { title, text?, placeholder?, select?, command, args?,
+    /// field }`: ask for a line of text and run `command` with it as
+    /// `args[field]`. `select` is the part of `text` selected at first
+    /// (`[start, end]` in bytes: a name's stem), all of it when absent. The
+    /// one question of a line of text, the shell's own (Rename, New
+    /// folder) as a plugin's.
     pub fn open_ask(
         &mut self,
         args: &serde_json::Value,
@@ -104,6 +102,10 @@ impl Shell {
             self.set_status("ui.ask needs a command and a field", true, cx);
             return;
         };
+        let select = args
+            .get("select")
+            .and_then(|s| serde_json::from_value::<[usize; 2]>(s.clone()).ok())
+            .map(|[start, end]| start..end);
         let command = Invocation {
             name: command.into(),
             args: args
@@ -121,7 +123,7 @@ impl Shell {
             text("title").unwrap_or_default(),
             text("placeholder").unwrap_or_default(),
             text("text").unwrap_or_default(),
-            None,
+            select,
             Some(ask),
             window,
             cx,
@@ -254,30 +256,10 @@ impl Shell {
                     Err(error) => self.set_status(format!("{error:#}"), true, cx),
                 }
             }
-            PromptKind::Rename if !text.is_empty() => {
-                self.run(
-                    "rename",
-                    serde_json::json!({ "new_name": text }),
-                    window,
-                    cx,
-                );
-            }
-            PromptKind::Mkdir if !text.is_empty() => {
-                self.run("mkdir", serde_json::json!({ "name": text }), window, cx);
-            }
-            PromptKind::NewFile => match text.strip_suffix('/') {
-                Some(folder) if !folder.is_empty() => {
-                    self.run("mkdir", serde_json::json!({ "name": folder }), window, cx);
-                }
-                None if !text.is_empty() => {
-                    self.run("new_file", serde_json::json!({ "name": text }), window, cx);
-                }
-                _ => {}
-            },
             PromptKind::Find { backward, .. } => {
                 self.last_find = (!text.is_empty()).then_some((text, backward));
             }
-            _ => {}
+            PromptKind::Ask => {}
         }
     }
 

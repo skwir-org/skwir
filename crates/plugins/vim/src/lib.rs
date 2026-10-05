@@ -16,6 +16,7 @@ use std::path::Path;
 use bibli_core::app::App;
 use bibli_core::cancel::CancelToken;
 use bibli_core::command::Invocation;
+use bibli_core::keymap::LIKE;
 use bibli_core::os_path::PathArg;
 use bibli_core::plugin::{Category, Plugin};
 use bibli_core::registry::KeyBinding;
@@ -141,20 +142,21 @@ const KEYS: &[(&str, &str, &str, &str)] = &[
     // Seeking in the preview.
     ("K", "ui.preview_page", r#"{"delta":-1}"#, "pane"),
     ("J", "ui.preview_page", r#"{"delta":1}"#, "pane"),
-    // Operations.
+    // Operations: the standard keys' gestures (`keys.like`), so each does
+    // what its key does where the place changes it (in a tag `d` takes the
+    // tag off, in the trash it deletes for good).
     ("o", "open", "{}", "pane selection"),
-    ("y", "clipboard_copy", "{}", "pane selection"),
-    ("x", "clipboard_cut", "{}", "pane selection"),
-    ("p", "clipboard_paste", "{}", "pane folder"),
+    ("y", LIKE, r#"{"keys":"ctrl-c"}"#, "pane"),
+    ("x", LIKE, r#"{"keys":"ctrl-x"}"#, "pane"),
+    ("p", LIKE, r#"{"keys":"ctrl-v"}"#, "pane"),
     ("Y", "clipboard_clear", "{}", "pane"),
     ("X", "clipboard_clear", "{}", "pane"),
-    ("d", "trash", "{}", "pane selection"),
-    ("D", "ui.confirm_delete", "{}", "pane selection"),
+    ("d", LIKE, r#"{"keys":"delete"}"#, "pane"),
+    ("D", LIKE, r#"{"keys":"shift-delete"}"#, "pane"),
     // A name ending in `/` is a folder.
     ("a", "ui.new_file_prompt", "{}", "pane folder"),
-    // Several renamed at once, one on its own.
-    ("r", "ui.rename_bulk_prompt", "{}", "pane selection"),
-    ("r", "ui.rename_prompt", "{}", "pane single"),
+    // Several renamed at once, one on its own: F2.
+    ("r", LIKE, r#"{"keys":"f2"}"#, "pane"),
     (".", "ui.toggle_hidden", "{}", "pane"),
     ("s", "ui.search", "{}", "pane"),
     ("S", "ui.search", r#"{"text":"content:"}"#, "pane"),

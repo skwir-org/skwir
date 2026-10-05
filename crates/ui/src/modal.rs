@@ -105,14 +105,85 @@ pub struct Picker {
     pub top: usize,
 }
 
+/// A move along a list (`ui.list_move`): rows at a time, round its ends;
+/// a page at a time, or to an end, stopping there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ListMove {
+    By(isize),
+    Page(isize),
+    First,
+    Last,
+}
+
+impl ListMove {
+    /// From `ui.list_move`'s arguments: `delta` rows, or `to` one of
+    /// `page_up`, `page_down`, `first`, `last`.
+    pub fn of(args: &serde_json::Value) -> ListMove {
+        match args.get("to").and_then(serde_json::Value::as_str) {
+            Some("page_up") => ListMove::Page(-1),
+            Some("page_down") => ListMove::Page(1),
+            Some("first") => ListMove::First,
+            Some("last") => ListMove::Last,
+            _ => ListMove::By(
+                args.get("delta")
+                    .and_then(serde_json::Value::as_i64)
+                    .and_then(|d| isize::try_from(d).ok())
+                    .unwrap_or(1),
+            ),
+        }
+    }
+
+    /// Where it leads from row `at` of `len` (more than none).
+    pub fn from(self, at: usize, len: usize) -> usize {
+        let (at, last) = (at.cast_signed(), len.cast_signed() - 1);
+        match self {
+            ListMove::By(delta) => (at + delta).rem_euclid(last + 1),
+            ListMove::Page(pages) => (at + pages * PICKER_ROWS.cast_signed()).clamp(0, last),
+            ListMove::First => 0,
+            ListMove::Last => last,
+        }
+        .cast_unsigned()
+    }
+}
+
+/// Indices of `items` matching `query` (fuzzy, case ignored), best first;
+/// all of them in their order for an empty query. The palette's and
+/// `ui.choose`'s filter.
+pub fn fuzzy<T>(items: &[T], query: &str, hay: impl Fn(&T) -> String) -> Vec<usize> {
+    use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
+    use nucleo_matcher::{Config, Matcher, Utf32Str};
+    if query.trim().is_empty() {
+        return (0..items.len()).collect();
+    }
+    let mut matcher = Matcher::new(Config::DEFAULT);
+    let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
+    let mut buf = Vec::new();
+    let mut scored: Vec<(u32, usize)> = items
+        .iter()
+        .enumerate()
+        .filter_map(|(i, item)| {
+            pattern
+                .score(Utf32Str::new(&hay(item), &mut buf), &mut matcher)
+                .map(|s| (s, i))
+        })
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    scored.into_iter().map(|(_, i)| i).collect()
+}
+
 impl Picker {
     /// Move by `delta`, wrapping around the `len` rows.
     pub fn step(&mut self, delta: isize, len: usize) {
+        self.go(ListMove::By(delta), len);
+    }
+
+    /// Move as `mv` says among `len` rows, the highlighted one kept in
+    /// sight.
+    pub fn go(&mut self, mv: ListMove, len: usize) {
         if len == 0 {
             return;
         }
-        let n = len as isize;
-        self.highlighted = (self.highlighted as isize + delta).rem_euclid(n) as usize;
+        self.highlighted = mv.from(self.highlighted, len);
         if self.highlighted < self.top {
             self.top = self.highlighted;
         } else if self.highlighted >= self.top + PICKER_ROWS {

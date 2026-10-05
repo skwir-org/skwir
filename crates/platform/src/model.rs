@@ -3,7 +3,6 @@
 //! gives back when it exits, and a reader that fails takes nothing with
 //! it. What comes back is what the mesh measures and its picture.
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use bibli_core::{CancelToken, thumbs::Image};
 
@@ -63,12 +62,16 @@ pub struct Drawn {
 
 /// The helper's executable: `BIBLI_MODEL_WORKER`, beside our binary, or
 /// on `PATH`, if it is there. Plugins that require it name this, not the
-/// literals; whether a model is read at all depends on it, so a variable
-/// naming nothing is no helper.
+/// literals; whether a model is read at all depends on it.
 pub fn worker_path() -> Option<PathBuf> {
-    crate::process::find_worker("BIBLI_MODEL_WORKER", "bibli-model-worker")
-        .filter(|path| path.is_file())
+    WORKER.find()
 }
+
+/// The helper. Plugins that require it name this, not the literals.
+pub const WORKER: crate::process::Worker = crate::process::Worker {
+    variable: "BIBLI_MODEL_WORKER",
+    executable: "bibli-model-worker",
+};
 
 /// The mesh at `path` drawn at most `side` pixels on its longer side, and
 /// measured. An error when the helper is missing, or says why it cannot.
@@ -78,11 +81,13 @@ pub fn draw(
     side: u32,
     cancel: &CancelToken,
 ) -> anyhow::Result<Drawn> {
-    let worker = worker_path()
-        .ok_or_else(|| anyhow::anyhow!("Install bibli-model-worker to draw 3D models"))?;
+    let worker = WORKER.require("draw 3D models")?;
+    let work = tempfile::tempdir()?;
+    let mut run =
+        crate::sandbox::untrusted(&worker, path, work.path(), crate::sandbox::Otherwise::Run)?;
     let finished = crate::process::run_to_exit(
-        Command::new(worker)
-            .arg(path)
+        run.command
+            .arg(&run.input)
             .args(["--format", format.name()])
             .args(["--side", &side.clamp(16, 2048).to_string()])
             .args(["--triangles", &TRIANGLES.to_string()])

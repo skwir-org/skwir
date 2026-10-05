@@ -139,7 +139,7 @@ pub(crate) fn hex_available(shell: &Shell) -> bool {
     {
         return hex;
     }
-    let hex = shell.app.previews.ids().contains(&"preview-hex");
+    let hex = shell.app.previews.bytes_view().is_some();
     cache.set(Some((revision, hex)));
     hex
 }

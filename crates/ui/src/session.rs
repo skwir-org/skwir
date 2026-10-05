@@ -63,6 +63,31 @@ pub struct Session {
     pub terminal: bool,
     /// How tall its edge was dragged; 0 until then.
     pub terminal_height: f32,
+    /// The list's detail columns dragged to another width than their own,
+    /// by `Column::key`.
+    #[serde(deserialize_with = "widths")]
+    pub column_widths: std::collections::BTreeMap<String, f32>,
+}
+
+/// Widths by column; a list is the setting they were kept in before
+/// (`ui.column_widths`, moved here by `declare`), in its order.
+fn widths<'de, D: serde::Deserializer<'de>>(
+    from: D,
+) -> Result<std::collections::BTreeMap<String, f32>, D::Error> {
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum Saved {
+        Named(std::collections::BTreeMap<String, f32>),
+        Listed(Vec<f32>),
+    }
+    Ok(match serde::Deserialize::deserialize(from)? {
+        Saved::Named(widths) => widths,
+        Saved::Listed(widths) => ["size", "modified", "type", "rating", "folder"]
+            .into_iter()
+            .map(str::to_owned)
+            .zip(widths)
+            .collect(),
+    })
 }
 
 impl Shell {
@@ -91,6 +116,16 @@ impl Shell {
             player_height: self.player.height,
             terminal: self.terminal.open,
             terminal_height: self.terminal.height.unwrap_or(0.),
+            column_widths: crate::views::list::COLUMNS
+                .iter()
+                .filter(|column| (self.column_widths[column.detail] - column.width).abs() >= 0.5)
+                .map(|column| {
+                    (
+                        column.key.to_owned(),
+                        self.column_widths[column.detail].round(),
+                    )
+                })
+                .collect(),
         }
     }
 
@@ -125,6 +160,9 @@ pub fn restore(app: &bibli_core::App) -> Option<Session> {
 }
 
 pub fn declare(app: &bibli_core::App) {
+    // The columns' widths were a setting of their own.
+    app.settings
+        .rename("ui.column_widths", &format!("{SESSION_KEY}.column_widths"));
     app.settings
         .declare(bibli_core::settings::SettingSpec::data(
             SESSION_KEY,
@@ -155,5 +193,22 @@ mod tests {
         // A file written before the arrangement existed reads as automatic.
         let old: Session = toml::from_str("split = true\npreview = true").unwrap();
         assert_eq!((old.panes, old.preview_at), (Panes::Auto, Preview::Auto));
+    }
+
+    #[test]
+    fn column_widths_kept_as_a_setting_are_read_by_name() {
+        let old: Session = toml::from_str("column_widths = [90, 136, 150]").unwrap();
+        let widths: Vec<(&str, f32)> = old
+            .column_widths
+            .iter()
+            .map(|(key, width)| (key.as_str(), *width))
+            .collect();
+        assert_eq!(widths, [("modified", 136.), ("size", 90.), ("type", 150.)]);
+        let named: Session = toml::from_str(
+            "[column_widths]
+folder = 200.0",
+        )
+        .unwrap();
+        assert_eq!(named.column_widths.get("folder"), Some(&200.));
     }
 }

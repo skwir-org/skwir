@@ -30,8 +30,14 @@ use std::{
 /// kills it.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 
+/// The player. Plugins that require it name this, not the literals.
+pub const WORKER: crate::process::Worker = crate::process::Worker {
+    variable: "BIBLI_MEDIA_WORKER",
+    executable: "bibli-media-worker",
+};
+
 pub fn worker_path() -> Option<PathBuf> {
-    crate::process::find_worker("BIBLI_MEDIA_WORKER", "bibli-media-worker")
+    WORKER.find()
 }
 
 struct Shared {
@@ -320,8 +326,7 @@ fn manage(
             }
             recv(worker.replies()) -> reply => {
                 let result = reply.map_err(|_| anyhow::anyhow!("video worker exited")).and_then(|r| r);
-                if result.is_err() && !ready && worker.child().try_wait()?.is_some_and(|status| status.code() == Some(127)) {
-                    // A dynamic loader reports missing shared libraries with 127.
+                if result.is_err() && !ready && worker.missing_runtime() {
                     // Decoder/file errors have a protocol reply and never fall back.
                     let _ = startup.send(Ok(false));
                     return Ok(());

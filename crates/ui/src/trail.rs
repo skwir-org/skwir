@@ -10,7 +10,6 @@
 //! scheme how to show it: a new kind of location needs no branch here.
 
 use bibli_core::location::{Crumb, EmptyState, Location, Trail, Verbs};
-use bibli_core::os_path::PathArg;
 
 use crate::shell::Shell;
 
@@ -27,8 +26,12 @@ pub struct Shown {
     pub empty: Option<EmptyState>,
     /// It is a folder: what it lists is in it (no Folder column).
     pub folder: bool,
+    /// It is a search (`LocationProvider::searches`): results, pills.
+    pub search: bool,
     /// The trail's places that take files dropped on them (`Verbs::drop`).
     takes_drops: Vec<Location>,
+    /// The sidebar's arrangement they were named under (`Roots::generation`).
+    names: u64,
 }
 
 impl Shown {
@@ -46,32 +49,62 @@ pub fn sync(shell: &mut Shell) {
         .as_ref()
         .map(ToString::to_string)
         .unwrap_or_default();
-    if shell.ui().place.location == text {
+    let names = shell.roots.generation;
+    if shell.ui().place.location == text && shell.ui().place.names == names {
         return;
     }
-    let (trail, verbs, icon, empty) = match &location {
+    let (mut trail, verbs, icon, empty) = match &location {
         Some(location) if !location.is_path() => (
             shell.app.trail(location),
             shell.app.verbs(location),
             shell.app.location_icon(location),
             shell.app.empty_state(location),
         ),
-        _ => (None, Verbs::default(), None, None),
+        // A folder is a trail of its own: its folders from the sidebar's
+        // place that holds it, the last holding folders.
+        Some(location) => (
+            location.path().map(|base| Trail {
+                base: Some(base),
+                holds_places: true,
+                ..Trail::default()
+            }),
+            Verbs::default(),
+            None,
+            None,
+        ),
+        None => (None, Verbs::default(), None, None),
     };
+    // A place the user renamed in the sidebar reads as they named it
+    // (the Trash they call Bin), as its tab and the history say it.
+    let registry = &shell.app.registry;
+    for crumb in trail.iter_mut().flat_map(|trail| &mut trail.crumbs) {
+        if let Some(title) = registry
+            .places
+            .find(|p| p.location.same_place(&crumb.location))
+            .and_then(|place| registry.user_title(&place))
+        {
+            crumb.label = title;
+        }
+    }
     let takes_drops = trail
         .iter()
         .flat_map(|trail| &trail.crumbs)
         .filter(|crumb| shell.app.verbs(&crumb.location).drop.is_some())
         .map(|crumb| crumb.location.clone())
         .collect();
+    let search = location
+        .as_ref()
+        .is_some_and(|location| shell.app.is_search(location));
     shell.ui_mut().place = Shown {
         folder: location.as_ref().is_none_or(Location::is_path),
+        search,
         location: text,
         trail,
         verbs,
         icon,
         empty,
         takes_drops,
+        names,
     };
 }
 
@@ -80,15 +113,6 @@ pub fn sync(shell: &mut Shell) {
 /// (`LocationProvider::icon`), else a folder's.
 pub fn glyph(app: &bibli_core::App, location: &Location) -> &'static str {
     app.location_icon(location).unwrap_or("folder")
-}
-
-/// A location as a command's `location` argument: a folder's path exactly
-/// (`PathArg`, whatever bytes it holds), anything else as its text.
-pub fn location_arg(location: &Location) -> serde_json::Value {
-    match location.path() {
-        Some(path) => serde_json::json!(PathArg::from(path)),
-        None => serde_json::json!(location.to_string()),
-    }
 }
 
 /// The segments of a trail as the address draws them: the folders of
@@ -112,7 +136,6 @@ pub fn segments(trail: &Trail, roots: &[crate::sidebar::Root]) -> Vec<Crumb> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     #[test]
     fn a_trail_continues_the_folder_it_is_of() {
@@ -145,18 +168,6 @@ mod tests {
             first.parent(),
             Some(Location::from_path("/home/someone/Photos")),
             "Up from a tag location's top goes to the folder it is of"
-        );
-    }
-
-    #[test]
-    fn a_location_argument_keeps_a_folder_exact() {
-        assert_eq!(
-            location_arg(&Location::new("tags", "/Places")),
-            serde_json::json!("tags:/Places")
-        );
-        assert_eq!(
-            location_arg(&Location::from_path("/x/y")),
-            serde_json::json!(PathArg::from(Path::new("/x/y")))
         );
     }
 }

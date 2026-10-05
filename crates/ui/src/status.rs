@@ -33,11 +33,7 @@ impl Shell {
     /// A command failed. Nothing selected, reached from the palette or a
     /// menu, is a hint rather than a failure.
     pub fn report_error(&mut self, error: &anyhow::Error, cx: &mut Context<Self>) {
-        // Plugins that still bail with the bare text (not yet the typed
-        // `NothingSelected`) are recognized by it; remove once they adopt it.
-        if bibli_core::command::is_nothing_selected(error)
-            || error.root_cause().to_string() == "nothing selected"
-        {
+        if bibli_core::command::is_nothing_selected(error) {
             self.set_status(crate::shell::NOTHING_SELECTED, false, cx);
         } else {
             self.set_status(format!("{error:#}"), true, cx);
@@ -99,7 +95,7 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
                 shell.ui().list.sorted.len(),
                 p.listing.is_complete(),
                 p.listing.error().map(str::to_owned),
-                p.location().is_some_and(|l| &*l.scheme == "query"),
+                shell.ui().place.search,
                 p.selection.sweeping(),
                 // Filtered by name or narrowed: how many there are in all.
                 p.is_filtered().then(|| p.listing.sorted(p.sort).len()),
@@ -232,21 +228,25 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
                 .child(format!("{} proposal(s) to review", shell.reviews.len())),
         );
     }
-    // The shelf announces itself only when it holds something.
-    if shell.shelf_count > 0 {
+    // What a plugin counts (the shelf's items) announces itself only
+    // when it counts something, in its words; a click opens what it counts.
+    for (i, tally) in shell.tallies.iter().enumerate() {
+        let open = tally.open.clone();
         bar = bar.child(
             div()
-                .id("shelf-chip")
+                .id(("tally", i))
                 .px_2()
                 .rounded_md()
-                .cursor_pointer()
+                .when(open.is_some(), gpui::Styled::cursor_pointer)
                 .bg(theme.selection_bg)
                 .text_color(theme.selection_text)
                 .hover(|s| s.bg(theme.hover))
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.run("ui.shelf_open", serde_json::json!({}), window, cx);
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    if let Some(open) = &open {
+                        this.run(&open.name, open.args.clone(), window, cx);
+                    }
                 }))
-                .child(format!("Shelf: {}", shell.shelf_count)),
+                .child(format!("{}: {}", tally.label, tally.count)),
         );
     }
     if let Some(title) = shell.app.executor.last_undo_title() {

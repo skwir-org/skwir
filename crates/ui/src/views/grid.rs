@@ -27,7 +27,6 @@ use bibli_core::EntryId;
 use bibli_core::thumbs::ThumbSize;
 use gpui::{AnyElement, Context, Window, div, img, prelude::*, px, size};
 
-use crate::dnd;
 use crate::elements::uniform_grid::{TileHeights, UniformGridScrollHandle, uniform_grid};
 use crate::icons;
 use crate::shell::Shell;
@@ -181,37 +180,17 @@ fn cell(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let zoom = shell.zoom;
-    let pane = shell.pane;
-    let (name, is_dir, selected, is_cursor, icon, link, path, tags, place, pictures) = {
-        let ws = shell.app.workspace.read();
+    let (look, pictures) = {
+        let app = std::sync::Arc::clone(&shell.app);
+        let ws = app.workspace.read();
         let Some(pane) = ws.pane(shell.pane) else {
             return div().into_any_element();
         };
-        let Some(e) = pane.listing.get(id) else {
+        let (Some(e), Some(look)) = (pane.entry(id), shell.look(pane, id, GridView::icon(zoom).1))
+        else {
             return div().into_any_element();
         };
-        (
-            e.name_str().into_owned(),
-            e.is_dir(),
-            pane.selection.contains(id),
-            pane.selection.cursor == Some(id),
-            shell.icons.for_entry(e, GridView::icon(zoom).1),
-            icons::Link::of(e),
-            if e.is_dir() {
-                pane.open.as_ref().and_then(|o| o.path_of(id))
-            } else {
-                None
-            },
-            crate::tags::entry_tags(e, &shell.tag_colors),
-            pane.location_of(id).map(|place| {
-                let tag = e
-                    .metadata
-                    .value(bibli_core::entry::keys::PLACE_TAG)
-                    .and_then(bibli_core::Value::as_str);
-                (place, tag.map(|tag| shell.tag_colors.of(tag)))
-            }),
-            mosaic_of(e),
-        )
+        (look, mosaic_of(e))
     };
     // A filled box shows the short side of the thumbnail at full size.
     let fill = shell.prefs.grid_fill;
@@ -220,7 +199,7 @@ fn cell(
     } else {
         ThumbSize::Normal
     };
-    let thumb = if is_dir {
+    let thumb = if look.is_dir {
         ThumbView::Unavailable
     } else {
         shell.thumb(id, size, window, cx)
@@ -244,21 +223,17 @@ fn cell(
             .rounded_md()
             .bg(theme.placeholder)
             .into_any_element(),
-        ThumbView::Unavailable => match &icon {
-            Some(p) => icons::element(p, icon_px),
-            None => div()
-                .size(px(icon_px))
-                .rounded_md()
-                .bg(if is_dir {
-                    theme.accent
-                } else {
-                    theme.text_muted
-                })
-                .into_any_element(),
-        },
+        // Marked below, with the thumbnail's mark.
+        ThumbView::Unavailable => icons::entry_picture(
+            look.icon.as_deref(),
+            look.is_dir,
+            icon_px,
+            icons::Mark::None,
+            theme,
+        ),
     };
     // A place with pictures (a tag's) shows a few of them.
-    let picture = match &place {
+    let picture = match &look.place {
         Some((_, Some(color))) if !pictures.is_empty() => mosaic(
             shell,
             pictures,
@@ -271,80 +246,55 @@ fn cell(
         ),
         _ => picture,
     };
-    let mut el = div()
-        .id(ix)
-        .relative()
-        .size_full()
-        .flex()
-        .flex_col()
-        .items_center()
-        .p(px(FRAME - 1.))
-        .gap(px(LABEL_GAP))
-        .rounded_md()
-        .border_1()
-        .border_color(if is_cursor {
-            theme.accent
-        } else {
-            gpui::transparent_black()
-        })
-        .when(selected, |d| {
-            d.bg(theme.selection_bg).text_color(theme.selection_text)
-        })
-        .when(!selected, |d| d.hover(|s| s.bg(theme.hover)))
-        .when(
-            shell.pending.cut && shell.pending.entries.contains(&id),
-            |d| d.opacity(crate::views::list::CUT_OPACITY),
-        )
-        .children(shell.menu_marker(pane, is_cursor))
-        .child(
-            div()
-                .size(px(zoom as f32))
-                .flex_none()
-                .flex()
-                .items_end()
-                .justify_center()
-                .child(
-                    div()
-                        .relative()
-                        .flex_none()
-                        .child(match &place {
-                            Some((_, Some(color))) => {
-                                icons::with_tag(picture, icon_px, *color, theme)
-                            }
-                            _ => icons::with_link(picture, icon_px, link, theme),
-                        })
-                        .children(crate::tags::tile_dots(
-                            ("tile-tags", ix),
-                            &tags,
-                            zoom as f32,
-                            theme,
-                            shell.font.clone(),
-                        )),
-                ),
-        )
-        .child(crate::elements::clip::clipped(
-            div()
-                .id(("label", ix))
-                .w_full()
-                .text_xs()
-                .line_height(px(LABEL_LINE))
-                .text_center()
-                .overflow_hidden()
-                .text_ellipsis_middle()
-                .line_clamp(usize::from(lines)),
-            name,
-            shell.font.clone(),
-        ));
-    el = crate::list::entry_mouse(el, pane, ix, cx);
-    el = dnd::draggable(el, pane, cx);
-    el = dnd::takes_gifts(el, pane, ix, cx);
-    // Where it leads takes what is dropped on it (a folder of the trash).
-    if let Some((place, _)) = place {
-        el = dnd::droppable_place(el, place, cx);
-    } else if let Some(p) = path {
-        el = dnd::droppable_dir(el, p, cx);
-    }
-    el.into_any_element()
+    let el = crate::views::entry::highlight(
+        div()
+            .id(ix)
+            .relative()
+            .size_full()
+            .flex()
+            .flex_col()
+            .items_center()
+            .p(px(FRAME - 1.))
+            .gap(px(LABEL_GAP))
+            .rounded_md(),
+        &look,
+        theme,
+    )
+    .child(
+        div()
+            .size(px(zoom as f32))
+            .flex_none()
+            .flex()
+            .items_end()
+            .justify_center()
+            .child(
+                div()
+                    .relative()
+                    .flex_none()
+                    .child(icons::marked(picture, icon_px, look.mark(), theme))
+                    .children(crate::tags::tile_dots(
+                        ("tile-tags", ix),
+                        &look.tags,
+                        zoom as f32,
+                        theme,
+                        shell.font.clone(),
+                    )),
+            ),
+    )
+    .child(crate::elements::clip::clipped(
+        div()
+            .id(("label", ix))
+            .w_full()
+            .text_xs()
+            .line_height(px(LABEL_LINE))
+            .text_center()
+            .overflow_hidden()
+            .text_ellipsis_middle()
+            .line_clamp(usize::from(lines)),
+        look.name.clone(),
+        shell.font.clone(),
+    ));
+    crate::views::entry::behave(el, &look, ix, shell, cx).into_any_element()
 }
 
 /// The pictures a place's tile shows (`keys::PLACE_PICTURES`): each one's
@@ -430,7 +380,7 @@ fn mosaic(
         .p(px(FRAME - 1.))
         .rounded_md()
         .border_1()
-        .border_color(theme.tags[color % theme.tags.len()])
+        .border_color(theme.tag(color))
         .bg(theme.tag_fill(color))
         .child(
             div()
@@ -444,6 +394,10 @@ fn mosaic(
 }
 
 impl PaneView for GridView {
+    fn zooms(&self) -> crate::view::Zooms {
+        crate::view::Zooms::Tiles
+    }
+
     fn id(&self) -> &'static str {
         crate::view::GRID
     }
@@ -470,20 +424,7 @@ impl PaneView for GridView {
                         .filter_map(|ix| this.ui().list.sorted.get(ix).map(|id| (ix, *id)))
                         .collect();
                     // Metadata for the whole visible range in one request.
-                    let need: Vec<EntryId> = {
-                        let ws = this.app.workspace.read();
-                        ws.pane(pane).map_or_else(Vec::new, |p| {
-                            ids.iter()
-                                .map(|(_, id)| *id)
-                                .filter(|id| {
-                                    p.listing
-                                        .get(*id)
-                                        .is_some_and(|e| !e.metadata.is_hydrated())
-                                })
-                                .collect()
-                        })
-                    };
-                    this.request_hydrate(need);
+                    this.request_hydrate(ids.iter().map(|(_, id)| *id).collect::<Vec<_>>());
                     let cells = ids
                         .into_iter()
                         .map(|(ix, id)| {

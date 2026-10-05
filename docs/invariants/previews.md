@@ -5,6 +5,13 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
 - New format plugins publish `inspection::Inspection` from scheduler workers;
   use the existing preview registry and owner lifetimes. Fallback providers have
   lower priority than typed providers, including after disable/re-enable.
+  Providers of one priority never accept the same file: registration order
+  would choose. One that settles a shared name by its content (geo's Litchi
+  `.csv`) outranks one that takes the name whole (the table reader);
+  `format_providers_never_compete_for_the_same_file` asks every preview
+  plugin the binary wires (`Previews::accepting`). A changed preference
+  re-registers only the provider it concerns (`Previews::unregister`), so a
+  document open in the reader stays open.
 - Keep rich text, table/tree rows and images toolkit-independent. The UI owns
   virtualized layout and commands. Bound input, expansion and visible work;
   a short file can still contain one huge field or deeply nested structure.
@@ -14,6 +21,9 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   so the folder shown is the one the link named. The pane navigates there and
   `Shell::reveal_path` selects the file once the listing has it, which is what
   opens it in the preview. A link is a place to show, never a file to run.
+  Every kind follows its links through `Shell::follow_document_link` (a
+  PDF's too, past its links to its own pages), and the map's attribution
+  goes through `ui.open_url` like any address.
 - An address found in text (ADR-029) is a link too: in a document read as a
   page (Markdown's bare addresses, a plain-text mail) like a written one; in
   raw text (the code view) only under Ctrl, since a click there selects
@@ -80,11 +90,17 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   run (that format read, PAM written, no delegate, bounded memory, one
   thread), at most `magick::RUNNING` at once.
 - Every program run on a file that is not ours runs in
-  `bibli_platform::sandbox` where bubblewrap can isolate: converters
-  (LibreOffice, Pandoc) and ImageMagick only there, the desktop's
-  thumbnailers there when it can and as before when it cannot (ADR-031).
-  A sandbox that started and failed is never retried outside it. The
-  file is at `sandbox::inside_name`, never its own name.
+  `bibli_platform::sandbox` where bubblewrap can isolate, through one
+  entry point, `sandbox::untrusted`, which says what to do where nothing
+  isolates: converters (LibreOffice, Pandoc) and ImageMagick refuse
+  (`Otherwise::Refuse`); the desktop's thumbnailers, bibli's own decoders
+  (`ffprobe`, `ffmpeg`, Poppler's `pdfinfo` and `pdftoppm`) and helpers
+  (the archive and model workers) run as before (`Otherwise::Run`). A
+  sandbox that started and failed is never retried outside it. The file
+  is at `sandbox::inside_name`, never its own name: what a program says
+  of its name (a compressed file's one member) is told it (`--stem`).
+  The PDF readers and the player are sessions of their own, outside it
+  (ADR-004, ADR-005, ADR-016).
 - A model, drawing or print is shown by the picture its application stored
   in it (`preview-models`), read from where the format keeps it and no
   further: a Blender file's blocks before its `TEST` block (a compressed

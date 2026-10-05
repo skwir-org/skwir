@@ -356,6 +356,20 @@ impl Shell {
         {
             return;
         }
+        // The names the user gave places, for everything that names a
+        // location (`App::location_title`).
+        let titles = self
+            .sidebar_sections
+            .places
+            .iter()
+            .flat_map(|(group, arrangement)| {
+                arrangement
+                    .titles
+                    .iter()
+                    .map(move |(key, title)| ((group.clone(), key.clone()), title.clone()))
+            })
+            .collect();
+        self.app.registry.set_place_titles(titles);
         let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
         self.roots = Roots {
             roots: roots(
@@ -366,16 +380,6 @@ impl Shell {
             key: Some((revision, self.sidebar_sections.clone())),
             generation: self.roots.generation + 1,
         };
-    }
-
-    /// What `location` is called among others (its tab, the history): the
-    /// sidebar's name for a folder it shows, as the user named it, else
-    /// what the core calls it (`App::location_title`).
-    pub fn location_name(&self, location: &Location) -> String {
-        location
-            .path()
-            .and_then(|path| self.roots.roots.iter().find(|r| r.path == path))
-            .map_or_else(|| self.app.location_title(location), |r| r.name.clone())
     }
 }
 
@@ -452,7 +456,8 @@ pub struct PlaceDrag {
     /// Its position among the group's movable places when the drag started.
     pub index: usize,
     pub reorder: Option<Reorder>,
-    /// What dropping it on files runs, with the files (`Place::drop`).
+    /// What dropping it on files runs, with the files: what its
+    /// location takes (`Verbs::drop`, a tag's gives its tag).
     pub gives: Option<Invocation>,
 }
 
@@ -489,27 +494,13 @@ pub fn drop_target<T: Clone>(order: &[T], from: usize, gap: usize) -> Option<Opt
     (gap != from && gap != from + 1).then(|| order.get(gap).cloned())
 }
 
-/// Whether two locations are the same place: a folder by its path (`~`
-/// and the exact bytes resolved), anything else as written.
-pub fn same_place(a: &Location, b: &Location) -> bool {
-    a.same_place(b)
-}
-
 /// What activating `place` runs: its own command (mount, unlock), or
 /// opening its location.
 pub fn open_invocation(place: &Place) -> Invocation {
     if let Some(activate) = &place.activate {
         return activate.clone();
     }
-    // A folder goes by its path, which need not be UTF-8.
-    let location = match place.location.path() {
-        Some(path) => serde_json::json!(PathArg::from(path)),
-        None => serde_json::json!(place.location.to_string()),
-    };
-    Invocation {
-        name: "navigate".into(),
-        args: serde_json::json!({ "location": location }),
-    }
+    Invocation::navigate(&place.location)
 }
 
 /// Opening `place` in a tab behind the one shown: a middle click on its
@@ -517,22 +508,11 @@ pub fn open_invocation(place: &Place) -> Invocation {
 /// command with `tab`, which opens the volume there once it is mounted.
 pub fn open_in_tab(place: &Place) -> Invocation {
     if let Some(activate) = &place.activate {
-        let mut run = activate.clone();
-        if let Some(args) = run.args.as_object_mut() {
-            args.insert("tab".into(), serde_json::json!(true));
-        } else {
-            run.args = serde_json::json!({ "tab": true });
-        }
-        return run;
+        return activate.clone().with("tab", true);
     }
-    let location = match place.location.path() {
-        Some(path) => serde_json::json!(PathArg::from(path)),
-        None => serde_json::json!(place.location.to_string()),
-    };
-    Invocation {
-        name: "tab.new".into(),
-        args: serde_json::json!({ "location": location, "show": false }),
-    }
+    Invocation::new("tab.new")
+        .with("location", place.location.arg())
+        .with("show", false)
 }
 
 /// Share of the volume in use, 0 to 1.
@@ -697,11 +677,17 @@ pub fn render(
             *index += 1;
             *index - 1
         });
+        // What its location takes, it gives files it is dragged onto.
+        let gives = if place.location.is_path() {
+            None
+        } else {
+            shell.app.verbs(&place.location).drop
+        };
         let drag = PlaceDrag {
             group: place.group.clone(),
             index: index.unwrap_or_default(),
             reorder: moves.clone(),
-            gives: place.drop.clone(),
+            gives: gives.clone(),
         };
         let order = moves
             .as_ref()
@@ -710,6 +696,7 @@ pub fn render(
         if let Some(color) = color {
             let mut pill = pill(i, &place, color, is_current, at_cursor, &font, cx)
                 .children(shell.host_marker(MenuHost::Sidebar, menu_here));
+            pill = takes_drops(pill, &place.location, gives.is_some(), cx);
             if drag.reorder.is_some() || drag.gives.is_some() {
                 pill = movable_pill(pill, place.title.clone(), drag, order, cx);
             }
@@ -896,11 +883,7 @@ pub fn render(
         if drag.reorder.is_some() {
             row = movable_row(row, place.title.clone(), drag, order, cx);
         }
-        if let Some(drop) = place.drop.clone() {
-            row = takes_drops(row, drop, cx);
-        } else if let Some(path) = place.location.path() {
-            row = crate::dnd::droppable_dir(row, path, cx);
-        }
+        row = takes_drops(row, &place.location, gives.is_some(), cx);
         column = column.child(row);
         drawn.push((item, children));
         children += 1;
@@ -921,25 +904,13 @@ pub fn render(
     // would scroll away with the places.
     // Its right edge is dragged like the preview's left one; a double click
     // gives the sidebar its default width back.
-    let edge = div()
-        .id("sidebar-resize")
-        .absolute()
-        .top_0()
-        .right_0()
-        .h_full()
-        .w(px(6.))
-        .cursor(gpui::CursorStyle::ResizeLeftRight)
-        .hover(|style| style.bg(theme.handle))
-        .on_click(cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
-            if event.click_count() == 2 {
-                this.sidebar_width = DEFAULT_WIDTH;
-                this.remember_session();
-                cx.notify();
-            }
-        }))
-        .on_drag(SidebarResize, |_, _, _, cx| {
-            cx.new(|_| crate::preview::NoDragView)
-        });
+    let edge = crate::elements::edge::edge(
+        "sidebar-resize",
+        crate::elements::edge::Side::Right,
+        SidebarResize,
+        |this| this.sidebar_width = DEFAULT_WIDTH,
+        cx,
+    );
     // Its header holds the window's toggle and More, level with the panes'
     // rows; the places scroll below it.
     let header = crate::address::sidebar_header(shell, cx);
@@ -1122,7 +1093,7 @@ fn pill(
     cx: &mut Context<Shell>,
 ) -> gpui::Stateful<gpui::Div> {
     let theme = cx.global::<Theme>().clone();
-    let tone = theme.tags[color % theme.tags.len()];
+    let tone = theme.tag(color);
     let open = open_invocation(place);
     let tab = open_in_tab(place);
     // A tag in a category says its own name; the tooltip says where it is.
@@ -1135,7 +1106,7 @@ fn pill(
     )
     .into();
     let font = font.clone();
-    let mut pill = div()
+    div()
         .id(("place", i))
         .flex_none()
         .max_w_full()
@@ -1168,29 +1139,26 @@ fn pill(
         .cursor_pointer()
         .hover(move |s| s.border_color(tone))
         .on_click(cx.listener({
-            let tag = place.title.clone();
+            let clicks = place.clicks.clone();
             let item = Item::of(place);
             move |this, ev: &gpui::ClickEvent, window, cx| {
                 this.sidebar_keys.cursor = Some(item.clone());
-                // Shift narrows what is shown to the files that have the
-                // tag too (or no longer), Alt shows its files in the
-                // folder shown: the tags plugin says how (`tags.pill`).
+                // With a modifier, what the place says it runs (a tag's
+                // pill: Shift narrows, Alt shows its files here).
                 let m = ev.modifiers();
-                let how = if m.shift {
-                    "also"
+                let held = if m.shift {
+                    "shift"
                 } else if m.alt {
-                    "here"
+                    "alt"
                 } else {
-                    this.run(&open.name, open.args.clone(), window, cx);
-                    return;
+                    ""
                 };
-                let pane = this.pane;
-                this.run(
-                    "tags.pill",
-                    serde_json::json!({ "tag": tag, "how": how, "pane": pane }),
-                    window,
-                    cx,
-                );
+                let run = clicks
+                    .iter()
+                    .find(|click| click.modifier == held)
+                    .map(|click| click.command.clone().with("pane", this.pane));
+                let run = run.unwrap_or_else(|| open.clone());
+                this.run(&run.name, run.args, window, cx);
             }
         }))
         .on_mouse_down(
@@ -1211,44 +1179,29 @@ fn pill(
             }),
         )
         .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), font.clone(), cx))
-        .child(div().truncate().child(title));
-    if let Some(drop) = place.drop.clone() {
-        pill = takes_drops(pill, drop, cx);
-    }
-    pill
+        .child(div().truncate().child(title))
 }
 
-/// A place that takes files dropped on it (`Place::drop`: a tag gives them
-/// itself, the Trash takes them in): `drop` runs with `pane` for a drag
-/// from a pane (its selection), `entries` for another application's files.
+/// A place takes what its location takes (ADR-032): a folder's row is a
+/// folder's drop target, any other's is its location's (`Verbs::drop`,
+/// `takes`: the Trash trashes, a tag gives its tag, the shelf shelves).
+/// One that takes nothing (Recent, a search) still swallows a drop, which
+/// would otherwise reach the column and be bookmarked.
 fn takes_drops(
     place: gpui::Stateful<gpui::Div>,
-    drop: Invocation,
+    location: &Location,
+    takes: bool,
     cx: &mut Context<Shell>,
 ) -> gpui::Stateful<gpui::Div> {
-    let theme = cx.global::<Theme>();
-    let (tint, edge) = (theme.drop_target, theme.accent);
-    let from_paths = drop.clone();
+    if let Some(path) = location.path() {
+        return crate::dnd::droppable_dir(place, path, cx);
+    }
+    if takes {
+        return crate::dnd::droppable_place(place, location.clone(), cx);
+    }
     place
-        .drag_over::<DragPayload>(move |s, _, _, _| s.bg(tint).border_color(edge))
-        .on_drop(cx.listener(move |this, payload: &DragPayload, window, cx| {
-            cx.stop_propagation();
-            let mut args = drop.args.clone();
-            args["pane"] = serde_json::json!(payload.pane);
-            this.run(&drop.name, args, window, cx);
-        }))
-        .drag_over::<ExternalPaths>(move |s, _, _, _| s.bg(tint).border_color(edge))
-        .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
-            cx.stop_propagation();
-            let entries: Vec<bibli_core::op::EntryRef> = paths
-                .paths()
-                .iter()
-                .filter_map(bibli_core::op::EntryRef::from_path)
-                .collect();
-            let mut args = from_paths.args.clone();
-            args["entries"] = serde_json::json!(entries);
-            this.run(&from_paths.name, args, window, cx);
-        }))
+        .on_drop(cx.listener(|_, _: &DragPayload, _, cx| cx.stop_propagation()))
+        .on_drop(cx.listener(|_, _: &ExternalPaths, _, cx| cx.stop_propagation()))
 }
 
 /// A pill dragged: onto files, which it gives what it gives (its tag),
@@ -1428,13 +1381,14 @@ impl Shell {
             .find(|a| a.place.group == group && a.place.key() == key)
     }
 
-    /// What renames the place: its owner's command for one kept
-    /// (`Place::rename`), the sidebar's for one offered, which asks for
-    /// the name it shows under.
+    /// What renames the place: its owner's command for one kept or
+    /// suggested (`Place::rename`: a bookmark, a saved search, a tag on
+    /// every file), the sidebar's for one offered, which asks for the
+    /// name it shows under.
     pub fn sidebar_rename(&self, arranged: &Arranged) -> Option<Invocation> {
         match arranged.role {
-            Role::Kept => arranged.place.rename.clone(),
-            Role::Suggested => None,
+            // A suggested tag is renamed on every file, as a pinned one.
+            Role::Kept | Role::Suggested => arranged.place.rename.clone(),
             Role::Offered => {
                 let place = &arranged.place;
                 let own = self
@@ -1970,7 +1924,7 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::{Role, Sections, arrange, drop_target, group_title, same_place, used_fraction};
+    use super::{Role, Sections, arrange, drop_target, group_title, used_fraction};
     use bibli_core::Location;
     use std::path::PathBuf;
 
@@ -2030,26 +1984,12 @@ mod tests {
     }
 
     fn place(group: &str, location: &str) -> bibli_core::registry::Place {
-        bibli_core::registry::Place {
-            title: location.trim_start_matches('/').to_owned(),
-            location: Location::parse(location),
-            icon: None,
-            group: group.into(),
-            space: None,
-            eject: None,
-            activate: None,
-            unavailable: None,
-            busy: None,
-            menu: Vec::new(),
-            forget: None,
-            reorder: None,
-            color: None,
-            drop: None,
-            suggested: false,
-            key: None,
-            hidden: false,
-            rename: None,
-        }
+        bibli_core::registry::Place::new(
+            group,
+            location.trim_start_matches('/').to_owned(),
+            "",
+            Location::parse(location),
+        )
     }
 
     fn titles(arranged: &[super::Arranged]) -> Vec<String> {
@@ -2145,25 +2085,8 @@ mod tests {
     /// behind the one shown.
     #[test]
     fn a_volume_to_mount_opens_in_a_tab_once_mounted() {
-        let place = |location: &str| bibli_core::registry::Place {
-            title: "Backup".into(),
-            location: Location::parse(location),
-            icon: None,
-            group: "devices".into(),
-            space: None,
-            eject: None,
-            activate: None,
-            unavailable: None,
-            busy: None,
-            menu: Vec::new(),
-            forget: None,
-            reorder: None,
-            color: None,
-            drop: None,
-            suggested: false,
-            key: None,
-            hidden: false,
-            rename: None,
+        let place = |location: &str| {
+            bibli_core::registry::Place::new("devices", "Backup", "", Location::parse(location))
         };
         let mut locked = place("device:/dev/sdz");
         locked.activate = Some(bibli_core::command::Invocation::with_args(
@@ -2202,30 +2125,5 @@ mod tests {
         );
         assert_eq!(group_title("devices"), "Devices");
         assert_eq!(group_title("searches"), "Searches");
-    }
-
-    #[test]
-    fn a_folder_is_the_same_place_by_its_path_anything_else_as_written() {
-        let home = Location::parse("~").path().unwrap();
-        assert!(same_place(
-            &Location::parse("~/a b"),
-            &Location::from_path(home.join("a b"))
-        ));
-        assert!(!same_place(
-            &Location::from_path("/a"),
-            &Location::from_path("/b")
-        ));
-        assert!(same_place(
-            &Location::parse("query:ext:pdf in:/x"),
-            &Location::new("query", "ext:pdf in:/x")
-        ));
-        assert!(!same_place(
-            &Location::parse("query:ext:pdf"),
-            &Location::parse("query:ext:png")
-        ));
-        assert!(!same_place(
-            &Location::parse("/query"),
-            &Location::parse("query:/")
-        ));
     }
 }

@@ -14,12 +14,10 @@
 
 pub mod packet;
 
-use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
 
 use bibli_core::app::App;
 use bibli_core::cancel::CancelToken;
@@ -30,7 +28,6 @@ use bibli_core::metadata::Listed;
 use bibli_core::notes::raw::{self, RawKey};
 use bibli_core::notes::{Holds, Kept, Notes, NotesStore, Probe, Tag, Write, Wrote};
 use bibli_core::plugin::{Category, Plugin};
-use parking_lot::Mutex;
 
 pub(crate) const ID: &str = "xmp";
 
@@ -38,6 +35,12 @@ fn with_suffix(name: &OsStr, suffix: &str) -> OsString {
     let mut out = name.to_os_string();
     out.push(suffix);
     out
+}
+
+/// A sidecar's text: a regular file of a sidecar's size at most, so a pipe
+/// or a giant named `x.xmp` holds nothing up.
+fn read(path: &Path) -> std::io::Result<String> {
+    bibli_platform::file::read_regular_text(path, bibli_platform::file::SIDE_FILE_LIMIT)
 }
 
 /// `x.jpg.xmp`, the name everyone but Adobe gives a sidecar.
@@ -75,58 +78,20 @@ fn stem_shared(path: &Path) -> bool {
     })
 }
 
-/// The `.xmp` files in the folders batches were in: a folder is read once
-/// for its listing, not once per file, and again when it changes.
-#[derive(Default)]
-struct SidecarNames {
-    folders: Mutex<Vec<(PathBuf, Option<SystemTime>, Instant, Arc<HashSet<OsString>>)>>,
-}
-
-const FOLDERS: usize = 16;
-const FRESH: Duration = Duration::from_secs(5);
-
-impl SidecarNames {
-    fn of(&self, dir: &Path) -> Arc<HashSet<OsString>> {
-        let modified = std::fs::metadata(dir).ok().and_then(|m| m.modified().ok());
-        let known = self
-            .folders
-            .lock()
-            .iter()
-            .find(|(d, m, at, _)| d == dir && *m == modified && at.elapsed() < FRESH)
-            .map(|(_, _, _, names)| Arc::clone(names));
-        if let Some(names) = known {
-            return names;
-        }
-        let names: Arc<HashSet<OsString>> = Arc::new(
-            std::fs::read_dir(dir)
-                .map(|entries| {
-                    entries
-                        .flatten()
-                        .map(|e| e.file_name())
-                        .filter(|n| is_sidecar(n))
-                        .collect()
-                })
-                .unwrap_or_default(),
-        );
-        let mut folders = self.folders.lock();
-        folders.retain(|(d, _, _, _)| d != dir);
-        if folders.len() >= FOLDERS {
-            folders.remove(0);
-        }
-        folders.push((
-            dir.to_path_buf(),
-            modified,
-            Instant::now(),
-            Arc::clone(&names),
-        ));
-        names
-    }
-}
-
 /// XMP sidecars as a notes store.
-#[derive(Default)]
 pub struct XmpStore {
-    names: SidecarNames,
+    /// The `.xmp` files of a folder.
+    names: bibli_core::companions::FolderNames,
+}
+
+impl Default for XmpStore {
+    fn default() -> Self {
+        XmpStore {
+            names: bibli_core::companions::FolderNames::new(|name| {
+                is_sidecar(name).then(|| name.to_owned())
+            }),
+        }
+    }
 }
 
 impl XmpStore {
@@ -139,7 +104,7 @@ impl XmpStore {
         }
         let replaced = replaced(name).filter(|r| has(r))?;
         let path = dir.join(&replaced);
-        let text = std::fs::read_to_string(&path).ok()?;
+        let text = read(&path).ok()?;
         let ext = Path::new(name).extension()?.to_string_lossy().into_owned();
         packet::sidecar_for(&text)
             .is_none_or(|theirs| theirs.eq_ignore_ascii_case(&ext))
@@ -215,7 +180,7 @@ impl NotesStore for XmpStore {
                     return None;
                 }
                 let path = Self::sidecar(dir, f.name, &has)?;
-                packet::notes_of(&std::fs::read_to_string(path).ok()?).filter(|n| !n.is_empty())
+                packet::notes_of(&read(&path).ok()?).filter(|n| !n.is_empty())
             })
             .collect()
     }
@@ -237,10 +202,10 @@ impl NotesStore for XmpStore {
         let Some(dir) = file.path.parent() else {
             return Ok(Wrote::NotHere);
         };
-        let has_notes = !notes.tags.is_empty() || notes.rating.is_some() || notes.comment.is_some();
+        let has_notes = notes.has_user_notes();
         let (path, text) = match Self::existing(dir, file.name) {
             Some(path) => {
-                let text = std::fs::read_to_string(&path)?;
+                let text = read(&path)?;
                 let Some(edited) = packet::edit(&text, notes) else {
                     // Not XMP bibli can edit: left alone, the others kept.
                     tracing::debug!(path = %path.display(), "xmp: a sidecar left as it is");

@@ -65,14 +65,13 @@ pub fn set(app: &App, saving: &Arc<Mutex<()>>, tag: &str, on: bool, undo: bool) 
                     NotifyLevel::Error,
                     format!("“{tag}” was not changed: {error:#}"),
                 ),
-                Ok(()) => app.notify_with_action(
-                    NotifyLevel::Info,
+                Ok(()) => app.notify_undoable(
                     if on {
                         format!("A file now has one tag of “{tag}” at a time")
                     } else {
                         format!("A file can have several tags of “{tag}” again")
                     },
-                    if undo { "Redo" } else { "Undo" },
+                    undo,
                     Invocation::with_args(
                         "tags.exclusive",
                         &serde_json::json!({ "tag": tag, "on": !on, "undo": !undo }),

@@ -12,18 +12,22 @@ use crate::inspection::limits;
 /// A diagram's source handed over at most; the helper refuses more.
 pub const SOURCE: usize = 64 * 1024;
 
-/// The helper's executable: `BIBLI_MERMAID_WORKER`, beside our binary, or
-/// on `PATH`. Plugins that require it name this, not the literals.
+/// The helper. Plugins that require it name this, not the literals.
+pub const WORKER: crate::process::Worker = crate::process::Worker {
+    variable: "BIBLI_MERMAID_WORKER",
+    executable: "bibli-mermaid-worker",
+};
+
+/// Where the helper is, if it is.
 pub fn worker_path() -> Option<PathBuf> {
-    crate::process::find_worker("BIBLI_MERMAID_WORKER", "bibli-mermaid-worker")
+    WORKER.find()
 }
 
 /// The SVG of the diagram `source` describes. An error when the helper is
 /// missing, or says `source` is not a diagram it can draw.
 pub fn mermaid(source: &str, cancel: &CancelToken) -> anyhow::Result<String> {
     anyhow::ensure!(source.len() <= SOURCE, "The diagram is too long to draw");
-    let worker = worker_path()
-        .ok_or_else(|| anyhow::anyhow!("Install bibli-mermaid-worker to draw diagrams"))?;
+    let worker = WORKER.require("draw diagrams")?;
     let finished = crate::process::run_to_exit(
         &mut Command::new(worker),
         Some(source.as_bytes()),

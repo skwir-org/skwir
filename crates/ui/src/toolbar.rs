@@ -336,25 +336,11 @@ fn invoke(
         return;
     }
     shell.activate_pane(pane, cx);
-    if !matches!(
-        command,
-        "ui.history_menu" | "ui.subfolder_menu" | "ui.parents_menu"
-    ) {
-        shell.close_nav_menu(window);
-    }
-    if !matches!(
-        command,
-        "ui.toolbar_menu" | "ui.reader_menu" | "ui.preview_menu"
-    ) {
-        if let Some(popup) = shell.toolbar_menu.take() {
-            popup.restore(window);
-        }
-        if let Some(popup) = shell.preview.menu.take() {
-            popup.restore(window);
-        }
-    }
-    if command != "ui.search_chip" {
-        shell.close_search_chip(window);
+    // What a button runs closes the popup open, as a press outside it
+    // does: a menu's row closes its menu, and the popup's own button,
+    // pressed again, leaves it closed (`Shell::toggle_popup`).
+    if let Some(was) = shell.close_popup(window) {
+        shell.dismissed = Some((shell.presses, was));
     }
     shell.note_pointer_use(command, &args, cx);
     // A command acts on the button's pane, unless the button names the
@@ -366,6 +352,52 @@ fn invoke(
 }
 
 impl Shell {
+    /// Close the popup open, whichever it is (More or the View menu, a
+    /// menu of places, a search pill's choices, a preview's menu): there is
+    /// one at most. Returns what it was, as its toggle names it. A menu of
+    /// places still being read is no longer wanted (`nav_asked`).
+    pub(crate) fn close_popup(&mut self, window: &mut Window) -> Option<String> {
+        self.nav_asked += 1;
+        let mut was = None;
+        if let Some(popup) = self.toolbar_menu.take() {
+            was = Some(popup.kind.to_owned());
+            popup.restore(window);
+        }
+        if let Some(what) = self.close_nav_menu(window) {
+            was = Some(what.key());
+        }
+        if let Some(key) = self.close_search_chip(window) {
+            was = Some(key);
+        }
+        if let Some(popup) = self.preview.menu.take() {
+            was = Some(format!("preview {}", popup.kind));
+            popup.restore(window);
+        }
+        was
+    }
+
+    /// Every popup's toggle (`args`: `close`, and `pointer` when a press
+    /// outside closes it), before opening the one named `key`: the popup
+    /// open closes, and this one opens unless asked to close, unless it
+    /// was the one open (a second press closes it), and unless the press
+    /// that begins this click just closed it. One popup at a time, the
+    /// same way for all.
+    pub(crate) fn toggle_popup(
+        &mut self,
+        key: &str,
+        args: &serde_json::Value,
+        window: &mut Window,
+    ) -> bool {
+        let was = self.close_popup(window);
+        if args.get("close").and_then(serde_json::Value::as_bool) == Some(true) {
+            if let Some(was) = was {
+                self.note_dismissed(args, was);
+            }
+            return false;
+        }
+        was.as_deref() != Some(key) && !self.just_dismissed(key)
+    }
+
     /// A popup's toggle, closing it: when a press outside closed it
     /// (`pointer` in `args`), note which (`what`) and with which press.
     pub(crate) fn note_dismissed(&mut self, args: &serde_json::Value, what: String) {

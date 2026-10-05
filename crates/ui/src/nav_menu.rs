@@ -83,12 +83,8 @@ impl Shell {
     ) {
         let forward = args.get("forward").and_then(serde_json::Value::as_bool) == Some(true);
         let what = NavWhat::History { forward };
-        let was = self.close_nav_menu(window);
         cx.notify();
-        if self.nav_closing(args, was.as_ref()) || was.as_ref() == Some(&what) {
-            return;
-        }
-        if self.just_dismissed(&what.key()) {
+        if !self.toggle_popup(&what.key(), args, window) {
             return;
         }
         let pane = self.pane;
@@ -122,7 +118,7 @@ impl Shell {
         let rows = places
             .into_iter()
             .map(|(steps, location)| NavRow {
-                label: self.location_name(&location).into(),
+                label: self.app.location_title(&location).into(),
                 tip: match location.path() {
                     Some(path) => path.display().to_string().into(),
                     None => location.to_string().into(),
@@ -159,123 +155,40 @@ impl Shell {
                 .and_then(|v| serde_json::from_value::<PathArg>(v.clone()).ok())
                 .map(|arg| bibli_core::Location::parse_os(arg.as_os_str()))
         };
-        let was = self.close_nav_menu(window);
         cx.notify();
-        // A later request, or a close, makes an answer on its way unwanted.
-        self.nav_asked += 1;
-        if self.nav_closing(args, was.as_ref()) {
-            return;
-        }
-        let Some(of) = location("location").or_else(|| location("path")) else {
+        let of = location("location").or_else(|| location("path"));
+        let what = of.clone().map(|of| NavWhat::Subfolders { of });
+        // A later request, or a close, makes an answer on its way unwanted
+        // (`toggle_popup` counts it in `nav_asked`).
+        let key = what.as_ref().map(NavWhat::key).unwrap_or_default();
+        let (Some(of), true) = (of, self.toggle_popup(&key, args, window)) else {
             return;
         };
-        let what = NavWhat::Subfolders { of: of.clone() };
-        if was.as_ref() == Some(&what) || self.just_dismissed(&what.key()) {
-            return;
-        }
         let asked = self.nav_asked;
         let current = location("current");
-        let Some(folder) = of.path() else {
-            self.places_menu(of, current, asked, window, cx);
-            return;
-        };
-        let current = current.as_ref().and_then(bibli_core::Location::path);
         let hidden = self.sort_spec().show_hidden;
         let pane = self.pane;
-        let reading = folder.clone();
+        // Answered for the location the pane shows now: one shown since
+        // asks again.
+        let shown = self.app.pane_location(pane);
+        let app = self.app.clone();
+        let reading = of.clone();
         self.off_thread(
-            "subfolders",
-            move || subfolders(&reading, hidden),
+            "inside",
+            move || app.places_in(&reading, hidden),
             move |shell, read, window, cx| {
-                // Still asked for, and the pane still shows that folder or
-                // one inside it.
-                let shows = shell
-                    .app
-                    .workspace
-                    .read()
-                    .pane(pane)
-                    .and_then(|p| p.location())
-                    .and_then(bibli_core::Location::path)
-                    .is_some_and(|shown| shown.starts_with(&folder));
-                if shell.nav_asked != asked || !shows {
+                if shell.nav_asked != asked || shell.app.pane_location(pane) != shown {
                     return;
                 }
-                let dirs = match read {
-                    Ok(dirs) => dirs,
+                let inside = match read {
+                    Ok(inside) => inside,
                     Err(error) => {
-                        let name = folder.file_name().map_or_else(
-                            || folder.display().to_string(),
-                            |n| n.to_string_lossy().into_owned(),
-                        );
+                        let name = shell.app.location_title(&of);
                         shell.set_status(format!("Could not read “{name}”: {error}"), true, cx);
                         return;
                     }
                 };
-                let rows = folder_rows(&folder, dirs, current.as_deref());
-                shell.close_nav_menu(window);
-                shell.nav_menu = Some(NavMenu {
-                    pane,
-                    what: NavWhat::Subfolders {
-                        of: bibli_core::Location::from_path(folder),
-                    },
-                    rows,
-                    popup: Popup::new("nav", window, cx),
-                });
-                cx.notify();
-            },
-            window,
-            cx,
-        );
-    }
-
-    /// The places a provider says are inside `of`, a place of the trail
-    /// that is no folder (a tag's tags), asked on a worker.
-    fn places_menu(
-        &mut self,
-        of: bibli_core::Location,
-        current: Option<bibli_core::Location>,
-        asked: u64,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let pane = self.pane;
-        let app = self.app.clone();
-        let reading = of.clone();
-        self.off_thread(
-            "places",
-            move || app.places_in(&reading),
-            move |shell, places, window, cx| {
-                if shell.nav_asked != asked {
-                    return;
-                }
-                let navigate =
-                    |l: &bibli_core::Location| serde_json::json!({ "location": l.to_string() });
-                let mut rows: Vec<NavRow> = places
-                    .iter()
-                    .take(FOLDER_ROWS)
-                    .map(|place| NavRow {
-                        label: place.label.clone().into(),
-                        tip: shell.app.location_title(&place.location).into(),
-                        icon: crate::trail::glyph(&shell.app, &place.location),
-                        command: "navigate",
-                        args: navigate(&place.location),
-                        current: current.as_ref() == Some(&place.location),
-                        enabled: true,
-                        depth: 0,
-                    })
-                    .collect();
-                if rows.is_empty() {
-                    rows.push(NavRow {
-                        label: "Nothing inside".into(),
-                        tip: "Nothing inside".into(),
-                        icon: "",
-                        command: "navigate",
-                        args: navigate(&of),
-                        current: false,
-                        enabled: false,
-                        depth: 0,
-                    });
-                }
+                let rows = inside_rows(&shell.app, &of, inside, current.as_ref());
                 shell.close_nav_menu(window);
                 shell.nav_menu = Some(NavMenu {
                     pane,
@@ -301,24 +214,19 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let was = self.close_nav_menu(window);
         cx.notify();
-        // A folder's menu on its way is no longer wanted.
-        self.nav_asked += 1;
-        if self.nav_closing(args, was.as_ref()) {
-            return;
-        }
-        let Some(top) = args
+        let top = args
             .get("location")
             .and_then(|v| serde_json::from_value::<PathArg>(v.clone()).ok())
-            .and_then(|arg| bibli_core::Location::parse_os(arg.as_os_str()).path())
-        else {
+            .and_then(|arg| bibli_core::Location::parse_os(arg.as_os_str()).path());
+        let key = top
+            .clone()
+            .map(|of| NavWhat::Parents { of }.key())
+            .unwrap_or_default();
+        let (Some(top), true) = (top, self.toggle_popup(&key, args, window)) else {
             return;
         };
         let what = NavWhat::Parents { of: top.clone() };
-        if was.as_ref() == Some(&what) || self.just_dismissed(&what.key()) {
-            return;
-        }
         self.nav_menu = Some(NavMenu {
             pane: self.pane,
             what,
@@ -329,70 +237,59 @@ impl Shell {
 }
 
 impl NavWhat {
-    /// What `Shell::note_dismissed` remembers of it.
-    fn key(&self) -> String {
+    /// What its toggle names it (`Shell::toggle_popup`).
+    pub(crate) fn key(&self) -> String {
         format!("nav {self:?}")
     }
 }
 
-impl Shell {
-    /// Whether `args` close the menu (`was`, now closed), noting a press
-    /// outside that did.
-    fn nav_closing(&mut self, args: &serde_json::Value, was: Option<&NavWhat>) -> bool {
-        let closing = args.get("close").and_then(serde_json::Value::as_bool) == Some(true);
-        if closing && let Some(was) = was {
-            self.note_dismissed(args, was.key());
-        }
-        closing
-    }
-}
-
-/// The rows of a folder's menu: its folders up to `FOLDER_ROWS`, then one
-/// that opens the folder for the rest; a folder with none says so.
-fn folder_rows(folder: &Path, dirs: Vec<PathBuf>, current: Option<&Path>) -> Vec<NavRow> {
-    let total = dirs.len();
-    let navigate = |path: &Path| serde_json::json!({ "location": PathArg::from(path) });
-    let mut rows: Vec<NavRow> = dirs
+/// The rows of the menu of what is inside `of` (`App::places_in`): each a
+/// step in, `current` (where the trail goes on) marked; the first
+/// `FOLDER_ROWS`, then a row that opens `of` for the rest, or one that
+/// says there is nothing inside.
+fn inside_rows(
+    app: &bibli_core::App,
+    of: &bibli_core::Location,
+    inside: Vec<bibli_core::location::Crumb>,
+    current: Option<&bibli_core::Location>,
+) -> Vec<NavRow> {
+    let total = inside.len();
+    let navigate = |l: &bibli_core::Location| serde_json::json!({ "location": l.arg() });
+    let mut rows: Vec<NavRow> = inside
         .into_iter()
         .take(FOLDER_ROWS)
-        .map(|dir| NavRow {
-            label: dir
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default()
-                .into(),
-            tip: dir.display().to_string().into(),
-            icon: "folder",
+        .map(|place| NavRow {
+            label: place.label.clone().into(),
+            tip: match place.location.path() {
+                Some(path) => path.display().to_string().into(),
+                None => app.location_title(&place.location).into(),
+            },
+            icon: crate::trail::glyph(app, &place.location),
             command: "navigate",
-            args: navigate(&dir),
-            current: current == Some(dir.as_path()),
+            args: navigate(&place.location),
+            current: current.is_some_and(|c| c.same_place(&place.location)),
             enabled: true,
             depth: 0,
         })
         .collect();
+    let note = |label: String, enabled: bool, icon: &'static str| NavRow {
+        tip: label.clone().into(),
+        label: label.into(),
+        icon,
+        command: "navigate",
+        args: navigate(of),
+        current: false,
+        enabled,
+        depth: 0,
+    };
     if total == 0 {
-        rows.push(NavRow {
-            label: "No folders inside".into(),
-            tip: "No folders inside".into(),
-            icon: "",
-            command: "navigate",
-            args: navigate(folder),
-            current: false,
-            enabled: false,
-            depth: 0,
-        });
+        rows.push(note("Nothing inside".to_owned(), false, ""));
     } else if total > FOLDER_ROWS {
-        let more = format!("{} more: open the folder", total - FOLDER_ROWS);
-        rows.push(NavRow {
-            label: more.clone().into(),
-            tip: more.into(),
-            icon: "open",
-            command: "navigate",
-            args: navigate(folder),
-            current: false,
-            enabled: true,
-            depth: 0,
-        });
+        rows.push(note(
+            format!("{} more: open it", total - FOLDER_ROWS),
+            true,
+            "open",
+        ));
     }
     rows
 }
@@ -425,32 +322,6 @@ fn parent_rows(top: &Path) -> Vec<NavRow> {
             depth,
         })
         .collect()
-}
-
-/// The folders inside `folder` in the panes' name order, links to folders
-/// included; names starting with a dot only when `hidden`.
-fn subfolders(folder: &Path, hidden: bool) -> std::io::Result<Vec<PathBuf>> {
-    let mut dirs = Vec::new();
-    for entry in std::fs::read_dir(folder)? {
-        let Ok(entry) = entry else {
-            continue;
-        };
-        if !hidden && entry.file_name().as_encoded_bytes().starts_with(b".") {
-            continue;
-        }
-        let dir = match entry.file_type() {
-            Ok(kind) if kind.is_symlink() => entry.path().is_dir(),
-            Ok(kind) => kind.is_dir(),
-            Err(_) => false,
-        };
-        if dir {
-            dirs.push(entry.path());
-        }
-    }
-    dirs.sort_by_cached_key(|dir| {
-        bibli_core::collate::sort_key(dir.file_name().unwrap_or_default())
-    });
-    Ok(dirs)
 }
 
 /// The open menu's panel, for the row of `pane` that draws its anchor.
@@ -490,7 +361,8 @@ pub fn panel(shell: &Shell, pane: PaneId, cx: &mut Context<Shell>) -> Option<Any
 
 #[cfg(test)]
 mod tests {
-    use super::{parent_rows, subfolders};
+    use super::parent_rows;
+    use bibli_core::fs::subfolders;
     use std::path::Path;
 
     /// From the root down to the folder the trail starts at, which is

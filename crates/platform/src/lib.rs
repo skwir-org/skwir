@@ -28,6 +28,7 @@ pub mod exif;
 pub mod file;
 pub mod filesystem;
 pub mod icons;
+pub mod keyfile;
 mod line_channel;
 pub mod links;
 pub mod magick;
@@ -36,6 +37,7 @@ pub mod mime;
 pub mod model;
 pub mod mp4;
 pub mod open;
+pub mod package;
 pub mod picture;
 pub mod places;
 pub mod preview;
@@ -46,7 +48,7 @@ pub mod thumbnails;
 pub mod trash;
 pub mod uri;
 pub mod users;
-pub mod xdg;
+pub use bibli_core::xdg;
 
 pub mod inspection;
 /// Every preview bound in one place (see `inspection::limits`).

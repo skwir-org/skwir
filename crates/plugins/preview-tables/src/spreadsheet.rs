@@ -90,27 +90,28 @@ impl Book {
 /// Inflate every part calamine may read, counting, before it reads any:
 /// at most `limit` bytes together.
 fn bounded(path: &Path, limit: u64, cancel: &CancelToken) -> anyhow::Result<()> {
-    let mut archive = zip::ZipArchive::new(inspection::open(path)?)?;
-    anyhow::ensure!(
-        archive.len() <= limits::CONTAINER_MEMBERS,
-        "Spreadsheet exceeds {} parts",
-        limits::CONTAINER_MEMBERS
-    );
+    let mut package =
+        bibli_platform::package::Package::open(path, "The spreadsheet", false, cancel)?;
+    let parts: Vec<String> = package
+        .names()
+        .filter(|name| {
+            Path::new(name)
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| {
+                    ["xml", "bin", "rels"]
+                        .iter()
+                        .any(|read| extension.eq_ignore_ascii_case(read))
+                })
+        })
+        .map(str::to_owned)
+        .collect();
     let mut total = 0usize;
     let mut chunk = vec![0; 64 * 1024];
-    for index in 0..archive.len() {
-        let mut part = archive.by_index(index)?;
-        let read = Path::new(part.name())
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| {
-                ["xml", "bin", "rels"]
-                    .iter()
-                    .any(|read| extension.eq_ignore_ascii_case(read))
-            });
-        if !read {
+    for name in parts {
+        let Some(mut part) = package.reader(&name) else {
             continue;
-        }
+        };
         loop {
             inspection::check(cancel)?;
             let read = part.read(&mut chunk)?;

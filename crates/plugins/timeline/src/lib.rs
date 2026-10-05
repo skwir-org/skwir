@@ -441,10 +441,9 @@ impl TimelinePlugin {
             let p = ws
                 .pane(pane)
                 .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-            for e in p.listing.iter() {
-                if !p.sort.show_hidden && is_hidden(&e.name) {
-                    continue;
-                }
+            // What the pane shows (`Pane::order`): hidden files and
+            // companions as it shows them, filtered by name, narrowed.
+            for e in p.order().iter().filter_map(|id| p.entry(*id)) {
                 match e.metadata.value(keys::MODIFIED).and_then(Value::as_time) {
                     Some(t) => days.add(
                         t,

@@ -447,18 +447,21 @@ fn read(
         Format::Mavlink => mavlink::read(BufReader::new(file.take(MAX_INPUT)), into, cancel)?,
         Format::Litchi => litchi::read(BufReader::new(file.take(MAX_INPUT)), into, cancel)?,
         Format::Kmz => {
-            let mut archive = zip::ZipArchive::new(file)?;
+            drop(file);
+            let mut package =
+                bibli_platform::package::Package::open(path, "This KMZ", false, cancel)?;
             // A DJI mission (WPML) is a KMZ of its own kind.
-            if let Some(index) = wpml::MEMBERS
-                .iter()
-                .find_map(|name| archive.index_for_name(name))
-            {
-                let member = archive.by_index(index)?;
+            if let Some(name) = wpml::MEMBERS.iter().find(|name| package.has(name)) {
+                let member = package
+                    .reader(name)
+                    .ok_or_else(|| anyhow::anyhow!("This mission cannot be read"))?;
                 wpml::read(BufReader::new(member.take(MAX_INPUT)), into, cancel)?
             } else {
-                let index = kmz_document(&archive)
+                let name = kmz_document(package.names())
                     .ok_or_else(|| anyhow::anyhow!("This KMZ holds no KML document"))?;
-                let member = archive.by_index(index)?;
+                let member = package
+                    .reader(&name)
+                    .ok_or_else(|| anyhow::anyhow!("This KMZ's document cannot be read"))?;
                 kml::read(BufReader::new(member.take(MAX_INPUT)), into, cancel)?
             }
         }
@@ -490,20 +493,20 @@ fn read(
 
 /// The KML a KMZ holds: `doc.kml` as Google Earth writes it, else the
 /// first KML nearest the top.
-fn kmz_document<R: Read + std::io::Seek>(archive: &zip::ZipArchive<R>) -> Option<usize> {
-    let names: Vec<(usize, &str)> = (0..archive.len())
-        .filter_map(|i| archive.name_for_index(i).map(|name| (i, name)))
-        .collect();
+fn kmz_document<'a>(names: impl Iterator<Item = &'a str>) -> Option<String> {
+    let names: Vec<&str> = names.collect();
     names
         .iter()
-        .find(|(_, name)| name.eq_ignore_ascii_case("doc.kml"))
+        .find(|name| name.eq_ignore_ascii_case("doc.kml"))
         .or_else(|| {
             names
                 .iter()
-                .filter(|(_, name)| name.to_ascii_lowercase().ends_with(".kml"))
-                .min_by_key(|(_, name)| name.matches('/').count())
+                .filter(|name| name.to_ascii_lowercase().ends_with(".kml"))
+                // The shallowest, then by name: the members' order is the
+                // index's, which is no order.
+                .min_by_key(|name| (name.matches('/').count(), **name))
         })
-        .map(|(i, _)| *i)
+        .map(|name| (*name).to_owned())
 }
 
 pub fn distance(metres: f64) -> String {
@@ -809,11 +812,13 @@ impl PreviewProvider for Provider {
     fn id(&self) -> &'static str {
         ID
     }
-    /// Before the readers of tables and text: a `.csv` or a `.txt` this
-    /// provider accepts is a mission its first bytes confirmed, which a
-    /// table of numbers would show less well.
+    /// Before the readers of tables and text, which take a name whole: a
+    /// `.csv` or a `.txt` this provider accepts is a mission its first
+    /// bytes confirmed, which a table of numbers would show less well. A
+    /// provider that settles a shared name by content outranks one that
+    /// takes the name; never a tie, which registration order would settle.
     fn priority(&self) -> i32 {
-        10
+        20
     }
     /// On a worker: a file of a shared extension is asked what it is.
     fn accepts(&self, req: &PreviewRequest) -> bool {

@@ -490,3 +490,32 @@ fn a_card_dragged_between_two_columns_of_tags_moves_from_one_to_the_other() {
         (read_tags(&s.root.join("trips/2024/france.jpg")) == tags(&["Places/Japan"])).then_some(())
     });
 }
+
+/// A tag opened in a tab (the middle button, Ctrl+Enter, the menu's Open
+/// in New Tab: `tab.open`) shows its own tag folder, as opening it does,
+/// behind the tab shown.
+#[test]
+fn a_tag_opens_in_a_tab_where_it_leads() {
+    let s = setup();
+    go(&s, &tag_location(&s.root, None));
+    let (id, leads) = {
+        let ws = s.app.workspace.read();
+        let p = ws.pane(s.pane).unwrap();
+        let place = p
+            .listing
+            .iter()
+            .find(|e| e.is_place() && e.name_str() == "family")
+            .expect("a place family");
+        (place.id, p.location_of(place.id).unwrap())
+    };
+    s.app
+        .dispatch(&Invocation::with_args(
+            "tab.open",
+            &serde_json::json!({ "ids": [id], "pane": s.pane }),
+        ))
+        .unwrap();
+    let tabs = s.app.tab_list();
+    assert_eq!(tabs.len(), 2);
+    assert!(tabs[0].shown, "the tab shown stays shown");
+    assert_eq!(tabs[1].panes[0].location.as_ref(), Some(&leads));
+}

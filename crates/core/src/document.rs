@@ -193,7 +193,7 @@ pub const PIXELS_FILE: &str = "page.rgba";
 /// The worker's side of the protocol, the same for every engine: a worker
 /// greets once, then `serve` answers each request in order.
 pub mod worker {
-    use std::io::{BufRead, BufReader, Read, Write};
+    use std::io::{BufReader, Read, Write};
 
     use super::{MAX_REPLY, MAX_REQUEST, Tagged, WorkerReply, WorkerRequest};
 
@@ -234,19 +234,9 @@ pub mod worker {
             .name("requests".into())
             .spawn(move || {
                 let mut input = BufReader::new(input);
-                loop {
-                    let mut line = Vec::new();
-                    let read = Read::by_ref(&mut input)
-                        .take(MAX_REQUEST as u64)
-                        .read_until(b'\n', &mut line);
-                    if matches!(read, Ok(0)) {
-                        break;
-                    }
-                    let request = (|| -> anyhow::Result<Tagged<WorkerRequest>> {
-                        read?;
-                        anyhow::ensure!(line.last() == Some(&b'\n'), "request exceeds limit");
-                        Ok(serde_json::from_slice(&line)?)
-                    })();
+                while let Some(request) =
+                    crate::jsonl::read::<Tagged<WorkerRequest>>(&mut input, MAX_REQUEST)
+                {
                     let failed = request.is_err();
                     if lines.send(request).is_err() || failed {
                         break;
@@ -268,14 +258,13 @@ pub mod worker {
 
     /// One reply line, newline included, within `MAX_REPLY`.
     fn send(output: &mut impl Write, id: u64, reply: &WorkerReply) -> anyhow::Result<()> {
-        let mut line = serde_json::to_vec(&Tagged { id, body: reply })?;
-        if line.len() >= MAX_REPLY {
-            line = serde_json::to_vec(&Tagged {
+        let mut line = crate::jsonl::encode(&Tagged { id, body: reply })?;
+        if line.len() > MAX_REPLY {
+            line = crate::jsonl::encode(&Tagged {
                 id,
                 body: WorkerReply::Error("page content exceeds the reply limit".into()),
             })?;
         }
-        line.push(b'\n');
         output.write_all(&line)?;
         output.flush()?;
         Ok(())

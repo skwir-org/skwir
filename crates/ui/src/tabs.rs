@@ -401,7 +401,7 @@ impl Shell {
                     tab: *tab,
                     title: location
                         .as_ref()
-                        .map(|l| self.location_name(l))
+                        .map(|l| self.app.location_title(l))
                         .unwrap_or_default()
                         .into(),
                     tip: location

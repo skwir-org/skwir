@@ -1089,6 +1089,241 @@ folder, none at `/`, a second click closing it, and the narrow pane.
 Left: the segments a narrow pane wraps out of sight are not in that
 menu, as they are in Dolphin's.
 
+A review for consistency, and its first fixes (2026-10-05): nine
+read-only reviews looked for the kind of exception the trail's drive
+root was (a second piece of code saying what another already knows) and
+found about 170 places, grouped in ten patterns; they are fixed in that
+order. First the bugs that stood alone: F1 and the strip of a key
+sequence left out every binding with a `!` condition (Delete, Cut,
+Rename), and F1 now lists only the binding a key runs where it is
+pressed; Shift+F3 in a structured preview split the window (it finds the
+previous match now, with a button, and Escape closes its find); the
+middle button and Ctrl+Enter opened nothing on a tag and a trashed
+folder at its raw path (`tab.open` with `ids`, through
+`Pane::leads_to`); "Tags out of Name" could rename two files to one
+name and fail halfway (`order_renames`); a changed Documents or Books
+preference closed the document open in the reader (only the provider it
+concerns starts again); the table reader and geo shared a priority, so
+a Litchi mission's `.csv` never showed as a map (geo outranks it now,
+and the test that keeps providers apart asks every preview plugin the
+binary wires, `Previews::accepting`); vim's `p`, `d`, `x`, `r` and `D`
+had copied the standard keys' conditions, which had moved on (`keys.like`
+takes a standard key's bindings instead); Enter in the address before
+any edit took a search's or a filter's words for a path; the address's
+places were stat-ed in render; Open With typed a file by its name, so a
+pipe named `x.png` went to the image viewer (`apps::type_of` takes the
+entry, and a pipe, a socket or a device is never handed to the
+desktop); bibli's own `ffprobe`, `pdfinfo`, `pdftoppm`, `ffmpeg` and the
+archive and model helpers read files outside the sandbox
+(`sandbox::untrusted`, the one way, with `Otherwise::Refuse` or `Run`);
+files dropped from another application applied in part; `bibli trash:`
+opened `./trash:`; the View menu offered Zoom where nothing zooms
+(`PaneView::zooms`); a preview's menu opened again on its own button's
+second click, and a folder read late could replace the history menu.
+Checked on Xvfb with a synthetic home: `bibli trash:`, F1 with a file
+selected, the View menu in Board, Shift+F3 and the previous match in a
+JSON preview, Enter on a filter's pill and on a search unedited, a
+preview menu's button clicked twice. Not checked in a window: the
+middle button on a tag (core path in tests), vim's keys, a drop from
+another application.
+
+The sidebar from its places' own answers (2026-10-05): a sidebar row
+said again what its location says, and the copies had drifted. A place
+had a `drop` of its own beside its location's `Verbs::drop`: the Shelf's
+was missing, so a folder dropped on the Shelf, Recent, a saved search or
+All Tags fell through to the column and was bookmarked, and a tag's pill
+added the tag where its folder in a pane moves files out of the tag they
+came from. `Place::drop` is gone: a row takes what its location takes
+(a folder's row is a folder; any other runs `Verbs::drop`), one that
+takes nothing swallows the drop, and a pill dragged onto files gives
+what its location takes. Owners listed Rename… and their own Remove item
+in a place's menu beside `rename` and `forget`, in three wordings; the
+sidebar now builds Rename… and Remove From Sidebar from those fields for
+every place, and F2 renames a suggested tag as its menu does. The
+trash's top said it held no places although its chevron's menu listed
+them inside a trashed folder; it holds them now. The names the user
+gives places in the sidebar were the UI's alone, so a renamed Trash
+kept its name in the close toast and `tab.list`; the sidebar publishes
+them to the core (`Registry::set_place_titles`), and the tab, the
+history, the trail, the address's search pill, the preview and every
+message name a place as the sidebar does (`App::location_title`, the
+UI's own `location_name` gone). A tag's search was kept as the tag's pin
+by two branches in the shell, around the keepers; they are gone, and a
+keeper says which of its locations it keeps (`Keeper::keeps`: a tag
+folder of the home folder, not narrowed), so the pane's button is not
+offered at All Tags, where Ctrl+D refused. Checked on Xvfb with a
+synthetic home: a folder dropped on the Shelf shelved, a file dropped
+on Recent doing nothing, a bookmark's menu, the Trash renamed Bin in its
+trail (with its chevron), its tabs and the close toast.
+
+One surface for the shell's commands and one base for its lists
+(2026-10-05): the shell's own commands (`ui.*`) were names matched in a
+150-arm switch, invisible to `commands`, agents and scripts, with their
+arguments read by hand and defaults guessed for what they did not
+understand (`ui.sort {key: "type"}` sorted by name). They are declared in
+the registry like every command (`commands.rs`: a title, what it does,
+the schema of its arguments), checked before they run
+(`CommandRegistry::check`), and one asked from elsewhere waits for the
+window (`App::request_front`); a user's shortcut naming a command none is
+called, or giving it arguments it does not take, is refused when saved.
+What repeated another went: 22 cursor commands (`ui.cursor` with `to` and
+`step`), `ui.confirm_delete` (`delete`, which asks as any plan Undo cannot
+take back does), `ui.open`, the shell's Rename, New folder and New file
+prompts (`ui.ask`, with a `select` range; `new_file` makes a folder of a
+name ending in `/`), the reader's find, copy, select all, contents, page
+field and match next to the structured preview's (`ui.preview_find`,
+`_copy`, `_select_all`, `_contents`, `_goto`, `_match`, one key each in a
+`Preview` context set while the preview shows a document or a structured
+preview, both find fields one `PreviewFind`), the pinned player's mute
+(`PlayerRequest::Mute`), commands nothing ran. Key places are one table
+(`keymap::PLACES`: token, context, what F1 calls it), bindings name them
+by token, and one evaluator reads a binding's condition. Popups: opening
+any closes the one open and the press that closed a popup leaves its own
+button's click alone (`Shell::toggle_popup`), so two never hold the
+keyboard and the hand lists of which commands keep which popup open are
+gone; the arrows walk a toolbar popup's rows; the palette, a choice,
+Jump, the tag editor and the address's suggestions move by one command
+(`ui.list_move`, the page keys too) and filter by one function; a pill's ×
+is one element with a tooltip, and the narrowing pills became buttons the
+keyboard reaches; a tag's menu is one (`tags.tag_menu`, a source of the
+places' and the tags' menus), the same on its pill, in Details and in a
+tag location. Checked on Xvfb with a synthetic home: the arrows, Shift and
+Ctrl+Space in the list, F2 with the stem selected, New folder, Shift+Delete
+asking, the arrows in the View menu and the palette, a tag's menu on its
+pill and in Details, Ctrl+F, F3, Shift+F3 and Escape in a JSON preview.
+Not done: the current item is still marked two ways (a check for an
+option, a highlight for where one is); Home and End do not reach a
+toolbar popup's ends.
+
+An entry drawn one way, in every view (2026-10-05): the board's cards
+and the columns' rows above the folder shown were built by hand beside
+the list's rows and the grid's tiles, and four collectors read an entry
+four ways; a card had no link or tag mark, no dimming while cut, no
+middle ellipsis or tooltip for a long name, no "+N" for its tags, no
+menu marker, and was not dragged as the selection nor took a tag
+dragged onto it. Each view now reads an entry once (`Shell::look`) and
+draws its own shape around one set of pieces (`views::entry`: the
+picture and its mark, the highlight, the name, the tags, and `behave`
+for what an entry answers); a card dragged to another column is a drop
+like any other, told the tag it leaves. The list's detail columns were
+five parallel arrays and magic indices (the menu hid Rating as
+"index 3"); they are one table (`views::list::COLUMNS`) the header, the
+rows, the header's menu, the View menu's sorts and Settings read, so the
+header and the menu say Modified alike, every cut column says itself
+whole when pointed at, and Rating is offered where ratings are kept.
+Their dragged widths were a setting rewritten on each drag and read on
+every settings change; they are the window's shape now (`Session`, by
+column, the old setting carried over). The seven edges that size an area
+(the sidebar, the preview, the split, an archive's view, the dock, the
+terminal, a list column) are one element (`elements::edge`): the list's
+had no hover and no double click back to its width, and stood over its
+column's label (it is in the gap now). The board's keys stepped through
+the pane's order onto the columns' own entries and never scrolled to the
+cursor; they move along a column and across to the same height, with
+Shift extending, and the row of columns has a scrollbar along its
+bottom (`scrollbar::horizontal`). A narrow pane in the Columns view cut
+the folder shown first; it keeps it and cuts the folders above.
+Smaller: counts said "12345 files" and "1 items" (`format::count`),
+dates were formatted three ways (`format::time`, `exact_time`, `day`),
+the rubber band's colors were derived locally (`Theme::band`). Checked
+on Xvfb with a synthetic home: the header's menu, Rating shown, a column
+dragged narrower with its cut types' tooltips, the width kept across a
+restart and reset by a double click, sorting by Modified from the View
+menu, a tag category as a board (cards with their chips, the arrows,
+Shift+Left, a row of seven columns scrolled by the keys with its bar),
+the Columns view in a split, the split's edge dragged and reset.
+
+Safe reads, and one helper where there were several (2026-10-05): files
+another application keeps beside a file were read whole, as they were:
+a pipe named `x.jpg.xmp`, `.ts/x.json` or a volume trash's `x.trashinfo`
+held the worker that read it, and a large one was read into memory.
+They go through one read (`fs::file::read_regular`, the core's, which
+the platform re-exports with `open_regular`): a regular file only,
+within what is expected, refused rather than cut (a `._` file is
+written back whole, so one cut was worse than none). A PDF's links to
+mail, to a file beside it or to a folder were refused, and the map's
+attribution opened its address itself: every document's link now goes
+where it says through one follower (`Shell::follow_document_link`:
+addresses through `ui.open_url`, a place on this machine shown in its
+folder, in a tab with Shift). A worker named by its variable was taken
+on faith, so a probe said "installed" and the engine chosen
+automatically failed instead of trying the next; a worker is now found
+where it runs (`process::Worker`, one per helper, which also gives its
+requirement and its "Install … to …" message), and one that exits 127
+before greeting (its library missing) gives way to the next engine, as
+the player already did (`LineChannel::missing_runtime`). `plocate` ran
+without a timeout, a bound or the search's cancellation. The workspace
+called a location's `path_of` under its lock in some places and outside
+it in others, with a release choreography to close panes after it; the
+rule is now written on `OpenLocation` (those calls answer from memory,
+so they are made under the lock) and the choreography is gone.
+Then the helpers: a disabled plugin's worker could still publish a
+count, a cut or a provider (the gate now covers every store a plugin
+publishes in); a location given as a command's argument four ways, two
+of them losing a name that is not UTF-8 (`Location::arg`,
+`Invocation::with`, `Invocation::navigate`); an operation's kind said
+twice (`op::Kind`); two `Exec` tokenizers and three key-file readers
+(`keyfile`); two mountinfo parsers and three ideas of "removable" (one
+of each: a USB drive mounted under `/mnt` is drawn as removable, and
+Eject stays for what udisks mounted); three hand-written "latest answer
+wins" (`latest::Latest`); 18-field place and menu-item literals
+(`Place::new`, `MenuItem::new`); five resolvers of "which files"
+(`App::targets`, and "nothing selected" typed everywhere); three
+sidecar-name caches (`companions::FolderNames`); five "toast with Undo"
+copies (`App::notify_undoable`); two settled watchers (`fs::Settled`);
+five zip readers, one without a bound on its members
+(`platform::package`); the JSON-lines framing three times (`jsonl`).
+Checked on Xvfb with a synthetic home: an XMP sidecar's tag and rating,
+a pipe named like a sidecar not holding the listing, a Markdown link to
+a file beside it selecting it, the Trash listing following a trash and
+its Undo. Not checked in a window: a PDF's mail link, a missing engine
+library, plocate.
+
+No plugin's name in the shell, a folder as a location, and types from
+the MIME database (2026-10-05), the review's last three patterns. The
+shell asked plugins by name what any location or provider could say:
+whether a location is a search (`LocationProvider::searches`, for its
+"Searching…", its count and its address), whether ratings are kept
+(`NoteStores::held`, for the Rating column; rating, comment and making
+stores agree are the core's `notes.*` commands, as the notes are), what
+a tag pill does with Shift or Alt (`Place::clicks`, carried by the
+place), what Copy Path puts on the clipboard (`Outcome::Clipboard`),
+how many files wait on the shelf (`tally::Tally`, a count any plugin
+publishes in the footer, opening what it counts), which preview shows a
+file's bytes (`PreviewProvider::shows_bytes`), what F5 means in Usage
+and who draws its empty state (`PaneView::refresh`, `draws_empty`), and
+what kind a place is in the Type column (`keys::PLACE_KIND`). A folder
+was a case beside every location: its trail is now a `Trail` like the
+others, its chevrons list folders and places through one call
+(`App::places_in`), Shift+F5 and Shift+F6 give the selection to what the
+other pane shows as a drop there does (onto a tag: the tag), `App::release`
+lets go of whatever holds a folder under a mount point, whatever its
+scheme (`OpenLocation::holds`), and the map and the timeline count what
+the pane shows (`Pane::order`: its filter too). Then types: a provider
+took files by extension lists that disagreed with the MIME database and
+with each other, so a `.mkd` had no Markdown, a `.jar` no archive, a
+comic no TIFF page, a `.ppsx` a thumbnail but no preview, an `.xlsb`
+with Spreadsheets as Pages no preview at all, and a type named under
+another name was missed (`audio/matroska` covers, `image/vnd.ms-dds`).
+A provider now takes a request by its type (`mime::of_request`, from the
+bytes where the name is ambiguous) against a kind or a `mime::Types`,
+matched through the database's aliases and without case; office
+documents are one list (`preview::is_office`) and "shown as pages" one
+question that the tables and the documents ask (`shown_as_pages`);
+playlists one table the player refuses and the playlist preview reads.
+`LibreOffice`'s desktop entries were tried as the list and dropped: they
+claim plain text, CSV and PDF. The XDG directories are read in the core
+(`bibli_core::xdg`), the cache and settings paths included, and the
+thumbnailers' NixOS folders beside `XDG_DATA_DIRS` are gone. The
+settings dialog's pages are one table (`ui.settings` with `page: core`
+reaches General). Checked on Xvfb with a synthetic home: a `.mkd` as
+Markdown, a `.jar` as an archive, a text file as text and View as hex,
+both kinds of trail chevron, Shift+click on a tag pill, Shift+F5 onto a
+tag pane (the tag given, then undone), the shelf's footer count opening
+the shelf, the timeline with a name filter (14 files, then 4). Not
+checked in a window: F5 in Usage (its watcher refreshes it as well),
+Alt+click on a pill, an office document converted.
+
 ## Phase 0 — Foundations and toolkit spike (~2 weeks)
 
 Goal: a repo that can measure itself, and a toolkit decision backed by numbers.

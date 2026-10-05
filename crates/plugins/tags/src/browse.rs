@@ -500,13 +500,23 @@ pub fn pill(app: &App, a: &PillArgs) -> anyhow::Result<Outcome> {
     Ok(Outcome::Done)
 }
 
+/// Whether a tag location is kept in the sidebar (`Keeper::keeps`): one
+/// tag of the home folder, not narrowed, its pin.
+pub fn keepable(location: &bibli_core::Location) -> bool {
+    pinned_tag(&crate::location::Address::parse(&location.rest)).is_some()
+}
+
+fn pinned_tag(address: &crate::location::Address) -> Option<&str> {
+    let plain = address.scope.is_none() && !address.narrowed() && !address.deep;
+    address.tag.as_deref().filter(|_| plain)
+}
+
 /// `tags.keep`, Ctrl+D in a tag location: its tag pinned, when it is one
-/// tag of the home folder, not narrowed.
+/// tag of the home folder, not narrowed (`keepable`).
 pub fn keep(app: &App, a: PaneOnly) -> anyhow::Result<Outcome> {
     let pane = app.pane_or_active(a.pane);
     let address = shown(app, pane, None)?;
-    let plain = address.scope.is_none() && !address.narrowed() && !address.deep;
-    let Some(tag) = address.tag.filter(|_| plain) else {
+    let Some(tag) = pinned_tag(&address).map(str::to_owned) else {
         anyhow::bail!("a tag of the home folder, not narrowed, is kept in the sidebar: pinned");
     };
     app.dispatch(&Invocation::with_args(
@@ -516,21 +526,11 @@ pub fn keep(app: &App, a: PaneOnly) -> anyhow::Result<Outcome> {
 }
 
 fn item(title: &str, command: Invocation, order: i32, icon: &str) -> MenuItem {
-    MenuItem {
-        menu: "context".into(),
-        title: title.into(),
-        command,
-        when: Some("place".into()),
-        order,
-        icon: Some(icon.into()),
-        submenu: None,
-    }
+    MenuItem::new("context", title, icon, order, command).when("place")
 }
 
-/// `tags.place_menu`: the items of the tags selected in a tag location,
-/// answered from memory (the pins, the fields, the colors' names): pin
-/// or unpin them, their color, put them in a category or out of it, one
-/// tag at a time, take them off every file.
+/// `tags.place_menu`: the items of the tags selected in a tag location
+/// (`tag_items`).
 pub fn place_menu(app: &App, a: PaneOnly) -> Outcome {
     let pane = app.pane_or_active(a.pane);
     let tags = selected_places(app, pane);
@@ -540,124 +540,173 @@ pub fn place_menu(app: &App, a: PaneOnly) -> Outcome {
         .and_then(address_of)
         .and_then(|a| a.scope)
         .map(PathArg::from);
+    Outcome::Value(serde_json::json!({ "items": tag_items(app, &tags, root.as_ref(), false) }))
+}
+
+/// `tags.tag_menu`'s arguments: tags by name (a chip in Details), or a
+/// place of the sidebar (`location`), which is a tag's when it is a tag
+/// folder of the home folder.
+#[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
+pub struct TagMenuArgs {
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub location: Option<bibli_core::os_path::PathArg>,
+}
+
+/// `tags.tag_menu`: a tag's menu where it is shown outside a tag location:
+/// its chip in Details (`tags`), its pill in the sidebar (`location`,
+/// whose pin the sidebar takes out itself). Nothing for a place that is no
+/// tag's. Answers from memory.
+pub fn tag_menu(app: &App, a: TagMenuArgs) -> Outcome {
+    let (tags, on_pin) = match a
+        .location
+        .as_deref()
+        .map(|l| Location::parse_os(l.as_os_str()))
+    {
+        Some(location) => match address_of(&location).as_ref().and_then(pinned_tag) {
+            Some(tag) => {
+                let pinned = crate::sidebar::pinned(app).iter().any(|p| same_tag(p, tag));
+                (vec![tag.to_owned()], pinned)
+            }
+            None => (Vec::new(), false),
+        },
+        None => (a.tags, false),
+    };
+    Outcome::Value(serde_json::json!({ "items": tag_items(app, &tags, None, on_pin) }))
+}
+
+/// The one menu of tags, wherever they are shown (a tag location's
+/// entries, a sidebar pill, a chip in Details), answered from memory (the
+/// pins, the fields, the colors' names): pin or unpin them (not `on_pin`,
+/// a pin of the sidebar, which takes itself out), their color, put them in
+/// a category or out of it, one tag at a time, merge them, take them off
+/// every file (of `root` only, when given).
+pub fn tag_items(
+    app: &App,
+    tags: &[String],
+    root: Option<&PathArg>,
+    on_pin: bool,
+) -> Vec<MenuItem> {
     let mut items = Vec::new();
-    if !tags.is_empty() {
-        let pins = crate::sidebar::pinned(app);
-        let all_pinned = tags.iter().all(|t| pins.iter().any(|p| same_tag(p, t)));
-        let them = serde_json::json!({ "tags": tags });
-        items.push(if all_pinned {
-            item(
-                "Unpin From Sidebar",
-                Invocation::with_args("tags.unpin", &them),
-                410,
-                "pin",
-            )
-        } else {
-            item(
-                "Pin to Sidebar",
-                Invocation::with_args("tags.pin", &them),
-                410,
-                "pin",
-            )
-        });
+    if tags.is_empty() {
+        return items;
+    }
+    let pins = crate::sidebar::pinned(app);
+    let all_pinned = tags.iter().all(|t| pins.iter().any(|p| same_tag(p, t)));
+    let them = serde_json::json!({ "tags": tags });
+    if all_pinned && !on_pin {
         items.push(item(
-            "Move to Category…",
+            "Unpin From Sidebar",
+            Invocation::with_args("tags.unpin", &them),
+            410,
+            "pin",
+        ));
+    } else if !all_pinned {
+        items.push(item(
+            "Pin to Sidebar",
+            Invocation::with_args("tags.pin", &them),
+            410,
+            "pin",
+        ));
+    }
+    items.push(item(
+        "Move to Category…",
+        Invocation::with_args(
+            "ui.ask",
+            &serde_json::json!({
+                "title": "Move into a category, keeping the names",
+                "placeholder": "Category (Places/France)",
+                "command": "tags.move",
+                "args": { "tags": tags, "root": root },
+                "field": "into",
+            }),
+        ),
+        120,
+        "move",
+    ));
+    if tags.iter().all(|t| tag_parent(t).is_some()) {
+        let title = match tags {
+            [one] => format!(
+                "Move Out of “{}”",
+                tag_parent(one).map(tag_leaf).unwrap_or_default()
+            ),
+            _ => "Move Out of Their Categories".to_owned(),
+        };
+        items.push(item(
+            &title,
+            Invocation::with_args(
+                "tags.move",
+                &serde_json::json!({ "tags": tags, "root": root }),
+            ),
+            121,
+            "move",
+        ));
+    }
+    if let [tag] = tags {
+        let fields: Vec<String> = app.settings.get(TAG_EXCLUSIVE_SETTING).unwrap_or_default();
+        let on = fields.iter().any(|f| same_tag(f, tag));
+        items.push(item(
+            "One Tag at a Time",
+            Invocation::with_args(
+                "tags.exclusive",
+                &serde_json::json!({ "tag": tag, "on": !on }),
+            ),
+            150,
+            if on { "check" } else { "tag" },
+        ));
+        let mut color = |title: &str, color: Option<&str>, order| {
+            items.push(MenuItem {
+                submenu: Some("Color".into()),
+                ..item(
+                    title,
+                    Invocation::with_args(
+                        "tags.color",
+                        &serde_json::json!({ "tag": tag, "color": color }),
+                    ),
+                    order,
+                    "appearance",
+                )
+            });
+        };
+        color("From Its Name", None, 140);
+        for (i, name) in TAG_COLORS.iter().enumerate() {
+            let mut title = (*name).to_owned();
+            title[..1].make_ascii_uppercase();
+            color(
+                &title,
+                Some(name),
+                141 + i32::try_from(i).unwrap_or_default(),
+            );
+        }
+    }
+    if tags.len() > 1 {
+        items.push(item(
+            "Merge Into One…",
             Invocation::with_args(
                 "ui.ask",
                 &serde_json::json!({
-                    "title": "Move into a category, keeping the names",
-                    "placeholder": "Category (Places/France)",
-                    "command": "tags.move",
+                    "title": "Merge these tags into one, on every file",
+                    "placeholder": "The tag they become",
+                    "command": "tags.rename",
                     "args": { "tags": tags, "root": root },
-                    "field": "into",
+                    "field": "to",
                 }),
             ),
-            120,
-            "move",
-        ));
-        if tags.iter().all(|t| tag_parent(t).is_some()) {
-            let title = match tags.as_slice() {
-                [one] => format!(
-                    "Move Out of “{}”",
-                    tag_parent(one).map(tag_leaf).unwrap_or_default()
-                ),
-                _ => "Move Out of Their Categories".to_owned(),
-            };
-            items.push(item(
-                &title,
-                Invocation::with_args(
-                    "tags.move",
-                    &serde_json::json!({ "tags": tags, "root": root }),
-                ),
-                121,
-                "move",
-            ));
-        }
-        if let [tag] = tags.as_slice() {
-            let fields: Vec<String> = app.settings.get(TAG_EXCLUSIVE_SETTING).unwrap_or_default();
-            let on = fields.iter().any(|f| same_tag(f, tag));
-            items.push(item(
-                "One Tag at a Time",
-                Invocation::with_args(
-                    "tags.exclusive",
-                    &serde_json::json!({ "tag": tag, "on": !on }),
-                ),
-                150,
-                if on { "check" } else { "tag" },
-            ));
-            let mut color = |title: &str, color: Option<&str>, order| {
-                items.push(MenuItem {
-                    submenu: Some("Color".into()),
-                    ..item(
-                        title,
-                        Invocation::with_args(
-                            "tags.color",
-                            &serde_json::json!({ "tag": tag, "color": color }),
-                        ),
-                        order,
-                        "appearance",
-                    )
-                });
-            };
-            color("From Its Name", None, 140);
-            for (i, name) in TAG_COLORS.iter().enumerate() {
-                let mut title = (*name).to_owned();
-                title[..1].make_ascii_uppercase();
-                color(
-                    &title,
-                    Some(name),
-                    141 + i32::try_from(i).unwrap_or_default(),
-                );
-            }
-        }
-        if tags.len() > 1 {
-            items.push(item(
-                "Merge Into One…",
-                Invocation::with_args(
-                    "ui.ask",
-                    &serde_json::json!({
-                        "title": "Merge these tags into one, on every file",
-                        "placeholder": "The tag they become",
-                        "command": "tags.rename",
-                        "args": { "tags": tags, "root": root },
-                        "field": "to",
-                    }),
-                ),
-                122,
-                "rename",
-            ));
-        }
-        items.push(item(
-            "Remove Tag From Every File…",
-            Invocation::with_args(
-                "tags.delete",
-                &serde_json::json!({ "tags": tags, "root": root }),
-            ),
-            300,
-            "trash",
+            122,
+            "rename",
         ));
     }
-    Outcome::Value(serde_json::json!({ "items": items }))
+    items.push(item(
+        "Remove Tag From Every File…",
+        Invocation::with_args(
+            "tags.delete",
+            &serde_json::json!({ "tags": tags, "root": root }),
+        ),
+        300,
+        "trash",
+    ));
+    items
 }
 
 #[cfg(test)]

@@ -62,12 +62,12 @@ pub fn model(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Fou
     }
     inspection::check(cancel)?;
     // Since 2021: a zip after the header.
-    if let Ok(mut archive) = crate::package::open(path) {
+    if let Ok(mut archive) = crate::package::open(path, cancel) {
         let bound = limits::BINARY_INPUT as u64;
         found.picture = crate::package::member(&mut archive, "meta/model_thumbnail.png", bound)
             .and_then(|bytes| crate::decoded(&bytes, side));
         let scenes = archive
-            .file_names()
+            .names()
             .filter(|name| name.starts_with("scene_thumbnails/"))
             .count();
         if scenes > 0 {
@@ -85,7 +85,7 @@ pub fn model(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Fou
 
 /// A `LayOut` document: its first page's picture and its page count.
 pub fn layout(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Found> {
-    let mut archive = crate::package::open(path)?;
+    let mut archive = crate::package::open(path, cancel)?;
     inspection::check(cancel)?;
     let bound = limits::BINARY_INPUT as u64;
     let mut found = Found {

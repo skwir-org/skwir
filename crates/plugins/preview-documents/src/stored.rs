@@ -10,24 +10,15 @@ use bibli_core::thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider};
 use bibli_platform::inspection;
 use std::path::Path;
 
-/// `OpenDocument` formats: text, spreadsheets, presentations, drawings,
-/// formulas, and their templates.
-const OPEN_DOCUMENT: &[&str] = &[
-    "odt", "ott", "ods", "ots", "odp", "otp", "odg", "otg", "odf", "odm",
-];
-/// Office Open XML formats, macro-enabled and templates included.
-const OFFICE: &[&str] = &[
-    "docx", "docm", "dotx", "dotm", "xlsx", "xlsm", "xltx", "xltm", "pptx", "pptm", "potx", "potm",
-    "ppsx", "ppsm",
-];
+/// Where `OpenDocument` keeps its picture.
+const OPEN_DOCUMENT: &str = "Thumbnails/thumbnail.png";
 
-/// Where the package keeps its picture.
-fn stored(package: &mut Package, path: &Path, cancel: &CancelToken) -> Option<String> {
-    let extension = inspection::extension(path);
-    if OPEN_DOCUMENT.contains(&extension.as_str()) {
-        return package
-            .has("Thumbnails/thumbnail.png")
-            .then(|| "Thumbnails/thumbnail.png".to_owned());
+/// Where the package keeps its picture: `OpenDocument`'s place, else the
+/// one an Office package's relationships name. The package says which it
+/// is, not its name.
+fn stored(package: &mut Package, cancel: &CancelToken) -> Option<String> {
+    if package.has(OPEN_DOCUMENT) {
+        return Some(OPEN_DOCUMENT.to_owned());
     }
     let rels = package
         .text("_rels/.rels", "Relationships", cancel)
@@ -55,7 +46,7 @@ pub(crate) fn picture(
         return Ok(None);
     }
     let mut package = Package::open(path, cancel)?;
-    let Some(name) = stored(&mut package, path, cancel) else {
+    let Some(name) = stored(&mut package, cancel) else {
         return Ok(None);
     };
     let bytes = package.read(&name, "Thumbnail", cancel)?;
@@ -76,8 +67,7 @@ impl ThumbnailProvider for StoredPictures {
         Stage::Fallback
     }
     fn accepts(&self, req: &ThumbRequest) -> bool {
-        let extension = inspection::extension(&req.entry.path);
-        OPEN_DOCUMENT.contains(&extension.as_str()) || OFFICE.contains(&extension.as_str())
+        bibli_platform::preview::is_office(&req.entry.path, req.mime.as_deref())
     }
     fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
         let path = req.entry.resolve()?;

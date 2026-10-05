@@ -48,6 +48,26 @@ impl Invocation {
         Invocation { name, args }
     }
 
+    /// This invocation with `key` set to `value` among its arguments (made
+    /// an object if they were not one): how a surface adds what it knows,
+    /// the pane it acts on first of all.
+    #[must_use]
+    pub fn with(mut self, key: &str, value: impl Serialize) -> Self {
+        if !self.args.is_object() {
+            self.args = empty_args();
+        }
+        self.args[key] = serde_json::to_value(value).unwrap_or_else(|error| {
+            tracing::error!(command = %self.name, key, "an argument cannot be serialized: {error}");
+            serde_json::Value::Null
+        });
+        self
+    }
+
+    /// `navigate` to `location`.
+    pub fn navigate(location: &crate::location::Location) -> Self {
+        Invocation::new("navigate").with("location", location.arg())
+    }
+
     /// Like [`Invocation::with_args`], reporting a serialization failure.
     pub fn try_with_args<A: Serialize>(
         name: impl Into<Arc<str>>,
@@ -93,6 +113,13 @@ pub enum Outcome {
     Done,
     Plan(Plan),
     Value(serde_json::Value),
+    /// A text for the clipboard, and what to say once it is there ("Copied
+    /// 3 paths"): the window puts it there; a script or an agent gets the
+    /// text.
+    Clipboard {
+        text: String,
+        said: String,
+    },
 }
 
 /// Declared metadata of a command, including the JSON schema of its arguments.
@@ -123,6 +150,8 @@ impl CommandSpec {
 }
 
 type Handler = Arc<dyn Fn(serde_json::Value, &App) -> anyhow::Result<Outcome> + Send + Sync>;
+/// Whether arguments are a command's, without running it.
+type Validator = Arc<dyn Fn(&serde_json::Value) -> Result<(), serde_json::Error> + Send + Sync>;
 
 /// Errors from dispatch.
 #[derive(Debug, thiserror::Error)]
@@ -145,7 +174,7 @@ pub enum CommandError {
 #[derive(Default)]
 pub struct CommandRegistry {
     /// Per name, every owner's registration; the last one is active.
-    commands: RwLock<IndexMap<Arc<str>, Vec<(CommandSpec, Handler)>>>,
+    commands: RwLock<IndexMap<Arc<str>, Vec<(CommandSpec, Handler, Validator)>>>,
 }
 
 impl CommandRegistry {
@@ -162,15 +191,7 @@ impl CommandRegistry {
         A: DeserializeOwned + JsonSchema + 'static,
         F: Fn(A, &App) -> anyhow::Result<Outcome> + Send + Sync + 'static,
     {
-        let name: Arc<str> = name.into();
-        let spec = CommandSpec {
-            name: name.clone(),
-            title: title.into(),
-            description: description.into(),
-            args_schema: schemars::schema_for!(A),
-            owner: owner.into(),
-        };
-        let n = name.clone();
+        let n: Arc<str> = name.into();
         let h: Handler = Arc::new(move |args, app| {
             let typed: A =
                 serde_json::from_value(args).map_err(|source| CommandError::InvalidArgs {
@@ -179,6 +200,49 @@ impl CommandRegistry {
                 })?;
             handler(typed, app)
         });
+        self.insert::<A>(owner, name, title, description, h);
+    }
+
+    /// Register a command whose handler takes its arguments as they came,
+    /// once they are known to be `A`'s: one carried out elsewhere (the
+    /// window's `ui.*`, which waits for it as it was asked).
+    pub fn register_raw<A, F>(
+        &self,
+        owner: &str,
+        name: &str,
+        title: &str,
+        description: &str,
+        handler: F,
+    ) where
+        A: DeserializeOwned + JsonSchema + 'static,
+        F: Fn(serde_json::Value, &App) -> anyhow::Result<Outcome> + Send + Sync + 'static,
+    {
+        let n: Arc<str> = name.into();
+        let h: Handler = Arc::new(move |args, app| {
+            serde_json::from_value::<A>(args.clone()).map_err(|source| {
+                CommandError::InvalidArgs {
+                    name: n.clone(),
+                    source,
+                }
+            })?;
+            handler(args, app)
+        });
+        self.insert::<A>(owner, name, title, description, h);
+    }
+
+    fn insert<A>(&self, owner: &str, name: &str, title: &str, description: &str, h: Handler)
+    where
+        A: DeserializeOwned + JsonSchema + 'static,
+    {
+        let name: Arc<str> = name.into();
+        let spec = CommandSpec {
+            name: name.clone(),
+            title: title.into(),
+            description: description.into(),
+            args_schema: schemars::schema_for!(A),
+            owner: owner.into(),
+        };
+        let v: Validator = Arc::new(|args| serde_json::from_value::<A>(args.clone()).map(|_| ()));
         let mut commands = self.commands.write();
         let stack = commands.entry(name).or_default();
         if let Some(prev) = stack.last()
@@ -186,8 +250,8 @@ impl CommandRegistry {
         {
             tracing::debug!(command = %spec.name, owner = %spec.owner, shadowed = %prev.0.owner, "command shadows another");
         }
-        stack.retain(|(s, _)| s.owner != spec.owner);
-        stack.push((spec, h));
+        stack.retain(|(s, _, _)| s.owner != spec.owner);
+        stack.push((spec, h, v));
     }
 
     /// Remove every command owned by `owner` (a plugin being disabled);
@@ -195,7 +259,7 @@ impl CommandRegistry {
     pub fn unregister_owner(&self, owner: &str) {
         let mut commands = self.commands.write();
         for stack in commands.values_mut() {
-            stack.retain(|(spec, _)| &*spec.owner != owner);
+            stack.retain(|(spec, _, _)| &*spec.owner != owner);
         }
         commands.retain(|_, stack| !stack.is_empty());
     }
@@ -205,7 +269,7 @@ impl CommandRegistry {
             .read()
             .get(name)
             .and_then(|stack| stack.last())
-            .map(|(s, _)| s.clone())
+            .map(|(s, _, _)| s.clone())
     }
 
     pub fn list(&self) -> Vec<CommandSpec> {
@@ -213,8 +277,28 @@ impl CommandRegistry {
             .read()
             .values()
             .filter_map(|stack| stack.last())
-            .map(|(s, _)| s.clone())
+            .map(|(s, _, _)| s.clone())
             .collect()
+    }
+
+    /// Whether `inv` names a command and gives it arguments it takes,
+    /// without running it: a binding the user wrote, or a command the
+    /// window carries out itself.
+    ///
+    /// # Errors
+    /// [`CommandError::Unknown`], or [`CommandError::InvalidArgs`].
+    pub fn check(&self, inv: &Invocation) -> Result<(), CommandError> {
+        let validator = self
+            .commands
+            .read()
+            .get(&inv.name)
+            .and_then(|stack| stack.last())
+            .map(|(_, _, v)| Arc::clone(v))
+            .ok_or_else(|| CommandError::Unknown(inv.name.clone()))?;
+        validator(&inv.args).map_err(|source| CommandError::InvalidArgs {
+            name: inv.name.clone(),
+            source,
+        })
     }
 
     /// Dispatch an invocation. The handler runs on the caller's thread and
@@ -225,7 +309,7 @@ impl CommandRegistry {
             .read()
             .get(&inv.name)
             .and_then(|stack| stack.last())
-            .map(|(_, h)| Arc::clone(h));
+            .map(|(_, h, _)| Arc::clone(h));
         let handler = handler.ok_or_else(|| CommandError::Unknown(inv.name.clone()))?;
         handler(inv.args.clone(), app)
     }

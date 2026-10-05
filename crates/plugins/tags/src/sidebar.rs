@@ -16,7 +16,7 @@ use bibli_core::location::Location;
 use bibli_core::metadata::{
     TAG_COLOR_SETTING, TAG_COLORS, same_tag, tag_color, tag_lineage, tag_parent,
 };
-use bibli_core::registry::{MenuItem, Place, Reorder};
+use bibli_core::registry::{Click, Place, Reorder};
 use parking_lot::Mutex;
 
 use crate::index::TagIndex;
@@ -49,18 +49,6 @@ impl Shown {
     }
 }
 
-fn menu_item(title: &str, command: Invocation, order: i32, icon: &str) -> MenuItem {
-    MenuItem {
-        menu: "place".into(),
-        title: title.into(),
-        command,
-        when: None,
-        order,
-        icon: Some(icon.into()),
-        submenu: None,
-    }
-}
-
 /// Asking for a tag's new name on every file: its menu's Rename Tag…,
 /// and F2 on its pill.
 fn rename(tag: &str) -> Invocation {
@@ -75,60 +63,6 @@ fn rename(tag: &str) -> Invocation {
             "field": "to",
         }),
     )
-}
-
-/// A tag row's own items: pin or unpin it, rename it or take it from
-/// every file (each a plan to review), or choose its color.
-fn menu(tag: &str, pinned: bool) -> Vec<MenuItem> {
-    let mut items = vec![
-        if pinned {
-            menu_item(
-                "Unpin From Sidebar",
-                Invocation::with_args("tags.unpin", &serde_json::json!({ "tag": tag })),
-                50,
-                "pin",
-            )
-        } else {
-            menu_item(
-                "Pin to Sidebar",
-                Invocation::with_args("tags.pin", &serde_json::json!({ "tag": tag })),
-                50,
-                "pin",
-            )
-        },
-        menu_item("Rename Tag…", rename(tag), 100, "rename"),
-        menu_item(
-            "Remove Tag From Every File…",
-            Invocation::with_args("tags.delete", &serde_json::json!({ "tag": tag })),
-            300,
-            "trash",
-        ),
-    ];
-    let mut color = |title: &str, color: Option<&str>, order| {
-        items.push(MenuItem {
-            submenu: Some("Color".into()),
-            ..menu_item(
-                title,
-                Invocation::with_args(
-                    "tags.color",
-                    &serde_json::json!({ "tag": tag, "color": color }),
-                ),
-                order,
-                "appearance",
-            )
-        });
-    };
-    color("From Its Name", None, 200);
-    for (i, name) in TAG_COLORS.iter().enumerate() {
-        let mut title = (*name).to_owned();
-        title[..1].make_ascii_uppercase();
-        color(
-            &title,
-            Some(name),
-            201 + i32::try_from(i).unwrap_or_default(),
-        );
-    }
-    items
 }
 
 /// Where a tag's pill leads: its tag folder of the home folder.
@@ -288,12 +222,7 @@ pub fn edit(
                     format!("The pinned tags were not saved: {error:#}"),
                 );
             } else {
-                app.notify_with_action(
-                    NotifyLevel::Info,
-                    edit.words(&was),
-                    if undo { "Redo" } else { "Undo" },
-                    set_invocation(&was, !undo),
-                );
+                app.notify_undoable(edit.words(&was), undo, set_invocation(&was, !undo));
             }
             then(&app);
             app.wake();
@@ -351,54 +280,39 @@ pub fn publish(app: &App, index: &Arc<TagIndex>, vocabulary: &Vocabulary, shown:
     *last = Some(rows.clone());
     let places = rows.into_iter().map(|r| {
         let one = serde_json::json!({ "tag": &r.tag });
+        // Its menu is the tag's (`tags.tag_menu`, a source of the places'
+        // menus), read when it opens.
         Place {
-            menu: menu(&r.tag, r.pinned),
-            drop: Some(Invocation::with_args(
-                "tags.add",
-                &serde_json::json!({ "tags": [&r.tag] }),
-            )),
             forget: r.pinned.then(|| Invocation::with_args("tags.unpin", &one)),
             reorder: r.pinned.then(|| Reorder {
                 command: Invocation::with_args("tags.pin", &one),
                 before: serde_json::json!(&r.tag),
             }),
             suggested: !r.pinned,
-            key: None,
-            hidden: false,
             rename: Some(rename(&r.tag)),
-            title: r.tag,
-            location: Location::parse(&r.location),
-            icon: None,
-            group: GROUP.into(),
-            space: None,
-            eject: None,
-            activate: None,
-            unavailable: None,
-            busy: None,
             color: Some(r.color),
+            // Shift: the files shown that have it too; Alt: its files in the
+            // folder shown (`tags.pill`).
+            clicks: [("shift", "also"), ("alt", "here")]
+                .into_iter()
+                .map(|(modifier, how)| Click {
+                    modifier: modifier.into(),
+                    command: Invocation::with_args(
+                        "tags.pill",
+                        &serde_json::json!({ "tag": &r.tag, "how": how }),
+                    ),
+                })
+                .collect(),
+            ..Place::new(GROUP, r.tag.clone(), "", Location::parse(&r.location))
         }
     });
     // Last, every tag: the home folder's tags, browsed as folders.
-    let all = Some(Place {
-        title: "All Tags".into(),
-        location: crate::location::Address::default().location(),
-        icon: Some("tag".into()),
-        group: GROUP.into(),
-        space: None,
-        eject: None,
-        activate: None,
-        unavailable: None,
-        busy: None,
-        menu: Vec::new(),
-        forget: None,
-        reorder: None,
-        color: None,
-        drop: None,
-        suggested: false,
-        key: None,
-        hidden: false,
-        rename: None,
-    });
+    let all = Some(Place::new(
+        GROUP,
+        "All Tags",
+        "tag",
+        crate::location::Address::default().location(),
+    ));
     let places = places.chain(all);
     if app.registry.places.replace_owner(crate::ID, places) {
         app.wake();

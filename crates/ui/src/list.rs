@@ -307,10 +307,13 @@ impl Shell {
     /// another location.
     pub fn request_hydrate(&mut self, ids: impl IntoIterator<Item = EntryId>) {
         let pane = self.pane;
+        // Only what lacks its metadata, of whichever listing of the pane
+        // holds it (shown, or opened in place): callers pass what they draw.
         let held: Vec<(u64, EntryId)> = {
             let ws = self.app.workspace.read();
             let Some(p) = ws.pane(pane) else { return };
             ids.into_iter()
+                .filter(|id| p.entry(*id).is_some_and(|e| !e.metadata.is_hydrated()))
                 .filter_map(|id| Some((p.listing_of(id)?, id)))
                 .collect()
         };
@@ -342,9 +345,8 @@ impl Shell {
         if self.is_split() {
             kc.add("split");
         }
-        if self.ui().view_id == "usage" {
-            kc.add("usage");
-        }
+        // The view shown, by its id: a lens's keys (Usage's) say it.
+        kc.add(self.ui().view_id);
         let (sweeping, filtered) = {
             let ws = self.app.workspace.read();
             ws.pane(self.pane).map_or((false, false), |p| {
@@ -470,6 +472,10 @@ impl Shell {
                     self.cursor_to(ix as isize, step, window, cx);
                 }
             }
+            // One item along the pane's order, whatever the view draws:
+            // how peek walks the files.
+            "previous" => self.cursor_move(-1, step, window, cx),
+            "next" => self.cursor_move(1, step, window, cx),
             to => match nav_of(to) {
                 Some(nav) => self.navigate_by(nav, step, window, cx),
                 None => self.set_status(format!("ui.cursor cannot go to “{to}”"), true, cx),
@@ -521,10 +527,12 @@ impl Shell {
         if handled {
             return;
         }
+        // A view that says where Home and End go (the board: its column's
+        // ends) is followed; else they are the order's.
         match (nav, delta) {
-            (Nav::Home, _) => self.cursor_to(0, step, window, cx),
-            (Nav::End, _) => self.cursor_to(isize::MAX, step, window, cx),
             (_, Some(d)) => self.cursor_move(d, step, window, cx),
+            (Nav::Home, None) => self.cursor_to(0, step, window, cx),
+            (Nav::End, None) => self.cursor_to(isize::MAX, step, window, cx),
             (_, None) => {}
         }
     }
@@ -586,52 +594,34 @@ impl Shell {
         cx.notify();
     }
 
-    /// Ctrl+Enter: the selected folders each in a tab behind the one shown,
-    /// as the middle button opens one; with no folder selected, the
-    /// selection opens as Enter would.
+    /// Ctrl+Enter: the selected folders and places each in a tab behind
+    /// the one shown, as the middle button opens one (`tab.open`); with
+    /// none selected, the selection opens as Enter would.
     pub fn open_selection_in_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let folders: Vec<EntryId> = {
+        let leads = {
             let ws = self.app.workspace.read();
-            let Some(p) = ws.pane(self.pane) else {
-                return;
-            };
-            let sorted = &self.ui().list.sorted;
-            let mut ids: Vec<EntryId> = p
-                .selection
-                .iter()
-                .filter(|id| p.entry(*id).is_some_and(bibli_core::Entry::is_dir))
-                .collect();
-            // In the order the pane shows them, so the tabs line up the same.
-            ids.sort_by_key(|id| sorted.iter().position(|s| s == id));
-            ids
+            ws.pane(self.pane)
+                .is_some_and(|p| p.selection.iter().any(|id| p.leads_to(id).is_some()))
         };
-        if folders.is_empty() {
+        if !leads {
             return self.open_selection(window, cx);
         }
-        for id in folders {
-            self.open_in_tab(id, window, cx);
-        }
+        let pane = self.pane;
+        self.run("tab.open", serde_json::json!({ "pane": pane }), window, cx);
     }
 
-    /// Open entry `id` of the pane in a tab behind the one shown, if it is
-    /// a folder.
+    /// Open entry `id` of the pane in a tab behind the one shown, if it
+    /// leads somewhere: a folder, a place, a trashed folder.
     fn open_in_tab(&mut self, id: EntryId, window: &mut Window, cx: &mut Context<Self>) {
-        let folder = {
+        let leads = {
             let ws = self.app.workspace.read();
-            ws.pane(self.pane).and_then(|p| {
-                p.entry(id).filter(|e| e.is_dir())?;
-                p.path_of(id)
-            })
+            ws.pane(self.pane).is_some_and(|p| p.leads_to(id).is_some())
         };
-        if let Some(folder) = folder {
+        if leads {
             let pane = self.pane;
             self.run(
-                "tab.new",
-                serde_json::json!({
-                    "location": bibli_core::os_path::PathArg::from(folder),
-                    "show": false,
-                    "pane": pane,
-                }),
+                "tab.open",
+                serde_json::json!({ "ids": [id], "pane": pane }),
                 window,
                 cx,
             );
@@ -836,18 +826,7 @@ impl Shell {
                 if payload.pane == pane {
                     return;
                 }
-                if let Some(dest) = this.pane_folder(pane) {
-                    this.drop_into(payload.pane, &dest, window, cx);
-                } else {
-                    // A location that takes files (a tag's) says what a
-                    // drop does there.
-                    let shown = this.app.pane_location(pane);
-                    let taken = shown
-                        .is_some_and(|place| this.drop_on_place(payload.pane, &place, window, cx));
-                    if !taken {
-                        this.set_status("drop target is not a directory", true, cx);
-                    }
-                }
+                this.give_to_pane(payload.pane, pane, None, window, cx);
             }))
             .drag_over::<ExternalPaths>(move |s, _, _, _| s.bg(tint))
             .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {

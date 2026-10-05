@@ -264,9 +264,14 @@ impl SetNotes {
     }
 }
 
+impl SetNotes {
+    /// What it is registered and serialized under.
+    pub const KIND: &'static str = "set_notes";
+}
+
 impl Operation for SetNotes {
     fn kind(&self) -> &'static str {
-        "set_notes"
+        Self::KIND
     }
     fn clone_box(&self) -> Box<dyn Operation> {
         Box::new(self.clone())
@@ -472,9 +477,14 @@ impl RestoreNotes {
     }
 }
 
+impl RestoreNotes {
+    /// What it is registered and serialized under.
+    pub const KIND: &'static str = "restore_notes";
+}
+
 impl Operation for RestoreNotes {
     fn kind(&self) -> &'static str {
-        "restore_notes"
+        Self::KIND
     }
     fn clone_box(&self) -> Box<dyn Operation> {
         Box::new(self.clone())

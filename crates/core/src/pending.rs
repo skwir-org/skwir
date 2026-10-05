@@ -8,6 +8,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 
 use crate::entry::EntryId;
+use crate::registry::OwnerGate;
 
 /// Entries held for a paste. Identity, not paths: a cut file is the same
 /// file in every pane and view that lists it.
@@ -20,17 +21,39 @@ pub struct Pending {
     pub owner: String,
 }
 
-#[derive(Debug, Default)]
-pub struct PendingTransfer(RwLock<Arc<Pending>>);
+#[derive(Default)]
+pub struct PendingTransfer {
+    now: RwLock<Arc<Pending>>,
+    /// Refuses a disabled plugin's worker.
+    gate: Arc<OwnerGate>,
+}
+
+impl std::fmt::Debug for PendingTransfer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("PendingTransfer").field(&self.get()).finish()
+    }
+}
 
 impl PendingTransfer {
-    /// One cheap snapshot per frame; rows test membership against it.
-    pub fn get(&self) -> Arc<Pending> {
-        Arc::clone(&self.0.read())
+    pub fn gated(gate: Arc<OwnerGate>) -> Self {
+        PendingTransfer {
+            now: RwLock::default(),
+            gate,
+        }
     }
 
+    /// One cheap snapshot per frame; rows test membership against it.
+    pub fn get(&self) -> Arc<Pending> {
+        Arc::clone(&self.now.read())
+    }
+
+    /// Refused while `owner` is disabled.
     pub fn set(&self, owner: &str, entries: impl IntoIterator<Item = EntryId>, cut: bool) {
-        *self.0.write() = Arc::new(Pending {
+        let mut now = self.now.write();
+        if !self.gate.is_open(owner) {
+            return;
+        }
+        *now = Arc::new(Pending {
             entries: entries.into_iter().collect(),
             cut,
             owner: owner.to_owned(),
@@ -38,12 +61,13 @@ impl PendingTransfer {
     }
 
     pub fn clear(&self) {
-        *self.0.write() = Arc::default();
+        *self.now.write() = Arc::default();
     }
 
     pub fn unregister_owner(&self, owner: &str) {
-        if self.0.read().owner == owner {
-            self.clear();
+        let mut now = self.now.write();
+        if now.owner == owner {
+            *now = Arc::default();
         }
     }
 }

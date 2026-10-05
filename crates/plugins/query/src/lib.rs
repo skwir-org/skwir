@@ -218,7 +218,7 @@ pub fn suggested_name(expr: &str) -> String {
 /// A search's root as its name and its chip say it: Home for the home
 /// folder, else the folder's name.
 pub fn place_name(root: &std::path::Path) -> String {
-    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let home = bibli_core::os_path::home();
     if home.as_deref() == Some(root) {
         "Home".to_owned()
     } else {
@@ -355,12 +355,7 @@ impl Editor {
                 match apply_edit(&app, &saving, &edit) {
                     Ok(Some(inverse)) => {
                         if let Some(text) = describe(&edit, shown.as_deref(), true) {
-                            app.notify_with_action(
-                                NotifyLevel::Info,
-                                text,
-                                if undo { "Redo" } else { "Undo" },
-                                invocation(&inverse, !undo),
-                            );
+                            app.notify_undoable(text, undo, invocation(&inverse, !undo));
                         }
                     }
                     Ok(None) => {
@@ -381,15 +376,7 @@ impl Editor {
 
 /// An item of a saved search's own menu.
 fn menu_item(title: &str, command: Invocation, order: i32, icon: &str) -> MenuItem {
-    MenuItem {
-        menu: "place".into(),
-        title: title.into(),
-        command,
-        when: None,
-        order,
-        icon: Some(icon.into()),
-        submenu: None,
-    }
+    MenuItem::new("place", title, icon, order, command)
 }
 
 fn place(search: SavedQuery) -> Place {
@@ -405,41 +392,25 @@ fn place(search: SavedQuery) -> Place {
             "field": "name",
         }),
     );
-    let menu = vec![
-        menu_item("Rename…", rename.clone(), 100, "rename"),
-        menu_item(
-            "Edit Search…",
-            Invocation::with_args(
-                "ui.ask",
-                &serde_json::json!({
-                    "title": "Edit saved search",
-                    "placeholder": "kind:document modified:this-week *.pdf  (in: picks the root)",
-                    "text": search.expr,
-                    "command": "query.edit",
-                    "args": { "expr": expr },
-                    "field": "to",
-                }),
-            ),
-            110,
-            "search",
+    // Rename… and the item that removes it are the sidebar's, from
+    // `rename` and `forget`.
+    let menu = vec![menu_item(
+        "Edit Search…",
+        Invocation::with_args(
+            "ui.ask",
+            &serde_json::json!({
+                "title": "Edit saved search",
+                "placeholder": "kind:document modified:this-week *.pdf  (in: picks the root)",
+                "text": search.expr,
+                "command": "query.edit",
+                "args": { "expr": expr },
+                "field": "to",
+            }),
         ),
-        menu_item(
-            "Remove Saved Search",
-            Invocation::with_args("query.forget", &serde_json::json!({ "expr": expr })),
-            300,
-            "minus",
-        ),
-    ];
+        110,
+        "search",
+    )];
     Place {
-        title: search.name,
-        location: Location::new(SCHEME, search.expr),
-        icon: Some("folder-saved-search".into()),
-        group: GROUP.into(),
-        space: None,
-        eject: None,
-        activate: None,
-        unavailable: None,
-        busy: None,
         menu,
         forget: Some(Invocation::with_args(
             "query.forget",
@@ -449,12 +420,13 @@ fn place(search: SavedQuery) -> Place {
             command: Invocation::with_args("query.move", &serde_json::json!({ "expr": expr })),
             before: expr,
         }),
-        color: None,
-        drop: None,
-        suggested: false,
-        key: None,
-        hidden: false,
         rename: Some(rename),
+        ..Place::new(
+            GROUP,
+            search.name,
+            "folder-saved-search",
+            Location::new(SCHEME, search.expr),
+        )
     }
 }
 
@@ -713,18 +685,15 @@ impl Plugin for QueryPlugin {
         ] {
             app.registry.menus.add(
                 ID,
-                MenuItem {
-                    menu: "context".into(),
-                    title: title.into(),
-                    command: Invocation::with_args(
-                        "query.similar",
-                        &serde_json::json!({ "by": by }),
-                    ),
-                    when: Some(when.into()),
+                MenuItem::new(
+                    "context",
+                    title,
+                    "search",
                     order,
-                    icon: Some("search".into()),
-                    submenu: Some("Find Similar".into()),
-                },
+                    Invocation::with_args("query.similar", &serde_json::json!({ "by": by })),
+                )
+                .when(when)
+                .submenu("Find Similar"),
             );
         }
         app.commands.register::<RefineArgs, _>(
@@ -807,6 +776,7 @@ impl Plugin for QueryPlugin {
                 save: Invocation::new("query.save"),
                 save_title: "Save this search".into(),
                 forget_title: "Remove saved search".into(),
+                keeps: None,
             },
         );
 
@@ -820,15 +790,14 @@ impl Plugin for QueryPlugin {
         );
         app.registry.menus.add(
             ID,
-            MenuItem {
-                menu: "context".into(),
-                title: "Search here…".into(),
-                command: Invocation::new("ui.search"),
-                when: Some("empty folder".into()),
-                order: 420,
-                icon: Some("search".into()),
-                submenu: None,
-            },
+            MenuItem::new(
+                "context",
+                "Search here…",
+                "search",
+                420,
+                Invocation::new("ui.search"),
+            )
+            .when("empty folder"),
         );
     }
 }
@@ -1552,9 +1521,14 @@ mod tests {
         std::fs::set_permissions(bin.join("plocate"), std::fs::Permissions::from_mode(0o755))
             .unwrap();
         let q = lang::parse("report in:/").unwrap();
-        let paths =
-            plocate::locate_with(&bin.join("plocate"), &q.name_substrings().unwrap(), false)
-                .unwrap();
+        let never = bibli_core::cancel::CancelToken::new();
+        let paths = plocate::locate_with(
+            &bin.join("plocate"),
+            &q.name_substrings().unwrap(),
+            false,
+            &never,
+        )
+        .unwrap();
         assert_eq!(
             paths,
             vec![
@@ -1563,11 +1537,11 @@ mod tests {
             ]
         );
         assert!(
-            plocate::try_locate(&lang::parse("report in:/tmp").unwrap()).is_none(),
+            plocate::try_locate(&lang::parse("report in:/tmp").unwrap(), &never).is_none(),
             "only over /"
         );
         assert!(
-            plocate::try_locate(&lang::parse("report size>1k in:/").unwrap()).is_none(),
+            plocate::try_locate(&lang::parse("report size>1k in:/").unwrap(), &never).is_none(),
             "only name-only"
         );
         // A database that cannot answer (it says why) is not "no matches".
@@ -1578,12 +1552,12 @@ mod tests {
         .unwrap();
         std::fs::set_permissions(bin.join("broken"), std::fs::Permissions::from_mode(0o755))
             .unwrap();
-        assert!(plocate::locate_with(&bin.join("broken"), &["x".into()], false).is_none());
+        assert!(plocate::locate_with(&bin.join("broken"), &["x".into()], false, &never).is_none());
         std::fs::write(bin.join("empty"), "#!/bin/sh\nexit 1\n").unwrap();
         std::fs::set_permissions(bin.join("empty"), std::fs::Permissions::from_mode(0o755))
             .unwrap();
         assert_eq!(
-            plocate::locate_with(&bin.join("empty"), &["x".into()], false),
+            plocate::locate_with(&bin.join("empty"), &["x".into()], false, &never),
             Some(Vec::new())
         );
     }

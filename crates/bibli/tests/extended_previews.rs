@@ -25,23 +25,14 @@ fn app(root: &Path) -> Arc<App> {
 /// A request as the preview worker makes one: the type a fixture's name
 /// says. Only bytes proven binary are `application/octet-stream`, which is
 /// what the hexadecimal fallback takes, so a text file never says it.
+/// A preview's request for `path`, typed as the preview worker types it
+/// (`ui/src/preview.rs`): by its name, and its bytes where the name is
+/// ambiguous.
 fn request(path: &Path) -> PreviewRequest {
-    let mime = match bibli_platform::inspection::extension(path).as_str() {
-        "md" => "text/markdown",
-        "csv" => "text/csv",
-        "json" => "application/json",
-        "yaml" => "application/yaml",
-        "toml" => "application/toml",
-        "eml" => "message/rfc822",
-        "epub" => "application/epub+zip",
-        "zip" => "application/zip",
-        "gz" => "application/gzip",
-        "ttf" => "font/ttf",
-        _ => "application/octet-stream",
-    };
+    let mime = bibli_platform::mime::identify(path.file_name().unwrap(), path);
     PreviewRequest {
         entry: EntryRef::from_path(path).unwrap(),
-        mime: Some(mime.into()),
+        mime: mime.map(|mime| mime.0),
         page: 1,
         seconds: None,
         max_side: 512,
@@ -73,7 +64,8 @@ fn asf_media_ownership_precedes_hex_fallback_but_allows_explicit_hex() {
         Arc::new(bibli_plugin_preview_media::PreviewPlugin::default()),
         &app,
     );
-    let request = request(&path); // `.asf` is not in the table: generic bytes.
+    // Windows Media by its name, though its bytes are no film.
+    let request = request(&path);
     let default = InspectRequest::default();
     assert!(
         app.previews
@@ -87,7 +79,9 @@ fn asf_media_ownership_precedes_hex_fallback_but_allows_explicit_hex() {
     };
     assert!(inspect(&app, &path, &explicit).title.starts_with("Hex"));
     assert!(app.plugins.set_enabled("preview-media", false, &app));
-    assert!(inspect(&app, &path, &default).title.starts_with("Hex"));
+    // Nothing else takes a film; its bytes are still there to ask for.
+    assert!(try_inspect(&app, &path, &default).is_none());
+    assert!(inspect(&app, &path, &explicit).title.starts_with("Hex"));
     assert!(app.plugins.set_enabled("preview-media", true, &app));
     assert!(
         app.previews
@@ -394,141 +388,120 @@ fn epub_chapters_source_navigation_and_disable() {
     assert!(source.plain_text().contains("<h1>"));
 }
 
-/// Every preview plugin the binary wires, each constructed the way main.rs does.
-fn all_preview_plugins() -> Vec<(&'static str, Arc<dyn Plugin>)> {
-    vec![
-        (
-            "preview-media",
-            Arc::new(bibli_plugin_preview_media::PreviewPlugin::default()),
-        ),
-        (
-            "preview-documents",
-            Arc::new(bibli_plugin_preview_documents::PreviewPlugin),
-        ),
-        (
-            "preview-markdown",
-            Arc::new(bibli_plugin_preview_markdown::PreviewPlugin),
-        ),
-        (
-            "preview-archives",
-            Arc::new(bibli_plugin_preview_archives::PreviewPlugin),
-        ),
-        (
-            "preview-epub",
-            Arc::new(bibli_plugin_preview_epub::PreviewPlugin),
-        ),
-        (
-            "preview-tables",
-            Arc::new(bibli_plugin_preview_tables::PreviewPlugin),
-        ),
-        (
-            "preview-playlists",
-            Arc::new(bibli_plugin_preview_playlists::PreviewPlugin),
-        ),
-        (
-            "preview-structured",
-            Arc::new(bibli_plugin_preview_structured::PreviewPlugin),
-        ),
-        (
-            "preview-fonts",
-            Arc::new(bibli_plugin_preview_fonts::PreviewPlugin),
-        ),
-        (
-            "preview-email",
-            Arc::new(bibli_plugin_preview_email::PreviewPlugin),
-        ),
-        (
-            "preview-comics",
-            Arc::new(bibli_plugin_preview_comics::PreviewPlugin),
-        ),
-        (
-            "preview-hex",
-            Arc::new(bibli_plugin_preview_hex::PreviewPlugin),
-        ),
-    ]
+/// Every preview plugin the binary wires, in the order it wires them.
+fn preview_plugins() -> Vec<Arc<dyn Plugin>> {
+    bibli::plugins()
+        .into_iter()
+        .filter(|p| p.category() == bibli_core::plugin::Category::Previews)
+        .collect()
 }
 
-/// Equal-priority providers are ordered by registration, so their accept sets
-/// must stay disjoint: at most one non-fallback plugin may claim a file. The
-/// registry has no accept query, so each plugin is probed alone through
-/// `render`, which returns `Ok(None)` only when nothing accepted the request.
+/// Providers of one priority are ordered by registration, so no two of
+/// them may accept the same file: one that settles a shared name by its
+/// content outranks one that takes the name whole (a Litchi mission's
+/// `.csv` before the table reader). Fallbacks (below 0) take what nothing
+/// else does.
 #[test]
 fn format_providers_never_compete_for_the_same_file() {
     let tmp = tempfile::tempdir().unwrap();
-    let fixtures: Vec<(&str, Option<&str>)> = vec![
-        ("notes.md", Some("text/markdown")),
-        ("table.csv", Some("text/csv")),
-        ("table.tsv", Some("text/tab-separated-values")),
-        ("data.json", Some("application/json")),
-        ("data.yaml", Some("application/yaml")),
-        ("data.yml", None),
-        ("data.toml", Some("application/toml")),
-        ("message.eml", Some("message/rfc822")),
-        ("book.epub", Some("application/epub+zip")),
-        ("face.ttf", Some("font/ttf")),
-        ("face.otf", Some("font/otf")),
-        ("bundle.zip", Some("application/zip")),
-        ("bundle.tar.gz", Some("application/gzip")),
-        ("bundle.7z", Some("application/x-7z-compressed")),
-        ("pages.cbz", Some("application/vnd.comicbook+zip")),
-        ("pages.cbr", None),
-        ("clip.asf", Some("application/vnd.ms-asf")),
-        ("clip.mp4", Some("video/mp4")),
-        ("song.mp3", Some("audio/mpeg")),
-        ("mix.m3u", Some("audio/x-mpegurl")),
-        ("mix.m3u8", None),
-        ("mix.pls", Some("audio/x-scpls")),
-        ("mix.xspf", Some("application/xspf+xml")),
-        ("album.cue", Some("application/x-cue")),
-        ("paper.pdf", Some("application/pdf")),
-        ("text.odt", Some("application/vnd.oasis.opendocument.text")),
-        ("blob.bin", Some("application/octet-stream")),
-        ("photo.jpg", Some("image/jpeg")),
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    for plugin in preview_plugins() {
+        app.plugins.add(plugin, &app);
+    }
+    let actions: Vec<String> = (1..=15)
+        .map(|i| format!("actiontype{i},actionparam{i}"))
+        .collect();
+    let mission = format!(
+        "latitude,longitude,altitude(m),heading(deg),curvesize(m),rotationdir,gimbalmode,\
+         gimbalpitchangle,{},altitudemode,speed(m/s),poi_latitude,poi_longitude,poi_altitude(m),\
+         poi_altitudemode,photo_timeinterval,photo_distinterval\r\n",
+        actions.join(",")
+    );
+    let fixtures: Vec<(&str, Option<&str>, &[u8])> = vec![
+        ("notes.md", Some("text/markdown"), b"synthetic"),
+        ("table.csv", Some("text/csv"), b"synthetic"),
+        ("mission.csv", Some("text/csv"), mission.as_bytes()),
+        ("table.tsv", Some("text/tab-separated-values"), b"synthetic"),
+        ("data.json", Some("application/json"), b"synthetic"),
+        ("data.yaml", Some("application/yaml"), b"synthetic"),
+        ("data.yml", None, b"synthetic"),
+        ("data.toml", Some("application/toml"), b"synthetic"),
+        ("message.eml", Some("message/rfc822"), b"synthetic"),
+        ("book.epub", Some("application/epub+zip"), b"synthetic"),
+        ("face.ttf", Some("font/ttf"), b"synthetic"),
+        ("face.otf", Some("font/otf"), b"synthetic"),
+        ("bundle.zip", Some("application/zip"), b"synthetic"),
+        ("bundle.tar.gz", Some("application/gzip"), b"synthetic"),
+        (
+            "bundle.7z",
+            Some("application/x-7z-compressed"),
+            b"synthetic",
+        ),
+        (
+            "pages.cbz",
+            Some("application/vnd.comicbook+zip"),
+            b"synthetic",
+        ),
+        ("pages.cbr", None, b"synthetic"),
+        ("clip.asf", Some("application/vnd.ms-asf"), b"synthetic"),
+        ("clip.mp4", Some("video/mp4"), b"synthetic"),
+        ("song.mp3", Some("audio/mpeg"), b"synthetic"),
+        ("mix.m3u", Some("audio/x-mpegurl"), b"synthetic"),
+        ("mix.m3u8", None, b"synthetic"),
+        ("mix.pls", Some("audio/x-scpls"), b"synthetic"),
+        ("mix.xspf", Some("application/xspf+xml"), b"synthetic"),
+        ("album.cue", Some("application/x-cue"), b"synthetic"),
+        ("paper.pdf", Some("application/pdf"), b"synthetic"),
+        (
+            "text.odt",
+            Some("application/vnd.oasis.opendocument.text"),
+            b"synthetic",
+        ),
+        ("blob.bin", Some("application/octet-stream"), b"synthetic"),
+        ("photo.jpg", Some("image/jpeg"), b"synthetic"),
     ];
-    let mut claims: Vec<(String, Vec<&str>)> = Vec::new();
-    for (name, mime) in &fixtures {
+    let mut shown: Vec<(&str, Option<String>)> = Vec::new();
+    for (name, mime, bytes) in &fixtures {
         let path = tmp.path().join(name);
-        std::fs::write(&path, b"synthetic").unwrap();
-        let mut accepted = Vec::new();
-        for (id, plugin) in all_preview_plugins() {
-            let app = App::new(AppConfig::ephemeral(tmp.path().join("state").join(id))).unwrap();
-            app.plugins.add(plugin, &app);
-            let request = PreviewRequest {
-                entry: EntryRef::from_path(&path).unwrap(),
-                mime: mime.map(str::to_owned),
-                page: 1,
-                seconds: None,
-                max_side: 64,
-                text_size: None,
-            };
-            if !matches!(app.previews.render(&request, &CancelToken::new()), Ok(None)) {
-                accepted.push(id);
-            }
+        std::fs::write(&path, bytes).unwrap();
+        let request = PreviewRequest {
+            entry: EntryRef::from_path(&path).unwrap(),
+            mime: mime.map(str::to_owned),
+            page: 1,
+            seconds: None,
+            max_side: 64,
+            text_size: None,
+        };
+        let accepting = app.previews.accepting(&request);
+        for (i, (owner, id, priority)) in accepting.iter().enumerate() {
+            let tied = accepting[i + 1..]
+                .iter()
+                .find(|(_, _, other)| other == priority && *priority >= 0);
+            assert!(
+                tied.is_none(),
+                "{name}: {owner}'s {id} and {tied:?} accept it at one priority, {priority}"
+            );
         }
-        claims.push(((*name).to_owned(), accepted));
+        shown.push((name, accepting.first().map(|(owner, _, _)| owner.clone())));
     }
-    for (name, accepted) in &claims {
-        let format_owners: Vec<_> = accepted.iter().filter(|id| **id != "preview-hex").collect();
-        assert!(
-            format_owners.len() <= 1,
-            "{name} is claimed by several format providers: {format_owners:?}"
-        );
-    }
-    let owner = |name: &str| claims.iter().find(|(n, _)| n == name).unwrap().1.clone();
-    assert_eq!(owner("notes.md"), ["preview-markdown"]);
-    assert_eq!(owner("data.yml"), ["preview-structured"]);
-    assert_eq!(owner("bundle.tar.gz"), ["preview-archives"]);
-    assert_eq!(owner("pages.cbr"), ["preview-comics"]);
-    assert_eq!(owner("clip.asf"), ["preview-media"]);
-    assert_eq!(owner("song.mp3"), ["preview-media"]);
-    assert_eq!(owner("paper.pdf"), ["preview-documents"]);
+    let owner = |name: &str| shown.iter().find(|(n, _)| *n == name).unwrap().1.clone();
+    assert_eq!(owner("notes.md").as_deref(), Some("preview-markdown"));
+    assert_eq!(owner("table.csv").as_deref(), Some("preview-tables"));
+    assert_eq!(owner("mission.csv").as_deref(), Some("geo"));
+    assert_eq!(owner("data.yml").as_deref(), Some("preview-structured"));
+    assert_eq!(owner("bundle.tar.gz").as_deref(), Some("preview-archives"));
+    assert_eq!(owner("pages.cbr").as_deref(), Some("preview-comics"));
+    assert_eq!(owner("clip.asf").as_deref(), Some("preview-media"));
+    assert_eq!(owner("song.mp3").as_deref(), Some("preview-media"));
+    assert_eq!(owner("paper.pdf").as_deref(), Some("preview-documents"));
     assert_eq!(
-        owner("blob.bin"),
-        ["preview-hex"],
+        owner("blob.bin").as_deref(),
+        Some("preview-hex"),
         "only the fallback owns generic bytes"
     );
-    assert!(
-        owner("photo.jpg").is_empty(),
+    assert_eq!(
+        owner("photo.jpg"),
+        None,
         "bitmaps are the shell's own preview"
     );
 }

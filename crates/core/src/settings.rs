@@ -680,24 +680,23 @@ pub fn startup_folder(settings: &Settings, home: &Path) -> PathBuf {
     choice.unwrap_or_else(|| home.to_path_buf())
 }
 
-/// Record the folder to reopen. Writes the settings file on the calling
-/// thread: for the moment the application closes, not for a UI callback.
-pub fn remember_location(settings: &Settings, folder: &Path) {
+/// Record `folder` as the one to reopen, when the startup preference
+/// says to come back to it (`tabs::remember`, at exit). Whether it changed;
+/// the caller saves.
+pub fn remember_location(settings: &Settings, folder: &Path) -> bool {
     if settings.get::<String>(STARTUP).as_deref() != Some("last") {
-        return;
+        return false;
     }
     // A string when the path is UTF-8, its bytes otherwise (`os_path`): a
     // folder whose name is not UTF-8 reopens as itself.
     if settings.get::<PathArg>(LAST_LOCATION).as_deref() == Some(folder) {
-        return;
+        return false;
     }
     let Ok(value) = toml::Value::try_from(PathArg::from(folder)) else {
-        return;
+        return false;
     };
     settings.set(LAST_LOCATION, value);
-    if let Err(error) = settings.save() {
-        tracing::warn!("cannot remember the last folder: {error:#}");
-    }
+    true
 }
 
 /// Loaded settings plus declared schema.
@@ -716,7 +715,7 @@ pub struct Settings {
 impl Settings {
     /// The platform config file (`$XDG_CONFIG_HOME/bibli/settings.toml` on Linux).
     pub fn default_path() -> PathBuf {
-        dirs::config_dir()
+        crate::xdg::config_home()
             .unwrap_or_else(std::env::temp_dir)
             .join("bibli")
             .join("settings.toml")

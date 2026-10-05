@@ -7,42 +7,28 @@ use crate::Found;
 use bibli_core::CancelToken;
 use bibli_platform::inspection::{self, limits};
 use quick_xml::events::Event;
-use std::io::Read;
 use std::path::Path;
 
 /// The start of a model's XML read for its metadata, which comes before
 /// its resources (the meshes, megabytes of them).
 const MODEL_HEAD: u64 = 64 * 1024;
 
-pub(crate) type Archive = zip::ZipArchive<std::io::BufReader<std::fs::File>>;
+/// A model's package, read as every package is (`bibli_platform::package`).
+pub(crate) type Archive = bibli_platform::package::Package;
 
-pub(crate) fn open(path: &Path) -> anyhow::Result<Archive> {
-    let archive = zip::ZipArchive::new(std::io::BufReader::new(inspection::open(path)?))?;
-    anyhow::ensure!(
-        archive.len() <= limits::CONTAINER_MEMBERS,
-        "The package holds more than {} members",
-        limits::CONTAINER_MEMBERS
-    );
-    Ok(archive)
+pub(crate) fn open(path: &Path, cancel: &CancelToken) -> anyhow::Result<Archive> {
+    Archive::open(path, "The package", false, cancel)
 }
 
 /// The member `name`, if it is there and within `bound` once inflated.
 pub(crate) fn member(archive: &mut Archive, name: &str, bound: u64) -> Option<Vec<u8>> {
-    let file = archive.by_name(name).ok()?;
-    if file.size() > bound {
-        return None;
-    }
-    let mut bytes = Vec::new();
-    file.take(bound + 1).read_to_end(&mut bytes).ok()?;
-    (bytes.len() as u64 <= bound).then_some(bytes)
+    let bound = usize::try_from(bound).unwrap_or(usize::MAX);
+    archive.read(name, bound, name, &CancelToken::new()).ok()
 }
 
 /// The start of member `name`, at most `bound` bytes of it.
 fn member_head(archive: &mut Archive, name: &str, bound: u64) -> Option<Vec<u8>> {
-    let file = archive.by_name(name).ok()?;
-    let mut bytes = Vec::new();
-    file.take(bound).read_to_end(&mut bytes).ok()?;
-    Some(bytes)
+    archive.head(name, usize::try_from(bound).unwrap_or(usize::MAX))
 }
 
 /// An attribute of an element, unescaped.
@@ -82,9 +68,9 @@ fn thumbnail_target(archive: &mut Archive) -> Option<String> {
 /// A 3MF package: its picture, the plates its slicer stored, and what its
 /// model and its slicer say.
 pub fn three_mf(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Found> {
-    let mut archive = open(path)?;
+    let mut archive = open(path, cancel)?;
     inspection::check(cancel)?;
-    let names: Vec<String> = archive.file_names().map(str::to_owned).collect();
+    let names: Vec<String> = archive.names().map(str::to_owned).collect();
     // Bambu Studio and Orca store a picture per plate: `plate_1.png`.
     let plates = names
         .iter()
@@ -131,7 +117,10 @@ pub fn three_mf(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<
             title: "3MF".into(),
             picture: None,
             details,
-            notice: Some("Install bibli-model-worker to draw models that store no picture".into()),
+            notice: Some(format!(
+                "Install {} to draw models that store no picture",
+                bibli_platform::model::WORKER.executable
+            )),
         });
     }
     match crate::mesh::read(path, format, side, cancel) {
@@ -245,7 +234,7 @@ fn slice_info(xml: &[u8]) -> Vec<(String, String)> {
 /// A `FreeCAD` document: the picture `FreeCAD` stores when it saves, and the
 /// version that saved it (`Document.xml`'s first element).
 pub fn freecad(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Found> {
-    let mut archive = open(path)?;
+    let mut archive = open(path, cancel)?;
     inspection::check(cancel)?;
     let picture = member(
         &mut archive,

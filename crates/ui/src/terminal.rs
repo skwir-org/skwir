@@ -219,7 +219,7 @@ impl Shell {
             .app
             .pane_dir(self.pane)
             .ok()
-            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+            .or_else(bibli_core::os_path::home)
             .unwrap_or_else(|| PathBuf::from("/"));
         let theme = cx.global::<Theme>();
         let spawn = Spawn {
@@ -540,26 +540,13 @@ impl Shell {
                     .map(|tip| crate::toolbar::tooltip(tip, font.clone(), cx))
             }
         };
-        let reset = cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
-            if event.click_count() == 2 {
-                this.terminal.height = None;
-                this.remember_session();
-                cx.notify();
-            }
-        });
-        let edge = div()
-            .id("terminal-resize")
-            .absolute()
-            .left_0()
-            .top_0()
-            .w_full()
-            .h(px(6.))
-            .cursor(CursorStyle::ResizeUpDown)
-            .hover(|style| style.bg(theme.handle))
-            .on_click(reset)
-            .on_drag(HeightHandle, |_, _, _, cx| {
-                cx.new(|_| crate::preview::NoDragView)
-            });
+        let edge = crate::elements::edge::edge(
+            "terminal-resize",
+            crate::elements::edge::Side::Top,
+            HeightHandle,
+            |this| this.terminal.height = None,
+            cx,
+        );
         Some(
             div()
                 .id("terminal-panel")

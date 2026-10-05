@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use parking_lot::RwLock;
+use crate::registry::{Contributions, OwnerGate};
 
 use crate::entry::Entry;
 
@@ -165,20 +165,26 @@ pub type Listed<'a> = dyn Fn(&std::ffi::OsStr) -> bool + 'a;
 /// The registered providers, in registration order.
 #[derive(Default)]
 pub struct MetadataProviders {
-    list: RwLock<Vec<(Arc<str>, Arc<dyn MetadataProvider>)>>,
+    list: Contributions<Arc<dyn MetadataProvider>>,
 }
 
 impl MetadataProviders {
+    pub fn gated(gate: Arc<OwnerGate>) -> Self {
+        MetadataProviders {
+            list: Contributions::gated(gate),
+        }
+    }
+
     pub fn register(&self, owner: &str, provider: Arc<dyn MetadataProvider>) {
-        self.list.write().push((owner.into(), provider));
+        self.list.add(owner, provider);
     }
 
     pub fn unregister_owner(&self, owner: &str) {
-        self.list.write().retain(|(o, _)| &**o != owner);
+        self.list.remove_owner(owner);
     }
 
     pub fn ids(&self) -> Vec<&'static str> {
-        self.list.read().iter().map(|(_, p)| p.id()).collect()
+        self.list.all().iter().map(|p| p.id()).collect()
     }
 
     /// Run every provider over `entries` (all children of `dir`).
@@ -188,12 +194,7 @@ impl MetadataProviders {
         if entries.is_empty() {
             return;
         }
-        let providers: Vec<Arc<dyn MetadataProvider>> = self
-            .list
-            .read()
-            .iter()
-            .map(|(_, p)| Arc::clone(p))
-            .collect();
+        let providers = self.list.all();
         for p in providers {
             p.fill_listed(dir, listed, entries);
         }
@@ -203,12 +204,7 @@ impl MetadataProviders {
         if entries.is_empty() {
             return;
         }
-        let providers: Vec<Arc<dyn MetadataProvider>> = self
-            .list
-            .read()
-            .iter()
-            .map(|(_, p)| Arc::clone(p))
-            .collect();
+        let providers = self.list.all();
         for p in providers {
             p.fill(dir, entries);
         }
