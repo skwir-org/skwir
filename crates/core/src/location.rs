@@ -571,6 +571,9 @@ pub enum SortKey {
     Modified,
     /// The user's rating (`keys::RATING`); unrated sorts as none.
     Rating,
+    /// When a file of the trash was put there (`keys::TRASHED`); a file
+    /// that does not say sorts as the oldest.
+    Deleted,
 }
 
 /// A pane's sort and filter settings; the sorted order is cached in the listing.
@@ -671,6 +674,7 @@ struct Delta {
     /// move anything: it is placed among the rest (`Listing::sorted`).
     order: bool,
     size: bool,
+    /// A date changed: when it was modified, or put in the trash.
     modified: bool,
     rating: bool,
 }
@@ -681,7 +685,8 @@ impl Delta {
         let name = old.name != new.name;
         let size = old.metadata.value(keys::SIZE) != new.metadata.value(keys::SIZE)
             || old.metadata.value(keys::FILES) != new.metadata.value(keys::FILES);
-        let modified = old.metadata.value(keys::MODIFIED) != new.metadata.value(keys::MODIFIED);
+        let modified = old.metadata.value(keys::MODIFIED) != new.metadata.value(keys::MODIFIED)
+            || old.metadata.value(keys::TRASHED) != new.metadata.value(keys::TRASHED);
         let rating = old.metadata.value(keys::RATING) != new.metadata.value(keys::RATING);
         Delta {
             any: old != new,
@@ -742,8 +747,8 @@ pub struct Listing {
     /// every sort: a removal, a new name or kind. Arrivals leave it alone:
     /// they are appended to `entries`, and `sorted` places them.
     order_version: u64,
-    /// Incremented when a size or a modification time changes: only the
-    /// sorts by those keys depend on them.
+    /// Incremented when a size or a date (modified, put in the trash)
+    /// changes: only the sorts by those keys depend on them.
     size_version: u64,
     modified_version: u64,
     rating_version: u64,
@@ -981,7 +986,7 @@ impl Listing {
             match spec.key {
                 SortKey::Name => 0,
                 SortKey::Size => self.size_version,
-                SortKey::Modified => self.modified_version,
+                SortKey::Modified | SortKey::Deleted => self.modified_version,
                 SortKey::Rating => self.rating_version,
             },
         );
@@ -1049,9 +1054,13 @@ impl Listing {
                 })
                 .and_then(Value::as_u64)
                 .unwrap_or(0),
-            SortKey::Modified => e
+            SortKey::Modified | SortKey::Deleted => e
                 .metadata
-                .value(keys::MODIFIED)
+                .value(if spec.key == SortKey::Modified {
+                    keys::MODIFIED
+                } else {
+                    keys::TRASHED
+                })
                 .and_then(Value::as_time)
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map_or(0, |d| d.as_secs()),

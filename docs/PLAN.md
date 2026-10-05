@@ -1324,6 +1324,38 @@ the shelf, the timeline with a name filter (14 files, then 4). Not
 checked in a window: F5 in Usage (its watcher refreshes it as well),
 Alt+click on a pill, an office document converted.
 
+Out of the trash, and what was left open (2026-10-05): a file of the
+trash could leave it only by Restore; dragged to a folder it was
+refused. A move of a file of the trash now takes it out there, as a
+restore does (`Move` is a `RestorePart` to its place), so a drop, a
+paste after Cut (offered in the trash now), Shift+F5 and Shift+F6 all
+do it: an item under the name it had (the trash's `draft.txt.2` is
+`draft.txt` again), with its `.trashinfo` and the companions trashed
+with it, all back as the trash had them undone (`Untrashed`). A folder
+restored into one there again brings its companions too
+(`Unmerge::companions`), and folders a restore made read-only go when it
+is undone. The trash has a Deleted column and sort (`SortKey::Deleted`,
+newest first). A search names the folder it looks in as the sidebar
+does (its pill and its title, read again when a place is renamed). The
+first segment a narrow pane leaves in sight lists what is above it,
+the segments wrapped out included (`PaneUi::trail_shown`, the layout's
+answer read when its chevron is pressed), and Home and End reach a
+toolbar popup's ends. One `.trashinfo` reader (`op::parse_trash_info`).
+Checked on Xvfb with a synthetic home: the Deleted column and its sort
+from the header and the View menu; Cut in the trash and Paste on
+Desktop of the trash's `draft.txt.2`, landing as `draft.txt`, and its
+undo; Shift+F6 out of the trash; a drag out of the trash and a drop on a
+trashed folder (which trashes); a folder restored into one made again,
+its `._` file with it, and the undo putting both back as they were; a
+place renamed twice while a search in it was shown (its pill and both
+tabs following); a narrow pane's chevron over a folder trail and a
+trash folder's trail, a row of its menu, Home and End in that menu and
+the View menu. Not checked in a window: a move out of the trash across
+volumes (tests cover the same path for any move), Empty Trash (real
+volume trashes are listed). Left: a row the keyboard reaches beyond a
+popup's visible height is not scrolled into view (the arrows had that
+already); "Add to Bookmarks" is offered on a trashed folder.
+
 ## Phase 0 — Foundations and toolkit spike (~2 weeks)
 
 Goal: a repo that can measure itself, and a toolkit decision backed by numbers.

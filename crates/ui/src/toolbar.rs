@@ -398,6 +398,37 @@ impl Shell {
         was.as_deref() != Some(key) && !self.just_dismissed(key)
     }
 
+    /// `ui.toolbar_first`, `ui.toolbar_last`: the keyboard to the first
+    /// or the last row of the popup it is in. GPUI knows only the stop
+    /// before and the one after: walk them while the keyboard stays in the
+    /// popup (`ToolbarPopup`), and stay at the last one that was.
+    pub(crate) fn toolbar_popup_end(&mut self, last: bool, window: &mut Window, cx: &App) {
+        let in_popup = |window: &Window| {
+            window
+                .context_stack()
+                .iter()
+                .any(|context| context.contains("ToolbarPopup"))
+        };
+        if !in_popup(window) {
+            return;
+        }
+        // More than a popup's rows: a folder's menu has `FOLDER_ROWS` and one.
+        for _ in 0..1000 {
+            let Some(at) = window.focused(cx) else {
+                return;
+            };
+            if last {
+                window.focus_next();
+            } else {
+                window.focus_prev();
+            }
+            if !in_popup(window) || window.focused(cx).as_ref() == Some(&at) {
+                window.focus(&at);
+                return;
+            }
+        }
+    }
+
     /// A popup's toggle, closing it: when a press outside closed it
     /// (`pointer` in `args`), note which (`what`) and with which press.
     pub(crate) fn note_dismissed(&mut self, args: &serde_json::Value, what: String) {

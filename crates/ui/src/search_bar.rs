@@ -85,12 +85,15 @@ struct Description {
     text: String,
 }
 
-/// The chips of the location a pane shows, read when it changed, and the
-/// search cut in two for the field that edits it: where it looks, and the
-/// rest.
+/// The chips of the location a pane shows, read when it changed or the
+/// sidebar's names did (where it looks is named as the sidebar names it),
+/// and the search cut in two for the field that edits it: where it looks,
+/// and the rest.
 #[derive(Default)]
 pub struct Chips {
     location: String,
+    /// The sidebar's names they were read with (`Roots::generation`).
+    names: u64,
     pub chips: Vec<Chip>,
     pub root: std::path::PathBuf,
     pub text: String,
@@ -181,7 +184,8 @@ impl Shell {
 }
 
 /// Read the chips of the search the pane being rendered shows, when it
-/// shows another one than they were read for; none for a folder.
+/// shows another one than they were read for or the sidebar's names
+/// changed since; none for a folder.
 pub fn sync(shell: &mut Shell, window: &mut Window) {
     let pane = shell.pane;
     let location = shell
@@ -192,7 +196,8 @@ pub fn sync(shell: &mut Shell, window: &mut Window) {
         .as_ref()
         .map(ToString::to_string)
         .unwrap_or_default();
-    if shell.ui().chips.location == shown {
+    let names = shell.roots.generation;
+    if shell.ui().chips.location == shown && shell.ui().chips.names == names {
         return;
     }
     let described = match location {
@@ -212,6 +217,7 @@ pub fn sync(shell: &mut Shell, window: &mut Window) {
     };
     shell.ui_mut().chips = Chips {
         location: shown,
+        names,
         chips: described.chips,
         root: described.root,
         text: described.text,

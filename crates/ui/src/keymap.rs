@@ -100,9 +100,12 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("enter", "ui.toolbar_activate", Some("toolbar_button")),
     ("space", "ui.toolbar_activate", Some("toolbar_button")),
     ("escape", "ui.toolbar_close", Some("toolbar_popup")),
-    // A popup's rows are buttons: the arrows walk them as Tab does.
+    // A popup's rows are buttons: the arrows walk them as Tab does, and
+    // Home and End reach its ends.
     ("down", "ui.toolbar_next", Some("toolbar_popup")),
     ("up", "ui.toolbar_prev", Some("toolbar_popup")),
+    ("home", "ui.toolbar_first", Some("toolbar_popup")),
+    ("end", "ui.toolbar_last", Some("toolbar_popup")),
     ("escape", "ui.preview_find_close", Some("preview_find")),
     ("ctrl-,", "ui.settings", None),
     ("f1", "ui.shortcuts", None),

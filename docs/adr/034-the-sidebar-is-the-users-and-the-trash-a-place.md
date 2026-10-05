@@ -2,7 +2,8 @@
 
 Status: accepted, 2026-10-04. Amends ADR-032 (verbs) for the trash.
 Amended 2026-10-04: a trashed folder stays in the trash, and a folder's
-trail starts at the sidebar's place (below).
+trail starts at the sidebar's place (below). Amended 2026-10-05: out of
+the trash wherever a file goes, and the Deleted column (below).
 
 ## Context
 
@@ -105,9 +106,8 @@ Delete, Delete in the trash, Empty Trash.
   Downloads, nor bibli a sidebar arranged in Nautilus.
 - A group whose places are all hidden keeps its header, whose menu shows
   them again.
-- The trash lists no Deleted column and does not sort by it: Details says
-  when a file was deleted and where from, and the Folder column says the
-  folder it came from.
+- The trash listed no Deleted column and did not sort by it: Details
+  said when a file was deleted. It does since the second amendment.
 - Restoring over a file that took the place is refused, not renamed; a
   folder merges into one there again (amendment below).
 - A volume's trash is watched once read: one mounted later is read when
@@ -168,3 +168,51 @@ listing, a toast and Details say the folder's own. The core does not see
 the user's names (they are the window's, ADR-034), so the CLI and
 agents name a folder as its owner does, and the search's pill ("In
 Documents") is the query plugin's words.
+
+## Amendment: out of the trash (2026-10-05)
+
+### A file of the trash moved is taken out of it
+
+A file of the trash could leave it only by Restore, to where it was:
+dragged to a folder, the drop was refused ("restore it first"), and Cut
+was not offered. Finder and Dolphin take a file out of the trash where
+it is dropped. A move of a file of the trash (a drop, a paste after Cut,
+Shift+F5 and Shift+F6, the `move` command, an agent's plan) now takes it
+out there, as a restore does to where it was: the operation `Move` is,
+for such a file, a `RestorePart` to its place in the destination, so
+every path that builds a move gets it, and none branches on the trash.
+An item of the trash goes under the name it had (the trash names a file
+whose name it holds already otherwise, `draft.txt.2`; its `.trashinfo`
+says the name), takes its `.trashinfo` along, and the companions
+trashed with it (each an item of its own: `._x`, `x.xmp`,
+`.ts/x.json`) go beside it where their places are free, found as
+`Restore` finds them, by where they came from and when. Across volumes
+it is copied, then removed, as any move. Undone, all of it is in the
+trash again as the trash had it, under the same names and with the same
+`.trashinfo` text (`ReturnPart`, `Untrashed`), so its date still finds
+its companions when it is restored later. Within the trash, an item
+still does not move: the trash would hold a file it says nothing of.
+
+A folder restored into one there again (the merge) takes the
+companions trashed with it too, where their places are free; undone,
+they are back in the trash as they were (`Unmerge::companions`). The
+folders a file restored alone made are made as their counterparts in
+the trash are, read-only maybe: undone, they are opened to go, and one
+something was put in since keeps its mode.
+
+### The Deleted column
+
+Where a location's files are the trash's (`Verbs::restore`), the list
+has a Deleted column from `keys::TRASHED`, and the listing sorts by it
+(`SortKey::Deleted`), newest first when chosen. Not in a trashed
+folder: what it holds was put in the trash with it. The trash still
+opens in the pane's sort.
+
+### Names
+
+The sidebar's names now reach the core (`Registry::set_place_titles`,
+from the consistency review of the same day), so the last sentence of
+the first amendment no longer holds: the query plugin names the folder a
+search looks in as the sidebar does (`place_name`), its pill
+("In Papers") and its title ("report in Papers") included, read again
+when the sidebar's names change.

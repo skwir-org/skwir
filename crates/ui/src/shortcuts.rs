@@ -283,7 +283,7 @@ mod tests {
         assert!(!applies("Pane && (split || empty)", &pane_with_one_file));
     }
 
-    /// Rename, Delete and Cut say what must not hold (`!refs !restores`):
+    /// Rename and Delete say what must not hold (`!refs !restores`):
     /// F1 lists them where it does not.
     #[test]
     fn a_negated_token_holds_where_its_token_does_not() {

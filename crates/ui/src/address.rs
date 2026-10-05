@@ -192,7 +192,7 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
     let (up, down) = match spec.key {
         SortKey::Name => ("A to Z", "Z to A"),
         SortKey::Size => ("Smallest first", "Largest first"),
-        SortKey::Modified => ("Oldest first", "Newest first"),
+        SortKey::Modified | SortKey::Deleted => ("Oldest first", "Newest first"),
         SortKey::Rating => ("Lowest first", "Highest first"),
     };
     let direction: Vec<Button> = [(true, up), (false, down)]
@@ -1087,8 +1087,12 @@ pub fn crumbs(path: &std::path::Path, roots: &[crate::sidebar::Root]) -> Vec<(St
 /// places (not the trash's files). The outermost has one too when the
 /// trail leaves folders out above it (it starts at a folder of the
 /// sidebar, Home or a drive, not at `/`), which lists them from the root
-/// down (`ui.parents_menu`), and wraps out of sight with it. `open` is the menu of places open from this row, whose
-/// chevron hangs it from `anchor`.
+/// down (`ui.parents_menu`), and wraps out of sight with it. The first
+/// segment a narrow pane leaves in sight then has its chevron list what
+/// is above it instead, the segments wrapped out included: which is first
+/// is the layout's answer (`PaneUi::trail_shown`), read when the chevron
+/// is pointed at or pressed, never here. `open` is the menu of places
+/// open from this row, whose chevron hangs it from `anchor`.
 fn breadcrumbs(
     shell: &Shell,
     crumbs: &[Crumb],
@@ -1100,7 +1104,19 @@ fn breadcrumbs(
 ) -> AnyElement {
     let pane = shell.pane;
     let last = crumbs.len().saturating_sub(1);
+    let in_sight = shell.ui().trail_shown.clone();
+    let laid_out = in_sight.clone();
     let mut trail = div()
+        // The segments are its children last first: those on its first
+        // line are in sight, the rest wrapped below, out of it.
+        .on_children_prepainted(move |bounds, _, _| {
+            let top = bounds.first().map(|b| b.origin.y);
+            let shown = bounds
+                .iter()
+                .take_while(|b| Some(b.origin.y) == top)
+                .count();
+            laid_out.set(bounds.len() - shown);
+        })
         .h(px(24.))
         .flex_1()
         .min_w_0()
@@ -1114,15 +1130,28 @@ fn breadcrumbs(
         .line_height(px(24.));
     // `index` names it among the row's: the segment it stands before, and
     // one past the last for the chevron after it.
+    // `above`, for a segment's own chevron: what it lists instead while
+    // the segments before it are out of sight (`ui.parents_menu`).
     let chevron = |index: usize,
                    menu: &'static str,
                    what: crate::nav_menu::NavWhat,
                    args: serde_json::Value,
                    tip: gpui::SharedString,
+                   above: Option<(
+        crate::nav_menu::NavWhat,
+        serde_json::Value,
+        gpui::SharedString,
+    )>,
                    cx: &mut Context<Shell>| {
-        let shown = open == Some(&what);
+        let shown = open == Some(&what) || above.as_ref().is_some_and(|(a, ..)| open == Some(a));
         let font = shell.font.clone();
         let hover = theme.hover;
+        let hidden = {
+            let in_sight = in_sight.clone();
+            move || in_sight.get() == index
+        };
+        let (tip_above, click_above) = (above.clone(), above);
+        let hidden_at_click = hidden.clone();
         div()
             .id(("crumb-folders", index))
             .relative()
@@ -1136,11 +1165,22 @@ fn breadcrumbs(
             .cursor_pointer()
             .hover(move |s| s.bg(hover))
             .when(shown, |d| d.bg(theme.hover))
-            .tooltip(move |_, cx| toolbar::tooltip(tip.clone(), font.clone(), cx))
+            .tooltip(move |_, cx| {
+                let tip = match &tip_above {
+                    Some((_, _, above)) if hidden() => above.clone(),
+                    _ => tip.clone(),
+                };
+                toolbar::tooltip(tip, font.clone(), cx)
+            })
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
                 this.activate_pane(pane, cx);
-                this.run(menu, args.clone(), window, cx);
+                match &click_above {
+                    Some((_, above, _)) if hidden_at_click() => {
+                        this.run("ui.parents_menu", above.clone(), window, cx);
+                    }
+                    _ => this.run(menu, args.clone(), window, cx),
+                }
             }))
             .child(
                 gpui::svg()
@@ -1155,8 +1195,23 @@ fn breadcrumbs(
             )
             .when(shown, |d| d.child(anchor.marker()))
     };
-    // The places inside `of`, `current` the one the trail goes on into.
-    let inside = |index: usize, of: &Crumb, current: Option<&Location>, cx: &mut Context<Shell>| {
+    // The places inside `of`, `current` the one the trail goes on into
+    // (whose chevron it is, listing what is above it while those before
+    // are out of sight).
+    let inside = |index: usize, of: &Crumb, current: Option<&Crumb>, cx: &mut Context<Shell>| {
+        let above = current.map(|crumb| {
+            (
+                crate::nav_menu::NavWhat::Parents {
+                    of: crumb.location.clone(),
+                },
+                serde_json::json!({ "location": crumb.location.arg() }),
+                gpui::SharedString::from(if crumb.location.is_path() {
+                    format!("Folders above {}", crumb.label)
+                } else {
+                    format!("Above {}", crumb.label)
+                }),
+            )
+        });
         chevron(
             index,
             "ui.subfolder_menu",
@@ -1165,13 +1220,14 @@ fn breadcrumbs(
             },
             serde_json::json!({
                 "location": serde_json::json!(of.location.arg()),
-                "current": current.map(bibli_core::Location::arg),
+                "current": current.map(|crumb| crumb.location.arg()),
             }),
             if of.location.is_path() {
                 format!("Folders in {}", of.label).into()
             } else {
                 format!("In {}", of.label).into()
             },
+            above,
             cx,
         )
     };
@@ -1236,14 +1292,17 @@ fn breadcrumbs(
             None => segment,
         };
         let before = match index.checked_sub(1) {
-            Some(parent) => Some(inside(index, &crumbs[parent], Some(&crumb.location), cx)),
+            Some(parent) => Some(inside(index, &crumbs[parent], Some(crumb), cx)),
             None => above.as_ref().map(|(label, path)| {
                 chevron(
                     index,
                     "ui.parents_menu",
-                    crate::nav_menu::NavWhat::Parents { of: path.clone() },
+                    crate::nav_menu::NavWhat::Parents {
+                        of: Location::from_path(path),
+                    },
                     serde_json::json!({ "location": bibli_core::os_path::PathArg::from(path.as_path()) }),
                     format!("Folders above {label}").into(),
+                    None,
                     cx,
                 )
             }),

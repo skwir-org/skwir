@@ -139,7 +139,7 @@ current source before assuming a planned crate, command, or API exists.
   `Papers › 2026` for a folder of Documents the user named Papers in the
   sidebar, `stick › Photos` on a drive, Home when nothing deeper holds
   it. A tab and the history name such a folder as the sidebar does
-  (`Shell::location_name`); a listing, a toast and Details keep the
+  (`App::location_title`); a listing, a toast and Details keep the
   folder's own name. Up still goes to the real parent, and Ctrl+L edits
   the real path.
   There is no Up button: the trail's parent segment and Alt+Up do it.
@@ -150,13 +150,21 @@ current source before assuming a planned crate, command, or API exists.
   worker, `nav_menu.rs`); one before the first, when the trail starts at
   a folder of the sidebar (Home, a drive: anything but `/`), lists the
   folders above it from the root down, by their own names as every
-  chevron's menu does (`ui.parents_menu`). Every popup's toggle goes
+  chevron's menu does (`ui.parents_menu`). In a narrow pane, the first
+  segment left in sight lists instead what is above it, what the pane
+  wrapped out included (the same menu: a folder's folders from the
+  root, a place's the trail's places before it): which segment that is
+  is the layout's answer (`PaneUi::trail_shown`, from
+  `on_children_prepainted`), read when its chevron is pointed at or
+  pressed, as a cut text's tooltip is. Every popup's toggle goes
   through `Shell::toggle_popup`: opening one closes the one open (one at
   a time, whichever slot), a press outside closes it and says so
   (`pointer` in its close command, `Shell::note_dismissed`), and the click
   that press begins on its own button leaves it closed. A button's click
   closes the popup open the same way, so no list says which command keeps
-  which popup. A toolbar popup's rows are buttons: the arrows walk them. The
+  which popup. A toolbar popup's rows are buttons: the arrows walk them,
+  and Home and End reach its ends (`ui.toolbar_first`, `ui.toolbar_last`,
+  walking GPUI's tab order while the keyboard stays in the popup). The
   view buttons are the views that show the listing (`ViewRole::Listing`:
   list, grid, columns); a shape chosen now and then (`ViewRole::Alternate`:
   the tree, the board) and a lens, a view that gathers data of its own
@@ -717,18 +725,30 @@ current source before assuming a planned crate, command, or API exists.
   what every trash holds (`bibli_platform::trash`: the home trash and
   the volumes' the sidebar shows), each file under the name it had,
   where it came from in `keys::TRASHED_FROM` (the Folder column) and
-  when in `keys::TRASHED`. A trashed folder opens in the trash
+  when in `keys::TRASHED` (the Deleted column, and a sort by it, newest
+  first: `SortKey::Deleted`, where the location's files are the trash's,
+  not in a trashed folder). A trashed folder opens in the trash
   (`trash:` and its path, `Trash › old project › sub`), listed by the
   core's own folder listing (`Trail::one_folder`: no Folder column). The
   trash plugin reads; the core acts: Restore names the item
-  (`Restore::item`) and merges a folder into one there again; a file
-  inside a trashed folder is restored alone (`RestorePart`: its folders
-  made again as they are in the trash, the rest left there, undone by
-  `ReturnPart`); Delete takes the `.trashinfo` along wherever a trashed
-  file is deleted from; and Trash refuses a file in a trash at any depth
-  (`op::in_trash`). A location whose files are the trash's says
-  `Verbs::restore` (the `restores` token): Restore in their menu, no Move
-  to Trash, a drop or a paste trashes, and Delete deletes for good. A step Undo cannot take back
+  (`Restore::item`) and merges a folder into one there again, with the
+  companions trashed with it; a file inside a trashed folder is restored
+  alone (`RestorePart`: its folders made again as they are in the trash,
+  the rest left there, undone by `ReturnPart`); a file of the trash
+  moved elsewhere (a drop, a paste after Cut, Shift+F5, `move`) is taken
+  out there the same way (`Move` is a `RestorePart` to its place): an
+  item under the name it had (the trash's `draft.txt.2` is `draft.txt`
+  again), with its `.trashinfo`, and its companions trashed with it go
+  beside it (`take_trashed_with`), all of it back as the trash had it
+  undone (`Untrashed`); Delete takes the `.trashinfo` along wherever a
+  trashed file is deleted from; and Trash refuses a file in a trash at
+  any depth (`op::in_trash`), and moves within the trash only a trashed
+  folder's files. A `.trashinfo` is read one way
+  (`op::parse_trash_info`, which the platform re-exports). A location
+  whose files are the trash's says `Verbs::restore` (the `restores`
+  token): Restore in their menu, no Move to Trash, a drop or a paste
+  trashes, Cut takes them out where they are pasted, and Delete deletes
+  for good. A step Undo cannot take back
   (`Operation::undoable`: deleting for good) makes its plan ask before a
   gesture applies it (`Shell::apply_user_plan`), whatever the gesture.
 - **Search chips.** A pane showing a search draws it in its address field
@@ -739,7 +759,8 @@ current source before assuming a planned crate, command, or API exists.
   (`facets.rs`: the facets, their presets, how a query is cut into them
   and written back, and the search cut in two, `root` and `text`, for
   whoever edits it); the UI knows no query syntax and reads the chips once
-  per location, never per frame. The text stays the one truth: a part no
+  per location (and again when the sidebar's names change: where it
+  looks is named as the sidebar names it), never per frame. The text stays the one truth: a part no
   facet holds is a pill of its own, and a click beside the pills (or
   Ctrl+L) edits its text, where it looks staying a pill. A choice navigates, so Back undoes it.
   The tags a search requires are a set, each a chip of its own read as a
@@ -764,7 +785,8 @@ current source before assuming a planned crate, command, or API exists.
   affordance that goes with what it acts on (a pill's ×) takes no focus;
   the keyboard reaches the same through the pill's menu. A location is
   named in words by its provider (`LocationProvider::title`: a search as
-  what it looks for and where), for tabs and menus. A search does not
+  what it looks for and where, the folder as the sidebar names it,
+  `report in Papers`), for tabs and menus. A search does not
   watch the folders it walked, but what bibli changes it sees at once:
   after each plan the query plugin (an executor observer,
   `provider::Searches`) checks again the files the plan touched under

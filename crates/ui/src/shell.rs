@@ -69,6 +69,10 @@ pub struct PaneUi {
     /// The trail and verbs of the location it shows, when that is no
     /// folder (`trail.rs`).
     pub place: crate::trail::Shown,
+    /// The first segment of its trail the last layout left in sight: a
+    /// narrow pane wraps those before it out (`address::breadcrumbs`).
+    /// The layout's answer, read when a chevron is pointed at or pressed.
+    pub(crate) trail_shown: std::rc::Rc<std::cell::Cell<usize>>,
     /// The placeholder's button, kept so Tab can reach it.
     pub(crate) placeholder_focus: FocusHandle,
     /// Its pane came back (or is new) and has not been put in place yet
@@ -707,6 +711,7 @@ impl Shell {
             narrow: crate::narrow::Narrow::default(),
             chips: crate::search_bar::Chips::default(),
             place: crate::trail::Shown::default(),
+            trail_shown: std::rc::Rc::default(),
             placeholder_focus: cx.focus_handle(),
             returning: true,
             anchor: None,
@@ -1450,6 +1455,8 @@ impl Shell {
             "toolbar_activate" | "toolbar_close" => {}
             "toolbar_next" => window.focus_next(),
             "toolbar_prev" => window.focus_prev(),
+            "toolbar_first" => self.toolbar_popup_end(false, window, cx),
+            "toolbar_last" => self.toolbar_popup_end(true, window, cx),
             "toolbar_menu" => self.toggle_toolbar_menu(args, window, cx),
             "history_menu" => self.toggle_history_menu(args, window, cx),
             "subfolder_menu" => self.toggle_subfolder_menu(args, window, cx),

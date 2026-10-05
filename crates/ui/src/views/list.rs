@@ -69,6 +69,7 @@ pub struct Column {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Detail {
     Folder,
+    Deleted,
     Size,
     Modified,
     Type,
@@ -83,8 +84,9 @@ impl Detail {
 
 /// The detail columns in the order they stand after the name. A narrow
 /// pane drops them whole from the last (`line`): Folder, first of them
-/// where it is shown at all, is the last to give way.
-pub const COLUMNS: [Column; 5] = [
+/// where it is shown at all, is the last to give way, then in the trash
+/// when each file was put there.
+pub const COLUMNS: [Column; 6] = [
     Column {
         detail: Detail::Folder,
         key: "folder",
@@ -94,6 +96,17 @@ pub const COLUMNS: [Column; 5] = [
         shown: true,
         sort: None,
         width: 180.,
+        right: false,
+    },
+    Column {
+        detail: Detail::Deleted,
+        key: "deleted",
+        setting: "ui.column_deleted",
+        label: "Deleted",
+        description: "Show when each file was put in the trash, where the trash's files are listed.",
+        shown: true,
+        sort: Some(SortKey::Deleted),
+        width: 136.,
         right: false,
     },
     Column {
@@ -144,7 +157,7 @@ pub const COLUMNS: [Column; 5] = [
 
 /// One value per detail column, read by `Detail`.
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub struct PerColumn<T>(pub [T; 5]);
+pub struct PerColumn<T>(pub [T; 6]);
 
 impl<T> std::ops::Index<Detail> for PerColumn<T> {
     type Output = T;
@@ -215,16 +228,24 @@ impl Shell {
 
     /// Whether `detail` can be shown here: Rating only while ratings are
     /// kept, Folder only where files from many folders are listed (a
-    /// folder's are in it, as a trashed folder's are).
+    /// folder's are in it, as a trashed folder's are), Deleted where the
+    /// trash's files are (`Verbs::restore`), not those of a trashed folder,
+    /// put there with it.
     pub fn column_applies(&self, detail: Detail) -> bool {
+        let place = &self.ui().place;
+        let one_folder = place.trail.as_ref().is_some_and(|trail| trail.one_folder);
         match detail {
             Detail::Rating => self.rated(),
-            Detail::Folder => {
-                let place = &self.ui().place;
-                !place.folder && !place.trail.as_ref().is_some_and(|trail| trail.one_folder)
-            }
+            Detail::Folder => !place.folder && !one_folder,
+            Detail::Deleted => place.verbs.restore.is_some() && !one_folder,
             Detail::Size | Detail::Modified | Detail::Type => true,
         }
+    }
+
+    /// Whether the header's menu offers `detail`: where it applies, and
+    /// Folder everywhere, for where files from many folders are listed.
+    pub fn column_offered(&self, detail: Detail) -> bool {
+        detail == Detail::Folder || self.column_applies(detail)
     }
 
     /// Whether a store keeps ratings (`NoteStores::held`): no column,
@@ -315,6 +336,9 @@ pub struct RowData {
     pub modified: String,
     /// Exact timestamp, shown as the date's tooltip.
     pub modified_exact: String,
+    /// When it was put in the trash, and exactly.
+    pub deleted: String,
+    pub deleted_exact: String,
     pub kind: std::sync::Arc<str>,
     /// Half stars, from 1 to 10.
     pub rating: Option<u64>,
@@ -334,7 +358,18 @@ impl Shell {
         let mut out = Vec::with_capacity(range.len());
         let friendly = self.prefs.friendly_dates;
         let columns = self.shown_columns();
-        let now = (!compact && friendly && columns[Detail::Modified]).then(jiff::Zoned::now);
+        let now = (!compact && friendly && (columns[Detail::Modified] || columns[Detail::Deleted]))
+            .then(jiff::Zoned::now);
+        // A date as the column says it, and exactly for its tooltip.
+        let date = |time: Option<std::time::SystemTime>| -> (String, String) {
+            let exact = time.map_or_else(String::new, format::time);
+            let shown = match (time, &now) {
+                (None, _) => "—".to_owned(),
+                (Some(time), Some(now)) => format::friendly_time(time, now),
+                (Some(_), None) => exact.clone(),
+            };
+            (shown, exact)
+        };
         let app = std::sync::Arc::clone(&self.app);
         let ws = app.workspace.read();
         let Some(pane) = ws.pane(self.pane) else {
@@ -358,6 +393,8 @@ impl Shell {
                 size: String::new(),
                 modified: String::new(),
                 modified_exact: String::new(),
+                deleted: String::new(),
+                deleted_exact: String::new(),
                 kind: std::sync::Arc::from(""),
                 hydrated: e.metadata.is_hydrated(),
                 rating: None,
@@ -409,16 +446,18 @@ impl Shell {
                     };
                 }
                 if columns[Detail::Modified] {
-                    let time = e
-                        .metadata
-                        .value(keys::MODIFIED)
-                        .and_then(bibli_core::Value::as_time);
-                    row.modified_exact = time.map_or_else(String::new, format::time);
-                    row.modified = match (time, &now) {
-                        (None, _) => "—".to_owned(),
-                        (Some(time), Some(now)) => format::friendly_time(time, now),
-                        (Some(_), None) => row.modified_exact.clone(),
-                    };
+                    (row.modified, row.modified_exact) = date(
+                        e.metadata
+                            .value(keys::MODIFIED)
+                            .and_then(bibli_core::Value::as_time),
+                    );
+                }
+                if columns[Detail::Deleted] {
+                    (row.deleted, row.deleted_exact) = date(
+                        e.metadata
+                            .value(keys::TRASHED)
+                            .and_then(bibli_core::Value::as_time),
+                    );
                 }
                 if columns[Detail::Type] {
                     row.kind = if e.is_place() {
@@ -620,6 +659,7 @@ fn detail(shell: &Shell, r: &RowData, detail: Detail, cell: Div, theme: &Theme) 
         }
         Detail::Size => ("size", r.size.clone(), String::new()),
         Detail::Modified => ("modified", r.modified.clone(), r.modified_exact.clone()),
+        Detail::Deleted => ("deleted", r.deleted.clone(), r.deleted_exact.clone()),
         Detail::Type => ("type", r.kind.to_string(), String::new()),
     };
     crate::elements::clip::clipped_with(

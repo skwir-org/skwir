@@ -3,7 +3,9 @@
 //! place of the trail (the chevron after it, `ui.subfolder_menu`): a
 //! folder's folders, a tag's tags (`LocationProvider::places`), and the
 //! folders a trail leaves out above its first place (the chevron before
-//! it, `ui.parents_menu`), which there is no Up button to reach.
+//! it, `ui.parents_menu`), which there is no Up button to reach, and
+//! what a narrow pane wrapped out of sight above the first place it
+//! shows (that place's chevron, the same menu).
 //!
 //! All hang from what opened them in the pane's row, which draws their
 //! anchor (`address::render_address`). A folder is read on a worker, since
@@ -36,9 +38,10 @@ pub enum NavWhat {
     Subfolders {
         of: bibli_core::Location,
     },
-    /// The folders that hold `of`, where a trail starts.
+    /// What is above `of`, a place of the trail: the folders that hold
+    /// it, or for a place that is no folder the trail's places before it.
     Parents {
-        of: PathBuf,
+        of: bibli_core::Location,
     },
 }
 
@@ -205,9 +208,12 @@ impl Shell {
 }
 
 impl Shell {
-    /// `ui.parents_menu { location }`: the folders that hold `location`,
-    /// the folder a trail starts at, from the root down to it (marked);
-    /// `{ close: true }` closes it. Known from the path: nothing is read.
+    /// `ui.parents_menu { location }`: what is above `location`, a place
+    /// of the active pane's trail, down to it (marked): a folder's folders
+    /// from the root down, a place's (a tag's, a trashed folder's) the
+    /// trail's places before it, after the folders above the trail's first
+    /// when that is one. `{ close: true }` closes it. Known from the path
+    /// and the trail: nothing is read.
     pub fn toggle_parents_menu(
         &mut self,
         args: &serde_json::Value,
@@ -215,24 +221,62 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         cx.notify();
-        let top = args
+        // A folder as the trail names it (`Location::from_path`), so the
+        // chevron that opened it knows its menu.
+        let of = args
             .get("location")
             .and_then(|v| serde_json::from_value::<PathArg>(v.clone()).ok())
-            .and_then(|arg| bibli_core::Location::parse_os(arg.as_os_str()).path());
-        let key = top
+            .map(|arg| bibli_core::Location::parse_os(arg.as_os_str()))
+            .map(|of| of.path().map_or(of, bibli_core::Location::from_path));
+        let key = of
             .clone()
             .map(|of| NavWhat::Parents { of }.key())
             .unwrap_or_default();
-        let (Some(top), true) = (top, self.toggle_popup(&key, args, window)) else {
+        let (Some(of), true) = (of, self.toggle_popup(&key, args, window)) else {
             return;
         };
-        let what = NavWhat::Parents { of: top.clone() };
+        let rows = match of.path() {
+            Some(top) => parent_rows(&top, true),
+            None => self.trail_rows(&of),
+        };
+        if rows.is_empty() {
+            return;
+        }
         self.nav_menu = Some(NavMenu {
             pane: self.pane,
-            what,
-            rows: parent_rows(&top),
+            what: NavWhat::Parents { of },
+            rows,
             popup: Popup::new("nav", window, cx),
         });
+    }
+
+    /// The rows of what is above `of` in the active pane's trail, `of`
+    /// a place that is no folder: the folders above the trail's first
+    /// segment when that is a folder, root down, then its segments down to
+    /// `of` (marked), as the trail names them.
+    fn trail_rows(&self, of: &bibli_core::Location) -> Vec<NavRow> {
+        let Some(trail) = self.ui().place.trail.as_ref() else {
+            return Vec::new();
+        };
+        let segments = crate::trail::segments(trail, &self.roots.roots);
+        let Some((folder, places)) = above_in_trail(&segments, of) else {
+            return Vec::new();
+        };
+        let mut rows = folder.map_or_else(Vec::new, |path| parent_rows(&path, false));
+        let app = &self.app;
+        for segment in places {
+            rows.push(NavRow {
+                label: segment.label.clone().into(),
+                tip: app.location_title(&segment.location).into(),
+                icon: crate::trail::glyph(app, &segment.location),
+                command: "navigate",
+                args: serde_json::json!({ "location": segment.location.arg() }),
+                current: segment.location.same_place(of),
+                enabled: true,
+                depth: rows.len(),
+            });
+        }
+        rows
     }
 }
 
@@ -294,12 +338,27 @@ fn inside_rows(
     rows
 }
 
+/// What is above `of`, a place of a trail of `segments` that is no
+/// folder: the last of the folders that lead the trail, one inside the
+/// other (those above it and it come first, under their own names), then
+/// the trail's places down to `of`.
+fn above_in_trail<'a>(
+    segments: &'a [bibli_core::location::Crumb],
+    of: &bibli_core::Location,
+) -> Option<(Option<PathBuf>, &'a [bibli_core::location::Crumb])> {
+    let at = segments.iter().position(|s| s.location.same_place(of))?;
+    let upto = &segments[..=at];
+    let folders = upto.iter().take_while(|s| s.location.is_path()).count();
+    let folder = upto[..folders].last().and_then(|s| s.location.path());
+    Some((folder, &upto[folders..]))
+}
+
 /// The rows of the menu of what a trail leaves out above `top`, its
 /// first folder: every folder from the root down to `top` itself
-/// (marked), each a step further in, under its own name as the other
-/// chevrons' menus list folders: `/ › home › example`, never the
+/// (marked, with `mark`), each a step further in, under its own name as
+/// the other chevrons' menus list folders: `/ › home › example`, never the
 /// sidebar's `Home`.
-fn parent_rows(top: &Path) -> Vec<NavRow> {
+fn parent_rows(top: &Path, mark: bool) -> Vec<NavRow> {
     let mut folders: Vec<&Path> = top.ancestors().collect();
     folders.reverse();
     folders
@@ -317,7 +376,7 @@ fn parent_rows(top: &Path) -> Vec<NavRow> {
             icon: "folder",
             command: "navigate",
             args: serde_json::json!({ "location": PathArg::from(folder) }),
-            current: folder == top,
+            current: mark && folder == top,
             enabled: true,
             depth,
         })
@@ -361,7 +420,7 @@ pub fn panel(shell: &Shell, pane: PaneId, cx: &mut Context<Shell>) -> Option<Any
 
 #[cfg(test)]
 mod tests {
-    use super::parent_rows;
+    use super::{above_in_trail, parent_rows};
     use bibli_core::fs::subfolders;
     use std::path::Path;
 
@@ -369,7 +428,7 @@ mod tests {
     /// marked, each by its own name, whatever the sidebar calls it.
     #[test]
     fn the_folders_above_a_trail_go_from_the_root_down_to_it() {
-        let rows = parent_rows(Path::new("/home/example/Documents"));
+        let rows = parent_rows(Path::new("/home/example/Documents"), true);
         let labels: Vec<&str> = rows.iter().map(|r| r.label.as_ref()).collect();
         assert_eq!(labels, ["/", "home", "example", "Documents"]);
         assert_eq!(
@@ -384,9 +443,43 @@ mod tests {
             rows[1].args,
             serde_json::json!({ "location": bibli_core::os_path::PathArg::from(Path::new("/home")) })
         );
-        let rows = parent_rows(Path::new("/srv/it's data"));
+        let rows = parent_rows(Path::new("/srv/it's data"), true);
         let labels: Vec<&str> = rows.iter().map(|r| r.label.as_ref()).collect();
         assert_eq!(labels, ["/", "srv", "it's data"]);
+    }
+
+    /// Above a place of a trail that is no folder: the folders leading
+    /// the trail (the last of them, whose own folders come first), then
+    /// its places down to it, as a narrow pane may have hidden them.
+    #[test]
+    fn above_a_place_of_a_trail_are_its_folders_then_its_places() {
+        use bibli_core::Location;
+        use bibli_core::location::Crumb;
+        let segments = [
+            Crumb::new("Home", Location::from_path("/home/example")),
+            Crumb::new("Papers", Location::from_path("/home/example/Documents")),
+            Crumb::new("Tags", Location::parse("tags:/")),
+            Crumb::new("Places", Location::parse("tags:/Places")),
+            Crumb::new("France", Location::parse("tags:/Places/France")),
+        ];
+        let (folder, places) = above_in_trail(&segments, &Location::parse("tags:/Places")).unwrap();
+        assert_eq!(
+            folder.as_deref(),
+            Some(Path::new("/home/example/Documents"))
+        );
+        let labels: Vec<&str> = places.iter().map(|c| c.label.as_str()).collect();
+        assert_eq!(labels, ["Tags", "Places"]);
+        // A trail of places only, as the trash's.
+        let trash = [
+            Crumb::new("Trash", Location::parse("trash:")),
+            Crumb::new("old project", Location::parse("trash:/t/files/old project")),
+            Crumb::new("sub", Location::parse("trash:/t/files/old project/sub")),
+        ];
+        let (folder, places) =
+            above_in_trail(&trash, &Location::parse("trash:/t/files/old project/sub")).unwrap();
+        assert_eq!(folder, None);
+        assert_eq!(places.len(), 3);
+        assert!(above_in_trail(&trash, &Location::parse("tags:/")).is_none());
     }
 
     #[test]

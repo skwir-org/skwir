@@ -709,6 +709,16 @@ pub fn declare_all(app: &App) {
         "Previous button",
         "Give the keyboard to the previous button",
     );
+    none(
+        "ui.toolbar_first",
+        "First row",
+        "Give the keyboard to the first row of the open menu",
+    );
+    none(
+        "ui.toolbar_last",
+        "Last row",
+        "Give the keyboard to the last row of the open menu",
+    );
     declare::<Split>(
         app,
         "ui.split",

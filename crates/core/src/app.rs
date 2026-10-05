@@ -1310,11 +1310,15 @@ mod builtin {
                     .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
                 if let Some(k) = a.key {
                     // The same key again flips the direction unless one was given.
-                    // A rating is sought from the best down.
+                    // A rating is sought from the best down, the trash from
+                    // what was put there last.
                     p.sort.ascending = a.ascending.unwrap_or(if p.sort.key == k {
                         !p.sort.ascending
                     } else {
-                        k != crate::location::SortKey::Rating
+                        !matches!(
+                            k,
+                            crate::location::SortKey::Rating | crate::location::SortKey::Deleted
+                        )
                     });
                     p.sort.key = k;
                 } else if let Some(asc) = a.ascending {

@@ -592,7 +592,11 @@ fn without_root(p: &Parts, q: &Query) -> String {
 /// The chips of `expr`: every facet, set or not, then the parts no facet
 /// holds. With `tags_known`, the Tag chip picks from the tags the search
 /// found (`query.tag_choices`), else it asks for one.
-pub fn describe(expr: &str, tags_known: bool) -> Result<Description, String> {
+pub fn describe(
+    expr: &str,
+    tags_known: bool,
+    app: Option<&bibli_core::App>,
+) -> Result<Description, String> {
     let q = lang::parse(expr).map_err(|e| e.to_string())?;
     let p = Parts::of(&q);
     let mut chips = Vec::new();
@@ -733,7 +737,7 @@ pub fn describe(expr: &str, tags_known: bool) -> Result<Description, String> {
         segments: Vec::new(),
     });
 
-    let folder = crate::place_name(&q.root);
+    let folder = crate::place_name(app, &q.root);
     let mut where_value = Vec::new();
     if q.depth == Some(1) {
         where_value.push("this folder only");
@@ -804,6 +808,7 @@ mod tests {
         let d = describe(
             r#"invoice "two words" kind:document modified:this-week size>1M tag:work content:total (a OR b) -draft in:/data depth:1"#,
             false,
+            None,
         ).unwrap();
         assert_eq!(
             chip(&d, "words").value.as_deref(),
@@ -828,7 +833,7 @@ mod tests {
             .collect();
         assert_eq!(advanced, ["(name:a OR name:b)", "NOT name:draft"]);
         // Each tag is a chip of its own, which takes it out.
-        let two = describe("tag:a tag:b", false).unwrap();
+        let two = describe("tag:a tag:b", false, None).unwrap();
         let tags: Vec<_> = two
             .chips
             .iter()
@@ -858,7 +863,7 @@ mod tests {
         assert_eq!(again.to_string(), q.to_string());
         assert!(!d.text.contains("in:"), "{}", d.text);
         // Nothing is set on an empty search but where it looks.
-        let d = describe("in:/data", false).unwrap();
+        let d = describe("in:/data", false, None).unwrap();
         assert_eq!(d.text, "");
         assert!(d.chips.iter().all(|c| c.value.is_none()));
         assert!(d.chips.iter().all(|c| c.id == "where" || c.clear.is_none()));
@@ -981,7 +986,7 @@ mod tests {
         assert_eq!(r("tag:2024 in:/d", "not_tag", "2024"), "NOT tag:2024 in:/d");
         assert_eq!(r("NOT tag:2024 in:/d", "tag", "2024"), "tag:2024 in:/d");
         // The chip of a tag in categories: each goes up to its own.
-        let d = describe("tag:Places/France NOT tag:x in:/d", false).unwrap();
+        let d = describe("tag:Places/France NOT tag:x in:/d", false, None).unwrap();
         let chip = d
             .chips
             .iter()

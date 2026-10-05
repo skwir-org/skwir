@@ -23,7 +23,8 @@ use serde::{Deserialize, Serialize};
 
 pub use builtin::{
     Copy, Delete, InTrash, Mkdir, Move, NewFile, RemoveEmptyFile, Rename, Restore, RestorePart,
-    ReturnPart, Rmdir, Swap, Trash, Unmerge, in_trash, register_builtin, trash_info_of,
+    ReturnPart, Rmdir, Swap, Trash, Unmerge, Untrashed, in_trash, parse_trash_info,
+    register_builtin, trash_info_of,
 };
 pub use context::{Cancelled, StepContext};
 pub use entry_ref::{EntryRef, ResolveError};

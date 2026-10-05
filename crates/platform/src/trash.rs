@@ -129,39 +129,9 @@ pub fn list(trash: &Path, calendar: &Calendar) -> Vec<Trashed> {
     found
 }
 
-/// A `.trashinfo`'s `Path` (percent-encoded bytes; relative to `top` in a
-/// volume's trash) and its `DeletionDate`, as written.
-pub fn parse_info<'a>(text: &'a str, top: Option<&Path>) -> Option<(PathBuf, Option<&'a str>)> {
-    use std::os::unix::ffi::OsStringExt;
-    let mut lines = text.lines().map(str::trim);
-    if lines.next()? != "[Trash Info]" {
-        return None;
-    }
-    let mut path = None;
-    let mut date = None;
-    for line in lines {
-        // A line of another group ends this one.
-        if line.starts_with('[') {
-            break;
-        }
-        match line.split_once('=') {
-            Some(("Path", value)) => {
-                path = Some(PathBuf::from(OsString::from_vec(
-                    crate::uri::percent_decode(value),
-                )));
-            }
-            Some(("DeletionDate", value)) => date = Some(value),
-            _ => {}
-        }
-    }
-    let path = path?;
-    let path = if path.is_absolute() {
-        path
-    } else {
-        top?.join(path)
-    };
-    Some((path, date))
-}
+/// A `.trashinfo`'s `Path` and `DeletionDate`: the core's reading
+/// (`bibli_core::op::parse_trash_info`), which the operations share.
+pub use bibli_core::op::parse_trash_info as parse_info;
 
 #[cfg(test)]
 mod tests {

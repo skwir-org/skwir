@@ -7,7 +7,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use bibli_core::op::{
-    Copy, EntryRef, Mkdir, Move, Operation, Plan, Rename, StepContext, StepStatus, Swap, Trash,
+    Copy, EntryRef, Mkdir, Move, Operation, Plan, Rename, Restore, StepContext, StepStatus, Swap,
+    Trash,
 };
 use common::*;
 use proptest::prelude::*;
@@ -912,4 +913,99 @@ fn a_file_goes_with_its_companion_and_a_copy_takes_its_attributes_in() {
         ),
         StepStatus::Conflict { .. }
     ));
+}
+
+/// The `.trashinfo` of the item the trash holds from `original`, and where
+/// the item is.
+fn trashed(original: &Path) -> Option<(PathBuf, PathBuf)> {
+    let info = trash::os_limited::list()
+        .ok()?
+        .into_iter()
+        .find(|i| i.original_path() == original)
+        .map(|i| PathBuf::from(i.id))?;
+    let item = info
+        .parent()?
+        .parent()?
+        .join("files")
+        .join(info.file_stem()?);
+    Some((info, item))
+}
+
+/// What leaves the trash takes the companions trashed with it, and undone
+/// puts them back as the trash had them: an item moved elsewhere, a
+/// folder restored into one there again.
+#[test]
+fn companions_trashed_with_a_file_leave_the_trash_with_it() {
+    let tmp = Scratch::new();
+    let root = tmp.path().join("tree");
+    std::fs::create_dir_all(root.join("desk")).unwrap();
+    let app = app(tmp.path());
+    app.companions
+        .register("test", std::sync::Arc::new(Aside { holds: false }));
+    let undo = || {
+        let u = app.executor.undo_blocking(app.lifetime()).unwrap();
+        assert!(u.error.is_none(), "{:?}", u.error);
+    };
+    let redo = || {
+        let r = app.executor.redo_blocking(app.lifetime()).unwrap();
+        assert!(r.error.is_none(), "{:?}", r.error);
+    };
+
+    // An item moved out of the trash, its companion beside it.
+    let f = file(&root.join("it's a.txt"), "a");
+    std::fs::write(root.join("._it's a.txt"), "aside").unwrap();
+    apply(
+        &app,
+        &Plan::with_steps("trash", vec![Box::new(Trash { entry: f })]),
+    );
+    let (info, item) = trashed(&root.join("it's a.txt")).expect("in the trash");
+    let (aside_info, _) = trashed(&root.join("._it's a.txt")).expect("its companion too");
+    let out = Move {
+        entry: EntryRef::from_path(&item).unwrap(),
+        dest_dir: root.join("desk"),
+    };
+    apply(&app, &Plan::with_steps("move", vec![Box::new(out)]));
+    assert_eq!(
+        std::fs::read_to_string(root.join("desk/it's a.txt")).unwrap(),
+        "a"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("desk/._it's a.txt")).unwrap(),
+        "aside"
+    );
+    assert!(
+        !info.exists() && !aside_info.exists(),
+        "both out of the trash"
+    );
+    undo();
+    assert!(item.exists() && info.exists() && aside_info.exists());
+    assert!(!root.join("desk/._it's a.txt").exists());
+    redo();
+    assert!(root.join("desk/._it's a.txt").exists() && !aside_info.exists());
+
+    // A folder restored into one made there again.
+    std::fs::create_dir(root.join("old")).unwrap();
+    std::fs::write(root.join("old/b.txt"), "b").unwrap();
+    std::fs::write(root.join("._old"), "aside").unwrap();
+    let old = EntryRef::from_path(root.join("old")).unwrap();
+    apply(
+        &app,
+        &Plan::with_steps("trash", vec![Box::new(Trash { entry: old })]),
+    );
+    let (info, item) = trashed(&root.join("old")).expect("in the trash");
+    let (aside_info, _) = trashed(&root.join("._old")).expect("its companion too");
+    std::fs::create_dir(root.join("old")).unwrap();
+    let restore = Restore {
+        path: root.join("old"),
+        item: Some(info.as_path().into()),
+    };
+    apply(&app, &Plan::with_steps("restore", vec![Box::new(restore)]));
+    assert!(root.join("old/b.txt").exists() && root.join("._old").exists());
+    assert!(!info.exists() && !aside_info.exists());
+    undo();
+    assert!(item.join("b.txt").exists() && info.exists() && aside_info.exists());
+    assert!(!root.join("._old").exists(), "back in the trash");
+    redo();
+    assert!(root.join("old/b.txt").exists() && root.join("._old").exists());
+    assert!(!aside_info.exists(), "found again by when it was trashed");
 }

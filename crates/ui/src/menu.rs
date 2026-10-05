@@ -707,9 +707,7 @@ impl Shell {
     ) {
         let mut items: Vec<MenuItem> = crate::views::list::COLUMNS
             .iter()
-            // Rating only while ratings are kept; Folder is offered
-            // everywhere, for where files from many folders are listed.
-            .filter(|column| column.detail != crate::views::list::Detail::Rating || self.rated())
+            .filter(|column| self.column_offered(column.detail))
             .enumerate()
             .map(|(i, column)| MenuItem {
                 menu: "columns".into(),

@@ -102,8 +102,10 @@ pub fn describe(title: &str, run: RunKind, first: Option<&Change>, applied: usiz
             format!("Renamed {} to {}", quoted(from), quoted(to))
         }
         Some(Change::Rename { .. }) => format!("Renamed {many}"),
-        Some(Change::Move { from, to }) if one => {
-            format!("Moved {} to {}", quoted(from), folder_of(to))
+        // By the name it arrived under: a file of the trash goes back to
+        // its own (`draft.txt`, not the trash's `draft.txt.2`).
+        Some(Change::Move { to, .. }) if one => {
+            format!("Moved {} to {}", quoted(to), folder_of(to))
         }
         Some(Change::Move { to, .. }) => format!("Moved {many} to {}", folder_of(to)),
         Some(Change::Copy { from, to }) if one => {

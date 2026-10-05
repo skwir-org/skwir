@@ -200,8 +200,9 @@ pub fn location_for(expr: &str, root: Option<&std::path::Path>) -> Location {
 }
 
 /// A name for a search saved without one: what it looks for and where
-/// (`*.pdf modified<7d in Documents`).
-pub fn suggested_name(expr: &str) -> String {
+/// (`*.pdf modified<7d in Documents`), the place named as `place_name`
+/// says.
+pub fn suggested_name(app: Option<&App>, expr: &str) -> String {
     let Ok(query) = lang::parse(expr) else {
         return expr.to_owned();
     };
@@ -212,12 +213,16 @@ pub fn suggested_name(expr: &str) -> String {
     if !query.root_given {
         return what;
     }
-    format!("{what} in {}", place_name(&query.root))
+    format!("{what} in {}", place_name(app, &query.root))
 }
 
-/// A search's root as its name and its chip say it: Home for the home
-/// folder, else the folder's name.
-pub fn place_name(root: &std::path::Path) -> String {
+/// A search's root as its name and its chip say it: as the sidebar names
+/// the place it is (`Registry::place_title`: Papers for a Documents the
+/// user renamed), else Home for the home folder, else the folder's name.
+pub fn place_name(app: Option<&App>, root: &std::path::Path) -> String {
+    if let Some(title) = app.and_then(|app| app.registry.place_title(&Location::from_path(root))) {
+        return title;
+    }
     let home = bibli_core::os_path::home();
     if home.as_deref() == Some(root) {
         "Home".to_owned()
@@ -255,10 +260,10 @@ fn check(expr: &str) -> anyhow::Result<()> {
 }
 
 /// The name a new name means: the one made from the search when empty.
-fn name_or_suggested(name: &str, expr: &str) -> String {
+fn name_or_suggested(app: &App, name: &str, expr: &str) -> String {
     let name = name.trim();
     if name.is_empty() {
-        suggested_name(expr)
+        suggested_name(Some(app), expr)
     } else {
         name.to_owned()
     }
@@ -313,8 +318,8 @@ fn invocation(edit: &Edit, undo: bool) -> Invocation {
 
 /// What an edit did, in a sentence, or what it found when it did nothing.
 /// `shown` is the search's name before the edit, when it was saved.
-fn describe(edit: &Edit, shown: Option<&str>, done: bool) -> Option<String> {
-    let name = || shown.map_or_else(|| suggested_name(edit.expr()), str::to_owned);
+fn describe(app: &App, edit: &Edit, shown: Option<&str>, done: bool) -> Option<String> {
+    let name = || shown.map_or_else(|| suggested_name(Some(app), edit.expr()), str::to_owned);
     Some(match (edit, done) {
         (Edit::Add { name: new, .. }, true) => format!("Saved search “{new}”"),
         (Edit::Add { .. }, false) => format!("This search is already saved as “{}”", name()),
@@ -354,12 +359,12 @@ impl Editor {
                     .map(|s| s.name);
                 match apply_edit(&app, &saving, &edit) {
                     Ok(Some(inverse)) => {
-                        if let Some(text) = describe(&edit, shown.as_deref(), true) {
+                        if let Some(text) = describe(&app, &edit, shown.as_deref(), true) {
                             app.notify_undoable(text, undo, invocation(&inverse, !undo));
                         }
                     }
                     Ok(None) => {
-                        if let Some(text) = describe(&edit, shown.as_deref(), false) {
+                        if let Some(text) = describe(&app, &edit, shown.as_deref(), false) {
                             app.notify(NotifyLevel::Info, text);
                         }
                     }
@@ -479,7 +484,11 @@ impl Plugin for QueryPlugin {
         let searches = provider::Searches::default();
         app.register_provider(
             ID,
-            Arc::new(QueryProvider::new(lifetime.clone(), searches.clone())),
+            Arc::new(QueryProvider::new(
+                lifetime.clone(),
+                searches.clone(),
+                app.weak(),
+            )),
         );
         // What bibli changed, an open search sees at once.
         app.executor
@@ -543,7 +552,7 @@ impl Plugin for QueryPlugin {
                         .ok_or_else(|| anyhow::anyhow!("the pane is not showing a search"))?
                 };
                 check(&expr)?;
-                let name = name_or_suggested(a.name.as_deref().unwrap_or_default(), &expr);
+                let name = name_or_suggested(app, a.name.as_deref().unwrap_or_default(), &expr);
                 let edit = Edit::Add {
                     name,
                     expr,
@@ -582,7 +591,7 @@ impl Plugin for QueryPlugin {
             "Rename saved search",
             "Change the name a saved search shows in the sidebar",
             move |a, app| {
-                let name = name_or_suggested(&a.name, &a.expr);
+                let name = name_or_suggested(app, &a.name, &a.expr);
                 edits.run(app, Edit::Rename { expr: a.expr, name }, a.undo);
                 Ok(Outcome::Done)
             },
@@ -636,7 +645,7 @@ impl Plugin for QueryPlugin {
                     None => pane_search(app, app.pane_or_active(a.pane))?,
                 };
                 let tags_known = app.commands.get("tags.list").is_some();
-                let description = facets::describe(&expr, tags_known)
+                let description = facets::describe(&expr, tags_known, Some(app))
                     .map_err(|e| anyhow::anyhow!("query: {e}"))?;
                 Ok(Outcome::Value(serde_json::to_value(description)?))
             },
@@ -1466,17 +1475,44 @@ mod tests {
         assert_eq!(names(), set(&["cat.png", "dog.JPG"]));
     }
 
+    /// A search's folder is named as the sidebar names it: its title and
+    /// its pill say the name the user gave the place there.
+    #[test]
+    fn a_search_names_its_folder_as_the_sidebar_does() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+        let docs = Location::from_path(Path::new("/data/Documents"));
+        let place = bibli_core::registry::Place::new("places", "Documents", "folder", docs);
+        app.registry.places.add("test", place.clone());
+        let expr = "ext:pdf in:/data/Documents";
+        let search = location_for(expr, None);
+        assert_eq!(app.location_title(&search), "ext:pdf in Documents");
+        app.registry
+            .set_place_titles([((place.group.clone(), place.key()), "Papers".to_owned())].into());
+        assert_eq!(app.location_title(&search), "ext:pdf in Papers");
+        let d = facets::describe(expr, false, Some(&app)).unwrap();
+        assert!(
+            d.chips
+                .iter()
+                .any(|c| c.id == "where" && c.title == "In Papers")
+        );
+    }
+
     #[test]
     fn a_suggested_name_says_what_and_where() {
-        assert_eq!(suggested_name("*.pdf modified<7d"), "*.pdf modified<7d");
         assert_eq!(
-            suggested_name(r#"ext:png in:"/pics/two words" depth:2"#),
+            suggested_name(None, "*.pdf modified<7d"),
+            "*.pdf modified<7d"
+        );
+        assert_eq!(
+            suggested_name(None, r#"ext:png in:"/pics/two words" depth:2"#),
             "ext:png in two words"
         );
-        assert_eq!(suggested_name("in:/srv"), "Everything in srv");
-        assert_eq!(suggested_name("in:/"), "Everything in /");
+        assert_eq!(suggested_name(None, "in:/srv"), "Everything in srv");
+        assert_eq!(suggested_name(None, "in:/"), "Everything in /");
         assert_eq!(
-            suggested_name(r#""two words" OR -draft type:file"#),
+            suggested_name(None, r#""two words" OR -draft type:file"#),
             "two words OR NOT draft type:file"
         );
     }

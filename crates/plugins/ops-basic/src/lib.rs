@@ -244,7 +244,9 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
     // plan Undo cannot take back (`Shell::apply_user_plan`).
     ("shift-delete", "delete", Some("pane selection !place")),
     ("ctrl-c", "clipboard_copy", Some("pane selection")),
-    ("ctrl-x", "clipboard_cut", Some("pane selection !restores")),
+    // In the trash too: pasted, a file of the trash leaves it as a
+    // restore does, to where it is pasted (`op::Move`).
+    ("ctrl-x", "clipboard_cut", Some("pane selection")),
     // Into the folder shown, or a place that takes files (a tag gives
     // them itself): a search has neither.
     ("ctrl-v", "clipboard_paste", Some("pane folder|drops")),
@@ -313,14 +315,9 @@ const MENU: &[(&str, &str, Option<&str>, i32, &str)] = &[
         "rename",
     ),
     // A place too: a tag copied into a folder is a folder of its files,
-    // cut and pasted in a tag it goes inside.
-    (
-        "Cut",
-        "clipboard_cut",
-        Some("selection !restores"),
-        110,
-        "cut",
-    ),
+    // cut and pasted in a tag it goes inside. A file of the trash pasted
+    // elsewhere leaves the trash.
+    ("Cut", "clipboard_cut", Some("selection"), 110, "cut"),
     ("Copy", "clipboard_copy", Some("selection"), 120, "copy"),
     (
         "Paste",

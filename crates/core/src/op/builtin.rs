@@ -293,8 +293,11 @@ pub struct Move {
 }
 
 impl Move {
+    /// Where `src` goes: into the destination under its name, or for an
+    /// item of the trash the name it had (`trashed_name`).
     fn target(&self, src: &Path) -> PathBuf {
-        self.dest_dir.join(src.file_name().unwrap_or_default())
+        self.dest_dir
+            .join(trashed_name(src).unwrap_or_else(|| file_name(src)))
     }
 }
 
@@ -313,8 +316,15 @@ impl super::Effect for Move {
         if !self.dest_dir.is_dir() {
             return conflict(format!("{} is not a directory", self.dest_dir.display()));
         }
-        if let Some(trashed) = trashed(&self.entry.path) {
-            return trashed;
+        // A file of the trash leaves it as a restore does; within the
+        // trash, only a trashed folder's files move.
+        if in_trash(&self.entry.path).is_some() {
+            if in_trash(&self.dest_dir).is_none() {
+                return super::Effect::check(&self.restoring(&self.entry.path), ctx);
+            }
+            if let Some(trashed) = trashed(&self.entry.path) {
+                return trashed;
+            }
         }
         match self.entry.resolve() {
             Ok(src) if src.parent() == Some(self.dest_dir.as_path()) => StepStatus::AlreadyDone,
@@ -344,35 +354,58 @@ impl super::Effect for Move {
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let src = self.entry.resolve()?;
+        if in_trash(&src).is_some() && in_trash(&self.dest_dir).is_none() {
+            return super::Effect::apply(&self.restoring(&src), ctx);
+        }
         let target = self.target(&src);
         let origin = src.parent().unwrap_or(Path::new("/")).to_path_buf();
         let along = along(ctx, &src, &target);
-        match rename_noreplace(&src, &target) {
-            Ok(()) => {
-                if let Err(e) = rename_along(&along) {
-                    let _ = rename_noreplace(&target, &src);
-                    return Err(e);
-                }
-            }
-            Err(e) if is_cross_device(&e) => {
-                // A move must never lose metadata, whatever the copy preference
-                // says, and a failed transfer must not leave a partial target.
-                // The companion holding the file's attributes is converted
-                // with them (ADR-028); the others go as files.
-                copy_entry(&src, &target, &self.dest_dir, true, &along, ctx)?;
-                remove_recursive(&src)?;
-                for a in &along {
-                    let _ = remove_recursive(&a.from);
-                }
-            }
-            Err(e) => return Err(e),
-        }
+        move_entry(ctx, &src, &target, &along)?;
         let id = id_of(&target).unwrap_or(self.entry.id);
         Ok(Some(Box::new(Move {
             entry: EntryRef::new(id, target),
             dest_dir: origin,
         })))
     }
+}
+
+impl Move {
+    /// A file of the trash, at `src`, moved: taken out of the trash to
+    /// its place in the destination, as a restore takes it to where it
+    /// was (`RestorePart`: what the trash says of it goes, and comes back
+    /// with it undone).
+    fn restoring(&self, src: &Path) -> RestorePart {
+        RestorePart {
+            entry: EntryRef::new(self.entry.id, src.to_path_buf()),
+            path: self.target(src),
+        }
+    }
+}
+
+/// Move `src` to `target` with its companions (`along`): renamed, or
+/// across volumes copied and then removed. A move must never lose
+/// metadata, whatever the copy preference says, and a failed transfer must
+/// not leave a partial target. The companion holding the file's attributes
+/// is converted with them (ADR-028); the others go as files.
+fn move_entry(ctx: &StepContext, src: &Path, target: &Path, along: &[Along]) -> anyhow::Result<()> {
+    match rename_noreplace(src, target) {
+        Ok(()) => {
+            if let Err(e) = rename_along(along) {
+                let _ = rename_noreplace(target, src);
+                return Err(e);
+            }
+        }
+        Err(e) if is_cross_device(&e) => {
+            let dest_dir = target.parent().unwrap_or(Path::new("/"));
+            copy_entry(src, target, dest_dir, true, along, ctx)?;
+            remove_recursive(src)?;
+            for a in along {
+                let _ = remove_recursive(&a.from);
+            }
+        }
+        Err(e) => return Err(e),
+    }
+    Ok(())
 }
 
 fn is_cross_device(e: &anyhow::Error) -> bool {
@@ -1129,6 +1162,56 @@ pub fn trash_info_of(path: &Path) -> Option<PathBuf> {
     Some(trash.join("info").join(info))
 }
 
+/// What a `.trashinfo` says (freedesktop.org's trash specification): the
+/// `Path` its file was put in the trash from (percent-encoded bytes,
+/// relative to `top` in a volume's trash) and its `DeletionDate`, as
+/// written. `None` for a text that is no trash info, or says no path.
+pub fn parse_trash_info<'a>(
+    text: &'a str,
+    top: Option<&Path>,
+) -> Option<(PathBuf, Option<&'a str>)> {
+    use std::os::unix::ffi::OsStringExt;
+    let mut lines = text.lines().map(str::trim);
+    if lines.next()? != "[Trash Info]" {
+        return None;
+    }
+    let mut path = None;
+    let mut date = None;
+    for line in lines {
+        // A line of another group ends this one.
+        if line.starts_with('[') {
+            break;
+        }
+        match line.split_once('=') {
+            Some(("Path", value)) => {
+                path = Some(PathBuf::from(OsString::from_vec(
+                    crate::location::unescape(value),
+                )));
+            }
+            Some(("DeletionDate", value)) => date = Some(value),
+            _ => {}
+        }
+    }
+    let path = path?;
+    let path = if path.is_absolute() {
+        path
+    } else {
+        top?.join(path)
+    };
+    Some((path, date))
+}
+
+/// The name the item of a trash at `item` had where it came from: a trash
+/// holding a file of that name already gives it another (`a.txt.2`), and
+/// taken out, it goes back to its own. `None` for a file that is no item
+/// of a trash. Reads its `.trashinfo`.
+fn trashed_name(item: &Path) -> Option<OsString> {
+    let info = trash_info_of(item)?;
+    let text = crate::fs::file::read_regular_text(&info, crate::fs::file::SIDE_FILE_LIMIT).ok()?;
+    let (path, _) = parse_trash_info(&text, Some(Path::new("/")))?;
+    path.file_name().map(OsStr::to_os_string)
+}
+
 /// A file of a trash at any depth (`in_trash`): the item of the trash it
 /// is, or is inside (a trashed folder's file), what the trash says of the
 /// item, and where the file is in it.
@@ -1166,6 +1249,124 @@ fn item_of_info(info: &Path) -> Option<PathBuf> {
             .join("files")
             .join(OsStr::from_bytes(name)),
     )
+}
+
+/// Where the companions of a file at `path` are, by every rule
+/// (`Companions::of`): the same places, in the same order, for every
+/// name, so the one at an index is that one wherever its file goes.
+fn companion_places(ctx: &StepContext, path: &Path) -> Vec<PathBuf> {
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+        return Vec::new();
+    };
+    ctx.companions()
+        .of(name)
+        .into_iter()
+        .map(|p| dir.join(p))
+        .collect()
+}
+
+/// Where the item of the trash whose `.trashinfo` is `info` was put there
+/// from, and when, as the plan's trash listing says.
+fn trashed_from(ctx: &StepContext, info: &Path) -> Option<(PathBuf, i64)> {
+    ctx.with_trash(|items| {
+        items
+            .iter()
+            .find(|i| Path::new(&i.id) == info)
+            .map(|i| (i.original_path(), i.time_deleted))
+    })
+    .ok()
+    .flatten()
+}
+
+/// The companions trashed with a file put in the trash at `when`, each an
+/// item of its own (`Trash`): for each of `places` (its companions' places
+/// when it was put there, `companion_places`) that `wanted` says, the item
+/// put there from it then or just after, the latest, taken out of the
+/// plan's trash listing. Each with its index in `places`.
+fn take_trashed_with(
+    ctx: &StepContext,
+    places: &[PathBuf],
+    when: i64,
+    wanted: impl Fn(usize) -> bool,
+) -> Vec<(usize, trash::TrashItem)> {
+    if places.is_empty() {
+        return Vec::new();
+    }
+    ctx.with_trash(|items| {
+        let mut found = Vec::new();
+        for (index, place) in places.iter().enumerate().filter(|(n, _)| wanted(*n)) {
+            let at = items
+                .iter()
+                .enumerate()
+                .filter(|(_, i)| {
+                    i.original_path() == *place
+                        && (i.time_deleted - when).abs() <= COMPANION_TRASHED_WITHIN
+                })
+                .max_by_key(|(_, i)| i.time_deleted)
+                .map(|(n, _)| n);
+            if let Some(n) = at {
+                found.push((index, items.swap_remove(n)));
+            }
+        }
+        found
+    })
+    .unwrap_or_default()
+}
+
+/// A file taken out of the trash to a place of its own (a companion of a
+/// file restored or moved out of the trash), and what puts it back as it
+/// was: where it was in the trash and what the trash said of it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Untrashed {
+    /// Where it is now.
+    #[serde(with = "crate::os_path")]
+    #[schemars(with = "PathArg")]
+    pub path: PathBuf,
+    /// Its `.trashinfo`, which names its place in the trash.
+    pub info: PathArg,
+    /// What the trash said of it, written again when it goes back.
+    pub info_text: String,
+}
+
+impl Untrashed {
+    /// Take the item of the trash whose `.trashinfo` is `info` out to `to`
+    /// (into a companions' folder made where needed, `.ts`), what the
+    /// trash said of it with it.
+    fn take(ctx: &StepContext, info: &Path, to: &Path) -> anyhow::Result<Self> {
+        let item = item_of_info(info)
+            .ok_or_else(|| anyhow::anyhow!("{} is no trash's", info.display()))?;
+        let info_text = crate::fs::file::read_regular_text(info, crate::fs::file::SIDE_FILE_LIMIT)
+            .with_context(|| format!("read {}", info.display()))?;
+        if let Some(dir) = to.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        move_entry(ctx, &item, to, &[])?;
+        let _ = std::fs::remove_file(info);
+        Ok(Untrashed {
+            path: to.to_path_buf(),
+            info: PathArg::from(info),
+            info_text,
+        })
+    }
+
+    /// Whether it is in the trash as it was.
+    fn is_back(&self) -> bool {
+        self.info.exists() && item_of_info(&self.info).is_some_and(|item| exists(&item))
+    }
+
+    /// Back in the trash where it was, as the trash said.
+    fn put_back(&self, ctx: &StepContext) -> anyhow::Result<()> {
+        let item = item_of_info(&self.info)
+            .ok_or_else(|| anyhow::anyhow!("{} is no trash's", self.info.display()))?;
+        if !exists(&item) {
+            move_entry(ctx, &self.path, &item, &[])?;
+        }
+        if !self.info.exists() {
+            std::fs::write(&self.info, &self.info_text)
+                .with_context(|| format!("write {}", self.info.display()))?;
+        }
+        Ok(())
+    }
 }
 
 /// Restore the trashed item that had this original path: the one whose
@@ -1308,8 +1509,25 @@ impl super::Effect for Restore {
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         if let (Some(item), Some(info)) = (self.merging(), self.item.as_deref()) {
+            // The companions trashed with it, found while the trash still
+            // says when it was put there, go back where their places are
+            // free, as they do with a folder restored whole.
+            let places = companion_places(ctx, &self.path);
+            let with = if places.is_empty() {
+                Vec::new()
+            } else {
+                trashed_from(ctx, info).map_or_else(Vec::new, |(_, when)| {
+                    take_trashed_with(ctx, &places, when, |n| !exists(&places[n]))
+                })
+            };
             ctx.forget_trash();
-            return Ok(Some(Box::new(merge_restore(&item, info, &self.path)?)));
+            let mut unmerge = merge_restore(&item, info, &self.path)?;
+            for (n, found) in with {
+                if let Ok(back) = Untrashed::take(ctx, Path::new(&found.id), &places[n]) {
+                    unmerge.companions.push(back);
+                }
+            }
+            return Ok(Some(Box::new(unmerge)));
         }
         // Taken out of the listing: once restored it is no longer there.
         let item = ctx
@@ -1319,39 +1537,15 @@ impl super::Effect for Restore {
         let when = item.time_deleted;
         trash::os_limited::restore_all([item])
             .with_context(|| format!("restore {}", self.path.display()))?;
-        // The companions trashed with it: those trashed from their places
-        // as it was, then or just after.
-        if let (Some(dir), Some(name)) = (self.path.parent(), self.path.file_name()) {
-            let places: Vec<PathBuf> = ctx
-                .companions()
-                .of(name)
+        // The companions trashed with it, where their places are free.
+        let places = companion_places(ctx, &self.path);
+        let found: Vec<trash::TrashItem> =
+            take_trashed_with(ctx, &places, when, |n| !exists(&places[n]))
                 .into_iter()
-                .map(|p| dir.join(p))
-                .filter(|p| !exists(p))
+                .map(|(_, item)| item)
                 .collect();
-            let found = ctx
-                .with_trash(|items| {
-                    let mut found = Vec::new();
-                    for place in &places {
-                        let at = items
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, i)| {
-                                i.original_path() == *place
-                                    && (i.time_deleted - when).abs() <= COMPANION_TRASHED_WITHIN
-                            })
-                            .max_by_key(|(_, i)| i.time_deleted)
-                            .map(|(n, _)| n);
-                        if let Some(n) = at {
-                            found.push(items.swap_remove(n));
-                        }
-                    }
-                    found
-                })
-                .unwrap_or_default();
-            if !found.is_empty() {
-                let _ = trash::os_limited::restore_all(found);
-            }
+        if !found.is_empty() {
+            let _ = trash::os_limited::restore_all(found);
         }
         let r = EntryRef::from_path(&self.path)
             .ok_or_else(|| anyhow::anyhow!("restored file missing: {}", self.path.display()))?;
@@ -1363,8 +1557,7 @@ impl super::Effect for Restore {
 /// folder `path`, there again: merged, then the trashed folder's empty
 /// folders and its `.trashinfo` go, as a restore takes them. Undone, the
 /// files that moved go back into it (`Unmerge`); nothing else of the
-/// folder there leaves it. Companions trashed beside the folder stay in
-/// the trash: they are restored with it only into a free place.
+/// folder there leaves it. Its companions are the caller's.
 fn merge_restore(item: &Path, info: &Path, path: &Path) -> anyhow::Result<Unmerge> {
     let mut merged = Merged::default();
     if let Err(e) = merge(item, path, Path::new(""), &mut merged) {
@@ -1374,7 +1567,8 @@ fn merge_restore(item: &Path, info: &Path, path: &Path) -> anyhow::Result<Unmerg
         }
         return Err(e.context(format!("restore {}", path.display())));
     }
-    let info_text = std::fs::read_to_string(info).unwrap_or_default();
+    let info_text = crate::fs::file::read_regular_text(info, crate::fs::file::SIDE_FILE_LIMIT)
+        .unwrap_or_default();
     let mut folders = Vec::new();
     for inner in merged.left {
         // One a file was put in since stays, and the trash with it.
@@ -1391,6 +1585,7 @@ fn merge_restore(item: &Path, info: &Path, path: &Path) -> anyhow::Result<Unmerg
         info_text,
         moved: merged.moved.into_iter().map(PathArg).collect(),
         folders,
+        companions: Vec::new(),
     })
 }
 
@@ -1412,6 +1607,9 @@ pub struct Unmerge {
     /// The trashed folder's folders that were left empty and went,
     /// relative to it, deepest first.
     pub folders: Vec<PathArg>,
+    /// The companions trashed with it that came back with it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub companions: Vec<Untrashed>,
 }
 
 impl super::Kind for Unmerge {
@@ -1429,7 +1627,10 @@ impl super::Effect for Unmerge {
             return conflict(format!("{} is no trash's", self.info.display()));
         };
         let back = |inner: &PathArg| exists(&item.join(inner));
-        if self.info.exists() && self.moved.iter().all(back) {
+        if self.info.exists()
+            && self.moved.iter().all(back)
+            && self.companions.iter().all(Untrashed::is_back)
+        {
             return StepStatus::AlreadyDone;
         }
         if let Some(gone) = self
@@ -1465,6 +1666,9 @@ impl super::Effect for Unmerge {
             std::fs::write(&self.info, &self.info_text)
                 .with_context(|| format!("write {}", self.info.display()))?;
         }
+        for companion in &self.companions {
+            companion.put_back(ctx)?;
+        }
         Ok(Some(Box::new(Restore {
             path: self.path.clone(),
             item: Some(self.info.clone()),
@@ -1472,20 +1676,25 @@ impl super::Effect for Unmerge {
     }
 }
 
-// ------------------------------------------------------------------ inside a trashed folder
+// ------------------------------------------------------------------ out of the trash, one file
 
-/// Restore, alone, a file or folder from inside a trashed folder
-/// (`Restore` takes back a whole item): the folders it was in are made
-/// again where they are missing, as their counterparts in the trash are
-/// (their mode, `user.*` attributes and times), and it moves back to where
-/// it was, with its companions. The trashed folder stays in the trash with
-/// the rest, under what the trash says of it; restored later, it merges
-/// into the folders made again.
+/// Take a file out of the trash to `path`, alone: a file or folder from
+/// inside a trashed folder restored (`Restore` takes back a whole item),
+/// or any file of the trash moved elsewhere (`Move`). The folders it was
+/// in are made again where they are missing, as their counterparts in the
+/// trash are (their mode, `user.*` attributes and times), and it moves
+/// there with its companions. A trashed folder it leaves stays in the
+/// trash with the rest, under what the trash says of it; restored later,
+/// it merges into the folders made again. An item of the trash takes
+/// what the trash says of it along, and the companions trashed with it go
+/// beside it where their places are free; undone, all of it is in the
+/// trash again as it was (`ReturnPart`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RestorePart {
-    /// It, inside the trashed folder.
+    /// It, in the trash.
     pub entry: EntryRef,
-    /// Where it was: where the trashed folder was, then its path in it.
+    /// Where it goes: restored, where it was (where the trashed folder
+    /// was, then its path in it).
     #[serde(with = "crate::os_path")]
     #[schemars(with = "PathArg")]
     pub path: PathBuf,
@@ -1558,11 +1767,11 @@ impl super::Effect for RestorePart {
             }
             Err(e) => return conflict(e.to_string()),
         };
-        if in_trash(&src).is_none_or(|t| t.inner.as_os_str().is_empty()) {
-            return conflict(format!(
-                "{} is not inside a folder of the trash",
-                src.display()
-            ));
+        let Some(inside) = in_trash(&src) else {
+            return conflict(format!("{} is not in the trash", src.display()));
+        };
+        if self.path.starts_with(&inside.item) {
+            return conflict(format!("{} would stay in the trash", self.path.display()));
         }
         if exists(&self.path) {
             return conflict(format!(
@@ -1570,7 +1779,11 @@ impl super::Effect for RestorePart {
                 self.path.display()
             ));
         }
-        if let Some(taken) = along_conflict(&along(ctx, &src, &self.path)) {
+        // An item's companions are items of their own, which go only where
+        // their places are free.
+        if !inside.inner.as_os_str().is_empty()
+            && let Some(taken) = along_conflict(&along(ctx, &src, &self.path))
+        {
             return taken;
         }
         // The first folder above that is there must be one.
@@ -1584,10 +1797,28 @@ impl super::Effect for RestorePart {
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let src = self.entry.resolve()?;
         let inside = in_trash(&src)
-            .filter(|t| !t.inner.as_os_str().is_empty())
-            .ok_or_else(|| {
-                anyhow::anyhow!("{} is not inside a folder of the trash", src.display())
-            })?;
+            .ok_or_else(|| anyhow::anyhow!("{} is not in the trash", src.display()))?;
+        let item = inside.inner.as_os_str().is_empty();
+        // An item of the trash: the companions trashed with it, found
+        // while the trash still says where it came from and when.
+        let places = companion_places(ctx, &self.path);
+        let with = if item && !places.is_empty() {
+            trashed_from(ctx, &inside.info).map_or_else(Vec::new, |(original, when)| {
+                take_trashed_with(ctx, &companion_places(ctx, &original), when, |n| {
+                    places.get(n).is_some_and(|p| !exists(p))
+                })
+            })
+        } else {
+            Vec::new()
+        };
+        let info_text = if item {
+            Some(
+                crate::fs::file::read_regular_text(&inside.info, crate::fs::file::SIDE_FILE_LIMIT)
+                    .with_context(|| format!("read {}", inside.info.display()))?,
+            )
+        } else {
+            None
+        };
         let folders = self.folders(&src, inside.inner.components().count());
         let undo_folders = |made: &[(PathBuf, Option<PathBuf>)]| {
             for (dir, _) in made.iter().rev() {
@@ -1600,17 +1831,25 @@ impl super::Effect for RestorePart {
                 return Err(e).with_context(|| format!("mkdir {}", dir.display()));
             }
         }
-        let companions = along(ctx, &src, &self.path);
-        if let Err(e) = rename_noreplace(&src, &self.path) {
+        let companions = if item {
+            Vec::new()
+        } else {
+            along(ctx, &src, &self.path)
+        };
+        if let Err(e) = move_entry(ctx, &src, &self.path, &companions) {
             undo_folders(&folders);
             return Err(e.context(format!("restore {}", self.path.display())));
         }
-        if let Err(e) = rename_along(&companions) {
-            let _ = rename_noreplace(&self.path, &src);
-            undo_folders(&folders);
-            return Err(e);
-        }
         ctx.forget_trash();
+        if item {
+            let _ = std::fs::remove_file(&inside.info);
+        }
+        let mut returned = Vec::new();
+        for (n, found) in with {
+            if let Ok(back) = Untrashed::take(ctx, Path::new(&found.id), &places[n]) {
+                returned.push(back);
+            }
+        }
         for (dir, like) in folders.iter().rev() {
             if let Some(like) = like {
                 made_like(dir, like);
@@ -1620,28 +1859,80 @@ impl super::Effect for RestorePart {
             path: self.path.clone(),
             to: src,
             made: folders.into_iter().map(|(dir, _)| PathArg(dir)).collect(),
+            info_text,
+            companions: returned,
         })))
     }
 }
 
-/// Put back in its trashed folder what `RestorePart` took out, with its
-/// companions: the folders the restore made go while empty.
+/// Put back in the trash what `RestorePart` took out, with its companions:
+/// an item of the trash with what the trash said of it, and the folders
+/// the restore made go while empty.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReturnPart {
-    /// Where it is, restored.
+    /// Where it is, out of the trash.
     #[serde(with = "crate::os_path")]
     #[schemars(with = "PathArg")]
     pub path: PathBuf,
-    /// Its place in the trashed folder.
+    /// Its place in the trash.
     #[serde(with = "crate::os_path")]
     #[schemars(with = "PathArg")]
     pub to: PathBuf,
     /// The folders the restore made, outermost first.
     pub made: Vec<PathArg>,
+    /// What the trash said of it, when it was an item of the trash (not
+    /// inside a trashed folder): its `.trashinfo`, written again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub info_text: Option<String>,
+    /// The companions trashed with it that went beside it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub companions: Vec<Untrashed>,
 }
 
 impl super::Kind for ReturnPart {
     const KIND: &'static str = "return_part";
+}
+
+impl ReturnPart {
+    /// The folders made that are there, opened to their owner while the
+    /// file leaves them and they go: made as their counterparts in the
+    /// trash are, they may be read-only. Each with the mode to give back
+    /// to it if it stays.
+    fn open_made(&self) -> Vec<(PathBuf, u32)> {
+        self.made
+            .iter()
+            .filter_map(|dir| {
+                let meta = std::fs::symlink_metadata(dir)
+                    .ok()
+                    .filter(std::fs::Metadata::is_dir)?;
+                let mode = meta.permissions().mode();
+                if mode & 0o700 != 0o700 {
+                    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode | 0o700))
+                        .ok()?;
+                }
+                Some((dir.to_path_buf(), mode))
+            })
+            .collect()
+    }
+
+    fn put_back(&self, ctx: &StepContext) -> anyhow::Result<()> {
+        let companions = if self.info_text.is_some() {
+            Vec::new()
+        } else {
+            along(ctx, &self.path, &self.to)
+        };
+        move_entry(ctx, &self.path, &self.to, &companions)?;
+        ctx.forget_trash();
+        if let (Some(text), Some(info)) = (&self.info_text, trash_info_of(&self.to))
+            && !exists(&info)
+        {
+            std::fs::write(&info, text).with_context(|| format!("write {}", info.display()))?;
+        }
+        for companion in &self.companions {
+            companion.put_back(ctx)?;
+        }
+        Ok(())
+    }
 }
 
 impl super::Effect for ReturnPart {
@@ -1670,20 +1961,26 @@ impl super::Effect for ReturnPart {
                 self.path.display()
             ));
         }
+        if self.info_text.is_some() {
+            return pending(true);
+        }
         along_conflict(&along(ctx, &self.path, &self.to)).unwrap_or(pending(true))
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
-        let companions = along(ctx, &self.path, &self.to);
-        rename_noreplace(&self.path, &self.to)?;
-        if let Err(e) = rename_along(&companions) {
-            let _ = rename_noreplace(&self.to, &self.path);
-            return Err(e);
+        let opened = self.open_made();
+        let result = self.put_back(ctx);
+        if result.is_ok() {
+            for dir in self.made.iter().rev() {
+                // Only while empty: what was put there since stays.
+                let _ = std::fs::remove_dir(dir);
+            }
         }
-        ctx.forget_trash();
-        for dir in self.made.iter().rev() {
-            // Only while empty: what was put there since stays.
-            let _ = std::fs::remove_dir(dir);
+        for (dir, mode) in opened {
+            if exists(&dir) {
+                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(mode));
+            }
         }
+        result?;
         let entry = EntryRef::from_path(&self.to)
             .ok_or_else(|| anyhow::anyhow!("{} is not in the trash", self.to.display()))?;
         Ok(Some(Box::new(RestorePart {
@@ -1735,9 +2032,11 @@ impl super::Effect for Delete {
     }
 }
 
-/// A file of a trash is moved or renamed only by being restored: under
-/// another name, or elsewhere, its `.trashinfo` would speak of nothing and
-/// the trash would hold a file it says nothing of.
+/// A file of a trash is renamed or moved within the trash only by being
+/// restored: under another name, or elsewhere, its `.trashinfo` would
+/// speak of nothing and the trash would hold a file it says nothing of.
+/// Moved out of the trash, it takes the `.trashinfo` along
+/// (`Move::restoring`).
 fn trashed(path: &Path) -> Option<StepStatus> {
     trash_info_of(path).map(|_| {
         conflict(format!(
@@ -1984,7 +2283,7 @@ mod tests {
     }
 
     /// A file deleted from a trash takes its `.trashinfo` along, and one
-    /// in a trash is not put there again.
+    /// in a trash is neither put there again nor renamed there.
     #[test]
     fn deleting_from_the_trash_forgets_what_it_said() {
         let tmp = tempfile::tempdir().unwrap();
@@ -2012,11 +2311,12 @@ mod tests {
             new_name: "b.txt".into(),
         };
         assert!(matches!(renamed.check(&ctx), StepStatus::Conflict { .. }));
+        // Moved out, it leaves the trash (as a restore does elsewhere).
         let moved = Move {
             entry: entry.clone(),
             dest_dir: tmp.path().to_path_buf(),
         };
-        assert!(matches!(moved.check(&ctx), StepStatus::Conflict { .. }));
+        assert_eq!(moved.check(&ctx), StepStatus::Pending { reversible: true });
         let delete = Delete { entry };
         assert!(!delete.undoable());
         assert!(delete.apply(&ctx).unwrap().is_none());
@@ -2126,6 +2426,137 @@ mod tests {
         std::fs::write(folder.join("b.txt"), "mine").unwrap();
         assert!(matches!(redo.check(&ctx), StepStatus::Conflict { .. }));
         assert!(matches!(whole.check(&ctx), StepStatus::Conflict { .. }));
+    }
+
+    /// An item of the trash moved elsewhere leaves the trash with what it
+    /// said of it, and comes back with it undone; one inside a trashed
+    /// folder leaves the folder there.
+    #[test]
+    fn a_file_moved_out_of_the_trash_takes_what_the_trash_said_of_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let trash = tmp.path().join(".Trash-1000");
+        std::fs::create_dir_all(trash.join("files/old project")).unwrap();
+        std::fs::create_dir_all(trash.join("info")).unwrap();
+        std::fs::write(trash.join("files/it's a.txt"), "a").unwrap();
+        std::fs::write(trash.join("files/old project/b.txt"), "b").unwrap();
+        let said = "[Trash Info]\nPath=docs/it%27s%20a.txt\nDeletionDate=2026-10-04T09:30:00\n";
+        let info = trash.join("info/it's a.txt.trashinfo");
+        std::fs::write(&info, said).unwrap();
+        let folder_info = trash.join("info/old project.trashinfo");
+        std::fs::write(&folder_info, "[Trash Info]\nPath=docs/old%20project\n").unwrap();
+        let desk = tmp.path().join("desk");
+        std::fs::create_dir(&desk).unwrap();
+        let ctx = StepContext::detached();
+
+        let out = Move {
+            entry: EntryRef::from_path(trash.join("files/it's a.txt")).unwrap(),
+            dest_dir: desk.clone(),
+        };
+        assert_eq!(out.check(&ctx), StepStatus::Pending { reversible: true });
+        let back = out.apply(&ctx).unwrap().unwrap();
+        assert_eq!(
+            std::fs::read_to_string(desk.join("it's a.txt")).unwrap(),
+            "a"
+        );
+        assert!(!info.exists(), "out of the trash, nothing says it is there");
+        assert_eq!(out.check(&ctx), StepStatus::AlreadyDone);
+        let again = back.apply(&ctx).unwrap().unwrap();
+        assert!(!desk.join("it's a.txt").exists());
+        assert_eq!(std::fs::read_to_string(&info).unwrap(), said, "as it was");
+        again.apply(&ctx).unwrap();
+        assert!(desk.join("it's a.txt").exists() && !info.exists());
+
+        let inner = Move {
+            entry: EntryRef::from_path(trash.join("files/old project/b.txt")).unwrap(),
+            dest_dir: desk.clone(),
+        };
+        let back = inner.apply(&ctx).unwrap().unwrap();
+        assert!(desk.join("b.txt").exists());
+        assert!(
+            trash.join("files/old project").is_dir() && folder_info.exists(),
+            "the folder it was in stays in the trash"
+        );
+        back.apply(&ctx).unwrap();
+        assert!(trash.join("files/old project/b.txt").exists());
+
+        // One the trash named otherwise, holding a file of its name
+        // already, goes back to its own name.
+        std::fs::write(trash.join("files/it's a.txt.2"), "two").unwrap();
+        let info_two = trash.join("info/it's a.txt.2.trashinfo");
+        std::fs::write(&info_two, said).unwrap();
+        let other = tmp.path().join("other");
+        std::fs::create_dir(&other).unwrap();
+        let named = Move {
+            entry: EntryRef::from_path(trash.join("files/it's a.txt.2")).unwrap(),
+            dest_dir: other.clone(),
+        };
+        assert_eq!(
+            named.describe(),
+            Change::Move {
+                from: trash.join("files/it's a.txt.2"),
+                to: other.join("it's a.txt"),
+            }
+        );
+        let back = named.apply(&ctx).unwrap().unwrap();
+        assert_eq!(
+            std::fs::read_to_string(other.join("it's a.txt")).unwrap(),
+            "two"
+        );
+        back.apply(&ctx).unwrap();
+        assert!(trash.join("files/it's a.txt.2").exists() && info_two.exists());
+
+        // Within the trash, an item is not moved: the trash would hold a
+        // file it says nothing of.
+        std::fs::write(trash.join("files/c.txt"), "c").unwrap();
+        std::fs::write(trash.join("info/c.txt.trashinfo"), said).unwrap();
+        let within = Move {
+            entry: EntryRef::from_path(trash.join("files/c.txt")).unwrap(),
+            dest_dir: trash.join("files/old project"),
+        };
+        assert!(matches!(within.check(&ctx), StepStatus::Conflict { .. }));
+    }
+
+    /// The folders a file restored alone made are made as their
+    /// counterparts in the trash are, read-only maybe: undone, they go all
+    /// the same, and one something was put in since keeps its mode.
+    #[test]
+    fn read_only_folders_made_for_a_restore_go_when_it_is_undone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let trash = tmp.path().join(".Trash-1000");
+        let item = trash.join("files/old");
+        std::fs::create_dir_all(item.join("sub")).unwrap();
+        std::fs::create_dir_all(trash.join("info")).unwrap();
+        std::fs::write(item.join("sub/a.txt"), "a").unwrap();
+        std::fs::write(
+            trash.join("info/old.trashinfo"),
+            "[Trash Info]\nPath=docs/old\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&item, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let docs = tmp.path().join("docs");
+        std::fs::create_dir(&docs).unwrap();
+        let ctx = StepContext::detached();
+        let part = RestorePart {
+            entry: EntryRef::from_path(item.join("sub/a.txt")).unwrap(),
+            path: docs.join("old/sub/a.txt"),
+        };
+        let back = part.apply(&ctx).unwrap().unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&docs.join("old")), 0o555, "made as it is in the trash");
+        let again = back.apply(&ctx).unwrap().unwrap();
+        assert!(item.join("sub/a.txt").exists());
+        assert!(!docs.join("old").exists(), "the folders made go");
+
+        again.apply(&ctx).unwrap();
+        std::fs::set_permissions(docs.join("old"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(docs.join("old/mine.txt"), "mine").unwrap();
+        std::fs::set_permissions(docs.join("old"), std::fs::Permissions::from_mode(0o555)).unwrap();
+        back.apply(&ctx).unwrap();
+        assert!(docs.join("old/mine.txt").exists() && !docs.join("old/sub").exists());
+        assert_eq!(mode(&docs.join("old")), 0o555, "what stays keeps its mode");
+        for dir in [docs.join("old"), item] {
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
     }
 
     #[test]

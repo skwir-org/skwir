@@ -5,9 +5,10 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant, SystemTime};
 
+use bibli_core::app::App;
 use bibli_core::cancel::CancelToken;
 use bibli_core::entry::{Entry, EntryId, EntryKind};
 use bibli_core::fs::Statter;
@@ -30,6 +31,8 @@ pub const SCHEME: &str = "query";
 pub struct QueryProvider {
     lifetime: CancelToken,
     open: Searches,
+    /// To name the folder a search looks in as the sidebar does.
+    app: Weak<App>,
 }
 
 /// The searches open now, to check again what a plan changed.
@@ -72,8 +75,12 @@ impl Searches {
 }
 
 impl QueryProvider {
-    pub fn new(lifetime: CancelToken, open: Searches) -> Self {
-        QueryProvider { lifetime, open }
+    pub fn new(lifetime: CancelToken, open: Searches, app: Weak<App>) -> Self {
+        QueryProvider {
+            lifetime,
+            open,
+            app,
+        }
     }
 }
 
@@ -84,7 +91,10 @@ impl LocationProvider for QueryProvider {
 
     /// What the search looks for and where, as a saved one is named.
     fn title(&self, location: &Location) -> Option<String> {
-        Some(crate::suggested_name(&location.rest))
+        Some(crate::suggested_name(
+            self.app.upgrade().as_deref(),
+            &location.rest,
+        ))
     }
 
     /// A search is in the folder it looks in: Up goes there.
@@ -93,7 +103,7 @@ impl LocationProvider for QueryProvider {
         Some(bibli_core::location::Trail {
             base: Some(query.root),
             crumbs: vec![bibli_core::location::Crumb::new(
-                crate::suggested_name(&location.rest),
+                crate::suggested_name(self.app.upgrade().as_deref(), &location.rest),
                 location.clone(),
             )],
             filters: Vec::new(),
@@ -832,7 +842,7 @@ mod tests {
     /// the folder is its pill.
     #[test]
     fn a_search_that_finds_nothing_says_what_it_looked_for() {
-        let provider = QueryProvider::new(CancelToken::new(), Searches::default());
+        let provider = QueryProvider::new(CancelToken::new(), Searches::default(), Weak::new());
         let location = crate::location_for("it's a draft", Some(Path::new("/x/a folder")));
         let empty = provider.empty_state(&location).unwrap();
         assert_eq!(empty.title, "Nothing found");
