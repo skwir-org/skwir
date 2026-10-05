@@ -6,7 +6,10 @@
 //! Days are counted as civil days since 1970-01-01 (`i64`, negative before
 //! it): a day number names a date, not an instant, and only
 //! [`Calendar::day_start`] turns one into the instant it begins at in the
-//! zone. A day is then 23, 24 or 25 hours long.
+//! zone. A day is then 23, 24 or 25 hours long. Weeks, months and years
+//! are [`Period`]s of those days, the one reading of them: the query's
+//! dates and named periods and the timeline's bars ask it, never count
+//! months of their own.
 //!
 //! The zone is the system's (`TZ`, else `/etc/localtime`, read by jiff,
 //! which notices a change). The first day of the week is the locale's
@@ -123,6 +126,79 @@ impl Calendar {
         let then = zoned.checked_sub(span).ok()?;
         Some(SystemTime::from(then.timestamp()))
     }
+
+    /// The year `t` falls in, in the zone.
+    pub fn year_of(&self, t: SystemTime) -> i64 {
+        civil_from_days(self.day_of(t)).0
+    }
+}
+
+/// A period of the calendar, counted in civil days: what a date names
+/// (`2026-05` is a month), what `this-week` names, a bar of the timeline.
+/// Weeks start on the calendar's first weekday.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Period {
+    Day,
+    Week,
+    Month,
+    Year,
+}
+
+impl Period {
+    /// The first day of the period that holds `day`.
+    pub fn floor(self, day: i64, cal: &Calendar) -> i64 {
+        match self {
+            Period::Day => day,
+            Period::Week => cal.week_floor(day),
+            Period::Month => {
+                let (y, m, _) = civil_from_days(day);
+                days_from_civil(y, m, 1)
+            }
+            Period::Year => days_from_civil(civil_from_days(day).0, 1, 1),
+        }
+    }
+
+    /// The first day of the period after the one that holds `day`.
+    pub fn next(self, day: i64, cal: &Calendar) -> i64 {
+        match self {
+            Period::Day => day + 1,
+            Period::Week => cal.week_floor(day) + 7,
+            Period::Month => {
+                let (y, m, _) = civil_from_days(day);
+                let (y, m) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
+                days_from_civil(y, m, 1)
+            }
+            Period::Year => days_from_civil(civil_from_days(day).0 + 1, 1, 1),
+        }
+    }
+
+    /// The period that holds `day`: its first day and the first day of
+    /// the next, `[start, end)`.
+    pub fn around(self, day: i64, cal: &Calendar) -> (i64, i64) {
+        (self.floor(day, cal), self.next(day, cal))
+    }
+
+    /// The period before the one that holds `day`.
+    pub fn before(self, day: i64, cal: &Calendar) -> (i64, i64) {
+        self.around(self.floor(day, cal) - 1, cal)
+    }
+
+    /// How many periods there are from the one that holds `first` to the
+    /// one that holds `last`, both counted; none when the period of `last`
+    /// comes first.
+    pub fn count(self, first: i64, last: i64, cal: &Calendar) -> u64 {
+        let month = |day: i64| {
+            let (y, m, _) = civil_from_days(day);
+            y * 12 + i64::from(m)
+        };
+        let between = match self {
+            Period::Day => last - first,
+            Period::Week => (cal.week_floor(last) - cal.week_floor(first)) / 7,
+            Period::Month => month(last) - month(first),
+            Period::Year => civil_from_days(last).0 - civil_from_days(first).0,
+        };
+        u64::try_from(between + 1).unwrap_or(0)
+    }
 }
 
 fn shift(t: SystemTime, secs: i64) -> SystemTime {
@@ -158,6 +234,13 @@ pub fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
     let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
     (yoe + era * 400 + i64::from(m <= 2), m, d)
+}
+
+/// The civil day of a date, when there is such a date: `2026-02-31` does
+/// not roll into March.
+pub fn civil_day(y: i64, m: u32, d: u32) -> Option<i64> {
+    let day = days_from_civil(y, m, d);
+    (civil_from_days(day) == (y, m, d)).then_some(day)
 }
 
 /// `YYYY-MM-DD` of a civil day, as the query language writes dates.
@@ -300,6 +383,92 @@ mod tests {
         assert_eq!(first_weekday("19971201\n1\n"), Some(Weekday::Monday));
         assert_eq!(first_weekday("19971130\n7\n"), Some(Weekday::Saturday));
         assert_eq!(first_weekday("garbage"), None);
+    }
+
+    #[test]
+    fn a_date_that_does_not_exist_names_no_day() {
+        assert_eq!(civil_day(2026, 9, 25), Some(days_from_civil(2026, 9, 25)));
+        assert_eq!(civil_day(2024, 2, 29), Some(days_from_civil(2024, 2, 29)));
+        for (y, m, d) in [(2026, 2, 29), (2026, 2, 31), (2026, 4, 31), (2026, 13, 1)] {
+            assert_eq!(civil_day(y, m, d), None, "{y}-{m}-{d}");
+        }
+        assert_eq!(civil_day(2026, 0, 1), None);
+        assert_eq!(civil_day(2026, 1, 0), None);
+    }
+
+    #[test]
+    fn periods_are_the_calendars() {
+        let cal = Calendar::utc();
+        let day = |y, m, d| days_from_civil(y, m, d);
+        let friday = day(2026, 9, 18);
+        let around = |period: Period, d: i64| {
+            let (start, end) = period.around(d, &cal);
+            (date_string(start), date_string(end))
+        };
+        let pair = |a: &str, b: &str| (a.to_owned(), b.to_owned());
+        assert_eq!(
+            around(Period::Day, friday),
+            pair("2026-09-18", "2026-09-19")
+        );
+        assert_eq!(
+            around(Period::Week, friday),
+            pair("2026-09-14", "2026-09-21")
+        );
+        assert_eq!(
+            around(Period::Month, friday),
+            pair("2026-09-01", "2026-10-01")
+        );
+        assert_eq!(
+            around(Period::Year, friday),
+            pair("2026-01-01", "2027-01-01")
+        );
+        // December's next month is January of the next year.
+        assert_eq!(
+            around(Period::Month, day(2026, 12, 31)),
+            pair("2026-12-01", "2027-01-01")
+        );
+        // A period's first day is its own; the day before is the last one's.
+        assert_eq!(Period::Week.floor(day(2026, 9, 14), &cal), day(2026, 9, 14));
+        assert_eq!(
+            Period::Week.before(day(2026, 9, 14), &cal),
+            (day(2026, 9, 7), day(2026, 9, 14))
+        );
+        assert_eq!(
+            Period::Month.before(day(2026, 1, 20), &cal),
+            (day(2025, 12, 1), day(2026, 1, 1))
+        );
+        assert_eq!(
+            Period::Year.before(friday, &cal),
+            (day(2025, 1, 1), day(2026, 1, 1))
+        );
+        // Weeks of a locale that starts them on Sunday.
+        let sunday = Calendar::new(TimeZone::UTC, Weekday::Sunday);
+        assert_eq!(Period::Week.floor(friday, &sunday), day(2026, 9, 13));
+        assert_eq!(Period::Week.next(friday, &sunday), day(2026, 9, 20));
+    }
+
+    #[test]
+    fn periods_are_counted_by_walking_them() {
+        let cal = Calendar::utc();
+        let friday = days_from_civil(2026, 9, 18);
+        for period in [Period::Day, Period::Week, Period::Month, Period::Year] {
+            for (first, last) in [
+                (0, 0),
+                (0, 4),
+                (0, 11),
+                (friday, friday + 30),
+                (friday - 400, friday + 800),
+            ] {
+                let mut walked = 1;
+                let mut start = period.floor(first, &cal);
+                while period.next(start, &cal) <= last {
+                    start = period.next(start, &cal);
+                    walked += 1;
+                }
+                assert_eq!(period.count(first, last, &cal), walked, "{period:?}");
+            }
+            assert_eq!(period.count(friday, friday - 800, &cal), 0, "{period:?}");
+        }
     }
 
     #[test]

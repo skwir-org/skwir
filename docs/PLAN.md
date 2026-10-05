@@ -29,8 +29,7 @@ plugins (ADR-009); tag-preserving copies (ADR-006); and Usage as a persistent pl
 view with cached, watched, progressive sizes (ADR-007). Recorded deviations: `search` is
 folded into `query`; `view-dual` is per-pane shell state rather than a crate; the review
 modal, prompts, treemap and timeline strip live in `bibli-ui`; `edit-as-buffer` uses
-`$VISUAL`/`$EDITOR` in a terminal; the query language's date parser and the timeline's
-calendar math are duplicated; AccessKit is unavailable in gpui 0.2.2 (ADR-001); the native
+`$VISUAL`/`$EDITOR` in a terminal; AccessKit is unavailable in gpui 0.2.2 (ADR-001); the native
 workers are workspace members outside `default-members`, so the default build needs no
 Poppler, GStreamer or libarchive. The idle memory gate, open since ADR-002's addendum at
 118 to 120 MB of PSS against 100, is closed by ADR-033 (2026-10-04): the budget counts
@@ -48,6 +47,14 @@ anything had opened it (notify reports opens; it now drops access events, with a
 old MIME name; shared-mime-info 2.5.1 names them `text/x-shellscript`, so it now asks the
 database for the name (`unalias`). The per-change validation history that used to sit here
 is in `docs/STATUS-LOG.md`.
+
+Calendar periods, one reading (2026-10-05): the deviation "the query language's date
+parser and the timeline's calendar math are duplicated" is closed. Weeks, months and years
+are `bibli_platform::calendar::Period` (the first day of the one holding a day, the next,
+the one before, how many between), which the query's dates (`2026-05`) and named periods
+(`last-month`) and the timeline's bars all read; a date typed is `civil_day`, which refuses
+`2026-02-31`; the year of an instant (the Narrow by bar, a tag location's `year`) is
+`Calendar::year_of`. The period tests moved from the timeline to the calendar.
 
 Sidebar tags as pills (2026-10-01): a place with a color is drawn as a
 pill of it, and a group's pills wrap together left-aligned (a justified

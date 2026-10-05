@@ -1190,7 +1190,10 @@ are about to touch, in full:
   `bibli_platform::calendar::Calendar`, the system's time zone with its
   clock changes and the locale's first weekday. Count days as civil day
   numbers and make instants only with `Calendar::day_start`; a day is not
-  86 400 seconds. Test boundary instants explicitly, with an explicit
+  86 400 seconds. A week, a month or a year is a `calendar::Period`
+  (`floor`, `next`, `around`, `before`, `count`), never months counted
+  where they are needed; a date read from text is `civil_day`, which
+  refuses one that does not exist. Test boundary instants explicitly, with an explicit
   calendar (`lang::parse_in`), when changing date behavior.
 - `kind:` groups files as the desktop's MIME database does
   (`bibli_platform::mime::Kind`, from each type's generic icon and its

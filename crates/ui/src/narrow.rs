@@ -242,7 +242,7 @@ impl Shell {
                         .metadata
                         .value(bibli_core::entry::keys::MODIFIED)
                         .and_then(bibli_core::Value::as_time)
-                        .map(|t| bibli_platform::calendar::civil_from_days(calendar.day_of(t)).0),
+                        .map(|t| calendar.year_of(t)),
                 })
                 .collect()
         };

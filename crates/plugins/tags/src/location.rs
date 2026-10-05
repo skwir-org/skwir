@@ -756,7 +756,7 @@ impl Places {
             .map(|(path, tags)| {
                 let year = calendar.as_ref().and_then(|calendar| {
                     let modified = std::fs::symlink_metadata(&path).ok()?.modified().ok()?;
-                    Some(bibli_platform::calendar::civil_from_days(calendar.day_of(modified)).0)
+                    Some(calendar.year_of(modified))
                 });
                 Tagged { path, tags, year }
             })

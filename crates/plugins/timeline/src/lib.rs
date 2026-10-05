@@ -32,7 +32,7 @@ use bibli_core::os_path::PathArg;
 use bibli_core::plugin::Plugin;
 use bibli_core::scheduler::Priority;
 use bibli_core::workspace::PaneId;
-use bibli_platform::calendar::{Calendar, civil_from_days, date_string, days_from_civil};
+use bibli_platform::calendar::{Calendar, Period, civil_from_days, date_string, days_from_civil};
 use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -61,46 +61,14 @@ pub enum Bucket {
 impl Bucket {
     const ALL: [Bucket; 4] = [Bucket::Day, Bucket::Week, Bucket::Month, Bucket::Year];
 
-    /// First day of the bucket holding civil day `day`.
-    pub fn floor(self, day: i64, cal: &Calendar) -> i64 {
+    /// The calendar's period a bar of this width covers.
+    pub fn period(self) -> Period {
         match self {
-            Bucket::Day => day,
-            Bucket::Week => cal.week_floor(day),
-            Bucket::Month => {
-                let (y, m, _) = civil_from_days(day);
-                days_from_civil(y, m, 1)
-            }
-            Bucket::Year => days_from_civil(civil_from_days(day).0, 1, 1),
+            Bucket::Day => Period::Day,
+            Bucket::Week => Period::Week,
+            Bucket::Month => Period::Month,
+            Bucket::Year => Period::Year,
         }
-    }
-
-    /// First day of the bucket after the one starting on `start`.
-    pub fn next(self, start: i64) -> i64 {
-        match self {
-            Bucket::Day => start + 1,
-            Bucket::Week => start + 7,
-            Bucket::Month => {
-                let (y, m, _) = civil_from_days(start);
-                let (y, m) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
-                days_from_civil(y, m, 1)
-            }
-            Bucket::Year => days_from_civil(civil_from_days(start).0 + 1, 1, 1),
-        }
-    }
-
-    /// How many buckets `[first, last]` spans (both are bucket starts).
-    fn span(self, first: i64, last: i64) -> u64 {
-        let month = |day: i64| {
-            let (y, m, _) = civil_from_days(day);
-            y * 12 + i64::from(m)
-        };
-        let n = match self {
-            Bucket::Day => last - first,
-            Bucket::Week => (last - first) / 7,
-            Bucket::Month => month(last) - month(first),
-            Bucket::Year => (month(last) - month(first)) / 12,
-        };
-        u64::try_from(n).unwrap_or(0) + 1
     }
 }
 
@@ -207,7 +175,7 @@ impl Days {
         else {
             return h;
         };
-        let fits = |b: Bucket| b.span(b.floor(first, cal), b.floor(last, cal)) <= MAX_BARS as u64;
+        let fits = |b: Bucket| b.period().count(first, last, cal) <= MAX_BARS as u64;
         h.bucket = Bucket::ALL
             .into_iter()
             .filter(|b| *b >= bucket)
@@ -218,18 +186,19 @@ impl Days {
         } else {
             self.busiest_years()
         };
+        let period = h.bucket.period();
         let mut sums: BTreeMap<i64, Tally> = BTreeMap::new();
         for (&day, &tally) in &self.days {
             if day < from || day > to {
                 h.outside += tally.count;
             } else {
-                sums.entry(h.bucket.floor(day, cal)).or_default().add(tally);
+                sums.entry(period.floor(day, cal)).or_default().add(tally);
             }
         }
-        let mut s = h.bucket.floor(from, cal);
+        let mut s = period.floor(from, cal);
         while s <= to {
             let tally = sums.get(&s).copied().unwrap_or_default();
-            let end = h.bucket.next(s);
+            let end = period.next(s, cal);
             h.bars.push(Bar {
                 start: day_start_secs(s, cal),
                 end: day_start_secs(end, cal),
@@ -678,63 +647,6 @@ mod tests {
         unknown: u64,
     ) -> Histogram {
         super::histogram(samples, bucket, unknown, &Calendar::utc())
-    }
-
-    #[test]
-    fn buckets_are_calendar_periods() {
-        let cal = Calendar::utc();
-        let day = days_from_civil(2026, 9, 18);
-        let s = Bucket::Month.floor(day, &cal);
-        assert_eq!(date_string(s), "2026-09-01");
-        assert_eq!(date_string(Bucket::Month.next(s)), "2026-10-01");
-        assert_eq!(
-            date_string(Bucket::Year.next(Bucket::Year.floor(s, &cal))),
-            "2027-01-01"
-        );
-        assert_eq!(
-            date_string(Bucket::Month.next(days_from_civil(2026, 12, 1))),
-            "2027-01-01"
-        );
-    }
-
-    #[test]
-    fn weeks_start_on_the_calendars_day() {
-        let monday = Calendar::utc();
-        // 2026-09-18 is a Friday; its week starts Monday 2026-09-14.
-        let friday = days_from_civil(2026, 9, 18);
-        let start = Bucket::Week.floor(friday, &monday);
-        assert_eq!(date_string(start), "2026-09-14");
-        assert_eq!(date_string(Bucket::Week.next(start)), "2026-09-21");
-        // A Monday is its own week's start; the Sunday before is not.
-        let m = days_from_civil(2026, 9, 14);
-        assert_eq!(Bucket::Week.floor(m, &monday), m);
-        assert_eq!(
-            date_string(Bucket::Week.floor(m - 1, &monday)),
-            "2026-09-07"
-        );
-        // Weeks of a locale that starts them on Sunday.
-        let sunday = Calendar::new(jiff_tz_utc(), bibli_platform::calendar::Weekday::Sunday);
-        assert_eq!(
-            date_string(Bucket::Week.floor(friday, &sunday)),
-            "2026-09-13"
-        );
-        for (first, last) in [(0, 0), (0, 4), (0, 11), (friday, friday + 30)] {
-            let (first, last) = (
-                Bucket::Week.floor(first, &monday),
-                Bucket::Week.floor(last, &monday),
-            );
-            let mut n = 1;
-            let mut s = first;
-            while s < last {
-                s = Bucket::Week.next(s);
-                n += 1;
-            }
-            assert_eq!(Bucket::Week.span(first, last), n);
-        }
-    }
-
-    fn jiff_tz_utc() -> bibli_platform::calendar::TimeZone {
-        Calendar::utc().time_zone().clone()
     }
 
     /// The user's days: a file modified at 23:30 UTC on the 25th is on the

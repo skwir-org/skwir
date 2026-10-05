@@ -76,7 +76,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bibli_core::entry::{EntryKind, Metadata, Value, keys};
-use bibli_platform::calendar::{Calendar, civil_from_days, days_from_civil};
+use bibli_platform::calendar::{Calendar, Period, civil_day};
 use globset::{Glob, GlobMatcher};
 use grep_regex::RegexMatcher;
 
@@ -969,63 +969,44 @@ fn parse_rating(rest: &str) -> Result<Term, ParseError> {
 /// A calendar period `[start, end)` in civil days.
 type Days = (i64, i64);
 
-/// A date literal (`2026`, `2026-05`, `2026-05-01`) as civil days.
-fn parse_date(s: &str) -> Option<Days> {
-    let parts: Vec<&str> = s.split('-').collect();
-    let y: i64 = parts.first()?.parse().ok()?;
+/// A date literal (`2026`, `2026-05`, `2026-05-01`) as the period it
+/// names, in civil days.
+fn parse_date(s: &str, cal: &Calendar) -> Option<Days> {
+    let mut parts = s.split('-');
+    let y: i64 = parts.next()?.parse().ok()?;
     if !(1970..=9999).contains(&y) {
         return None;
     }
-    let month = |m: u32| (days_from_civil(y, m, 1), next_month_start(y, m));
-    match parts.len() {
-        1 => Some((days_from_civil(y, 1, 1), days_from_civil(y + 1, 1, 1))),
-        2 => {
-            let m: u32 = parts[1].parse().ok()?;
-            (1..=12).contains(&m).then(|| month(m))
-        }
-        3 => {
-            let m: u32 = parts[1].parse().ok()?;
-            let d: u32 = parts[2].parse().ok()?;
-            if !(1..=12).contains(&m) || d == 0 {
-                return None;
-            }
-            // `2026-02-31` is not a day; it must not roll into March.
-            let (first, next) = month(m);
-            let day = first + i64::from(d) - 1;
-            (day < next).then_some((day, day + 1))
-        }
-        _ => None,
-    }
-}
-
-fn next_month_start(y: i64, m: u32) -> i64 {
-    if m == 12 {
-        days_from_civil(y + 1, 1, 1)
-    } else {
-        days_from_civil(y, m + 1, 1)
-    }
+    let number = |part: &str| part.parse::<u32>().ok();
+    let (period, day) = match (parts.next(), parts.next(), parts.next()) {
+        (None, _, _) => (Period::Year, civil_day(y, 1, 1)?),
+        (Some(m), None, _) => (Period::Month, civil_day(y, number(m)?, 1)?),
+        (Some(m), Some(d), None) => (Period::Day, civil_day(y, number(m)?, number(d)?)?),
+        _ => return None,
+    };
+    Some(period.around(day, cal))
 }
 
 /// A period named from `today` (`today`, `this-week`, `last-month`), and
-/// the day it next means another period: at its unit's next start.
+/// the day it next means another period: when the one holding today ends.
 fn named_period(s: &str, today: i64, cal: &Calendar) -> Option<(Days, i64)> {
-    let week = cal.week_floor(today);
-    let (y, m, _) = civil_from_days(today);
-    let month = days_from_civil(y, m, 1);
-    let (py, pm) = if m == 1 { (y - 1, 12) } else { (y, m - 1) };
-    let year = days_from_civil(y, 1, 1);
-    let next_year = days_from_civil(y + 1, 1, 1);
-    Some(match s.to_ascii_lowercase().as_str() {
-        "today" => ((today, today + 1), today + 1),
-        "yesterday" => ((today - 1, today), today + 1),
-        "this-week" => ((week, week + 7), week + 7),
-        "last-week" => ((week - 7, week), week + 7),
-        "this-month" => ((month, next_month_start(y, m)), next_month_start(y, m)),
-        "last-month" => ((days_from_civil(py, pm, 1), month), next_month_start(y, m)),
-        "this-year" => ((year, next_year), next_year),
-        "last-year" => ((days_from_civil(y - 1, 1, 1), year), next_year),
+    let (period, last) = match s.to_ascii_lowercase().as_str() {
+        "today" => (Period::Day, false),
+        "yesterday" => (Period::Day, true),
+        "this-week" => (Period::Week, false),
+        "last-week" => (Period::Week, true),
+        "this-month" => (Period::Month, false),
+        "last-month" => (Period::Month, true),
+        "this-year" => (Period::Year, false),
+        "last-year" => (Period::Year, true),
         _ => return None,
-    })
+    };
+    let days = if last {
+        period.before(today, cal)
+    } else {
+        period.around(today, cal)
+    };
+    Some((days, period.next(today, cal)))
 }
 
 enum TimeLit {
@@ -1044,7 +1025,7 @@ fn parse_time_lit(s: &str, now: SystemTime, cal: &Calendar) -> Result<TimeLit, P
             changes.map(|day| cal.day_start(day)),
         )
     };
-    if let Some(days) = parse_date(s) {
+    if let Some(days) = parse_date(s, cal) {
         return Ok(period(days, None));
     }
     if let Some((days, changes)) = named_period(s, cal.day_of(now), cal) {
@@ -1758,7 +1739,7 @@ pub fn content_matches(path: &Path, pat: &ContentPat) -> bool {
 mod tests {
     use super::*;
     use bibli_core::entry::Provenance;
-    use bibli_platform::calendar::Weekday;
+    use bibli_platform::calendar::{Weekday, days_from_civil};
     use std::time::Duration;
 
     /// Parse on a UTC calendar with weeks from Monday: what these tests
@@ -2463,19 +2444,28 @@ mod tests {
     }
 
     #[test]
-    fn civil_dates() {
-        assert_eq!(days_from_civil(1970, 1, 1), 0);
-        assert_eq!(days_from_civil(2000, 3, 1), 11_017);
-        let (a, b) = parse_date("2026-02").unwrap();
+    fn a_date_names_its_period() {
+        let date = |s| parse_date(s, &Calendar::utc());
+        let (a, b) = date("2026-02").unwrap();
         assert_eq!(b - a, 28, "days");
-        let (a, b) = parse_date("2024").unwrap();
+        let (a, b) = date("2024").unwrap();
         assert_eq!(b - a, 366);
-        assert!(parse_date("2026-13").is_none());
-        assert!(parse_date("2026-02-31").is_none());
-        assert!(parse_date("2026-02-29").is_none());
-        assert!(parse_date("2024-02-29").is_some());
-        assert!(parse_date("2026-04-31").is_none());
-        assert!(parse_date("2026-12-31").is_some());
+        assert_eq!(
+            date("2026-12-31"),
+            Some((days_from_civil(2026, 12, 31), days_from_civil(2027, 1, 1)))
+        );
+        assert!(date("2024-02-29").is_some());
+        for bad in [
+            "2026-13",
+            "2026-02-31",
+            "2026-02-29",
+            "2026-04-31",
+            "2026-",
+            "2026-05-01-02",
+            "1969",
+        ] {
+            assert!(date(bad).is_none(), "{bad}");
+        }
     }
 
     #[test]
