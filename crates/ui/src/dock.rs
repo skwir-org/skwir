@@ -12,12 +12,12 @@
 //! under it. A pinned film shows its frames in the place of the cover, at
 //! whatever height was dragged.
 //!
-//! Only the picture (the film, the cover of the compact row, the cover's
-//! disc of the tall figure, `halo::OnDisc`) answers clicks like the
-//! panel's player (`media::clickable`): one toggles playback, two reveal a
-//! film in the panel and go fullscreen there. A click anywhere else but the
-//! transport, the ring round the disc included, shows the track in the
-//! panel, as it plays.
+//! Only the picture (the film's frame, `picture::OnPicture`, the cover of
+//! the compact row, the cover's disc of the tall figure, `halo::OnDisc`)
+//! answers clicks like the panel's player (`media::clickable`): one toggles
+//! playback, two reveal a film in the panel and go fullscreen there. A click
+//! anywhere else but the transport, the ring round the disc and the film's
+//! letterbox included, shows the track in the panel, as it plays.
 //!
 //! The height is a remembered preference, not a measured size, so the form
 //! is chosen here in render, as the panel's width is. The dock steps aside
@@ -151,24 +151,34 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
     // The picture answers clicks as a player (`media::clickable`); the rest
     // of the dock, transport aside, shows the track.
     let picture: AnyElement = if pinned.video {
+        // Only the frame plays and pauses, placed where it is drawn: shrunk
+        // to fit, never grown. The letterbox round it shows the track, as
+        // the ring round a cover's disc does.
         let frame = pinned.frame.as_ref().map(|(image, ..)| {
-            gpui::img(Arc::clone(image))
-                .max_w_full()
-                .max_h_full()
-                .object_fit(gpui::ObjectFit::Contain)
+            let film = div()
+                .relative()
+                .size_full()
+                .child(gpui::img(Arc::clone(image)).size_full())
+                .children(crate::media::flash(Flash::Dock, shell, 1.));
+            crate::elements::picture::OnPicture {
+                child: crate::media::clickable("dock-film", film, Flash::Dock, cx)
+                    // The letterbox under it lights up and explains itself
+                    // only where a click shows the track.
+                    .occlude()
+                    .into_any_element(),
+                image: image.size(0),
+                fit: gpui::ObjectFit::ScaleDown,
+            }
         });
-        let film = div()
+        let letterbox = div()
+            .relative()
             .flex_1()
             .min_h_0()
             .w_full()
-            .flex()
-            .items_center()
-            .justify_center()
             // The letterbox round a film is the panel's own surface.
             .bg(theme.surface)
-            .children(frame)
-            .into_any_element();
-        crate::media::surface("dock-film", film, Flash::Dock, shell, cx)
+            .children(frame);
+        reveal(shell, "dock-letterbox", letterbox, cx).into_any_element()
     } else if tall {
         // Only the cover's disc plays and pauses, with its own tooltip and
         // highlight; the ring around it and the room beside it show the
