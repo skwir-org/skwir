@@ -61,6 +61,8 @@ pub struct Inspection {
     pub details: Vec<Detail>,
     /// What an [`InspectionKind::Map`] places on the map.
     pub geo: Option<std::sync::Arc<crate::geo::GeoDoc>>,
+    /// What it draws over the background: the tiles a tile archive holds.
+    pub tiles: Option<crate::tiles::Layer>,
 }
 /// A page of the printed book (`Inspection::printed_pages`): its number as
 /// printed ("xii", "47"), the section that holds it, and the link to where

@@ -541,6 +541,7 @@ impl PaneView for MapView {
             Arc::clone(&self.shapes),
             self.handles.clone(),
             &theme,
+            None,
         )
         .picking(picking)
         .spread(spread);

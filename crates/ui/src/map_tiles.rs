@@ -7,12 +7,15 @@
 //! did not ask for in a frame and is still on its way is cancelled
 //! (`end_frame`), so panning past a place never downloads it. A tile of
 //! another source revision (the setting chose another background) is
-//! never shown.
+//! never shown. A file's own tiles (a tile archive's `Layer`, drawn by its
+//! preview over the background) are kept beside the background's, by the
+//! layer's id; one the file does not have is left blank and never asked
+//! for again.
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use bibli_core::CancelToken;
-use bibli_core::tiles::{Palette, SourceInfo, TileRequest, Tiles};
+use bibli_core::tiles::{Layer, NoTile, Palette, SourceInfo, TileRequest, Tiles};
 use gpui::RenderImage;
 
 /// How long a tile that failed is left blank before it is asked again.
@@ -27,6 +30,9 @@ const BUDGET: usize = 48 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Key {
+    /// 0 for the background's tiles, else the file's `Layer::id`.
+    source: u64,
+    /// The background's revision; 0 for a file's, which never changes.
     revision: u64,
     request: TileRequest,
 }
@@ -40,9 +46,25 @@ enum Entry {
     },
     /// Asked again once `RETRY` has passed, or for another source.
     Failed(std::time::Instant),
+    /// A tile the file does not have (`NoTile`): blank, never asked again.
+    Empty,
 }
 
-type Arrival = (Key, Result<Arc<RenderImage>, String>);
+/// Why a tile did not come.
+enum Lack {
+    NoTile,
+    Failed(String),
+}
+
+type Arrival = (Key, Result<Arc<RenderImage>, Lack>);
+
+/// A tile that could not be had: of which source (`Key::source`), of which
+/// revision, and why.
+pub struct Failure {
+    pub source: u64,
+    pub revision: u64,
+    pub error: String,
+}
 
 /// How long a view waited for its tiles: from the first frame that lacked
 /// one to the first that had them all. Traced at debug level
@@ -88,8 +110,8 @@ pub struct TileStore {
     evicted: Vec<Arc<RenderImage>>,
     info: Option<(u64, Option<SourceInfo>, Option<Backgrounds>)>,
     app: Arc<bibli_core::App>,
-    /// Why the last tile of this revision failed, until someone says so.
-    pub failure: Option<(u64, String)>,
+    /// Why the last tile failed, until someone says so.
+    pub failure: Option<Failure>,
     /// A view waiting for tiles, measured until it has them all.
     waiting: Option<Waiting>,
     /// Tiles the frame being drawn lacks, and those it asked for.
@@ -177,20 +199,32 @@ impl TileStore {
         self.middle = None;
     }
 
-    /// The tile at the middle of the view, for the measure only.
-    pub fn middle(&mut self, request: TileRequest) {
-        self.middle = Some(Key {
-            revision: self.revision(),
-            request,
-        });
+    /// The key of a tile of the background (`file` none) or of a file.
+    fn key(&self, file: Option<&Layer>, request: TileRequest) -> Key {
+        match file {
+            Some(file) => Key {
+                source: file.id,
+                revision: 0,
+                request,
+            },
+            None => Key {
+                source: 0,
+                revision: self.revision(),
+                request,
+            },
+        }
     }
 
-    /// The tile, if it is here; asked for if it is not.
-    pub fn get(&mut self, request: TileRequest) -> Option<Arc<RenderImage>> {
-        let key = Key {
-            revision: self.revision(),
-            request,
-        };
+    /// The background's tile at the middle of the view, for the measure
+    /// only.
+    pub fn middle(&mut self, request: TileRequest) {
+        self.middle = Some(self.key(None, request));
+    }
+
+    /// The tile of the background (`file` none) or of a file, if it is
+    /// here; asked for if it is not.
+    pub fn get(&mut self, file: Option<&Layer>, request: TileRequest) -> Option<Arc<RenderImage>> {
+        let key = self.key(file, request);
         let frame = self.frame;
         match self.entries.get_mut(&key) {
             Some(Entry::Ready { image, used, .. }) => {
@@ -204,10 +238,17 @@ impl TileStore {
                 return None;
             }
             Some(Entry::Failed(when)) if when.elapsed() < RETRY => return None,
+            Some(Entry::Empty) => return None,
             Some(Entry::Failed(_)) | None => {}
         }
-        let (source, lifetime) = self.tiles.source()?;
-        let cancel = lifetime.child();
+        // A file's source lives as long as its preview holds it; the
+        // background's ends with its registration.
+        let (source, cancel) = if let Some(file) = file {
+            (Arc::clone(&file.source), CancelToken::new())
+        } else {
+            let (source, lifetime) = self.tiles.source()?;
+            (source, lifetime.child())
+        };
         let (tx, wake) = (self.tx.clone(), Arc::clone(&self.wake));
         self.entries.insert(key, Entry::Loading(cancel.clone()));
         self.wanted.push(key);
@@ -217,10 +258,18 @@ impl TileStore {
             request,
             cancel,
             Box::new(move |tile| {
-                let image = tile.map_err(|e| format!("{e:#}")).and_then(|image| {
-                    crate::thumbs::to_render_image(&image)
-                        .ok_or_else(|| "the tile is not a picture".to_owned())
-                });
+                let image = tile
+                    .map_err(|error| {
+                        if error.is::<NoTile>() {
+                            Lack::NoTile
+                        } else {
+                            Lack::Failed(format!("{error:#}"))
+                        }
+                    })
+                    .and_then(|image| {
+                        crate::thumbs::to_render_image(&image)
+                            .ok_or_else(|| Lack::Failed("the tile is not a picture".to_owned()))
+                    });
                 if tx.send((key, image)).is_ok() {
                     wake();
                 }
@@ -231,11 +280,12 @@ impl TileStore {
 
     /// A tile already here, without asking for it: a coarser one stands in
     /// while a finer one comes.
-    pub fn cached(&mut self, request: TileRequest) -> Option<Arc<RenderImage>> {
-        let key = Key {
-            revision: self.revision(),
-            request,
-        };
+    pub fn cached(
+        &mut self,
+        file: Option<&Layer>,
+        request: TileRequest,
+    ) -> Option<Arc<RenderImage>> {
+        let key = self.key(file, request);
         match self.entries.get_mut(&key) {
             Some(Entry::Ready { image, used, .. }) => {
                 *used = self.frame;
@@ -285,7 +335,7 @@ impl TileStore {
         let wanted: std::collections::HashSet<Key> = self.wanted.drain(..).collect();
         let mut gone = Vec::new();
         for (key, entry) in &self.entries {
-            let stale = key.revision != revision;
+            let stale = key.source == 0 && key.revision != revision;
             match entry {
                 Entry::Loading(cancel) if stale || !wanted.contains(key) => {
                     cancel.cancel();
@@ -356,10 +406,17 @@ impl TileStore {
                         },
                     );
                 }
-                Err(error) => {
+                Err(Lack::NoTile) => {
+                    self.entries.insert(key, Entry::Empty);
+                }
+                Err(Lack::Failed(error)) => {
                     self.entries
                         .insert(key, Entry::Failed(std::time::Instant::now()));
-                    self.failure = Some((key.revision, error));
+                    self.failure = Some(Failure {
+                        source: key.source,
+                        revision: key.revision,
+                        error,
+                    });
                 }
             }
             arrived = true;

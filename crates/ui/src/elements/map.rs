@@ -496,6 +496,18 @@ impl Shapes {
             r.y0 = r.y0.min(y);
             r.y1 = r.y1.max(y);
         };
+        // What the file says it covers, the short way round: all a tile
+        // archive places, which has its own tiles and nothing else to draw.
+        for corner in [
+            LatLon::new(bounds.north, bounds.west),
+            LatLon::new(bounds.south, bounds.east),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let (x, y) = math::project(corner);
+            grow((beside(x, center), y));
+        }
         // A line stays continuous: each point within half a world of the
         // one before, the first near the centre.
         let mut path = |points: &mut dyn Iterator<Item = LatLon>| -> Vec<(f64, f64)> {
@@ -782,10 +794,12 @@ impl Map {
     }
 }
 
-/// What a map is drawn on: the tiles of the registered source.
+/// What a map is drawn on: the tiles of the registered source, and over
+/// them those of the file shown, when it holds some (a tile archive).
 pub struct TileLayer {
     pub store: Rc<RefCell<crate::map_tiles::TileStore>>,
     pub palette: bibli_core::tiles::Palette,
+    pub file: Option<bibli_core::tiles::Layer>,
     /// Follow the attribution's link.
     pub on_link: Rc<dyn Fn(String, &mut Window, &mut App)>,
 }
@@ -842,6 +856,101 @@ fn tile_bounds(
 /// How many coarser zooms stand in for a tile on its way.
 const STAND_IN: u8 = 4;
 
+/// How many zooms out of a source's shallowest its tiles are still drawn,
+/// made smaller: a file of a region whose tiles begin at zoom 6 shows them
+/// on a map fitted to it at zoom 4, at most 16 of them in each tile's room.
+const SHALLOWER: u8 = 2;
+
+/// What a source draws of the view: the background's tiles (`file` none)
+/// or a file's, each one not here yet stood in for by finer ones already
+/// here or by a coarser one, coarser first. `None` when the source holds
+/// nothing in view.
+fn gather(
+    store: &mut crate::map_tiles::TileStore,
+    file: Option<&bibli_core::tiles::Layer>,
+    info: &bibli_core::tiles::SourceInfo,
+    request: &dyn Fn(u8, u32, u32) -> bibli_core::tiles::TileRequest,
+    view: &View,
+    size: (f64, f64),
+    origin: gpui::Point<Pixels>,
+) -> Option<Vec<TileDraw>> {
+    let mut z = (view.zoom.round() as u8).min(info.max_zoom);
+    if z < info.min_zoom {
+        if info.min_zoom - z > SHALLOWER {
+            return None;
+        }
+        z = info.min_zoom;
+    }
+    let corners = (view.to_world((0., 0.), size), view.to_world(size, size));
+    let mut cover = bibli_core::tiles::cover(z, corners.0, corners.1);
+    cover.retain(|&(x, y, _, _)| info.holds(z, x, y));
+    if cover.is_empty() {
+        return None;
+    }
+    // The farthest from the middle asked first: a source serves its newest
+    // request first, so the middle arrives first.
+    let n = f64::from(1u32 << z);
+    let away = |&(_, _, dx, dy): &(u32, u32, i64, i64)| {
+        let (cx, cy) = ((dx as f64 + 0.5) / n, (dy as f64 + 0.5) / n);
+        (cx - view.x).hypot(cy - view.y)
+    };
+    cover.sort_by(|a, b| away(b).total_cmp(&away(a)));
+    if file.is_none()
+        && let Some(&(x, y, _, _)) = cover.last()
+    {
+        store.middle(request(z, x, y));
+    }
+    let mut tiles = Vec::new();
+    for (x, y, dx, dy) in cover {
+        let bounds = tile_bounds(view, z, (dx, dy), size, origin);
+        if let Some(image) = store.get(file, request(z, x, y)) {
+            tiles.push(TileDraw {
+                image,
+                bounds,
+                clip: bounds,
+            });
+            continue;
+        }
+        // Zooming out: the four finer tiles already here stand in, over
+        // any coarser one found below.
+        if z < info.max_zoom {
+            for (i, j) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                let child = request(z + 1, 2 * x + i, 2 * y + j);
+                if let Some(image) = store.cached(file, child) {
+                    let at = (2 * dx + i64::from(i), 2 * dy + i64::from(j));
+                    let bounds = tile_bounds(view, z + 1, at, size, origin);
+                    tiles.push(TileDraw {
+                        image,
+                        bounds,
+                        clip: bounds,
+                    });
+                }
+            }
+        }
+        for up in 1..=STAND_IN.min(z) {
+            let (pz, step) = (z - up, 1i64 << up);
+            if let Some(image) = store.cached(file, request(pz, x >> up, y >> up)) {
+                tiles.push(TileDraw {
+                    image,
+                    bounds: tile_bounds(
+                        view,
+                        pz,
+                        (dx.div_euclid(step), dy.div_euclid(step)),
+                        size,
+                        origin,
+                    ),
+                    clip: bounds,
+                });
+                break;
+            }
+        }
+    }
+    // Coarser stand-ins are drawn first, under the tiles they wait for,
+    // and finer ones last, over them.
+    tiles.sort_by_key(|t| std::cmp::Reverse(t.bounds.size.width));
+    Some(tiles)
+}
+
 impl IntoElement for Map {
     type Element = Self;
     fn into_element(self) -> Self {
@@ -895,9 +1004,9 @@ pub struct Prepaint {
     hitbox: Hitbox,
     view: View,
     tiles: Vec<TileDraw>,
-    /// The source's attribution, where it is drawn, and its link with the
-    /// hitbox that takes a click on it.
-    attribution: Option<(ShapedLine, Bounds<Pixels>, Option<(String, Hitbox)>)>,
+    /// Whose tiles are drawn, the background's first, each where it is
+    /// drawn and its link with the hitbox that takes a click on it.
+    attributions: Vec<(ShapedLine, Bounds<Pixels>, Option<(String, Hitbox)>)>,
     grid: Vec<(gpui::Point<Pixels>, gpui::Point<Pixels>)>,
     labels: Vec<Label>,
     /// Runs of screen points, by what they draw.
@@ -1054,102 +1163,62 @@ impl Element for Map {
             origin + point(px(x as f32), px(y as f32))
         };
 
-        // The background's tiles, a coarser one standing in for each that
-        // is not here yet.
+        // The background's tiles, then the file's own over them.
         let mut tiles = Vec::new();
-        let mut attribution = None;
+        let mut attributions = Vec::new();
         let mut detailed = false;
         if let Some(layer) = &self.tiles {
             let mut store = layer.store.borrow_mut();
-            if let Some(info) = store.info() {
+            let scale = window.scale_factor().round().clamp(1., 2.) as u8;
+            let request = |z: u8, x: u32, y: u32| bibli_core::tiles::TileRequest {
+                z,
+                x,
+                y,
+                scale,
+                palette: layer.palette,
+            };
+            store.begin_frame();
+            let background = store.info();
+            if let Some(info) = &background {
                 detailed = info.detailed;
-                store.begin_frame();
-                let z = (view.zoom.round() as u8).min(info.max_zoom);
-                let scale = window.scale_factor().round().clamp(1., 2.) as u8;
-                let request = |z: u8, x: u32, y: u32| bibli_core::tiles::TileRequest {
-                    z,
-                    x,
-                    y,
-                    scale,
-                    palette: layer.palette,
+            }
+            let sources = [
+                background.map(|info| (None, info)),
+                layer
+                    .file
+                    .as_ref()
+                    .map(|file| (Some(file), file.info.clone())),
+            ];
+            for (file, info) in sources.into_iter().flatten() {
+                let Some(drawn) = gather(&mut store, file, &info, &request, &view, size, origin)
+                else {
+                    continue;
                 };
-                let corners = (view.to_world((0., 0.), size), view.to_world(size, size));
-                let mut cover = bibli_core::tiles::cover(z, corners.0, corners.1);
-                // The farthest from the middle asked first: a source serves
-                // its newest request first, so the middle arrives first.
-                let n = f64::from(1u32 << z);
-                let away = |&(_, _, dx, dy): &(u32, u32, i64, i64)| {
-                    let (cx, cy) = ((dx as f64 + 0.5) / n, (dy as f64 + 0.5) / n);
-                    (cx - view.x).hypot(cy - view.y)
-                };
-                cover.sort_by(|a, b| away(b).total_cmp(&away(a)));
-                if let Some(&(x, y, _, _)) = cover.last() {
-                    store.middle(request(z, x, y));
-                }
-                for (x, y, dx, dy) in cover {
-                    let bounds = tile_bounds(&view, z, (dx, dy), size, origin);
-                    if let Some(image) = store.get(request(z, x, y)) {
-                        tiles.push(TileDraw {
-                            image,
-                            bounds,
-                            clip: bounds,
-                        });
-                        continue;
-                    }
-                    // Zooming out: the four finer tiles already here stand
-                    // in, over any coarser one found below.
-                    if z < info.max_zoom {
-                        for (i, j) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                            let child = request(z + 1, 2 * x + i, 2 * y + j);
-                            if let Some(image) = store.cached(child) {
-                                let at = (2 * dx + i64::from(i), 2 * dy + i64::from(j));
-                                let bounds = tile_bounds(&view, z + 1, at, size, origin);
-                                tiles.push(TileDraw {
-                                    image,
-                                    bounds,
-                                    clip: bounds,
-                                });
-                            }
-                        }
-                    }
-                    for up in 1..=STAND_IN.min(z) {
-                        let (pz, step) = (z - up, 1i64 << up);
-                        if let Some(image) = store.cached(request(pz, x >> up, y >> up)) {
-                            tiles.push(TileDraw {
-                                image,
-                                bounds: tile_bounds(
-                                    &view,
-                                    pz,
-                                    (dx.div_euclid(step), dy.div_euclid(step)),
-                                    size,
-                                    origin,
-                                ),
-                                clip: bounds,
-                            });
-                            break;
-                        }
-                    }
-                }
-                store.end_frame();
-                // Coarser stand-ins are drawn first, under the tiles they
-                // wait for, and finer ones last, over them.
-                tiles.sort_by_key(|t| std::cmp::Reverse(t.bounds.size.width));
+                tiles.extend(drawn);
+                detailed |= info.detailed;
                 if !info.attribution.is_empty() {
-                    let line = shape(info.attribution.into(), self.colors.text, window);
-                    let width = line.width + px(8.);
-                    let at = bounds.origin
-                        + point(
-                            bounds.size.width - width - px(4.),
-                            bounds.size.height - px(LINE_HEIGHT + 6.),
-                        );
-                    attribution = Some((
-                        line,
-                        Bounds::new(at, gpui::size(width, px(LINE_HEIGHT + 2.))),
-                        info.attribution_url,
-                    ));
+                    attributions.push((info.attribution, info.attribution_url));
                 }
             }
+            store.end_frame();
         }
+        // The attributions at the foot, right-aligned, the background's
+        // lowest.
+        let mut row = bounds.size.height - px(LINE_HEIGHT + 6.);
+        let attributions: Vec<(ShapedLine, Bounds<Pixels>, Option<String>)> = attributions
+            .into_iter()
+            .map(|(text, url)| {
+                let line = shape(text.into(), self.colors.text, window);
+                let width = line.width + px(8.);
+                let at = bounds.origin + point(bounds.size.width - width - px(4.), row);
+                row -= px(LINE_HEIGHT + 4.);
+                (
+                    line,
+                    Bounds::new(at, gpui::size(width, px(LINE_HEIGHT + 2.))),
+                    url,
+                )
+            })
+            .collect();
 
         // The graticule, labelled along the top and the left edges, over
         // a background without streets.
@@ -1456,18 +1525,19 @@ impl Element for Map {
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         // Over the map's own hitbox, so a click there follows the link and
         // does not start a drag.
-        let attribution = attribution.map(
-            |(line, card, url): (ShapedLine, Bounds<Pixels>, Option<String>)| {
+        let attributions = attributions
+            .into_iter()
+            .map(|(line, card, url)| {
                 let link =
                     url.map(|url| (url, window.insert_hitbox(card, HitboxBehavior::BlockMouse)));
                 (line, card, link)
-            },
-        );
+            })
+            .collect();
         Prepaint {
             hitbox,
             view,
             tiles,
-            attribution,
+            attributions,
             grid,
             labels,
             areas,
@@ -1711,7 +1781,7 @@ impl Element for Map {
                 );
             }
             // Whose tiles these are, whenever they are drawn.
-            if let Some((line, card, _)) = &prepaint.attribution {
+            for (line, card, _) in &prepaint.attributions {
                 window.paint_quad(quad(
                     *card,
                     px(3.),
@@ -1751,18 +1821,23 @@ impl Element for Map {
         };
         let shown = prepaint.view;
 
-        if let (Some((_, _, Some((url, link)))), Some(layer)) = (&prepaint.attribution, &self.tiles)
-        {
-            window.set_cursor_style(CursorStyle::PointingHand, link);
-            let (url, link, on_link) = (url.clone(), link.clone(), Rc::clone(&layer.on_link));
-            window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
-                if phase == DispatchPhase::Bubble
-                    && event.button == MouseButton::Left
-                    && link.is_hovered(window)
-                {
-                    on_link(url.clone(), window, cx);
-                }
-            });
+        if let Some(layer) = &self.tiles {
+            let links = prepaint
+                .attributions
+                .iter()
+                .filter_map(|(_, _, link)| link.as_ref());
+            for (url, link) in links {
+                window.set_cursor_style(CursorStyle::PointingHand, link);
+                let (url, link, on_link) = (url.clone(), link.clone(), Rc::clone(&layer.on_link));
+                window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+                    if phase == DispatchPhase::Bubble
+                        && event.button == MouseButton::Left
+                        && link.is_hovered(window)
+                    {
+                        on_link(url.clone(), window, cx);
+                    }
+                });
+            }
         }
         // A band being drawn, over everything.
         if let Some((from, to)) = self.handles.band.get() {
@@ -2172,6 +2247,29 @@ mod tests {
         assert!(shapes.markers.iter().any(|m| m.kind == MarkerKind::End));
         // The copy drawn is the one nearest the view, however far it panned.
         assert_eq!(copy_offset(2.99, rect.center().0), 2.);
+    }
+
+    /// A tile archive places nothing but says where it has tiles: the map
+    /// is fitted there, the short way round.
+    #[test]
+    fn a_file_of_nothing_but_an_area_is_fitted_to_it() {
+        let doc = |west: f64, east: f64| GeoDoc {
+            bounds: Some(bibli_core::geo::Bounds {
+                south: 44.,
+                north: 45.,
+                west,
+                east,
+            }),
+            ..GeoDoc::default()
+        };
+        let rect = Shapes::new(&doc(5., 6.))
+            .bounds
+            .expect("fitted to its area");
+        assert!((rect.x1 - rect.x0 - 1. / 360.).abs() < 1e-9);
+        let (x, _) = math::project(at(44.5, 5.5));
+        assert!((rect.center().0 - x).abs() < 1e-9);
+        let rect = Shapes::new(&doc(179., -179.)).bounds.unwrap();
+        assert!((rect.x1 - rect.x0 - 2. / 360.).abs() < 1e-9, "not 358°");
     }
 
     #[test]

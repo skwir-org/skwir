@@ -7,12 +7,13 @@
 //! thread, when it has the tile. A download never holds a scheduler worker
 //! while it waits, and cancelling the request (the tile left the view)
 //! drops it wherever it is.
+use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::RwLock;
 
-use crate::{CancelToken, thumbs::Image};
+use crate::{CancelToken, geo::Bounds, thumbs::Image};
 
 /// The colours a source that draws its tiles itself uses, from the UI's
 /// theme (RGBA). Part of what a tile is: another theme is another tile.
@@ -35,7 +36,7 @@ pub struct TileRequest {
 }
 
 /// What the UI says about a source.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SourceInfo {
     /// Shown on the map whenever one of its tiles is: the licence of
     /// OpenStreetMap's data requires it.
@@ -44,12 +45,62 @@ pub struct SourceInfo {
     pub attribution_url: Option<String>,
     /// The deepest zoom it serves; deeper views enlarge these tiles.
     pub max_zoom: u8,
+    /// The shallowest: a view farther out draws none of its tiles.
+    pub min_zoom: u8,
+    /// Where it has tiles: a file's area (a tile archive), `None` for the
+    /// whole world.
+    pub bounds: Option<Bounds>,
     /// Whether it shows streets. A map on a source that does not draws a
     /// graticule over it and, zoomed in, says where detail can be had.
     pub detailed: bool,
     /// The setting that chooses the source, for the UI to link to.
     pub setting: Option<String>,
 }
+
+impl SourceInfo {
+    /// Whether the source may hold tile `(z, x, y)`: one of its zooms (a
+    /// deeper view enlarges its deepest) over its area. What it cannot
+    /// hold is never asked for.
+    pub fn holds(&self, z: u8, x: u32, y: u32) -> bool {
+        if z < self.min_zoom {
+            return false;
+        }
+        let Some(area) = self.bounds else {
+            return true;
+        };
+        let n = f64::from(1u32 << z.min(31));
+        let lon = |x: f64| x / n * 360. - 180.;
+        let lat = |y: f64| {
+            (std::f64::consts::PI * (1. - 2. * y / n))
+                .sinh()
+                .atan()
+                .to_degrees()
+        };
+        let (west, east) = (lon(f64::from(x)), lon(f64::from(x) + 1.));
+        let (north, south) = (lat(f64::from(y)), lat(f64::from(y) + 1.));
+        let across = south < area.north && north > area.south;
+        let along = if area.crosses_antimeridian() {
+            east > area.west || west < area.east
+        } else {
+            west < area.east && east > area.west
+        };
+        across && along
+    }
+}
+
+/// What a source answers for a tile it may hold (`SourceInfo::holds`) but
+/// does not: an archive leaves out tiles with nothing on them. Not a
+/// failure: the tile is left blank and not asked for again.
+#[derive(Debug)]
+pub struct NoTile;
+
+impl fmt::Display for NoTile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("no tile there")
+    }
+}
+
+impl std::error::Error for NoTile {}
 
 /// A tile or why there is none.
 pub type TileResult = anyhow::Result<Image>;
@@ -63,6 +114,38 @@ pub trait TileSource: Send + Sync {
     /// is served first, as the scheduler serves its jobs: a map asks for
     /// the tiles farthest from its middle first, so the middle comes first.
     fn request(&self, request: TileRequest, cancel: CancelToken, done: TileDone);
+}
+
+/// Tiles a file holds (a `PMTiles` or `MBTiles` archive), which its preview
+/// draws over the background where it has them. Its `id` keeps its tiles
+/// apart from the background's and from another file's; its `info` is
+/// read once, where the file was opened.
+#[derive(Clone)]
+pub struct Layer {
+    pub id: u64,
+    pub info: SourceInfo,
+    pub source: Arc<dyn TileSource>,
+}
+
+impl Layer {
+    pub fn new(source: Arc<dyn TileSource>) -> Layer {
+        // 0 is no file's: the registered source's tiles.
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Layer {
+            id: NEXT.fetch_add(1, Ordering::Relaxed),
+            info: source.info(),
+            source,
+        }
+    }
+}
+
+impl fmt::Debug for Layer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Layer")
+            .field("id", &self.id)
+            .field("info", &self.info)
+            .finish_non_exhaustive()
+    }
 }
 
 struct Registered {
@@ -157,6 +240,8 @@ mod tests {
                 attribution: String::new(),
                 attribution_url: None,
                 max_zoom: 0,
+                min_zoom: 0,
+                bounds: None,
                 detailed: false,
                 setting: None,
             }
@@ -176,6 +261,40 @@ mod tests {
         assert!(lifetime.is_cancelled());
         assert!(tiles.source().is_none());
         assert!(tiles.revision() > before);
+    }
+
+    #[test]
+    fn a_source_holds_its_zooms_over_its_area() {
+        let mut info = Nothing.info();
+        info.max_zoom = 14;
+        assert!(info.holds(0, 0, 0), "the world's, without bounds");
+        info.min_zoom = 2;
+        assert!(!info.holds(1, 0, 0));
+        // An area east of Greenwich, north of the equator.
+        info.bounds = Some(Bounds {
+            south: 10.,
+            north: 20.,
+            west: 30.,
+            east: 40.,
+        });
+        // Zoom 2: x 2 spans 0° to 90° east, y 1 the equator to 66.5° north.
+        assert!(info.holds(2, 2, 1));
+        assert!(!info.holds(2, 1, 1), "west of Greenwich");
+        assert!(!info.holds(2, 2, 2), "south of the equator");
+        assert!(
+            info.holds(17, 78_279, 60_011),
+            "deeper than its tiles: enlarged"
+        );
+        assert!(!info.holds(17, 78_279, 70_000));
+        // Across the ±180° meridian: both ends of the world.
+        info.bounds = Some(Bounds {
+            south: 60.,
+            north: 70.,
+            west: 170.,
+            east: -170.,
+        });
+        assert!(info.holds(2, 3, 0) && info.holds(2, 0, 0));
+        assert!(!info.holds(2, 1, 0) && !info.holds(2, 2, 0));
     }
 
     #[test]

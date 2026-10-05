@@ -17,6 +17,11 @@ serde_json.workspace = true
 schemars.workspace = true
 toml.workspace = true
 tracing.workspace = true
+# Tile archives: PMTiles' gzipped directories, the version and backend
+# already in the tree; MBTiles read by the system's libsqlite3 (ADR-022),
+# as the tables preview reads a database.
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+rusqlite = { version = "0.40", default-features = false, features = ["hooks"] }
 # Rasterizes the offline outline; the version resvg already brings.
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
 # The HTTP client (ADR-020): HTTP/2 where the server speaks it, on a runtime
@@ -33,6 +38,8 @@ rustls-platform-verifier = "0.7"
 
 [dev-dependencies]
 tempfile.workspace = true
+# The tests write the tiles of an archive.
+image = { workspace = true, features = ["png"] }
 # A local HTTPS server speaking HTTP/2, for the client's tests.
 tokio = { version = "1", features = ["rt", "time", "sync", "net", "macros"] }
 hyper = { version = "1", features = ["server"] }

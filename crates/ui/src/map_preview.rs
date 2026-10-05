@@ -11,6 +11,7 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
+use bibli_core::tiles::Layer;
 use gpui::{AnyElement, Context, MouseButton, Window, div, prelude::*};
 
 use crate::elements::map::{self, Colors, Handles, Shapes, View};
@@ -35,6 +36,8 @@ pub struct Notes {
     hinted: bool,
     /// That the tiles of this source revision failed.
     failed: Option<u64>,
+    /// That a file's tiles failed (its `Layer::id`).
+    failed_file: Option<u64>,
 }
 
 /// The map's view, kept with the preview (`PreviewState::map`).
@@ -51,19 +54,22 @@ fn colors(theme: &Theme) -> Colors {
     }
 }
 
-/// A map of `shapes` over the registered background: the preview's and the
-/// Map view's, which differ only in what they place and how it answers.
+/// A map of `shapes` over the registered background, and over it the
+/// tiles of the `file` shown when it holds some: the preview's and the Map
+/// view's, which differ only in what they place and how it answers.
 pub fn element(
     shell: &Shell,
     id: impl Into<gpui::ElementId>,
     shapes: Arc<Shapes>,
     handles: Handles,
     theme: &Theme,
+    file: Option<Layer>,
 ) -> map::Map {
     let app = Arc::clone(&shell.app);
     let tiles = map::TileLayer {
         store: Rc::clone(&shell.map_tiles),
         palette: crate::map_tiles::palette(theme),
+        file,
         // The attribution's link reaches the desktop as every address does.
         on_link: Rc::new(move |url: String, _: &mut Window, _: &mut gpui::App| {
             app.request_front(bibli_core::command::Invocation::with_args(
@@ -97,6 +103,7 @@ pub fn content(shell: &Shell, display: &Display, theme: &Theme) -> AnyElement {
             shapes,
             shell.preview.map.clone(),
             theme,
+            display.data.tiles.clone(),
         )))
         .when_some(display.profile.clone(), |d, profile| {
             let handles = &shell.preview.map;
@@ -264,20 +271,34 @@ impl Shell {
             cx.notify();
         }
         let setting = crate::map_tiles::SETTING;
-        if let Some((revision, error)) = failure
-            && self.map_notes.failed != Some(revision)
-            && shown
-        {
-            self.map_notes.failed = Some(revision);
-            self.set_status_about(
-                format!("Map tiles could not be loaded: {error}"),
-                setting,
-                cx,
-            );
+        match failure.filter(|_| shown) {
+            Some(failure) if failure.source != 0 => {
+                // A damaged file: no setting fixes it.
+                if self.map_notes.failed_file != Some(failure.source) {
+                    self.map_notes.failed_file = Some(failure.source);
+                    self.set_status(
+                        format!("This file's map tiles could not be read: {}", failure.error),
+                        true,
+                        cx,
+                    );
+                }
+            }
+            Some(failure) if self.map_notes.failed != Some(failure.revision) => {
+                self.map_notes.failed = Some(failure.revision);
+                self.set_status_about(
+                    format!("Map tiles could not be loaded: {}", failure.error),
+                    setting,
+                    cx,
+                );
+            }
+            _ => {}
         }
+        // A file that holds its own tiles shows its streets where it has
+        // them: the background's lack of them is not worth a word there.
         if let Some(info) = info
             && !info.detailed
             && !self.map_notes.hinted
+            && !self.map_has_file_tiles()
             && self.map_view().is_some_and(|view| view.zoom >= DETAIL_ZOOM)
         {
             self.map_notes.hinted = true;
@@ -292,6 +313,14 @@ impl Shell {
     /// Whether a map is drawn anywhere: the preview's or a pane's.
     fn any_map(&self) -> bool {
         self.map_shown().is_some() || !self.map_views.is_empty()
+    }
+
+    /// Whether the preview's map draws a file's own tiles.
+    fn map_has_file_tiles(&self) -> bool {
+        matches!(
+            &self.preview.content,
+            Some(PreviewContent::Inspection(display)) if display.data.tiles.is_some()
+        )
     }
 
     /// The map shown in the preview, if one is.

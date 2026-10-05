@@ -56,6 +56,21 @@ the one before, how many between), which the query's dates (`2026-05`) and named
 `2026-02-31`; the year of an instant (the Narrow by bar, a tag location's `year`) is
 `Calendar::year_of`. The period tests moved from the timeline to the calendar.
 
+Tile archives previewed (2026-10-05), the first step of ADR-022's part 4: a PMTiles
+(version 3) or MBTiles file previews as the map it holds, its facts in Details, its raster
+tiles drawn over the background where it has them (a `tiles::Layer` the inspection
+carries; `SourceInfo` says a source's zooms and area, `NoTile` a tile it lacks), a vector
+archive outlined with a word on why it is not drawn. A map placing nothing but an area is
+now fitted to it (`Shapes::new` counts the file's bounds). Checked by the plugin's tests,
+two of them on files the reference `pmtiles` tool wrote (each tile where it was put, told
+by its colour), and on Xvfb in the debug build: a raster PMTiles and its MBTiles copy drawn
+fitted, out to the tile of their shallowest zoom and in past their deepest, their
+attribution above the background's; a vector PMTiles outlined with its layers; a plain
+SQLite file still in the tables preview; idle CPU 0 to 1.5 %, as with no map shown. Not
+checked: a real offline map of either format (none may be copied here), Brotli or
+Zstandard archives (refused with words, untested against a real one), the dark theme.
+Backgrounds from a file remain proposed.
+
 Sidebar tags as pills (2026-10-01): a place with a color is drawn as a
 pill of it, and a group's pills wrap together left-aligned (a justified
 line spreads its last pills to both edges), so twenty tags fit in ten
@@ -1670,7 +1685,8 @@ only network code). Each step below ships on its own.
   `near:` finding the one picture within 500 m, "This area" the four in
   view, and a picture near a town named in Details. Written by two agents
   in parallel for geotagging and place names, integrated with the fields
-  contract. Local PMTiles/MBTiles backgrounds remain proposed.
+  contract. Local PMTiles/MBTiles files preview as their maps (built
+  2026-10-05, ADR-022's part 4); backgrounds from them remain proposed.
 
 Tests and fixtures use invented coordinates only. `bibli-bench gen` gains
 geotagged pictures and a 100 000-point GPX; `budgets.toml` gains the GPX parse

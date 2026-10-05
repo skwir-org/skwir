@@ -3,9 +3,16 @@
 //! the user chooses OpenStreetMap or a server of their own. It is the only
 //! code in bibli that uses the network, and only after that choice;
 //! disabling it withdraws every source and cancels the downloads in flight.
+//!
+//! Tiles kept in a file (`PMTiles`, `MBTiles`: `archive.rs`) are previewed as
+//! the map they hold (`preview.rs`), read from the file alone.
+mod archive;
 mod download;
 mod http;
+mod mbtiles;
 mod outline;
+mod pmtiles;
+mod preview;
 mod server;
 
 use std::sync::{Arc, Weak};
@@ -33,6 +40,8 @@ const OUTLINE: &str = "outline";
 #[derive(Default)]
 pub struct MapTilesPlugin {
     source: Mutex<Option<Arc<Source>>>,
+    /// Ends with the plugin: tile archives previewed are no longer read.
+    previews: Mutex<Option<CancelToken>>,
 }
 
 /// The servers the settings hold.
@@ -143,7 +152,7 @@ impl Plugin for MapTilesPlugin {
         "Map backgrounds"
     }
     fn description(&self) -> &'static str {
-        "Draw maps on the outline of the land, offline, or on OpenStreetMap or tile servers you add once you choose one. Only this plugin uses the network"
+        "Draw maps on the outline of the land, offline, or on OpenStreetMap or tile servers you add once you choose one, and preview maps kept in files (PMTiles, MBTiles). Only this plugin uses the network"
     }
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Previews
@@ -212,6 +221,17 @@ impl Plugin for MapTilesPlugin {
         if let Some(old) = self.source.lock().replace(source) {
             old.downloads.stop();
         }
+        let lifetime = app.lifetime().child();
+        if let Some(old) = self.previews.lock().replace(lifetime.clone()) {
+            old.cancel();
+        }
+        app.previews.register(
+            ID,
+            Arc::new(preview::Provider {
+                scheduler: app.scheduler.clone(),
+                lifetime,
+            }),
+        );
     }
     fn on_settings_changed(&self, app: &App, keys: &[String]) {
         if keys.iter().any(|key| key == SERVERS_KEY) {
@@ -228,6 +248,9 @@ impl Plugin for MapTilesPlugin {
     fn on_disable(&self, _app: &App) {
         if let Some(source) = self.source.lock().take() {
             source.downloads.stop();
+        }
+        if let Some(previews) = self.previews.lock().take() {
+            previews.cancel();
         }
     }
 }
@@ -324,6 +347,8 @@ impl TileSource for Source {
                 attribution: "Natural Earth".into(),
                 attribution_url: Some("https://www.naturalearthdata.com".into()),
                 max_zoom: server::MAX_ZOOM,
+                min_zoom: 0,
+                bounds: None,
                 detailed: false,
                 setting: Some(SOURCE_KEY.into()),
             },
@@ -331,6 +356,8 @@ impl TileSource for Source {
                 attribution: server.attribution.clone(),
                 attribution_url: server.attribution_url.clone(),
                 max_zoom: server.max_zoom,
+                min_zoom: 0,
+                bounds: None,
                 detailed: true,
                 setting: Some(SOURCE_KEY.into()),
             },

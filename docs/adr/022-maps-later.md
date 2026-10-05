@@ -1,9 +1,10 @@
 # ADR-022: Maps, later: search by place, writing locations, names and backgrounds offline
 
 Status: parts 1 to 3 accepted and built, 2026-09-27 (their decisions are
-the "Decided" paragraphs below); part 4 proposed and deferred. Each part
-is decided when its work starts, by amending this ADR or by an ADR of
-its own where it says so.
+the "Decided" paragraphs below); of part 4, archives previewed, 2026-10-05,
+and backgrounds from them proposed and deferred. Each part is decided when
+its work starts, by amending this ADR or by an ADR of its own where it
+says so.
 
 ## Context
 
@@ -210,6 +211,37 @@ What must hold:
   if the system's cannot be relied on, a size to weigh).
 - **No network**: a PMTiles address over HTTP (range requests) is a tile
   server, and would be `map-tiles`' under ADR-020's rules, not this.
+
+**Decided (2026-10-05), the first step: archives previewed.** A PMTiles
+or MBTiles file previews as the map it holds; using one as a background
+is still as proposed above.
+
+- `map-tiles` reads them (`archive.rs`, `pmtiles.rs`, `mbtiles.rs`) and
+  provides their preview, before the tables preview, which would take an
+  `.mbtiles` file as any SQLite database. Neither format is in the MIME
+  database: each is claimed by its extension and confirmed by its first
+  bytes, as the geo plugin's formats are. PMTiles version 3 only, with
+  gzipped or uncompressed parts (Brotli and Zstandard are said, not
+  read); every offset checked against its section and the file, what is
+  inflated bounded. MBTiles through the system's `libsqlite3`, opened as
+  the tables preview opens a database (read-only, immutable, schema not
+  trusted, cancellation interrupting it).
+- **The preview's map draws the file's own tiles over the background**
+  where it has them. The core contract grew for it, as a background from
+  a file will need too: a source says the zooms and the area it holds
+  (`SourceInfo::min_zoom`, `bounds`, `holds`), and answers `NoTile` for a
+  tile it may hold but does not, which is left blank and not asked again;
+  an inspection carries a file's tiles as a `tiles::Layer` (an id, the
+  source, its info read once). The UI keeps a layer's tiles beside the
+  background's, keyed by the layer's id, and draws its attribution above
+  the background's. Its tiles are drawn up to two zooms out of its
+  shallowest, smaller, and enlarged past its deepest.
+- **Vector tiles are not drawn**, as above: the preview says so, outlines
+  the area the file covers, and lists its layers in Details.
+- Checked against files the reference writer made (`pmtiles convert`
+  1.31.2, from MBTiles files `tools/maps/test_archives.py` writes; kept in
+  `crates/plugins/map-tiles/src/testdata/`): every tile where it was put,
+  told by its colour.
 
 ## Consequences
 
