@@ -884,6 +884,14 @@ impl Plugin for PlacesPlugin {
             move |args, app| {
                 let undo = args.target.undo;
                 let path = target(app, args.target)?;
+                // Restored or deleted, a folder of the trash leaves the
+                // bookmark leading nowhere.
+                if bibli_core::op::in_trash(&path).is_some() {
+                    anyhow::bail!(
+                        "“{}” is in the trash: restore it first",
+                        path.file_name().unwrap_or(path.as_os_str()).display()
+                    );
+                }
                 let edit = BookmarkEdit::Add {
                     path,
                     title: args.title,
@@ -1050,10 +1058,11 @@ impl Plugin for PlacesPlugin {
         let shown =
             || Invocation::with_args("places.bookmark", &serde_json::json!({ "shown": true }));
         for (title, command, when) in [
+            // Not a folder of the trash, which `places.bookmark` refuses.
             (
                 "Add to Bookmarks",
                 Invocation::new("places.bookmark"),
-                "single dir !place",
+                "single dir !place !restores",
             ),
             // The folder's own menu, on its background.
             ("Bookmark This Folder", shown(), "empty folder"),
@@ -1408,6 +1417,15 @@ mod tests {
         let again = run("places.bookmark", serde_json::json!({ "path": path(&a) }));
         assert_eq!(again.text, "“it's 100% a folder” is already bookmarked");
         assert!(again.action.is_none());
+        // A folder of the trash is not bookmarked: restored or deleted,
+        // the bookmark would lead nowhere.
+        let trashed = tmp.path().join(".Trash-1000/files/old project");
+        std::fs::create_dir_all(&trashed).unwrap();
+        let refused = app.dispatch(&Invocation::with_args(
+            "places.bookmark",
+            &serde_json::json!({ "path": path(&trashed) }),
+        ));
+        assert!(format!("{:#}", refused.unwrap_err()).contains("is in the trash"));
         run(
             "places.bookmark",
             serde_json::json!({ "path": path(&b), "title": "Bee" }),

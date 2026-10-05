@@ -2,8 +2,8 @@
 use crate::{keymap::RunCommand, shell::Shell, theme::Theme};
 use bibli_core::workspace::PaneId;
 use gpui::{
-    AnyView, App, Context, Div, FocusHandle, Render, SharedString, Stateful, Window, div,
-    prelude::*, px, svg,
+    AnyView, App, Context, Div, FocusHandle, Render, ScrollHandle, SharedString, Stateful, Window,
+    div, prelude::*, px, svg,
 };
 
 pub fn asset(path: &str) -> Option<&'static [u8]> {
@@ -235,6 +235,10 @@ impl Button {
             .label
             .map(crate::elements::clip::text)
             .map_or((None, None), |(label, clip)| (Some(label), Some(clip)));
+        let id = self.id.clone();
+        let revealed = cx
+            .try_global::<RevealRow>()
+            .is_some_and(|reveal| reveal.row.as_ref() == Some(&id));
         div()
             .id(self.id)
             .relative()
@@ -258,7 +262,14 @@ impl Button {
             .focusable()
             .tab_index(0)
             .tab_stop(enabled)
-            .key_context("ToolbarButton")
+            // Its id says which row of a popup the keyboard reached
+            // (`Shell::reveal_focused_row`).
+            .key_context({
+                let mut context = gpui::KeyContext::default();
+                context.add("ToolbarButton");
+                context.set(ROW, id);
+                context
+            })
             .when(self.active, |d| {
                 d.bg(theme.selection_bg).text_color(theme.selection_text)
             })
@@ -309,6 +320,7 @@ impl Button {
                 )
             })
             .children(self.anchor.map(|anchor| anchor.marker()))
+            .when(revealed, |d| d.child(reveal_marker()))
             .on_click(cx.listener(move |this, _, window, cx| {
                 if enabled {
                     invoke(this, pane, &command, args.clone(), window, cx);
@@ -398,6 +410,30 @@ impl Shell {
         was.as_deref() != Some(key) && !self.just_dismissed(key)
     }
 
+    /// The keyboard moved to another row of the open popup (the arrows,
+    /// Tab, Home, End): that row, once drawn, scrolls into view
+    /// (`RevealRow`). Which row it is is read from the focused element's
+    /// key context, never from layout.
+    pub(crate) fn reveal_focused_row(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let stack = window.context_stack();
+        if !stack.iter().any(|context| context.contains("ToolbarPopup")) {
+            return;
+        }
+        let Some(row) = stack
+            .iter()
+            .rev()
+            .find(|context| context.contains("ToolbarButton"))
+            .and_then(|context| context.get(ROW).cloned())
+        else {
+            return;
+        };
+        cx.set_global(RevealRow {
+            row: Some(row),
+            scroll: None,
+        });
+        cx.notify();
+    }
+
     /// `ui.toolbar_first`, `ui.toolbar_last`: the keyboard to the first
     /// or the last row of the popup it is in. GPUI knows only the stop
     /// before and the one after: walk them while the keyboard stays in the
@@ -477,6 +513,9 @@ pub struct Popup {
     pub kind: &'static str,
     pub focus: FocusHandle,
     previous: crate::modal::FocusReturn,
+    /// How far its rows are scrolled, for the keyboard to bring the row
+    /// it reaches into view (`RevealRow`).
+    scroll: ScrollHandle,
 }
 impl Popup {
     pub fn new(kind: &'static str, window: &mut Window, cx: &mut Context<Shell>) -> Self {
@@ -487,6 +526,7 @@ impl Popup {
             kind,
             focus,
             previous,
+            scroll: ScrollHandle::new(),
         }
     }
     pub fn restore(self, window: &mut Window) {
@@ -500,6 +540,12 @@ pub fn popup_panel(
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> Stateful<Div> {
+    // A row the keyboard reached is brought into view in this popup.
+    if let Some(reveal) = cx.try_global::<RevealRow>()
+        && reveal.row.is_some()
+    {
+        cx.global_mut::<RevealRow>().scroll = Some(popup.scroll.clone());
+    }
     div()
         .id("toolbar-popup")
         .tab_group()
@@ -507,7 +553,8 @@ pub fn popup_panel(
         .w(px(264.))
         .min_h_0()
         .overflow_y_scroll()
-        .p_2()
+        .track_scroll(&popup.scroll)
+        .p(px(POPUP_PAD))
         .flex()
         .flex_col()
         .gap_1()
@@ -539,6 +586,64 @@ pub fn popup_panel(
                 cx,
             );
         }))
+}
+
+/// The key a button's id goes under in its key context.
+const ROW: &str = "row";
+
+/// The room around a popup's rows, which a row brought into view keeps.
+const POPUP_PAD: f32 = 8.;
+
+/// The row of the open popup the keyboard just reached
+/// (`Shell::reveal_focused_row`), and the scroll of the popup drawing it
+/// (`popup_panel`). Popups open one at a time: one is enough.
+#[derive(Default)]
+pub(crate) struct RevealRow {
+    row: Option<SharedString>,
+    scroll: Option<ScrollHandle>,
+}
+
+impl gpui::Global for RevealRow {}
+
+/// Drawn in the row `RevealRow` names: in prepaint, where the row's
+/// bounds are real, it scrolls the popup the least that shows the row
+/// whole, once, and asks for the frame that draws it there.
+fn reveal_marker() -> gpui::AnyElement {
+    gpui::canvas(
+        |row, window, cx| {
+            // Asked once, whatever comes of it.
+            let scroll = cx
+                .try_global::<RevealRow>()
+                .and_then(|reveal| reveal.scroll.clone());
+            cx.set_global(RevealRow::default());
+            let Some(scroll) = scroll else {
+                return;
+            };
+            let area = scroll.bounds();
+            // Another element of the same id, not the popup's row.
+            if row.left() < area.left() || row.right() > area.right() {
+                return;
+            }
+            let (top, bottom) = (area.top() + px(POPUP_PAD), area.bottom() - px(POPUP_PAD));
+            let mut offset = scroll.offset();
+            if row.top() < top {
+                offset.y += top - row.top();
+            } else if row.bottom() > bottom {
+                offset.y -= row.bottom() - bottom;
+            } else {
+                return;
+            }
+            scroll.set_offset(offset);
+            // A refresh asked while drawing is dropped: the next frame is.
+            window.on_next_frame(|window, _| window.refresh());
+        },
+        |_, (), _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+    .into_any_element()
 }
 
 #[cfg(test)]

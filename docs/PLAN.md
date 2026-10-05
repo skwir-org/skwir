@@ -1356,6 +1356,16 @@ volume trashes are listed). Left: a row the keyboard reaches beyond a
 popup's visible height is not scrolled into view (the arrows had that
 already); "Add to Bookmarks" is offered on a trashed folder.
 
+What that left (2026-10-05): a row the keyboard reaches in a popup
+taller than the window scrolls into view (the arrows, Tab, Home, End:
+`toolbar::RevealRow`, the row scrolling its popup in prepaint and asking
+for the next frame, since a refresh asked while drawing is dropped), and
+a folder of the trash is not offered to the bookmarks, nor bookmarked
+(`places.bookmark` refuses it: restored or deleted, the bookmark would
+lead nowhere). Checked on Xvfb with a synthetic home: End, Up and Home in
+a menu of sixty folders, the padding kept at both ends, and a trashed
+folder's menu.
+
 ## Phase 0 — Foundations and toolkit spike (~2 weeks)
 
 Goal: a repo that can measure itself, and a toolkit decision backed by numbers.

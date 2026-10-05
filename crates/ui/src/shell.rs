@@ -1453,10 +1453,22 @@ impl Shell {
             // The focused button and the open popup answer these; one
             // that reaches here found neither.
             "toolbar_activate" | "toolbar_close" => {}
-            "toolbar_next" => window.focus_next(),
-            "toolbar_prev" => window.focus_prev(),
-            "toolbar_first" => self.toolbar_popup_end(false, window, cx),
-            "toolbar_last" => self.toolbar_popup_end(true, window, cx),
+            "toolbar_next" => {
+                window.focus_next();
+                self.reveal_focused_row(window, cx);
+            }
+            "toolbar_prev" => {
+                window.focus_prev();
+                self.reveal_focused_row(window, cx);
+            }
+            "toolbar_first" => {
+                self.toolbar_popup_end(false, window, cx);
+                self.reveal_focused_row(window, cx);
+            }
+            "toolbar_last" => {
+                self.toolbar_popup_end(true, window, cx);
+                self.reveal_focused_row(window, cx);
+            }
             "toolbar_menu" => self.toggle_toolbar_menu(args, window, cx),
             "history_menu" => self.toggle_history_menu(args, window, cx),
             "subfolder_menu" => self.toggle_subfolder_menu(args, window, cx),

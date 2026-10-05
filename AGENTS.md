@@ -66,7 +66,10 @@ current source before assuming a planned crate, command, or API exists.
 - **UI layout rule.** Never derive layout from a measured size in `render`.
   Size-dependent layout lives in an element's `prepaint`, where the bounds are
   real (`crates/ui/src/elements/`). The only permitted later reads of prepaint
-  values are for keyboard paging.
+  values are for keyboard paging. What prepaint changes that shows only
+  in the next frame (a scroll offset) asks for that frame with
+  `window.on_next_frame`, once: a `refresh` asked while drawing is
+  dropped.
 - **Toolbars.** Reuse command-backed buttons and bundled symbolic SVGs in
   `crates/ui/src/toolbar.rs`. Responsive rows select variants by intrinsic
   measurement in `elements/adaptive.rs` prepaint; do not maintain pixel
@@ -164,7 +167,10 @@ current source before assuming a planned crate, command, or API exists.
   closes the popup open the same way, so no list says which command keeps
   which popup. A toolbar popup's rows are buttons: the arrows walk them,
   and Home and End reach its ends (`ui.toolbar_first`, `ui.toolbar_last`,
-  walking GPUI's tab order while the keyboard stays in the popup). The
+  walking GPUI's tab order while the keyboard stays in the popup); the
+  row reached scrolls into view (`toolbar::RevealRow`: the shell reads
+  which from the focused button's key context, its id under `row`, and
+  the row scrolls its popup in prepaint, where its bounds are real). The
   view buttons are the views that show the listing (`ViewRole::Listing`:
   list, grid, columns); a shape chosen now and then (`ViewRole::Alternate`:
   the tree, the board) and a lens, a view that gathers data of its own
