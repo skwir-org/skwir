@@ -302,6 +302,30 @@ one, read the same budgets over by as much, and five paired rounds on
 way). To run again on a quiet machine before committing; `just
 idle-pss` was not run (it opens a window in the session).
 
+Phase 5a's gate passes (2026-10-06). `just check-cross` is part of
+`just lint-all` and green. Every step above has its code or says what
+is not done (G, I and K brought up to date). The Linux packages build
+and install on Debian 13, Fedora 44 and Arch, `bibli` alone and then
+with the others: every program found and working, and the licences in
+place (a new check of `linux/check.sh`, which found Fedora's dropped on
+a system installed without documents; fixed). Linux's tests pass
+(`just test-all`, 1176), and so do poppler-check and mupdf-check.
+Budgets, against the commit before Phase 5a (`e4c6322`): `just
+bench-check` meets all 36 on an idle machine (the listing stream's
+three timings read over only while the machine compiled or was loaded,
+as in the runs above); `just idle-pss`, the two builds alternated back
+to back, reads an own share of 95.8 MiB against 95.4 (the binary's
+0.4 MiB) and a first frame no slower. The first frame itself could not
+be measured that day: the build that read a median of 114.5 ms on
+2026-10-04 (`23e6e59`), alternated with the two, read 180 to 851 ms,
+the machine loaded by other programs (load average 4 to 10). ADR-002's
+150 ms is to be measured again on a quiet machine. Found with it: the
+own share grew 3.9 MiB between 2026-10-04 and Phase 5a (91.5 to 95.4
+MiB in the same runs, 3.2 of it anonymous memory at idle), by the work
+of 10-04 and 10-05, before Phase 5; 4.2 MiB of the budget is left.
+5b, on the machines, starts from this plan's steps and
+`docs/PORTING.md`.
+
 Calendar periods, one reading (2026-10-05): the deviation "the query language's date
 parser and the timeline's calendar math are duplicated" is closed. Weeks, months and years
 are `bibli_platform::calendar::Period` (the first day of the one holding a day, the next,
@@ -2097,7 +2121,7 @@ what it touched.
   on macOS (`phys_footprint`) and Windows (private working set), and
   how each is measured (an ADR); measured in 5b.
 
-**Done when (5a, on Linux):** `just check-cross` is part of
+**Done when (5a, on Linux):** passed 2026-10-06 (status above). `just check-cross` is part of
 `lint-all` and green; every step above has its code or is recorded as
 not done, with what ran under Wine and what no machine ran; the Linux
 packages build and start; Linux's tests and budgets are unchanged.
