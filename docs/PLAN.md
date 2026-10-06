@@ -380,6 +380,19 @@ three engines through the reader's session, sandboxed against not
 13), its pages no slower; a page of text in a font it does not embed
 drawn to the same pixels.
 
+The icon theme is a setting of bibli's own (2026-10-07, as the user
+asked): Appearance's Icon theme, Automatic (the desktop's, as before)
+or any icon theme installed, listed by its name when the settings open
+(on a worker: it reads the icon folders), stored by its folder's
+(`ui.icon_theme`); one no longer installed follows the desktop and is
+said missing. A change applies at once: the theme's lookups are
+forgotten and asked again (`IconCache::set_theme`, the platform's cache
+by generation, so a lookup begun before a change keeps its answer to
+itself). The free desktops' only: macOS and Windows draw the system's
+icons. Checked in a window (Xvfb): with GNOME's setting saying Breeze
+and bibli's Adwaita, Adwaita's icons; the list of themes by name, no
+cursor theme nor hicolor; Papirus chosen, every icon redrawn in it.
+
 Calendar periods, one reading (2026-10-05): the deviation "the query language's date
 parser and the timeline's calendar math are duplicated" is closed. Weeks, months and years
 are `bibli_platform::calendar::Period` (the first day of the one holding a day, the next,

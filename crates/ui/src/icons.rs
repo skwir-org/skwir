@@ -213,9 +213,27 @@ pub struct IconCache {
     known: HashMap<u16, HashMap<Want, Option<Pic>>>,
     wanted: HashSet<(Want, u16)>,
     results: Arc<Mutex<Resolved>>,
+    /// The theme the setting names (`ui.icon_theme`); `None`: the
+    /// desktop's.
+    theme: Option<String>,
 }
 
 impl IconCache {
+    /// Use the icon theme the setting names (`None`: the desktop's). What
+    /// was looked up is forgotten and asked again, and answers still on
+    /// their way, for the theme before, are dropped. Whether it changed.
+    pub fn set_theme(&mut self, theme: Option<String>) -> bool {
+        if self.theme == theme {
+            return false;
+        }
+        icons::choose_theme(theme.as_deref());
+        self.theme = theme;
+        self.known.clear();
+        self.wanted.clear();
+        self.results = Arc::default();
+        true
+    }
+
     fn lookup(&mut self, want: Want, size: u16) -> Option<Pic> {
         if let Some(found) = self.known.get(&size).and_then(|known| known.get(&want)) {
             return found.clone();
@@ -594,8 +612,35 @@ pub fn themed(pic: &Pic, size: f32, color: Hsla) -> AnyElement {
 
 #[cfg(test)]
 mod tests {
-    use super::{Pic, is_svg, is_symbolic, preloaded, raster_side};
+    use super::{IconCache, Pic, Want, is_svg, is_symbolic, preloaded, raster_side};
     use std::path::Path;
+    use std::sync::Arc;
+
+    #[test]
+    fn another_theme_forgets_the_icons_and_what_was_on_its_way() {
+        let mut cache = IconCache::default();
+        let folder = Pic::Theme(Path::new("/icons/breeze/places/16/folder.svg").into());
+        cache
+            .known
+            .entry(16)
+            .or_default()
+            .insert(Want::Folder, Some(folder.clone()));
+        assert_eq!(cache.folder(16), Some(folder.clone()));
+        let on_its_way = Arc::clone(&cache.results);
+        assert!(cache.set_theme(Some("Adwaita".into())));
+        assert!(
+            !cache.set_theme(Some("Adwaita".into())),
+            "the same theme again"
+        );
+        // An answer for the theme before arrives: it is not taken.
+        on_its_way
+            .lock()
+            .unwrap()
+            .push(((Want::Folder, 16), Some(folder)));
+        assert!(!cache.absorb());
+        assert_eq!(cache.folder(16), None, "asked again");
+        cache.set_theme(None);
+    }
 
     #[test]
     fn an_icon_in_the_color_schemes_colors_is_a_shape_drawn_in_the_text_color() {

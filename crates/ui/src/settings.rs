@@ -41,6 +41,12 @@ pub const READING_OWNER: &str = "reading";
 pub const NOTES_OWNER: &str = bibli_core::notes::SETTINGS;
 
 pub const THEME_KEY: &str = "ui.theme";
+/// The icon theme bibli draws with, by its folder's name; Automatic is the
+/// desktop's (`icons::IconCache::set_theme`). The free desktops' only:
+/// macOS and Windows draw the system's own icons.
+pub const ICON_THEME_KEY: &str = "ui.icon_theme";
+/// `ui.icon_theme`'s Automatic.
+pub const ICON_THEME_AUTO: &str = "auto";
 pub const DATES_KEY: &str = "ui.date_format";
 /// Whether the grid crops thumbnails to fill their box.
 pub const GRID_FILL_KEY: &str = "ui.grid_fill";
@@ -75,6 +81,65 @@ pub const CONTINUE_CHOICES: [&str; 3] = [
     crate::player::Continue::Shuffle.key(),
 ];
 
+/// The icon theme setting: Automatic, then the themes installed, by name,
+/// once listed (`list_icon_themes`: it reads the icon folders, a worker's
+/// work), whose value is the theme's folder (`breeze`). The one chosen is
+/// always a choice, said missing once the list shows it is not installed.
+pub fn icon_theme_spec(
+    chosen: &str,
+    themes: Option<&[bibli_platform::icons::Theme]>,
+) -> SettingSpec {
+    let mut choices = vec![(ICON_THEME_AUTO.to_owned(), "Automatic".to_owned())];
+    if let Some(themes) = themes {
+        choices.extend(themes.iter().map(|t| (t.folder.clone(), t.name.clone())));
+    }
+    if !chosen.is_empty() && !choices.iter().any(|(value, _)| value == chosen) {
+        let label = if themes.is_some() {
+            format!("{chosen} (not installed)")
+        } else {
+            chosen.to_owned()
+        };
+        choices.push((chosen.to_owned(), label));
+    }
+    let pairs: Vec<(&str, &str)> = choices
+        .iter()
+        .map(|(value, label)| (value.as_str(), label.as_str()))
+        .collect();
+    SettingSpec::choice(
+        ICON_THEME_KEY,
+        "Icon theme",
+        "The icons bibli draws files, folders and places with. Automatic follows your desktop's choice.",
+        ICON_THEME_AUTO,
+        &pairs,
+    )
+}
+
+/// List the installed icon themes on a worker and declare the icon theme
+/// setting again with them: when the settings open, where the list is
+/// read. Nothing where the system draws its own icons.
+pub(crate) fn list_icon_themes(app: &Arc<App>) {
+    if bibli_platform::system_icons::AVAILABLE {
+        return;
+    }
+    let weak = app.weak();
+    app.scheduler.spawn(
+        bibli_core::scheduler::Priority::Normal,
+        "icon-themes",
+        app.lifetime().child(),
+        move || {
+            let themes = bibli_platform::icons::installed_themes();
+            let Some(app) = weak.upgrade() else { return };
+            let chosen = app
+                .settings
+                .get::<String>(ICON_THEME_KEY)
+                .unwrap_or_default();
+            app.settings
+                .declare(icon_theme_spec(&chosen, Some(&themes)));
+            app.wake();
+        },
+    );
+}
+
 /// Declare the shell's own preferences. They live in the shell's namespaces
 /// (`ui`, `reading`) and exist only while a shell does, so headless tools
 /// never see them.
@@ -94,6 +159,17 @@ pub fn declare(app: &App) {
         "auto",
         &[("auto", "Automatic"), ("light", "Light"), ("dark", "Dark")],
     ));
+    if !bibli_platform::system_icons::AVAILABLE {
+        let chosen = app
+            .settings
+            .get::<String>(ICON_THEME_KEY)
+            .unwrap_or_default();
+        app.settings.declare(icon_theme_spec(&chosen, None));
+        // Before anything is drawn, as the shell will say it again.
+        bibli_platform::icons::choose_theme(
+            Some(chosen.as_str()).filter(|c| *c != ICON_THEME_AUTO),
+        );
+    }
     app.settings.declare(SettingSpec::choice(
         DATES_KEY,
         "Dates",
@@ -502,6 +578,7 @@ impl SettingsView {
         };
         view.rebuild(window, cx);
         view.probe_requirements();
+        list_icon_themes(&view.app);
         window.focus(&view.nav);
         view.open_target(target, window, cx);
         view
@@ -1185,7 +1262,46 @@ impl crate::shell::Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::Page;
+    use super::{ICON_THEME_AUTO, Page, icon_theme_spec};
+    use bibli_platform::icons::Theme;
+
+    #[test]
+    fn the_icon_theme_is_automatic_or_one_installed_by_its_folder() {
+        let themes = [
+            Theme {
+                folder: "Adwaita".into(),
+                name: "Adwaita".into(),
+            },
+            Theme {
+                folder: "breeze".into(),
+                name: "Breeze".into(),
+            },
+        ];
+        let listed = icon_theme_spec(ICON_THEME_AUTO, Some(&themes));
+        assert_eq!(listed.constraints.choices, ["auto", "Adwaita", "breeze"]);
+        assert_eq!(
+            listed.constraints.choice_labels,
+            ["Automatic", "Adwaita", "Breeze"]
+        );
+        assert_eq!(listed.default.as_str(), Some("auto"));
+        // Chosen and listed: no more than its name.
+        let chosen = icon_theme_spec("breeze", Some(&themes));
+        assert_eq!(chosen.constraints.choices.len(), 3);
+        // Chosen, not listed yet: a choice under its folder's name.
+        let early = icon_theme_spec("Papirus", None);
+        assert_eq!(early.constraints.choices, ["auto", "Papirus"]);
+        assert_eq!(early.constraints.choice_labels, ["Automatic", "Papirus"]);
+        // Chosen and no longer installed: said so.
+        let gone = icon_theme_spec("Papirus", Some(&themes));
+        assert_eq!(
+            gone.constraints.choices.last().map(String::as_str),
+            Some("Papirus")
+        );
+        assert_eq!(
+            gone.constraints.choice_labels.last().map(String::as_str),
+            Some("Papirus (not installed)")
+        );
+    }
 
     #[test]
     fn a_page_is_named_by_its_word_or_its_namespace() {

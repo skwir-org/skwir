@@ -1998,6 +1998,12 @@ impl Shell {
                 .settings
                 .get::<bool>(crate::settings::SINGLE_TAB_KEY)
                 .unwrap_or(false);
+            let icon_theme = self
+                .app
+                .settings
+                .get::<String>(crate::settings::ICON_THEME_KEY)
+                .filter(|theme| theme != crate::settings::ICON_THEME_AUTO);
+            self.icons.set_theme(icon_theme);
             self.reading_measure = crate::markdown::measure(
                 &self
                     .app

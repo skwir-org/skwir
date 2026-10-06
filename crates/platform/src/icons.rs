@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use crate::mime::Mime;
@@ -23,11 +24,89 @@ pub fn rasterize(path: &std::path::Path, side: u32) -> anyhow::Result<crate::ins
     crate::inspection::drawing_within(&bytes, side)
 }
 
-/// The active icon theme name. Lists the installed themes the first time:
+/// The theme the user chose in bibli (`ui.icon_theme`), by its folder's
+/// name; `None` follows the desktop.
+fn chosen() -> &'static Mutex<Option<String>> {
+    static CHOSEN: Mutex<Option<String>> = Mutex::new(None);
+    &CHOSEN
+}
+
+/// The theme in use, once resolved since the last choice: `None` until a
+/// lookup needs it.
+fn resolved() -> &'static Mutex<Option<String>> {
+    static RESOLVED: Mutex<Option<String>> = Mutex::new(None);
+    &RESOLVED
+}
+
+/// Advances with each choice: a lookup begun before it keeps its answer to
+/// itself, never the cache.
+static GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Use `theme` (a folder's name, `breeze`), or the desktop's when `None`:
+/// the icon theme setting. What was looked up is forgotten, so the next
+/// lookups read the new theme. No I/O: callable while drawing.
+pub fn choose_theme(theme: Option<&str>) {
+    let theme = theme
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_owned);
+    if let Ok(mut chosen) = chosen().lock() {
+        if *chosen == theme {
+            return;
+        }
+        *chosen = theme;
+    }
+    GENERATION.fetch_add(1, Ordering::SeqCst);
+    if let Ok(mut resolved) = resolved().lock() {
+        *resolved = None;
+    }
+    if let Ok(mut cache) = cache().lock() {
+        cache.clear();
+    }
+}
+
+/// The desktop's theme, read once (`imp::detect_theme`).
+static DETECTED: OnceLock<String> = OnceLock::new();
+
+/// The active icon theme name: the one chosen in bibli when it is
+/// installed, else the desktop's. Reads the icon folders the first time:
 /// blocks.
 pub fn theme_name() -> String {
-    static NAME: OnceLock<String> = OnceLock::new();
-    NAME.get_or_init(imp::detect_theme).clone()
+    if let Some(name) = resolved().lock().ok().and_then(|r| r.clone()) {
+        return name;
+    }
+    let generation = GENERATION.load(Ordering::SeqCst);
+    let chosen = chosen().lock().ok().and_then(|c| c.clone());
+    let name = chosen
+        .filter(|theme| imp::is_installed(theme))
+        .unwrap_or_else(|| DETECTED.get_or_init(imp::detect_theme).clone());
+    // Kept unless a choice came meanwhile.
+    if let Ok(mut resolved) = resolved().lock()
+        && GENERATION.load(Ordering::SeqCst) == generation
+    {
+        *resolved = Some(name.clone());
+    }
+    name
+}
+
+/// An installed icon theme: its folder's name, which settings and lookups
+/// use (`breeze`), and the name it gives itself (`Breeze`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Theme {
+    pub folder: String,
+    pub name: String,
+}
+
+/// The icon themes installed, by name; not the cursor themes, nor hicolor,
+/// the base every theme falls back to. Reads the icon folders: blocks.
+pub fn installed_themes() -> Vec<Theme> {
+    imp::installed_themes()
+}
+
+/// Whether the theme `folder` names is installed. Reads the icon folders:
+/// blocks.
+pub fn is_installed(folder: &str) -> bool {
+    imp::is_installed(folder)
 }
 
 fn cache() -> &'static Mutex<HashMap<(String, u16), Option<PathBuf>>> {
@@ -50,8 +129,11 @@ pub fn lookup(name: &str, size: u16) -> Option<PathBuf> {
     if let Some(hit) = cache().lock().ok()?.get(&key) {
         return hit.clone();
     }
+    let generation = GENERATION.load(Ordering::SeqCst);
     let found = imp::lookup(name, size);
-    if let Ok(mut c) = cache().lock() {
+    if let Ok(mut c) = cache().lock()
+        && GENERATION.load(Ordering::SeqCst) == generation
+    {
         c.insert(key, found.clone());
     }
     found
@@ -170,6 +252,61 @@ mod imp {
             .collect()
     }
 
+    /// Whether the theme `name` is installed where themes are.
+    pub fn is_installed(name: &str) -> bool {
+        installed(&theme_folders(), name)
+    }
+
+    /// The icon themes installed where themes are.
+    pub fn installed_themes() -> Vec<super::Theme> {
+        themes_in(&theme_folders())
+    }
+
+    /// The icon themes in `folders`, the first of a name winning (the
+    /// user's own before the system's), sorted by name without case. A
+    /// theme is a folder with an `index.theme` whose `[Icon Theme]` lists
+    /// `Directories`: a cursor theme lists none. Hicolor, the base every
+    /// theme falls back to, and `default`, a cursor theme's alias, are left
+    /// out.
+    pub(super) fn themes_in(folders: &[PathBuf]) -> Vec<super::Theme> {
+        let mut found: Vec<super::Theme> = Vec::new();
+        for folder in folders {
+            let Ok(entries) = std::fs::read_dir(folder) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let Ok(name) = entry.file_name().into_string() else {
+                    continue;
+                };
+                if matches!(name.as_str(), "hicolor" | "default")
+                    || found.iter().any(|theme| theme.folder == name)
+                {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(entry.path().join("index.theme")) else {
+                    continue;
+                };
+                let field = |wanted: &str| {
+                    crate::keyfile::entries(&text)
+                        .find(|(group, key, _)| *group == "Icon Theme" && *key == wanted)
+                        .map(|(_, _, value)| value.trim().to_owned())
+                };
+                if field("Directories").is_none_or(|d| d.is_empty()) {
+                    continue;
+                }
+                let shown = field("Name")
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| name.clone());
+                found.push(super::Theme {
+                    folder: name,
+                    name: shown,
+                });
+            }
+        }
+        found.sort_by_key(|theme| theme.name.to_lowercase());
+        found
+    }
+
     /// Whether the theme `name` (its folder's name, as settings and
     /// lookups name it: `breeze`, never its display name `Breeze`) is
     /// installed in one of `folders`.
@@ -265,6 +402,12 @@ mod imp {
     pub fn detect_theme() -> String {
         String::new()
     }
+    pub fn is_installed(_name: &str) -> bool {
+        false
+    }
+    pub fn installed_themes() -> Vec<super::Theme> {
+        Vec::new()
+    }
     pub fn lookup(_name: &str, _size: u16) -> Option<PathBuf> {
         None
     }
@@ -317,6 +460,7 @@ mod rasterize_tests {
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn folder_resolves_and_is_cached() {
@@ -372,6 +516,91 @@ mod tests {
             "breeze"
         );
         assert_eq!(kde_theme(None), "breeze");
+    }
+
+    #[test]
+    fn the_installed_themes_are_the_icon_themes_each_once_by_name() {
+        let user = tempfile::tempdir().unwrap();
+        let system = tempfile::tempdir().unwrap();
+        let theme = |root: &Path, folder: &str, text: &str| {
+            std::fs::create_dir_all(root.join(folder)).unwrap();
+            std::fs::write(root.join(folder).join("index.theme"), text).unwrap();
+        };
+        theme(
+            user.path(),
+            "papirus",
+            "[Icon Theme]\nName=Papirus\nDirectories=16x16/apps\n",
+        );
+        theme(
+            user.path(),
+            "breeze",
+            "[Icon Theme]\nName=Breeze\nDirectories=places/16\n",
+        );
+        // A cursor theme names no directories.
+        theme(
+            user.path(),
+            "Bibata",
+            "[Icon Theme]\nName=Bibata\nInherits=Adwaita\n",
+        );
+        theme(
+            system.path(),
+            "breeze",
+            "[Icon Theme]\nName=Breeze (system)\nDirectories=x\n",
+        );
+        theme(
+            system.path(),
+            "Adwaita",
+            "[Icon Theme]\nName=Adwaita\nDirectories=16x16/places\n",
+        );
+        theme(
+            system.path(),
+            "hicolor",
+            "[Icon Theme]\nName=Hicolor\nDirectories=16x16/apps\n",
+        );
+        theme(
+            system.path(),
+            "default",
+            "[Icon Theme]\nName=Default\nDirectories=x\n",
+        );
+        std::fs::create_dir_all(system.path().join("no-index")).unwrap();
+        let found = imp::themes_in(&[user.path().to_owned(), system.path().to_owned()]);
+        let found: Vec<(&str, &str)> = found
+            .iter()
+            .map(|t| (t.folder.as_str(), t.name.as_str()))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("Adwaita", "Adwaita"),
+                ("breeze", "Breeze"),
+                ("papirus", "Papirus")
+            ]
+        );
+    }
+
+    #[test]
+    fn a_theme_chosen_in_bibli_is_used_while_it_is_installed() {
+        let detected = theme_name();
+        // A theme of the test's own, where themes are looked for (the
+        // isolated data folder nextest gives each test).
+        let data = crate::xdg::data_home().unwrap();
+        let folder = format!("bibli-test-theme-{}", std::process::id());
+        let theme = data.join("icons").join(&folder);
+        std::fs::create_dir_all(&theme).unwrap();
+        std::fs::write(
+            theme.join("index.theme"),
+            "[Icon Theme]\nName=Test\nDirectories=16x16/places\n",
+        )
+        .unwrap();
+        choose_theme(Some(&folder));
+        assert_eq!(theme_name(), folder);
+        assert!(installed_themes().iter().any(|t| t.folder == folder));
+        // One no longer installed follows the desktop.
+        choose_theme(Some("bibli-test-absent-theme"));
+        assert_eq!(theme_name(), detected);
+        choose_theme(None);
+        assert_eq!(theme_name(), detected);
+        std::fs::remove_dir_all(&theme).unwrap();
     }
 
     #[test]
