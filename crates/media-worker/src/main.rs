@@ -480,17 +480,21 @@ fn spectrum_rate(spectrum: &gst::Element) -> Option<u32> {
     u32::try_from(rate).ok()
 }
 
-fn run() -> anyhow::Result<()> {
-    if let Err(error) = gst::init() {
-        reply(&Reply::Unavailable(error.to_string()))?;
-        return Ok(());
-    }
+/// Whether `GStreamer` can play here: it starts, and has the playback
+/// plugins (playbin3, appsink), a package of their own on most systems.
+fn playable() -> Result<(), String> {
+    gst::init().map_err(|error| error.to_string())?;
     if gst::ElementFactory::find("playbin3").is_none()
         || gst::ElementFactory::find("appsink").is_none()
     {
-        reply(&Reply::Unavailable(
-            "Install GStreamer base playback plugins".into(),
-        ))?;
+        return Err("Install GStreamer base playback plugins".into());
+    }
+    Ok(())
+}
+
+fn run() -> anyhow::Result<()> {
+    if let Err(reason) = playable() {
+        reply(&Reply::Unavailable(reason))?;
         return Ok(());
     }
     let mut args = std::env::args_os().skip(1);
@@ -862,6 +866,18 @@ fn handle_message(
     Ok(())
 }
 fn main() {
+    // `--probe`, bibli's settings asking whether this helper works here
+    // (`platform::process::probe`): GStreamer and its playback plugins.
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == "--probe")
+    {
+        if let Err(reason) = playable() {
+            eprintln!("{reason}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if let Err(error) = run() {
         let _ = reply(&Reply::Error(format!("{error:#}")));
     }

@@ -332,6 +332,15 @@ mod native {
     }
 }
 fn main() {
+    // `--probe`, bibli's settings asking whether this helper works here
+    // (`platform::process::probe`): being started at all says its
+    // libraries are there.
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == "--probe")
+    {
+        return;
+    }
     if let Err(error) = native::run() {
         eprintln!("{error:#}");
         std::process::exit(1);

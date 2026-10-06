@@ -31,7 +31,7 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
         Arc::new(bibli_plugin_usage::UsagePlugin::default()),
         Arc::new(bibli_plugin_timeline::TimelinePlugin::default()),
         Arc::new(bibli_plugin_preview_media::PreviewPlugin::default()),
-        Arc::new(bibli_plugin_preview_documents::PreviewPlugin),
+        Arc::new(bibli_plugin_preview_documents::PreviewPlugin::default()),
         Arc::new(bibli_plugin_preview_markdown::PreviewPlugin),
         Arc::new(bibli_plugin_preview_archives::PreviewPlugin),
         Arc::new(bibli_plugin_preview_epub::PreviewPlugin),

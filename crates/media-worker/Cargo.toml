@@ -14,5 +14,8 @@ gstreamer = "0.24"
 gstreamer-app = "0.24"
 gstreamer-video = "0.24"
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true

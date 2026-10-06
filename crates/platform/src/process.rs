@@ -53,12 +53,47 @@ impl Worker {
             .with_context(|| format!("Install {} to {purpose}", self.executable))
     }
 
+    /// Whether it can work here: found, and answering `--probe` (`probe`).
+    /// Starts it: call from a worker.
+    pub fn works(&self) -> bool {
+        self.works_with(&[])
+    }
+
+    /// [`Worker::works`], told what it would be launched with (`envs`:
+    /// `PDFium`'s library as the settings name it).
+    pub fn works_with(&self, envs: &[(&str, &std::ffi::OsStr)]) -> bool {
+        self.find().is_some_and(|path| probe(&path, envs))
+    }
+
     /// What a plugin needing it lists (`Plugin::requirements`), probed as
-    /// it is found.
+    /// the settings show it: installed only where it works (`works`), not
+    /// where its program is and its libraries are not.
     pub fn requirement(self, purpose: &str) -> bibli_core::plugin::Requirement {
-        bibli_core::plugin::Requirement::new(self.executable, purpose, move || {
-            self.find().is_some()
-        })
+        bibli_core::plugin::Requirement::new(self.executable, purpose, move || self.works())
+    }
+}
+
+/// How long a helper may take to answer `--probe`: `GStreamer`'s first
+/// start reads every plugin it has.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Whether the helper at `path` can work here: run with `--probe`, the
+/// one argument every helper of bibli's answers before any other, it
+/// checks what it needs beside the libraries it links (`PDFium`'s, which
+/// it opens; `GStreamer`'s playback plugins) and exits 0 when it has it,
+/// else non-zero, saying why. One whose library is missing is refused by
+/// the system before it starts (the loader's 127 on Linux, an abort on
+/// macOS, a missing DLL on Windows), which fails the probe too. A helper
+/// that hangs is no helper.
+pub fn probe(path: &Path, envs: &[(&str, &std::ffi::OsStr)]) -> bool {
+    let mut command = Command::new(path);
+    command.arg("--probe").envs(envs.iter().copied());
+    match run(&mut command, &CancelToken::new(), PROBE_TIMEOUT) {
+        Ok(_) => true,
+        Err(error) => {
+            tracing::debug!("{} cannot work here: {error:#}", path.display());
+            false
+        }
     }
 }
 
@@ -552,6 +587,39 @@ mod reaper {
 #[cfg_attr(not(unix), allow(dead_code, unused_imports))]
 mod tests {
     use super::*;
+
+    // Scripts stand in for helpers.
+    #[cfg(unix)]
+    #[test]
+    fn a_helper_works_only_where_it_answers_its_probe() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let helper = |name: &str, body: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        };
+        let works = helper("works", r#"[ "$1" = --probe ] && exit 0; exit 2"#);
+        assert!(probe(&works, &[]));
+        // What the loader says of a missing library, and a helper lacking
+        // what it opens itself.
+        let unloadable = helper(
+            "unloadable",
+            "echo 'error while loading shared libraries' >&2; exit 127",
+        );
+        assert!(!probe(&unloadable, &[]));
+        let lacking = helper("lacking", "echo 'PDFium library unavailable' >&2; exit 1");
+        assert!(!probe(&lacking, &[]));
+        // What it would be launched with reaches it.
+        let told = helper("told", r#"[ -n "$BIBLI_TEST_TOLD" ] && exit 0; exit 1"#);
+        assert!(!probe(&told, &[]));
+        assert!(probe(
+            &told,
+            &[("BIBLI_TEST_TOLD", std::ffi::OsStr::new("/x/libpdfium.so"))]
+        ));
+        assert!(!probe(&dir.path().join("absent"), &[]));
+    }
 
     #[test]
     fn helpers_are_beside_bibli_or_where_a_package_keeps_them() {

@@ -41,7 +41,12 @@ const READING_PROVIDER: &str = "preview-documents.reading";
 /// The document reader (`DocumentPreviews`), which shows pages.
 const READER_PROVIDER: &str = "preview-documents";
 
-pub struct PreviewPlugin;
+#[derive(Default)]
+pub struct PreviewPlugin {
+    /// `PDFium`'s library as the settings name it: what the `PDFium`
+    /// requirement's probe tells the helper, as a launch would.
+    pdfium_library: Arc<parking_lot::RwLock<Option<std::path::PathBuf>>>,
+}
 
 impl Plugin for PreviewPlugin {
     fn id(&self) -> &'static str {
@@ -67,6 +72,7 @@ impl Plugin for PreviewPlugin {
             .iter()
             .any(|key| key == BACKEND || key == PDFIUM_LIBRARY)
         {
+            *self.pdfium_library.write() = pdfium_library(app);
             app.previews.unregister(ID, READER_PROVIDER);
             register_reader(app);
         }
@@ -75,8 +81,18 @@ impl Plugin for PreviewPlugin {
     fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
         use bibli_core::plugin::Requirement;
         use bibli_platform::document::{Engine, worker};
+        let library = Arc::clone(&self.pdfium_library);
+        let pdfium = worker(Engine::Pdfium);
         vec![
-            worker(Engine::Pdfium).requirement("PDF reading with PDFium"),
+            // Its library is the one the settings name, else the system's.
+            Requirement::new(pdfium.executable, "PDF reading with PDFium", move || {
+                let library = library.read().clone();
+                let envs: Vec<(&str, &std::ffi::OsStr)> = library
+                    .iter()
+                    .map(|path| ("BIBLI_PDFIUM_LIBRARY", path.as_os_str()))
+                    .collect();
+                pdfium.works_with(&envs)
+            }),
             worker(Engine::Poppler).requirement("PDF reading with Poppler"),
             worker(Engine::Mupdf).requirement("PDF reading with MuPDF"),
             Requirement::program("libreoffice", "Office documents shown as pages"),
@@ -128,6 +144,7 @@ impl Plugin for PreviewPlugin {
         ));
         register_reading(app);
         register_reader(app);
+        *self.pdfium_library.write() = pdfium_library(app);
         let cache = app.cache.namespace(ID);
         // A fallback stage: the desktop's cache and thumbnailers come first
         // whichever plugin registers first. The picture a document keeps
@@ -156,17 +173,21 @@ fn register_reading(app: &App) {
     );
 }
 
+/// `PDFium`'s library as the settings name it, if they do.
+fn pdfium_library(app: &App) -> Option<std::path::PathBuf> {
+    app.settings
+        .get::<String>(PDFIUM_LIBRARY)
+        .filter(|s| !s.is_empty())
+        .map(Into::into)
+}
+
 /// The document reader, with the engine the settings choose.
 fn register_reader(app: &App) {
     let backend = app
         .settings
         .get::<String>(BACKEND)
         .unwrap_or_else(|| "auto".into());
-    let library = app
-        .settings
-        .get::<String>(PDFIUM_LIBRARY)
-        .filter(|s| !s.is_empty())
-        .map(Into::into);
+    let library = pdfium_library(app);
     // A document converted for its preview has a thumbnail from then on:
     // a tile that had none asks again.
     let thumbnails = Arc::clone(&app.thumbnails);

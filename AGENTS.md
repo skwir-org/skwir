@@ -1160,7 +1160,13 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   on a worker and persists the choice.
 - `Plugin::requirements` lists external tools with a probe. Probes touch the
   filesystem: the dialog runs them on a worker when it opens, never during
-  registration or rendering.
+  registration or rendering. One of bibli's own helpers is probed by
+  starting it with `--probe` (`process::Worker::requirement`, `probe`),
+  the first thing every helper answers: it checks what it opens itself
+  (PDFium's library, GStreamer's playback plugins) and exits 0 when it
+  can work, and one whose linked libraries are missing never starts, so
+  it is not installed where only its program is. A new helper answers
+  `--probe` too (each has a test of it).
 - `ui.settings` takes `{ "key": "plugin.option" }` or `{ "page": "plugins" }`.
   Report a problem whose remedy is a setting with `App::notify_about_setting`
   (or `Shell::set_status_about`); its toast links to it.

@@ -13,6 +13,15 @@ const SOURCE: u64 = 64 * 1024;
 const DEADLINE: Duration = Duration::from_secs(5);
 
 fn main() {
+    // `--probe`, bibli's settings asking whether this helper works here
+    // (`platform::process::probe`): being started at all says its
+    // libraries are there.
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == "--probe")
+    {
+        return;
+    }
     if let Err(reason) = run() {
         eprintln!("{reason}");
         std::process::exit(1);

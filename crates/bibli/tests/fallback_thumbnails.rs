@@ -28,7 +28,7 @@ const FALLBACK_PLUGINS: [&str; 4] = [
 fn app(root: &Path) -> Arc<App> {
     let app = App::new(AppConfig::ephemeral(root.join("state"))).unwrap();
     for plugin in [
-        Arc::new(bibli_plugin_preview_documents::PreviewPlugin) as Arc<dyn Plugin>,
+        Arc::new(bibli_plugin_preview_documents::PreviewPlugin::default()) as Arc<dyn Plugin>,
         Arc::new(bibli_plugin_preview_media::PreviewPlugin::default()),
         Arc::new(bibli_plugin_preview_epub::PreviewPlugin),
         Arc::new(bibli_plugin_preview_comics::PreviewPlugin),

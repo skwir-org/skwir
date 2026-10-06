@@ -10,7 +10,7 @@ fn changing_document_engine_refreshes_only_document_previews() {
     let tmp = tempfile::tempdir().unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
     app.plugins.add(
-        Arc::new(bibli_plugin_preview_documents::PreviewPlugin),
+        Arc::new(bibli_plugin_preview_documents::PreviewPlugin::default()),
         &app,
     );
     app.plugins.add(

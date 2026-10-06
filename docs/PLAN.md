@@ -180,6 +180,12 @@ through the distribution's own Mesa (software Vulkan). namcap finds
 nothing in the PKGBUILD. CI builds the three in their containers
 (`linux-packages`), never run (no remote). Not done: publishing (the
 AUR and a repository are the user's), Ubuntu's own build, an icon.
+Settings now says a helper is installed only where it works: every
+helper answers `--probe` (`process::probe`), the PDFium reader opening
+the library the settings name, the player finding GStreamer's playback
+plugins, and one whose linked libraries are missing is refused by the
+system before it starts (tested on a Poppler reader whose library was
+out of reach), so a package may leave a helper's libraries optional.
 
 Phase 5, step G: isolation (2026-10-06), in part (ADR-039, as the
 user chose). macOS isolates converters and decoders with

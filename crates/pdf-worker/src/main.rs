@@ -13,19 +13,37 @@ use bibli_core::document::{
 use pdfium_render::prelude::*;
 
 fn main() {
+    // `--probe`, bibli's settings asking whether this helper works here
+    // (`platform::process::probe`): PDFium's library, which it opens
+    // itself, is there.
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == "--probe")
+    {
+        if let Err(error) = bindings() {
+            eprintln!("PDFium library unavailable: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if let Err(error) = run() {
         worker::fail(&error);
+    }
+}
+
+/// `PDFium`'s library: the one named (`BIBLI_PDFIUM_LIBRARY`), else the
+/// system's.
+fn bindings() -> Result<Box<dyn PdfiumLibraryBindings>, PdfiumError> {
+    match std::env::var_os("BIBLI_PDFIUM_LIBRARY") {
+        Some(path) => Pdfium::bind_to_library(path),
+        None => Pdfium::bind_to_system_library(),
     }
 }
 
 fn run() -> anyhow::Result<()> {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
     anyhow::ensure!(args.len() == 2, "expected PDF path and scratch directory");
-    let bindings = match std::env::var_os("BIBLI_PDFIUM_LIBRARY") {
-        Some(path) => Pdfium::bind_to_library(path),
-        None => Pdfium::bind_to_system_library(),
-    };
-    let bindings = match bindings {
+    let bindings = match bindings() {
         Ok(bindings) => bindings,
         Err(error) => {
             return worker::greet(&WorkerReply::Unavailable(format!(
