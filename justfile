@@ -18,7 +18,7 @@ build-all:
 # Build what is shipped: bibli and every helper, without debug info, into
 # target/dist (the `dist` profile). Helpers sit beside bibli, where it finds them.
 dist:
-    cargo build --profile dist -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-mupdf-worker -p bibli-media-worker -p bibli-archive-worker -p bibli-mermaid-worker -p bibli-model-worker
+    cargo build --profile dist $(sed 's/^/-p /' tools/package/programs)
 
 # Run the tests of the default members.
 test:
@@ -90,6 +90,26 @@ test-windows *args:
 # Linux's package (Phase 5, step K): bibli and its helpers, by Nix, from the git tree.
 package-nix:
     nix build "git+file://{{justfile_directory()}}#default"
+
+# Debian's and Ubuntu's package, made on the distribution it is for
+# (ADR-040), into target/debian.
+package-deb:
+    tools/package/deb.sh
+
+# The RPM package, made on Fedora or the distribution it is for (ADR-040),
+# into target/generate-rpm.
+package-rpm:
+    tools/package/rpm.sh
+
+# The AUR package (ADR-040): its .SRCINFO beside the PKGBUILD, which the
+# AUR wants with it (makepkg, from pacman: on Arch).
+package-aur:
+    cd tools/package/aur && makepkg --printsrcinfo > .SRCINFO
+
+# A Linux package built in a distribution's own root and installed in a
+# fresh one, from any Linux with bubblewrap (ADR-040): debian, fedora, arch.
+package-try distribution:
+    tools/package/try.sh {{distribution}}
 
 # An AppImage of that package (nix-appimage), into result-appimage.
 package-appimage:

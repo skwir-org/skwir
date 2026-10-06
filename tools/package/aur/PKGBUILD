@@ -1,0 +1,73 @@
+# bibli's Arch package, for the AUR (ADR-040): built from a release's
+# source with Arch's own Rust. The files are those of the Debian and RPM
+# packages (crates/bibli/Cargo.toml), the helpers in /usr/lib/bibli.
+# `just package-aur` writes .SRCINFO beside this file; publishing it is
+# pushing both to the AUR's git repository of the package.
+# Maintainer: whoever publishes it on the AUR
+
+pkgname=bibli
+pkgver=0.0.1
+pkgrel=1
+pkgdesc='An experimental file manager, GPU-drawn, for people, scripts and agents'
+arch=('x86_64' 'aarch64')
+url='https://github.com/venator/bibli'
+# bibli's own code; bibli-poppler-worker links Poppler, bibli-mupdf-worker
+# links MuPDF (ADR-014).
+license=('MIT OR Apache-2.0' 'GPL-2.0-or-later' 'AGPL-3.0-or-later')
+# What the programs link, and what bibli opens at run time (the Vulkan
+# loader and a driver for it, fontconfig).
+depends=(
+  'libgcc' 'glibc' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'sqlite'
+  'fontconfig' 'vulkan-icd-loader' 'vulkan-driver'
+  'cairo' 'glib2' 'poppler-glib' 'gstreamer' 'gst-plugins-base-libs' 'libarchive'
+)
+makedepends=('cargo' 'clang' 'cmake')
+# makepkg's LTO compiles the C that crates build (MuPDF) into GCC's
+# intermediate code, which Rust's linker (lld) cannot read.
+options=('!lto')
+optdepends=(
+  'bubblewrap: LibreOffice, ImageMagick and thumbnailers run isolated'
+  'gst-plugins-base: audio and video playback'
+  'gst-plugins-good: more audio and video formats'
+  'gst-plugins-bad: more audio and video formats'
+  'gst-plugins-ugly: more audio and video formats'
+  'gst-libav: more audio and video formats'
+  'libreoffice-fresh: office documents shown as pages'
+  'pandoc-cli: text documents read by Pandoc'
+  'imagemagick: pictures no thumbnailer draws'
+  'ffmpeg: still frames of films'
+  'poppler: PDF details and pages without a reader'
+  'perl-image-exiftool: writing and removing pictures locations'
+  'plocate: instant name searches over whole disks'
+  'udisks2: unmounting volumes from the sidebar'
+)
+source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
+# Filled when a release is tagged (updpkgsums).
+sha256sums=('SKIP')
+
+prepare() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  # shellcheck disable=SC2046 # one `-p name` per program
+  cargo build --frozen --profile dist $(sed 's/^/-p /' tools/package/programs)
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  install -Dm755 target/dist/bibli "$pkgdir/usr/bin/bibli"
+  while read -r program; do
+    [ "$program" = bibli ] && continue
+    install -Dm755 "target/dist/$program" "$pkgdir/usr/lib/bibli/$program"
+  done < tools/package/programs
+  install -Dm644 tools/package/linux/bibli.desktop -t "$pkgdir/usr/share/applications/"
+  install -Dm644 tools/package/linux/io.github.venator.bibli.metainfo.xml -t "$pkgdir/usr/share/metainfo/"
+  install -Dm644 README.md -t "$pkgdir/usr/share/doc/$pkgname/"
+  install -Dm644 LICENSE-MIT LICENSE-APACHE -t "$pkgdir/usr/share/licenses/$pkgname/"
+}

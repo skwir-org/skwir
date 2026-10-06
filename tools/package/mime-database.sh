@@ -25,8 +25,8 @@ if ! command -v update-mime-database >/dev/null; then
 fi
 version="$(cat "$source/VERSION")"
 build="$out.build"
-trap 'rm -rf "$build"' EXIT
-rm -rf "$build" "$out"
+trap 'rm -rf "${build:?}"' EXIT
+rm -rf "${build:?}" "${out:?}"
 mkdir -p "$build/mime/packages" "$out"
 cp "$source/freedesktop.org.xml.in" "$build/mime/packages/freedesktop.org.xml"
 # Named as a data folder, so it does not say it is not one.

@@ -168,7 +168,10 @@ backend = "pdfium" # "auto" or "poppler"
 ```
 
 An explicit library setting takes precedence over `BIBLI_PDFIUM_LIBRARY`.
-Distributors should install workers beside bibli, or on `PATH`;
+Distributors should install workers beside bibli, in `lib/bibli` or
+`libexec/bibli` beside the folder bibli is in (`/usr/bin/bibli` and
+`/usr/lib/bibli/`, as the Debian, RPM and AUR packages do: ADR-040), or
+on `PATH`;
 `BIBLI_PDF_WORKER` and `BIBLI_POPPLER_WORKER` select alternate executables
 for development. Native PDF libraries are loaded only in workers while a
 document is open. PDFium uses the

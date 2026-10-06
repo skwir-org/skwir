@@ -28,16 +28,21 @@ pub struct Worker {
 
 impl Worker {
     /// Where it is, if it can run there: the variable's choice, else
-    /// beside the running binary, else on `PATH`. A choice naming nothing
-    /// that runs is no worker: a probe says it is missing rather than
-    /// installed, and an engine chosen automatically goes on to the next.
+    /// where bibli's own helpers are (`helper_folders`), else on `PATH`. A
+    /// choice naming nothing that runs is no worker: a probe says it is
+    /// missing rather than installed, and an engine chosen automatically
+    /// goes on to the next.
     pub fn find(&self) -> Option<PathBuf> {
         if let Some(chosen) = std::env::var_os(self.variable) {
             return find_program(chosen);
         }
         std::env::current_exe()
             .ok()
-            .and_then(|bin| find_program(bin.parent()?.join(self.executable)))
+            .and_then(|bin| {
+                helper_folders(bin.parent()?)
+                    .into_iter()
+                    .find_map(|dir| find_program(dir.join(self.executable)))
+            })
             .or_else(|| find_program(self.executable))
     }
 
@@ -55,6 +60,20 @@ impl Worker {
             self.find().is_some()
         })
     }
+}
+
+/// Where bibli's helpers are, from the folder its program is in: beside
+/// it (a build, `just dist`, a Mac's bundle, Windows' installer, the Nix
+/// package), else where a Linux package keeps a program's private
+/// helpers, `/usr/bin/bibli` beside `/usr/lib/bibli/` (Debian, Arch) or
+/// `/usr/libexec/bibli/` (Fedora) (ADR-040).
+fn helper_folders(bin: &Path) -> Vec<PathBuf> {
+    let mut folders = vec![bin.to_owned()];
+    if let Some(prefix) = bin.parent() {
+        folders.push(prefix.join("lib").join("bibli"));
+        folders.push(prefix.join("libexec").join("bibli"));
+    }
+    folders
 }
 
 /// The installed `program` something needs, as its real path: a sandbox
@@ -533,6 +552,20 @@ mod reaper {
 #[cfg_attr(not(unix), allow(dead_code, unused_imports))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn helpers_are_beside_bibli_or_where_a_package_keeps_them() {
+        let bin = Path::new("/usr/bin");
+        assert_eq!(
+            helper_folders(bin),
+            [
+                PathBuf::from("/usr/bin"),
+                PathBuf::from("/usr/lib/bibli"),
+                PathBuf::from("/usr/libexec/bibli"),
+            ]
+        );
+        assert_eq!(helper_folders(Path::new("/")), [PathBuf::from("/")]);
+    }
 
     // A POSIX shell runs the scripts.
     #[cfg(unix)]

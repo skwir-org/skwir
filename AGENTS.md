@@ -1256,6 +1256,8 @@ just lint-all       the same over the whole workspace, then check-cross (CI)
 just check-cross    clippy for Windows and macOS from Linux (ADR-035)
 just test-windows   the Windows build's tests under Wine (args go to nextest)
 just package-nix    Linux's package, by Nix, from the git tree
+just package-deb    Debian's and Ubuntu's (on Debian or Ubuntu); package-rpm, package-aur
+just package-try d  a Linux package built and installed in debian|fedora|arch's root (bubblewrap)
 just bench-check    generate bench-data/ on demand and enforce budgets
 just run [dir]      run the release binary
 just dist           build bibli and every helper without debug info (target/dist)

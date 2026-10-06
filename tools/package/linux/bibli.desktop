@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=bibli
+GenericName=File Manager
+Comment=Browse, find and organize your files
+Exec=bibli %f
+Icon=system-file-manager
+Terminal=false
+StartupNotify=true
+StartupWMClass=bibli
+Categories=System;FileTools;FileManager;
+MimeType=inode/directory;
+Keywords=files;folders;browser;tags;search;

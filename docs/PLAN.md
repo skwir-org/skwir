@@ -159,6 +159,28 @@ never run on a Mac or Windows). Not
 done: icons from the system, Open With from Launch Services or
 Windows' handlers, owners by SID.
 
+Linux packages (2026-10-06, ADR-040, the formats the user chose:
+Debian's, RPMs and the AUR; no Flatpak). Each is built on the
+distribution it is for: a `.deb` (cargo-deb, `tools/package/deb.sh`),
+an `.rpm` (cargo-generate-rpm, `rpm.sh`), and a PKGBUILD with its
+`.SRCINFO` (`tools/package/aur`), from one list of the programs
+shipped (`tools/package/programs`, which `just dist` and the flake
+read too). `bibli` goes to `/usr/bin`, its helpers to `/usr/lib/bibli`
+(`/usr/libexec/bibli` on Fedora), where bibli now looks
+(`process::helper_folders`); a desktop entry and AppStream metainfo
+(both pass `desktop-file-validate` and `appstreamcli validate`) and
+the licence texts, now in the repository, go with them. Tried from
+here without containers (`tools/package/try.sh`: a distribution's root
+filesystem entered as its root user through bubblewrap): each package
+built on Debian 13, Fedora 44 and Arch, installed in a fresh root by
+apt, dnf or pacman with what it depends on and nothing it recommends,
+every program found with its libraries there (`linux/check.sh`); on
+Debian and Fedora bibli then drew its window on a virtual display
+through the distribution's own Mesa (software Vulkan). namcap finds
+nothing in the PKGBUILD. CI builds the three in their containers
+(`linux-packages`), never run (no remote). Not done: publishing (the
+AUR and a repository are the user's), Ubuntu's own build, an icon.
+
 Phase 5, step G: isolation (2026-10-06), in part (ADR-039, as the
 user chose). macOS isolates converters and decoders with
 `sandbox-exec` under bibli's profile, the contract bubblewrap has on

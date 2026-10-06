@@ -164,16 +164,10 @@
           version = "0.0.1";
           src = self;
           cargoLock.lockFile = ./Cargo.lock;
-          cargoBuildFlags = map (p: "--package=${p}") [
-            "bibli"
-            "bibli-pdf-worker"
-            "bibli-poppler-worker"
-            "bibli-mupdf-worker"
-            "bibli-media-worker"
-            "bibli-archive-worker"
-            "bibli-mermaid-worker"
-            "bibli-model-worker"
-          ];
+          # The programs shipped, as every package lists them.
+          cargoBuildFlags =
+            map (p: "--package=${p}")
+            (lib.filter (p: p != "") (lib.splitString "\n" (builtins.readFile ./tools/package/programs)));
           doCheck = false;
           inherit buildInputs;
           nativeBuildInputs = [pkgs.pkg-config pkgs.cmake pkgs.clang pkgs.makeWrapper];

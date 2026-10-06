@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.venator.bibli</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+  <name>bibli</name>
+  <developer id="io.github.venator">
+    <name>The bibli authors</name>
+  </developer>
+  <summary>Browse, find and organize your files</summary>
+  <description>
+    <p>
+      bibli is an experimental file manager, drawn by the GPU, built to be
+      driven by people, scripts and agents alike.
+    </p>
+    <ul>
+      <li>Lists, grids and columns that stay responsive on very large folders</li>
+      <li>Previews of documents, pictures, music, films, archives and maps</li>
+      <li>Tags kept on the files themselves, where other applications find them</li>
+      <li>Every change undoable, and planned for review before it is applied</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">bibli.desktop</launchable>
+  <url type="homepage">https://github.com/venator/bibli</url>
+  <provides>
+    <binary>bibli</binary>
+  </provides>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.0.1" date="2026-10-06"/>
+  </releases>
+</component>
