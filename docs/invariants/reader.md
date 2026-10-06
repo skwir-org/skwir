@@ -12,6 +12,16 @@ Read this before touching `crates/pdf-worker`, `crates/poppler-worker`, `crates/
   Session creation/render/search are blocking worker entry points. The manager
   thread owns child cleanup and temporary files; dropping a UI session must
   only cancel/send, never wait for a process or delete files.
+- A document is a file nobody vouched for: every engine's worker runs
+  isolated where the system can (`sandbox::untrusted_reading`, ADR-041),
+  as the converters do: the document read-only at `/input`, its scratch
+  folder at `/work`, its own folder (where a package carries `PDFium`) and
+  the library the settings name readable, nothing else, no network. Where
+  nothing isolates (Windows, a Linux without bubblewrap) it runs as it
+  did (`Otherwise::Run`). The manager keeps the real scratch path; the
+  worker is told the paths inside. A test of a stand-in worker that
+  watches its process asks for none (`open_with_worker(.., false)`):
+  isolation renumbers processes.
 - A PDF page drawn anywhere else (a PDF's thumbnail, the first page of an
   office document converted to PDF) is drawn by an engine first
   (`document::first_page`, in `auto`'s order, `document::AUTO`), Poppler's

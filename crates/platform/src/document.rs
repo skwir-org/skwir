@@ -10,7 +10,6 @@
 //! short grace, times out or breaks the protocol is killed and reopened.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -93,6 +92,9 @@ struct Launch {
     pdf: PathBuf,
     scratch: PathBuf,
     setup: Setup,
+    /// Whether it runs isolated where the system can (`sandbox`): always,
+    /// but for tests that watch a stand-in worker's process.
+    isolate: bool,
 }
 
 /// What an engine is told beside the document: `PDFium`'s library, and the
@@ -209,7 +211,7 @@ impl WorkerSession {
         let Some(executable) = worker_path(engine) else {
             return Ok(None);
         };
-        Self::open_with_worker(executable, pdf, source, scratch, setup, lifetime)
+        Self::open_with_worker(executable, pdf, source, scratch, setup, lifetime, true)
     }
 
     fn open_with_worker(
@@ -219,6 +221,7 @@ impl WorkerSession {
         scratch: tempfile::TempDir,
         setup: Setup,
         lifetime: CancelToken,
+        isolate: bool,
     ) -> anyhow::Result<Option<Arc<dyn DocumentSession>>> {
         let (jobs, rx) = crossbeam_channel::unbounded::<Job>();
         let (ready, startup) = crossbeam_channel::bounded(1);
@@ -231,6 +234,7 @@ impl WorkerSession {
                     pdf,
                     scratch: scratch.path().to_owned(),
                     setup,
+                    isolate,
                 };
                 let setup = || -> anyhow::Result<(Worker, DocumentInfo, FileVersion)> {
                     let version = file_version(&source)?;
@@ -524,8 +528,25 @@ struct Worker {
 impl Worker {
     fn start(launch: &Launch, cancel: &CancelToken) -> anyhow::Result<(Self, WorkerReply)> {
         anyhow::ensure!(!cancel.is_cancelled(), "document open cancelled");
-        let mut command = Command::new(&launch.executable);
-        command.arg(&launch.pdf).arg(&launch.scratch);
+        // A document is a file nobody vouched for: its engine runs isolated
+        // where the system can (ADR-041), as bibli's other helpers on such
+        // files do, reading its own folder (where a package carries
+        // PDFium) and the library the settings name.
+        let run = if launch.isolate {
+            let mut readable: Vec<&Path> = launch.executable.parent().into_iter().collect();
+            readable.extend(launch.setup.library.as_deref());
+            crate::sandbox::untrusted_reading(
+                &launch.executable,
+                &launch.pdf,
+                &launch.scratch,
+                crate::sandbox::Otherwise::Run,
+                &readable,
+            )?
+        } else {
+            crate::sandbox::plain(&launch.executable, &launch.pdf, &launch.scratch)
+        };
+        let mut command = run.command;
+        command.arg(&run.input).arg(&run.work);
         if let Some(Layout { width, height, em }) = launch.setup.layout {
             command.arg(format!("--layout={width},{height},{em}"));
         }
@@ -670,6 +691,8 @@ mod tests {
                 scratch,
                 Setup::default(),
                 lifetime.clone(),
+                // It reports its process id, which isolation renumbers.
+                false,
             )
             .unwrap()
             .unwrap();
@@ -687,6 +710,60 @@ mod tests {
                 .parse()
                 .unwrap()
         }
+    }
+
+    #[test]
+    fn a_worker_reads_its_document_isolated_and_nothing_else() {
+        if !crate::sandbox::available() {
+            eprintln!("bubblewrap cannot isolate here");
+            return;
+        }
+        let helpers = tempfile::tempdir().unwrap();
+        let documents = tempfile::tempdir().unwrap();
+        let source = documents.path().join("A report’s [draft].pdf");
+        std::fs::write(&source, b"%PDF synthetic").unwrap();
+        // Beside the document, as anything of the user's is.
+        let private = documents.path().join("private.txt");
+        std::fs::write(&private, "not for the worker").unwrap();
+        let executable = helpers.path().join("worker");
+        let shell = crate::process::required("sh").unwrap();
+        let script = format!(
+            concat!(
+                "#!{shell}\n",
+                "printf '%s %s' \"$1\" \"$2\" > \"$2/args\"\n",
+                "head -c 4 \"$1\" > \"$2/read\"\n",
+                "cat '{private}' > \"$2/private\" 2>/dev/null\n",
+                "printf '%s\\n' '{{\"id\":0,\"body\":{{\"Ready\":{{\"pages\":1,\"outlines\":[]}}}}}}'\n",
+                "while IFS= read -r line; do :; done\n"
+            ),
+            shell = shell.display(),
+            private = private.display(),
+        );
+        std::fs::write(&executable, script).unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        let scratch_path = scratch.path().to_owned();
+        let session = WorkerSession::open_with_worker(
+            executable,
+            source.clone(),
+            source,
+            scratch,
+            Setup::default(),
+            CancelToken::new(),
+            true,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(session.info().pages, 1);
+        let read = |name: &str| std::fs::read_to_string(scratch_path.join(name)).unwrap();
+        assert_eq!(read("args"), "/input/document.pdf /work");
+        assert_eq!(read("read"), "%PDF");
+        assert_eq!(
+            read("private"),
+            "",
+            "a file beside the document stays out of reach"
+        );
+        drop(session);
     }
 
     #[test]

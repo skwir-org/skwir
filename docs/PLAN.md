@@ -366,6 +366,20 @@ dark theme. Checked in a window (Xvfb): with `XDG_CURRENT_DESKTOP=GNOME`
 and a `gsettings` answering `breeze`, Breeze's icons, in the light and
 the dark theme.
 
+The document readers run isolated (2026-10-06, ADR-041's next
+hardening): PDFium's, Poppler's and MuPDF's helpers, which parse
+documents nobody vouched for, start through the sandbox as the
+converters do (bubblewrap on Linux, `sandbox-exec` on macOS, compiled
+only; as before where nothing isolates), the document read-only at
+`/input`, the scratch folder at `/work`, the helper's own folder and the
+library the settings name readable (`sandbox::untrusted_reading`). A
+stand-in worker under it sees its document and nothing beside it. The
+three engines through the reader's session, sandboxed against not
+(debug helpers): pages and search the same, a document's opening 10 to
+20 ms longer (PDFium 6-8 to 25-27 ms, Poppler 18-19 to 26, MuPDF 4 to
+13), its pages no slower; a page of text in a font it does not embed
+drawn to the same pixels.
+
 Calendar periods, one reading (2026-10-05): the deviation "the query language's date
 parser and the timeline's calendar math are duplicated" is closed. Weeks, months and years
 are `bibli_platform::calendar::Period` (the first day of the one holding a day, the next,

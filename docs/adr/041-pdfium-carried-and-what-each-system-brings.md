@@ -85,10 +85,11 @@ Windows shell's thumbnail handlers, AVFoundation, Media Foundation).
   alternative engine, suggested.
 - The Linux packages carry 7.9 MB more and depend on less: on a minimal
   Debian 13, Poppler's libraries no longer come with bibli.
-- PDFium's security updates are ours to ship. Its helper is not run in
-  the sandbox (only the converters, the archive helper and the decoders
-  that may be are); doing so, as for the other readers, is the next
-  hardening.
+- PDFium's security updates are ours to ship. Its helper, and the other
+  readers', run in the sandbox where the system has one (since the same
+  day, `docs/invariants/reader.md`): a malformed PDF that takes over the
+  library reaches its document and its scratch folder, nothing of the
+  user's.
 - On macOS and Windows, nothing of point 4 has run on the machines:
   Quick Look's thumbnails and the packages are compiled only; the
   Windows shell's thumbnails ran under Wine, whose shell draws none,

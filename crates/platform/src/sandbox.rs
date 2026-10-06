@@ -1,5 +1,6 @@
-//! Converters and thumbnailers run on a file nobody vouched for, isolated
-//! from everything else (ADR-003, ADR-030, ADR-031, ADR-039): no network,
+//! Converters, thumbnailers and the document readers' helpers run on a
+//! file nobody vouched for, isolated from everything else (ADR-003,
+//! ADR-030, ADR-031, ADR-039, ADR-041): no network,
 //! only the system runtime and the input readable, and only a disposable
 //! working folder writable. On Linux this is bubblewrap; on macOS the
 //! system's own sandbox, `sandbox-exec` with a profile of bibli's; on
@@ -84,6 +85,7 @@ fn isolates() -> bool {
                 Path::new("/usr/bin/true"),
                 Path::new("/etc/hosts"),
                 work.path(),
+                &[],
             )?;
             crate::process::run(
                 &mut run.command,
@@ -169,8 +171,23 @@ pub fn untrusted(
     work: &Path,
     otherwise: Otherwise,
 ) -> anyhow::Result<Untrusted> {
+    untrusted_reading(program, input, work, otherwise, &[])
+}
+
+/// `untrusted`, the program also reading `readable` where it runs
+/// isolated: files or folders it needs beside the system's (a helper's own
+/// folder, where a package carries its libraries; a library the settings
+/// name), read-only at their own paths. One that does not exist is left
+/// out.
+pub fn untrusted_reading(
+    program: &Path,
+    input: &Path,
+    work: &Path,
+    otherwise: Otherwise,
+    readable: &[&Path],
+) -> anyhow::Result<Untrusted> {
     if available() {
-        return command(program, input, work);
+        return isolated(program, input, work, readable);
     }
     if otherwise == Otherwise::Refuse {
         return Err(needed());
@@ -202,14 +219,20 @@ pub fn command(program: &Path, input: &Path, work: &Path) -> anyhow::Result<Untr
     if !available() {
         return Err(needed());
     }
-    isolated(program, input, work)
+    isolated(program, input, work, &[])
 }
 
 /// Bubblewrap: the system's folders read-only, the input at `/input`, the
 /// working folder at `/work`, nothing else; no network, no session. A
-/// program outside the system's folders is bound at its own path.
+/// program outside the system's folders is bound at its own path, and so
+/// is what it also reads (`readable`).
 #[cfg(target_os = "linux")]
-fn isolated(program: &Path, input: &Path, work: &Path) -> anyhow::Result<Untrusted> {
+fn isolated(
+    program: &Path,
+    input: &Path,
+    work: &Path,
+    readable: &[&Path],
+) -> anyhow::Result<Untrusted> {
     let bwrap = crate::process::required("bwrap")?;
     let mut command = Command::new(bwrap);
     command.args(["--unshare-all", "--die-with-parent", "--new-session"]);
@@ -223,8 +246,15 @@ fn isolated(program: &Path, input: &Path, work: &Path) -> anyhow::Result<Untrust
         "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--dir", "/input",
     ]);
     // After the private /tmp, which would hide a program kept there.
-    if program.is_absolute() && !SYSTEM.iter().any(|system| program.starts_with(system)) {
+    let outside =
+        |path: &Path| path.is_absolute() && !SYSTEM.iter().any(|system| path.starts_with(system));
+    if outside(program) {
         command.arg("--ro-bind").arg(program).arg(program);
+    }
+    for path in readable {
+        if outside(path) && path.exists() {
+            command.arg("--ro-bind").arg(path).arg(path);
+        }
     }
     command
         .arg("--ro-bind")
@@ -320,7 +350,12 @@ const PROFILE: &str = r#"(version 1)
 /// (`inside_name`), and everything is named by its canonical path
 /// (`/private/var`, not `/var`), which the profile compares.
 #[cfg(target_os = "macos")]
-fn isolated(program: &Path, input: &Path, work: &Path) -> anyhow::Result<Untrusted> {
+fn isolated(
+    program: &Path,
+    input: &Path,
+    work: &Path,
+    readable: &[&Path],
+) -> anyhow::Result<Untrusted> {
     use std::ffi::OsString;
     let work = std::fs::canonicalize(work)?;
     let input = std::fs::canonicalize(input)?;
@@ -339,14 +374,30 @@ fn isolated(program: &Path, input: &Path, work: &Path) -> anyhow::Result<Untrust
     for folder in ["home", "cache", "tmp"] {
         std::fs::create_dir_all(work.join(folder))?;
     }
+    // What it also reads, each a parameter of its own: a path is never
+    // written into the profile's text.
+    let readable: Vec<PathBuf> = readable
+        .iter()
+        .filter_map(|path| std::fs::canonicalize(path).ok())
+        .collect();
+    let mut profile = PROFILE.to_owned();
+    profile.extend(
+        (0..readable.len())
+            .map(|n| format!("(allow file-read* (subpath (param \"READABLE{n}\")))\n")),
+    );
     let mut command = Command::new("/usr/bin/sandbox-exec");
-    command.arg("-p").arg(PROFILE);
-    for (name, value) in [
-        ("WORK", &work),
-        ("INPUT", &input),
-        ("PROGRAM", &program),
-        ("BUNDLE", &bundle),
-    ] {
+    command.arg("-p").arg(profile);
+    let named = [
+        ("WORK".to_owned(), &work),
+        ("INPUT".to_owned(), &input),
+        ("PROGRAM".to_owned(), &program),
+        ("BUNDLE".to_owned(), &bundle),
+    ];
+    let also = readable
+        .iter()
+        .enumerate()
+        .map(|(n, path)| (format!("READABLE{n}"), path));
+    for (name, value) in named.into_iter().chain(also) {
         let mut parameter = OsString::from(format!("{name}="));
         parameter.push(value);
         command.arg("-D").arg(parameter);
@@ -366,7 +417,12 @@ fn isolated(program: &Path, input: &Path, work: &Path) -> anyhow::Result<Untrust
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn isolated(_program: &Path, _input: &Path, _work: &Path) -> anyhow::Result<Untrusted> {
+fn isolated(
+    _program: &Path,
+    _input: &Path,
+    _work: &Path,
+    _readable: &[&Path],
+) -> anyhow::Result<Untrusted> {
     Err(needed())
 }
 
