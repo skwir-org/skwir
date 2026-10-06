@@ -9,8 +9,10 @@ use bibli_core::{App, Location};
 
 fn main() -> anyhow::Result<()> {
     let started = Instant::now();
-    // Before anything allocates much: freed memory goes back (ADR-011).
+    // Before anything allocates much: freed memory goes back (ADR-011),
+    // and a worker idle after its jobs gives back what they left.
     bibli_alloc::tune();
+    bibli_core::scheduler::release_when_idle(bibli_alloc::collect);
     // Before any GPU work: keep the Vulkan loader from mapping drivers for
     // hardware that is not here (ADR-002).
     let restricted = gpu::restrict_vulkan_drivers();

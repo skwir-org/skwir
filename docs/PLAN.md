@@ -326,6 +326,24 @@ of 10-04 and 10-05, before Phase 5; 4.2 MiB of the budget is left.
 5b, on the machines, starts from this plan's steps and
 `docs/PORTING.md`.
 
+The idle memory found with Phase 5a's gate (2026-10-06). Bisected, most
+of the 3.9 MiB came with the Trash's place (ADR-034), and measured in its
+parts, from its icon, not the trash plugin's work: when a trash holds
+something the place shows `user-trash-full`, which Adwaita has as a
+128 px SVG with filters, and `img()` drew every full-color SVG icon at
+twice the size its file declares, 256 by 256 for a 16 px row. Icons are
+now rasterized for the pixels they cover, rounded up to a few sides and
+at most 256 (`icons::element`, `bibli_platform::icons::rasterize`). With
+them: a scheduler worker idle a second after its jobs gives back what
+they freed (ADR-011's addendum), and a name is typed without an
+allocation per pattern of the type database (the vendored xdg-mime's
+patch 0002: 1,411 allocations to type `notes.txt`, 6 now; about 13 µs a
+name). `just idle-pss`, alternated back to back: an own share of 95.3 MiB
+before, 92.8 to 92.9 with the icons (anonymous memory 30.1 to 27.2
+MiB), 91.5 to 91.6 with the idle release, what the commit of 2026-10-04
+reads the same day (91.5). The icons draw as before in a window (Xvfb,
+scale 1 and 2: the list, the sidebar, the grid zoomed in).
+
 Calendar periods, one reading (2026-10-05): the deviation "the query language's date
 parser and the timeline's calendar math are duplicated" is closed. Weeks, months and years
 are `bibli_platform::calendar::Period` (the first day of the one holding a day, the next,

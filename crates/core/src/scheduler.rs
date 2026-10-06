@@ -172,7 +172,26 @@ impl Scheduler {
     }
 }
 
+/// What a worker calls once idle for [`RELEASE_AFTER`] after a job: the
+/// allocator's way to give back what the jobs freed, set by the binary.
+static RELEASE: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+
+/// How long a worker waits idle after its last job before it releases:
+/// long enough that a burst of jobs never pays for it.
+const RELEASE_AFTER: Duration = Duration::from_secs(1);
+
+/// Have each worker, once idle for a moment after running a job, call
+/// `release` (`bibli_alloc::collect`): an allocator may keep what a thread
+/// freed until that thread allocates again, and a worker can wait for its
+/// next job for hours. Process-wide, as the allocator is; set once, by the
+/// binary, before or after the scheduler starts.
+pub fn release_when_idle(release: fn()) {
+    let _ = RELEASE.set(release);
+}
+
 fn worker(inner: &Inner) {
+    // Whether this worker ran a job since it last released.
+    let mut ran = false;
     loop {
         let task = {
             let mut q = inner.queue.lock();
@@ -183,12 +202,24 @@ fn worker(inner: &Inner) {
                 if let Some(t) = q.heap.pop() {
                     break t;
                 }
-                inner.cv.wait(&mut q);
+                match RELEASE.get() {
+                    Some(release) if ran => {
+                        if inner.cv.wait_for(&mut q, RELEASE_AFTER).timed_out()
+                            && q.heap.is_empty()
+                            && !q.shutdown
+                        {
+                            ran = false;
+                            parking_lot::MutexGuard::unlocked(&mut q, release);
+                        }
+                    }
+                    _ => inner.cv.wait(&mut q),
+                }
             }
         };
         if task.cancel.is_cancelled() {
             continue;
         }
+        ran = true;
         let t = Instant::now();
         // A job that panics (a malformed file in a third-party parser, for
         // instance) must not take the worker thread with it: the pool is
@@ -234,5 +265,39 @@ mod tests {
             assert!(Instant::now() < deadline, "workers still hold the queue");
             std::thread::sleep(Duration::from_millis(1));
         }
+    }
+
+    // The hook is process-wide: this test is the only one in its process
+    // that sets it (nextest runs each test in a process of its own).
+    #[test]
+    fn a_worker_idle_after_a_job_releases_once() {
+        static RELEASED: AtomicU64 = AtomicU64::new(0);
+        fn count() {
+            RELEASED.fetch_add(1, AtomicOrdering::SeqCst);
+        }
+        let released = || RELEASED.load(AtomicOrdering::SeqCst);
+        let until = |n: u64| {
+            let deadline = Instant::now() + RELEASE_AFTER + Duration::from_secs(5);
+            while released() < n {
+                assert!(Instant::now() < deadline, "released {} times", released());
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        release_when_idle(count);
+        let scheduler = Scheduler::new(4);
+        let run = || {
+            let (tx, rx) = crossbeam_channel::bounded(1);
+            scheduler.spawn(Priority::Normal, "test", CancelToken::new(), move || {
+                tx.send(()).unwrap();
+            });
+            rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        };
+        run();
+        until(1);
+        // Only the worker that ran the job, and once while it stays idle.
+        std::thread::sleep(RELEASE_AFTER * 2);
+        assert_eq!(released(), 1);
+        run();
+        until(2);
     }
 }

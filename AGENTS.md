@@ -1047,7 +1047,11 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   current request (e.g. the generation check in `crates/ui/src/preview.rs`);
   cancellation alone does not prevent stale results. In the UI, work of
   which one is asked at a time (a note, a picture, a search) is a
-  `latest::Latest`: ask, forget, take, cancelled on drop.
+  `latest::Latest`: ask, forget, take, cancelled on drop. A worker idle a
+  second after its jobs gives back what they freed
+  (`scheduler::release_when_idle`, the allocator's `collect`, which the
+  binary wires); a thread of a plugin's own that allocates and then waits
+  keeps it, so wait on the scheduler rather than a thread where you can.
 - Pane-owned background work links to `Pane::location_lifetime`; navigation,
   Back and pane close cancel it independently of the next UI render. Show
   locations through `App::show` (navigate, Back, Forward) and

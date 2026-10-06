@@ -79,6 +79,24 @@ pub fn tune() {
     }
 }
 
+/// Give back what the calling thread's freed allocations left committed,
+/// and the free memory mimalloc keeps in its arenas. mimalloc returns a
+/// thread's emptied pages only when that thread allocates again: a worker
+/// that read and freed a burst, then waits for the next job, kept them, a
+/// megabyte at idle (2026-10-06). The scheduler's workers call it once
+/// idle after a job (`bibli_core::scheduler::release_when_idle`). Costs a
+/// walk of the thread's heap: never call it on a hot path. Does nothing
+/// without the `mimalloc` feature.
+pub fn collect() {
+    // SAFETY: `mi_collect` takes no pointers; it frees what the calling
+    // thread's heap and the arenas hold unused, from any thread.
+    #[cfg(feature = "mimalloc")]
+    #[allow(unsafe_code)]
+    unsafe {
+        libmimalloc_sys::mi_collect(true);
+    }
+}
+
 #[cfg(all(test, feature = "mimalloc"))]
 mod tests {
     use super::option;

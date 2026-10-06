@@ -1,6 +1,7 @@
 # ADR-011: mimalloc, tuned, is the allocator of the bibli binaries
 
-Status: accepted, 2026-09-24
+Status: accepted, 2026-09-24; addendum 2026-10-06 (idle workers give back
+what they freed).
 
 ## Context
 
@@ -79,3 +80,21 @@ listing path.
 - The worker processes (PDF, media, archives) keep the system allocator.
   They were not measured here; the media worker lives as long as a track
   plays and may deserve the same look.
+
+## Addendum (2026-10-06): idle workers give back what they freed
+
+mimalloc returns a thread's emptied pages to the OS only when that thread
+allocates again. A scheduler worker that ran a burst of jobs (a listing's
+metadata, a trash read) and then waits for the next one, possibly for
+hours, kept them: forcing a collection on idle workers measured 1 MiB less
+anonymous memory at idle, with or without the plugins that caused the
+burst. So each worker, once idle for a second after running a job, calls
+`bibli_alloc::collect` (`mi_collect(true)`, which also gives back what the
+arenas keep free), once until it runs another
+(`bibli_core::scheduler::release_when_idle`, wired by the binary beside
+`tune`). A burst never pays for it: a worker that gets another job within
+the second does not collect. `just idle-pss`, alternated back to back with
+the build before: own share 92.8–93.0 MiB to 91.5–91.6.
+
+Threads that are not the scheduler's (GPUI's executor, a plugin's own
+watcher) are not covered: work that allocates belongs on the scheduler.
