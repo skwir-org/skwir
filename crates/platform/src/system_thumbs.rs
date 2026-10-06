@@ -155,8 +155,9 @@ mod imp {
         }
     }
 
-    /// The picture as straight RGBA, drawn into a bitmap of its size.
-    fn pixels(picture: &CGImage) -> Option<image::DynamicImage> {
+    /// The picture as straight RGBA, drawn into a bitmap of its size: a
+    /// thumbnail's, and a system icon's (`system_icons`).
+    pub(crate) fn pixels(picture: &CGImage) -> Option<image::DynamicImage> {
         let (width, height) = (
             CGImage::width(Some(picture)),
             CGImage::height(Some(picture)),
@@ -248,16 +249,17 @@ mod imp {
         }) else {
             return Ok(None);
         };
-        let picture = pixels(bitmap);
+        let picture = pixels(bitmap).map(|(picture, _)| picture);
         // SAFETY: the bitmap the shell handed over, ours to delete.
         let _ = unsafe { DeleteObject(HGDIOBJ(bitmap.0)) };
         Ok(picture)
     }
 
-    /// The bitmap's pixels, top row first, as straight RGBA: the shell's
-    /// are BGRA, premultiplied, with no alpha at all (every byte 0) when
-    /// the picture has none.
-    fn pixels(bitmap: HBITMAP) -> Option<image::DynamicImage> {
+    /// The bitmap's pixels, top row first, as straight RGBA, and whether
+    /// it had an alpha channel: the shell's are BGRA, premultiplied, with
+    /// no alpha at all (every byte 0) when the picture has none, which
+    /// leaves them opaque (an icon's mask says what is not: `system_icons`).
+    pub(crate) fn pixels(bitmap: HBITMAP) -> Option<(image::DynamicImage, bool)> {
         let mut info = BITMAP::default();
         // SAFETY: a BITMAP the size of which is given, filled by GDI.
         let got = unsafe {
@@ -320,9 +322,12 @@ mod imp {
             super::unpremultiply(&mut rgba);
         }
         image::RgbaImage::from_raw(width.unsigned_abs(), height.unsigned_abs(), rgba)
-            .map(image::DynamicImage::ImageRgba8)
+            .map(|picture| (image::DynamicImage::ImageRgba8(picture), !opaque))
     }
 }
+
+#[cfg(any(target_os = "macos", windows))]
+pub(crate) use imp::pixels;
 
 #[cfg(test)]
 mod tests {

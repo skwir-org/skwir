@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use bibli_core::{App, Entry};
+use bibli_platform::system_icons::{self, SystemIcon};
 use bibli_platform::{icons, mime};
 use gpui::{
     AnyElement, Asset, AssetSource, Hsla, ImageCacheError, ImageSource, RenderImage, SharedString,
@@ -122,13 +123,16 @@ impl AssetSource for FsAssets {
     }
 }
 
-/// What an icon is drawn from: a file of the desktop's icon theme.
+/// What an icon is drawn from: a file of the desktop's icon theme, or the
+/// system's own picture, where bibli reads no theme (macOS, Windows:
+/// `bibli_platform::system_icons`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Pic {
     /// A theme's icon, in its own colors.
     Theme(Arc<Path>),
     /// A theme's icon drawn as a shape in one color (`shape_of`).
     Shape(Arc<Path>),
+    System(Arc<SystemIcon>),
 }
 
 impl Pic {
@@ -150,20 +154,34 @@ enum Want {
     /// A MIME type's icon; the empty type is the unknown file.
     Mime(String),
     Folder,
+    /// What the system draws itself, where it does: a file's by its
+    /// extension or its path.
+    System(SystemIcon),
 }
 
 impl Want {
-    /// A file known only by its name: its type's icon.
+    /// A file known only by its name: its type's icon, or on a system
+    /// that draws its own, its extension's.
     fn for_name(name: &std::ffi::OsStr) -> Want {
-        Want::Mime(mime::by_name(name).map_or_else(String::new, |m| m.0))
+        if system_icons::AVAILABLE {
+            Want::System(system_icons::by_extension(name))
+        } else {
+            Want::Mime(mime::by_name(name).map_or_else(String::new, |m| m.0))
+        }
     }
 }
 
 /// What `want` is drawn from at `size`. Reads the icon theme: blocks, so a
 /// worker's (`IconCache::request`, an inspection's rows).
 fn resolve(want: &Want, size: u16) -> Option<Pic> {
+    let system = |icon: SystemIcon| Some(Pic::System(Arc::new(icon)));
     let theme = |path: Option<PathBuf>| path.map(Pic::of_theme);
     match want {
+        Want::System(icon) => system(icon.clone()),
+        Want::Named(name) if system_icons::AVAILABLE => {
+            system_icons::for_name(name).and_then(system)
+        }
+        Want::Folder if system_icons::AVAILABLE => system(SystemIcon::Folder),
         Want::Named(name) => theme(lookup_named(name, size)),
         Want::Folder => theme(icons::folder(size)),
         Want::Mime(m) if m.is_empty() => theme(icons::unknown(size)),
@@ -184,8 +202,8 @@ pub fn for_name_now(name: &std::ffi::OsStr, size: u16) -> Option<Pic> {
 
 type Resolved = Vec<((Want, u16), Option<Pic>)>;
 
-/// Icons of the desktop's theme, per size. Looking one up may read the
-/// theme from disk, so a miss is answered `None` for now and
+/// Icons of the desktop's theme, or the system's, per size. Looking one up
+/// may read the theme from disk, so a miss is answered `None` for now and
 /// resolved on a worker with the others this frame missed (`request`);
 /// `absorb` takes the answers and the next frame draws them. Drawing only
 /// ever reads this map.
@@ -205,7 +223,7 @@ impl IconCache {
         // Resolved by an earlier worker, or by anyone else who asked.
         let cached = match &want {
             // Or its symbolic variant, which `lookup_named` tries next.
-            Want::Named(name) => match icons::try_cached(name, size) {
+            Want::Named(name) if !system_icons::AVAILABLE => match icons::try_cached(name, size) {
                 Some(None) if !name.ends_with("-symbolic") => {
                     icons::try_cached(&format!("{name}-symbolic"), size)
                 }
@@ -236,14 +254,31 @@ impl IconCache {
         found
     }
 
-    /// An icon of the desktop's theme by name (`user-home`, `drive-harddisk`).
+    /// An icon by the name the desktop's themes give it (`user-home`,
+    /// `drive-harddisk`): the theme's, or the system's for it.
     pub fn named(&mut self, name: &str, size: u16) -> Option<Pic> {
         self.lookup(Want::Named(name.to_owned()), size)
     }
 
     /// The icon for an entry: the folder icon or the icon of the type it
-    /// is shown as (`mime::of_entry`: a link's is what it leads to's).
-    pub fn for_entry(&mut self, e: &Entry, size: u16) -> Option<Pic> {
+    /// is shown as (`mime::of_entry`: a link's is what it leads to's); on
+    /// a system that draws its own, its extension's, or its own (an
+    /// application, a shortcut), read from the file at `path`, which is
+    /// asked for only then.
+    pub fn for_entry(
+        &mut self,
+        e: &Entry,
+        path: impl FnOnce() -> Option<PathBuf>,
+        size: u16,
+    ) -> Option<Pic> {
+        if system_icons::AVAILABLE {
+            let icon = match path() {
+                Some(path) => system_icons::for_file(&path, e.type_name(), e.is_dir()),
+                None if e.is_dir() => SystemIcon::Folder,
+                None => system_icons::by_extension(e.type_name()),
+            };
+            return self.lookup(Want::System(icon), size);
+        }
         if e.is_dir() {
             return self.folder(size);
         }
@@ -254,8 +289,9 @@ impl IconCache {
         self.lookup(Want::Folder, size)
     }
 
-    /// The icon of a file's MIME type, by its name; the unknown-file icon
-    /// when the name says nothing.
+    /// The icon of a file by its name: its type's, the unknown-file icon
+    /// when the name says nothing; its extension's on a system that draws
+    /// its own.
     pub fn for_name(&mut self, name: &std::ffi::OsStr, size: u16) -> Option<Pic> {
         self.lookup(Want::for_name(name), size)
     }
@@ -319,7 +355,7 @@ impl IconCache {
 }
 
 /// Render an icon at `size` px: a theme's file in its own colors, a shape
-/// in `tint`.
+/// in `tint`, the system's picture.
 pub fn element(pic: &Pic, size: f32, tint: Hsla) -> AnyElement {
     match pic {
         Pic::Theme(path) => file_element(path, size),
@@ -329,6 +365,18 @@ pub fn element(pic: &Pic, size: f32, tint: Hsla) -> AnyElement {
             .flex_none()
             .text_color(tint)
             .into_any_element(),
+        Pic::System(icon) => {
+            let icon = Arc::clone(icon);
+            img(ImageSource::Custom(Arc::new(
+                move |window: &mut Window, cx: &mut gpui::App| {
+                    let pixels = raster_side(size * window.scale_factor());
+                    window.use_asset::<SystemPicture>(&(Arc::clone(&icon), pixels), cx)
+                },
+            )))
+            .size(px(size))
+            .flex_none()
+            .into_any_element()
+        }
     }
 }
 
@@ -396,6 +444,32 @@ impl Asset for SizedSvg {
                     )))
                 },
             )
+        }
+    }
+}
+
+/// A system icon drawn within a side of device pixels
+/// (`bibli_platform::system_icons::picture`), loaded by GPUI's asset
+/// system on its background executor and kept per (icon, side).
+enum SystemPicture {}
+
+impl Asset for SystemPicture {
+    type Source = (Arc<SystemIcon>, u32);
+    type Output = Result<Arc<RenderImage>, ImageCacheError>;
+
+    // As `SizedSvg::load`: the work stays in the future.
+    #[allow(clippy::manual_async_fn)]
+    fn load(
+        (icon, side): Self::Source,
+        _cx: &mut gpui::App,
+    ) -> impl Future<Output = Self::Output> + Send + 'static {
+        async move {
+            let none =
+                || ImageCacheError::Other(Arc::new(anyhow::anyhow!("the system has no such icon")));
+            let picture = system_icons::picture(&icon, side)
+                .map_err(|e| ImageCacheError::Other(Arc::new(e)))?
+                .ok_or_else(none)?;
+            crate::thumbs::to_render_image(&picture).ok_or_else(none)
         }
     }
 }

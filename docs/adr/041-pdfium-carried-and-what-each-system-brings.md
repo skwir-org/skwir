@@ -59,6 +59,11 @@ Windows shell's thumbnail handlers, AVFoundation, Media Foundation).
    - thumbnails are the system's own (`system_thumbs`: Quick Look,
      the shell's `IShellItemImageFactory`), as the Finder and Explorer
      show them: Office documents, RAW, HEIC, films, fonts;
+   - so are icons (added the same day, `system_icons`): `NSWorkspace`'s
+     on macOS, the shell's system image list on Windows, by a file's
+     extension, by its path where the icon is the file's own (an
+     application, a shortcut), the trash and drives as the system's
+     stock icons; bibli reads no icon theme there;
    - the programs bibli uses when installed (LibreOffice, Pandoc,
      ImageMagick, ffmpeg, exiftool) are found where they are installed:
      Homebrew's and MacPorts' folders searched on macOS (an application

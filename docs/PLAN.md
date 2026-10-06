@@ -344,7 +344,16 @@ MiB), 91.5 to 91.6 with the idle release, what the commit of 2026-10-04
 reads the same day (91.5). The icons draw as before in a window (Xvfb,
 scale 1 and 2: the list, the sidebar, the grid zoomed in).
 
-The icon theme is read where the desktop keeps it (2026-10-06): GNOME and
+Icons are the system's own off Linux (2026-10-06, ADR-041's point 4,
+`bibli_platform::system_icons`): a file's by its extension, its own
+where the system draws such files each theirs (Windows' `.exe`, `.lnk`,
+`.ico`; a Mac's `.app`), a folder's, a user folder's and a volume's by
+path, the trash and drives as the system's stock icons; `NSWorkspace`
+and `NSImage` on macOS (compiled only), the shell's system image list on
+Windows (run under Wine: a type's, a folder's and a program's icon; its
+stock icons are a stub, so the trash has none there). The UI's icons are
+a `Pic`, a theme's file or the system's picture, drawn at the size they
+cover. On Linux the theme is read where the desktop keeps it: GNOME and
 those built on it in GSettings (which writes no `settings.ini`),
 Cinnamon's and MATE's in theirs, KDE's `kdeglobals`, Xfce's xfconf, then
 GTK's `settings.ini`. Found with it: a theme counted as installed by its
@@ -2113,7 +2122,7 @@ what it touched.
   on fixtures); macOS `~/.Trash` and each volume's `.Trashes/<uid>`
   through `trashItemAtURL` (the resulting path kept for undo), where
   the place a file came from is known only for what bibli trashed.
-- **E. The environment.** In part 2026-10-05 (status above): types done 2026-10-06 (ADR-037); icons, Open With and owners not done. Folders (macOS `~/Library/…`, Windows
+- **E. The environment.** In part 2026-10-05 (status above): types and the system's icons done 2026-10-06 (ADR-037, `system_icons`); Open With and owners not done. Folders (macOS `~/Library/…`, Windows
   `%APPDATA%`/`%LOCALAPPDATA%`) behind `bibli_core::xdg`'s callers; the
   MIME database off Linux (an ADR: shared-mime-info is GPL data and
   bibli is Apache-2.0, so it is installed beside bibli or replaced by

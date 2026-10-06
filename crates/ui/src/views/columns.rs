@@ -160,7 +160,11 @@ fn ancestor_column(
                         label: e.name_str().into_owned().into(),
                         name: e.name.clone(),
                         is_dir: e.is_dir(),
-                        icon: this.icons.for_entry(e, icon_px),
+                        icon: this.icons.for_entry(
+                            e,
+                            || path.as_ref().map(|dir| dir.join(&e.name)),
+                            icon_px,
+                        ),
                         link: icons::Link::of(e),
                         place: p
                             .and_then(|p| p.kept_location_of(&location, e.id))

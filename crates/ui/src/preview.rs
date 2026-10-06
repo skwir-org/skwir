@@ -1068,7 +1068,7 @@ impl Shell {
                 size: None,
                 modified: None,
                 is_dir: entry.is_dir(),
-                icon: self.icons.for_entry(&entry, 48),
+                icon: self.icons.for_entry(&entry, || Some(key.path.clone()), 48),
                 link: icons::Link::of(&entry),
             };
             // Where the pane is reads as the sidebar and the tabs name it.
@@ -1103,7 +1103,7 @@ impl Shell {
         // An icon not known when the entry was shown is asked for again
         // until it is (the theme is read on a worker, `icons.request`).
         if self.preview.info.icon.is_none() {
-            self.preview.info.icon = self.icons.for_entry(&entry, 48);
+            self.preview.info.icon = self.icons.for_entry(&entry, || Some(key.path.clone()), 48);
         }
         if self.preview.details_at != Some(seen) {
             self.preview.details_at = Some(seen);

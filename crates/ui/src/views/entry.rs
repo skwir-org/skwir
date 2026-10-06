@@ -72,7 +72,7 @@ impl Shell {
             selected: pane.selection.contains(id),
             cursor: pane.selection.cursor == Some(id),
             cut: self.pending.cut && self.pending.entries.contains(&id),
-            icon: self.icons.for_entry(e, icon_px),
+            icon: self.icons.for_entry(e, || pane.path_of(id), icon_px),
             link: icons::Link::of(e),
             tags: crate::tags::entry_tags(e, &self.tag_colors),
             place,

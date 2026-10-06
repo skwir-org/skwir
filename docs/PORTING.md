@@ -192,13 +192,21 @@ first (`platform/mime/uttype.rs`, UTType, compiled only;
 shared-mime-info behind it, its reader vendored to build on Windows,
 its compiled files carried by the macOS and Windows packages, compiled
 from the source vendored in `vendor/shared-mime-info`
-(`tools/package/mime-database.sh`). Left:
+(`tools/package/mime-database.sh`); icons (2026-10-06): the system's
+own off Linux (`platform/system_icons.rs`): a file's by its extension,
+its own where the system draws such files each theirs (Windows' `.exe`,
+`.lnk`, `.ico`; a Mac's `.app`), a folder's, a user folder's and a
+volume's by path, the trash and drives as stock icons; Windows' shell's
+from the system image list (run under Wine, whose stock icons are a
+stub: the trash has none there), `NSWorkspace`'s and `NSImage`'s on
+macOS (compiled only). Left:
 
 - macOS's types never run: the `UTType` calls, and the table of
   conformances read as kinds (`uttype::KINDS`), are unverified **(5b)**.
-- `platform/icons.rs` icon themes (Linux); `ui/icons.rs`,
-  `ui/inspector.rs`: macOS and Windows show bundled icons only
-  (NSWorkspace's, `SHGetFileInfo`'s not read).
+- The system's icons never ran on the systems: whether AppKit's icons
+  and images answer off the main thread, as documented; the Windows
+  jumbo list's small icons; a folder with an icon of its own (not asked:
+  every folder is drawn as a folder) **(5b)**.
 - `platform/apps.rs` (c): desktop entries, `mimeapps.list`, the
   locale, `Exec` codes; Open With lists nothing off Linux (Launch
   Services, Windows' association handlers not read).

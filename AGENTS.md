@@ -425,7 +425,9 @@ current source before assuming a planned crate, command, or API exists.
   `-symbolic`, or drawn in the color scheme's colors as Breeze's small
   icons are, is a shape drawn tinted, `icons::Pic::Shape`; a full-color
   SVG, any icon's, is rasterized for the pixels it covers, never at the
-  size its file declares, `icons::element`), optionally `space` (filled in
+  size its file declares, `icons::element`; on macOS and Windows the
+  name stands for the system's own icon, `system_icons::for_name`),
+  optionally `space` (filled in
   by a worker: asking a volume can block), an `eject` command, `unavailable`
   (why it cannot be opened: the row dims and this is its tooltip), `busy`
   (what its owner is doing to it, "Unlocking…": a still hourglass and those
