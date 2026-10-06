@@ -44,8 +44,9 @@ const READER_PROVIDER: &str = "preview-documents";
 #[derive(Default)]
 pub struct PreviewPlugin {
     /// `PDFium`'s library as the settings name it: what the `PDFium`
-    /// requirement's probe tells the helper, as a launch would.
-    pdfium_library: Arc<parking_lot::RwLock<Option<std::path::PathBuf>>>,
+    /// requirement's probe and the PDF thumbnails tell the helper, as the
+    /// reader's launch does.
+    pdfium_library: bibli_platform::document::PdfiumChoice,
 }
 
 impl Plugin for PreviewPlugin {
@@ -95,7 +96,10 @@ impl Plugin for PreviewPlugin {
             }),
             worker(Engine::Poppler).requirement("PDF reading with Poppler"),
             worker(Engine::Mupdf).requirement("PDF reading with MuPDF"),
-            Requirement::program("libreoffice", "Office documents shown as pages"),
+            // Where it installs itself too, off Linux (`process::required`).
+            Requirement::new("libreoffice", "Office documents shown as pages", || {
+                bibli_platform::process::required("libreoffice").is_ok()
+            }),
             Requirement::program(
                 "pandoc",
                 "Text documents read by Pandoc, and RTF files read as text",
@@ -149,11 +153,18 @@ impl Plugin for PreviewPlugin {
         // A fallback stage: the desktop's cache and thumbnailers come first
         // whichever plugin registers first. The picture a document keeps
         // comes before the first page of one converted.
-        app.thumbnails.register(ID, Arc::new(PdfPages));
+        app.thumbnails.register(
+            ID,
+            Arc::new(PdfPages {
+                pdfium: Arc::clone(&self.pdfium_library),
+            }),
+        );
         app.thumbnails
             .register(ID, Arc::new(stored::StoredPictures));
-        app.thumbnails
-            .register(ID, Arc::new(OfficePages::new(cache)));
+        app.thumbnails.register(
+            ID,
+            Arc::new(OfficePages::new(cache, Arc::clone(&self.pdfium_library))),
+        );
     }
 }
 

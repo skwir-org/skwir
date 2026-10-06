@@ -31,13 +31,34 @@ fn main() {
     }
 }
 
-/// `PDFium`'s library: the one named (`BIBLI_PDFIUM_LIBRARY`), else the
-/// system's.
+/// `PDFium`'s library: the one named (`BIBLI_PDFIUM_LIBRARY`: the
+/// settings'), else the one a package carries for this helper (ADR-041),
+/// else the system's.
 fn bindings() -> Result<Box<dyn PdfiumLibraryBindings>, PdfiumError> {
-    match std::env::var_os("BIBLI_PDFIUM_LIBRARY") {
+    if let Some(path) = std::env::var_os("BIBLI_PDFIUM_LIBRARY") {
+        return Pdfium::bind_to_library(path);
+    }
+    let carried = std::env::current_exe().ok().and_then(|program| {
+        carried(program.parent()?, &Pdfium::pdfium_platform_library_name())
+            .into_iter()
+            .find(|path| path.is_file())
+    });
+    match carried {
         Some(path) => Pdfium::bind_to_library(path),
         None => Pdfium::bind_to_system_library(),
     }
+}
+
+/// Where a package puts `PDFium`'s library, named `library` as this system
+/// names it (`libpdfium.so`, `libpdfium.dylib`, `pdfium.dll`), for a
+/// helper in `folder`: beside it (Linux's /usr/lib/bibli, Windows'
+/// program folder), and a Mac bundle's `Frameworks` beside its `MacOS`.
+fn carried(folder: &Path, library: &std::ffi::OsStr) -> [std::path::PathBuf; 2] {
+    let frameworks = folder.parent().map_or_else(
+        || folder.join("Frameworks"),
+        |bundle| bundle.join("Frameworks"),
+    );
+    [folder.join(library), frameworks.join(library)]
 }
 
 fn run() -> anyhow::Result<()> {
@@ -265,4 +286,24 @@ fn search(
         }
     }
     Ok(hits)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+    use std::path::Path;
+
+    #[test]
+    fn a_packages_pdfium_is_beside_the_helper_or_in_a_macs_frameworks() {
+        let at = super::carried(Path::new("/usr/lib/bibli"), OsStr::new("libpdfium.so"));
+        assert_eq!(at[0], Path::new("/usr/lib/bibli/libpdfium.so"));
+        let at = super::carried(
+            Path::new("/Applications/bibli.app/Contents/MacOS"),
+            OsStr::new("libpdfium.dylib"),
+        );
+        assert_eq!(
+            at[1],
+            Path::new("/Applications/bibli.app/Contents/Frameworks/libpdfium.dylib")
+        );
+    }
 }

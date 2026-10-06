@@ -259,7 +259,8 @@ fn budget(app: &App) {
 
 impl ThumbnailsPlugin {
     /// The providers, in order: the cache first, then the decoder, then
-    /// the desktop's thumbnailers, and `ImageMagick` last of all (its stage).
+    /// the system's thumbnails (macOS, Windows) or the desktop's
+    /// thumbnailers (Linux), and `ImageMagick` last of all (its stage).
     fn providers(&self, app: &App) {
         let write_back = app.settings.get::<bool>(WRITE_CACHE).unwrap_or(true);
         let magick = app.settings.get::<bool>(IMAGEMAGICK).unwrap_or(true);
@@ -267,6 +268,14 @@ impl ThumbnailsPlugin {
         app.thumbnails
             .register(ID, Arc::new(FreedesktopCache::desktop(write_back)));
         app.thumbnails.register(ID, Arc::new(ImageDecoder));
+        // The system's own (Quick Look, the Windows shell; ADR-041), where
+        // a Linux desktop's thumbnailers are.
+        if bibli_platform::system_thumbs::AVAILABLE {
+            app.thumbnails.register(
+                ID,
+                Arc::new(bibli_platform::system_thumbs::SystemThumbnails),
+            );
+        }
         app.thumbnails.register(
             ID,
             Arc::clone(&self.thumbnailers) as Arc<dyn ThumbnailProvider>,

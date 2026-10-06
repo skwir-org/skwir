@@ -74,11 +74,15 @@ serde_json.workspace = true
 zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 
-# The Linux packages (ADR-040): bibli in /usr/bin, its helpers where a
-# distribution keeps a program's own (`process::helper_folders`), the
-# desktop entry and the metainfo. Built on the distribution each is for,
-# whose libraries they depend on: tools/package/deb.sh, rpm.sh, and the
-# AUR's tools/package/aur/PKGBUILD, which lists the same files.
+# The Linux packages (ADR-040, ADR-041): bibli in /usr/bin, its helpers
+# where a distribution keeps a program's own (`process::helper_folders`),
+# PDFium beside its helper, the desktop entry and the metainfo. Built on
+# the distribution each is for, whose libraries they depend on:
+# tools/package/deb.sh, rpm.sh, and the AUR's tools/package/aur/PKGBUILD,
+# which lists the same files. A helper whose libraries most systems do
+# not need (GStreamer, Poppler), or that few want (Mermaid, MuPDF), is a
+# package of its own, recommended or suggested: the tools find what each
+# program links, so no list of library packages is kept by hand.
 
 # Debian and Ubuntu (cargo-deb). Beside what the programs link ($auto),
 # what bibli opens at run time: the Vulkan loader and fontconfig.
@@ -95,39 +99,76 @@ responsive on very large folders, previews of documents, pictures, \
 music, films, archives and maps, tags kept on the files themselves, \
 and every change undoable."""
 depends = "$auto, libvulkan1, libfontconfig1"
-recommends = "mesa-vulkan-drivers, bubblewrap, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, poppler-utils, udisks2"
-suggests = "libreoffice-writer, libreoffice-calc, libreoffice-impress, pandoc, imagemagick, ffmpeg, libimage-exiftool-perl, plocate, gstreamer1.0-plugins-bad, gstreamer1.0-plugins-ugly, gstreamer1.0-libav"
+recommends = "bibli-media, mesa-vulkan-drivers, bubblewrap, udisks2"
+suggests = "bibli-poppler, bibli-mermaid, bibli-mupdf, poppler-utils, libreoffice-writer, libreoffice-calc, libreoffice-impress, pandoc, imagemagick, ffmpeg, libimage-exiftool-perl, plocate"
 assets = [
     ["target/release/bibli", "usr/bin/", "755"],
     ["target/release/bibli-pdf-worker", "usr/lib/bibli/", "755"],
-    ["target/release/bibli-poppler-worker", "usr/lib/bibli/", "755"],
-    ["target/release/bibli-mupdf-worker", "usr/lib/bibli/", "755"],
-    ["target/release/bibli-media-worker", "usr/lib/bibli/", "755"],
     ["target/release/bibli-archive-worker", "usr/lib/bibli/", "755"],
-    ["target/release/bibli-mermaid-worker", "usr/lib/bibli/", "755"],
     ["target/release/bibli-model-worker", "usr/lib/bibli/", "755"],
+    ["../../target/pdfium/libpdfium.so", "usr/lib/bibli/", "644"],
+    ["../../target/pdfium/licenses/pdfium/*", "usr/share/doc/bibli/pdfium/", "644"],
     ["../../tools/package/linux/bibli.desktop", "usr/share/applications/", "644"],
     ["../../tools/package/linux/io.github.venator.bibli.metainfo.xml", "usr/share/metainfo/", "644"],
     ["../../tools/package/linux/copyright", "usr/share/doc/bibli/copyright", "644"],
     ["../../README.md", "usr/share/doc/bibli/", "644"],
 ]
 
+[package.metadata.deb.variants.media]
+name = "bibli-media"
+extended-description = "bibli's audio and video player, through GStreamer."
+depends = "$auto, bibli"
+recommends = "gstreamer1.0-plugins-base, gstreamer1.0-plugins-good"
+suggests = "gstreamer1.0-plugins-bad, gstreamer1.0-plugins-ugly, gstreamer1.0-libav"
+assets = [["target/release/bibli-media-worker", "usr/lib/bibli/", "755"]]
+
+[package.metadata.deb.variants.poppler]
+name = "bibli-poppler"
+extended-description = "bibli's PDF reader through Poppler, beside the PDFium one bibli carries."
+depends = "$auto, bibli"
+recommends = ""
+suggests = ""
+assets = [
+    ["target/release/bibli-poppler-worker", "usr/lib/bibli/", "755"],
+    ["../../tools/package/linux/copyright-poppler", "usr/share/doc/bibli-poppler/copyright", "644"],
+]
+
+[package.metadata.deb.variants.mermaid]
+name = "bibli-mermaid"
+extended-description = "Mermaid diagrams drawn in bibli's Markdown previews."
+depends = "$auto, bibli"
+recommends = ""
+suggests = ""
+assets = [["target/release/bibli-mermaid-worker", "usr/lib/bibli/", "755"]]
+
+[package.metadata.deb.variants.mupdf]
+name = "bibli-mupdf"
+extended-description = "bibli's MuPDF engine: PDFs, and books laid out into pages."
+depends = "$auto, bibli"
+recommends = ""
+suggests = ""
+assets = [
+    ["target/release/bibli-mupdf-worker", "usr/lib/bibli/", "755"],
+    ["../../tools/package/linux/copyright-mupdf", "usr/share/doc/bibli-mupdf/copyright", "644"],
+]
+
 # Fedora, openSUSE and the others that install RPMs (cargo-generate-rpm):
-# helpers in /usr/libexec. Beside what the programs link (auto-req), what
-# bibli opens at run time: the Vulkan loader and fontconfig.
+# helpers, and PDFium beside its own, in /usr/libexec/bibli. Beside what
+# the programs link (auto-req), what bibli opens at run time: the Vulkan
+# loader and fontconfig.
 [package.metadata.generate-rpm]
-license = "(MIT OR Apache-2.0) AND GPL-2.0-or-later AND AGPL-3.0-or-later"
+# bibli's own, and PDFium's (its parts' notices in
+# /usr/share/licenses/bibli/pdfium).
+license = "(MIT OR Apache-2.0) AND BSD-3-Clause"
 url = "https://github.com/venator/bibli"
 auto-req = "auto"
 assets = [
     { source = "target/release/bibli", dest = "/usr/bin/bibli", mode = "755" },
     { source = "target/release/bibli-pdf-worker", dest = "/usr/libexec/bibli/bibli-pdf-worker", mode = "755" },
-    { source = "target/release/bibli-poppler-worker", dest = "/usr/libexec/bibli/bibli-poppler-worker", mode = "755" },
-    { source = "target/release/bibli-mupdf-worker", dest = "/usr/libexec/bibli/bibli-mupdf-worker", mode = "755" },
-    { source = "target/release/bibli-media-worker", dest = "/usr/libexec/bibli/bibli-media-worker", mode = "755" },
     { source = "target/release/bibli-archive-worker", dest = "/usr/libexec/bibli/bibli-archive-worker", mode = "755" },
-    { source = "target/release/bibli-mermaid-worker", dest = "/usr/libexec/bibli/bibli-mermaid-worker", mode = "755" },
     { source = "target/release/bibli-model-worker", dest = "/usr/libexec/bibli/bibli-model-worker", mode = "755" },
+    { source = "../../target/pdfium/libpdfium.so", dest = "/usr/libexec/bibli/libpdfium.so", mode = "755" },
+    { source = "../../target/pdfium/licenses/pdfium/*", dest = "/usr/share/licenses/bibli/pdfium/", mode = "644", doc = true },
     { source = "../../tools/package/linux/bibli.desktop", dest = "/usr/share/applications/bibli.desktop", mode = "644" },
     { source = "../../tools/package/linux/io.github.venator.bibli.metainfo.xml", dest = "/usr/share/metainfo/io.github.venator.bibli.metainfo.xml", mode = "644" },
     { source = "../../LICENSE-MIT", dest = "/usr/share/licenses/bibli/LICENSE-MIT", mode = "644", doc = true },
@@ -140,14 +181,16 @@ vulkan-loader = "*"
 fontconfig = "*"
 
 [package.metadata.generate-rpm.recommends]
+bibli-media = "*"
 mesa-vulkan-drivers = "*"
 bubblewrap = "*"
-gstreamer1-plugins-base = "*"
-gstreamer1-plugins-good = "*"
-poppler-utils = "*"
 udisks2 = "*"
 
 [package.metadata.generate-rpm.suggests]
+bibli-poppler = "*"
+bibli-mermaid = "*"
+bibli-mupdf = "*"
+poppler-utils = "*"
 libreoffice-writer = "*"
 libreoffice-calc = "*"
 libreoffice-impress = "*"
@@ -156,6 +199,47 @@ ImageMagick = "*"
 ffmpeg-free = "*"
 perl-Image-ExifTool = "*"
 plocate = "*"
-gstreamer1-plugins-bad-free = "*"
-gstreamer1-plugins-ugly-free = "*"
-gstreamer1-plugin-libav = "*"
+
+[package.metadata.generate-rpm.variants.media]
+name = "bibli-media"
+license = "MIT OR Apache-2.0"
+summary = "bibli's audio and video player, through GStreamer"
+assets = [
+    { source = "target/release/bibli-media-worker", dest = "/usr/libexec/bibli/bibli-media-worker", mode = "755" },
+]
+requires = { bibli = "*" }
+recommends = { gstreamer1-plugins-base = "*", gstreamer1-plugins-good = "*" }
+suggests = { gstreamer1-plugins-bad-free = "*", gstreamer1-plugins-ugly-free = "*", gstreamer1-plugin-libav = "*" }
+
+[package.metadata.generate-rpm.variants.poppler]
+name = "bibli-poppler"
+summary = "bibli's PDF reader through Poppler"
+license = "GPL-2.0-or-later"
+assets = [
+    { source = "target/release/bibli-poppler-worker", dest = "/usr/libexec/bibli/bibli-poppler-worker", mode = "755" },
+]
+requires = { bibli = "*" }
+recommends = {}
+suggests = {}
+
+[package.metadata.generate-rpm.variants.mermaid]
+name = "bibli-mermaid"
+license = "MIT OR Apache-2.0"
+summary = "Mermaid diagrams drawn in bibli's Markdown previews"
+assets = [
+    { source = "target/release/bibli-mermaid-worker", dest = "/usr/libexec/bibli/bibli-mermaid-worker", mode = "755" },
+]
+requires = { bibli = "*" }
+recommends = {}
+suggests = {}
+
+[package.metadata.generate-rpm.variants.mupdf]
+name = "bibli-mupdf"
+summary = "bibli's MuPDF engine: PDFs, and books laid out into pages"
+license = "AGPL-3.0-or-later"
+assets = [
+    { source = "target/release/bibli-mupdf-worker", dest = "/usr/libexec/bibli/bibli-mupdf-worker", mode = "755" },
+]
+requires = { bibli = "*" }
+recommends = {}
+suggests = {}

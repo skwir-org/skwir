@@ -360,9 +360,11 @@ fn without_verbatim(path: &str) -> Option<String> {
 }
 
 /// The executable `program` would run as: a path containing a separator
-/// is taken as is, anything else is searched on `PATH`. On Unix only
-/// regular files with an execute bit count; on Windows a file counts by
-/// its extension, `PATHEXT`'s (`zoxide` runs as `zoxide.exe`).
+/// is taken as is, anything else is searched on `PATH`, then where the
+/// system's package managers put programs a desktop session's `PATH` may
+/// lack (`also_searched`). On Unix only regular files with an execute bit
+/// count; on Windows a file counts by its extension, `PATHEXT`'s
+/// (`zoxide` runs as `zoxide.exe`).
 pub fn find_program(program: impl AsRef<OsStr>) -> Option<PathBuf> {
     let program = Path::new(program.as_ref());
     if program.as_os_str().is_empty() {
@@ -371,12 +373,31 @@ pub fn find_program(program: impl AsRef<OsStr>) -> Option<PathBuf> {
     if program.components().count() > 1 || program.is_absolute() {
         return names_of(program).into_iter().find(|p| is_executable(p));
     }
-    let paths = std::env::var_os("PATH")?;
-    std::env::split_paths(&paths).find_map(|dir| {
-        names_of(&dir.join(program))
+    let paths = std::env::var_os("PATH").unwrap_or_default();
+    std::env::split_paths(&paths)
+        .chain(also_searched())
+        .find_map(|dir| {
+            names_of(&dir.join(program))
+                .into_iter()
+                .find(|candidate| is_executable(candidate))
+        })
+}
+
+/// Where programs are that a desktop session's `PATH` may lack, searched
+/// after it: on macOS an application started from the Finder or the Dock
+/// has the system's folders alone, so Homebrew's (`/opt/homebrew/bin` on
+/// Apple silicon, `/usr/local/bin` on Intel) and `MacPorts`' (`/opt/local/bin`)
+/// are searched too. None elsewhere: a Linux session has them on its
+/// `PATH`, and on Windows winget and Scoop put theirs on the user's.
+fn also_searched() -> Vec<PathBuf> {
+    if cfg!(target_os = "macos") {
+        ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"]
             .into_iter()
-            .find(|candidate| is_executable(candidate))
-    })
+            .map(PathBuf::from)
+            .collect()
+    } else {
+        Vec::new()
+    }
 }
 
 /// The files `program` may be: itself on Unix; on Windows itself when its

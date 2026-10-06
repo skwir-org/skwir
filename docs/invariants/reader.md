@@ -12,6 +12,15 @@ Read this before touching `crates/pdf-worker`, `crates/poppler-worker`, `crates/
   Session creation/render/search are blocking worker entry points. The manager
   thread owns child cleanup and temporary files; dropping a UI session must
   only cancel/send, never wait for a process or delete files.
+- A PDF page drawn anywhere else (a PDF's thumbnail, the first page of an
+  office document converted to PDF) is drawn by an engine first
+  (`document::first_page`, in `auto`'s order, `document::AUTO`), Poppler's
+  `pdftoppm` only where none is: it is what macOS, Windows and a minimal
+  Linux have (ADR-041). `PDFium`'s library is the one the settings name
+  (`document::PdfiumChoice`, shared by the reader, the thumbnails and the
+  requirement's probe), else the one bibli's packages carry beside the
+  PDFium helper (or in a Mac bundle's `Frameworks`), else the system's;
+  every helper answers `--probe` (`process::probe`).
 - Protocol lines are `Tagged`: the greeting is reply 0 and request `n` gets
   reply `n`, once, in order (`bibli_core::document::worker::serve`, shared by
   both workers). A cancelled request sends `Cancel` and its answer is drained

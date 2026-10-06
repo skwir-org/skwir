@@ -54,7 +54,7 @@ pub(crate) fn drawn(output: &Path, pixels: u32) -> anyhow::Result<Image> {
 }
 
 /// Downscale so the longest side is at most `px`, then RGBA8.
-fn fit(img: DynamicImage, px: u32) -> Image {
+pub(crate) fn fit(img: DynamicImage, px: u32) -> Image {
     let img = if img.width().max(img.height()) > px {
         img.thumbnail(px, px)
     } else {
@@ -470,12 +470,41 @@ impl ThumbnailProvider for Thumbnailers {
 
 // ------------------------------------------------------------- PDF pages
 
-/// A PDF's first page, rendered by Poppler's `pdftoppm` the way the document
-/// preview renders its pages. A fallback: a thumbnailer the desktop installed
-/// for PDFs runs first, so bibli draws what other applications draw, and the
-/// cache stores what this makes for them.
+/// A PDF's first page, drawn as the reader draws it (`document::first_page`:
+/// `PDFium`, which bibli's packages carry, then Poppler), else by Poppler's
+/// `pdftoppm`. A fallback: a thumbnailer the desktop installed for PDFs
+/// runs first, so bibli draws what other applications draw, and the cache
+/// stores what this makes for them.
 #[derive(Debug, Clone, Default)]
-pub struct PdfPages;
+pub struct PdfPages {
+    /// `PDFium`'s library as the settings name it.
+    pub pdfium: crate::document::PdfiumChoice,
+}
+
+/// The first page of the PDF at `pdf`, at most `side` pixels: by a reader
+/// engine, else by `pdftoppm`, else none.
+fn first_pdf_page(
+    pdf: &Path,
+    side: u32,
+    pdfium: &crate::document::PdfiumChoice,
+    scratch: &Path,
+    cancel: &CancelToken,
+) -> anyhow::Result<Option<Image>> {
+    let library = pdfium.read().clone();
+    if let Some(page) = crate::document::first_page(
+        pdf,
+        side,
+        &crate::document::AUTO,
+        library.as_deref(),
+        cancel,
+    )? {
+        return Ok(Some(page));
+    }
+    let Ok(renderer) = crate::process::required("pdftoppm") else {
+        return Ok(None);
+    };
+    crate::preview::render_pdf_page(&renderer, pdf, 1, side, scratch, cancel).map(Some)
+}
 
 impl ThumbnailProvider for PdfPages {
     fn id(&self) -> &'static str {
@@ -491,26 +520,24 @@ impl ThumbnailProvider for PdfPages {
     }
 
     fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
-        let Ok(renderer) = crate::process::required("pdftoppm") else {
-            return Ok(None);
-        };
         ensure_file(&req.entry.path)?;
         let scratch = tempfile::tempdir()?;
-        let page = crate::preview::render_pdf_page(
-            &renderer,
+        let page = first_pdf_page(
             &req.entry.path,
-            1,
             req.size.pixels(),
+            &self.pdfium,
             scratch.path(),
             cancel,
         );
         if cancel.is_cancelled() {
             return Ok(None);
         }
-        let page = page?;
+        let Some(page) = page? else {
+            return Ok(None);
+        };
         anyhow::ensure!(
             page.width.max(page.height) <= req.size.pixels(),
-            "pdftoppm made a page larger than asked"
+            "a page larger than asked"
         );
         Ok(Some(page))
     }
@@ -527,11 +554,13 @@ impl ThumbnailProvider for PdfPages {
 pub struct OfficePages {
     /// The document preview's cache, where its conversions are.
     cache: bibli_core::cache::CacheSlot,
+    /// `PDFium`'s library as the settings name it.
+    pdfium: crate::document::PdfiumChoice,
 }
 
 impl OfficePages {
-    pub fn new(cache: bibli_core::cache::CacheSlot) -> Self {
-        Self { cache }
+    pub fn new(cache: bibli_core::cache::CacheSlot, pdfium: crate::document::PdfiumChoice) -> Self {
+        Self { cache, pdfium }
     }
 }
 
@@ -549,9 +578,6 @@ impl ThumbnailProvider for OfficePages {
     }
 
     fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
-        let Ok(renderer) = crate::process::required("pdftoppm") else {
-            return Ok(None);
-        };
         let source = req.entry.resolve()?;
         let scratch = tempfile::tempdir()?;
         let Some(pdf) =
@@ -559,18 +585,17 @@ impl ThumbnailProvider for OfficePages {
         else {
             return Ok(None);
         };
-        let page = crate::preview::render_pdf_page(
-            &renderer,
+        let page = first_pdf_page(
             &pdf,
-            1,
             req.size.pixels(),
+            &self.pdfium,
             scratch.path(),
             cancel,
         );
         if cancel.is_cancelled() {
             return Ok(None);
         }
-        Ok(Some(page?))
+        page
     }
 }
 

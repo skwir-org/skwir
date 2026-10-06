@@ -220,8 +220,20 @@ from the source vendored in `vendor/shared-mime-info`
   `convert` is a system tool on Windows) are refused; Pandoc
   (`preview-documents/pandoc.rs`) runs in its own `--sandbox` (2.15 or
   later) on every system, and alone where the system isolates nothing.
-- Quick Look's thumbnails on macOS and Windows' thumbnail cache, which
-  the systems isolate themselves, are not read yet (ADR-039).
+- The system's thumbnails (ADR-041, `platform/system_thumbs.rs`): Quick
+  Look's on macOS (compiled, never run **(5b)**), the shell's
+  `IShellItemImageFactory` on Windows (run under Wine, whose shell
+  draws none **(5b)**), at the Generate stage after bibli's decoder.
+- PDFs (ADR-041): the packages carry PDFium, which its helper finds
+  beside itself or in a Mac bundle's `Frameworks` (the Windows helper
+  loaded the pinned `pdfium.dll` so under Wine); PDF thumbnails and
+  converted office pages are drawn by the engine (`document::
+  first_page`), `pdftoppm` only where none is.
+- Left for the machines (ADR-041): audio and video through AVFoundation
+  and Media Foundation (a helper per system, not GStreamer bundled);
+  the archive helper with libarchive linked in statically; LibreOffice
+  on macOS under `sandbox-exec` (found where it installs itself,
+  `process::required`).
 
 ## 9. Processes, terminal, editors (step H)
 
@@ -238,6 +250,11 @@ Linux). Left:
   never run; who has the terminal and where the shell is are **(u)**
   there, so the pane and the shell do not follow each other (a shell's
   own report, OSC 9;9 or 7, would say where it is).
+- Programs off `PATH` (ADR-041): on macOS Homebrew's and MacPorts'
+  folders are searched after `PATH` (`os_path::find_program`: an
+  application started from the Finder has the system's folders alone),
+  and LibreOffice is found where it installs itself on macOS and
+  Windows (`process::required`). Compiled only.
 - `platform/process.rs`: a child is put in its job just after it
   starts (std cannot start it suspended): what it starts in that
   instant escapes the job.

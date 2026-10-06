@@ -133,8 +133,9 @@ Install optional tools on `PATH` to enable these formats:
 - Poppler reader: `bibli-poppler-worker` plus `poppler-glib`, GLib and Cairo.
   The default Nix shell provides these libraries. `just build` and `just run`
   build both workers; building only `bibli` does not require Poppler headers.
-- PDFium reader: `bibli-pdf-worker` plus the PDFium shared library. The
-  default shell does not provide it. To opt in, create a git-ignored
+- PDFium reader: `bibli-pdf-worker` plus the PDFium shared library, which
+  bibli's packages carry beside the helper (ADR-041). The default shell
+  does not provide it. To opt in, create a git-ignored
   `.envrc.local` containing `use flake .#pdf` (direnv then enters the `pdf`
   shell, which exports `BIBLI_PDFIUM_LIBRARY`), or set `BIBLI_PDFIUM_LIBRARY`
   to your installed library.

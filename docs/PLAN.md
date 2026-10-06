@@ -159,6 +159,31 @@ never run on a Mac or Windows). Not
 done: icons from the system, Open With from Launch Services or
 Windows' handlers, owners by SID.
 
+PDFium carried, and what each system brings (2026-10-06, ADR-041, as
+the user chose). Every package carries PDFium, a pinned release of
+bblanchon/pdfium-binaries (`tools/package/pdfium.lock`, fetched and
+checked by `pdfium.sh`), which its helper finds beside itself or in a
+Mac bundle's `Frameworks`: PDFs open everywhere. PDF thumbnails and
+converted office pages are drawn by the engine (`document::first_page`;
+tested with no Poppler tool to be found), `pdftoppm` only where none is.
+Linux's packages split: on Debian and Fedora `bibli` (the app, PDFium,
+archives, 3D models), `bibli-media` recommended, `bibli-poppler`,
+`bibli-mermaid` and `bibli-mupdf` suggested, every dependency found by
+the tools; on Arch one `bibli` whose Poppler and GStreamer libraries are
+optional, and `bibli-mermaid` and `bibli-mupdf`. The main Debian package
+went from 26 MB (85 MB installed) to 20 MB (67 MB), depending on what
+bibli links alone. `try.sh` checks each system's packages twice in a
+fresh root: `bibli` alone (PDFium working, the rest absent or saying it
+lacks its libraries), then with the others and what they recommend
+(every helper working). macOS and Windows: their packages carry PDFium
+and leave Mermaid and MuPDF out; the system's thumbnails
+(`system_thumbs`: Quick Look, compiled only; the Windows shell, run
+under Wine, whose shell draws none); Homebrew's and MacPorts' folders
+searched on macOS, LibreOffice found where it installs itself (compiled
+only); the Windows PDF helper loaded the pinned `pdfium.dll` beside it
+under Wine. Left for the machines: audio and video through AVFoundation
+and Media Foundation, libarchive linked in statically, everything run.
+
 Linux packages (2026-10-06, ADR-040, the formats the user chose:
 Debian's, RPMs and the AUR; no Flatpak). Each is built on the
 distribution it is for: a `.deb` (cargo-deb, `tools/package/deb.sh`),
@@ -253,10 +278,10 @@ remote). ADR-038 says what the budgets measure on macOS
 until 5b measures; `just idle-pss` says it measures nothing off Linux.
 
 Phase 5a's checks on Linux (2026-10-06): `just lint-all` green (the
-workspace, then Windows and macOS); `just test-all` 1161 passed.
+workspace, then Windows and macOS); `just test-all` 1176 passed.
 Under Wine (`just test-windows`, all but bibli-ui, bibli and the
 native workers, whose gpui imports Windows' own ICU, which Wine lacks):
-755 passed, 15 ignored, those needing what Wine lacks passing with a
+766 passed, 15 ignored, those needing what Wine lacks passing with a
 word on why. The tests that run Pandoc, ImageMagick and LibreOffice
 (ignored by default) pass on Linux, but for the last's PDF reader
 step, which needs the native workers built.

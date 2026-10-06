@@ -115,8 +115,43 @@ fn helper_folders(bin: &Path) -> Vec<PathBuf> {
 /// binds the store it lives in, not the profile's symlink farm.
 pub fn required(program: &str) -> anyhow::Result<PathBuf> {
     find_program(program)
+        .or_else(|| application(program))
         .and_then(|path| bibli_core::os_path::canonical(path).ok())
         .with_context(|| format!("{program} is not installed"))
+}
+
+/// Where an application that puts no program on any path keeps the one
+/// bibli runs as `program`: `LibreOffice`'s `soffice`, in its bundle on
+/// macOS (in `/Applications` or the user's own) and in its folder under
+/// Program Files on Windows. Linux's packages put it on `PATH`.
+fn application(program: &str) -> Option<PathBuf> {
+    if program != "libreoffice" {
+        return None;
+    }
+    let places: Vec<PathBuf> = if cfg!(target_os = "macos") {
+        [
+            Some(PathBuf::from("/Applications")),
+            bibli_core::os_path::home().map(|home| home.join("Applications")),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|dir| dir.join("LibreOffice.app/Contents/MacOS/soffice"))
+        .collect()
+    } else if cfg!(windows) {
+        ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"]
+            .into_iter()
+            .filter_map(std::env::var_os)
+            .map(|dir| {
+                Path::new(&dir)
+                    .join("LibreOffice")
+                    .join("program")
+                    .join("soffice.exe")
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    places.into_iter().find_map(find_program)
 }
 
 /// A child that is killed, with its process group, and reaped when dropped.

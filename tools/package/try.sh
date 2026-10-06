@@ -111,47 +111,76 @@ if [ -d "$builder/src" ]; then
 fi
 mkdir -p "$builder/src"
 (cd "$tree" && git ls-files -co --exclude-standard -z | tar --null -T - -cf -) | tar -xf - -C "$builder/src"
-# The newest package made: names of the tools' own making.
-# shellcheck disable=SC2012
+# The packages made: bibli, and those of its own a package of its own
+# holds (bibli-media, bibli-poppler… on Debian and Fedora; bibli-mermaid
+# and bibli-mupdf on Arch), by names of the tools' own making.
 case "$distribution" in
 debian)
     enter "$builder" 0 env CARGO_TARGET_DIR=/build/target sh -c 'cd /src && tools/package/deb.sh'
-    package="$(ls -t "$builder"/build/target/debian/bibli_*.deb | head -1)"
+    made="$builder/build/target/debian"
+    main='bibli_*.deb'
+    extra='bibli-*_*.deb'
     ;;
 fedora)
     enter "$builder" 0 env CARGO_TARGET_DIR=/build/target sh -c 'cd /src && tools/package/rpm.sh'
-    package="$(ls -t "$builder"/build/target/generate-rpm/bibli-*.rpm | head -1)"
+    made="$builder/build/target/generate-rpm"
+    main='bibli-[0-9]*.rpm'
+    extra='bibli-[a-z]*.rpm'
     ;;
 arch)
     enter "$builder" 1000 sh -c 'cd /src && tools/package/aur/build.sh'
-    for made in "$builder"/src/target/aur/bibli-*.pkg.tar.zst; do
-        case "$made" in
-        *-debug-*) ;;
-        *) package="$made" ;;
-        esac
-    done
+    made="$builder/src/target/aur"
+    main='bibli-[0-9]*.pkg.tar.zst'
+    extra='bibli-[a-z]*.pkg.tar.zst'
     ;;
 esac
-cp "$package" "$out/"
-echo "built: $out/$(basename "$package")"
 
-# A fresh root installs it, with what it depends on, and checks it.
+# A fresh root installs bibli alone, without what it only recommends,
+# and checks it; then the others, with what they recommend (and on Arch
+# the libraries bibli's helpers may go without), and checks them all.
 fresh="$roots/$distribution-try"
 unpack "$fresh"
-mkdir -p "$fresh/package"
-cp "$package" "$fresh/package/"
-name="/package/$(basename "$package")"
+mkdir -p "$fresh/package/main" "$fresh/package/extra"
+# shellcheck disable=SC2086 # the names are patterns
+for package in "$made"/$main; do
+    cp "$package" "$fresh/package/main/"
+    cp "$package" "$out/"
+    echo "built: $out/$(basename "$package")"
+done
+# shellcheck disable=SC2086 # the names are patterns
+for package in "$made"/$extra; do
+    case "$package" in
+    *-debug-*) continue ;;
+    esac
+    cp "$package" "$fresh/package/extra/"
+    cp "$package" "$out/"
+    echo "built: $out/$(basename "$package")"
+done
 case "$distribution" in
 debian)
-    enter "$fresh" 0 sh -c "apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends $name" >/dev/null
+    enter "$fresh" 0 sh -c 'apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends /package/main/*.deb' >/dev/null
     ;;
 fedora)
-    enter "$fresh" 0 dnf -y -q install --setopt=install_weak_deps=False "$name" >/dev/null
+    enter "$fresh" 0 sh -c 'dnf -y -q install --setopt=install_weak_deps=False /package/main/*.rpm' >/dev/null
     ;;
 arch)
-    enter "$fresh" 0 sh -c "pacman-key --init && pacman-key --populate archlinux && pacman -Syu --noconfirm && pacman -U --noconfirm $name" >/dev/null
+    enter "$fresh" 0 sh -c 'pacman-key --init && pacman-key --populate archlinux && pacman -Syu --noconfirm && pacman -U --noconfirm /package/main/*.pkg.tar.zst' >/dev/null
     ;;
 esac
+echo "== $distribution: bibli alone"
+enter "$fresh" 0 /tools/package/linux/check.sh minimal
+case "$distribution" in
+debian)
+    enter "$fresh" 0 sh -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y -q /package/extra/*.deb' >/dev/null
+    ;;
+fedora)
+    enter "$fresh" 0 sh -c 'dnf -y -q install /package/extra/*.rpm' >/dev/null
+    ;;
+arch)
+    enter "$fresh" 0 sh -c 'pacman -S --noconfirm --needed gst-plugins-base poppler-glib && pacman -U --noconfirm /package/extra/*.pkg.tar.zst' >/dev/null
+    ;;
+esac
+echo "== $distribution: with the others and what they recommend"
 enter "$fresh" 0 /tools/package/linux/check.sh
 chmod -R u+rwX "$fresh"
 rm -rf "${fresh:?}"

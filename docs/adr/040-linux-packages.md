@@ -1,6 +1,9 @@
 # ADR-040: Linux packages: Debian's, RPMs and the AUR
 
 Status: accepted, 2026-10-06 (Phase 5; the user chose the formats).
+Amended the same day by ADR-041: the packages carry PDFium, and the
+helpers few need, or whose libraries most systems do not, are packages
+of their own (on Arch, optional libraries).
 
 ## Context
 

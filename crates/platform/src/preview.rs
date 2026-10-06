@@ -527,7 +527,7 @@ impl PreviewProvider for DocumentPreviews {
             "pdfium" => &[Engine::Pdfium],
             "poppler" => &[Engine::Poppler],
             "mupdf" => &[Engine::Mupdf],
-            _ => &[Engine::Pdfium, Engine::Poppler],
+            _ => &crate::document::AUTO,
         };
         let source = req.entry.resolve()?;
         let base = fingerprint(req, &source)?;
@@ -891,11 +891,62 @@ mod tests {
                 size: ThumbSize::Normal,
             }
         };
-        assert_eq!(PdfPages.stage(), Stage::Fallback);
-        assert!(PdfPages.accepts(&req("Report \u{2019}24.PDF", None)));
-        assert!(PdfPages.accepts(&req("scan", Some("application/pdf"))));
-        assert!(!PdfPages.accepts(&req("notes.txt", None)));
-        assert!(!PdfPages.accepts(&req("book.epub", None)));
+        assert_eq!(PdfPages::default().stage(), Stage::Fallback);
+        assert!(PdfPages::default().accepts(&req("Report \u{2019}24.PDF", None)));
+        assert!(PdfPages::default().accepts(&req("scan", Some("application/pdf"))));
+        assert!(!PdfPages::default().accepts(&req("notes.txt", None)));
+        assert!(!PdfPages::default().accepts(&req("book.epub", None)));
+    }
+
+    /// A PDF's thumbnail drawn by the reader's engine, `PDFium`, with no
+    /// Poppler tool to be found (macOS, Windows, a Linux without them).
+    /// Needs the helper built in the target folder the test runs from and
+    /// a `PDFium` (the `pdf` dev shell names one); without them the test
+    /// says so and passes.
+    #[test]
+    fn pdf_thumbnails_are_drawn_by_the_readers_engine() {
+        use crate::thumb_providers::PdfPages;
+        use bibli_core::thumbs::{ThumbRequest, ThumbSize, ThumbnailProvider};
+        let helper = std::env::current_exe()
+            .ok()
+            .and_then(|exe| Some(exe.parent()?.parent()?.join("bibli-pdf-worker")))
+            .filter(|path| path.is_file());
+        let (Some(helper), Some(_)) = (helper, std::env::var_os("BIBLI_PDFIUM_LIBRARY")) else {
+            eprintln!("skipped: needs bibli-pdf-worker built and a PDFium library");
+            return;
+        };
+        // SAFETY: nextest runs each test in a process of its own, and
+        // nothing else reads the environment before this.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("BIBLI_PDF_WORKER", &helper);
+            // No `pdftoppm` to fall back on.
+            std::env::set_var("PATH", "");
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("Synthetic \u{201c}report\u{201d}.pdf");
+        pdf(&path);
+        let req = ThumbRequest {
+            entry: EntryRef::from_path(&path).unwrap(),
+            mime: None,
+            mtime: None,
+            size: ThumbSize::Normal,
+        };
+        let img = PdfPages::default()
+            .thumbnail(&req, &CancelToken::new())
+            .unwrap()
+            .expect("PDFium draws it");
+        assert_eq!(
+            img.width,
+            ThumbSize::Normal.pixels(),
+            "the page is wider than tall"
+        );
+        let middle = ((img.height / 2 * img.width + img.width / 2) * 4) as usize;
+        assert_eq!(
+            &img.rgba[middle..middle + 4],
+            &[255, 0, 0, 255],
+            "page 1 is red"
+        );
     }
 
     #[test]
@@ -915,7 +966,7 @@ mod tests {
                 mtime: None,
                 size,
             };
-            let img = PdfPages
+            let img = PdfPages::default()
                 .thumbnail(&req, &CancelToken::new())
                 .unwrap()
                 .expect("a thumbnail");
@@ -936,7 +987,11 @@ mod tests {
             mtime: None,
             size: ThumbSize::Normal,
         };
-        assert!(PdfPages.thumbnail(&req, &CancelToken::new()).is_err());
+        assert!(
+            PdfPages::default()
+                .thumbnail(&req, &CancelToken::new())
+                .is_err()
+        );
     }
 
     #[test]

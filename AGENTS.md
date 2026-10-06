@@ -1270,6 +1270,12 @@ just dist           build bibli and every helper without debug info (target/dist
 just flame [dir]    profile with samply
 ```
 
+A new helper program is listed in `tools/package/programs` (and in
+`tools/package/optional` when a package of its own holds it), in the
+packages' file lists (`crates/bibli/Cargo.toml`'s metadata, the
+PKGBUILD) and the macOS and Windows scripts where it ships, and answers
+`--probe` (ADR-040, ADR-041).
+
 Without an active dev shell, use `nix develop --command just <recipe>`, as CI
 does. `spikes/` is a separate workspace and is not covered by the root checks.
 

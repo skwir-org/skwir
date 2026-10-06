@@ -145,6 +145,56 @@ pub fn open_book(
     )
 }
 
+/// `PDFium`'s library as the settings name it, shared by what opens
+/// documents (the reader, thumbnails, the requirement's probe), so one
+/// change reaches them all. `None`: the one a package carries beside the
+/// helper, else the system's (ADR-041).
+pub type PdfiumChoice = Arc<parking_lot::RwLock<Option<PathBuf>>>;
+
+/// The engines `auto` tries, in its order: `PDFium` (the one bibli's
+/// packages carry), then Poppler. `MuPDF` only when chosen (ADR-014).
+pub const AUTO: [Engine; 2] = [Engine::Pdfium, Engine::Poppler];
+
+/// The first page of the PDF at `pdf`, at most `side` pixels on its
+/// longer side, drawn by the first of `engines` there is, `PDFium` told
+/// `library` when the settings name one: what a thumbnail draws, as the
+/// reader would. `None` when no engine is. A session opened for one page
+/// and closed. Called on a scheduler worker.
+pub fn first_page(
+    pdf: &Path,
+    side: u32,
+    engines: &[Engine],
+    library: Option<&Path>,
+    cancel: &CancelToken,
+) -> anyhow::Result<Option<bibli_core::thumbs::Image>> {
+    for &engine in engines {
+        let setup = Setup {
+            library: library
+                .filter(|_| matches!(engine, Engine::Pdfium))
+                .map(Path::to_owned),
+            layout: None,
+        };
+        let Some(session) = WorkerSession::open(
+            engine,
+            pdf.to_owned(),
+            pdf.to_owned(),
+            tempfile::tempdir()?,
+            setup,
+            cancel.child(),
+        )?
+        else {
+            continue;
+        };
+        let page = session.render(1, side, cancel)?;
+        return Ok(Some(bibli_core::thumbs::Image {
+            width: page.width,
+            height: page.height,
+            rgba: page.rgba.into(),
+        }));
+    }
+    Ok(None)
+}
+
 impl WorkerSession {
     /// Called on a scheduler worker. None means the optional worker/library is
     /// absent; malformed or encrypted documents produce an ordinary error.

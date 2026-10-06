@@ -1,13 +1,14 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: bibli
 Source: https://github.com/venator/bibli
-Comment: bibli's own code is MIT OR Apache-2.0. Two of its helpers link
- libraries under other licences, and their programs are distributed
- under those, with their sources: bibli-poppler-worker links Poppler
- (GPL-2.0-or-later), bibli-mupdf-worker links MuPDF (AGPL-3.0-or-later, Artifex
- Software; its source is bundled by the mupdf-sys crate; ADR-014). bibli
- itself links neither: it speaks to them over its worker protocol. The
- source of all of it is bibli's repository.
+Comment: bibli's own code is MIT OR Apache-2.0. It carries PDFium
+ (usr/lib/bibli/libpdfium.so, ADR-041), a build of bblanchon's
+ pdfium-binaries under PDFium's licence (BSD-3-Clause) with those of what
+ it includes (FreeType, HarfBuzz, ICU, libjpeg-turbo, OpenJPEG, libpng,
+ LittleCMS, zlib, Abseil and others, all permissive): their texts are in
+ /usr/share/doc/bibli/pdfium. The Poppler and MuPDF readers, which link
+ libraries under the GPL and the AGPL, are packages of their own
+ (bibli-poppler, bibli-mupdf).
 
 Files: *
 Copyright: The bibli authors
@@ -36,11 +37,3 @@ License: MIT
 License: Apache-2.0
  On Debian systems, the full text is in
  /usr/share/common-licenses/Apache-2.0.
-
-License: GPL-2.0-or-later
- On Debian systems, the full text of the GNU General Public License
- version 2 is in /usr/share/common-licenses/GPL-2.
-
-License: AGPL-3.0-or-later
- On Debian systems, the full text of the GNU Affero General Public
- License version 3 is in /usr/share/common-licenses/AGPL-3.0.

@@ -12,5 +12,8 @@ anyhow.workspace = true
 serde_json.workspace = true
 pdfium-render = { version = "=0.8.35", default-features = false, features = ["pdfium_6721"] }
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true

@@ -1,4 +1,4 @@
-<!-- bibli's Windows installer (Phase 5, step K), for WiX 4 or later:
+<!-- bibli's Windows installer (Phase 5, step K), for WiX 5 or later:
      `wix build bibli.wxs -d Version=0.0.1 -d Dist=..\..\..\target\dist`.
      Written on Linux, never built yet (ADR-035: 5b builds it). The helpers
      go beside bibli.exe, where it finds them. Unsigned. -->
@@ -16,9 +16,14 @@
                         WorkingDirectory="INSTALLFOLDER" Advertise="yes" />
             </File>
             <File Source="$(Dist)\bibli-pdf-worker.exe" />
-            <File Source="$(Dist)\bibli-mermaid-worker.exe" />
             <File Source="$(Dist)\bibli-model-worker.exe" />
+            <!-- PDFium, beside its helper (ADR-041). -->
+            <File Source="$(Dist)\pdfium.dll" />
           </Component>
+          <!-- bibli's licences, and PDFium's with those of what it carries. -->
+          <Directory Id="Licenses" Name="licenses">
+            <Files Include="$(Dist)\licenses\**" />
+          </Directory>
           <!-- The type database, beside bibli.exe (ADR-037): what
                tools/package/mime-database.sh puts in it. -->
           <Directory Id="Share" Name="share">
