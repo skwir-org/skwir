@@ -6,6 +6,11 @@
 //! GTK does, drawn in the text color: a symbolic SVG is a shape to tint,
 //! not a picture. The worker that finds one reads it too, so drawing it
 //! never touches the disk.
+//!
+//! A full-color SVG icon is rasterized at the size it is drawn, in device
+//! pixels rounded up to a few sides (`raster_side`), never at the size its
+//! file declares: Adwaita's are 128 px, which `img()` drew at 256 by 256
+//! for a 16 px row, filters and all.
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -14,7 +19,10 @@ use std::sync::{Arc, Mutex};
 
 use bibli_core::{App, Entry};
 use bibli_platform::{icons, mime};
-use gpui::{AnyElement, AssetSource, Hsla, SharedString, div, img, prelude::*, px, svg};
+use gpui::{
+    AnyElement, Asset, AssetSource, Hsla, ImageCacheError, ImageSource, RenderImage, SharedString,
+    Window, div, img, prelude::*, px, svg,
+};
 
 /// Serves any absolute path on disk. Icon themes live outside the binary.
 pub struct FsAssets;
@@ -217,13 +225,72 @@ impl IconCache {
     }
 }
 
-/// Render an icon path at `size` px. SVGs go through `img()` too, which
-/// rasterizes them in full color; `svg()` would render a monochrome mask.
+/// Render an icon path at `size` px, in full color (`svg()` would render
+/// a monochrome mask). An SVG is rasterized for the side it is drawn at
+/// (`SizedSvg`); any other picture is decoded by `img()` as it is.
 pub fn element(path: &Path, size: f32) -> AnyElement {
-    img(path.to_path_buf())
-        .size(px(size))
-        .flex_none()
-        .into_any_element()
+    let source: ImageSource = if is_svg(path) {
+        let path: Arc<Path> = path.into();
+        ImageSource::Custom(Arc::new(move |window: &mut Window, cx: &mut gpui::App| {
+            let pixels = raster_side(size * window.scale_factor());
+            window.use_asset::<SizedSvg>(&(Arc::clone(&path), pixels), cx)
+        }))
+    } else {
+        path.to_path_buf().into()
+    };
+    img(source).size(px(size)).flex_none().into_any_element()
+}
+
+/// Whether an icon file is an SVG drawing (`.svgz` compressed).
+fn is_svg(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("svg") || e.eq_ignore_ascii_case("svgz"))
+}
+
+/// The sides, in device pixels, an SVG icon is rasterized at: the drawn
+/// side rounded up to one of these, so a zoom that moves the size a little
+/// draws from the same bitmap, and at most the last, the largest any icon
+/// was drawn from before (the grid's largest icon is enlarged past it).
+const RASTER_SIDES: [u32; 9] = [16, 24, 32, 48, 64, 96, 128, 192, 256];
+
+/// The side an icon drawn `device` pixels wide is rasterized at.
+fn raster_side(device: f32) -> u32 {
+    let device = device.ceil().max(1.) as u32;
+    RASTER_SIDES
+        .into_iter()
+        .find(|side| *side >= device)
+        .unwrap_or(RASTER_SIDES[RASTER_SIDES.len() - 1])
+}
+
+/// An SVG icon rasterized within a side of device pixels, loaded by GPUI's
+/// asset system on its background executor and kept by it per (file,
+/// side), as `img()` keeps a picture per file.
+enum SizedSvg {}
+
+impl Asset for SizedSvg {
+    type Source = (Arc<Path>, u32);
+    type Output = Result<Arc<RenderImage>, ImageCacheError>;
+
+    // An `async fn` would hold `cx`, and GPUI wants a future that outlives
+    // the call; the work stays in the future, on the background executor.
+    #[allow(clippy::manual_async_fn)]
+    fn load(
+        (path, side): Self::Source,
+        _cx: &mut gpui::App,
+    ) -> impl Future<Output = Self::Output> + Send + 'static {
+        async move {
+            let drawn =
+                icons::rasterize(&path, side).map_err(|e| ImageCacheError::Other(Arc::new(e)))?;
+            crate::thumbs::owned_render_image(drawn.width, drawn.height, drawn.rgba).ok_or_else(
+                || {
+                    ImageCacheError::Other(Arc::new(anyhow::anyhow!(
+                        "an icon's pixels do not fill its size"
+                    )))
+                },
+            )
+        }
+    }
 }
 
 /// What an entry's picture says of a link: nothing, that it is one, or
@@ -354,8 +421,26 @@ pub fn themed(path: &Path, size: f32, color: Hsla) -> AnyElement {
 
 #[cfg(test)]
 mod tests {
-    use super::is_symbolic;
+    use super::{is_svg, is_symbolic, raster_side};
     use std::path::Path;
+
+    #[test]
+    fn an_svg_icon_is_rasterized_at_a_side_at_least_as_large_as_drawn() {
+        // A sidebar row's 16 px at scale 1 and 2, a list's, the grid's.
+        assert_eq!(raster_side(16.), 16);
+        assert_eq!(raster_side(32.), 32);
+        assert_eq!(raster_side(16.5), 24);
+        assert_eq!(raster_side(20. * 1.5), 32);
+        assert_eq!(raster_side(33.), 48);
+        assert_eq!(raster_side(0.), 16);
+        // Never larger than an icon was drawn from before.
+        assert_eq!(raster_side(512.), 256);
+        assert!(is_svg(Path::new(
+            "/icons/Adwaita/scalable/places/user-trash.svg"
+        )));
+        assert!(is_svg(Path::new("/icons/x/folder.SVGZ")));
+        assert!(!is_svg(Path::new("/icons/hicolor/16x16/places/folder.png")));
+    }
 
     #[test]
     fn a_symbolic_icon_is_known_by_its_name() {

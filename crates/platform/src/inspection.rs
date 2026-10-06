@@ -504,6 +504,17 @@ pub fn drawing(bytes: &[u8], side: Option<u32>) -> anyhow::Result<Decoded> {
     };
     render_svg(&tree, own, drawn)
 }
+/// A drawing (`read_drawing`) fitted within `side` pixels on its longer
+/// side, however small: an icon, drawn at the size it is shown (`drawing`
+/// keeps a preview's least). At most `limits::PICTURE_SIDE`.
+pub fn drawing_within(bytes: &[u8], side: u32) -> anyhow::Result<Decoded> {
+    let tree = svg_tree(bytes)?;
+    let own = own_size(&tree);
+    let side = f64::from(side.clamp(1, limits::PICTURE_SIDE));
+    let scale = side / f64::from(own.0.max(own.1));
+    let fit = |length: u32| ((f64::from(length) * scale).round() as u32).max(1);
+    render_svg(&tree, own, (fit(own.0), fit(own.1)))
+}
 fn own_size(tree: &resvg::usvg::Tree) -> (u32, u32) {
     let drawn = tree.size();
     (

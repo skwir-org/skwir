@@ -13,6 +13,16 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::mime::Mime;
 
+/// An SVG icon (or `.svgz`) drawn within `side` pixels on its longer side,
+/// the size it is shown at, in RGBA: an icon theme's full-color SVG
+/// declares a size of its own (Adwaita's 128 px), which has nothing to do
+/// with the 16 px of a sidebar row. Inert, as a drawing previewed is.
+/// Reads the file: call it from a worker.
+pub fn rasterize(path: &std::path::Path, side: u32) -> anyhow::Result<crate::inspection::Decoded> {
+    let bytes = crate::inspection::read_drawing(path, &bibli_core::CancelToken::new())?;
+    crate::inspection::drawing_within(&bytes, side)
+}
+
 /// The active icon theme name. Lists the installed themes the first time:
 /// blocks.
 pub fn theme_name() -> String {
@@ -131,6 +141,49 @@ mod imp {
     }
     pub fn lookup(_name: &str, _size: u16) -> Option<PathBuf> {
         None
+    }
+}
+
+#[cfg(test)]
+mod rasterize_tests {
+    use super::rasterize;
+
+    /// A drawing as an icon theme's: `width` by `height` px, filled red.
+    fn icon(width: u32, height: u32) -> String {
+        format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}"><rect width="{width}" height="{height}" fill="#ff0000"/></svg>"##
+        )
+    }
+
+    #[test]
+    fn an_icon_is_drawn_at_the_size_it_is_shown_not_the_one_it_declares() {
+        let dir = tempfile::tempdir().unwrap();
+        let square = dir.path().join("user-trash.svg");
+        std::fs::write(&square, icon(128, 128)).unwrap();
+        let drawn = rasterize(&square, 32).unwrap();
+        assert_eq!((drawn.width, drawn.height), (32, 32));
+        assert_eq!(drawn.own, (128, 128));
+        assert_eq!(drawn.rgba.len(), 32 * 32 * 4);
+        let middle = ((16 * 32 + 16) * 4) as usize;
+        assert_eq!(&drawn.rgba[middle..middle + 4], &[255, 0, 0, 255]);
+
+        // A wide one keeps its shape within the side.
+        let wide = dir.path().join("wide.svg");
+        std::fs::write(&wide, icon(128, 64)).unwrap();
+        let drawn = rasterize(&wide, 32).unwrap();
+        assert_eq!((drawn.width, drawn.height), (32, 16));
+    }
+
+    #[test]
+    fn a_compressed_icon_is_drawn_too() {
+        use std::io::Write as _;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("folder.svgz");
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(icon(64, 64).as_bytes()).unwrap();
+        std::fs::write(&path, gz.finish().unwrap()).unwrap();
+        let drawn = rasterize(&path, 24).unwrap();
+        assert_eq!((drawn.width, drawn.height), (24, 24));
     }
 }
 
