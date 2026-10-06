@@ -212,6 +212,14 @@ plugins, and one whose linked libraries are missing is refused by the
 system before it starts (tested on a Poppler reader whose library was
 out of reach), so a package may leave a helper's libraries optional.
 
+bibli is under the Apache License 2.0 alone (2026-10-06, ADR-042, as
+the user chose), no longer MIT or Apache-2.0: `LICENSE`, every crate's
+field, and every package's. Every dependency built into bibli allows it
+(checked over the lockfile). The Poppler reader, linking Poppler whose
+core is under the GPL version 2 or 3, is distributed under the GPL
+version 3 (it said version 2 or later); the MuPDF reader stays under
+the AGPL. Arch's `bibli`, which holds the Poppler reader, now says so.
+
 Phase 5, step G: isolation (2026-10-06), in part (ADR-039, as the
 user chose). macOS isolates converters and decoders with
 `sandbox-exec` under bibli's profile, the contract bubblewrap has on
@@ -2053,7 +2061,7 @@ what it touched.
 - **E. The environment.** In part 2026-10-05 (status above): types done 2026-10-06 (ADR-037); icons, Open With and owners not done. Folders (macOS `~/Library/…`, Windows
   `%APPDATA%`/`%LOCALAPPDATA%`) behind `bibli_core::xdg`'s callers; the
   MIME database off Linux (an ADR: shared-mime-info is GPL data and
-  bibli is MIT/Apache, so it is installed beside bibli or replaced by
+  bibli is Apache-2.0, so it is installed beside bibli or replaced by
   the system's types, UTType and the registry); icons, opening and
   Open With (NSWorkspace and Launch Services; `ShellExecuteExW` and the
   association handlers); the terminal to open (Terminal or iTerm,

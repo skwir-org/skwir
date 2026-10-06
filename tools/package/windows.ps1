@@ -44,7 +44,7 @@ $licenses = "target\dist\licenses"
 if (Test-Path $licenses) { Remove-Item -Recurse -Force $licenses }
 New-Item -ItemType Directory -Force "$licenses\pdfium" | Out-Null
 Copy-Item "$unpacked\LICENSE", "$unpacked\licenses\*" "$licenses\pdfium"
-Copy-Item LICENSE-MIT, LICENSE-APACHE $licenses
+Copy-Item LICENSE $licenses
 # Beside bibli.exe, where it looks for it.
 $share = "target\dist\share\mime"
 if (Test-Path $share) { Remove-Item -Recurse -Force $share }

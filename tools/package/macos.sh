@@ -35,7 +35,7 @@ tools/package/pdfium.sh "$platform" "$out/pdfium"
 mkdir -p "$app/Contents/Frameworks" "$app/Contents/Resources/licenses"
 cp "$out/pdfium/libpdfium.dylib" "$app/Contents/Frameworks/"
 cp -R "$out/pdfium/licenses/pdfium" "$app/Contents/Resources/licenses/"
-cp LICENSE-MIT LICENSE-APACHE "$app/Contents/Resources/licenses/"
+cp LICENSE "$app/Contents/Resources/licenses/"
 # The type database, the fallback of the system's types (ADR-037), where
 # bibli looks for it in a bundle: compiled from vendor/shared-mime-info
 # (with Homebrew's update-mime-database: brew install shared-mime-info).

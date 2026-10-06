@@ -20,7 +20,7 @@
             <!-- PDFium, beside its helper (ADR-041). -->
             <File Source="$(Dist)\pdfium.dll" />
           </Component>
-          <!-- bibli's licences, and PDFium's with those of what it carries. -->
+          <!-- bibli's licence, and PDFium's with those of what it carries. -->
           <Directory Id="Licenses" Name="licenses">
             <Files Include="$(Dist)\licenses\**" />
           </Directory>

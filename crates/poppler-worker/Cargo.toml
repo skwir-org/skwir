@@ -3,6 +3,9 @@ name = "bibli-poppler-worker"
 description = "On-demand Poppler document worker for bibli"
 version.workspace = true
 edition.workspace = true
+# Our source is Apache-2.0 like the rest of bibli. The worker binary
+# links Poppler, whose core is GPL v2 or v3: whoever distributes this
+# executable distributes it under the GPL v3 (ADR-042).
 license.workspace = true
 rust-version.workspace = true
 

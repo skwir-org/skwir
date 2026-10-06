@@ -1,7 +1,9 @@
 # ADR-014: MuPDF as an optional third reader engine
 
 Status: accepted, 2026-09-24. Amends ADR-004, which preferred PDFium partly
-to keep MuPDF's AGPL out of the reader integration.
+to keep MuPDF's AGPL out of the reader integration. Amended 2026-10-06 by
+ADR-042: bibli's own code, the worker's included, is under Apache-2.0
+alone; the worker is still distributed under the AGPL.
 
 ## Context
 

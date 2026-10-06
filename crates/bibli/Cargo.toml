@@ -159,7 +159,7 @@ assets = [
 [package.metadata.generate-rpm]
 # bibli's own, and PDFium's (its parts' notices in
 # /usr/share/licenses/bibli/pdfium).
-license = "(MIT OR Apache-2.0) AND BSD-3-Clause"
+license = "Apache-2.0 AND BSD-3-Clause"
 url = "https://github.com/venator/bibli"
 auto-req = "auto"
 assets = [
@@ -171,8 +171,7 @@ assets = [
     { source = "../../target/pdfium/licenses/pdfium/*", dest = "/usr/share/licenses/bibli/pdfium/", mode = "644", doc = true },
     { source = "../../tools/package/linux/bibli.desktop", dest = "/usr/share/applications/bibli.desktop", mode = "644" },
     { source = "../../tools/package/linux/io.github.venator.bibli.metainfo.xml", dest = "/usr/share/metainfo/io.github.venator.bibli.metainfo.xml", mode = "644" },
-    { source = "../../LICENSE-MIT", dest = "/usr/share/licenses/bibli/LICENSE-MIT", mode = "644", doc = true },
-    { source = "../../LICENSE-APACHE", dest = "/usr/share/licenses/bibli/LICENSE-APACHE", mode = "644", doc = true },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/bibli/LICENSE", mode = "644", doc = true },
     { source = "../../README.md", dest = "/usr/share/doc/bibli/README.md", mode = "644", doc = true },
 ]
 
@@ -202,7 +201,7 @@ plocate = "*"
 
 [package.metadata.generate-rpm.variants.media]
 name = "bibli-media"
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 summary = "bibli's audio and video player, through GStreamer"
 assets = [
     { source = "target/release/bibli-media-worker", dest = "/usr/libexec/bibli/bibli-media-worker", mode = "755" },
@@ -214,7 +213,7 @@ suggests = { gstreamer1-plugins-bad-free = "*", gstreamer1-plugins-ugly-free = "
 [package.metadata.generate-rpm.variants.poppler]
 name = "bibli-poppler"
 summary = "bibli's PDF reader through Poppler"
-license = "GPL-2.0-or-later"
+license = "GPL-3.0-only"
 assets = [
     { source = "target/release/bibli-poppler-worker", dest = "/usr/libexec/bibli/bibli-poppler-worker", mode = "755" },
 ]
@@ -224,7 +223,7 @@ suggests = {}
 
 [package.metadata.generate-rpm.variants.mermaid]
 name = "bibli-mermaid"
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 summary = "Mermaid diagrams drawn in bibli's Markdown previews"
 assets = [
     { source = "target/release/bibli-mermaid-worker", dest = "/usr/libexec/bibli/bibli-mermaid-worker", mode = "755" },

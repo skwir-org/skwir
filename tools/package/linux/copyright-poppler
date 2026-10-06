@@ -1,15 +1,18 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: bibli
 Source: https://github.com/venator/bibli
-Comment: bibli-poppler-worker, bibli's own code (MIT OR Apache-2.0),
- links Poppler (GPL-2.0-or-later): the program is distributed under the
- GPL, its source being bibli's repository and Poppler's. bibli itself
- links neither: it speaks to it over its worker protocol (ADR-005).
+Comment: bibli-poppler-worker, bibli's own code (Apache-2.0), links
+ Poppler, whose core is under the GPL version 2 or 3 and the rest under
+ version 2 or later: code under the Apache License can join it only
+ under the GPL version 3, so the program is distributed under it
+ (ADR-042), its source being bibli's repository and Poppler's. bibli
+ itself links neither: it speaks to it over its worker protocol
+ (ADR-005).
 
 Files: *
 Copyright: The bibli authors; the Poppler developers
-License: GPL-2.0-or-later
+License: GPL-3
 
-License: GPL-2.0-or-later
+License: GPL-3
  On Debian systems, the full text of the GNU General Public License
- version 2 is in /usr/share/common-licenses/GPL-2.
+ version 3 is in /usr/share/common-licenses/GPL-3.

@@ -3,6 +3,8 @@
 Status: accepted, 2026-10-06 (Phase 5, step E; ADR-035). Proposed
 2026-10-05 with three options; the user chose: the system's own type
 registry when it can answer, shared-mime-info as the fallback.
+Amended the same day by ADR-042: bibli is under Apache-2.0 alone, which
+changes nothing here (the database stays data beside bibli).
 
 ## Context
 

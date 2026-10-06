@@ -223,4 +223,9 @@ just lint && just test && just bench-check
 
 ## License
 
-MIT or Apache-2.0, at your option.
+bibli is under the Apache License 2.0 ([`LICENSE`](LICENSE)), and so is
+what is contributed to it (the licence's section 5). The Poppler and
+MuPDF readers are programs of their own that link libraries under the GPL
+and the AGPL: distributed, they are under the GPL version 3 and the AGPL
+version 3. bibli itself links neither. See
+[ADR-042](docs/adr/042-apache-2.0.md).

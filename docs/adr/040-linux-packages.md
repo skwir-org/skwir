@@ -3,7 +3,9 @@
 Status: accepted, 2026-10-06 (Phase 5; the user chose the formats).
 Amended the same day by ADR-041: the packages carry PDFium, and the
 helpers few need, or whose libraries most systems do not, are packages
-of their own (on Arch, optional libraries).
+of their own (on Arch, optional libraries). Amended the same day by
+ADR-042: bibli is under Apache-2.0 alone (`LICENSE`), and the Poppler
+reader is distributed under the GPL version 3.
 
 ## Context
 

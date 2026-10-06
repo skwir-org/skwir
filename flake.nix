@@ -179,7 +179,9 @@
           '';
           meta = {
             description = "An experimental file manager, GPU-drawn, for humans, scripts and agents";
-            license = with lib.licenses; [mit asl20];
+            # bibli's own; the Poppler and MuPDF readers, which link
+            # libraries under the GPL and the AGPL (ADR-042).
+            license = with lib.licenses; [asl20 gpl3Only agpl3Plus];
             mainProgram = "bibli";
           };
         };
