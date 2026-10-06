@@ -8,8 +8,7 @@
 //! A view draws its own shape around these (a row, a tile, a card), never
 //! its own copy of them.
 
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::PathBuf;
 
 use bibli_core::workspace::Pane;
 use bibli_core::{EntryId, Location};
@@ -30,8 +29,8 @@ pub struct Look {
     pub cursor: bool,
     /// Cut, waiting for a paste: drawn dimmed, as the file is on its way out.
     pub cut: bool,
-    /// Its theme icon, at the size asked.
-    pub icon: Option<Arc<Path>>,
+    /// Its icon, the theme's or the system's, at the size asked.
+    pub icon: Option<icons::Pic>,
     pub link: icons::Link,
     /// Each tag with its color (`tags::TagColors`).
     pub tags: Vec<(String, usize)>,
@@ -50,7 +49,7 @@ impl Look {
 
     /// Its picture when it has no thumbnail, `size` px (`icons::entry_picture`).
     pub fn picture(&self, size: f32, theme: &Theme) -> AnyElement {
-        icons::entry_picture(self.icon.as_deref(), self.is_dir, size, self.mark(), theme)
+        icons::entry_picture(self.icon.as_ref(), self.is_dir, size, self.mark(), theme)
     }
 }
 

@@ -225,7 +225,7 @@ fn cell(
             .into_any_element(),
         // Marked below, with the thumbnail's mark.
         ThumbView::Unavailable => icons::entry_picture(
-            look.icon.as_deref(),
+            look.icon.as_ref(),
             look.is_dir,
             icon_px,
             icons::Mark::None,

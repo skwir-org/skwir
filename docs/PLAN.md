@@ -344,6 +344,19 @@ MiB), 91.5 to 91.6 with the idle release, what the commit of 2026-10-04
 reads the same day (91.5). The icons draw as before in a window (Xvfb,
 scale 1 and 2: the list, the sidebar, the grid zoomed in).
 
+The icon theme is read where the desktop keeps it (2026-10-06): GNOME and
+those built on it in GSettings (which writes no `settings.ini`),
+Cinnamon's and MATE's in theirs, KDE's `kdeglobals`, Xfce's xfconf, then
+GTK's `settings.ini`. Found with it: a theme counted as installed by its
+display name (`Breeze`) while settings and lookups name its folder
+(`breeze`), so any theme whose two names differ fell back to Adwaita;
+themes are now known by their folders. Breeze's small icons, drawn in the
+color scheme's colors (KDE's `current-color-scheme` stylesheet), are
+shapes drawn in the text color, as symbolic ones are, so they read on a
+dark theme. Checked in a window (Xvfb): with `XDG_CURRENT_DESKTOP=GNOME`
+and a `gsettings` answering `breeze`, Breeze's icons, in the light and
+the dark theme.
+
 Calendar periods, one reading (2026-10-05): the deviation "the query language's date
 parser and the timeline's calendar math are duplicated" is closed. Weeks, months and years
 are `bibli_platform::calendar::Period` (the first day of the one holding a day, the next,

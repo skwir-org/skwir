@@ -8,7 +8,6 @@ use crate::{
 };
 use bibli_core::inspection::Row;
 use gpui::{Div, SharedString, div, prelude::*, px, svg};
-use std::path::Path;
 
 const SIZE_WIDTH: f32 = 90.;
 const ICON_SIZE: f32 = 18.;
@@ -44,7 +43,7 @@ pub fn header(theme: &Theme) -> Div {
 
 pub fn row(
     row: &Row,
-    icon: Option<&Path>,
+    icon: Option<&icons::Pic>,
     collapsed: bool,
     selected: bool,
     font: SharedString,
@@ -62,7 +61,7 @@ pub fn row(
                 })
                 .into_any_element()
         },
-        |path| icons::element(path, ICON_SIZE),
+        |pic| icons::element(pic, ICON_SIZE, theme.text_muted),
     );
     let mut name = div()
         .min_w_0()

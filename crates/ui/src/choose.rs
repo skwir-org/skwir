@@ -259,7 +259,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
     shell.choose_refilter(cx);
     let theme = cx.global::<Theme>().clone();
     // Icons first: the cache needs the shell mutably, the rows only read.
-    let icons: Vec<Option<std::sync::Arc<std::path::Path>>> = {
+    let icons: Vec<Option<crate::icons::Pic>> = {
         let c = shell.choose.as_ref()?;
         let wanted: Vec<Option<String>> = c
             .picker
@@ -271,7 +271,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
             .map(|icon| {
                 let icon = icon?;
                 if std::path::Path::new(&icon).is_absolute() {
-                    Some(std::path::Path::new(&icon).into())
+                    Some(crate::icons::Pic::Theme(std::path::Path::new(&icon).into()))
                 } else {
                     shell.icons.named(&icon, ICON_PX as u16)
                 }
@@ -323,7 +323,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                     this.choose_submit(window, cx);
                 }))
                 .child(match icon {
-                    Some(path) => crate::icons::themed(&path, ICON_PX, theme.text_muted),
+                    Some(pic) => crate::icons::themed(&pic, ICON_PX, theme.text_muted),
                     None => div().size(px(ICON_PX)).flex_none().into_any_element(),
                 })
                 .child(crate::elements::clip::clipped(

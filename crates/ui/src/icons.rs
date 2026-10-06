@@ -4,8 +4,11 @@
 //! A named icon the theme has only as a symbolic variant (current Adwaita
 //! and Breeze ship `folder-saved-search` only as `-symbolic`) is used as
 //! GTK does, drawn in the text color: a symbolic SVG is a shape to tint,
-//! not a picture. The worker that finds one reads it too, so drawing it
-//! never touches the disk.
+//! not a picture. So is an icon drawn in the color scheme's colors (KDE's
+//! `current-color-scheme` stylesheet: Breeze's small icons), which its
+//! theme expects recolored: drawn as its file says, it stays dark gray on
+//! a dark theme. The worker that finds one reads it too (`shape_of`), so
+//! drawing it never touches the disk.
 //!
 //! A full-color SVG icon is rasterized at the size it is drawn, in device
 //! pixels rounded up to a few sides (`raster_side`), never at the size its
@@ -27,7 +30,7 @@ use gpui::{
 /// Serves any absolute path on disk. Icon themes live outside the binary.
 pub struct FsAssets;
 
-/// Symbolic icons read by the lookup worker, by the path `svg()` asks for.
+/// Shapes read by the lookup worker, by the path `svg()` asks for.
 fn preloaded() -> &'static Mutex<HashMap<String, Arc<[u8]>>> {
     static PRELOADED: std::sync::OnceLock<Mutex<HashMap<String, Arc<[u8]>>>> =
         std::sync::OnceLock::new();
@@ -44,18 +47,54 @@ pub fn is_symbolic(path: &Path) -> bool {
 /// A named icon, or its symbolic variant when the theme has only that.
 /// Blocks: call it from a worker.
 fn lookup_named(name: &str, size: u16) -> Option<PathBuf> {
-    let found = icons::lookup(name, size).or_else(|| {
+    icons::lookup(name, size).or_else(|| {
         (!name.ends_with("-symbolic"))
             .then(|| icons::lookup(&format!("{name}-symbolic"), size))
             .flatten()
-    })?;
-    if is_symbolic(&found)
-        && let Ok(bytes) = std::fs::read(&found)
+    })
+}
+
+/// What `shape_of` found each theme icon file to be: a shape or not.
+fn shapes() -> &'static Mutex<HashMap<PathBuf, bool>> {
+    static SHAPES: std::sync::OnceLock<Mutex<HashMap<PathBuf, bool>>> = std::sync::OnceLock::new();
+    SHAPES.get_or_init(Mutex::default)
+}
+
+/// An icon file larger than this is no shape: drawn as a picture.
+const ICON_BYTES: u64 = 1 << 20;
+
+/// Whether a theme's icon file is a shape to draw in one color: a
+/// symbolic one (GTK's, by its name), or an SVG in the color scheme's
+/// colors (KDE's `current-color-scheme` stylesheet). Reads the file the
+/// first time, and keeps a shape's bytes for `svg()`: a worker's.
+fn shape_of(path: &Path) -> bool {
+    if let Some(known) = known_shape(path) {
+        return known;
+    }
+    let bytes = (is_svg(path) && std::fs::metadata(path).is_ok_and(|m| m.len() <= ICON_BYTES))
+        .then(|| std::fs::read(path).ok())
+        .flatten();
+    let shape = bytes.as_deref().is_some_and(|bytes| {
+        is_symbolic(path)
+            || bytes
+                .windows(b"current-color-scheme".len())
+                .any(|w| w == b"current-color-scheme")
+    });
+    if shape
+        && let Some(bytes) = bytes
         && let Ok(mut preloaded) = preloaded().lock()
     {
-        preloaded.insert(found.to_string_lossy().into_owned(), bytes.into());
+        preloaded.insert(path.to_string_lossy().into_owned(), bytes.into());
     }
-    Some(found)
+    if let Ok(mut shapes) = shapes().lock() {
+        shapes.insert(path.to_path_buf(), shape);
+    }
+    shape
+}
+
+/// What `shape_of` found `path` to be, if it has read it. Never blocks.
+fn known_shape(path: &Path) -> Option<bool> {
+    shapes().lock().ok()?.get(path).copied()
 }
 
 impl AssetSource for FsAssets {
@@ -83,6 +122,26 @@ impl AssetSource for FsAssets {
     }
 }
 
+/// What an icon is drawn from: a file of the desktop's icon theme.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Pic {
+    /// A theme's icon, in its own colors.
+    Theme(Arc<Path>),
+    /// A theme's icon drawn as a shape in one color (`shape_of`).
+    Shape(Arc<Path>),
+}
+
+impl Pic {
+    /// A theme's icon file, as `shape_of` read it: blocks the first time.
+    fn of_theme(path: PathBuf) -> Pic {
+        if shape_of(&path) {
+            Pic::Shape(path.into())
+        } else {
+            Pic::Theme(path.into())
+        }
+    }
+}
+
 /// What an icon is looked up by.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Want {
@@ -93,22 +152,53 @@ enum Want {
     Folder,
 }
 
-type Resolved = Vec<((Want, u16), Option<PathBuf>)>;
+impl Want {
+    /// A file known only by its name: its type's icon.
+    fn for_name(name: &std::ffi::OsStr) -> Want {
+        Want::Mime(mime::by_name(name).map_or_else(String::new, |m| m.0))
+    }
+}
 
-/// Icons of the desktop's theme, per size. Looking one up reads the theme
-/// from disk, so a miss is answered `None` for now and resolved on a worker
-/// with the others this frame missed (`request`); `absorb` takes the
-/// answers and the next frame draws them. Drawing only ever reads this map.
+/// What `want` is drawn from at `size`. Reads the icon theme: blocks, so a
+/// worker's (`IconCache::request`, an inspection's rows).
+fn resolve(want: &Want, size: u16) -> Option<Pic> {
+    let theme = |path: Option<PathBuf>| path.map(Pic::of_theme);
+    match want {
+        Want::Named(name) => theme(lookup_named(name, size)),
+        Want::Folder => theme(icons::folder(size)),
+        Want::Mime(m) if m.is_empty() => theme(icons::unknown(size)),
+        Want::Mime(m) => theme(icons::for_mime(&mime::Mime(m.clone()), size)),
+    }
+}
+
+/// A folder's icon, resolved where it may block (a worker).
+pub fn folder_now(size: u16) -> Option<Pic> {
+    resolve(&Want::Folder, size)
+}
+
+/// The icon of a file known only by its name, resolved where it may block
+/// (a worker): an archive's member, an attachment.
+pub fn for_name_now(name: &std::ffi::OsStr, size: u16) -> Option<Pic> {
+    resolve(&Want::for_name(name), size)
+}
+
+type Resolved = Vec<((Want, u16), Option<Pic>)>;
+
+/// Icons of the desktop's theme, per size. Looking one up may read the
+/// theme from disk, so a miss is answered `None` for now and
+/// resolved on a worker with the others this frame missed (`request`);
+/// `absorb` takes the answers and the next frame draws them. Drawing only
+/// ever reads this map.
 #[derive(Default)]
 pub struct IconCache {
     /// Answers, per size then per name or type.
-    known: HashMap<u16, HashMap<Want, Option<Arc<Path>>>>,
+    known: HashMap<u16, HashMap<Want, Option<Pic>>>,
     wanted: HashSet<(Want, u16)>,
     results: Arc<Mutex<Resolved>>,
 }
 
 impl IconCache {
-    fn lookup(&mut self, want: Want, size: u16) -> Option<Arc<Path>> {
+    fn lookup(&mut self, want: Want, size: u16) -> Option<Pic> {
         if let Some(found) = self.known.get(&size).and_then(|known| known.get(&want)) {
             return found.clone();
         }
@@ -123,11 +213,22 @@ impl IconCache {
             },
             _ => None,
         };
-        let Some(found) = cached else {
+        // Whether a file is a shape is known once a worker read it.
+        let found = match cached {
+            Some(None) => Some(None),
+            Some(Some(path)) => known_shape(&path).map(|shape| {
+                Some(if shape {
+                    Pic::Shape(path.into())
+                } else {
+                    Pic::Theme(path.into())
+                })
+            }),
+            None => None,
+        };
+        let Some(found) = found else {
             self.wanted.insert((want, size));
             return None;
         };
-        let found: Option<Arc<Path>> = found.map(PathBuf::into);
         self.known
             .entry(size)
             .or_default()
@@ -136,31 +237,31 @@ impl IconCache {
     }
 
     /// An icon of the desktop's theme by name (`user-home`, `drive-harddisk`).
-    pub fn named(&mut self, name: &str, size: u16) -> Option<Arc<Path>> {
+    pub fn named(&mut self, name: &str, size: u16) -> Option<Pic> {
         self.lookup(Want::Named(name.to_owned()), size)
     }
 
-    /// Icon path for an entry: the folder icon or the icon of the type it
+    /// The icon for an entry: the folder icon or the icon of the type it
     /// is shown as (`mime::of_entry`: a link's is what it leads to's).
-    pub fn for_entry(&mut self, e: &Entry, size: u16) -> Option<Arc<Path>> {
+    pub fn for_entry(&mut self, e: &Entry, size: u16) -> Option<Pic> {
         if e.is_dir() {
             return self.folder(size);
         }
         self.for_mime(mime::of_entry(e).as_ref(), size)
     }
 
-    pub fn folder(&mut self, size: u16) -> Option<Arc<Path>> {
+    pub fn folder(&mut self, size: u16) -> Option<Pic> {
         self.lookup(Want::Folder, size)
     }
 
     /// The icon of a file's MIME type, by its name; the unknown-file icon
     /// when the name says nothing.
-    pub fn for_name(&mut self, name: &std::ffi::OsStr, size: u16) -> Option<Arc<Path>> {
-        self.for_mime(mime::by_name(name).as_ref(), size)
+    pub fn for_name(&mut self, name: &std::ffi::OsStr, size: u16) -> Option<Pic> {
+        self.lookup(Want::for_name(name), size)
     }
 
     /// The icon of a MIME type already known; `None` is the unknown file.
-    pub fn for_mime(&mut self, mime: Option<&mime::Mime>, size: u16) -> Option<Arc<Path>> {
+    fn for_mime(&mut self, mime: Option<&mime::Mime>, size: u16) -> Option<Pic> {
         let key = mime.map_or_else(String::new, |m| m.0.clone());
         self.lookup(Want::Mime(key), size)
     }
@@ -188,13 +289,8 @@ impl IconCache {
                 let resolved: Resolved = wanted
                     .into_iter()
                     .map(|(want, size)| {
-                        let path = match &want {
-                            Want::Named(name) => lookup_named(name, size),
-                            Want::Folder => icons::folder(size),
-                            Want::Mime(m) if m.is_empty() => icons::unknown(size),
-                            Want::Mime(m) => icons::for_mime(&mime::Mime(m.clone()), size),
-                        };
-                        ((want, size), path)
+                        let pic = resolve(&want, size);
+                        ((want, size), pic)
                     })
                     .collect();
                 if let Ok(mut slot) = results.lock() {
@@ -214,21 +310,32 @@ impl IconCache {
         };
         let found = std::mem::take(&mut *slot);
         drop(slot);
-        let changed = found.iter().any(|(_, path)| path.is_some());
-        for ((want, size), path) in found {
-            self.known
-                .entry(size)
-                .or_default()
-                .insert(want, path.map(PathBuf::into));
+        let changed = found.iter().any(|(_, pic)| pic.is_some());
+        for ((want, size), pic) in found {
+            self.known.entry(size).or_default().insert(want, pic);
         }
         changed
     }
 }
 
-/// Render an icon path at `size` px, in full color (`svg()` would render
-/// a monochrome mask). An SVG is rasterized for the side it is drawn at
+/// Render an icon at `size` px: a theme's file in its own colors, a shape
+/// in `tint`.
+pub fn element(pic: &Pic, size: f32, tint: Hsla) -> AnyElement {
+    match pic {
+        Pic::Theme(path) => file_element(path, size),
+        Pic::Shape(path) => svg()
+            .path(SharedString::from(path.to_string_lossy().into_owned()))
+            .size(px(size))
+            .flex_none()
+            .text_color(tint)
+            .into_any_element(),
+    }
+}
+
+/// A theme's icon file at `size` px, in full color (`svg()` would render a
+/// monochrome mask). An SVG is rasterized for the side it is drawn at
 /// (`SizedSvg`); any other picture is decoded by `img()` as it is.
-pub fn element(path: &Path, size: f32) -> AnyElement {
+fn file_element(path: &Path, size: f32) -> AnyElement {
     let source: ImageSource = if is_svg(path) {
         let path: Arc<Path> = path.into();
         ImageSource::Custom(Arc::new(move |window: &mut Window, cx: &mut gpui::App| {
@@ -383,14 +490,14 @@ pub fn marked(
 /// icon, else a square (a folder's in the accent) until the theme answers;
 /// marked (`marked`). The one every view draws.
 pub fn entry_picture(
-    icon: Option<&Path>,
+    icon: Option<&Pic>,
     is_dir: bool,
     size: f32,
     mark: Mark,
     theme: &crate::theme::Theme,
 ) -> AnyElement {
     let picture = match icon {
-        Some(icon) => element(icon, size),
+        Some(icon) => element(icon, size, theme.text_muted),
         None => div()
             .size(px(size))
             .flex_none()
@@ -405,24 +512,53 @@ pub fn entry_picture(
     marked(picture, size, mark, theme)
 }
 
-/// A named theme icon at `size` px: in full color, or tinted with `color`
-/// when it is symbolic.
-pub fn themed(path: &Path, size: f32, color: Hsla) -> AnyElement {
-    if !is_symbolic(path) {
-        return element(path, size);
-    }
-    svg()
-        .path(SharedString::from(path.to_string_lossy().into_owned()))
-        .size(px(size))
-        .flex_none()
-        .text_color(color)
-        .into_any_element()
+/// A named icon at `size` px: in its own colors, or in `color` when it is
+/// a shape (`Pic::Shape`).
+pub fn themed(pic: &Pic, size: f32, color: Hsla) -> AnyElement {
+    element(pic, size, color)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{is_svg, is_symbolic, raster_side};
+    use super::{Pic, is_svg, is_symbolic, preloaded, raster_side};
     use std::path::Path;
+
+    #[test]
+    fn an_icon_in_the_color_schemes_colors_is_a_shape_drawn_in_the_text_color() {
+        let dir = tempfile::tempdir().unwrap();
+        // Breeze's small icons: a stylesheet whose colors KDE replaces.
+        let recolored = dir.path().join("user-home.svg");
+        std::fs::write(
+            &recolored,
+            r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><defs><style type="text/css" id="current-color-scheme">.ColorScheme-Text { color:#232629; }</style></defs><path style="fill:currentColor" d="M2 2h12v12H2z" class="ColorScheme-Text"/></svg>"#,
+        )
+        .unwrap();
+        let picture = dir.path().join("folder.svg");
+        std::fs::write(
+            &picture,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="#3daee9" d="M2 2h12v12H2z"/></svg>"##,
+        )
+        .unwrap();
+        let symbolic = dir.path().join("folder-saved-search-symbolic.svg");
+        std::fs::write(&symbolic, r#"<svg xmlns="http://www.w3.org/2000/svg"/>"#).unwrap();
+        let png = dir.path().join("folder.png");
+        std::fs::write(&png, b"not read").unwrap();
+
+        assert_eq!(
+            Pic::of_theme(recolored.clone()),
+            Pic::Shape(recolored.clone().into())
+        );
+        assert_eq!(Pic::of_theme(picture.clone()), Pic::Theme(picture.into()));
+        assert_eq!(
+            Pic::of_theme(symbolic.clone()),
+            Pic::Shape(symbolic.clone().into())
+        );
+        assert_eq!(Pic::of_theme(png.clone()), Pic::Theme(png.into()));
+        // A shape's bytes are kept for `svg()`, which draws it.
+        let kept = preloaded().lock().unwrap();
+        assert!(kept.contains_key(&*recolored.to_string_lossy()));
+        assert!(kept.contains_key(&*symbolic.to_string_lossy()));
+    }
 
     #[test]
     fn an_svg_icon_is_rasterized_at_a_side_at_least_as_large_as_drawn() {

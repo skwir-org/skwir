@@ -175,7 +175,7 @@ pub struct Pinned {
     pub scrub: Option<f64>,
     /// The track's file icon, in the place of a cover it has none of: the
     /// icon of the track it was looked up for, so it follows the track.
-    pub icon: Option<(PathBuf, Option<Arc<std::path::Path>>)>,
+    pub icon: Option<(PathBuf, Option<crate::icons::Pic>)>,
 }
 
 impl Drop for Pinned {

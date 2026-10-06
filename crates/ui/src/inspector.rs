@@ -15,7 +15,7 @@ pub struct Display {
     /// The inspection's own picture, then one per block. Shared with every
     /// frame's list closure, never copied per frame.
     pub images: Arc<[Option<Arc<RenderImage>>]>,
-    pub(crate) row_icons: Arc<Vec<Option<Arc<std::path::Path>>>>,
+    pub(crate) row_icons: Arc<Vec<Option<crate::icons::Pic>>>,
     /// Case-folded search text per block, then per row, prepared on the
     /// worker so Find never lowercases a document on the UI thread.
     folded: Arc<Vec<String>>,
@@ -44,14 +44,12 @@ impl Display {
                 .iter()
                 .map(|row| {
                     if row.branch {
-                        bibli_platform::icons::folder(18)
+                        crate::icons::folder_now(18)
                     } else {
                         row.cells
                             .first()
-                            .and_then(|name| bibli_platform::mime::by_name(name.as_ref()))
-                            .and_then(|mime| bibli_platform::icons::for_mime(&mime, 18))
+                            .and_then(|name| crate::icons::for_name_now(name.as_ref(), 18))
                     }
-                    .map(Arc::from)
                 })
                 .collect()
         } else {
@@ -2262,7 +2260,7 @@ pub fn content(
             let mut row = if data.kind == InspectionKind::Archive {
                 crate::archive_preview::row(
                     r,
-                    row_icons.get(ri).and_then(|i| i.as_deref()),
+                    row_icons.get(ri).and_then(Option::as_ref),
                     collapsed.contains(&ri),
                     selected == Some(data.blocks.len() + ri),
                     ui_font.clone(),

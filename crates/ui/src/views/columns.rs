@@ -122,7 +122,7 @@ struct AncestorRow {
     name: std::ffi::OsString,
     label: gpui::SharedString,
     is_dir: bool,
-    icon: Option<Arc<std::path::Path>>,
+    icon: Option<icons::Pic>,
     link: icons::Link,
     /// Where it leads, for a place (a tag's), and its tag's color.
     place: Option<(Location, Option<usize>)>,
@@ -181,7 +181,7 @@ fn ancestor_column(
                 let mark =
                     icons::Mark::of(row.link, row.place.as_ref().and_then(|(_, color)| *color));
                 let icon = icons::entry_picture(
-                    row.icon.as_deref(),
+                    row.icon.as_ref(),
                     row.is_dir,
                     f32::from(icon_px),
                     mark,

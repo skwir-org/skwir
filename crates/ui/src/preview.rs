@@ -111,7 +111,7 @@ pub struct Info {
     pub size: Option<String>,
     pub modified: Option<String>,
     pub is_dir: bool,
-    pub icon: Option<Arc<Path>>,
+    pub icon: Option<icons::Pic>,
     pub link: icons::Link,
 }
 
@@ -3226,7 +3226,7 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
         })
         .children(info.icon.as_ref().map(|icon| {
             icons::marked(
-                icons::element(icon, ICON),
+                icons::element(icon, ICON, theme.text_muted),
                 ICON,
                 icons::Mark::Link(info.link),
                 theme,

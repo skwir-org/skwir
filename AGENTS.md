@@ -422,9 +422,10 @@ current source before assuming a planned crate, command, or API exists.
   lists the scales). State colors are tokens: `hover`, `selection_*`,
   `success`/`warning`/`error`, `scrim`. Do not derive one locally.
 - **Sidebar.** Places carry a theme icon name (one the theme has only as
-  `-symbolic` is drawn tinted, `icons::themed`; a full-color SVG, any
-  icon's, is rasterized for the pixels it covers, never at the size its
-  file declares, `icons::element`), optionally `space` (filled in
+  `-symbolic`, or drawn in the color scheme's colors as Breeze's small
+  icons are, is a shape drawn tinted, `icons::Pic::Shape`; a full-color
+  SVG, any icon's, is rasterized for the pixels it covers, never at the
+  size its file declares, `icons::element`), optionally `space` (filled in
   by a worker: asking a volume can block), an `eject` command, `unavailable`
   (why it cannot be opened: the row dims and this is its tooltip), `busy`
   (what its owner is doing to it, "Unlocking…": a still hourglass and those
