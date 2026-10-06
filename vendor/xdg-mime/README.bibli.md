@@ -18,3 +18,9 @@ layout, so it applies there with `git apply -p1`.
   Unix. It reads the database's files by name and holds nothing of Unix's;
   on Windows bibli reads the database it ships beside the program, as the
   fallback of the system's own types (ADR-037).
+- `0002-one-lowercasing-per-lookup.patch`: a name is looked up without
+  an allocation per glob. `Glob::compare` lowercased the name again for
+  every glob that ignores case, the matches were cloned, and each one's
+  pattern was written to a `String` to measure it: 1,411 allocations to
+  type `notes.txt` against the desktop's database, 6 now
+  (`crates/platform/tests/mime_allocations.rs`).

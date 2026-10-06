@@ -28,6 +28,16 @@ impl fmt::Debug for GlobType {
     }
 }
 
+impl GlobType {
+    /// The length of the pattern as `Display` writes it, without writing it.
+    fn len(&self) -> usize {
+        match self {
+            GlobType::Literal(str) | GlobType::Simple(str) => str.len(),
+            GlobType::Full(pattern) => pattern.as_str().len(),
+        }
+    }
+}
+
 impl fmt::Display for GlobType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -160,31 +170,26 @@ impl Glob {
     }
 
     fn compare(&self, file_name: &str) -> bool {
+        self.matches(file_name, &file_name.to_lowercase())
+    }
+
+    /// Whether the glob matches `file_name`, whose lowercase form is
+    /// `lowercase`: computed once by the caller for every glob it tries,
+    /// not once per glob.
+    fn matches(&self, file_name: &str, lowercase: &str) -> bool {
         match &self.glob {
             GlobType::Literal(s) => {
                 let a = UniCase::new(s);
                 let b = UniCase::new(file_name);
 
-                return a == b;
+                a == b
             }
             GlobType::Simple(s) => {
-                if file_name.ends_with(s) {
-                    return true;
-                }
-
-                if !self.case_sensitive {
-                    let lc_file_name = file_name.to_lowercase();
-                    if lc_file_name.ends_with(s) {
-                        return true;
-                    }
-                }
+                file_name.ends_with(s.as_str())
+                    || (!self.case_sensitive && lowercase.ends_with(s.as_str()))
             }
-            GlobType::Full(p) => {
-                return p.matches(file_name);
-            }
+            GlobType::Full(p) => p.matches(file_name),
         }
-
-        false
     }
 }
 
@@ -280,13 +285,13 @@ impl GlobMap {
     }
 
     pub fn lookup_mime_type_for_file_name(&self, file_name: &str) -> Option<Vec<Mime>> {
-        let mut matching_globs = Vec::new();
-
-        for glob in &self.globs {
-            if glob.compare(file_name) {
-                matching_globs.push(glob.clone());
-            }
-        }
+        // Lowercased once, for every glob that ignores case.
+        let lowercase = file_name.to_lowercase();
+        let mut matching_globs: Vec<&Glob> = self
+            .globs
+            .iter()
+            .filter(|glob| glob.matches(file_name, &lowercase))
+            .collect();
 
         // Sort in descending order by weight
         matching_globs.sort_by(|a, b| b.weight.cmp(&a.weight));
@@ -303,14 +308,14 @@ impl GlobMap {
         // in case it changes which glob is the longest.
         let biggest_glob_length = matching_globs
             .clone()
-            .map(|glob| glob.glob.to_string().len())
+            .map(|glob| glob.glob.len())
             .max()?;
 
         // "If the patterns are different, keep only the globs
         // with the longest pattern, as previously discussed."
         // -- shared-mime-info, "Recommended checking order"
         let res = matching_globs
-            .filter(|glob| glob.glob.to_string().len() == biggest_glob_length)
+            .filter(|glob| glob.glob.len() == biggest_glob_length)
             .map(|glob| glob.mime_type.clone())
             .collect();
 
