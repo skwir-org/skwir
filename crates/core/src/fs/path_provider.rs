@@ -1,4 +1,4 @@
-//! The `path` scheme: stream a directory with getdents, stat lazily, watch for changes.
+//! The `path` scheme: stream a directory, stat lazily, watch for changes.
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
@@ -9,8 +9,6 @@ use std::time::Duration;
 
 use crossbeam_channel::Receiver;
 use parking_lot::{Mutex, RwLock};
-use rustix::fd::OwnedFd;
-use rustix::fs::{Dir, FileType, Mode, OFlags};
 
 use crate::cancel::CancelToken;
 use crate::entry::{Entry, EntryId, EntryKind};
@@ -19,6 +17,7 @@ use crate::location::{
 };
 use crate::scheduler::Priority;
 
+use super::dir::Dir;
 use super::stat::stat_entry;
 use super::watch;
 
@@ -47,7 +46,8 @@ impl LocationProvider for PathProvider {
 struct Shared {
     /// Where the directory is now: it follows the directory when it moves.
     dir: RwLock<PathBuf>,
-    dirfd: OwnedFd,
+    /// The directory held open: names are stat-ed relative to it.
+    folder: Dir,
     dev: u64,
     names: Mutex<Names>,
     /// Every name of the folder is in `names`: a batch can ask them.
@@ -60,7 +60,7 @@ struct Shared {
 /// The names of the listed entries, both ways, so a watcher event finds its
 /// entry without walking the directory.
 ///
-/// Identity is what statx reports (`fs::stat::id_of`, which operations
+/// Identity is what a stat reports (`fs::stat::id_of`, which operations
 /// resolve against). A listing streams before it stats, so it names an
 /// entry by the directory's device and `d_ino`; the two differ only for a
 /// mount point or a subvolume root. Hydration finds out, re-keys the entry
@@ -70,7 +70,7 @@ struct Shared {
 struct Names {
     by_id: HashMap<EntryId, OsString>,
     by_name: HashMap<OsString, EntryId>,
-    /// Provisional (device, `d_ino`) ids to the id statx reports.
+    /// Provisional (device, `d_ino`) ids to the id a stat reports.
     aliases: HashMap<EntryId, EntryId>,
 }
 
@@ -146,27 +146,6 @@ pub struct PathLocation {
     rx: Receiver<ListingEvent>,
 }
 
-fn open_dirfd(path: &Path) -> rustix::io::Result<OwnedFd> {
-    rustix::fs::open(
-        path,
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-}
-
-fn kind_of(t: FileType) -> EntryKind {
-    match t {
-        FileType::RegularFile => EntryKind::File,
-        FileType::Directory => EntryKind::Directory,
-        FileType::Symlink => EntryKind::Symlink,
-        FileType::Fifo => EntryKind::Fifo,
-        FileType::Socket => EntryKind::Socket,
-        FileType::CharacterDevice => EntryKind::CharDevice,
-        FileType::BlockDevice => EntryKind::BlockDevice,
-        FileType::Unknown => EntryKind::Unknown,
-    }
-}
-
 impl PathLocation {
     fn open(location: Location, dir: PathBuf, ctx: OpenContext) -> Arc<Self> {
         let (tx, rx) = ctx.channel();
@@ -200,11 +179,11 @@ impl PathLocation {
                 let result = (|| -> anyhow::Result<()> {
                     // Opening/stat-ing a sleeping disk and installing a watch are I/O.
                     // Publish the handle first, then stream entries on this worker.
-                    let dirfd = open_dirfd(&dir)?;
+                    let folder = Dir::open(&dir)?;
                     if ctx.cancel.is_cancelled() {
                         return Ok(());
                     }
-                    let st = rustix::fs::fstat(&dirfd)?;
+                    let dev = folder.device()?;
                     if ctx.cancel.is_cancelled() {
                         return Ok(());
                     }
@@ -218,8 +197,8 @@ impl PathLocation {
                         };
                     let shared = Arc::new(Shared {
                         dir: RwLock::new(dir),
-                        dirfd,
-                        dev: st.st_dev,
+                        folder,
+                        dev,
                         names: Mutex::new(Names::default()),
                         listed: std::sync::atomic::AtomicBool::new(false),
                         tx: tx.clone(),
@@ -291,7 +270,7 @@ impl Shared {
         if cancel.is_cancelled() {
             return;
         }
-        let mut dir = match Dir::read_from(&self.dirfd) {
+        let mut dir = match self.folder.read() {
             Ok(d) => d,
             Err(e) => {
                 self.tx.send(ListingEvent::Error(e.to_string()));
@@ -314,28 +293,23 @@ impl Shared {
                     return;
                 }
             };
-            let name = ent.file_name();
-            if name == c"." || name == c".." {
-                continue;
-            }
-            let name: OsString =
-                std::os::unix::ffi::OsStringExt::from_vec(name.to_bytes().to_vec());
             let id = {
                 let mut names = self.names.lock();
                 let id = names.listing_id(EntryId {
                     dev: self.dev,
-                    ino: ent.ino(),
+                    ino: ent.ino,
                 });
-                names.insert(id, name.clone());
+                names.insert(id, ent.name.clone());
                 id
             };
             seen.push(id);
-            let mut entry = Entry::new(id, name, kind_of(ent.file_type()));
+            let mut entry = Entry::new(id, ent.name, ent.kind);
+            entry.hidden = ent.hidden;
             // A link is followed now, not at hydration: whether it leads to
             // a folder decides where it sorts, and rows off screen are not
             // hydrated.
             if entry.is_link() {
-                entry.target = crate::fs::stat::follow(&self.dirfd, entry.name.as_os_str());
+                entry.target = crate::fs::stat::follow(&self.folder, entry.name.as_os_str());
             }
             batch.push(entry);
             if batch.len() >= self.ctx.batch_size {
@@ -409,7 +383,7 @@ impl Shared {
                 continue;
             };
             let mut e = Entry::new(id, name, EntryKind::Unknown);
-            if stat_entry(&self.dirfd, &mut e) {
+            if stat_entry(&self.folder, &mut e) {
                 stated.push((id, e));
             } else {
                 gone.push(id);
@@ -450,21 +424,11 @@ impl Shared {
     /// The directory itself moved: find where through its descriptor, which
     /// followed it. A directory that is gone empties the listing.
     fn follow_self(&self) -> bool {
-        #[cfg(target_os = "linux")]
-        {
-            use std::os::fd::AsRawFd;
-            let link = format!("/proc/self/fd/{}", self.dirfd.as_raw_fd());
-            if let Ok(now) = std::fs::read_link(link)
-                && now.is_absolute()
-                && !now.as_os_str().as_encoded_bytes().ends_with(b" (deleted)")
-            {
-                *self.dir.write() = now;
-                return true;
-            }
-            false
-        }
-        #[cfg(not(target_os = "linux"))]
-        false
+        let Some(now) = self.folder.path_now() else {
+            return false;
+        };
+        *self.dir.write() = now;
+        true
     }
 
     /// Whether the directory was removed. inotify cannot say so while we
@@ -472,7 +436,7 @@ impl Shared {
     /// removed directory has no links left; its children's removal is the
     /// event that brings us here.
     fn is_unlinked(&self) -> bool {
-        rustix::fs::fstat(&self.dirfd).is_ok_and(|st| st.st_nlink == 0)
+        self.folder.is_unlinked()
     }
 
     fn lose_self(&self) {
@@ -513,7 +477,7 @@ impl Shared {
                 return;
             }
             let mut e = Entry::new(EntryId { dev: 0, ino: 0 }, name.clone(), EntryKind::Unknown);
-            let exists = stat_entry(&self.dirfd, &mut e);
+            let exists = stat_entry(&self.folder, &mut e);
             let mut names = self.names.lock();
             if exists {
                 // A rename onto this name leaves the id it replaced stale.

@@ -1,3 +1,5 @@
+// Helpers of the tests that run on Unix alone (ADR-035).
+#![cfg_attr(not(unix), allow(dead_code, unused_imports))]
 use super::*;
 use bibli_core::app::AppConfig;
 use bibli_core::command::Invocation;
@@ -84,7 +86,7 @@ impl NotesStore for Attributes {
         files
             .iter()
             .map(|f| {
-                let v = xattr::get(f.path, "user.test.tags").ok()??;
+                let v = bibli_core::fs::xattr::get(f.path, "user.test.tags").ok()??;
                 let text = String::from_utf8(v).ok()?;
                 Some(Notes {
                     tags: text.split(',').map(Tag::named).collect(),
@@ -100,9 +102,9 @@ impl NotesStore for Attributes {
     }
     fn write(&self, f: &Probe<'_>, notes: &Notes, _: bool) -> std::io::Result<Wrote> {
         if notes.tags.is_empty() {
-            let _ = xattr::remove(f.path, "user.test.tags");
+            let _ = bibli_core::fs::xattr::remove(f.path, "user.test.tags");
         } else {
-            xattr::set(
+            bibli_core::fs::xattr::set(
                 f.path,
                 "user.test.tags",
                 notes.tag_names().join(",").as_bytes(),
@@ -119,6 +121,8 @@ fn plan(app: &App, name: &str, args: &serde_json::Value) -> Plan {
     }
 }
 
+// Extended attributes: Unix's.
+#[cfg(unix)]
 #[test]
 fn tagspaces_names_are_read_where_it_is_used_and_moved_in_and_out_of_names() {
     let tmp = home_tempdir();
@@ -162,10 +166,14 @@ fn tagspaces_names_are_read_where_it_is_used_and_moved_in_and_out_of_names() {
     assert_eq!(read(&plain), ["vacation", "alps"]);
     app.executor.undo_blocking(app.lifetime()).unwrap();
     assert!(tagged.exists());
-    assert!(xattr::get(&tagged, "user.test.tags").unwrap().is_none());
+    assert!(
+        bibli_core::fs::xattr::get(&tagged, "user.test.tags")
+            .unwrap()
+            .is_none()
+    );
 
     // Into the name: those it can hold, the rest said to be left out.
-    xattr::set(&tagged, "user.test.tags", b"alps,new,two words").unwrap();
+    bibli_core::fs::xattr::set(&tagged, "user.test.tags", b"alps,new,two words").unwrap();
     let entries = serde_json::json!([EntryRef::from_path(&tagged).unwrap()]);
     let into = plan(
         &app,

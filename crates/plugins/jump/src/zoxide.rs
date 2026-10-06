@@ -25,20 +25,10 @@ pub fn parse(output: &[u8]) -> Vec<ZEntry> {
             let path = line[space..].trim_ascii_start();
             (!path.is_empty()).then(|| ZEntry {
                 score,
-                path: path_from(path.to_vec()),
+                path: PathBuf::from(bibli_core::os_path::from_bytes(path.to_vec())),
             })
         })
         .collect()
-}
-
-#[cfg(unix)]
-fn path_from(bytes: Vec<u8>) -> PathBuf {
-    PathBuf::from(<std::ffi::OsString as std::os::unix::ffi::OsStringExt>::from_vec(bytes))
-}
-
-#[cfg(not(unix))]
-fn path_from(bytes: Vec<u8>) -> PathBuf {
-    String::from_utf8_lossy(&bytes).into_owned().into()
 }
 
 /// Ask zoxide, if it is installed. Worker-only: this runs a process. A

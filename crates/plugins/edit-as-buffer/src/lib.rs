@@ -47,29 +47,9 @@ const HEADER: &str = "\
 # \\x20 a space at either end).
 ";
 
-#[cfg(unix)]
-fn os_bytes(s: &OsStr) -> &[u8] {
-    std::os::unix::ffi::OsStrExt::as_bytes(s)
-}
-
-#[cfg(not(unix))]
-fn os_bytes(s: &OsStr) -> &[u8] {
-    s.as_encoded_bytes()
-}
-
-#[cfg(unix)]
-fn os_string(bytes: Vec<u8>) -> OsString {
-    std::os::unix::ffi::OsStringExt::from_vec(bytes)
-}
-
-#[cfg(not(unix))]
-fn os_string(bytes: Vec<u8>) -> OsString {
-    String::from_utf8_lossy(&bytes).into_owned().into()
-}
-
 /// `name` as one line of text that [`unescape`] turns back into it.
 pub fn escape(name: &OsStr) -> String {
-    let bytes = os_bytes(name);
+    let bytes = name.as_encoded_bytes();
     let mut out = String::with_capacity(bytes.len());
     let hex = |out: &mut String, bytes: &[u8]| {
         for b in bytes {
@@ -200,7 +180,7 @@ fn parse_target(text: &str, line: usize) -> Result<Target, BufferError> {
     let mut parts: Vec<OsString> = text
         .split('/')
         .filter(|p| !p.is_empty())
-        .map(|p| os_string(unescape(p)))
+        .map(|p| bibli_core::os_path::from_bytes(unescape(p)))
         .collect();
     let Some(name) = parts.pop() else {
         return Err(invalid("a name cannot be empty".into()));
@@ -696,10 +676,12 @@ impl Plugin for EditAsBufferPlugin {
 mod tests {
     use super::*;
     use std::sync::Arc;
+    #[cfg(unix)]
     use std::time::Duration;
 
     /// Environment writes are unsafe in edition 2024; nextest runs each test
     /// in its own process and this runs before any thread is spawned.
+    #[cfg(unix)]
     #[allow(unsafe_code)]
     fn set_env(key: &str, value: impl AsRef<OsStr>) {
         unsafe { std::env::set_var(key, value) };
@@ -754,7 +736,7 @@ mod tests {
 
     #[test]
     fn names_read_back_exactly() {
-        let mut names: Vec<OsString> = [
+        let names: Vec<OsString> = [
             " notes",
             "notes ",
             "a\nb",
@@ -766,17 +748,23 @@ mod tests {
         ]
         .into_iter()
         .map(OsString::from)
+        // A name that is no UTF-8: Unix's alone.
+        .chain(cfg!(unix).then(|| bibli_core::os_path::from_bytes(b"caf\xe9".to_vec())))
         .collect();
-        #[cfg(unix)]
-        names.push(os_string(b"caf\xe9".to_vec()));
         for name in &names {
             let line = escape(name);
             assert!(!line.contains('\n') && line.trim() == line, "{line:?}");
-            assert_eq!(&os_string(unescape(&line)), name, "{line:?}");
+            assert_eq!(
+                &bibli_core::os_path::from_bytes(unescape(&line)),
+                name,
+                "{line:?}"
+            );
         }
         assert_eq!(escape(OsStr::new("a b")), "a b", "inner spaces stay");
     }
 
+    // Names Windows refuses (a trailing space, a backslash).
+    #[cfg(unix)]
     #[test]
     fn an_unedited_buffer_changes_nothing_whatever_the_names() {
         let tmp = scratch();
@@ -793,6 +781,9 @@ mod tests {
 
     #[test]
     fn diff_rename_move_delete_and_new_dir() {
+        if bibli_core::system::under_wine("trashing through the shell") {
+            return;
+        }
         let tmp = scratch();
         let dir = tmp.path();
         let orig = refs(dir, &[("a.txt", false), ("b.txt", false), ("old", true)]);
@@ -942,6 +933,8 @@ mod tests {
 
     /// A fake terminal that runs its `-e` arguments, and an editor that
     /// renames `one.txt` in the buffer once `gate` exists.
+    // Shell scripts stand in for the programs (ADR-035).
+    #[cfg(unix)]
     fn fake_tools(tmp: &Path, gate: &Path) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
         let bin = tmp.join("bin");
@@ -967,6 +960,7 @@ mod tests {
         bin
     }
 
+    #[cfg(unix)]
     fn session(tmp: &Path) -> (Arc<App>, PathBuf) {
         let dir = tmp.join("work");
         std::fs::create_dir(&dir).unwrap();
@@ -981,6 +975,7 @@ mod tests {
         (app, dir)
     }
 
+    #[cfg(unix)]
     #[test]
     fn end_to_end_with_a_fake_editor_and_terminal() {
         let tmp = scratch();
@@ -1007,6 +1002,7 @@ mod tests {
         assert!(dir.join("one.txt").exists(), "proposing never applies");
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_session_ending_after_disable_proposes_nothing() {
         let tmp = scratch();

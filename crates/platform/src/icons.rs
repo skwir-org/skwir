@@ -134,12 +134,12 @@ mod imp {
     }
 }
 
-#[cfg(test)]
+// The icon themes are the free desktops' (ADR-035).
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
 
     #[test]
-    #[cfg(target_os = "linux")]
     fn folder_resolves_and_is_cached() {
         let p = folder(48).expect("an icon theme with a folder icon is installed");
         let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
@@ -160,7 +160,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "linux")]
     fn mime_icon_falls_back() {
         let m = Mime("application/x-bibli-nonexistent".into());
         // Either the generic or last-resort icon must exist.

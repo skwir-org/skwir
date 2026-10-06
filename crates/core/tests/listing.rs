@@ -376,6 +376,8 @@ fn a_refresh_keeps_metadata_and_restats() {
     }
 }
 
+// A folder's own move is reported by inotify alone so far (ADR-035).
+#[cfg(target_os = "linux")]
 #[test]
 fn a_listing_follows_its_folder_when_it_moves_and_says_when_it_is_gone() {
     let tmp = tempfile::tempdir().unwrap();
@@ -597,6 +599,7 @@ fn a_filter_shows_only_names_holding_it_until_the_pane_shows_another_folder() {
     assert_eq!(ws.pane(pane).unwrap().filter(), None);
 }
 
+#[cfg(unix)]
 #[test]
 fn a_link_is_listed_as_what_it_leads_to() {
     use bibli_core::entry::{EntryKind, Value, keys};
@@ -640,7 +643,7 @@ fn a_link_is_listed_as_what_it_leads_to() {
     assert_eq!(file.type_name(), "a note's text.txt");
     // What is read to show it is the file itself, named by its own
     // identity: a reference to it resolves.
-    let note = dir.join("a note's text.txt").canonicalize().unwrap();
+    let note = bibli_core::os_path::canonical(dir.join("a note's text.txt")).unwrap();
     let content = file.content(&dir.join("a file link")).unwrap();
     assert_eq!(content.path, note);
     assert_eq!(content.resolve().unwrap(), note);
@@ -699,6 +702,7 @@ fn a_link_is_listed_as_what_it_leads_to() {
     assert!(broken.is_broken_link());
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn a_pipe_or_a_socket_is_listed_as_what_it_is_and_never_read() {
     use bibli_core::entry::EntryKind;
@@ -757,6 +761,7 @@ fn a_pipe_or_a_socket_is_listed_as_what_it_is_and_never_read() {
 /// A folder's own attributes changing (its tags, its permissions) is a
 /// change of the location, not of what it lists: the listing says so
 /// (`itself_version`) and its entries stay as they are.
+#[cfg(unix)]
 #[test]
 fn a_folder_whose_own_attributes_change_says_so() {
     let tmp = home_tempdir();
@@ -773,7 +778,7 @@ fn a_folder_whose_own_attributes_change_says_so() {
         .unwrap()
         .listing
         .itself_version();
-    xattr::set(&dir, "user.xdg.tags", b"holiday").unwrap();
+    bibli_core::fs::xattr::set(&dir, "user.xdg.tags", b"holiday").unwrap();
     wait(&app, pane, |l| l.itself_version() != before);
     let ws = app.workspace.read();
     let listing = &ws.pane(pane).unwrap().listing;
@@ -932,4 +937,43 @@ fn companions_hide_beside_their_file_and_orphans_do_not() {
     std::fs::remove_file(dir.join("it's a.txt")).unwrap();
     wait(&app, pane, |l| l.len() == 3);
     assert_eq!(shown(true), ["._gone.txt", "._it's a.txt", ".hidden"]);
+}
+
+/// What Windows marks hidden is left out with the dot-files, from the
+/// listing on, and shown with them.
+#[cfg(windows)]
+#[test]
+fn a_file_windows_hides_is_hidden() {
+    use std::os::windows::fs::OpenOptionsExt;
+    /// `FILE_ATTRIBUTE_HIDDEN`.
+    const HIDDEN: u32 = 2;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("it's a folder");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("shown.txt"), b"x").unwrap();
+    std::fs::write(dir.join(".dotted"), b"x").unwrap();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .attributes(HIDDEN)
+        .open(dir.join("desktop.ini"))
+        .unwrap();
+    let app = app(tmp.path());
+    let pane = active(&app);
+    navigate(&app, &dir);
+    wait(&app, pane, |l| l.len() == 3);
+    let shown = |hidden: bool| {
+        let mut ws = app.workspace.write();
+        let p = ws.pane_mut(pane).unwrap();
+        p.sort.show_hidden = hidden;
+        let mut names: Vec<String> = p
+            .order()
+            .iter()
+            .map(|id| p.entry(*id).unwrap().name_str().into_owned())
+            .collect();
+        names.sort();
+        names
+    };
+    assert_eq!(shown(false), ["shown.txt"]);
+    assert_eq!(shown(true), [".dotted", "desktop.ini", "shown.txt"]);
 }

@@ -150,18 +150,77 @@ mod imp {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+/// macOS: the terminal application is `$TERMINAL` (an application's
+/// name, `iTerm`) or Terminal, opened in the folder by `open -a`. Compiled,
+/// never run (ADR-035).
+#[cfg(target_os = "macos")]
+// One signature on every system: Linux's can fail to find a terminal.
+#[allow(clippy::unnecessary_wraps)]
 mod imp {
-    use std::ffi::OsStr;
+    use std::ffi::{OsStr, OsString};
     use std::path::Path;
-    use std::process::Command;
+    use std::process::{Command, Stdio};
 
-    pub fn terminal(_dir: &Path) -> anyhow::Result<Command> {
-        anyhow::bail!("open_terminal is not implemented on this platform yet")
+    pub fn terminal(dir: &Path) -> anyhow::Result<Command> {
+        let app = std::env::var_os("TERMINAL")
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| OsString::from("Terminal"));
+        let mut c = Command::new("/usr/bin/open");
+        c.arg("-a")
+            .arg(app)
+            .arg(dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        Ok(c)
     }
 
+    /// A Mac's terminal applications hand a command to a window and return
+    /// at once: nothing waits for the program yet.
     pub fn terminal_with<S: AsRef<OsStr>>(_dir: &Path, _argv: &[S]) -> anyhow::Result<Command> {
-        anyhow::bail!("a terminal running a program is not implemented on this platform yet")
+        Err(bibli_core::system::not_yet("A terminal running a program").into())
+    }
+}
+
+/// Windows: Windows Terminal (`wt`) where it is installed, else a console
+/// of its own; a program to run gets a console of its own, which is the
+/// terminal it runs in and ends with it, so waiting for the program waits
+/// for the terminal. Run under Wine only as far as Wine has consoles.
+#[cfg(windows)]
+// One signature on every system: Linux's can fail to find a terminal.
+#[allow(clippy::unnecessary_wraps)]
+mod imp {
+    use std::ffi::OsStr;
+    use std::os::windows::process::CommandExt;
+    use std::path::Path;
+    use std::process::{Command, Stdio};
+
+    /// `CREATE_NEW_CONSOLE`: the program gets a console window of its own.
+    const NEW_CONSOLE: u32 = 0x10;
+
+    pub fn terminal(dir: &Path) -> anyhow::Result<Command> {
+        if let Some(wt) = bibli_core::os_path::find_program("wt") {
+            let mut c = Command::new(wt);
+            c.arg("-d")
+                .arg(dir)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            return Ok(c);
+        }
+        let shell = std::env::var_os("COMSPEC").unwrap_or_else(|| "cmd.exe".into());
+        let mut c = Command::new(shell);
+        c.current_dir(dir).creation_flags(NEW_CONSOLE);
+        Ok(c)
+    }
+
+    pub fn terminal_with<S: AsRef<OsStr>>(dir: &Path, argv: &[S]) -> anyhow::Result<Command> {
+        let (program, rest) = argv
+            .split_first()
+            .ok_or_else(|| anyhow::anyhow!("no command to run"))?;
+        let mut c = Command::new(program);
+        c.args(rest).current_dir(dir).creation_flags(NEW_CONSOLE);
+        Ok(c)
     }
 }
 

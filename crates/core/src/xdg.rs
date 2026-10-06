@@ -66,10 +66,14 @@ pub fn config_dirs() -> Vec<PathBuf> {
     list("XDG_CONFIG_DIRS", "/etc/xdg")
 }
 
-#[cfg(test)]
+// Unix's path lists (`:`-separated, `/`-rooted).
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
+    // Unix's path lists (`:`-separated, `/`-rooted).
+
+    #[cfg(unix)]
     #[test]
     fn empty_takes_the_default_and_relative_paths_are_ignored() {
         let paths = |value: Option<&str>| split(value.map(OsString::from), "/default");

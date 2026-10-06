@@ -1049,7 +1049,8 @@ mod tests {
         assert_eq!(size(512), "512 B");
     }
 
-    #[cfg(unix)]
+    // Pipes are made with mknodat, Linux's alone here (ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_named_pipe_is_refused_not_waited_on() {
         let dir = tempfile::tempdir().unwrap();

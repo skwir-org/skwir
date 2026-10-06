@@ -8,14 +8,14 @@
 
 use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
-use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::Context;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::{
-    Change, EntryRef, OpRegistry, Operation, ResolveError, StepContext, StepStatus, valid_file_name,
+    Change, EntryRef, OpRegistry, Operation, ResolveError, StepContext, StepStatus, sys,
+    valid_file_name,
 };
 use crate::fs::stat::id_of;
 use crate::os_path::PathArg;
@@ -63,29 +63,8 @@ fn parking_name(dir: &Path, purpose: &str) -> PathBuf {
 }
 
 fn rename_noreplace(from: &Path, to: &Path) -> anyhow::Result<()> {
-    match rustix::fs::renameat_with(
-        rustix::fs::CWD,
-        from,
-        rustix::fs::CWD,
-        to,
-        rustix::fs::RenameFlags::NOREPLACE,
-    ) {
-        // Many FUSE filesystems (sshfs, bindfs, exfat-fuse) and some
-        // network ones take no flags: look, then rename. What appears in
-        // between is replaced; nothing better is offered there.
-        Err(rustix::io::Errno::INVAL | rustix::io::Errno::NOSYS) if !exists(to) => {
-            // As an `Errno`, so a move still tells a cross-device rename.
-            std::fs::rename(from, to).map_err(|e| {
-                rustix::io::Errno::from_io_error(&e)
-                    .map_or_else(|| anyhow::Error::from(e), anyhow::Error::from)
-            })
-        }
-        Err(rustix::io::Errno::INVAL | rustix::io::Errno::NOSYS) => {
-            Err(anyhow::Error::from(rustix::io::Errno::EXIST))
-        }
-        r => r.map_err(anyhow::Error::from),
-    }
-    .with_context(|| format!("rename {} -> {}", from.display(), to.display()))
+    sys::rename_noreplace(from, to)
+        .with_context(|| format!("rename {} -> {}", from.display(), to.display()))
 }
 
 // ------------------------------------------------------------------ companions
@@ -157,11 +136,6 @@ fn attributes_of_sibling(ctx: &StepContext, dir: &Path, name: &OsStr) -> bool {
             .existing(&owner)
             .iter()
             .any(|f| rules.holds_attributes(f) && f.path == dir.join(name))
-}
-
-fn unsupported(error: &std::io::Error) -> bool {
-    error.kind() == std::io::ErrorKind::Unsupported
-        || rustix::io::Errno::from_io_error(error) == Some(rustix::io::Errno::NOTSUP)
 }
 
 // ------------------------------------------------------------------ rename
@@ -409,8 +383,8 @@ fn move_entry(ctx: &StepContext, src: &Path, target: &Path, along: &[Along]) -> 
 }
 
 fn is_cross_device(e: &anyhow::Error) -> bool {
-    e.downcast_ref::<rustix::io::Errno>()
-        .is_some_and(|e| *e == rustix::io::Errno::XDEV)
+    e.downcast_ref::<std::io::Error>()
+        .is_some_and(|e| e.kind() == std::io::ErrorKind::CrossesDevices)
 }
 
 // ------------------------------------------------------------------ copy
@@ -616,10 +590,12 @@ fn copy_staged(
     ctx: &StepContext,
 ) -> anyhow::Result<()> {
     ctx.add_total(tree_size(src, ctx)?);
-    let staging = tempfile::Builder::new()
-        .prefix(".bibli-copy-")
-        .permissions(std::fs::Permissions::from_mode(0o700))
-        .tempdir_in(dest_dir)?;
+    let mut staging = tempfile::Builder::new();
+    staging.prefix(".bibli-copy-");
+    if let Some(private) = sys::owner_only() {
+        staging.permissions(private);
+    }
+    let staging = staging.tempdir_in(dest_dir)?;
     let staged = staging.path().join("entry");
     // What the copy put beside the staged entry (the companion that holds
     // its attributes, on a volume that refuses them) follows it out.
@@ -657,10 +633,7 @@ fn tree_size(path: &Path, ctx: &StepContext) -> anyhow::Result<u64> {
 fn remove_staged_copy(path: &Path) -> std::io::Result<()> {
     let metadata = std::fs::symlink_metadata(path)?;
     if metadata.is_dir() {
-        std::fs::set_permissions(
-            path,
-            std::fs::Permissions::from_mode(metadata.permissions().mode() | 0o700),
-        )?;
+        std::fs::set_permissions(path, sys::opened_to_owner(&metadata.permissions()))?;
         for entry in std::fs::read_dir(path)? {
             remove_staged_copy(&entry?.path())?;
         }
@@ -690,7 +663,7 @@ const THROUGH_STEP: std::time::Duration = std::time::Duration::from_millis(250);
 /// file.
 struct Pace {
     /// The destination's filesystem, written through.
-    drive: Option<rustix::fd::OwnedFd>,
+    drive: Option<crate::fs::Dir>,
     /// Bytes to write before the next wait.
     chunk: std::cell::Cell<u64>,
     /// Bytes written since the last wait, not yet counted.
@@ -709,14 +682,9 @@ impl Pace {
     }
 
     fn through(dir: &Path) -> anyhow::Result<Self> {
-        use rustix::fs::{Mode, OFlags};
         // Opened before anything is written: `syncfs` reports the errors
         // since.
-        let drive = rustix::fs::open(
-            dir,
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
-            Mode::empty(),
-        )?;
+        let drive = crate::fs::Dir::open(dir)?;
         Ok(Self {
             drive: Some(drive),
             chunk: std::cell::Cell::new(THROUGH_FIRST),
@@ -749,7 +717,7 @@ impl Pace {
         let Some(drive) = &self.drive else {
             return Ok(());
         };
-        rustix::fs::syncfs(drive).context("write the copy to the drive")?;
+        drive.sync_volume().context("write the copy to the drive")?;
         let n = self.unsaid.take();
         ctx.advance(n);
         if n > 0 {
@@ -776,6 +744,30 @@ fn copy_file(
     pace: &Pace,
     ctx: &StepContext,
 ) -> anyhow::Result<()> {
+    // Where the system copies a whole file (Windows), it does: it keeps
+    // what a byte copy would lose there.
+    let mut written = 0;
+    let mut failed = None;
+    let whole = sys::copy_whole(src, dst, preserve_attributes, &mut |total| {
+        let n = total.saturating_sub(written);
+        written = total;
+        if let Err(e) = pace.wrote(n, ctx) {
+            failed = Some(e);
+            return false;
+        }
+        ctx.check_cancelled().is_ok()
+    });
+    if let Some(copied) = whole {
+        ctx.check_cancelled()?;
+        if let Some(error) = failed {
+            return Err(error);
+        }
+        copied.with_context(|| format!("copy {} -> {}", src.display(), dst.display()))?;
+        if preserve_attributes {
+            transfer_attributes(src, dst, ctx)?;
+        }
+        return Ok(());
+    }
     // Non-blocking, then checked: a file swapped for a FIFO since it was
     // listed must not block the executor in open(2).
     let mut sf = crate::fs::file::open_regular(src)
@@ -785,7 +777,7 @@ fn copy_file(
         .create_new(true)
         .open(dst)?;
     let m = sf.metadata()?;
-    if rustix::fs::ioctl_ficlone(&df, &sf).is_ok() {
+    if sys::clone_file(&sf, &df) {
         ctx.advance(m.len());
     } else {
         copy_contents(&mut sf, &mut df, pace, ctx)
@@ -812,24 +804,16 @@ fn copy_contents(
     let mut copied = 0u64;
     loop {
         ctx.check_cancelled()?;
-        match rustix::fs::copy_file_range(&*sf, None, &*df, None, pace.chunk()) {
-            Ok(0) if copied > 0 => return Ok(()),
-            Ok(n @ 1..) => {
+        match sys::copy_range(sf, df, pace.chunk())? {
+            Some(0) if copied > 0 => return Ok(()),
+            Some(n @ 1..) => {
                 copied += n as u64;
                 pace.wrote(n as u64, ctx)?;
             }
             // Some filesystems (procfs, a few FUSE) report 0 before the end,
             // so a first 0 is not trusted; others cannot copy in the kernel.
             // Either way the buffer takes over.
-            Ok(0)
-            | Err(
-                rustix::io::Errno::XDEV
-                | rustix::io::Errno::NOSYS
-                | rustix::io::Errno::INVAL
-                | rustix::io::Errno::OPNOTSUPP
-                | rustix::io::Errno::PERM,
-            ) => break,
-            Err(e) => return Err(e.into()),
+            Some(0) | None => break,
         }
     }
     // Both offsets advanced together, so the buffered copy resumes in place.
@@ -859,7 +843,7 @@ fn copy_recursive_with_attributes(
     let kind = m.file_type();
     if kind.is_symlink() {
         let target = std::fs::read_link(src)?;
-        std::os::unix::fs::symlink(target, dst)?;
+        sys::symlink_like(&target, dst, kind)?;
     } else if kind.is_dir() {
         std::fs::create_dir(dst)?;
         for e in std::fs::read_dir(src)? {
@@ -882,19 +866,12 @@ fn copy_recursive_with_attributes(
         std::fs::set_permissions(dst, m.permissions())?;
     } else if kind.is_file() {
         copy_file(src, dst, preserve_attributes, pace, ctx)?;
-    } else if kind.is_fifo() {
+    } else if sys::is_fifo(kind) {
         // A named pipe has no content to copy; reading one would wait for a
         // writer forever. Make a new pipe, as `cp -R` does.
-        rustix::fs::mknodat(
-            rustix::fs::CWD,
-            dst,
-            rustix::fs::FileType::Fifo,
-            rustix::fs::Mode::from_raw_mode(m.permissions().mode() & 0o7777),
-            0,
-        )
-        .with_context(|| format!("create pipe {}", dst.display()))?;
+        sys::make_fifo(dst, &m).with_context(|| format!("create pipe {}", dst.display()))?;
     } else {
-        let what = if kind.is_socket() {
+        let what = if sys::is_socket(kind) {
             "a socket"
         } else {
             "a device"
@@ -941,9 +918,9 @@ fn transfer_attributes(src: &Path, dst: &Path, ctx: &StepContext) -> anyhow::Res
     }
     let mut refused = false;
     for (name, value) in &all {
-        match xattr::set(dst, name, value) {
+        match crate::fs::xattr::set(dst, name, value) {
             Ok(()) => {}
-            Err(e) if unsupported(&e) => {
+            Err(e) if crate::fs::xattr::refused(&e) => {
                 refused = true;
                 break;
             }
@@ -970,25 +947,40 @@ fn transfer_attributes(src: &Path, dst: &Path, ctx: &StepContext) -> anyhow::Res
     Ok(())
 }
 
-/// The user's extended attributes of `path` (`user.*`), none on a volume
-/// that keeps none.
+/// The extended attributes of `path` a copy keeps, none on a volume that
+/// keeps none: on Linux the user's (`user.*`); on macOS, whose names have
+/// no namespace, every one but those the system sets itself and refuses
+/// to anyone else (`com.apple.rootless`, `com.apple.provenance`), Finder's
+/// tags and info among those kept.
 fn user_attributes(path: &Path) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
-    let names = match xattr::list(path) {
+    let names = match crate::fs::xattr::list(path) {
         Ok(names) => names,
-        Err(error) if unsupported(&error) => return Ok(Vec::new()),
+        Err(error) if crate::fs::xattr::refused(&error) => return Ok(Vec::new()),
         Err(error) => return Err(error).context("read source attributes while copying"),
     };
     let mut out = Vec::new();
-    for name in names.filter(|n| n.as_encoded_bytes().starts_with(b"user.")) {
+    for name in names.into_iter().filter(|n| kept_attribute(n)) {
         // One removed since it was listed is not there to keep.
         let Some(value) =
-            xattr::get(path, &name).context("read a source attribute while copying")?
+            crate::fs::xattr::get(path, &name).context("read a source attribute while copying")?
         else {
             continue;
         };
         out.push((name.to_string_lossy().into_owned(), value));
     }
     Ok(out)
+}
+
+/// Whether a copy keeps the attribute `name` (`user_attributes`).
+fn kept_attribute(name: &OsStr) -> bool {
+    if cfg!(target_os = "macos") {
+        !matches!(
+            name.to_str(),
+            Some("com.apple.rootless" | "com.apple.provenance")
+        )
+    } else {
+        name.as_encoded_bytes().starts_with(b"user.")
+    }
 }
 
 fn remove_recursive(p: &Path) -> anyhow::Result<()> {
@@ -1026,6 +1018,9 @@ impl super::Effect for Swap {
         if id_of(&self.a.path) == Some(self.b.id) && id_of(&self.b.path) == Some(self.a.id) {
             return StepStatus::AlreadyDone;
         }
+        if cfg!(windows) {
+            return conflict("Windows cannot swap two names in one step");
+        }
         if let Some(trashed) = trashed(&self.a.path).or_else(|| trashed(&self.b.path)) {
             return trashed;
         }
@@ -1046,24 +1041,12 @@ impl super::Effect for Swap {
                 pairs.push((a.from, a.to));
             }
         }
-        rustix::fs::renameat_with(
-            rustix::fs::CWD,
-            &pa,
-            rustix::fs::CWD,
-            &pb,
-            rustix::fs::RenameFlags::EXCHANGE,
-        )
-        .with_context(|| format!("swap {} <-> {}", pa.display(), pb.display()))?;
+        sys::exchange(&pa, &pb)
+            .with_context(|| format!("swap {} <-> {}", pa.display(), pb.display()))?;
         for (from, to) in pairs {
             if exists(&to) {
-                rustix::fs::renameat_with(
-                    rustix::fs::CWD,
-                    &from,
-                    rustix::fs::CWD,
-                    &to,
-                    rustix::fs::RenameFlags::EXCHANGE,
-                )
-                .with_context(|| format!("swap {} <-> {}", from.display(), to.display()))?;
+                sys::exchange(&from, &to)
+                    .with_context(|| format!("swap {} <-> {}", from.display(), to.display()))?;
             } else {
                 rename_noreplace(&from, &to)?;
             }
@@ -1120,14 +1103,21 @@ impl super::Effect for Trash {
             .into_iter()
             .map(|f| f.path)
             .collect();
-        trash::delete(&src).with_context(|| format!("trash {}", src.display()))?;
+        let at = sys::trash_item(&src).with_context(|| format!("trash {}", src.display()))?;
         // Each an item of the trash of its own, restored with the file.
+        let mut landed = Vec::new();
         for companion in companions {
-            let _ = trash::delete(&companion);
+            if let Ok(Some(at)) = sys::trash_item(&companion) {
+                landed.push(Landed {
+                    at: PathArg(at),
+                    from: PathArg(companion),
+                });
+            }
         }
         Ok(Some(Box::new(Restore {
             path: src,
-            item: None,
+            item: at.map(PathArg),
+            landed,
         })))
     }
 }
@@ -1136,70 +1126,17 @@ impl super::Effect for Trash {
 const COMPANION_TRASHED_WITHIN: i64 = 5;
 
 /// Where the trash keeps what it says of the file at `path` (where it came
-/// from, when), for a file of a trash's `files` folder: its
-/// `info/<name>.trashinfo`, beside. A trash is `$XDG_DATA_HOME/Trash`, or
-/// on another volume `.Trash/<uid>` or `.Trash-<uid>` at its top
-/// (freedesktop.org's trash specification). Read from the path alone.
+/// from, when), for an item of a trash: freedesktop's
+/// `info/<name>.trashinfo` beside its `files` folder (a trash is
+/// `$XDG_DATA_HOME/Trash`, or on another volume `.Trash/<uid>` or
+/// `.Trash-<uid>` at its top), Windows' `$I` record beside a `$R` item
+/// (`records`). Read from the path alone.
 pub fn trash_info_of(path: &Path) -> Option<PathBuf> {
-    let name = path.file_name()?;
-    let files = path.parent()?;
-    if files.file_name()? != "files" {
-        return None;
-    }
-    let trash = files.parent()?;
-    let named = trash.file_name()?.to_str()?;
-    let is_trash = named == "Trash"
-        || named
-            .strip_prefix(".Trash-")
-            .is_some_and(|uid| uid.parse::<u32>().is_ok())
-        || (named.parse::<u32>().is_ok()
-            && trash.parent().and_then(Path::file_name) == Some(".Trash".as_ref()));
-    if !is_trash {
-        return None;
-    }
-    let mut info = name.to_owned();
-    info.push(".trashinfo");
-    Some(trash.join("info").join(info))
+    super::records::record_of(path)
 }
 
-/// What a `.trashinfo` says (freedesktop.org's trash specification): the
-/// `Path` its file was put in the trash from (percent-encoded bytes,
-/// relative to `top` in a volume's trash) and its `DeletionDate`, as
-/// written. `None` for a text that is no trash info, or says no path.
-pub fn parse_trash_info<'a>(
-    text: &'a str,
-    top: Option<&Path>,
-) -> Option<(PathBuf, Option<&'a str>)> {
-    use std::os::unix::ffi::OsStringExt;
-    let mut lines = text.lines().map(str::trim);
-    if lines.next()? != "[Trash Info]" {
-        return None;
-    }
-    let mut path = None;
-    let mut date = None;
-    for line in lines {
-        // A line of another group ends this one.
-        if line.starts_with('[') {
-            break;
-        }
-        match line.split_once('=') {
-            Some(("Path", value)) => {
-                path = Some(PathBuf::from(OsString::from_vec(
-                    crate::location::unescape(value),
-                )));
-            }
-            Some(("DeletionDate", value)) => date = Some(value),
-            _ => {}
-        }
-    }
-    let path = path?;
-    let path = if path.is_absolute() {
-        path
-    } else {
-        top?.join(path)
-    };
-    Some((path, date))
-}
+/// What a `.trashinfo` says: `records::parse_trash_info`.
+pub use super::records::parse_trash_info;
 
 /// The name the item of a trash at `item` had where it came from: a trash
 /// holding a file of that name already gives it another (`a.txt.2`), and
@@ -1207,9 +1144,16 @@ pub fn parse_trash_info<'a>(
 /// of a trash. Reads its `.trashinfo`.
 fn trashed_name(item: &Path) -> Option<OsString> {
     let info = trash_info_of(item)?;
-    let text = crate::fs::file::read_regular_text(&info, crate::fs::file::SIDE_FILE_LIMIT).ok()?;
-    let (path, _) = parse_trash_info(&text, Some(Path::new("/")))?;
-    path.file_name().map(OsStr::to_os_string)
+    let bytes = read_record(&info).ok()?;
+    let said = super::records::read(&info, &bytes, Some(Path::new("/")))?;
+    said.original.file_name().map(OsStr::to_os_string)
+}
+
+/// The bytes of the record at `info`, whole: a trash is anyone's to
+/// write in on a shared volume, so a pipe or a giant named like a record
+/// is refused.
+fn read_record(info: &Path) -> std::io::Result<Vec<u8>> {
+    crate::fs::file::read_regular(info, crate::fs::file::SIDE_FILE_LIMIT)
 }
 
 /// A file of a trash at any depth (`in_trash`): the item of the trash it
@@ -1239,16 +1183,17 @@ pub fn in_trash(path: &Path) -> Option<InTrash> {
     })
 }
 
-/// The item a `.trashinfo` speaks of, in its trash's `files` folder.
+/// The record of an item the `trash` crate lists: its id on freedesktop
+/// systems (the `.trashinfo`), the record beside its id on Windows (the
+/// `$R` item, as the shell names it).
+fn record_of_listed(item: &trash::TrashItem) -> PathBuf {
+    let id = Path::new(&item.id);
+    trash_info_of(id).unwrap_or_else(|| id.to_path_buf())
+}
+
+/// The item a trash's record speaks of: `records::item_of`.
 fn item_of_info(info: &Path) -> Option<PathBuf> {
-    use std::os::unix::ffi::OsStrExt;
-    let name = info.file_name()?.as_bytes().strip_suffix(b".trashinfo")?;
-    Some(
-        info.parent()?
-            .parent()?
-            .join("files")
-            .join(OsStr::from_bytes(name)),
-    )
+    super::records::item_of(info)
 }
 
 /// Where the companions of a file at `path` are, by every rule
@@ -1271,7 +1216,7 @@ fn trashed_from(ctx: &StepContext, info: &Path) -> Option<(PathBuf, i64)> {
     ctx.with_trash(|items| {
         items
             .iter()
-            .find(|i| Path::new(&i.id) == info)
+            .find(|i| record_of_listed(i) == info)
             .map(|i| (i.original_path(), i.time_deleted))
     })
     .ok()
@@ -1324,8 +1269,11 @@ pub struct Untrashed {
     pub path: PathBuf,
     /// Its `.trashinfo`, which names its place in the trash.
     pub info: PathArg,
-    /// What the trash said of it, written again when it goes back.
-    pub info_text: String,
+    /// What the trash said of it, written again when it goes back: a
+    /// text on Linux, bytes on Windows.
+    #[serde(with = "crate::os_path::bytes")]
+    #[schemars(with = "String")]
+    pub info_text: Vec<u8>,
 }
 
 impl Untrashed {
@@ -1335,8 +1283,7 @@ impl Untrashed {
     fn take(ctx: &StepContext, info: &Path, to: &Path) -> anyhow::Result<Self> {
         let item = item_of_info(info)
             .ok_or_else(|| anyhow::anyhow!("{} is no trash's", info.display()))?;
-        let info_text = crate::fs::file::read_regular_text(info, crate::fs::file::SIDE_FILE_LIMIT)
-            .with_context(|| format!("read {}", info.display()))?;
+        let info_text = read_record(info).with_context(|| format!("read {}", info.display()))?;
         if let Some(dir) = to.parent() {
             std::fs::create_dir_all(dir)?;
         }
@@ -1379,10 +1326,32 @@ pub struct Restore {
     #[serde(with = "crate::os_path")]
     #[schemars(with = "PathArg")]
     pub path: PathBuf,
-    /// The item's `.trashinfo`, when one item is meant: undoing a trash
-    /// leaves it out, and restores what was trashed last from `path`.
+    /// The item's record (`.trashinfo`, `$I`), when one item is meant:
+    /// undoing a trash leaves it out, and restores what was trashed last
+    /// from `path`. On macOS, whose trash keeps no record, the item
+    /// itself, where `trashItemAtURL` put it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub item: Option<PathArg>,
+    /// On macOS, the companions trashed with it and where they went.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub landed: Vec<Landed>,
+}
+
+/// A file put in a trash that keeps no record of it (macOS's): where it
+/// is there, and where it came from.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Landed {
+    pub at: PathArg,
+    pub from: PathArg,
+}
+
+impl Restore {
+    /// The item itself, on macOS, where its trash keeps no record: what a
+    /// restore moves back. `None` where `item` is a record.
+    fn landed_item(&self) -> Option<&Path> {
+        let item = self.item.as_deref()?;
+        (cfg!(target_os = "macos") && super::records::item_of(item).is_none()).then_some(item)
+    }
 }
 
 impl Restore {
@@ -1391,7 +1360,7 @@ impl Restore {
     /// another name) the most recent from the path.
     fn find(&self, items: &[trash::TrashItem]) -> Option<usize> {
         if let Some(item) = self.item.as_deref()
-            && let Some(n) = items.iter().position(|i| Path::new(&i.id) == item)
+            && let Some(n) = items.iter().position(|i| record_of_listed(i) == item)
         {
             return Some(n);
         }
@@ -1478,6 +1447,17 @@ impl super::Effect for Restore {
         }
     }
     fn check(&self, ctx: &StepContext) -> StepStatus {
+        if let Some(item) = self.landed_item() {
+            return match (exists(&self.path), exists(item)) {
+                (true, false) => StepStatus::AlreadyDone,
+                (true, true) => conflict(format!(
+                    "{} is there again: rename or move it first",
+                    self.path.display()
+                )),
+                (false, true) => pending(true),
+                (false, false) => conflict(format!("{} is not in the trash", self.path.display())),
+            };
+        }
         if exists(&self.path) {
             // A folder there again takes the trashed folder's files where
             // their places are free.
@@ -1508,6 +1488,18 @@ impl super::Effect for Restore {
         }
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+        if let Some(item) = self.landed_item() {
+            rename_noreplace(item, &self.path)
+                .with_context(|| format!("restore {}", self.path.display()))?;
+            for companion in &self.landed {
+                if !exists(&companion.from) {
+                    let _ = rename_noreplace(&companion.at, &companion.from);
+                }
+            }
+            let r = EntryRef::from_path(&self.path)
+                .ok_or_else(|| anyhow::anyhow!("restored file missing: {}", self.path.display()))?;
+            return Ok(Some(Box::new(Trash { entry: r })));
+        }
         if let (Some(item), Some(info)) = (self.merging(), self.item.as_deref()) {
             // The companions trashed with it, found while the trash still
             // says when it was put there, go back where their places are
@@ -1523,7 +1515,7 @@ impl super::Effect for Restore {
             ctx.forget_trash();
             let mut unmerge = merge_restore(&item, info, &self.path)?;
             for (n, found) in with {
-                if let Ok(back) = Untrashed::take(ctx, Path::new(&found.id), &places[n]) {
+                if let Ok(back) = Untrashed::take(ctx, &record_of_listed(&found), &places[n]) {
                     unmerge.companions.push(back);
                 }
             }
@@ -1535,7 +1527,7 @@ impl super::Effect for Restore {
             .context("list trash")?
             .ok_or_else(|| anyhow::anyhow!("{} is not in the trash", self.path.display()))?;
         let when = item.time_deleted;
-        trash::os_limited::restore_all([item])
+        sys::trash_restore(vec![item])
             .with_context(|| format!("restore {}", self.path.display()))?;
         // The companions trashed with it, where their places are free.
         let places = companion_places(ctx, &self.path);
@@ -1545,7 +1537,7 @@ impl super::Effect for Restore {
                 .map(|(_, item)| item)
                 .collect();
         if !found.is_empty() {
-            let _ = trash::os_limited::restore_all(found);
+            let _ = sys::trash_restore(found);
         }
         let r = EntryRef::from_path(&self.path)
             .ok_or_else(|| anyhow::anyhow!("restored file missing: {}", self.path.display()))?;
@@ -1567,8 +1559,7 @@ fn merge_restore(item: &Path, info: &Path, path: &Path) -> anyhow::Result<Unmerg
         }
         return Err(e.context(format!("restore {}", path.display())));
     }
-    let info_text = crate::fs::file::read_regular_text(info, crate::fs::file::SIDE_FILE_LIMIT)
-        .unwrap_or_default();
+    let info_text = read_record(info).unwrap_or_default();
     let mut folders = Vec::new();
     for inner in merged.left {
         // One a file was put in since stays, and the trash with it.
@@ -1598,10 +1589,12 @@ pub struct Unmerge {
     #[serde(with = "crate::os_path")]
     #[schemars(with = "PathArg")]
     pub path: PathBuf,
-    /// The trashed folder's `.trashinfo`.
+    /// The trashed folder's record (`.trashinfo`, `$I`).
     pub info: PathArg,
     /// What it said, written again if it went.
-    pub info_text: String,
+    #[serde(with = "crate::os_path::bytes")]
+    #[schemars(with = "String")]
+    pub info_text: Vec<u8>,
     /// What moved, relative to both folders.
     pub moved: Vec<PathArg>,
     /// The trashed folder's folders that were left empty and went,
@@ -1672,6 +1665,7 @@ impl super::Effect for Unmerge {
         Ok(Some(Box::new(Restore {
             path: self.path.clone(),
             item: Some(self.info.clone()),
+            landed: Vec::new(),
         })))
     }
 }
@@ -1731,11 +1725,13 @@ fn made_like(dir: &Path, like: &Path) {
         return;
     };
     for (name, value) in user_attributes(like).unwrap_or_default() {
-        let _ = xattr::set(dir, name, &value);
+        let _ = crate::fs::xattr::set(dir, name, &value);
     }
-    if let (Ok(file), Ok(accessed), Ok(modified)) =
-        (std::fs::File::open(dir), meta.accessed(), meta.modified())
-    {
+    if let (Ok(file), Ok(accessed), Ok(modified)) = (
+        sys::open_to_set_times(dir),
+        meta.accessed(),
+        meta.modified(),
+    ) {
         let _ = file.set_times(
             std::fs::FileTimes::new()
                 .set_accessed(accessed)
@@ -1813,7 +1809,7 @@ impl super::Effect for RestorePart {
         };
         let info_text = if item {
             Some(
-                crate::fs::file::read_regular_text(&inside.info, crate::fs::file::SIDE_FILE_LIMIT)
+                read_record(&inside.info)
                     .with_context(|| format!("read {}", inside.info.display()))?,
             )
         } else {
@@ -1846,7 +1842,7 @@ impl super::Effect for RestorePart {
         }
         let mut returned = Vec::new();
         for (n, found) in with {
-            if let Ok(back) = Untrashed::take(ctx, Path::new(&found.id), &places[n]) {
+            if let Ok(back) = Untrashed::take(ctx, &record_of_listed(&found), &places[n]) {
                 returned.push(back);
             }
         }
@@ -1881,9 +1877,14 @@ pub struct ReturnPart {
     /// The folders the restore made, outermost first.
     pub made: Vec<PathArg>,
     /// What the trash said of it, when it was an item of the trash (not
-    /// inside a trashed folder): its `.trashinfo`, written again.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub info_text: Option<String>,
+    /// inside a trashed folder): its record, written again.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::os_path::bytes_opt"
+    )]
+    #[schemars(with = "Option<String>")]
+    pub info_text: Option<Vec<u8>>,
     /// The companions trashed with it that went beside it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub companions: Vec<Untrashed>,
@@ -1898,17 +1899,16 @@ impl ReturnPart {
     /// file leaves them and they go: made as their counterparts in the
     /// trash are, they may be read-only. Each with the mode to give back
     /// to it if it stays.
-    fn open_made(&self) -> Vec<(PathBuf, u32)> {
+    fn open_made(&self) -> Vec<(PathBuf, std::fs::Permissions)> {
         self.made
             .iter()
             .filter_map(|dir| {
                 let meta = std::fs::symlink_metadata(dir)
                     .ok()
                     .filter(std::fs::Metadata::is_dir)?;
-                let mode = meta.permissions().mode();
-                if mode & 0o700 != 0o700 {
-                    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode | 0o700))
-                        .ok()?;
+                let mode = meta.permissions();
+                if !sys::open_to_owner(&mode) {
+                    std::fs::set_permissions(dir, sys::opened_to_owner(&mode)).ok()?;
                 }
                 Some((dir.to_path_buf(), mode))
             })
@@ -1977,7 +1977,7 @@ impl super::Effect for ReturnPart {
         }
         for (dir, mode) in opened {
             if exists(&dir) {
-                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(mode));
+                let _ = std::fs::set_permissions(&dir, mode);
             }
         }
         result?;
@@ -2252,6 +2252,8 @@ pub fn register_builtin(reg: &OpRegistry) {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use std::time::Duration;
 
     use super::*;
@@ -2354,6 +2356,7 @@ mod tests {
     /// later merges into what was made, and undone takes back only what it
     /// brought.
     #[test]
+    #[cfg(unix)]
     fn a_trashed_folder_is_restored_in_parts_and_merges_into_what_came_back() {
         let tmp = tempfile::tempdir().unwrap();
         let trash = tmp.path().join(".Trash-1000");
@@ -2405,6 +2408,7 @@ mod tests {
         let whole = Restore {
             path: folder.clone(),
             item: Some(PathArg::from(info.as_path())),
+            landed: Vec::new(),
         };
         assert_eq!(whole.check(&ctx), StepStatus::Pending { reversible: true });
         let unmerge = whole.apply(&ctx).unwrap().unwrap();
@@ -2431,6 +2435,8 @@ mod tests {
     /// An item of the trash moved elsewhere leaves the trash with what it
     /// said of it, and comes back with it undone; one inside a trashed
     /// folder leaves the folder there.
+    // The freedesktop trash's records.
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_file_moved_out_of_the_trash_takes_what_the_trash_said_of_it() {
         let tmp = tempfile::tempdir().unwrap();
@@ -2520,6 +2526,7 @@ mod tests {
     /// counterparts in the trash are, read-only maybe: undone, they go all
     /// the same, and one something was put in since keeps its mode.
     #[test]
+    #[cfg(unix)]
     fn read_only_folders_made_for_a_restore_go_when_it_is_undone() {
         let tmp = tempfile::tempdir().unwrap();
         let trash = tmp.path().join(".Trash-1000");
@@ -2572,8 +2579,11 @@ mod tests {
     /// The wait written through syncs a whole filesystem: the tests' own
     /// would make every test writing to it wait. procfs has nothing to
     /// write; this checks the bytes and what is counted, not the drive.
+    #[cfg(target_os = "linux")]
     const NOTHING_TO_WRITE: &str = "/proc";
 
+    // Writing through is Linux's alone so far (ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_copy_written_through_is_whole() {
         let base = dirs::home_dir().unwrap().join(".cache/bibli-tests");

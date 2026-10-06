@@ -11,6 +11,9 @@ use common::*;
 
 #[test]
 fn list_select_rename_trash_undo_through_commands_only() {
+    if under_wine("trashing through the shell") {
+        return;
+    }
     let tmp = home_tempdir();
     let dir = tmp.path().join("work");
     std::fs::create_dir(&dir).unwrap();

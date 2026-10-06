@@ -161,7 +161,7 @@ impl WorkerSession {
         Self::open_with_tuning(executable, path, tuning, lifetime, wake)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "linux"))]
     fn open_with_worker(
         executable: PathBuf,
         path: PathBuf,

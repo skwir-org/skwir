@@ -181,7 +181,9 @@ pub fn read(path: &Path, names: &[String]) -> Vec<(String, Framing, Vec<Tag>)> {
         .iter()
         .filter_map(|name| {
             let framing = framing(name)?;
-            let value = xattr::get_deref(path, name).ok().flatten()?;
+            let value = bibli_core::fs::xattr::get_deref(path, name)
+                .ok()
+                .flatten()?;
             Some((name.clone(), framing, parse(&value, framing)?))
         })
         .collect()
@@ -336,7 +338,11 @@ impl NotesStore for FinderStore {
                 let values: Vec<(String, Vec<u8>, Framing)> = present
                     .into_iter()
                     .filter_map(|(linux, mac, framing)| {
-                        Some((mac, xattr::get_deref(f.path, &linux).ok()??, framing))
+                        Some((
+                            mac,
+                            bibli_core::fs::xattr::get_deref(f.path, &linux).ok()??,
+                            framing,
+                        ))
                     })
                     .collect();
                 notes_from(
@@ -367,16 +373,16 @@ impl NotesStore for FinderStore {
         let mut changed = false;
         let mut kept = false;
         let mut set = |name: &str, value: Option<Vec<u8>>| -> std::io::Result<()> {
-            let now = xattr::get_deref(file.path, name).ok().flatten();
+            let now = bibli_core::fs::xattr::get_deref(file.path, name)
+                .ok()
+                .flatten();
             if now == value {
                 return Ok(());
             }
             match value {
-                Some(value) => xattr::set_deref(file.path, name, &value)?,
-                None => match xattr::remove_deref(file.path, name) {
-                    Err(e)
-                        if rustix::io::Errno::from_io_error(&e)
-                            == Some(rustix::io::Errno::NODATA) => {}
+                Some(value) => bibli_core::fs::xattr::set_deref(file.path, name, &value)?,
+                None => match bibli_core::fs::xattr::remove_deref(file.path, name) {
+                    Err(e) if bibli_core::fs::xattr::missing(&e) => {}
                     r => r?,
                 },
             }
@@ -389,7 +395,7 @@ impl NotesStore for FinderStore {
             match mac.as_str() {
                 TAGS => {
                     has_tags = true;
-                    let theirs = xattr::get_deref(file.path, linux)
+                    let theirs = bibli_core::fs::xattr::get_deref(file.path, linux)
                         .ok()
                         .flatten()
                         .and_then(|v| parse(&v, *framing))
@@ -414,8 +420,7 @@ impl NotesStore for FinderStore {
                 Some(encode(&from_notes(notes, &[]), Framing::Plain)),
             ) {
                 Ok(()) => kept = true,
-                Err(e)
-                    if rustix::io::Errno::from_io_error(&e) == Some(rustix::io::Errno::NOTSUP) => {}
+                Err(e) if bibli_core::fs::xattr::refused(&e) => {}
                 Err(e) => return Err(e),
             }
         }

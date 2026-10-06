@@ -66,7 +66,7 @@ fn tag(dir: &Path, profile: Profile) -> Result<()> {
     }
     let probe = dir.join(".bibli-bench-probe");
     fs::write(&probe, b"")?;
-    let supported = xattr::set(&probe, "user.xdg.tags", TAG.as_bytes()).is_ok();
+    let supported = bibli_core::fs::xattr::set(&probe, "user.xdg.tags", TAG.as_bytes()).is_ok();
     fs::remove_file(&probe)?;
     if !supported {
         eprintln!(
@@ -87,11 +87,15 @@ fn tag(dir: &Path, profile: Profile) -> Result<()> {
             } else {
                 format!("{TAG},odd")
             };
-            xattr::set(path, "user.xdg.tags", tags.as_bytes())?;
+            bibli_core::fs::xattr::set(path, "user.xdg.tags", tags.as_bytes())?;
             if profile == Profile::Images10k {
                 let rating = (i / every) % 10 + 1;
-                xattr::set(path, "user.baloo.rating", rating.to_string().as_bytes())?;
-                xattr::set(path, "user.xdg.comment", b"a synthetic comment")?;
+                bibli_core::fs::xattr::set(
+                    path,
+                    "user.baloo.rating",
+                    rating.to_string().as_bytes(),
+                )?;
+                bibli_core::fs::xattr::set(path, "user.xdg.comment", b"a synthetic comment")?;
             }
             Ok(())
         })?;

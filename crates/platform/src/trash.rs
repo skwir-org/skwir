@@ -7,7 +7,6 @@
 //! (the trash crate, `bibli_core::op`); this reads what each trash holds,
 //! from the trashes a caller names.
 
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -39,8 +38,7 @@ pub fn volume_trashes(top: &Path, uid: u32) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let shared = top.join(".Trash");
     if let Ok(meta) = std::fs::symlink_metadata(&shared) {
-        use std::os::unix::fs::PermissionsExt;
-        let sticky = meta.permissions().mode() & 0o1000 != 0;
+        let sticky = is_sticky(&meta.permissions());
         let own = shared.join(uid.to_string());
         if meta.is_dir() && sticky && own.is_dir() {
             found.push(own);
@@ -53,9 +51,44 @@ pub fn volume_trashes(top: &Path, uid: u32) -> Vec<PathBuf> {
     found
 }
 
+#[cfg(unix)]
+fn is_sticky(permissions: &std::fs::Permissions) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    permissions.mode() & 0o1000 != 0
+}
+
+/// No folder is sticky off Unix: no shared `.Trash` is trusted.
+#[cfg(not(unix))]
+fn is_sticky(_: &std::fs::Permissions) -> bool {
+    false
+}
+
+/// Every trash of the user's on macOS: none read yet (ADR-035), its
+/// `~/.Trash` keeping no record of where a file came from.
+#[cfg(target_os = "macos")]
+pub fn trashes() -> Vec<PathBuf> {
+    Vec::new()
+}
+
+/// Every trash of the user's on Windows: their folder (named by their
+/// SID) in the Recycle Bin of each local drive. Asks each drive: call it
+/// from a worker.
+#[cfg(windows)]
+pub fn trashes() -> Vec<PathBuf> {
+    let Some(sid) = crate::windows::user_sid() else {
+        return Vec::new();
+    };
+    crate::windows::local_drives()
+        .into_iter()
+        .map(|root| root.join("$Recycle.Bin").join(&sid))
+        .filter(|bin| bin.is_dir())
+        .collect()
+}
+
 /// Every trash of the user's: the home trash, and those of the volumes
 /// the sidebar shows (`places::mounts`) but network and FUSE ones, where
 /// asking can hang. Asks each volume: call it from a worker.
+#[cfg(all(unix, not(target_os = "macos")))]
 pub fn trashes() -> Vec<PathBuf> {
     let uid = rustix::process::getuid().as_raw();
     let mut found: Vec<PathBuf> = home_trash().into_iter().collect();
@@ -78,7 +111,7 @@ pub fn trashes() -> Vec<PathBuf> {
 /// trash: call it from a worker.
 pub fn list(trash: &Path, calendar: &Calendar) -> Vec<Trashed> {
     let Ok(infos) = std::fs::read_dir(trash.join("info")) else {
-        return Vec::new();
+        return list_recycle_bin(trash);
     };
     // Where a relative `Path` starts: the volume a volume's trash is at the
     // top of (`<top>/.Trash-<uid>`, `<top>/.Trash/<uid>`).
@@ -101,9 +134,8 @@ pub fn list(trash: &Path, calendar: &Calendar) -> Vec<Trashed> {
         // Its file is named as it is, less `.trashinfo`: bytes, whatever
         // they are.
         let Some(name) = info.file_name().and_then(|name| {
-            use std::os::unix::ffi::{OsStrExt, OsStringExt};
-            let stem = name.as_bytes().strip_suffix(b".trashinfo")?;
-            Some(OsString::from_vec(stem.to_vec()))
+            let stem = name.as_encoded_bytes().strip_suffix(b".trashinfo")?;
+            Some(bibli_core::os_path::from_bytes(stem.to_vec()))
         }) else {
             continue;
         };
@@ -129,17 +161,53 @@ pub fn list(trash: &Path, calendar: &Calendar) -> Vec<Trashed> {
     found
 }
 
+/// What a Windows Recycle Bin folder (`$Recycle.Bin\\<SID>`) holds: each
+/// `$R` item its `$I` record speaks of, where it came from and when.
+/// Nothing for a folder that is no such bin.
+fn list_recycle_bin(bin: &Path) -> Vec<Trashed> {
+    use bibli_core::op::records;
+    let Ok(names) = std::fs::read_dir(bin) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for info in names.flatten().map(|e| e.path()) {
+        let Some(file) = records::recycle_item_of(&info) else {
+            continue;
+        };
+        if std::fs::symlink_metadata(&file).is_err() {
+            continue;
+        }
+        let Ok(bytes) = crate::file::read_regular(&info, crate::file::SIDE_FILE_LIMIT) else {
+            continue;
+        };
+        let Some((original, deleted)) = records::parse_recycle_record(&bytes) else {
+            continue;
+        };
+        found.push(Trashed {
+            file,
+            info,
+            original,
+            deleted,
+        });
+    }
+    found
+}
+
 /// A `.trashinfo`'s `Path` and `DeletionDate`: the core's reading
 /// (`bibli_core::op::parse_trash_info`), which the operations share.
 pub use bibli_core::op::parse_trash_info as parse_info;
 
 #[cfg(test)]
+// Helpers of the tests that run on Unix alone (ADR-035).
+#[cfg_attr(not(unix), allow(dead_code, unused_imports))]
 mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{list, parse_info, volume_trashes};
     use crate::calendar::Calendar;
 
+    // The freedesktop trash.
+    #[cfg(unix)]
     #[test]
     fn a_trashinfo_says_where_a_file_came_from_and_when() {
         let text = "[Trash Info]\nPath=/data/it%27s%20a%20caf%C3%A9.txt\nDeletionDate=2026-10-04T09:30:00\n";
@@ -206,5 +274,43 @@ mod tests {
         // A `.Trash` that is not sticky is not trusted.
         std::fs::create_dir_all(top.path().join(".Trash/1000")).unwrap();
         assert_eq!(volume_trashes(top.path(), 1000), [trash]);
+    }
+
+    /// What a Windows volume's Recycle Bin holds, read from its records
+    /// (laid out here as Windows lays them out).
+    #[test]
+    fn a_recycle_bin_lists_what_its_records_speak_of() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("$Recycle.Bin").join("S-1-5-21-1-2-3-1001");
+        std::fs::create_dir_all(&bin).unwrap();
+        let record = |path: &str| {
+            let units: Vec<u16> = path.encode_utf16().chain([0]).collect();
+            let mut out = Vec::new();
+            out.extend_from_slice(&2u64.to_le_bytes());
+            out.extend_from_slice(&9u64.to_le_bytes());
+            // 2026-10-05T12:00:00Z as a FILETIME.
+            out.extend_from_slice(
+                &(116_444_736_000_000_000i64 + 1_791_201_600 * 10_000_000).to_le_bytes(),
+            );
+            out.extend_from_slice(&u32::try_from(units.len()).unwrap().to_le_bytes());
+            for u in units {
+                out.extend_from_slice(&u.to_le_bytes());
+            }
+            out
+        };
+        std::fs::write(bin.join("$IAB12CD.txt"), record(r"C:\Users\me\it's a.txt")).unwrap();
+        std::fs::write(bin.join("$RAB12CD.txt"), b"the file").unwrap();
+        // A record whose item is gone, and an item without a record.
+        std::fs::write(bin.join("$IGONE.txt"), record(r"C:\gone.txt")).unwrap();
+        std::fs::write(bin.join("$RLONE.txt"), b"x").unwrap();
+        let found = list(&bin, &Calendar::utc());
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].file, bin.join("$RAB12CD.txt"));
+        assert_eq!(found[0].info, bin.join("$IAB12CD.txt"));
+        assert_eq!(found[0].original, PathBuf::from(r"C:\Users\me\it's a.txt"));
+        assert_eq!(
+            found[0].deleted,
+            Some(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_791_201_600))
+        );
     }
 }

@@ -264,17 +264,7 @@ impl Drop for Deferred<'_> {
 }
 
 fn kind_of(ft: Option<std::fs::FileType>) -> EntryKind {
-    use std::os::unix::fs::FileTypeExt;
-    match ft {
-        Some(t) if t.is_dir() => EntryKind::Directory,
-        Some(t) if t.is_file() => EntryKind::File,
-        Some(t) if t.is_symlink() => EntryKind::Symlink,
-        Some(t) if t.is_fifo() => EntryKind::Fifo,
-        Some(t) if t.is_socket() => EntryKind::Socket,
-        Some(t) if t.is_char_device() => EntryKind::CharDevice,
-        Some(t) if t.is_block_device() => EntryKind::BlockDevice,
-        Some(_) | None => EntryKind::Unknown,
-    }
+    ft.map_or(EntryKind::Unknown, EntryKind::from)
 }
 
 impl QueryLocation {
@@ -572,7 +562,7 @@ impl Shared {
             return hinted;
         };
         // Indexes know real paths; the walk goes through the root as typed.
-        let Ok(real_root) = std::fs::canonicalize(&q.root) else {
+        let Ok(real_root) = bibli_core::os_path::canonical(&q.root) else {
             return hinted;
         };
         let Some(paths) =
@@ -594,9 +584,9 @@ impl Shared {
                 continue;
             }
             // A folder on the way that is a link: the walk would not go there.
-            let through_link = real
-                .parent()
-                .is_none_or(|parent| std::fs::canonicalize(parent).ok().as_deref() != Some(parent));
+            let through_link = real.parent().is_none_or(|parent| {
+                bibli_core::os_path::canonical(parent).ok().as_deref() != Some(parent)
+            });
             let Some(name) = real.file_name() else {
                 continue;
             };
@@ -722,10 +712,10 @@ impl Shared {
             return None;
         }
         let dir = path.parent()?;
-        let real = std::fs::canonicalize(&q.root)
+        let real = bibli_core::os_path::canonical(&q.root)
             .ok()?
             .join(relative.parent()?);
-        if std::fs::canonicalize(dir).ok()? != real {
+        if bibli_core::os_path::canonical(dir).ok()? != real {
             return None;
         }
         let name = path.file_name()?;

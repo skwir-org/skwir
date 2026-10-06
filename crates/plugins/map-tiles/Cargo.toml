@@ -19,9 +19,10 @@ toml.workspace = true
 tracing.workspace = true
 # Tile archives: PMTiles' gzipped directories, the version and backend
 # already in the tree; MBTiles read by the system's libsqlite3 (ADR-022),
-# as the tables preview reads a database.
+# as the tables preview reads a database: built in on Windows, which has
+# none to link.
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
-rusqlite = { version = "0.40", default-features = false, features = ["hooks"] }
+rusqlite = { version = "0.40", default-features = false, features = ["hooks", "bundled-windows"] }
 # Rasterizes the offline outline; the version resvg already brings.
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
 # The HTTP client (ADR-020): HTTP/2 where the server speaks it, on a runtime

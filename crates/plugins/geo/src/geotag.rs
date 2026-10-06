@@ -540,24 +540,23 @@ fn read_tags(program: &Path, path: &Path, cancel: &CancelToken) -> anyhow::Resul
 /// A file's state, precise enough that a file with the same one has not
 /// been written: its change time moves with any write, even one that puts
 /// the modification time back.
+/// `None` where the system does not say the change time or the identity
+/// (Windows, not read yet: ADR-035), and nothing is remembered.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct Seen {
-    dev: u64,
-    ino: u64,
+    id: bibli_core::EntryId,
     size: u64,
-    modified: (i64, i64),
-    changed: (i64, i64),
+    modified: SystemTime,
+    changed: SystemTime,
 }
 
 fn seen_now(path: &Path) -> Option<Seen> {
-    use std::os::unix::fs::MetadataExt;
     let m = std::fs::metadata(path).ok()?;
     Some(Seen {
-        dev: m.dev(),
-        ino: m.ino(),
-        size: m.size(),
-        modified: (m.mtime(), m.mtime_nsec()),
-        changed: (m.ctime(), m.ctime_nsec()),
+        id: bibli_core::fs::stat::identity(path, &m)?,
+        size: m.len(),
+        modified: m.modified().ok()?,
+        changed: bibli_core::fs::stat::changed(path, &m)?,
     })
 }
 
@@ -705,9 +704,23 @@ struct PrivateFile {
     path: PathBuf,
 }
 
+/// Make the folder `dir`, failing if anything is there, open to its
+/// owner alone on Unix; elsewhere the user's temporary folder is already
+/// theirs alone.
+fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new().mode(0o700).create(dir)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir(dir)
+    }
+}
+
 impl PrivateFile {
     fn new(bytes: &[u8]) -> std::io::Result<Self> {
-        use std::os::unix::fs::DirBuilderExt;
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let stamp = SystemTime::now()
@@ -721,7 +734,7 @@ impl PrivateFile {
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
             // Fails if anything is there already: never someone else's.
-            match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+            match create_private_dir(&dir) {
                 Ok(()) => {
                     let file = PrivateFile {
                         path: dir.join("location.json"),

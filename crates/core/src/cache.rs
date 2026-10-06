@@ -10,11 +10,10 @@ pub struct Cache {
 }
 
 impl Cache {
-    /// The platform cache dir (`$XDG_CACHE_HOME/bibli` on Linux).
+    /// The system's cache folder of bibli's (`$XDG_CACHE_HOME/bibli` on
+    /// Linux): `crate::folders::cache`.
     pub fn default_root() -> PathBuf {
-        crate::xdg::cache_home()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("bibli")
+        crate::folders::cache().unwrap_or_else(|| std::env::temp_dir().join("bibli"))
     }
 
     pub fn new(root: impl Into<PathBuf>) -> Self {

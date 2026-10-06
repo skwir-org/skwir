@@ -1,0 +1,12 @@
+#!/bin/sh
+# cargo-zigbuild runs this as its cargo (`CARGO=…`, `just test-windows`):
+# with the environment it set up, Zig as the target's C compiler and
+# linker, run nextest where it would run `cargo test`. Anything else goes
+# to the real cargo, which nextest uses too.
+set -eu
+: "${REAL_CARGO:?the real cargo, as REAL_CARGO}"
+if [ "${1:-}" = test ]; then
+    shift
+    CARGO="$REAL_CARGO" exec cargo-nextest nextest run "$@"
+fi
+exec "$REAL_CARGO" "$@"

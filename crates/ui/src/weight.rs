@@ -161,7 +161,7 @@ fn weigh(dir: &Path, hidden: bool, filter: Option<&str>, cancel: &CancelToken) -
         }
         let Ok(entry) = entry else { continue };
         let name = entry.file_name();
-        if !hidden && name.as_encoded_bytes().starts_with(b".") {
+        if !hidden && bibli_core::fs::is_hidden(&entry) {
             continue;
         }
         if filter.is_some_and(|f| !bibli_core::workspace::name_holds(&name, f)) {

@@ -69,6 +69,39 @@ pub enum EntryKind {
     Unknown,
 }
 
+impl From<std::fs::FileType> for EntryKind {
+    /// What a listing or a stat through `std::fs` says an entry is: pipes,
+    /// sockets and devices on Unix, where there are some.
+    fn from(t: std::fs::FileType) -> Self {
+        if t.is_dir() {
+            return EntryKind::Directory;
+        }
+        if t.is_file() {
+            return EntryKind::File;
+        }
+        if t.is_symlink() {
+            return EntryKind::Symlink;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileTypeExt;
+            if t.is_fifo() {
+                return EntryKind::Fifo;
+            }
+            if t.is_socket() {
+                return EntryKind::Socket;
+            }
+            if t.is_char_device() {
+                return EntryKind::CharDevice;
+            }
+            if t.is_block_device() {
+                return EntryKind::BlockDevice;
+            }
+        }
+        EntryKind::Unknown
+    }
+}
+
 impl EntryKind {
     /// A pipe, a socket or a device: listed and acted on like any entry,
     /// never read (a pipe waits for a writer, a device may act when
@@ -292,6 +325,10 @@ pub struct Entry {
     /// one from its first row.
     pub target: Option<LinkTarget>,
     pub metadata: Metadata,
+    /// Hidden by the system's own mark: Windows' hidden attribute, a
+    /// Mac's `UF_HIDDEN` flag. Read where the listing or a stat says it;
+    /// a name starting with a dot hides too ([`Entry::is_hidden`]).
+    pub hidden: bool,
 }
 
 impl Entry {
@@ -302,7 +339,14 @@ impl Entry {
             kind,
             target: None,
             metadata: Metadata::default(),
+            hidden: false,
         }
+    }
+
+    /// Whether the entry is left out while hidden files are: its name
+    /// starts with a dot, or the system marks it hidden.
+    pub fn is_hidden(&self) -> bool {
+        self.hidden || self.name.as_encoded_bytes().starts_with(b".")
     }
 
     pub fn name_str(&self) -> std::borrow::Cow<'_, str> {

@@ -8,6 +8,7 @@
 //! unlocked it in the keyring's own prompt: call from a worker, never from
 //! the UI thread. A secret is never logged, traced or put on a command line;
 //! [`SecretText`] has no `Debug`.
+#[cfg(any(target_os = "linux", target_os = "freebsd", test))]
 use std::collections::HashMap;
 
 /// Where a secret belongs: a field of a record of a setting.
@@ -30,6 +31,7 @@ impl SecretText {
 
 /// The attributes the keyring finds a secret by; without `field`, every
 /// secret of a record.
+#[cfg(any(target_os = "linux", target_os = "freebsd", test))]
 fn attributes<'a>(
     setting: &'a str,
     record: &'a str,
@@ -101,7 +103,121 @@ mod backend {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+/// Windows: the Credential Manager's generic credentials, one per field,
+/// named `bibli/<setting>/<record>/<field>` (run under Wine's).
+#[cfg(windows)]
+mod backend {
+    use super::{SecretRef, SecretText};
+    use crate::windows::credentials;
+
+    fn name(setting: &str, record: &str, field: &str) -> String {
+        format!("bibli/{setting}/{record}/{field}")
+    }
+
+    pub fn store(at: SecretRef<'_>, label: &str, secret: &str) -> anyhow::Result<()> {
+        credentials::write(
+            &name(at.setting, at.record, at.field),
+            label,
+            secret.as_bytes(),
+        )?;
+        Ok(())
+    }
+
+    pub fn lookup(at: SecretRef<'_>) -> anyhow::Result<Option<SecretText>> {
+        let Some(bytes) = credentials::read(&name(at.setting, at.record, at.field))? else {
+            return Ok(None);
+        };
+        let text = String::from_utf8(bytes)
+            .map_err(|_| anyhow::anyhow!("The keyring's secret is not text"))?;
+        Ok(Some(SecretText(text)))
+    }
+
+    pub fn delete(setting: &str, record: &str, field: Option<&str>) -> anyhow::Result<()> {
+        credentials::delete(&name(setting, record, field.unwrap_or("*")))?;
+        Ok(())
+    }
+}
+
+/// macOS: the Keychain's generic passwords, service `bibli`, one per
+/// field, its account `<setting>/<record>/<field>`. Compiled, never run.
+#[cfg(target_os = "macos")]
+mod backend {
+    use security_framework::item::{ItemClass, ItemSearchOptions, Limit};
+    use security_framework::passwords;
+
+    use super::{SecretRef, SecretText};
+
+    const SERVICE: &str = "bibli";
+    /// `errSecItemNotFound`.
+    const NOT_FOUND: i32 = -25300;
+
+    fn account(setting: &str, record: &str, field: &str) -> String {
+        format!("{setting}/{record}/{field}")
+    }
+
+    pub fn store(at: SecretRef<'_>, _label: &str, secret: &str) -> anyhow::Result<()> {
+        passwords::set_generic_password(
+            SERVICE,
+            &account(at.setting, at.record, at.field),
+            secret.as_bytes(),
+        )?;
+        Ok(())
+    }
+
+    pub fn lookup(at: SecretRef<'_>) -> anyhow::Result<Option<SecretText>> {
+        match passwords::get_generic_password(SERVICE, &account(at.setting, at.record, at.field)) {
+            Ok(bytes) => {
+                let text = String::from_utf8(bytes)
+                    .map_err(|_| anyhow::anyhow!("The keyring's secret is not text"))?;
+                Ok(Some(SecretText(text)))
+            }
+            Err(e) if e.code() == NOT_FOUND => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn forget(name: &str) -> anyhow::Result<()> {
+        match passwords::delete_generic_password(SERVICE, name) {
+            Err(e) if e.code() != NOT_FOUND => Err(e.into()),
+            _ => Ok(()),
+        }
+    }
+
+    pub fn delete(setting: &str, record: &str, field: Option<&str>) -> anyhow::Result<()> {
+        if let Some(field) = field {
+            return forget(&account(setting, record, field));
+        }
+        let prefix = account(setting, record, "");
+        let found = ItemSearchOptions::new()
+            .class(ItemClass::generic_password())
+            .service(SERVICE)
+            .load_attributes(true)
+            .limit(Limit::All)
+            .search();
+        let results = match found {
+            Ok(results) => results,
+            Err(e) if e.code() == NOT_FOUND => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
+        for result in results {
+            if let Some(name) = result
+                .simplify_dict()
+                .and_then(|attributes| attributes.get("acct").cloned())
+                .filter(|name| name.starts_with(&prefix))
+            {
+                forget(&name)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    windows,
+    target_os = "macos"
+)))]
 mod backend {
     use super::{SecretRef, SecretText};
 

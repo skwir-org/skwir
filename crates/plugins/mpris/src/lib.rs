@@ -339,6 +339,8 @@ fn serve(
 }
 
 #[cfg(test)]
+// Helpers of the tests that run on Linux alone (ADR-035).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
 mod tests {
     use super::*;
 
@@ -362,6 +364,8 @@ mod tests {
         }
     }
 
+    // MPRIS is the free desktops' (step I, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_track_is_described_the_way_the_bus_expects() {
         let now = track();

@@ -23,3 +23,31 @@ jobs:
         # Hosted runners are slower and noisier than the reference machine;
         # budgets carry a 3x margin over local measurements for that reason.
         run: nix develop --command just bench-check
+
+  # The other systems, natively (ADR-035): written in Phase 5a, not yet run
+  # (no remote). Their failures are 5b's findings: they do not block
+  # merging until 5b says they pass, so `continue-on-error` until then.
+  # The default members only: the native workers' libraries per system are
+  # step K's, not set up here. Windows builds with the runner's MSVC; which
+  # Windows toolchain ships is 5b's decision.
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        # nextest's XDG isolation (`tools/test/isolate-xdg.sh`) is a shell
+        # script: Git's sh runs it on Windows.
+        run: cargo nextest run --no-tests=pass

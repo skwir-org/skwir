@@ -319,8 +319,13 @@ impl Policy {
 /// The attribute names of `path`, through a link: listed once per file
 /// for every store that keeps notes in attributes.
 pub fn attribute_names(path: &Path) -> Vec<String> {
-    xattr::list_deref(path)
-        .map(|names| names.filter_map(|n| n.into_string().ok()).collect())
+    crate::fs::xattr::list_deref(path)
+        .map(|names| {
+            names
+                .into_iter()
+                .filter_map(|n| n.into_string().ok())
+                .collect()
+        })
         .unwrap_or_default()
 }
 

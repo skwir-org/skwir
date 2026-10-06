@@ -11,7 +11,6 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::os::fd::OwnedFd;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -34,6 +33,13 @@ use parking_lot::{Condvar, Mutex, RwLock};
 
 use crate::follow::{self, Follow};
 use crate::{keys, links, screen};
+
+/// What the session keeps to ask who has the terminal: the controller's
+/// descriptor on Unix; nothing yet on Windows (ADR-035).
+#[cfg(unix)]
+type Controller = std::os::fd::OwnedFd;
+#[cfg(not(unix))]
+type Controller = ();
 
 /// The least time between two screens published: about one frame.
 const INTERVAL: Duration = Duration::from_millis(8);
@@ -216,13 +222,22 @@ pub(crate) fn open(
             working_directory: Some(spawn.dir.clone()),
             drain_on_exit: true,
             env,
+            #[cfg(windows)]
+            escape_args: true,
         },
         size,
         0,
     )?;
     // Kept to ask who has the terminal; the event loop owns the original.
-    let controller: OwnedFd = pty.file().try_clone()?.into();
-    let pid = pty.child().id();
+    #[cfg(unix)]
+    let (controller, pid): (Controller, u32) = (pty.file().try_clone()?.into(), pty.child().id());
+    #[cfg(windows)]
+    let (controller, pid): (Controller, u32) = (
+        (),
+        pty.child_watcher()
+            .pid()
+            .map_or(0, std::num::NonZeroU32::get),
+    );
     let family = options
         .program
         .clone()
@@ -267,7 +282,7 @@ pub(crate) fn open(
 struct Worker {
     shared: Arc<Shared>,
     term: Arc<FairMutex<Term<Listener>>>,
-    controller: OwnedFd,
+    controller: Controller,
     pid: u32,
     family: Option<follow::Family>,
     follow_on: Arc<AtomicBool>,
@@ -328,9 +343,25 @@ impl Worker {
 
     /// Whether the shell's process group has the terminal: a program it
     /// runs in the foreground has it instead.
+    #[cfg(unix)]
     fn shell_has_terminal(&self) -> bool {
         rustix::termios::tcgetpgrp(&self.controller)
             .is_ok_and(|group| u32::try_from(group.as_raw_nonzero().get()).ok() == Some(self.pid))
+    }
+
+    /// Not known off Unix yet (ADR-035): never, so no `cd` is typed over
+    /// a program the shell runs.
+    #[cfg(not(unix))]
+    #[allow(clippy::unused_self)]
+    fn shell_has_terminal(&self) -> bool {
+        let () = self.controller;
+        false
+    }
+
+    /// Where the shell is now, as the system says
+    /// (`process::working_dir`: not on Windows yet, ADR-035).
+    fn shell_dir(&self) -> Option<PathBuf> {
+        bibli_platform::process::working_dir(self.pid)
     }
 
     fn type_cd(&self, dir: &std::path::Path) {
@@ -485,7 +516,7 @@ impl Worker {
     /// Where the shell is, when it is looked at after output: where the
     /// paths it printed are read from, and where the pane follows it.
     fn look_at_shell(&mut self) {
-        let Ok(cwd) = std::fs::read_link(format!("/proc/{}/cwd", self.pid)) else {
+        let Some(cwd) = self.shell_dir() else {
             return;
         };
         self.cwd = Some(cwd.clone());

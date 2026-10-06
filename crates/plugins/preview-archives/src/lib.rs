@@ -196,6 +196,8 @@ fn member_rows(members: &[archive::Member], cancel: &CancelToken) -> anyhow::Res
 mod tests {
     use super::*;
 
+    // Types from the free desktops' database (step E, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn archives_are_what_the_database_calls_archives() {
         let accepts = |name: &str| {

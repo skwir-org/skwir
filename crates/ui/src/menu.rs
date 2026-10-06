@@ -979,6 +979,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
     use std::ffi::OsStr;
 
     use bibli_core::command::Invocation;
@@ -991,6 +992,7 @@ mod tests {
         super::when_holds(when, ctx, &SelectionTypes::default())
     }
 
+    #[cfg(target_os = "linux")]
     fn types(entries: &[(&str, bool)]) -> SelectionTypes {
         SelectionTypes::of(
             entries

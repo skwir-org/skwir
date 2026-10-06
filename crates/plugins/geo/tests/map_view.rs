@@ -1,6 +1,8 @@
 //! The Map view's data path, headless: `geo.scan` on what a pane lists,
 //! `geo.points` handing over what was found, each point once. Invented
 //! coordinates only.
+// Types from the free desktops' database (step E, ADR-035).
+#![cfg(target_os = "linux")]
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

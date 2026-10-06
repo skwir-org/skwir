@@ -230,6 +230,8 @@ pub fn png_text_chunk(png: &Path, keyword: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    // The freedesktop thumbnailers and cache (step G, ADR-035).
+    #[cfg(unix)]
     #[test]
     fn spec_example_hash() {
         // From the freedesktop thumbnail spec, "Thumbnail Filename".

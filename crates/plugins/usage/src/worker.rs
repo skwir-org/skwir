@@ -14,7 +14,6 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ffi::OsString;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -230,10 +229,50 @@ fn virtual_filesystem(path: &Path) -> bool {
     VIRTUAL_FILESYSTEMS.iter().any(|v| path.starts_with(v))
 }
 
+/// What the walk reads of a file's metadata. Only Unix is read so far
+/// (ADR-035): elsewhere `Scanner::list_root` refuses before any is asked.
+#[cfg(unix)]
+mod meta {
+    use std::fs::Metadata;
+    use std::os::unix::fs::MetadataExt;
+
+    pub fn device(m: &Metadata) -> u64 {
+        m.dev()
+    }
+    pub fn inode(m: &Metadata) -> u64 {
+        m.ino()
+    }
+    /// The bytes the file takes on its volume.
+    pub fn allocated(m: &Metadata) -> u64 {
+        m.blocks() * 512
+    }
+    pub fn links(m: &Metadata) -> u64 {
+        m.nlink()
+    }
+}
+
+#[cfg(not(unix))]
+mod meta {
+    use std::fs::Metadata;
+
+    pub fn device(_: &Metadata) -> u64 {
+        0
+    }
+    pub fn inode(_: &Metadata) -> u64 {
+        0
+    }
+    pub fn allocated(m: &Metadata) -> u64 {
+        m.len()
+    }
+    pub fn links(_: &Metadata) -> u64 {
+        1
+    }
+}
+
 /// Mount points are shown as leaves without contents; a walk never crosses
 /// onto another device or into a virtual filesystem.
 fn descend(path: &Path, metadata: &std::fs::Metadata, dev: u64) -> bool {
-    metadata.dev() == dev && !virtual_filesystem(path)
+    meta::device(metadata) == dev && !virtual_filesystem(path)
 }
 
 /// Why one registration is held: scans cover it, and/or it is the parent of
@@ -273,8 +312,8 @@ fn register(watcher: &mut dyn Watcher, path: &Path) -> Registration {
             ErrorKind::MaxFilesWatch => Registration::Exhausted,
             ErrorKind::Io(io)
                 if matches!(
-                    rustix::io::Errno::from_io_error(io),
-                    Some(rustix::io::Errno::NOSPC | rustix::io::Errno::NOMEM)
+                    io.kind(),
+                    std::io::ErrorKind::StorageFull | std::io::ErrorKind::OutOfMemory
                 ) =>
             {
                 // ENOSPC: inotify budget; ENOMEM: kernel watch allocation.
@@ -464,8 +503,8 @@ fn replace_pending(tree: &mut Node, mut child: Node) {
 
 fn entry_id(metadata: &std::fs::Metadata) -> EntryId {
     EntryId {
-        dev: metadata.dev(),
-        ino: metadata.ino(),
+        dev: meta::device(metadata),
+        ino: meta::inode(metadata),
     }
 }
 
@@ -483,9 +522,13 @@ fn entry_node(entry: &std::fs::DirEntry, dev: u64) -> std::io::Result<(Node, boo
             is_dir,
             incomplete: descend,
             size: if is_dir { 0 } else { metadata.len() },
-            alloc: if is_dir { 0 } else { metadata.blocks() * 512 },
+            alloc: if is_dir {
+                0
+            } else {
+                meta::allocated(&metadata)
+            },
             files: u64::from(!is_dir),
-            nlink: if is_dir { 0 } else { metadata.nlink() },
+            nlink: if is_dir { 0 } else { meta::links(&metadata) },
             ..Node::default()
         },
         descend,
@@ -608,6 +651,9 @@ impl<'a> Scanner<'a> {
     /// any subtree is descended. Only the names of subdirectories on the
     /// root's device are retained for the descent.
     fn list_root(&mut self) -> anyhow::Result<Vec<(OsString, EntryId)>> {
+        if !cfg!(unix) {
+            return Err(bibli_core::system::not_yet("Disk usage").into());
+        }
         let path = self.path;
         anyhow::ensure!(
             !virtual_filesystem(path),
@@ -617,7 +663,7 @@ impl<'a> Scanner<'a> {
         let metadata = std::fs::metadata(path)?;
         self.ensure()?;
         anyhow::ensure!(metadata.is_dir(), "Disk usage needs a directory");
-        self.dev = metadata.dev();
+        self.dev = meta::device(&metadata);
         let shown = &self.request.path;
         self.preview = Some(Progress {
             tree: Node {
@@ -754,9 +800,9 @@ impl<'a> Scanner<'a> {
                     path,
                     name,
                     size: metadata.len(),
-                    alloc: metadata.blocks() * 512,
+                    alloc: meta::allocated(&metadata),
                     files: 1,
-                    nlink: metadata.nlink(),
+                    nlink: meta::links(&metadata),
                     ..Node::default()
                 }
             } else if !descend(&path, &metadata, self.dev) {
@@ -856,7 +902,7 @@ impl Target {
             .filter(|p| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink()))
             .map(Path::to_path_buf)
             .collect();
-        let path = std::fs::canonicalize(path).unwrap_or_else(|_| normalize(path));
+        let path = bibli_core::os_path::canonical(path).unwrap_or_else(|_| normalize(path));
         Target { path, links }
     }
     /// Directories whose entries decide where the aliases point.
@@ -1406,7 +1452,8 @@ pub(super) fn run(
     // Watcher/cache destruction stays on this thread, including plugin disable and app shutdown.
 }
 
-#[cfg(test)]
+// The walk reads Unix's metadata alone so far (ADR-035).
+#[cfg(all(test, unix))]
 mod tests {
 
     #[test]
@@ -1807,7 +1854,7 @@ mod tests {
         .unwrap();
         std::fs::hard_link(root.join("photos/a.bin"), root.join("backup/a copy.bin")).unwrap();
         std::fs::write(root.join("own.txt"), b"hello").unwrap();
-        let alloc = |path: &str| std::fs::metadata(root.join(path)).unwrap().blocks() * 512;
+        let alloc = |path: &str| meta::allocated(&std::fs::metadata(root.join(path)).unwrap());
 
         let request = request(0, root.into());
         let (shared, updates) = observed(&request);
@@ -2436,7 +2483,10 @@ mod tests {
         let mut worker = worker(Arc::clone(&shared), Some(self::recording(&recording)));
         worker.admit(request);
         let state = &worker.active[&PaneId(0)];
-        assert_eq!(state.target.path, std::fs::canonicalize(&root).unwrap());
+        assert_eq!(
+            state.target.path,
+            bibli_core::os_path::canonical(&root).unwrap()
+        );
         assert_eq!(state.target.links, vec![alias.clone()]);
         assert_eq!(state.coverage, Coverage::Full);
         let parent = tmp.path().to_path_buf();
@@ -2471,14 +2521,14 @@ mod tests {
         let state = &worker.active[&PaneId(0)];
         assert_eq!(
             state.target.path,
-            std::fs::canonicalize(&replacement).unwrap()
+            bibli_core::os_path::canonical(&replacement).unwrap()
         );
         assert_eq!(worker.registrations[&parent].alias, 1);
         assert!(
             worker
                 .cache
                 .dirs
-                .contains_key(&std::fs::canonicalize(&root).unwrap()),
+                .contains_key(&bibli_core::os_path::canonical(&root).unwrap()),
             "the old target stays cached under its own watch"
         );
         worker.remove_active(PaneId(0));
@@ -2527,7 +2577,7 @@ mod tests {
         assert!(!descend(
             Path::new("/sys/kernel"),
             &std::fs::metadata("/").unwrap(),
-            std::fs::metadata("/").unwrap().dev()
+            meta::device(&std::fs::metadata("/").unwrap())
         ));
         assert_eq!(normalize(Path::new("/a/./b/../c")), PathBuf::from("/a/c"));
     }

@@ -61,10 +61,39 @@ lint:
     cargo fmt --all -- --check
     cargo clippy --all-targets -- -D warnings
 
-# Lint everything, native workers included (what CI runs).
-lint-all:
+# Lint everything, native workers and the Windows and macOS builds included (CI).
+lint-all: && check-cross
     cargo fmt --all -- --check
     cargo clippy --workspace --all-targets -- -D warnings
+
+# Phase 5 (ADR-035): Zig is the C compiler of these builds, `target/cross`
+# their build directory (not incremental: checks, rarely rebuilt in a loop,
+# whose caches only fill the disk), and nothing is run. On macOS bibli-ui
+# and bibli are left out: gpui's Metal backend generates its bindings from
+# Apple's SDK.
+
+# Compile and lint the Windows and macOS builds from Linux.
+check-cross: check-windows check-macos
+
+# Compile and lint the Windows build (default members, tests included).
+check-windows:
+    CARGO_TARGET_DIR=target/cross CARGO_INCREMENTAL=0 cargo-zigbuild clippy --target x86_64-pc-windows-gnu --all-targets -- -D warnings
+
+# Compile and lint the macOS build, but for the crates built on gpui.
+check-macos:
+    CARGO_TARGET_DIR=target/cross CARGO_INCREMENTAL=0 cargo-zigbuild clippy --target aarch64-apple-darwin --all-targets --workspace --exclude bibli-ui --exclude bibli --exclude bibli-poppler-worker --exclude bibli-mupdf-worker --exclude bibli-media-worker --exclude bibli-archive-worker -- -D warnings
+
+# Run the Windows build's tests under Wine (args go to nextest: `-p bibli-core`).
+test-windows *args:
+    tools/cross/test-windows.sh {{args}}
+
+# Linux's package (Phase 5, step K): bibli and its helpers, by Nix, from the git tree.
+package-nix:
+    nix build "git+file://{{justfile_directory()}}#default"
+
+# An AppImage of that package (nix-appimage), into result-appimage.
+package-appimage:
+    nix bundle --bundler github:ralismark/nix-appimage -o result-appimage "git+file://{{justfile_directory()}}#default"
 
 # Format the workspace.
 fmt:

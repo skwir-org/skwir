@@ -443,6 +443,8 @@ mod tests {
         }
     }
 
+    // Unix's paths.
+    #[cfg(unix)]
     #[test]
     fn a_link_a_program_writes_is_kept_as_written() {
         let mut shell = Shell::new(40, 3);

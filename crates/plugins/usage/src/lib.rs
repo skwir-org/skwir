@@ -366,7 +366,8 @@ impl Plugin for UsagePlugin {
     }
 }
 
-#[cfg(test)]
+// Usage reads Unix's metadata alone so far (ADR-035).
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use bibli_core::app::AppConfig;

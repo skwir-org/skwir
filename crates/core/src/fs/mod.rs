@@ -1,16 +1,42 @@
-//! The built-in filesystem provider: getdents streaming, lazy statx, watching.
+//! The built-in filesystem provider: streamed listing, lazy stat, watching.
 
+pub mod dir;
 pub mod file;
 mod hydrate;
 mod path_provider;
 pub mod stat;
 pub mod volume;
 mod watch;
+#[cfg(windows)]
+pub(crate) mod win;
+pub mod xattr;
 
+pub use dir::Dir;
 pub use hydrate::{hydrate_path, hydrate_paths};
 pub use path_provider::PathProvider;
 pub use stat::{Statter, content_path, stat_entry, stat_path};
 pub use watch::Settled;
+
+/// Whether a folder's entry `entry`, read with `std::fs::read_dir`, is
+/// hidden: its name starts with a dot, or Windows marks it hidden (which
+/// its listing says, free). A Mac's `UF_HIDDEN` would cost a stat per
+/// entry here; a listing's `Entry::is_hidden` has it.
+pub fn is_hidden(entry: &std::fs::DirEntry) -> bool {
+    if entry.file_name().as_encoded_bytes().starts_with(b".") {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        /// `FILE_ATTRIBUTE_HIDDEN`.
+        const HIDDEN: u32 = 2;
+        entry
+            .metadata()
+            .is_ok_and(|meta| meta.file_attributes() & HIDDEN != 0)
+    }
+    #[cfg(not(windows))]
+    false
+}
 
 /// The folders inside `dir`, in the panes' name order, links to folders
 /// included; names starting with a dot only when `hidden`. What a folder's
@@ -22,7 +48,7 @@ pub use watch::Settled;
 pub fn subfolders(dir: &std::path::Path, hidden: bool) -> std::io::Result<Vec<std::path::PathBuf>> {
     let mut dirs = Vec::new();
     for entry in std::fs::read_dir(dir)?.flatten() {
-        if !hidden && entry.file_name().as_encoded_bytes().starts_with(b".") {
+        if !hidden && is_hidden(&entry) {
             continue;
         }
         let is_dir = match entry.file_type() {

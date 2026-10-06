@@ -212,7 +212,8 @@ fn name(path: &Path) -> String {
     )
 }
 
-#[cfg(test)]
+// Types are read from the free desktops' database (ADR-035).
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
     use std::time::Duration;
@@ -225,7 +226,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "linux")]
     fn a_file_says_what_to_search_by() {
         let cal = Calendar::utc();
         let t = |s: &Sample<'_>, by| terms(s, by, &cal);

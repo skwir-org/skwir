@@ -37,6 +37,9 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
         Arc::new(bibli_plugin_preview_epub::PreviewPlugin),
         Arc::new(bibli_plugin_preview_tables::PreviewPlugin),
         Arc::new(bibli_plugin_preview_playlists::PreviewPlugin),
+        // The free desktops' media keys (D-Bus): not on macOS or Windows,
+        // whose own are plugins still to write (ADR-035, step I).
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         Arc::new(bibli_plugin_mpris::MprisPlugin::default()),
         Arc::new(bibli_plugin_preview_structured::PreviewPlugin),
         Arc::new(bibli_plugin_preview_fonts::PreviewPlugin),

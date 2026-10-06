@@ -107,6 +107,12 @@ def start(binary, folder, xdg, idle, log):
 
 
 def main():
+    # macOS's phys_footprint and Windows' private working set (ADR-038)
+    # are read on those machines, in 5b; nothing is measured here.
+    if not sys.platform.startswith("linux"):
+        print(f"idle-pss: nothing measured on {sys.platform}: ADR-038 says what "
+              "this system's measure is, read on its machine (Phase 5b)")
+        return 0
     root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--binary", default=str(root / "target/release/bibli"))

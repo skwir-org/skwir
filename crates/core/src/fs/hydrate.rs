@@ -11,6 +11,7 @@ use crate::entry::{Entry, EntryId, EntryKind};
 use crate::location::{EventSink, ListingEvent};
 use crate::metadata::MetadataProviders;
 
+use super::dir::Dir;
 use super::stat::{stat_entry, stat_path};
 
 /// One path read as a listing reads its entries: stat-ed, then filled by
@@ -54,20 +55,14 @@ pub fn hydrate_paths(
         if cancel.is_cancelled() {
             return Vec::new();
         }
-        let Ok(dirfd) = rustix::fs::open(
-            dir,
-            rustix::fs::OFlags::RDONLY
-                | rustix::fs::OFlags::DIRECTORY
-                | rustix::fs::OFlags::CLOEXEC,
-            rustix::fs::Mode::empty(),
-        ) else {
+        let Ok(folder) = Dir::open(dir) else {
             gone.extend(names.into_iter().map(|(id, _)| id));
             continue;
         };
         let mut found = Vec::with_capacity(names.len());
         for (id, name) in names {
             let mut e = Entry::new(id, name, EntryKind::Unknown);
-            if stat_entry(&dirfd, &mut e) {
+            if stat_entry(&folder, &mut e) {
                 e.id = id;
                 found.push(e);
             } else {

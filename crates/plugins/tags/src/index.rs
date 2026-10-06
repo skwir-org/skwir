@@ -18,9 +18,9 @@
 //! known stay current) and covers no folder, and bibli says the tags
 //! leave some out.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsStr;
-use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
@@ -92,7 +92,11 @@ pub fn stable_hash(parts: &[&[u8]]) -> u64 {
 
 /// Where the folders seen by a count of `root` are kept.
 fn dirs_key(root: &Path) -> Vec<u8> {
-    format!("dirs.{:016x}", stable_hash(&[root.as_os_str().as_bytes()])).into_bytes()
+    format!(
+        "dirs.{:016x}",
+        stable_hash(&[root.as_os_str().as_encoded_bytes()])
+    )
+    .into_bytes()
 }
 
 fn piece_key(piece: usize) -> Vec<u8> {
@@ -100,11 +104,11 @@ fn piece_key(piece: usize) -> Vec<u8> {
 }
 
 fn piece_of(folder: &Path) -> usize {
-    (stable_hash(&[folder.as_os_str().as_bytes()]) % BUCKETS as u64) as usize
+    (stable_hash(&[folder.as_os_str().as_encoded_bytes()]) % BUCKETS as u64) as usize
 }
 
 fn hidden(name: &OsStr) -> bool {
-    name.as_bytes().first() == Some(&b'.')
+    name.as_encoded_bytes().first() == Some(&b'.')
 }
 
 /// Whether `path`, under `root`, is inside a hidden folder or hidden
@@ -127,7 +131,7 @@ impl File {
         for tag in &tags[..n] {
             data.extend_from_slice(&tag.to_le_bytes());
         }
-        data.extend_from_slice(name.as_bytes());
+        data.extend_from_slice(name.as_encoded_bytes());
         File(data.into_boxed_slice())
     }
 
@@ -136,8 +140,13 @@ impl File {
         self.0[1..].split_at(4 * n)
     }
 
-    fn name(&self) -> &OsStr {
-        OsStr::from_bytes(self.split().1)
+    fn name(&self) -> Cow<'_, OsStr> {
+        bibli_core::os_path::from_bytes_ref(self.name_bytes())
+    }
+
+    /// Its name as stored: `OsStr::as_encoded_bytes`.
+    fn name_bytes(&self) -> &[u8] {
+        self.split().1
     }
 
     fn tags(&self) -> Vec<u32> {
@@ -173,7 +182,7 @@ struct Folder {
 impl Folder {
     fn find(&self, name: &OsStr) -> Result<usize, usize> {
         self.files
-            .binary_search_by(|f| f.name().as_bytes().cmp(name.as_bytes()))
+            .binary_search_by(|f| f.name_bytes().cmp(name.as_encoded_bytes()))
     }
 
     /// Count `name`'s `tags` in, or out, with the categories they are in
@@ -382,7 +391,7 @@ fn encode_piece(piece: &Piece) -> Vec<u8> {
             .to_le_bytes(),
     );
     for (path, folder) in &piece.folders {
-        put(&mut out, path.as_os_str().as_bytes());
+        put(&mut out, path.as_os_str().as_encoded_bytes());
         out.extend_from_slice(
             &u32::try_from(folder.files.len())
                 .unwrap_or(u32::MAX)
@@ -390,7 +399,7 @@ fn encode_piece(piece: &Piece) -> Vec<u8> {
         );
         for file in &folder.files {
             let tags = file.tags();
-            put(&mut out, file.name().as_bytes());
+            put(&mut out, file.name_bytes());
             out.extend_from_slice(&u32::try_from(tags.len()).unwrap_or(u32::MAX).to_le_bytes());
             for tag in tags {
                 out.extend_from_slice(&tag.to_le_bytes());
@@ -407,14 +416,14 @@ fn decode_piece(bytes: &[u8], parents: &[Option<u32>]) -> Option<HashMap<PathBuf
     };
     let mut folders = HashMap::new();
     for _ in 0..r.u32()? {
-        let path = PathBuf::from(OsStr::from_bytes(r.bytes()?));
+        let path = PathBuf::from(bibli_core::os_path::from_bytes(r.bytes()?.to_vec()));
         let mut folder = Folder::default();
         for _ in 0..r.u32()? {
-            let name = OsStr::from_bytes(r.bytes()?);
+            let name = bibli_core::os_path::from_bytes_ref(r.bytes()?);
             let n = r.u32()?;
             let ids: Option<Vec<u32>> = (0..n).map(|_| r.u32()).collect();
             let ids: Vec<u32> = ids?.into_iter().filter(|t| (*t as usize) < tags).collect();
-            folder.set(name, &ids, parents);
+            folder.set(&name, &ids, parents);
         }
         folders.insert(path, folder);
     }
@@ -424,7 +433,7 @@ fn decode_piece(bytes: &[u8], parents: &[Option<u32>]) -> Option<HashMap<PathBuf
 fn encode_folders(folders: &BTreeMap<PathBuf, usize>) -> Vec<u8> {
     let mut out = Vec::new();
     for path in folders.keys() {
-        put(&mut out, path.as_os_str().as_bytes());
+        put(&mut out, path.as_os_str().as_encoded_bytes());
     }
     out
 }
@@ -433,7 +442,7 @@ fn decode_folders(bytes: &[u8]) -> BTreeMap<PathBuf, usize> {
     let mut r = Reader { bytes };
     let mut out = BTreeMap::new();
     while let Some(path) = r.bytes() {
-        let path = PathBuf::from(OsStr::from_bytes(path));
+        let path = PathBuf::from(bibli_core::os_path::from_bytes(path.to_vec()));
         let piece = piece_of(&path);
         out.insert(path, piece);
     }
@@ -1066,7 +1075,7 @@ impl TagIndex {
                 continue;
             };
             for file in &folder.files {
-                if hidden(file.name()) || ids.as_ref().is_some_and(|ids| !file.has(ids)) {
+                if hidden(&file.name()) || ids.as_ref().is_some_and(|ids| !file.has(ids)) {
                     continue;
                 }
                 let tags = file

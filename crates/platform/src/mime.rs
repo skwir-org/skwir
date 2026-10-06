@@ -1,8 +1,17 @@
-//! MIME types via the shared-mime-info database.
+//! MIME types: the system's own registry first, and the desktop's
+//! database, shared-mime-info, for what it does not answer (ADR-037). On
+//! Linux and the BSDs the database is the system's registry; on macOS the
+//! system's is Uniform Type Identifiers (`uttype`), on Windows the
+//! registry's classes (`registry`). The system names a file by its
+//! extension and says what people call its type; the database says it
+//! more precisely where it can (`refine`), reads the bytes, and holds the
+//! hierarchy and the aliases, whose names are the ones bibli speaks.
 
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fmt;
 use std::path::Path;
+use std::sync::{OnceLock, RwLock};
 
 /// A MIME type such as `image/png`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -25,12 +34,15 @@ impl Mime {
 
     /// Generic fallback icon: `image-x-generic`.
     pub fn generic_icon_name(&self) -> String {
-        imp::generic_icon_name(self)
+        database::generic_icon_name(self)
     }
 
-    /// Human description from the database, if available.
+    /// What people call files of this type: the system's own words where
+    /// it has a registry beside the database (macOS's, Windows', in the
+    /// user's language), else the database's comment, if available. Reads
+    /// files: call from a worker and cache the answer.
     pub fn description(&self) -> Option<String> {
-        imp::description(self)
+        system::description(self).or_else(|| database::description(self))
     }
 }
 
@@ -40,7 +52,8 @@ impl fmt::Display for Mime {
     }
 }
 
-/// Guess from the file name only. No I/O; cheap enough for every row.
+/// Guess from the file name only. No I/O; cheap enough for every row
+/// (the system's registry, where it is asked, once per extension).
 ///
 /// `None` means the name says nothing (`settings.cfg`, `README`, `.env`):
 /// not that the file is binary. Only `by_content` can say that.
@@ -51,7 +64,7 @@ impl fmt::Display for Mime {
 /// database hands the ties back in no particular order. What such a file
 /// really holds is for [`identify`] to say, where the bytes can be read.
 pub fn by_name(name: &OsStr) -> Option<Mime> {
-    imp::by_name(name)
+    database::representative(candidates(name))
 }
 
 /// The type an entry of a listing is shown as. No I/O. What it is whatever
@@ -69,7 +82,7 @@ pub fn of_entry(entry: &bibli_core::Entry) -> Option<Mime> {
 /// Whether the name leaves the type to the bytes: several types claim it
 /// equally ([`by_name`]). No I/O.
 pub fn ambiguous(name: &OsStr) -> bool {
-    imp::ambiguous(name)
+    candidates(name).len() > 1
 }
 
 /// Selections no larger than this have each name asked as it is.
@@ -131,7 +144,20 @@ fn suffix(name: &str) -> Option<&str> {
 /// the name's answer when the bytes do not choose. A name no type claims is
 /// [`by_content`]'s. Reads the head of the file: call from a worker.
 pub fn identify(name: &OsStr, path: &Path) -> Option<Mime> {
-    imp::identify(name, path)
+    let candidates = candidates(name);
+    if candidates.len() < 2 {
+        return match candidates.into_iter().next() {
+            Some(only) => Some(only),
+            None => by_content(path),
+        };
+    }
+    // The bytes choose only among what the name allows, or something
+    // more precise than one of those: magic that names another kind of
+    // file altogether does not outvote an extension several types share.
+    let sniffed = head(path)
+        .and_then(|head| database::magic(&head))
+        .filter(|m| candidates.iter().any(|c| database::is_a(m, c)));
+    sniffed.or_else(|| database::representative(candidates))
 }
 
 /// What the bytes say, for a file whose name says nothing. Reads the head
@@ -144,20 +170,21 @@ pub fn identify(name: &OsStr, path: &Path) -> Option<Mime> {
 /// when the file cannot be read or is not a regular file (a FIFO would
 /// otherwise block until something writes to it).
 pub fn by_content(path: &Path) -> Option<Mime> {
-    imp::by_content(path)
+    let head = head(path)?;
+    // There is no magic for text/plain: what it does not know is text or
+    // binary by the bytes.
+    Some(database::magic(&head).unwrap_or_else(|| text_or_binary(&head)))
 }
 
 /// Bytes read to decide what a file without a known name holds. The
 /// database's deepest magic rules look further, but at that distance the
 /// name usually says it first; the text rule is git's (a NUL in the first
 /// 8000 bytes).
-#[cfg(target_os = "linux")]
 const SNIFF: usize = 8 * 1024;
 
 /// `text/plain` or `application/octet-stream` from a file's head: the one
 /// text-or-binary rule, the same one the preview applies to a declared type
 /// (`crate::inspection::is_text`).
-#[cfg(any(target_os = "linux", test))]
 fn text_or_binary(head: &[u8]) -> Mime {
     Mime(
         if crate::inspection::is_text(head) {
@@ -170,7 +197,6 @@ fn text_or_binary(head: &[u8]) -> Mime {
 }
 
 /// The untranslated `<comment>` of a shared-mime-info type file, capitalized.
-#[cfg(any(target_os = "linux", test))]
 fn comment_of(xml: &str) -> Option<String> {
     let start = xml.find("<comment>")? + "<comment>".len();
     let end = start + xml[start..].find("</comment>")?;
@@ -192,6 +218,10 @@ fn comment_of(xml: &str) -> Option<String> {
 /// processor files; `package-x-generic` for archives), else its top-level
 /// type; text is any type that descends from `text/plain`, code included.
 /// A type can be of several kinds (Markdown is a document and text).
+/// Where the system groups types itself, its groups count too
+/// (`system::kinds`, ADR-037): macOS's conformance adds to the
+/// database's; Windows' `PerceivedType`, coarser, groups only what the
+/// database gives no kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
@@ -297,8 +327,6 @@ pub fn is_kind(mime: &Mime, kind: Kind) -> bool {
 }
 
 fn kind_bits(mime: &Mime) -> u16 {
-    use std::collections::HashMap;
-    use std::sync::{OnceLock, RwLock};
     static CACHE: OnceLock<RwLock<HashMap<String, u16>>> = OnceLock::new();
     let cache = CACHE.get_or_init(RwLock::default);
     if let Some(bits) = cache
@@ -319,7 +347,7 @@ fn classify(mime: &Mime) -> u16 {
     if is_directory(mime) {
         return Kind::Folder.bit();
     }
-    let mime = imp::unalias(mime);
+    let mime = unalias(mime);
     let by_icon = match mime.generic_icon_name().as_str() {
         "image-x-generic" => Some(Kind::Image),
         "video-x-generic" => Some(Kind::Video),
@@ -333,7 +361,8 @@ fn classify(mime: &Mime) -> u16 {
         _ => None,
     };
     let text = lineage(&mime).iter().any(|m| m.as_str() == "text/plain");
-    by_icon.map_or(0, Kind::bit) | if text { Kind::Text.bit() } else { 0 }
+    let database = by_icon.map_or(0, Kind::bit) | if text { Kind::Text.bit() } else { 0 };
+    system::kinds(&mime, database)
 }
 
 pub fn is_directory(mime: &Mime) -> bool {
@@ -342,8 +371,20 @@ pub fn is_directory(mime: &Mime) -> bool {
 
 /// The type `mime` is another name for (`model/x.stl-binary` is
 /// `model/stl`), or `mime` itself. No I/O once the database is loaded.
+///
+/// The database's names first, whatever the system: they are the words
+/// the providers and queries speak (`Types`). A type it does not know is
+/// named as the system's registry names it, where it has one beside the
+/// database.
 pub fn unalias(mime: &Mime) -> Mime {
-    imp::unalias(mime)
+    static CANONICAL: Memo = OnceLock::new();
+    if !system::ASKED || database::knows(mime) {
+        return database::unalias(mime);
+    }
+    remembered(&CANONICAL, mime.as_str(), || {
+        system::canonical(mime).map(|c| database::unalias(&c))
+    })
+    .unwrap_or_else(|| mime.clone())
 }
 
 /// Types named by hand (what a decoder reads), matched as the database
@@ -395,12 +436,20 @@ pub fn of_request(path: &Path, mime: Option<&str>) -> Option<Mime> {
     }
 }
 
-/// The extensions the MIME database names files of type `mime` by, from
-/// its plain `*.ext` globs, lowercase, in the database's order (heaviest
-/// first, the most specific folder first). Aliases are resolved. No I/O
-/// once the database is loaded.
+/// The extensions files of type `mime` are named by, lowercase: the
+/// system registry's first, where it has one beside the database, then
+/// the database's plain `*.ext` globs in its order (heaviest first, the
+/// most specific folder first). Aliases are resolved. No I/O once the
+/// database is loaded; the system's registry is asked.
 pub fn extensions(mime: &Mime) -> Vec<String> {
-    imp::extensions(&imp::unalias(mime))
+    let mime = unalias(mime);
+    let mut all = system::extensions(&mime);
+    for extension in database::extensions(&mime) {
+        if !all.contains(&extension) {
+            all.push(extension);
+        }
+    }
+    all
 }
 
 /// The extension a `globs2` pattern names, if it is a plain `*.ext`.
@@ -416,10 +465,10 @@ fn plain_extension(glob: &str) -> Option<String> {
 /// `text/*`, `application/octet-stream` under any file (not a folder).
 /// Aliases are resolved first. No I/O once the database is loaded.
 pub fn lineage(mime: &Mime) -> Vec<Mime> {
-    let mut out = vec![imp::unalias(mime)];
+    let mut out = vec![unalias(mime)];
     let mut next = 0;
     while next < out.len() {
-        for parent in imp::parents(&out[next]) {
+        for parent in database::parents(&out[next]) {
             if !out.contains(&parent) {
                 out.push(parent);
             }
@@ -439,18 +488,71 @@ pub fn lineage(mime: &Mime) -> Vec<Mime> {
     out
 }
 
-#[cfg(target_os = "linux")]
-mod imp {
+/// Off Linux, the data folder whose `mime` holds the type database
+/// (ADR-037), the first of: beside bibli (`share` next to the program or
+/// above it, a `.app`'s `Resources/share`: what a package ships), where a
+/// package manager installed it (Homebrew on a Mac), `$XDG_DATA_DIRS`.
+/// Reads the disk once.
+#[cfg(not(target_os = "linux"))]
+fn found_database() -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+    static FOUND: OnceLock<Option<PathBuf>> = OnceLock::new();
+    FOUND
+        .get_or_init(|| {
+            let program = std::env::current_exe().ok();
+            let beside = program
+                .as_deref()
+                .and_then(Path::parent)
+                .into_iter()
+                .flat_map(|dir| {
+                    [
+                        dir.join("share"),
+                        dir.join("../share"),
+                        dir.join("../Resources/share"),
+                    ]
+                });
+            let managed: &[&str] = if cfg!(target_os = "macos") {
+                &["/opt/homebrew/share", "/usr/local/share"]
+            } else {
+                &[]
+            };
+            let named = std::env::var_os("XDG_DATA_DIRS")
+                .map(|dirs| std::env::split_paths(&dirs).collect::<Vec<_>>())
+                .unwrap_or_default();
+            beside
+                .chain(managed.iter().map(PathBuf::from))
+                .chain(named)
+                .find(|dir| dir.join("mime").join("globs2").is_file())
+        })
+        .clone()
+}
+
+/// The desktop's type database, shared-mime-info (ADR-037): Linux's own
+/// registry, read where the desktop installed it; elsewhere the fallback
+/// of the system's, read from the one found (`found_database`), which a
+/// package carries beside bibli. Where there is none it knows nothing.
+mod database {
+    use std::collections::{HashMap, HashSet};
     use std::ffi::OsStr;
-    use std::path::Path;
+    use std::path::PathBuf;
     use std::str::FromStr;
     use std::sync::OnceLock;
 
     use super::Mime;
 
-    fn db() -> &'static xdg_mime::SharedMimeInfo {
-        static DB: OnceLock<xdg_mime::SharedMimeInfo> = OnceLock::new();
-        DB.get_or_init(xdg_mime::SharedMimeInfo::new)
+    fn db() -> Option<&'static xdg_mime::SharedMimeInfo> {
+        static DB: OnceLock<Option<xdg_mime::SharedMimeInfo>> = OnceLock::new();
+        DB.get_or_init(|| {
+            #[cfg(target_os = "linux")]
+            {
+                Some(xdg_mime::SharedMimeInfo::new())
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                super::found_database().map(xdg_mime::SharedMimeInfo::new_for_directory)
+            }
+        })
+        .as_ref()
     }
 
     fn to_mime(m: &mime::Mime) -> Mime {
@@ -464,26 +566,39 @@ mod imp {
     /// The types the name's best globs give, all of equal weight. The
     /// database answers application/octet-stream for a name that matches
     /// no glob: its "no idea", never a type the name said.
-    fn candidates(name: &OsStr) -> Vec<mime::Mime> {
-        let Some(name) = name.to_str() else {
+    pub fn candidates(name: &OsStr) -> Vec<Mime> {
+        let (Some(db), Some(name)) = (db(), name.to_str()) else {
             return Vec::new();
         };
-        let mut all = db().get_mime_types_from_file_name(name);
-        all.retain(|m| *m != mime::APPLICATION_OCTET_STREAM);
-        all
+        db.get_mime_types_from_file_name(name)
+            .iter()
+            .filter(|m| **m != mime::APPLICATION_OCTET_STREAM)
+            .map(to_mime)
+            .collect()
+    }
+
+    /// Whether `m` is `base` or descends from it, by any of their names.
+    pub fn is_a(m: &Mime, base: &Mime) -> bool {
+        if m == base {
+            return true;
+        }
+        let (Some(db), Some(m), Some(base)) = (db(), parse(m), parse(base)) else {
+            return false;
+        };
+        db.mime_type_subclass(&m, &base)
     }
 
     /// The most general of equally likely types: the one most of the others
     /// descend from (`audio/ogg` over Vorbis, FLAC and Speex), the name as
     /// the last word, so the choice never depends on the order they came in.
-    pub(super) fn representative(mut candidates: Vec<mime::Mime>) -> Option<mime::Mime> {
+    pub fn representative(mut candidates: Vec<Mime>) -> Option<Mime> {
         if candidates.len() < 2 {
             return candidates.pop();
         }
-        let descendants = |base: &mime::Mime| {
+        let descendants = |base: &Mime| {
             candidates
                 .iter()
-                .filter(|m| *m != base && db().mime_type_subclass(m, base))
+                .filter(|m| *m != base && is_a(m, base))
                 .count()
         };
         candidates
@@ -491,77 +606,67 @@ mod imp {
             .max_by(|a, b| {
                 descendants(a)
                     .cmp(&descendants(b))
-                    .then_with(|| b.essence_str().cmp(a.essence_str()))
+                    .then_with(|| b.as_str().cmp(a.as_str()))
             })
             .cloned()
     }
 
-    pub fn by_name(name: &OsStr) -> Option<Mime> {
-        representative(candidates(name)).as_ref().map(to_mime)
-    }
-
-    pub fn ambiguous(name: &OsStr) -> bool {
-        candidates(name).len() > 1
-    }
-
-    pub fn identify(name: &OsStr, path: &Path) -> Option<Mime> {
-        let candidates = candidates(name);
-        if candidates.len() < 2 {
-            return match candidates.first() {
-                Some(only) => Some(to_mime(only)),
-                None => by_content(path),
-            };
-        }
-        // The bytes choose only among what the name allows, or something
-        // more precise than one of those: magic that names another kind of
-        // file altogether does not outvote an extension several types share.
-        let sniffed = head(path)
-            .and_then(|head| db().get_mime_type_for_data(&head))
-            .map(|(m, _)| m)
-            .filter(|m| candidates.iter().any(|c| db().mime_type_subclass(m, c)));
-        sniffed
-            .or_else(|| representative(candidates))
-            .as_ref()
-            .map(to_mime)
-    }
-
-    /// The first bytes of a regular file, as much as sniffing reads.
-    fn head(path: &Path) -> Option<Vec<u8>> {
-        use std::io::Read;
-        let mut head = Vec::with_capacity(super::SNIFF);
-        crate::file::open_regular(path)
-            .ok()?
-            .take(super::SNIFF as u64)
-            .read_to_end(&mut head)
-            .ok()?;
-        Some(head)
-    }
-
-    pub fn by_content(path: &Path) -> Option<Mime> {
-        let head = head(path)?;
-        // Magic, which also names an empty file (application/x-zerosize).
-        // There is no magic for text/plain: what it does not know is text
-        // or binary by the bytes.
-        Some(
-            db().get_mime_type_for_data(&head)
-                .map_or_else(|| super::text_or_binary(&head), |(m, _)| to_mime(&m)),
-        )
+    /// What the database's magic says of a file's first bytes, if it
+    /// knows them (it also names an empty file, application/x-zerosize).
+    pub fn magic(head: &[u8]) -> Option<Mime> {
+        db()?.get_mime_type_for_data(head).map(|(m, _)| to_mime(&m))
     }
 
     pub fn unalias(m: &Mime) -> Mime {
-        parse(m)
-            .and_then(|p| db().unalias_mime_type(&p))
+        db().zip(parse(m))
+            .and_then(|(db, p)| db.unalias_mime_type(&p))
             .map_or_else(|| m.clone(), |p| to_mime(&p))
+    }
+
+    /// Whether the database knows the type `m` by this name: one its
+    /// files name (a glob, a parent, an alias, an icon), without case.
+    /// Read once.
+    pub fn knows(m: &Mime) -> bool {
+        static NAMED: OnceLock<HashSet<String>> = OnceLock::new();
+        NAMED
+            .get_or_init(|| {
+                let mut named = HashSet::new();
+                for dir in data_dirs() {
+                    for (file, separator) in [
+                        ("globs2", ':'),
+                        ("subclasses", ' '),
+                        ("aliases", ' '),
+                        ("generic-icons", ':'),
+                    ] {
+                        let Ok(text) = std::fs::read_to_string(dir.join("mime").join(file)) else {
+                            continue;
+                        };
+                        for line in text.lines().filter(|l| !l.starts_with('#')) {
+                            let mut fields = line.split(separator);
+                            // globs2 is `weight:type:glob`; an alias line
+                            // names two types; the others start with one.
+                            let types: Vec<&str> = match file {
+                                "globs2" => fields.nth(1).into_iter().collect(),
+                                "aliases" => fields.collect(),
+                                _ => fields.next().into_iter().collect(),
+                            };
+                            named.extend(types.into_iter().map(str::to_ascii_lowercase));
+                        }
+                    }
+                }
+                named
+            })
+            .contains(&m.as_str().to_ascii_lowercase())
     }
 
     /// The declared parents of `m`, not `m` itself. xdg-mime 0.4 keeps its
     /// subclass table private and its `get_parents` answers only for
     /// aliases, so the database's `subclasses` files are read here, once.
     pub fn parents(m: &Mime) -> Vec<Mime> {
-        static PARENTS: OnceLock<std::collections::HashMap<String, Vec<String>>> = OnceLock::new();
+        static PARENTS: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
         PARENTS
             .get_or_init(|| {
-                let mut map = std::collections::HashMap::<String, Vec<String>>::new();
+                let mut map = HashMap::<String, Vec<String>>::new();
                 // Most specific directory first: its lines come first.
                 for dir in data_dirs() {
                     let Ok(text) = std::fs::read_to_string(dir.join("mime/subclasses")) else {
@@ -581,14 +686,13 @@ mod imp {
             .unwrap_or_default()
     }
 
-    /// What `extensions` answers, from every folder's `globs2` (lines of
-    /// `weight:type:glob[:flags]`), read once.
+    /// The extensions of the type `m` in the database, from every folder's
+    /// `globs2` (lines of `weight:type:glob[:flags]`), read once.
     pub fn extensions(m: &Mime) -> Vec<String> {
-        static EXTENSIONS: OnceLock<std::collections::HashMap<String, Vec<String>>> =
-            OnceLock::new();
+        static EXTENSIONS: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
         EXTENSIONS
             .get_or_init(|| {
-                let mut map = std::collections::HashMap::<String, Vec<String>>::new();
+                let mut map = HashMap::<String, Vec<String>>::new();
                 for dir in data_dirs() {
                     let Ok(text) = std::fs::read_to_string(dir.join("mime/globs2")) else {
                         continue;
@@ -616,20 +720,29 @@ mod imp {
             .unwrap_or_default()
     }
 
-    /// `$XDG_DATA_HOME`, then `$XDG_DATA_DIRS`: where the database lives.
-    fn data_dirs() -> Vec<std::path::PathBuf> {
-        crate::xdg::data_search()
+    /// Where the database lives: on Linux `$XDG_DATA_HOME`, then
+    /// `$XDG_DATA_DIRS`; elsewhere the one found (`super::found_database`).
+    fn data_dirs() -> Vec<PathBuf> {
+        #[cfg(target_os = "linux")]
+        {
+            crate::xdg::data_search()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            super::found_database().into_iter().collect()
+        }
     }
 
     pub fn generic_icon_name(m: &Mime) -> String {
-        parse(m)
-            .and_then(|p| db().lookup_generic_icon_name(&p))
+        db().zip(parse(m))
+            .and_then(|(db, p)| db.lookup_generic_icon_name(&p))
             .unwrap_or_else(|| format!("{}-x-generic", m.top_level()))
     }
 
     /// xdg-mime 0.4 does not expose the `<comment>` element, so read it from
-    /// the per-type XML the database installs. Reads a file: call from a
-    /// worker and cache the answer.
+    /// the per-type XML the database installs (a package leaves it out:
+    /// the system names its types). Reads a file: call from a worker and
+    /// cache the answer.
     pub fn description(m: &Mime) -> Option<String> {
         data_dirs().into_iter().find_map(|dir| {
             let xml =
@@ -639,40 +752,120 @@ mod imp {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
-mod imp {
-    use std::ffi::OsStr;
-    use std::path::Path;
+// The system's own registry, asked before the database (ADR-037).
+#[cfg(target_os = "macos")]
+mod uttype;
+#[cfg(target_os = "macos")]
+use uttype as system;
+#[cfg(windows)]
+mod registry;
+#[cfg(windows)]
+use registry as system;
 
+/// On Linux and the BSDs the desktop's database is the system's own
+/// registry: nothing is asked beside it.
+#[cfg(not(any(target_os = "macos", windows)))]
+mod system {
     use super::Mime;
 
-    pub fn by_name(_name: &OsStr) -> Option<Mime> {
+    pub const ASKED: bool = false;
+
+    pub fn by_extension(_extension: &str) -> Option<Mime> {
         None
-    }
-    pub fn by_content(_path: &Path) -> Option<Mime> {
-        None
-    }
-    pub fn ambiguous(_name: &OsStr) -> bool {
-        false
-    }
-    pub fn identify(_name: &OsStr, _path: &Path) -> Option<Mime> {
-        None
-    }
-    pub fn unalias(m: &Mime) -> Mime {
-        m.clone()
-    }
-    pub fn parents(_m: &Mime) -> Vec<Mime> {
-        Vec::new()
-    }
-    pub fn extensions(_m: &Mime) -> Vec<String> {
-        Vec::new()
-    }
-    pub fn generic_icon_name(m: &Mime) -> String {
-        format!("{}-x-generic", m.top_level())
     }
     pub fn description(_m: &Mime) -> Option<String> {
         None
     }
+    pub fn kinds(_m: &Mime, database: u16) -> u16 {
+        database
+    }
+    pub fn extensions(_m: &Mime) -> Vec<String> {
+        Vec::new()
+    }
+    pub fn canonical(_m: &Mime) -> Option<Mime> {
+        None
+    }
+}
+
+/// Answers of the system's registry by question: it is asked once per
+/// extension or type, not once per row. Forgotten all at once past `MEMO`
+/// questions, which bounds it whatever names a folder holds.
+type Memo = OnceLock<RwLock<HashMap<String, Option<Mime>>>>;
+const MEMO: usize = 4096;
+
+fn remembered(
+    memo: &'static Memo,
+    question: &str,
+    ask: impl FnOnce() -> Option<Mime>,
+) -> Option<Mime> {
+    let memo = memo.get_or_init(RwLock::default);
+    if let Some(answer) = memo.read().ok().and_then(|m| m.get(question).cloned()) {
+        return answer;
+    }
+    let answer = ask();
+    if let Ok(mut m) = memo.write() {
+        if m.len() >= MEMO {
+            m.clear();
+        }
+        m.insert(question.to_owned(), answer.clone());
+    }
+    answer
+}
+
+/// What the system's registry calls files named `name`, by their
+/// extension, in the database's words where it knows the type by another
+/// name (Windows' `application/x-zip-compressed` is `application/zip`).
+fn system_type(name: &OsStr) -> Option<Mime> {
+    static SAID: Memo = OnceLock::new();
+    if !system::ASKED {
+        return None;
+    }
+    let extension = Path::new(name).extension()?.to_str()?.to_lowercase();
+    if extension.is_empty() {
+        return None;
+    }
+    remembered(&SAID, &extension, || {
+        system::by_extension(&extension).map(|m| database::unalias(&m))
+    })
+}
+
+/// The types a name makes equally likely: the system's answer, or what
+/// the database's own answers make of it more precisely (`refine`).
+fn candidates(name: &OsStr) -> Vec<Mime> {
+    refine(system_type(name), database::candidates(name))
+}
+
+/// The system's answer `said` and the database's `known` for one name.
+/// The system says what the file is; the database may only say it more
+/// precisely: its types that descend from the system's (a `.tar.gz` the
+/// system calls gzip is a compressed tar; a `.js` an editor registered as
+/// plain text is JavaScript). Where none does, the system's answer
+/// stands alone; where the system says nothing, the database's.
+fn refine(said: Option<Mime>, known: Vec<Mime>) -> Vec<Mime> {
+    let Some(said) = said else {
+        return known;
+    };
+    let refined: Vec<Mime> = known
+        .into_iter()
+        .filter(|m| database::is_a(m, &said))
+        .collect();
+    if refined.is_empty() {
+        vec![said]
+    } else {
+        refined
+    }
+}
+
+/// The first bytes of a regular file, as much as sniffing reads.
+fn head(path: &Path) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut head = Vec::with_capacity(SNIFF);
+    crate::file::open_regular(path)
+        .ok()?
+        .take(SNIFF as u64)
+        .read_to_end(&mut head)
+        .ok()?;
+    Some(head)
 }
 
 #[cfg(test)]
@@ -771,7 +964,7 @@ mod tests {
         assert_eq!(by_name(name).map(|m| m.0), Some("audio/ogg".into()));
         // The database hands the ties back in no particular order: every
         // order gives the same answer.
-        let ties: Vec<mime::Mime> = [
+        let ties: Vec<Mime> = [
             "video/x-theora+ogg",
             "audio/x-flac+ogg",
             "audio/ogg",
@@ -780,7 +973,7 @@ mod tests {
             "audio/x-speex+ogg",
         ]
         .iter()
-        .map(|m| m.parse().unwrap())
+        .map(|m| Mime((*m).to_owned()))
         .collect();
         for rotation in 0..ties.len() {
             let mut order = ties.clone();
@@ -788,7 +981,7 @@ mod tests {
             let reversed: Vec<_> = order.iter().rev().cloned().collect();
             for order in [order, reversed] {
                 assert_eq!(
-                    imp::representative(order).map(|m| m.essence_str().to_owned()),
+                    database::representative(order).map(|m| m.0),
                     Some("audio/ogg".into())
                 );
             }
@@ -948,6 +1141,116 @@ mod tests {
         assert_eq!(Kind::from_name("Photos"), Some(Kind::Image));
         assert_eq!(Kind::from_name("music"), Some(Kind::Audio));
         assert_eq!(Kind::from_name("pdf"), None);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn the_system_names_a_file_and_the_database_only_says_it_more_precisely() {
+        let m = |name: &str| Mime(name.to_owned());
+        let known = |name: &str| database::candidates(OsStr::new(name));
+        // A compressed tar the system calls gzip; JavaScript an editor
+        // registered as plain text.
+        assert_eq!(
+            refine(Some(m("application/gzip")), known("a.tar.gz")),
+            [m("application/x-compressed-tar")]
+        );
+        assert_eq!(refine(Some(m("text/plain")), known("a.js")), known("a.js"));
+        assert!(!known("a.js").contains(&m("text/plain")));
+        // The database's answer says something else: the system's stands.
+        assert_eq!(
+            refine(Some(m("image/png")), known("a.txt")),
+            [m("image/png")]
+        );
+        // The database's several answers within the system's stay, for the
+        // bytes to choose among; those outside it go.
+        let ogg = refine(Some(m("audio/ogg")), known("a.ogg"));
+        assert!(ogg.contains(&m("audio/x-vorbis+ogg")), "{ogg:?}");
+        assert!(!ogg.contains(&m("video/x-theora+ogg")), "{ogg:?}");
+        // One silent: the other's.
+        assert_eq!(refine(None, known("a.png")), [m("image/png")]);
+        assert_eq!(
+            refine(Some(m("application/x-bibli-test")), Vec::new()),
+            [m("application/x-bibli-test")]
+        );
+        assert!(database::knows(&m("image/png")));
+        assert!(
+            database::knows(&m("application/x-zip-compressed")),
+            "an alias"
+        );
+        assert!(!database::knows(&m("application/x-bibli-test")));
+    }
+
+    /// The database read on Windows, where `just test-windows` puts one
+    /// beside the tests, as a package does; a machine without one says it
+    /// skips.
+    #[test]
+    #[cfg(windows)]
+    fn on_windows_the_database_answers_what_the_registry_does_not() {
+        if found_database().is_none() {
+            assert!(
+                std::env::var_os("BIBLI_TEST_UNDER_WINE").is_none(),
+                "test-windows.sh puts the dev shell's database beside the tests"
+            );
+            eprintln!("skipped: no type database beside the tests");
+            return;
+        }
+        let name = |n: &str| by_name(OsStr::new(n)).map(|m| m.0);
+        assert_eq!(name("a.png").as_deref(), Some("image/png"));
+        assert_eq!(
+            name("archive.tar.gz").as_deref(),
+            Some("application/x-compressed-tar")
+        );
+        assert_eq!(name("a tone.ogg").as_deref(), Some("audio/ogg"));
+        let svg = lineage(&Mime("image/svg+xml".into()));
+        assert!(svg.iter().any(|m| m.as_str() == "text/plain"), "{svg:?}");
+        assert_eq!(
+            kinds(&Mime("text/markdown".into())),
+            [Kind::Document, Kind::Text]
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("picture.cfg");
+        std::fs::write(&path, b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR").unwrap();
+        assert_eq!(by_content(&path).map(|m| m.0).as_deref(), Some("image/png"));
+    }
+
+    /// Writes the registry: in Wine's scratch prefix alone
+    /// (`just test-windows`), never a user's.
+    #[test]
+    #[cfg(windows)]
+    fn on_windows_the_registry_names_a_type_first() {
+        use crate::windows::classes;
+        /// Takes the test's classes out, whatever the test did.
+        struct Classes;
+        impl Drop for Classes {
+            fn drop(&mut self) {
+                classes::remove(".bibliqz");
+                classes::remove("bibli.test.qz");
+                classes::remove(r"MIME\Database\Content Type\application/x-bibli-qz");
+            }
+        }
+        if std::env::var_os("BIBLI_TEST_UNDER_WINE").is_none() {
+            eprintln!("skipped: writes the registry; only in Wine's scratch prefix");
+            return;
+        }
+        let _classes = Classes;
+        classes::set(".bibliqz", "Content Type", "Application/X-Bibli-QZ");
+        classes::set(".bibliqz", "PerceivedType", "image");
+        classes::set(".bibliqz", "", "bibli.test.qz");
+        classes::set("bibli.test.qz", "", "Bibli test picture");
+        classes::set(
+            r"MIME\Database\Content Type\application/x-bibli-qz",
+            "Extension",
+            ".bibliqz",
+        );
+        let qz = by_name(OsStr::new("Some Picture.BIBLIQZ")).expect("the registry's type");
+        assert_eq!(qz.as_str(), "application/x-bibli-qz", "lowercase");
+        assert!(!ambiguous(OsStr::new("a.bibliqz")));
+        assert_eq!(kinds(&qz), [Kind::Image], "as the registry perceives it");
+        assert_eq!(extensions(&qz), ["bibliqz"]);
+        assert_eq!(unalias(&qz), qz);
+        assert_eq!(by_name(OsStr::new("a.bibli-nothing")), None);
+        // What Explorer calls them: the name of the class they open as.
+        assert_eq!(qz.description().as_deref(), Some("Bibli test picture"));
     }
 
     #[test]

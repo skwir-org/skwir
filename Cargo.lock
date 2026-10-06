@@ -573,7 +573,6 @@ dependencies = [
  "toml 0.9.12+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
- "xattr 1.6.1",
  "zip",
 ]
 
@@ -614,7 +613,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "toml 0.9.12+spec-1.1.0",
- "xattr 1.6.1",
 ]
 
 [[package]]
@@ -627,7 +625,10 @@ dependencies = [
  "dirs 7.0.0",
  "indexmap",
  "inotify",
+ "libc",
  "notify",
+ "objc2",
+ "objc2-foundation",
  "parking_lot",
  "proptest",
  "rustix 1.1.5",
@@ -639,6 +640,7 @@ dependencies = [
  "toml 0.9.12+spec-1.1.0",
  "tracing",
  "trash",
+ "windows-sys 0.61.2",
  "xattr 1.6.1",
 ]
 
@@ -714,9 +716,13 @@ dependencies = [
  "image",
  "jiff",
  "kamadak-exif",
+ "libc",
  "markup5ever",
  "md5",
  "mime",
+ "objc2",
+ "objc2-foundation",
+ "objc2-uniform-type-identifiers",
  "oo7",
  "open",
  "parking_lot",
@@ -726,13 +732,14 @@ dependencies = [
  "roxmltree 0.21.1",
  "rustix 1.1.5",
  "scraper",
+ "security-framework",
  "selectors 0.31.0",
  "serde",
  "serde_json",
  "tempfile",
  "tracing",
  "ttf-parser 0.25.1",
- "xattr 1.6.1",
+ "windows-sys 0.61.2",
  "xdg-mime",
  "zip",
 ]
@@ -845,7 +852,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "xattr 1.6.1",
 ]
 
 [[package]]
@@ -1159,7 +1165,6 @@ dependencies = [
  "tempfile",
  "toml 0.9.12+spec-1.1.0",
  "tracing",
- "xattr 1.6.1",
 ]
 
 [[package]]
@@ -4867,6 +4872,7 @@ version = "0.38.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1d20bef17f513b9b3004532233187769cd072d790971f4e4da0e346eb6401e8"
 dependencies = [
+ "cc",
  "pkg-config",
  "vcpkg",
 ]
@@ -5668,6 +5674,16 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-foundation",
  "objc2-quartz-core",
+]
+
+[[package]]
+name = "objc2-uniform-type-identifiers"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7902ac02859fc1f7045f8b598c63f1ae0cc7efeaa06a9bc9f3d9a3c955974fa4"
+dependencies = [
+ "objc2",
+ "objc2-foundation",
 ]
 
 [[package]]
@@ -9808,8 +9824,6 @@ checksum = "213b7324336b53d2414b2db8537e56544d981803139155afa84f76eeebb7a546"
 [[package]]
 name = "xdg-mime"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58d325d0ca93fb1984a56eb926f019acfc67bd2ec559b0dbf09cafcc92e81ec9"
 dependencies = [
  "dirs-next",
  "glob",

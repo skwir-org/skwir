@@ -48,9 +48,16 @@ pub struct Mount {
 /// filesystem, which can block on a sleeping or unreachable volume: call it
 /// from a worker.
 pub fn space(path: &Path) -> Option<(u64, u64)> {
-    let stat = rustix::fs::statvfs(path).ok()?;
-    let total = stat.f_blocks.checked_mul(stat.f_frsize)?;
-    (total > 0).then(|| (stat.f_bavail.saturating_mul(stat.f_frsize), total))
+    #[cfg(unix)]
+    {
+        let stat = rustix::fs::statvfs(path).ok()?;
+        let total = stat.f_blocks.checked_mul(stat.f_frsize)?;
+        (total > 0).then(|| (stat.f_bavail.saturating_mul(stat.f_frsize), total))
+    }
+    #[cfg(windows)]
+    {
+        crate::windows::space(path)
+    }
 }
 
 /// A volume that is present but not mounted.
@@ -385,14 +392,8 @@ pub fn is_busy(error: &anyhow::Error) -> bool {
 /// still being written, and a write lost then is not reported. Blocks for
 /// as long as the drive takes: worker only.
 pub fn flush(path: &Path) -> anyhow::Result<()> {
-    use rustix::fs::{Mode, OFlags};
     // Closed before the unmount, which this would otherwise hold up.
-    let dir = rustix::fs::open(
-        path,
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
-        Mode::empty(),
-    )?;
-    rustix::fs::syncfs(&dir)?;
+    bibli_core::fs::Dir::open(path)?.sync_volume()?;
     Ok(())
 }
 
@@ -411,19 +412,55 @@ pub fn home() -> Option<PathBuf> {
     bibli_core::os_path::home()
 }
 
-/// XDG user dirs from `~/.config/user-dirs.dirs`, existing ones only, `$HOME` itself excluded.
+/// The user's folders, existing ones only, the home folder itself
+/// excluded: XDG's from `~/.config/user-dirs.dirs` on Linux; elsewhere
+/// the system's own (Windows' known folders, a Mac's `~/Documents`…),
+/// named by XDG's kinds.
 pub fn user_dirs() -> Vec<UserDir> {
     let Some(home) = home() else {
         return Vec::new();
     };
-    let Some(cfg) = crate::xdg::config_home() else {
-        return Vec::new();
+    #[cfg(target_os = "linux")]
+    let dirs = {
+        let Some(cfg) = crate::xdg::config_home() else {
+            return Vec::new();
+        };
+        let text = std::fs::read_to_string(cfg.join("user-dirs.dirs")).unwrap_or_default();
+        parse_user_dirs(&text, &home)
     };
-    let text = std::fs::read_to_string(cfg.join("user-dirs.dirs")).unwrap_or_default();
-    parse_user_dirs(&text, &home)
-        .into_iter()
+    #[cfg(not(target_os = "linux"))]
+    let dirs = system_user_dirs();
+    dirs.into_iter()
         .filter(|d| d.path != home && d.path.is_dir())
         .collect()
+}
+
+/// The system's own user folders, by XDG's kind for each.
+#[cfg(not(target_os = "linux"))]
+fn system_user_dirs() -> Vec<UserDir> {
+    [
+        ("desktop", dirs::desktop_dir()),
+        ("download", dirs::download_dir()),
+        ("documents", dirs::document_dir()),
+        ("music", dirs::audio_dir()),
+        ("pictures", dirs::picture_dir()),
+        ("videos", dirs::video_dir()),
+        ("publicshare", dirs::public_dir()),
+        ("templates", dirs::template_dir()),
+    ]
+    .into_iter()
+    .filter_map(|(kind, path)| {
+        let path = path?;
+        let name = path
+            .file_name()
+            .map_or_else(|| kind.to_owned(), |n| n.to_string_lossy().into_owned());
+        Some(UserDir {
+            name,
+            path,
+            kind: kind.to_owned(),
+        })
+    })
+    .collect()
 }
 
 /// Parse the `user-dirs.dirs` format.
@@ -674,7 +711,7 @@ pub fn bookmarks_folders() -> Vec<PathBuf> {
         return Vec::new();
     };
     let mut folders: Vec<PathBuf> = file.parent().map(Path::to_path_buf).into_iter().collect();
-    if let Some(target) = std::fs::canonicalize(&file)
+    if let Some(target) = bibli_core::os_path::canonical(&file)
         .ok()
         .and_then(|target| target.parent().map(Path::to_path_buf))
         && !folders.contains(&target)
@@ -779,12 +816,93 @@ mod imp {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+/// Windows: the local drives, each its label (or what Windows calls an
+/// unnamed one) with its letter, removable when it is plugged in.
+#[cfg(windows)]
 mod imp {
     use super::Mount;
 
     pub fn mounts() -> Vec<Mount> {
-        Vec::new()
+        crate::windows::local_drives()
+            .into_iter()
+            .map(|root| {
+                let letter = root.to_string_lossy().trim_end_matches('\\').to_owned();
+                let (label, fstype) = crate::windows::volume_information(&root).unwrap_or_default();
+                let label = if label.is_empty() {
+                    format!("Local Disk ({letter})")
+                } else {
+                    format!("{label} ({letter})")
+                };
+                Mount {
+                    label,
+                    removable: crate::windows::is_removable_drive(&root),
+                    fstype,
+                    udisks: false,
+                    source: letter,
+                    root: std::path::PathBuf::from("\\"),
+                    path: root,
+                }
+            })
+            .collect()
+    }
+}
+
+/// macOS: what `getmntinfo` says is mounted, the root and the volumes
+/// under `/Volumes` the Finder shows (not those it hides). Compiled,
+/// never run (ADR-035).
+#[cfg(target_os = "macos")]
+mod imp {
+    use std::ffi::CStr;
+    use std::path::{Path, PathBuf};
+
+    use super::Mount;
+
+    pub fn mounts() -> Vec<Mount> {
+        let mut list: *mut libc::statfs = std::ptr::null_mut();
+        // SAFETY: an out pointer the system fills with its own array of
+        // `count` entries, which it keeps (it is not to be freed).
+        #[allow(unsafe_code)]
+        let count = unsafe { libc::getmntinfo(&raw mut list, libc::MNT_NOWAIT) };
+        let Ok(count) = usize::try_from(count) else {
+            return Vec::new();
+        };
+        if list.is_null() {
+            return Vec::new();
+        }
+        // SAFETY: `count` entries at `list`, alive until the next call on
+        // this thread; read now.
+        #[allow(unsafe_code)]
+        let entries = unsafe { std::slice::from_raw_parts(list, count) };
+        let text = |field: &[libc::c_char]| {
+            // SAFETY: the system's fixed fields are NUL-terminated.
+            #[allow(unsafe_code)]
+            let text = unsafe { CStr::from_ptr(field.as_ptr()) };
+            text.to_string_lossy().into_owned()
+        };
+        entries
+            .iter()
+            .filter(|e| e.f_flags & (libc::MNT_DONTBROWSE as u32) == 0)
+            .filter_map(|e| {
+                let path = PathBuf::from(text(&e.f_mntonname));
+                if path != Path::new("/") && !path.starts_with("/Volumes") {
+                    return None;
+                }
+                let label = if path == Path::new("/") {
+                    "Macintosh HD".to_owned()
+                } else {
+                    path.file_name()?.to_string_lossy().into_owned()
+                };
+                Some(Mount {
+                    label,
+                    fstype: text(&e.f_fstypename),
+                    udisks: false,
+                    removable: false,
+                    source: text(&e.f_mntfromname),
+                    root: PathBuf::from("/"),
+                    path,
+                })
+            })
+            .collect()
     }
 }
 
@@ -903,6 +1021,8 @@ mod tests {
         );
     }
 
+    // GTK's bookmarks (step F, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn bookmarks_are_added_once_as_escaped_uris() {
         use super::BookmarkEdit::{Add, Remove};
@@ -938,6 +1058,8 @@ mod tests {
     /// folder (remote bookmarks) survives the round trip, though it may end
     /// up on the other side of a neighbour. A removed bookmark comes back
     /// with our escaping of its URI, which names the same folder.
+    // GTK's bookmarks (step F, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn bookmark_edits_are_undone_by_their_inverse() {
         use super::BookmarkEdit::{Add, Move, Remove, Rename};
@@ -998,6 +1120,8 @@ mod tests {
         }
     }
 
+    // GTK's bookmarks (step F, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn bookmark_edits_that_change_nothing_say_so() {
         use super::BookmarkEdit::{Move, Remove, Rename};
@@ -1081,6 +1205,8 @@ mod tests {
         assert_eq!(v[3].path, Path::new("/home/u"));
     }
 
+    // GTK's bookmarks (step F, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn bookmarks_parse() {
         let v = parse_bookmarks(
@@ -1132,6 +1258,8 @@ mod tests {
         assert!(mounts().iter().any(|m| m.path == Path::new("/")));
     }
 
+    // Linux's mounts.
+    #[cfg(target_os = "linux")]
     #[test]
     fn mount_points_keep_their_own_bytes_and_periods() {
         let mounts = parse_mountinfo(
@@ -1150,5 +1278,24 @@ mod tests {
         std::fs::create_dir(&plain).unwrap();
         assert_eq!(mount_point_of(&old(&plain)), Some(plain.clone()));
         assert_eq!(mount_point_of(&new(&plain)), Some(plain));
+    }
+
+    /// Windows' drives are the devices, each named with its letter.
+    #[cfg(windows)]
+    #[test]
+    fn windows_lists_its_drives_and_the_users_folders() {
+        let mounts = super::mounts();
+        let c = mounts
+            .iter()
+            .find(|m| m.path == std::path::Path::new("C:\\"))
+            .unwrap_or_else(|| panic!("{mounts:?}"));
+        assert!(c.label.ends_with("(C:)"), "{}", c.label);
+        assert!(super::space(&c.path).is_some());
+        let dirs = super::user_dirs();
+        assert!(
+            dirs.iter()
+                .any(|d| d.kind == "documents" || d.kind == "desktop"),
+            "{dirs:?}"
+        );
     }
 }

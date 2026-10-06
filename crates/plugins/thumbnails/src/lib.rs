@@ -306,13 +306,15 @@ impl Plugin for ThumbnailsPlugin {
     }
 
     fn requirements(&self) -> Vec<Requirement> {
-        vec![
-            Requirement::program(
-                "magick",
-                "Pictures no thumbnailer draws (HEIC, AVIF, JPEG XL, raw files…)",
-            ),
-            Requirement::program("bwrap", "Thumbnailers and ImageMagick run isolated"),
-        ]
+        vec![Requirement::program(
+            "magick",
+            "Pictures no thumbnailer draws (HEIC, AVIF, JPEG XL, raw files…)",
+        )]
+        .into_iter()
+        .chain(bibli_platform::sandbox::PROGRAM.map(|program| {
+            Requirement::program(program, "Thumbnailers and ImageMagick run isolated")
+        }))
+        .collect()
     }
 
     fn on_settings_changed(&self, app: &App, keys: &[String]) {
@@ -379,6 +381,8 @@ impl Plugin for ThumbnailsPlugin {
 }
 
 #[cfg(test)]
+// Helpers of the tests that run on Linux alone (ADR-035).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
 mod tests {
     use super::*;
     use bibli_core::app::AppConfig;
@@ -409,6 +413,8 @@ mod tests {
         }
     }
 
+    // Types from the free desktops' database (step E, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     #[allow(unsafe_code)]
     fn decodes_and_writes_back_to_the_cache() {
@@ -428,7 +434,7 @@ mod tests {
                 .starts_with(&["freedesktop-cache", "image-decoder"])
         );
 
-        let src = std::fs::canonicalize(images.join("img-00042.png")).unwrap();
+        let src = bibli_core::os_path::canonical(images.join("img-00042.png")).unwrap();
         let req = ThumbRequest {
             entry: EntryRef::from_path(&src).unwrap(),
             mime: None,
@@ -517,6 +523,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_picture_bibli_cannot_decode_is_previewed_as_its_thumbnailer_draws_it() {
         use bibli_platform::thumb_providers::ThumbnailerEntry;
@@ -587,6 +594,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn imagemagick_draws_last_what_no_thumbnailer_could() {
         use bibli_platform::thumb_providers::ThumbnailerEntry;

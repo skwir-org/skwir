@@ -82,12 +82,12 @@ pub struct KeyHint {
 const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("f2", "ui.rename_prompt", Some("pane single !restores")),
     // Into the folder shown, like Ctrl+V: a search or the shelf has none.
-    ("ctrl-shift-n", "ui.mkdir_prompt", Some("pane folder")),
+    ("secondary-shift-n", "ui.mkdir_prompt", Some("pane folder")),
     // A new place where the location makes them (a tag's: a tag in it).
-    ("ctrl-shift-n", "ui.create_here", Some("pane creates")),
-    ("ctrl-l", "ui.focus_address", None),
-    ("ctrl-shift-p", "ui.palette", None),
-    ("ctrl-q", "ui.quit", None),
+    ("secondary-shift-n", "ui.create_here", Some("pane creates")),
+    ("secondary-l", "ui.focus_address", None),
+    ("secondary-shift-p", "ui.palette", None),
+    ("secondary-q", "ui.quit", None),
     ("ctrl-h", "ui.toggle_hidden", None),
     // Dolphin's key for it, beside GNOME's.
     ("alt-.", "ui.toggle_hidden", None),
@@ -107,11 +107,11 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("home", "ui.toolbar_first", Some("toolbar_popup")),
     ("end", "ui.toolbar_last", Some("toolbar_popup")),
     ("escape", "ui.preview_find_close", Some("preview_find")),
-    ("ctrl-,", "ui.settings", None),
+    ("secondary-,", "ui.settings", None),
     ("f1", "ui.shortcuts", None),
     // GNOME's key for the shortcuts window. GPUI leaves out the Shift a
     // symbol took, so Ctrl+Shift+/ (or wherever `?` is) arrives as `ctrl-?`.
-    ("ctrl-?", "ui.shortcuts", None),
+    ("secondary-?", "ui.shortcuts", None),
     ("escape", "ui.shortcuts", Some("shortcuts")),
     ("escape", "ui.menu_close", Some("menu")),
     ("up", "ui.menu_up", Some("menu")),
@@ -125,18 +125,18 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("escape", "ui.settings_close", Some("settings")),
     ("tab", "ui.settings_next", Some("settings")),
     ("shift-tab", "ui.settings_prev", Some("settings")),
-    ("ctrl-f", "ui.settings_search", Some("settings")),
+    ("secondary-f", "ui.settings_search", Some("settings")),
     ("enter", "ui.settings_enter", Some("settings_nav")),
     ("right", "ui.settings_enter", Some("settings_nav")),
-    ("ctrl-c", "ui.preview_copy", Some("preview")),
-    ("ctrl-a", "ui.preview_select_all", Some("preview")),
-    ("ctrl-f", "ui.preview_find", Some("preview")),
+    ("secondary-c", "ui.preview_copy", Some("preview")),
+    ("secondary-a", "ui.preview_select_all", Some("preview")),
+    ("secondary-f", "ui.preview_find", Some("preview")),
     ("ctrl-space", "ui.cursor_toggle", Some("pane")),
     // The keyboard's way to what a right-click opens.
     ("shift-f10", "ui.context_menu", Some("pane")),
     ("menu", "ui.context_menu", Some("pane")),
     // What the middle button does to a folder: a tab behind this one.
-    ("ctrl-enter", "ui.open_in_tab", Some("pane selection")),
+    ("secondary-enter", "ui.open_in_tab", Some("pane selection")),
     ("enter", "ui.accept", Some("confirm")),
     ("escape", "ui.dismiss", Some("confirm")),
     ("space", "ui.peek", Some("pane")),
@@ -146,12 +146,12 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     // F3 splits and F11 shows the side panel, as in Dolphin; inside a
     // document F3 stays "next match", the deeper context wins.
     ("f11", "ui.toggle_preview", None),
-    ("ctrl-i", "ui.preview_details", None),
+    ("secondary-i", "ui.preview_details", None),
     ("alt-enter", "ui.preview_details", None),
     ("f3", "ui.split", None),
     ("space", "ui.peek_close", Some("peek")),
     ("escape", "ui.peek_close", Some("peek")),
-    ("ctrl-shift-d", "ui.split", None),
+    ("secondary-shift-d", "ui.split", None),
     ("tab", "ui.focus_other_pane", Some("pane split")),
     ("shift-tab", "ui.focus_other_pane", Some("pane split")),
     // F5 refreshes whatever the window shows; with Shift it sends the
@@ -162,10 +162,10 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("enter", "ui.review_apply", Some("review")),
     ("escape", "ui.review_cancel", Some("review")),
     ("alt-a", "ui.choose_option", Some("choose")),
-    ("ctrl-enter", "ui.tag_editor_apply", Some("tag_editor")),
+    ("secondary-enter", "ui.tag_editor_apply", Some("tag_editor")),
     ("tab", "ui.rename_bulk_next", Some("bulk")),
     ("shift-tab", "ui.rename_bulk_prev", Some("bulk")),
-    ("ctrl-k", "ui.rename_bulk_case", Some("bulk")),
+    ("secondary-k", "ui.rename_bulk_case", Some("bulk")),
 ];
 
 /// Builtin bindings that carry arguments (`keys, command, args json, when`).
@@ -641,21 +641,21 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         r#"{"pages":-1}"#,
         Some("terminal"),
     ),
-    ("ctrl-1", "ui.view", r#"{"id":"list"}"#, None),
-    ("ctrl-2", "ui.view", r#"{"id":"grid"}"#, None),
-    ("ctrl-3", "ui.view", r#"{"id":"columns"}"#, None),
+    ("secondary-1", "ui.view", r#"{"id":"list"}"#, None),
+    ("secondary-2", "ui.view", r#"{"id":"grid"}"#, None),
+    ("secondary-3", "ui.view", r#"{"id":"columns"}"#, None),
 ];
 
 /// The keys of zooming, the same wherever something zooms: `=` and `+`
 /// (GPUI leaves out the Shift a symbol took, so Ctrl+Shift+= arrives as
 /// `ctrl-+` on layouts where `+` is shifted), and the keypad's.
 const ZOOM_KEYS: [(&str, &str); 6] = [
-    ("ctrl-=", "in"),
-    ("ctrl-+", "in"),
-    ("ctrl-add", "in"),
-    ("ctrl--", "out"),
-    ("ctrl-subtract", "out"),
-    ("ctrl-0", "reset"),
+    ("secondary-=", "in"),
+    ("secondary-+", "in"),
+    ("secondary-add", "in"),
+    ("secondary--", "out"),
+    ("secondary-subtract", "out"),
+    ("secondary-0", "reset"),
 ];
 
 /// What zooms, where: the pane's view anywhere, what a preview shows where
@@ -984,8 +984,14 @@ pub fn key_caps(keys: &str) -> Vec<Vec<String>> {
                     caps.push("Shift".into());
                 }
                 caps.push(match part {
-                    "ctrl" => "Ctrl".into(),
+                    // `secondary` is the standard shortcuts' modifier: Cmd
+                    // on a Mac, Ctrl elsewhere, as GPUI reads it.
+                    "secondary" | "super" | "cmd" | "win" if cfg!(target_os = "macos") => {
+                        "⌘".into()
+                    }
+                    "ctrl" | "secondary" => "Ctrl".into(),
                     "shift" => "Shift".into(),
+                    "alt" if cfg!(target_os = "macos") => "⌥".into(),
                     "alt" => "Alt".into(),
                     "super" | "cmd" | "win" => "Super".into(),
                     "escape" => "Esc".into(),
@@ -1007,6 +1013,16 @@ pub fn key_caps(keys: &str) -> Vec<Vec<String>> {
             caps
         })
         .collect()
+}
+
+/// `keys` as GPUI reads them, written one way: `secondary-c` is
+/// `ctrl-c` off a Mac, `cmd-c` on one. Two bindings are of the same keys
+/// when these agree, whatever spelling each used.
+fn normal_keys(keys: &str) -> String {
+    keys.split_whitespace()
+        .map(|stroke| Keystroke::parse(stroke).map_or_else(|_| stroke.to_owned(), |k| k.unparse()))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// A binding as people read it: `ctrl-shift-n` becomes `Ctrl+Shift+N`.
@@ -1198,9 +1214,10 @@ fn like(spec: Spec, standard: &[Spec]) -> Vec<Spec> {
         _ => return vec![spec],
     };
     let within = conditions(&spec.context);
+    let target = normal_keys(&target);
     standard
         .iter()
-        .filter(|s| s.keys == target && s.command.is_some())
+        .filter(|s| normal_keys(&s.keys) == target && s.command.is_some())
         .filter(|s| {
             let theirs = conditions(&s.context);
             within.iter().all(|atom| theirs.contains(atom))
@@ -1232,8 +1249,9 @@ fn shadowed(specs: &[Spec]) -> Vec<bool> {
     (0..specs.len())
         .map(|i| {
             let mine = conditions(&specs[i].context);
+            let keys = normal_keys(&specs[i].keys);
             specs[i + 1..].iter().any(|later| {
-                later.keys == specs[i].keys
+                normal_keys(&later.keys) == keys
                     && conditions(&later.context)
                         .iter()
                         .all(|atom| mine.contains(atom))
@@ -1518,7 +1536,9 @@ mod tests {
         for context in [context_of(None), context_of(Some("reader"))] {
             for keys in ["ctrl-=", "ctrl-+", "ctrl-add", "ctrl--", "ctrl-0"] {
                 assert!(
-                    zooms.iter().any(|(k, _, _, c)| k == keys && *c == context),
+                    zooms.iter().any(|(k, _, _, c)| super::normal_keys(k)
+                        == super::normal_keys(keys)
+                        && *c == context),
                     "{keys} in {context}"
                 );
             }
@@ -1558,6 +1578,13 @@ mod tests {
         assert_eq!(display_keys(", M"), ", Shift+M");
         assert_eq!(key_caps("alt-pageup"), vec![vec!["Alt", "Page Up"]]);
         assert_eq!(display_keys("ctrl-shift-n"), "Ctrl+Shift+N");
+        if !cfg!(target_os = "macos") {
+            assert_eq!(display_keys("secondary-shift-n"), "Ctrl+Shift+N");
+            assert_eq!(
+                super::normal_keys("secondary-c g"),
+                super::normal_keys("ctrl-c g")
+            );
+        }
     }
 
     #[test]

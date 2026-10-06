@@ -16,8 +16,8 @@ csv = "1"
 # (`bibli_platform::package`) to bound what calamine reads whole.
 calamine = { version = "0.36", default-features = false }
 # SQLite databases, read by the system's libsqlite3 (ADR-022), not a
-# bundled copy.
-rusqlite = { version = "0.40", default-features = false, features = ["hooks"] }
+# bundled copy; built in on Windows alone, which has none to link.
+rusqlite = { version = "0.40", default-features = false, features = ["hooks", "bundled-windows"] }
 # A line's keys in the order it writes them.
 indexmap = { workspace = true, features = ["serde"] }
 

@@ -288,6 +288,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_certificate_the_client_does_not_trust_is_refused() {
+        if bibli_core::system::under_wine("Windows' certificate checks") {
+            return;
+        }
         let (address, _, _) = server(Duration::ZERO).await;
         // The system's authorities never signed the test's certificate.
         let http = Http::system("bibli/test").unwrap();

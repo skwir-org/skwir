@@ -1,6 +1,8 @@
 //! A real shell on a real pseudo-terminal, through the provider the UI uses:
 //! what is typed runs, the shell and the pane keep to the same folder, and
-//! disabling the plugin hangs up on the shell.
+//! disabling the plugin hangs up on the shell. A POSIX shell: Unix's (the
+//! Windows terminal is step H, ADR-035).
+#![cfg(unix)]
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -110,7 +112,7 @@ fn app(root: &Path) -> (Arc<App>, Arc<TerminalPlugin>) {
 #[test]
 fn what_is_typed_runs_and_the_shell_and_the_pane_follow_each_other() {
     let tmp = home_tempdir();
-    let root = tmp.path().canonicalize().unwrap();
+    let root = bibli_core::os_path::canonical(tmp.path()).unwrap();
     let first = root.join("it's a dir");
     let second = root.join("an\\other");
     std::fs::create_dir_all(&first).unwrap();
@@ -157,7 +159,7 @@ fn what_is_typed_runs_and_the_shell_and_the_pane_follow_each_other() {
 #[test]
 fn the_shell_ends_on_exit_and_disabling_hangs_up_on_it() {
     let tmp = home_tempdir();
-    let root = tmp.path().canonicalize().unwrap();
+    let root = bibli_core::os_path::canonical(tmp.path()).unwrap();
     let (app, _plugin) = app(&root);
 
     let leaving = Shell::open(&app, &root);

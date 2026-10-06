@@ -5,8 +5,6 @@
 //! that the caller still matches: we only drop what `hidden:` and `depth:`
 //! exclude, which a walk would never have visited.
 
-use std::ffi::OsString;
-use std::os::unix::ffi::OsStringExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -85,7 +83,7 @@ pub fn locate_with(
         out.stdout
             .split(|b| *b == 0)
             .filter(|s| !s.is_empty())
-            .map(|s| PathBuf::from(OsString::from_vec(s.to_vec())))
+            .map(|s| PathBuf::from(bibli_core::os_path::from_bytes(s.to_vec())))
             .collect(),
     )
 }

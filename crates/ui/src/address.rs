@@ -1065,10 +1065,21 @@ pub fn crumbs(path: &std::path::Path, roots: &[crate::sidebar::Root]) -> Vec<(St
         ),
         None => (Vec::new(), PathBuf::new(), path),
     };
-    for component in rest.components() {
+    let mut components = rest.components().peekable();
+    while let Some(component) = components.next() {
         current.push(component);
         let label = match component {
             std::path::Component::RootDir => "/".to_owned(),
+            // A drive or a share and its root are one segment, named as
+            // Windows names the drive: `C:`, `\\server\share`.
+            std::path::Component::Prefix(prefix) => {
+                if let Some(root) =
+                    components.next_if(|c| matches!(c, std::path::Component::RootDir))
+                {
+                    current.push(root);
+                }
+                prefix.as_os_str().to_string_lossy().into_owned()
+            }
             other => other.as_os_str().to_string_lossy().into_owned(),
         };
         out.push((label, current.clone()));

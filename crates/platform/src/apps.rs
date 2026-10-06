@@ -807,6 +807,8 @@ pub fn edit_associations(edit: &AssociationEdit) -> anyhow::Result<Option<Associ
 }
 
 #[cfg(test)]
+// Helpers of the tests that run on Linux alone (ADR-035).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
 mod tests {
     use super::*;
 
@@ -839,6 +841,8 @@ mod tests {
             .collect()
     }
 
+    // Unix's paths.
+    #[cfg(unix)]
     #[test]
     fn field_codes_expand_per_the_spec() {
         let files = ["/d/it's a b.txt", "/d/ünï.txt"];
@@ -878,6 +882,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_path_that_is_not_utf8_reaches_the_program_as_it_is() {
         use std::os::unix::ffi::OsStrExt;
@@ -895,6 +900,8 @@ mod tests {
         assert!(Locale::parse("C.UTF-8").keys.is_empty());
     }
 
+    // The free desktops' files (step E, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn catalog_reads_entries_and_lists_in_precedence() {
         let tmp = tempfile::tempdir().unwrap();

@@ -252,6 +252,8 @@ impl PreviewProvider for Provider {
 mod tests {
     use super::*;
 
+    // Unix's paths.
+    #[cfg(unix)]
     #[test]
     fn a_location_is_a_file_here_or_somewhere_else() {
         let base = Path::new("/music/lists");
@@ -328,6 +330,8 @@ mod tests {
         assert_eq!(data.details[0].value, "more than 2000");
     }
 
+    // Types from the free desktops' database (step E, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_playlist_lists_its_tracks_and_opens_only_what_is_here() {
         let dir = tempfile::tempdir().unwrap();

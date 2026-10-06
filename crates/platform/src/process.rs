@@ -61,17 +61,30 @@ impl Worker {
 /// binds the store it lives in, not the profile's symlink farm.
 pub fn required(program: &str) -> anyhow::Result<PathBuf> {
     find_program(program)
-        .and_then(|path| std::fs::canonicalize(path).ok())
+        .and_then(|path| bibli_core::os_path::canonical(path).ok())
         .with_context(|| format!("{program} is not installed"))
 }
 
 /// A child that is killed, with its process group, and reaped when dropped.
-pub(crate) struct ChildGuard(pub(crate) Child);
+/// On Windows its group is a job object holding it and what it starts.
+pub(crate) struct ChildGuard {
+    pub(crate) child: Child,
+    #[cfg(windows)]
+    job: Option<crate::windows::Job>,
+}
 
 impl ChildGuard {
+    pub(crate) fn new(child: Child) -> Self {
+        Self {
+            #[cfg(windows)]
+            job: crate::windows::Job::holding(&child),
+            child,
+        }
+    }
+
     #[cfg(unix)]
     fn pid(&self) -> Option<rustix::process::Pid> {
-        rustix::process::Pid::from_raw(i32::try_from(self.0.id()).ok()?)
+        rustix::process::Pid::from_raw(i32::try_from(self.child.id()).ok()?)
     }
 
     /// Whether the child has exited, without reaping it. Until it is reaped
@@ -92,12 +105,13 @@ impl ChildGuard {
         }
         #[cfg(not(unix))]
         {
-            Ok(self.0.try_wait()?.is_some())
+            Ok(self.child.try_wait()?.is_some())
         }
     }
 
     /// Kill what the child left running in its group, while the child's
-    /// unreaped pid still names that group.
+    /// unreaped pid still names that group; on Windows, everything in its
+    /// job.
     fn stop_group(&mut self) {
         #[cfg(unix)]
         if let Some(pid) = self.pid()
@@ -107,20 +121,24 @@ impl ChildGuard {
             // (`Child::try_wait`): its pid may be anyone's by now.
             let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
         }
+        #[cfg(windows)]
+        if let Some(job) = &self.job {
+            job.stop();
+        }
     }
 
     /// Stop the group and reap the child, which has exited.
     fn finish(mut self) -> io::Result<ExitStatus> {
         self.stop_group();
-        self.0.wait()
+        self.child.wait()
     }
 }
 
 impl Drop for ChildGuard {
     fn drop(&mut self) {
         self.stop_group();
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
@@ -202,7 +220,7 @@ pub fn run_capped(
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
-    let mut child = ChildGuard(
+    let mut child = ChildGuard::new(
         command
             .spawn()
             .with_context(|| format!("start {program}"))?,
@@ -263,6 +281,86 @@ pub fn run(
 /// which every watched child shares: do something brief (send on a channel,
 /// schedule a job, wake the app), never the work itself.
 pub type OnExit = Box<dyn FnOnce(io::Result<ExitStatus>) + Send>;
+
+/// The folder the process `pid` works in, as the system says: Linux's
+/// `/proc/<pid>/cwd`, macOS's `proc_pidinfo` (compiled, never run);
+/// `None` on Windows, which keeps it in the process's own memory.
+pub fn working_dir(pid: u32) -> Option<PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let mut info: libc::proc_vnodepathinfo = unsafe_zeroed();
+        let size = libc::c_int::try_from(size_of::<libc::proc_vnodepathinfo>()).ok()?;
+        // SAFETY: a buffer of the record PROC_PIDVNODEPATHINFO fills, of
+        // the size given.
+        #[allow(unsafe_code)]
+        let filled = unsafe {
+            libc::proc_pidinfo(
+                libc::c_int::try_from(pid).ok()?,
+                libc::PROC_PIDVNODEPATHINFO,
+                0,
+                (&raw mut info).cast(),
+                size,
+            )
+        };
+        if filled != size {
+            return None;
+        }
+        // The path, NUL-terminated within its fixed field.
+        let bytes: Vec<u8> = info
+            .pvi_cdir
+            .vip_path
+            .iter()
+            .flatten()
+            .map(|c| c.cast_unsigned())
+            .take_while(|b| *b != 0)
+            .collect();
+        (!bytes.is_empty()).then(|| PathBuf::from(std::ffi::OsStr::from_bytes(&bytes)))
+    }
+    #[cfg(windows)]
+    {
+        let _ = pid;
+        None
+    }
+}
+
+/// An all-zero record, as the system fills one.
+#[cfg(target_os = "macos")]
+fn unsafe_zeroed<T>() -> T {
+    // SAFETY: only called for the C records above, for which all zeros
+    // is a valid value.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::mem::zeroed()
+    }
+}
+
+/// Whether the process `pid` runs, as the system says: `None` when it
+/// will not say. What a process left behind (a folder named by its pid)
+/// is taken away only once this says it has ended.
+pub fn runs(pid: u32) -> Option<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        Some(std::path::Path::new("/proc").join(pid.to_string()).exists())
+    }
+    #[cfg(all(unix, not(target_os = "linux")))]
+    {
+        let pid = rustix::process::Pid::from_raw(i32::try_from(pid).ok()?)?;
+        match rustix::process::test_kill_process(pid) {
+            Ok(()) | Err(rustix::io::Errno::PERM) => Some(true),
+            Err(rustix::io::Errno::SRCH) => Some(false),
+            Err(_) => None,
+        }
+    }
+    #[cfg(windows)]
+    {
+        crate::windows::process_runs(pid)
+    }
+}
 
 /// Start `command` and let it run on its own: in a process group of its own
 /// (a Ctrl+C in the terminal bibli was started from does not reach it), its
@@ -431,9 +529,13 @@ mod reaper {
 }
 
 #[cfg(test)]
+// Helpers of the tests that run on Unix alone (ADR-035).
+#[cfg_attr(not(unix), allow(dead_code, unused_imports))]
 mod tests {
     use super::*;
 
+    // A POSIX shell runs the scripts.
+    #[cfg(unix)]
     #[test]
     fn cancellation_prevents_spawn_and_timeout_stops_a_child() {
         let tmp = tempfile::tempdir().unwrap();
@@ -504,6 +606,8 @@ mod tests {
         }
     }
 
+    // A POSIX shell runs the scripts.
+    #[cfg(unix)]
     #[test]
     fn captures_output_and_reports_failed_exit() {
         let token = CancelToken::new();
@@ -525,6 +629,8 @@ mod tests {
         assert!(error.to_string().contains("broken"));
     }
 
+    // A POSIX shell runs the scripts.
+    #[cfg(unix)]
     #[test]
     fn watched_children_report_their_exit_in_any_order() {
         let (tx, rx) = crossbeam_channel::unbounded();
@@ -544,6 +650,8 @@ mod tests {
         assert!(spawn_detached(&mut Command::new("/nonexistent/program")).is_err());
     }
 
+    // A POSIX shell runs the scripts.
+    #[cfg(unix)]
     #[test]
     fn input_reaches_the_child_and_a_failed_exit_is_reported() {
         let token = CancelToken::new();
@@ -566,5 +674,33 @@ mod tests {
         )
         .unwrap();
         assert!(finished.status.success());
+    }
+
+    /// A program run on Windows says how it ended, and a timeout ends it
+    /// with what it started (its job).
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_program_says_its_end_and_a_timeout_ends_its_tree() {
+        use std::os::windows::process::CommandExt;
+        let finished = run_to_exit(
+            Command::new("cmd").args(["/c", "exit 3"]),
+            None,
+            &CancelToken::new(),
+            Duration::from_secs(20),
+        )
+        .unwrap();
+        assert_eq!(finished.status.code(), Some(3));
+        let started = Instant::now();
+        // A shell that starts another, which loops for ever: as cmd reads
+        // its line, not as a program's arguments are quoted.
+        let error = run_to_exit(
+            Command::new("cmd").raw_arg(r#"/c cmd /c "for /l %i in (0,0,1) do @rem""#),
+            None,
+            &CancelToken::new(),
+            Duration::from_millis(500),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("timed out"), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(10));
     }
 }

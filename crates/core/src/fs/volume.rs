@@ -1,4 +1,8 @@
 //! What kind of drive a path is on, as the kernel describes it in sysfs.
+//! Only Linux is read so far (ADR-035): elsewhere no drive is known to be
+//! one the user can unplug, so nothing is written through here. Windows
+//! writes a removable drive through itself (its default policy, quick
+//! removal); a Mac's is still to see (5b).
 //!
 //! A drive that can be unplugged is written through (`op::builtin`): a copy
 //! is on it, not in memory, when the copy says it is done, as Windows does
@@ -7,15 +11,19 @@
 //! is unmounted may reset before the writes end and lose them.
 
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "linux")]
 use parking_lot::Mutex;
 
 /// The buses a drive is plugged into by hand, as `lsblk` counts them for
 /// HOTPLUG (util-linux's `hotplug_subsystems`).
+#[cfg(target_os = "linux")]
 const PLUGGED: [&str; 5] = ["usb", "ieee1394", "firewire", "pcmcia", "ccw"];
 
 /// How deep device mapper and RAID layers are followed to the disks.
+#[cfg(target_os = "linux")]
 const LAYERS: u8 = 8;
 
 /// Whether `path` is on a drive the user can unplug: one whose disk says it
@@ -23,6 +31,7 @@ const LAYERS: u8 = 8;
 /// device mapper (LUKS) or RAID layer. Reads sysfs: on a worker. A
 /// filesystem mounted from no block device (FUSE, NFS) is not known to be
 /// on one.
+#[cfg(target_os = "linux")]
 pub fn is_removable(path: &Path) -> bool {
     let Ok(stat) = rustix::fs::stat(path) else {
         return false;
@@ -44,17 +53,27 @@ pub fn is_removable(path: &Path) -> bool {
     removable
 }
 
+/// [`is_removable`] where only Linux is read yet: never known.
+#[cfg(not(target_os = "linux"))]
+pub fn is_removable(_: &Path) -> bool {
+    false
+}
+
 /// How long an answer of [`is_removable`] is kept, by device number.
+#[cfg(target_os = "linux")]
 const KEEP: Duration = Duration::from_secs(5);
 
+#[cfg(target_os = "linux")]
 struct Known {
     device: u64,
     removable: bool,
     asked: Instant,
 }
 
+#[cfg(target_os = "linux")]
 static KNOWN: Mutex<Vec<Known>> = Mutex::new(Vec::new());
 
+#[cfg(target_os = "linux")]
 fn look_up(path: &Path, device: u64) -> bool {
     let sys = Path::new("/sys");
     let own = number(device);
@@ -70,6 +89,7 @@ fn look_up(path: &Path, device: u64) -> bool {
 /// mountinfo names what a mount holds). Reads `/dev` and sysfs only, never
 /// the filesystem mounted, so a sleeping or unreachable volume cannot hold
 /// the caller.
+#[cfg(target_os = "linux")]
 pub fn device_removable(source: &Path) -> bool {
     rustix::fs::stat(source)
         .ok()
@@ -79,6 +99,13 @@ pub fn device_removable(source: &Path) -> bool {
         .is_some_and(|d| removable_in(Path::new("/sys"), &number(d.st_rdev)))
 }
 
+/// [`device_removable`] where only Linux is read yet: never known.
+#[cfg(not(target_os = "linux"))]
+pub fn device_removable(_: &Path) -> bool {
+    false
+}
+
+#[cfg(target_os = "linux")]
 fn number(device: u64) -> String {
     format!(
         "{}:{}",
@@ -88,6 +115,7 @@ fn number(device: u64) -> String {
 }
 
 /// The device mounted where `path` is, as mountinfo names it.
+#[cfg(target_os = "linux")]
 fn mounted_from(path: &Path) -> Option<PathBuf> {
     let path = std::fs::canonicalize(path).ok()?;
     let mountinfo = std::fs::read_to_string("/proc/self/mountinfo").ok()?;
@@ -131,6 +159,7 @@ pub fn mountinfo(text: &str) -> Vec<Mounted> {
 
 /// In `mountinfo`, the source of the mount that holds `path`: the last of
 /// the deepest, as the kernel stacks them.
+#[cfg(target_os = "linux")]
 fn source_of(path: &Path, mountinfo: &str) -> Option<PathBuf> {
     let mut best: Option<Mounted> = None;
     for mount in self::mountinfo(mountinfo) {
@@ -165,10 +194,11 @@ fn unescape(field: &str) -> std::ffi::OsString {
         out.push(b[i]);
         i += 1;
     }
-    std::os::unix::ffi::OsStringExt::from_vec(out)
+    crate::os_path::from_bytes(out)
 }
 
 /// [`is_removable`] for the block device `major:minor` of the sysfs at `sys`.
+#[cfg(target_os = "linux")]
 fn removable_in(sys: &Path, device: &str) -> bool {
     let Ok(sys) = std::fs::canonicalize(sys) else {
         return false;
@@ -177,6 +207,7 @@ fn removable_in(sys: &Path, device: &str) -> bool {
         .is_ok_and(|dir| block_removable(&sys, &dir, 0))
 }
 
+#[cfg(target_os = "linux")]
 fn block_removable(sys: &Path, dir: &Path, depth: u8) -> bool {
     // A mapped or RAID device is on whatever its members are on.
     if depth < LAYERS
@@ -211,13 +242,14 @@ fn block_removable(sys: &Path, dir: &Path, depth: u8) -> bool {
         })
 }
 
+#[cfg(target_os = "linux")]
 fn read(path: &Path) -> Option<String> {
     std::fs::read_to_string(path)
         .ok()
         .map(|s| s.trim().to_owned())
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use std::os::unix::fs::symlink;
 

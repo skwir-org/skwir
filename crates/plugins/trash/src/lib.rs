@@ -17,8 +17,6 @@
 //! the Trash itself.
 
 use std::collections::{HashMap, HashSet};
-use std::ffi::OsString;
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -74,12 +72,13 @@ impl Item {
 /// Where a folder of the trash leads, staying in the trash: `trash:` and
 /// its path there.
 fn folder_location(folder: &Path) -> Location {
-    Location::new(SCHEME, escape(folder.as_os_str().as_bytes()))
+    Location::new(SCHEME, escape(folder.as_os_str().as_encoded_bytes()))
 }
 
 /// The folder of the trash `location` shows; `None` for the trash itself.
 fn folder_of(location: &Location) -> Option<PathBuf> {
-    (!location.rest.is_empty()).then(|| PathBuf::from(OsString::from_vec(unescape(&location.rest))))
+    (!location.rest.is_empty())
+        .then(|| PathBuf::from(bibli_core::os_path::from_bytes(unescape(&location.rest))))
 }
 
 /// Names a trashed file's entry as the file was named, and says when it was
@@ -716,6 +715,7 @@ fn restore_step(state: &State, entry: EntryRef) -> Option<Box<dyn Operation>> {
         Box::new(Restore {
             path: item.trashed.original.clone(),
             item: Some(PathArg(item.trashed.info.clone())),
+            landed: Vec::new(),
         })
     } else {
         Box::new(RestorePart {

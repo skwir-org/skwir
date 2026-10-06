@@ -132,7 +132,7 @@ impl StepContext {
     ) -> Result<T, trash::Error> {
         let mut cached = self.trash.borrow_mut();
         if cached.is_none() {
-            *cached = Some(trash::os_limited::list()?);
+            *cached = Some(super::sys::trash_list()?);
         }
         Ok(f(cached.as_mut().expect("just filled")))
     }

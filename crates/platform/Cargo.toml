@@ -22,7 +22,6 @@ png.workspace = true
 parking_lot.workspace = true
 tempfile.workspace = true
 serde_json.workspace = true
-xattr.workspace = true
 jiff.workspace = true
 scraper = "0.24"
 # The versions scraper itself builds on: publisher stylesheets are parsed and
@@ -43,18 +42,40 @@ flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 percent-encoding = "2"
 encoding_rs = "0.8"
 crossbeam-channel.workspace = true
-rustix = { workspace = true, features = ["process", "event"] }
+rustix = { workspace = true, features = ["process", "event", "system"] }
 futures-lite = "2"
 kamadak-exif = "0.6"
+# The desktop's type database (shared-mime-info): Linux's own, and the
+# fallback of the system's types elsewhere (ADR-037; vendored, built on
+# every system).
+xdg-mime.workspace = true
+mime.workspace = true
 
 # The desktop's keyring (`secrets`): the client and features gpui already links.
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 oo7 = { version = "0.5", default-features = false, features = ["async-std", "native_crypto"] }
 
+# Windows' own calls (ADR-035): the drives, the user's SID, the types
+# the registry knows (ADR-037).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Globalization", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Shell"] }
+
+# macOS's own calls (ADR-035): the calendar's first weekday, the
+# Keychain, the types the system knows (ADR-037). The versions already in
+# the tree.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSCalendar", "NSDictionary", "NSEnumerator", "NSString"] }
+objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTType"] }
+security-framework = "3"
+libc = "0.2"
+
 [target.'cfg(target_os = "linux")'.dependencies]
-xdg-mime.workspace = true
 freedesktop-icons.workspace = true
-mime.workspace = true
+
+# The user's folders as the system names them, off Linux (ADR-035).
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+dirs.workspace = true
 
 [dev-dependencies]
 dirs.workspace = true

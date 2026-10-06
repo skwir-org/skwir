@@ -12,7 +12,6 @@
 //! runs on the UI thread or per frame.
 use std::collections::HashMap;
 use std::ffi::OsStr;
-use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -173,7 +172,8 @@ impl Fields {
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX));
-        let identity = (meta.dev(), meta.ino(), meta.len(), modified);
+        let id = crate::fs::stat::identity(path, &meta)?;
+        let identity = (id.dev, id.ino, meta.len(), modified);
         let memory_key: (Arc<str>, Identity) = (key.into(), identity);
         if let Some(value) = self.remembered.lock().get(&memory_key) {
             return value.clone();
@@ -314,6 +314,8 @@ mod tests {
         assert!(fields.revision() > revision);
     }
 
+    // Pipes are made with mknodat, Linux's alone here (ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_link_is_asked_as_what_it_leads_to() {
         let tmp = tempfile::tempdir().unwrap();

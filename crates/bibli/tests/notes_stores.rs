@@ -78,7 +78,9 @@ fn the_desktops_tags_and_a_sidecar_are_one_set_of_notes() {
             .is_none()
     );
     assert_eq!(
-        xattr::get(&photo, "user.xdg.tags").unwrap().as_deref(),
+        bibli_core::fs::xattr::get(&photo, "user.xdg.tags")
+            .unwrap()
+            .as_deref(),
         Some(b"mine,trip,Alps".as_slice())
     );
     let sidecar = std::fs::read_to_string(dir.join("it's a.jpg.xmp")).unwrap();
@@ -149,7 +151,9 @@ fn one_edit_reaches_every_store_that_keeps_the_files_notes() {
             .is_none()
     );
     assert_eq!(
-        xattr::get(&file, "user.xdg.tags").unwrap().as_deref(),
+        bibli_core::fs::xattr::get(&file, "user.xdg.tags")
+            .unwrap()
+            .as_deref(),
         Some("trip,Été".as_bytes())
     );
     let xmp = std::fs::read_to_string(dir.join("it's a.jpg.xmp")).unwrap();
@@ -164,5 +168,9 @@ fn one_edit_reaches_every_store_that_keeps_the_files_notes() {
         std::fs::read_to_string(dir.join("it's a.jpg.xmp")).unwrap(),
         SIDECAR
     );
-    assert!(xattr::get(&file, "user.xdg.tags").unwrap().is_none());
+    assert!(
+        bibli_core::fs::xattr::get(&file, "user.xdg.tags")
+            .unwrap()
+            .is_none()
+    );
 }

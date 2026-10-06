@@ -139,6 +139,7 @@ fn picks_and_sweeps_through_the_commands() {
     assert_eq!(selected(&app), ["d"]);
 }
 
+#[cfg(unix)]
 #[test]
 fn the_selection_says_what_a_link_leads_to_without_reading() {
     let tmp = home_tempdir();

@@ -7,9 +7,9 @@
 //! thumbnails, and the desktop never finding ours.
 //!
 //! Paths are bytes: both directions are lossless for names that are not
-//! UTF-8.
+//! UTF-8. On Windows a path is written as `GLib` writes it there:
+//! `file:///C:/…` for a drive, `file://server/share/…` for a share.
 
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC};
@@ -37,29 +37,91 @@ const PATH: &AsciiSet = &NON_ALPHANUMERIC
 
 /// The `file://` URI of an absolute path, escaped as `g_filename_to_uri` does.
 pub fn file_uri(path: &Path) -> String {
-    let encoded = percent_encoding::percent_encode(os_bytes(path.as_os_str()), PATH);
+    #[cfg(windows)]
+    if let Some(path) = path.to_str() {
+        return windows_file_uri(path);
+    }
+    let encoded = percent_encoding::percent_encode(path.as_os_str().as_encoded_bytes(), PATH);
     format!("file://{encoded}")
+}
+
+/// [`file_uri`] of a Windows path: `C:\a b` is `file:///C:/a%20b`,
+/// `\\server\share\x` is `file://server/share/x`. Tested everywhere.
+#[cfg(any(windows, test))]
+fn windows_file_uri(path: &str) -> String {
+    let slashed = path.replace('\\', "/");
+    if let Some(share) = slashed.strip_prefix("//") {
+        let (host, rest) = share.split_at(share.find('/').unwrap_or(share.len()));
+        return format!(
+            "file://{host}{}",
+            percent_encoding::percent_encode(rest.as_bytes(), PATH)
+        );
+    }
+    format!(
+        "file:///{}",
+        percent_encoding::percent_encode(slashed.as_bytes(), PATH)
+    )
 }
 
 /// The path a `file://` URI names on this machine: with no host,
 /// `localhost`, or this machine's name, as `ls --hyperlink` writes it.
-/// `None` for another scheme or another host.
+/// `None` for another scheme or another host (on Windows, another host
+/// is a share: `\\server\share`).
 pub fn path_of(uri: &str) -> Option<PathBuf> {
     let rest = uri.strip_prefix("file://")?;
     let (host, path) = rest.split_at(rest.find('/')?);
-    (host.is_empty()
+    let here = host.is_empty()
         || host.eq_ignore_ascii_case("localhost")
-        || hostname().is_some_and(|name| host.eq_ignore_ascii_case(name)))
-    .then(|| PathBuf::from(os_string(percent_decode(path))))
+        || hostname().is_some_and(|name| host.eq_ignore_ascii_case(name));
+    #[cfg(windows)]
+    {
+        windows_path_of(host, path, here).map(PathBuf::from)
+    }
+    #[cfg(not(windows))]
+    here.then(|| PathBuf::from(bibli_core::os_path::from_bytes(percent_decode(path))))
 }
 
-/// This machine's name, as `file://` URIs name it: the kernel's, read once.
+/// [`path_of`] on Windows, for a URI's `host` and `path` (`/C:/a%20b`):
+/// a drive's path here, a share's elsewhere. Tested everywhere.
+#[cfg(any(windows, test))]
+fn windows_path_of(host: &str, path: &str, here: bool) -> Option<String> {
+    let path = String::from_utf8(percent_decode(path))
+        .ok()?
+        .replace('/', "\\");
+    let drive = path.strip_prefix('\\').filter(|p| {
+        let b = p.as_bytes();
+        b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':'
+    });
+    match drive {
+        Some(drive) if here => Some(if drive.len() == 2 {
+            format!("{drive}\\")
+        } else {
+            drive.to_owned()
+        }),
+        None if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") => {
+            Some(format!(r"\\{host}{path}"))
+        }
+        _ => None,
+    }
+}
+
+/// This machine's name, as `file://` URIs name it, read once: the
+/// kernel's on Unix, `COMPUTERNAME` on Windows.
 fn hostname() -> Option<&'static str> {
     static NAME: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     NAME.get_or_init(|| {
-        std::fs::read_to_string("/proc/sys/kernel/hostname")
-            .ok()
-            .map(|name| name.trim().to_owned())
+        #[cfg(target_os = "linux")]
+        let name = std::fs::read_to_string("/proc/sys/kernel/hostname").ok();
+        #[cfg(all(unix, not(target_os = "linux")))]
+        let name = Some(
+            rustix::system::uname()
+                .nodename()
+                .to_string_lossy()
+                .into_owned(),
+        );
+        #[cfg(not(unix))]
+        let name = std::env::var("COMPUTERNAME").ok();
+        name.map(|name| name.trim().to_owned())
             .filter(|name| !name.is_empty())
     })
     .as_deref()
@@ -71,30 +133,11 @@ pub fn percent_decode(s: &str) -> Vec<u8> {
     percent_encoding::percent_decode_str(s).collect()
 }
 
-#[cfg(unix)]
-fn os_bytes(s: &std::ffi::OsStr) -> &[u8] {
-    std::os::unix::ffi::OsStrExt::as_bytes(s)
-}
-
-#[cfg(not(unix))]
-fn os_bytes(s: &std::ffi::OsStr) -> &[u8] {
-    s.as_encoded_bytes()
-}
-
-#[cfg(unix)]
-fn os_string(bytes: Vec<u8>) -> OsString {
-    std::os::unix::ffi::OsStringExt::from_vec(bytes)
-}
-
-#[cfg(not(unix))]
-fn os_string(bytes: Vec<u8>) -> OsString {
-    String::from_utf8_lossy(&bytes).into_owned().into()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     #[test]
     fn a_file_uri_of_this_machine_is_a_path() {
         assert_eq!(path_of("file:///etc/hosts"), Some("/etc/hosts".into()));
@@ -109,6 +152,7 @@ mod tests {
         assert_eq!(path_of("https://a.b/c"), None);
     }
 
+    #[cfg(unix)]
     #[test]
     fn punctuation_is_escaped_as_glib_does() {
         // What `gio list -u` prints for this name.
@@ -121,6 +165,7 @@ mod tests {
         assert_eq!(path_of(&uri).as_deref(), Some(path));
     }
 
+    #[cfg(unix)]
     #[test]
     fn only_local_file_uris_name_a_path() {
         assert_eq!(
@@ -140,5 +185,28 @@ mod tests {
         let uri = file_uri(path);
         assert_eq!(uri, "file:///x/caf%E9");
         assert_eq!(path_of(&uri).as_deref(), Some(path));
+    }
+
+    #[test]
+    fn windows_paths_are_written_as_glib_writes_them_there() {
+        assert_eq!(
+            windows_file_uri(r"C:\Users\it's me\a b#1.txt"),
+            "file:///C:/Users/it's%20me/a%20b%231.txt"
+        );
+        assert_eq!(
+            windows_file_uri(r"\\server\share\x y"),
+            "file://server/share/x%20y"
+        );
+        assert_eq!(
+            windows_path_of("", "/C:/Users/it's%20me", true).as_deref(),
+            Some(r"C:\Users\it's me")
+        );
+        assert_eq!(windows_path_of("", "/D:", true).as_deref(), Some(r"D:\"));
+        assert_eq!(
+            windows_path_of("server", "/share/x%20y", false).as_deref(),
+            Some(r"\\server\share\x y")
+        );
+        assert_eq!(windows_path_of("", "/no-drive", true), None);
+        assert_eq!(windows_path_of("server", "/C:/x", false), None);
     }
 }

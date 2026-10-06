@@ -938,6 +938,8 @@ impl Plugin for OpenWithPlugin {
 }
 
 #[cfg(test)]
+// Helpers of the tests that run on Linux alone (ADR-035).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
 mod tests {
     use super::*;
     use bibli_core::app::AppConfig;
@@ -972,6 +974,7 @@ mod tests {
 
     /// A socket (as a pipe or a device) is what it is whatever its name
     /// says: typed by its kind, never read, so no image viewer is offered.
+    #[cfg(unix)]
     #[test]
     fn a_socket_named_like_a_picture_is_typed_by_its_kind() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1030,6 +1033,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn open_enters_a_link_to_a_folder() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1195,6 +1199,8 @@ mod tests {
         p.selection.set(ids);
     }
 
+    // The free desktops' files (step E, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn choices_name_the_application_pane_and_entries_to_open() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1277,6 +1283,8 @@ mod tests {
         );
     }
 
+    // The free desktops' files (step E, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn the_menu_names_the_default_application_of_the_selection() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1331,6 +1339,8 @@ mod tests {
     }
 
     /// A program that writes its arguments, one a line, to `out`.
+    // Shell scripts stand in for the programs (ADR-035).
+    #[cfg(unix)]
     fn recorder(dir: &std::path::Path, out: &std::path::Path) -> PathBuf {
         let record = dir.join("record");
         std::fs::write(
@@ -1347,6 +1357,7 @@ mod tests {
     }
 
     /// The lines `out` holds once a program wrote it, sorted.
+    #[cfg(unix)]
     fn recorded(out: &std::path::Path) -> Vec<String> {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while !out.exists() {
@@ -1362,6 +1373,7 @@ mod tests {
         got
     }
 
+    #[cfg(unix)]
     #[test]
     fn open_starts_the_default_application_the_menu_names() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1397,6 +1409,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn open_with_launches_the_application_on_the_entries() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1449,6 +1462,8 @@ mod tests {
         }
     }
 
+    // The free desktops' files (step E, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_chosen_default_is_written_said_and_undone_then_redone() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1522,6 +1537,8 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&elsewhere).unwrap(), "mine\n");
     }
 
+    // Types from the free desktops' database (step E, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_type_is_named_as_a_sentence_names_it() {
         assert_eq!(files_of("inode/directory"), "folders");

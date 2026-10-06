@@ -1204,6 +1204,7 @@ mod tests {
     /// until the test lets them answer. Asked for a tab (a middle click),
     /// the volume opens in one behind the tab shown, the pane left where
     /// it was.
+    #[cfg(unix)]
     #[test]
     #[allow(unsafe_code)]
     fn a_volume_says_it_is_unlocking_and_is_right_as_soon_as_it_ends() {
@@ -1502,6 +1503,7 @@ mod tests {
         assert!(bookmarks(&app)[1].unavailable.is_none());
     }
 
+    #[cfg(unix)]
     #[test]
     fn unmount_takes_a_path_that_is_not_utf8() {
         use std::os::unix::ffi::OsStrExt;
@@ -1522,6 +1524,8 @@ mod tests {
     /// too: a watcher counting it rescanned for as long as the file
     /// existed, waking the window at every pass. Once the first scans have
     /// published, the plugin is quiet; another program's edit still counts.
+    // GTK's bookmarks (step F, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     #[allow(unsafe_code)]
     fn reading_the_bookmarks_rescans_nothing() {

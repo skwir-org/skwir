@@ -1,0 +1,16 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,4 +1,3 @@
+-#![cfg(any(unix, target_os = "redox"))]
+ #![doc(html_root_url = "https://docs.rs/xdg_mime/0.4.0")]
+ #![allow(dead_code)]
+ 
+@@ -854,7 +853,7 @@
+     /// ```
+     ///
+     /// [`GuessBuilder`]: struct.GuessBuilder.html
+-    pub fn guess_mime_type(&self) -> GuessBuilder {
++    pub fn guess_mime_type(&self) -> GuessBuilder<'_> {
+         GuessBuilder {
+             db: self,
+             file_name: None,

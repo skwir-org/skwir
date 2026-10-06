@@ -736,12 +736,12 @@ fn sweep(directory: &Path) {
         return;
     };
     for entry in entries.flatten() {
-        let alive = entry
+        let gone = entry
             .file_name()
             .to_str()
             .and_then(|pid| pid.parse::<u32>().ok())
-            .is_some_and(|pid| Path::new("/proc").join(pid.to_string()).exists());
-        if !alive {
+            .is_none_or(|pid| bibli_platform::process::runs(pid) == Some(false));
+        if gone {
             let _ = std::fs::remove_dir_all(entry.path());
         }
     }
@@ -3062,7 +3062,7 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                             })
                             .on_scroll_wheel(cx.listener(
                                 |this, event: &gpui::ScrollWheelEvent, window, cx| {
-                                    if event.modifiers.control {
+                                    if event.modifiers.secondary() {
                                         let up = event.delta.pixel_delta(window.line_height()).y
                                             > px(0.);
                                         this.preview_zoom(

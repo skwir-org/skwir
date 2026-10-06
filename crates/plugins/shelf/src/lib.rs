@@ -824,6 +824,9 @@ mod tests {
 
     #[test]
     fn move_here_plan_moves_files_and_skips_items_already_there() {
+        if bibli_core::system::under_wine("trashing through the shell") {
+            return;
+        }
         let (tmp, app, pane, src) = setup();
         select(&app, pane, &["a.txt", "sub"]);
         app.dispatch(&Invocation::new("shelf.add")).unwrap();

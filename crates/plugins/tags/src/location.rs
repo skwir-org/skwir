@@ -17,8 +17,6 @@
 //! can hold a tag no file has); F2 on a tag renames it everywhere.
 
 use std::collections::{HashMap, HashSet};
-use std::ffi::OsString;
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 
@@ -80,7 +78,7 @@ impl Address {
             let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
             match key {
                 "in" => {
-                    let path = PathBuf::from(OsString::from_vec(unescape(value)));
+                    let path = PathBuf::from(bibli_core::os_path::from_bytes(unescape(value)));
                     address.scope = scope_of(path);
                 }
                 "with" => push_tag(&mut address.with, &text(value)),
@@ -115,7 +113,10 @@ impl Address {
         }
         let mut params: Vec<String> = Vec::new();
         if let Some(scope) = &self.scope {
-            params.push(format!("in={}", escape(scope.as_os_str().as_bytes())));
+            params.push(format!(
+                "in={}",
+                escape(scope.as_os_str().as_encoded_bytes())
+            ));
         }
         params.extend(
             self.with
@@ -549,7 +550,6 @@ pub fn contents(address: &Address, files: &[Tagged], drafts: &[String]) -> Conte
 /// (hydration reads the rest): its identity and what it is. `None` when
 /// it is gone.
 fn entry_at(path: &Path) -> Option<Entry> {
-    use std::os::unix::fs::MetadataExt;
     let meta = std::fs::symlink_metadata(path).ok()?;
     let kind = if meta.is_dir() {
         EntryKind::Directory
@@ -558,10 +558,7 @@ fn entry_at(path: &Path) -> Option<Entry> {
     } else {
         EntryKind::File
     };
-    let id = EntryId {
-        dev: meta.dev(),
-        ino: meta.ino(),
-    };
+    let id = bibli_core::fs::stat::identity(path, &meta)?;
     Some(Entry::new(id, path.file_name()?.to_owned(), kind))
 }
 
@@ -569,16 +566,16 @@ fn entry_at(path: &Path) -> Option<Entry> {
 /// each its path, identity and modification time, for a thumbnail. Stats
 /// them: on a worker.
 fn tile_of(pictures: &[PathBuf]) -> Value {
-    use std::os::unix::fs::MetadataExt;
     Value::List(
         pictures
             .iter()
             .filter_map(|path| {
                 let meta = std::fs::metadata(path).ok()?;
+                let id = bibli_core::fs::stat::identity(path, &meta)?;
                 Some(Value::List(vec![
                     Value::Text(path.to_string_lossy().as_ref().into()),
-                    Value::UInt(meta.dev()),
-                    Value::UInt(meta.ino()),
+                    Value::UInt(id.dev),
+                    Value::UInt(id.ino),
                     Value::Time(meta.modified().ok()?),
                 ]))
             })
@@ -1172,6 +1169,8 @@ mod tests {
         }
     }
 
+    // Unix's paths.
+    #[cfg(unix)]
     #[test]
     fn a_tag_exported_is_a_folder_of_its_files_and_one_per_tag_within() {
         let files = [
@@ -1240,6 +1239,8 @@ mod tests {
         );
     }
 
+    // Unix's paths.
+    #[cfg(unix)]
     #[test]
     fn an_address_reads_back_what_it_wrote() {
         let address = Address {
@@ -1354,6 +1355,8 @@ mod tests {
         assert!(contents(&pictures, &files, &[]).places.is_empty());
     }
 
+    // Types from the free desktops' database (step E, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_place_shows_a_few_of_its_pictures_the_last_names_first() {
         let files: Vec<Tagged> = (1..=6)

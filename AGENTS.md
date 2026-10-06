@@ -920,6 +920,29 @@ current source before assuming a planned crate, command, or API exists.
   names is fetched. The core has no network layer and bibli speaks no
   file-system protocol (ADR-021). A new use of the network is a decision
   with an ADR of its own.
+- **Every system** (ADR-035). bibli is built for Linux, macOS and
+  Windows, and `just lint-all` compiles all three (`check-cross`), so
+  code only one system has sits behind `cfg` where it is used, with the
+  others' answer beside it: their own code, or an error naming the
+  system (`bibli_core::system::not_yet`: "Listing a folder is not
+  available on Windows yet"), never Linux's behaviour where it would be
+  wrong there. The filesystem is reached through core's seams, not
+  `std::os::unix` or rustix's `fs`: a folder held open, listed and
+  stat-ed (`fs::Dir`, `fs::stat`, with `stat::identity` and
+  `stat::changed` for metadata in hand), extended attributes
+  (`fs::xattr`: on Windows a volume that keeps none), what an
+  operation asks of the system (`op/sys.rs`). A name is bytes through
+  `OsStr::as_encoded_bytes` and back through `os_path::from_bytes`. A
+  test that needs Unix (a link, a mode, a script standing in for a
+  program) says `#[cfg(unix)]`; one that needs Linux (a pipe made with
+  `mknodat`, the freedesktop trash, `/proc`) says
+  `#[cfg(target_os = "linux")]`; one that needs what Windows has and
+  Wine lacks (its shell's trash, alternate streams) asks
+  `bibli_core::system::under_wine` and says why it passes there. Code
+  for Windows is tried under Wine (`just test-windows`, a prefix and
+  XDG folders of its own, no display); what Wine cannot answer and
+  everything for macOS is compiled only, and says so where it is
+  recorded. `docs/PORTING.md` lists what is still Linux's alone.
 - **Unsafe.** The workspace sets `unsafe_code = "warn"`; `just lint` promotes
   warnings to errors. Any exception needs a narrowly scoped `#[allow]` with a
   justification, as in `crates/bibli/src/gpu.rs` (setting an environment
@@ -946,6 +969,8 @@ crates/model-worker optional 3D mesh reader and renderer process (pure Rust)
 crates/plugins/*   one crate per plugin (see docs/PLAN.md Phase 2 and 4)
 crates/bench       synthetic trees and the performance regression check
 vendor/gpui        patched gpui 0.2.2 (see vendor/gpui/README.bibli.md)
+vendor/xdg-mime    xdg-mime 0.4.0, built on every system (ADR-037; its README.bibli.md)
+vendor/shared-mime-info  the type database's source the macOS and Windows packages compile
 spikes/            the Phase 0 toolkit spikes, kept runnable
 docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
                    invariants/ (binding area rules)
@@ -1195,9 +1220,16 @@ are about to touch, in full:
   where they are needed; a date read from text is `civil_day`, which
   refuses one that does not exist. Test boundary instants explicitly, with an explicit
   calendar (`lang::parse_in`), when changing date behavior.
-- `kind:` groups files as the desktop's MIME database does
+- Types are the system's own registry's first, the desktop's database
+  behind it (ADR-037, `bibli_platform::mime`): on Linux they are one;
+  on macOS (UTType) and Windows (the registry's classes) the system
+  names a file by its extension and the database may only say it more
+  precisely, reads the bytes and holds the aliases and the hierarchy.
+  Read types only through `mime`, never a system's registry beside it.
+  `kind:` groups files as the desktop's MIME database does
   (`bibli_platform::mime::Kind`, from each type's generic icon and its
-  descent from `text/plain`); do not keep lists of types beside it.
+  descent from `text/plain`, and on macOS what the type conforms to);
+  do not keep lists of types beside it.
   A provider takes files by type, never by an extension list: the
   request's type (`mime::of_request`, read from the bytes where a name is
   ambiguous: `.otf`), tested against a kind or a `mime::Types`, the types
@@ -1220,7 +1252,10 @@ just workers        build the Poppler, MuPDF, GStreamer and libarchive workers
 just test           cargo nextest run (default members)
 just test-all       every crate, native workers included (what CI runs)
 just lint           cargo fmt --check + clippy --all-targets -D warnings
-just lint-all       the same over the whole workspace (what CI runs)
+just lint-all       the same over the whole workspace, then check-cross (CI)
+just check-cross    clippy for Windows and macOS from Linux (ADR-035)
+just test-windows   the Windows build's tests under Wine (args go to nextest)
+just package-nix    Linux's package, by Nix, from the git tree
 just bench-check    generate bench-data/ on demand and enforce budgets
 just run [dir]      run the release binary
 just dist           build bibli and every helper without debug info (target/dist)

@@ -1,7 +1,9 @@
 //! A `tag:` search asks the indexes first (ADR-026): the tags plugin's own,
 //! learned as it reads files, and any other hint provider. What they name
 //! is checked like any file and never shown twice; what the walk would not
-//! reach (a hidden folder, a folder through a link) stays out.
+//! reach (a hidden folder, a folder through a link) stays out. Links and
+//! attributes: Unix's (ADR-035).
+#![cfg(unix)]
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -83,12 +85,12 @@ fn a_tag_search_asks_the_index_first_and_trusts_only_the_files() {
         std::fs::write(root.join(name), name).unwrap();
     }
     for name in tagged {
-        if xattr::set(root.join(name), "user.xdg.tags", b"Work,other").is_err() {
+        if bibli_core::fs::xattr::set(root.join(name), "user.xdg.tags", b"Work,other").is_err() {
             eprintln!("skipped: no user extended attributes here");
             return;
         }
     }
-    let root = std::fs::canonicalize(&root).unwrap();
+    let root = bibli_core::os_path::canonical(&root).unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins
         .add(Arc::new(bibli_plugin_query::QueryPlugin::default()), &app);
@@ -121,7 +123,7 @@ fn a_tag_search_asks_the_index_first_and_trusts_only_the_files() {
     assert!(known(&app).contains(&".hidden/b.txt".to_owned()));
 
     // Changed behind its back: the index still names it, the file says no.
-    xattr::remove(root.join("stale.txt"), "user.xdg.tags").unwrap();
+    bibli_core::fs::xattr::remove(root.join("stale.txt"), "user.xdg.tags").unwrap();
     // Named by another index: through a link, not tagged, gone, elsewhere.
     app.hints.register(
         "test",

@@ -103,7 +103,7 @@ fn main() -> Result<()> {
             expr,
         } => {
             let dir = generate::generate(&cli.root, profile)?;
-            let dir = std::fs::canonicalize(dir)?;
+            let dir = bibli_core::os_path::canonical(dir)?;
             let app = measure::tags_app();
             for run in 1..=runs {
                 let s = measure::search(&app, &expr, &dir);
@@ -127,11 +127,18 @@ fn main() -> Result<()> {
             for (p, r) in measure_all(&cli.root, &Profile::ALL, runs)? {
                 failed |= !measure::check(p, &r, &budgets);
             }
-            if failed {
+            // The budgets are Linux's, measured on its reference machine:
+            // elsewhere they are reported, not enforced, until 5b sets that
+            // system's own (ADR-038).
+            if failed && cfg!(target_os = "linux") {
                 eprintln!("bench: BUDGET REGRESSION");
                 std::process::exit(1);
             }
-            eprintln!("bench: all budgets met");
+            if failed {
+                eprintln!("bench: over Linux's budgets, reported only on this system (ADR-038)");
+            } else {
+                eprintln!("bench: all budgets met");
+            }
         }
     }
     Ok(())

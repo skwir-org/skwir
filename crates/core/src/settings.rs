@@ -713,11 +713,12 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// The platform config file (`$XDG_CONFIG_HOME/bibli/settings.toml` on Linux).
+    /// The system's settings file of bibli's
+    /// (`$XDG_CONFIG_HOME/bibli/settings.toml` on Linux): in
+    /// `crate::folders::config`.
     pub fn default_path() -> PathBuf {
-        crate::xdg::config_home()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("bibli")
+        crate::folders::config()
+            .unwrap_or_else(|| std::env::temp_dir().join("bibli"))
             .join("settings.toml")
     }
 
@@ -900,7 +901,9 @@ impl Settings {
             file.write_all(toml::to_string_pretty(values)?.as_bytes())?;
             file.as_file().sync_all()?;
             file.persist(path)?;
-            // The rename is durable only once the directory entry is flushed.
+            // The rename is durable only once the directory entry is
+            // flushed, on Unix; Windows journals it, and opens no folder so.
+            #[cfg(unix)]
             std::fs::File::open(parent)?.sync_all()?;
         }
         Ok(())

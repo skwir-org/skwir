@@ -433,6 +433,8 @@ impl OpenLocation for RecentLocation {
 }
 
 #[cfg(test)]
+// Helpers of the tests that run on Linux alone (ADR-035).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
 mod tests {
     use super::*;
     use bibli_core::app::AppConfig;
@@ -471,6 +473,7 @@ mod tests {
         assert_eq!(all.len(), 2, "limit applies");
     }
 
+    #[cfg(unix)]
     #[test]
     fn candidates_command_uses_a_fake_zoxide_on_path() {
         use std::os::unix::fs::PermissionsExt;
@@ -523,6 +526,8 @@ mod tests {
         assert!(app.commands.get("jump.candidates").is_some());
     }
 
+    // The free desktops' recent files (step E, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn recent_location_streams_existing_files_and_jump_to_selects() {
         let tmp = tempfile::tempdir().unwrap();

@@ -21,7 +21,7 @@ fn main() {
 fn run() -> anyhow::Result<()> {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
     anyhow::ensure!(args.len() == 2, "expected PDF path and scratch directory");
-    let uri = glib::filename_to_uri(std::fs::canonicalize(&args[0])?, None)?;
+    let uri = glib::filename_to_uri(bibli_core::os_path::canonical(&args[0])?, None)?;
     let document = Document::from_file(&uri, None)
         .context("open PDF (encrypted files require an external reader)")?;
     let pages = u32::try_from(document.n_pages())?;

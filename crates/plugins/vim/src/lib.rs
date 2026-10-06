@@ -146,9 +146,9 @@ const KEYS: &[(&str, &str, &str, &str)] = &[
     // what its key does where the place changes it (in a tag `d` takes the
     // tag off, in the trash it deletes for good).
     ("o", "open", "{}", "pane selection"),
-    ("y", LIKE, r#"{"keys":"ctrl-c"}"#, "pane"),
-    ("x", LIKE, r#"{"keys":"ctrl-x"}"#, "pane"),
-    ("p", LIKE, r#"{"keys":"ctrl-v"}"#, "pane"),
+    ("y", LIKE, r#"{"keys":"secondary-c"}"#, "pane"),
+    ("x", LIKE, r#"{"keys":"secondary-x"}"#, "pane"),
+    ("p", LIKE, r#"{"keys":"secondary-v"}"#, "pane"),
     ("Y", "clipboard_clear", "{}", "pane"),
     ("X", "clipboard_clear", "{}", "pane"),
     ("d", LIKE, r#"{"keys":"delete"}"#, "pane"),

@@ -293,6 +293,8 @@ fn draw(
 mod tests {
     use super::*;
 
+    // Types from the free desktops' database (step E, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn fonts_are_known_by_type() {
         let accepts = |name: &str, mime: Option<&str>| {

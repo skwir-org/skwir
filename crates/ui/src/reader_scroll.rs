@@ -344,7 +344,7 @@ impl Shell {
         let vertical = delta.y.abs() > delta.x.abs();
         if !at_edge
             || !vertical
-            || event.modifiers.control
+            || event.modifiers.secondary()
             || event.modifiers.alt
             || event.modifiers.platform
             || event.modifiers.shift

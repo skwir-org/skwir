@@ -594,6 +594,8 @@ impl TerminalGrid {
                     state.dragging.set(true);
                     cx.stop_propagation();
                 }
+                // The desktop's primary selection: Linux's alone.
+                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                 MouseButton::Middle => {
                     window.focus(&focus);
                     let text = cx.read_from_primary().and_then(|item| item.text());

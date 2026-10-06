@@ -84,11 +84,15 @@ impl Plugin for PreviewPlugin {
                 "pandoc",
                 "Text documents read by Pandoc, and RTF files read as text",
             ),
-            Requirement::program(
-                "bwrap",
-                "Isolation of LibreOffice and Pandoc, which both need it",
-            ),
         ]
+        .into_iter()
+        .chain(bibli_platform::sandbox::PROGRAM.map(|program| {
+            Requirement::program(
+                program,
+                "Isolation of LibreOffice, which needs it, and of Pandoc",
+            )
+        }))
+        .collect()
     }
 
     fn register(&self, app: &App) {
@@ -408,7 +412,7 @@ impl PreviewProvider for Reading {
                 package::Package::open(&path, cancel)?.read(key, "Embedded image", cancel)?
             }
             Some(Engine::Pandoc(tool, format)) => {
-                let name = pandoc::media_name(&format!("/work/{key}"))
+                let name = pandoc::media_name(key)
                     .ok_or_else(|| anyhow::anyhow!("not a picture of this document"))?;
                 let cache_key = Self::media_key(req, &path, &tool, &name)?;
                 if let Some(bytes) = self.cache.get(&cache_key) {

@@ -1,5 +1,6 @@
 //! Tags and other user attributes kept through the user-facing copy
-//! commands and saved plans.
+//! commands and saved plans. Unix's alone: Windows keeps no attributes.
+#![cfg(unix)]
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::Path;
 use std::sync::Arc;
@@ -71,7 +72,7 @@ fn copy_commands_preserve_attributes_and_capture_the_live_preference() {
                 ("user.xdg.comment", "from “the trip”".as_bytes()),
                 ("user.xdg.origin.url", b"https://example.org/photo.txt"),
             ] {
-                xattr::set(source.join("nested/photo.txt"), name, value).unwrap();
+                bibli_core::fs::xattr::set(source.join("nested/photo.txt"), name, value).unwrap();
             }
             std::fs::set_permissions(
                 source.join("nested/photo.txt"),
@@ -148,11 +149,13 @@ fn copy_commands_preserve_attributes_and_capture_the_live_preference() {
                 0o444
             );
             assert_eq!(
-                xattr::get(copied.join("nested/photo.txt"), "user.xdg.comment").unwrap(),
+                bibli_core::fs::xattr::get(copied.join("nested/photo.txt"), "user.xdg.comment")
+                    .unwrap(),
                 preserve.then(|| "from “the trip”".as_bytes().to_vec())
             );
             assert_eq!(
-                xattr::get(copied.join("nested/photo.txt"), "user.baloo.rating").unwrap(),
+                bibli_core::fs::xattr::get(copied.join("nested/photo.txt"), "user.baloo.rating")
+                    .unwrap(),
                 preserve.then(|| b"8".to_vec())
             );
             assert!(read_tags(&copied.join("untagged.txt")).is_empty());
@@ -255,7 +258,7 @@ fn other_device(reference: &Path) -> Option<std::path::PathBuf> {
         };
         let probe = dir.path().join("probe");
         std::fs::write(&probe, b"x").unwrap();
-        if xattr::set(&probe, "user.bibli-probe", b"1").is_ok() {
+        if bibli_core::fs::xattr::set(&probe, "user.bibli-probe", b"1").is_ok() {
             return Some(dir.keep());
         }
     }
@@ -275,7 +278,8 @@ fn cross_device_move_keeps_attributes_regardless_of_the_copy_preference() {
     for path in [&source, &source.join("nested/track.txt")] {
         write_tags(path, &["keep".into()]).unwrap();
     }
-    xattr::set(source.join("nested/track.txt"), "user.xdg.comment", b"kept").unwrap();
+    bibli_core::fs::xattr::set(source.join("nested/track.txt"), "user.xdg.comment", b"kept")
+        .unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins.add(
         Arc::new(bibli_plugin_ops_basic::OpsBasicPlugin::default()),
@@ -300,7 +304,7 @@ fn cross_device_move_keeps_attributes_regardless_of_the_copy_preference() {
     assert_eq!(read_tags(&moved), ["keep"]);
     assert_eq!(read_tags(&moved.join("nested/track.txt")), ["keep"]);
     assert_eq!(
-        xattr::get(moved.join("nested/track.txt"), "user.xdg.comment").unwrap(),
+        bibli_core::fs::xattr::get(moved.join("nested/track.txt"), "user.xdg.comment").unwrap(),
         Some(b"kept".to_vec())
     );
     assert_eq!(

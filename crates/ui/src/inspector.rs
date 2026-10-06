@@ -1583,7 +1583,7 @@ impl Shell {
         };
         let (previous, next) = (display.data.previous, display.data.next);
         let delta = f32::from(event.delta.pixel_delta(window.line_height()).y);
-        if delta == 0. || event.modifiers.control {
+        if delta == 0. || event.modifiers.secondary() {
             return;
         }
         let pending = self.preview.phase != PreviewPhase::Idle;

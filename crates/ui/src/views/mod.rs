@@ -22,7 +22,7 @@ pub fn zoom_wheel(cx: &mut Context<Shell>) -> impl IntoElement {
         move |_, hitbox, window, _| {
             window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
                 if !phase.capture()
-                    || !event.modifiers.control
+                    || !event.modifiers.secondary()
                     || !hitbox.should_handle_scroll(window)
                 {
                     return;

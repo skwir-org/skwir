@@ -1,12 +1,24 @@
 //! Converters and thumbnailers run on a file nobody vouched for, isolated
-//! from everything else (ADR-003, ADR-030, ADR-031). On Linux this is
-//! bubblewrap: no network, only the system runtime and the input readable,
-//! and only a disposable working folder writable. A sandbox that cannot
+//! from everything else (ADR-003, ADR-030, ADR-031, ADR-039): no network,
+//! only the system runtime and the input readable, and only a disposable
+//! working folder writable. On Linux this is bubblewrap; on macOS the
+//! system's own sandbox, `sandbox-exec` with a profile of bibli's; on
+//! Windows nothing yet (`AppContainer`, ADR-039). A sandbox that cannot
 //! start is an error: a conversion is never retried without it.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
+
+/// The program that isolates others here, for a plugin's requirements:
+/// what the settings say is missing when nothing can.
+pub const PROGRAM: Option<&str> = if cfg!(target_os = "linux") {
+    Some("bwrap")
+} else if cfg!(target_os = "macos") {
+    Some("sandbox-exec")
+} else {
+    None
+};
 
 /// What every isolated program may read, where it exists: the system's
 /// programs, libraries and fonts. `/etc/alternatives` holds Debian's links
@@ -30,7 +42,8 @@ const SYSTEM: &[&str] = &[
 
 /// Whether a program can run isolated here: on Linux, whether bubblewrap
 /// is installed and can make its namespaces, which a container or a
-/// kernel that restricts them refuses. Asked once, on a worker.
+/// kernel that restricts them refuses; on macOS, whether `sandbox-exec`
+/// runs a program under bibli's profile. Asked once, on a worker.
 pub fn available() -> bool {
     static AVAILABLE: OnceLock<bool> = OnceLock::new();
     *AVAILABLE.get_or_init(isolates)
@@ -60,9 +73,44 @@ fn isolates() -> bool {
     isolated.is_ok()
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+fn isolates() -> bool {
+    // The profile itself, on a program and a file of the system's: one
+    // this macOS no longer reads (or no sandbox-exec) isolates nothing.
+    let isolated = tempfile::tempdir()
+        .map_err(anyhow::Error::from)
+        .and_then(|work| {
+            let mut run = isolated(
+                Path::new("/usr/bin/true"),
+                Path::new("/etc/hosts"),
+                work.path(),
+            )?;
+            crate::process::run(
+                &mut run.command,
+                &bibli_core::CancelToken::new(),
+                std::time::Duration::from_secs(5),
+            )
+        });
+    if let Err(error) = &isolated {
+        tracing::debug!("sandbox-exec cannot isolate here: {error:#}");
+    }
+    isolated.is_ok()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn isolates() -> bool {
     false
+}
+
+/// Why a program that must run isolated does not run here.
+fn needed() -> anyhow::Error {
+    if cfg!(target_os = "linux") {
+        anyhow::anyhow!("This needs bubblewrap, to run isolated from your files")
+    } else if cfg!(target_os = "macos") {
+        anyhow::anyhow!("This needs the system's sandbox, to run isolated from your files")
+    } else {
+        bibli_core::system::not_yet("Running a converter isolated from your files").into()
+    }
 }
 
 /// The name `input` has inside the sandbox: `document`, then its
@@ -81,21 +129,24 @@ pub fn inside_name(input: &Path) -> String {
     }
 }
 
-/// What becomes of a program run on a file nobody vouched for where
-/// bubblewrap cannot isolate it.
+/// What becomes of a program run on a file nobody vouched for where the
+/// system cannot isolate it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Otherwise {
-    /// It does not run: a converter (`LibreOffice`, Pandoc) or `ImageMagick`,
-    /// which a file can make do anything they can.
+    /// It does not run: a converter (`LibreOffice`, a Pandoc without its
+    /// own sandbox) or `ImageMagick`, which a file can make do anything
+    /// they can.
     Refuse,
     /// It runs as it would without bibli: a decoder the desktop runs on
     /// the same files all the same (`ffmpeg`, Poppler's tools, bibli's
-    /// own helpers, a desktop thumbnailer).
+    /// own helpers, a desktop thumbnailer), or a program that keeps itself
+    /// to the files it is named (Pandoc's `--sandbox`, ADR-039).
     Run,
 }
 
 /// A program set to read a file nobody vouched for, and the paths to give
-/// it, which inside the sandbox are not the real ones.
+/// it, which inside a sandbox may not be the real ones (bubblewrap's
+/// `/input` and `/work`).
 pub struct Untrusted {
     pub command: Command,
     /// Where it reads the input.
@@ -108,10 +159,10 @@ pub struct Untrusted {
 }
 
 /// `program` set to read `input`, a file nobody vouched for, and to write
-/// in `work` (its current folder): isolated where bubblewrap can
-/// (`command`), else as `otherwise` says. The one way bibli runs a program
-/// on a file that is not ours; the caller adds the program's arguments,
-/// naming the input and the folder as returned.
+/// in `work` (its current folder): isolated where the system can
+/// (`command`), else as `otherwise` says (`plain`). The one way bibli runs
+/// a program on a file that is not ours; the caller adds the program's
+/// arguments, naming the input and the folder as returned.
 pub fn untrusted(
     program: &Path,
     input: &Path,
@@ -119,94 +170,204 @@ pub fn untrusted(
     otherwise: Otherwise,
 ) -> anyhow::Result<Untrusted> {
     if available() {
-        let (command, inside) = command(program, input, work)?;
-        return Ok(Untrusted {
-            command,
-            input: inside.into(),
-            work: "/work".into(),
-            isolated: true,
-        });
+        return command(program, input, work);
     }
-    anyhow::ensure!(
-        otherwise == Otherwise::Run,
-        "This needs bubblewrap, to run isolated from your files"
-    );
+    if otherwise == Otherwise::Refuse {
+        return Err(needed());
+    }
+    Ok(plain(program, input, work))
+}
+
+/// `program` set to read `input` and write in `work`, its current folder,
+/// as it would without bibli: not isolated. Only through `untrusted`'s
+/// `Otherwise::Run`, and for tests of what runs so.
+pub fn plain(program: &Path, input: &Path, work: &Path) -> Untrusted {
     let mut command = Command::new(program);
     command.current_dir(work);
-    Ok(Untrusted {
+    Untrusted {
         command,
         input: input.to_owned(),
         work: work.to_owned(),
         isolated: false,
-    })
+    }
 }
 
 /// `program` set to run isolated: `input` readable at the path returned
-/// (`inside_name`), and `work` writable at `/work`, also its home, cache
-/// and current folder. A program outside the system's folders is bound
-/// at its own path. The caller adds the program's own arguments and runs
-/// it with `process::run`, whose cancellation kills the sandbox with it.
-/// An error where bubblewrap cannot isolate (`available`).
-pub fn command(program: &Path, input: &Path, work: &Path) -> anyhow::Result<(Command, String)> {
-    anyhow::ensure!(
-        available(),
-        "This needs bubblewrap, to run isolated from your files"
-    );
-    #[cfg(target_os = "linux")]
-    {
-        let bwrap = crate::process::required("bwrap")?;
-        let mut command = Command::new(bwrap);
-        command.args(["--unshare-all", "--die-with-parent", "--new-session"]);
-        for system in SYSTEM {
-            if Path::new(system).exists() {
-                command.args(["--ro-bind", system, system]);
-            }
-        }
-        let inside = inside_name(input);
-        command.args([
-            "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--dir", "/input",
-        ]);
-        // After the private /tmp, which would hide a program kept there.
-        if program.is_absolute() && !SYSTEM.iter().any(|system| program.starts_with(system)) {
-            command.arg("--ro-bind").arg(program).arg(program);
-        }
-        command
-            .arg("--ro-bind")
-            .arg(input)
-            .arg(&inside)
-            .arg("--bind")
-            .arg(work)
-            .arg("/work")
-            .args([
-                "--chdir",
-                "/work",
-                "--setenv",
-                "HOME",
-                "/work/home",
-                "--setenv",
-                "XDG_CACHE_HOME",
-                "/work/cache",
-                // GIO reads files itself instead of asking gvfs over the
-                // session bus, which is not there.
-                "--setenv",
-                "GIO_USE_VFS",
-                "local",
-                "--unsetenv",
-                "DISPLAY",
-                "--unsetenv",
-                "WAYLAND_DISPLAY",
-                "--unsetenv",
-                "DBUS_SESSION_BUS_ADDRESS",
-                "--",
-            ])
-            .arg(program);
-        Ok((command, inside))
+/// (named as `inside_name` says), and its working folder, `work`, writable
+/// at the path returned, also its home, cache and current folder. The
+/// caller adds the program's own arguments, naming the paths returned,
+/// and runs it with `process::run`, whose cancellation kills the sandbox
+/// with it. An error where the system cannot isolate (`available`).
+pub fn command(program: &Path, input: &Path, work: &Path) -> anyhow::Result<Untrusted> {
+    if !available() {
+        return Err(needed());
     }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = (program, input, work);
-        anyhow::bail!("isolated conversion is not implemented on this platform")
+    isolated(program, input, work)
+}
+
+/// Bubblewrap: the system's folders read-only, the input at `/input`, the
+/// working folder at `/work`, nothing else; no network, no session. A
+/// program outside the system's folders is bound at its own path.
+#[cfg(target_os = "linux")]
+fn isolated(program: &Path, input: &Path, work: &Path) -> anyhow::Result<Untrusted> {
+    let bwrap = crate::process::required("bwrap")?;
+    let mut command = Command::new(bwrap);
+    command.args(["--unshare-all", "--die-with-parent", "--new-session"]);
+    for system in SYSTEM {
+        if Path::new(system).exists() {
+            command.args(["--ro-bind", system, system]);
+        }
     }
+    let inside = inside_name(input);
+    command.args([
+        "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--dir", "/input",
+    ]);
+    // After the private /tmp, which would hide a program kept there.
+    if program.is_absolute() && !SYSTEM.iter().any(|system| program.starts_with(system)) {
+        command.arg("--ro-bind").arg(program).arg(program);
+    }
+    command
+        .arg("--ro-bind")
+        .arg(input)
+        .arg(&inside)
+        .arg("--bind")
+        .arg(work)
+        .arg("/work")
+        .args([
+            "--chdir",
+            "/work",
+            "--setenv",
+            "HOME",
+            "/work/home",
+            "--setenv",
+            "XDG_CACHE_HOME",
+            "/work/cache",
+            // GIO reads files itself instead of asking gvfs over the
+            // session bus, which is not there.
+            "--setenv",
+            "GIO_USE_VFS",
+            "local",
+            "--unsetenv",
+            "DISPLAY",
+            "--unsetenv",
+            "WAYLAND_DISPLAY",
+            "--unsetenv",
+            "DBUS_SESSION_BUS_ADDRESS",
+            "--",
+        ])
+        .arg(program);
+    Ok(Untrusted {
+        command,
+        input: inside.into(),
+        work: "/work".into(),
+        isolated: true,
+    })
+}
+
+/// What a program run by `sandbox-exec` may do (Seatbelt's profile
+/// language): nothing but what it says. It runs, and what it runs is held
+/// the same; it reads the system's programs, libraries, frameworks and
+/// fonts, what a package manager installed, itself (its `.app` with it),
+/// the input and its folder; it writes only in its folder; it may learn
+/// where things are, never what they hold; it asks the system for fonts,
+/// the user's name and the preferences' defaults, as programs do to
+/// start. No network: nothing allows it.
+#[cfg(target_os = "macos")]
+const PROFILE: &str = r#"(version 1)
+(deny default)
+(allow process-exec process-fork)
+(allow signal (target same-sandbox))
+(allow process-info* (target same-sandbox))
+(allow sysctl-read)
+(allow ipc-posix-sem ipc-posix-shm)
+(allow file-read*
+    (subpath "/System")
+    (subpath "/usr")
+    (subpath "/bin")
+    (subpath "/sbin")
+    (subpath "/Library/Fonts")
+    (subpath "/Library/Frameworks")
+    (subpath "/private/etc")
+    (subpath "/private/var/db/timezone")
+    (subpath "/opt/homebrew")
+    (subpath "/opt/local")
+    (subpath "/nix/store")
+    (literal (param "PROGRAM"))
+    (subpath (param "BUNDLE"))
+    (literal (param "INPUT"))
+    (subpath (param "WORK")))
+(allow file-read-metadata)
+(allow file-write* (subpath (param "WORK")))
+(allow file-read* file-write-data
+    (literal "/dev/null")
+    (literal "/dev/zero")
+    (literal "/dev/random")
+    (literal "/dev/urandom")
+    (literal "/dev/dtracehelper"))
+(allow mach-lookup
+    (global-name "com.apple.fonts")
+    (global-name "com.apple.FontObjectsServer")
+    (global-name "com.apple.system.opendirectoryd.libinfo")
+    (global-name "com.apple.system.logger")
+    (global-name "com.apple.cfprefsd.daemon")
+    (global-name "com.apple.cfprefsd.agent"))
+(allow user-preference-read)
+"#;
+
+/// `sandbox-exec` with `PROFILE`: paths are the real ones, which the
+/// profile names (Seatbelt cannot move a file elsewhere), so the input is
+/// reached through a link in the working folder under a plain name
+/// (`inside_name`), and everything is named by its canonical path
+/// (`/private/var`, not `/var`), which the profile compares.
+#[cfg(target_os = "macos")]
+fn isolated(program: &Path, input: &Path, work: &Path) -> anyhow::Result<Untrusted> {
+    use std::ffi::OsString;
+    let work = std::fs::canonicalize(work)?;
+    let input = std::fs::canonicalize(input)?;
+    let program = std::fs::canonicalize(program)?;
+    // An application's bundle, read with it: its libraries and resources.
+    let bundle = program
+        .ancestors()
+        .find(|dir| dir.extension().is_some_and(|e| e == "app"))
+        .unwrap_or(&program)
+        .to_owned();
+    let inside = work.join(inside_name(&input).trim_start_matches('/'));
+    std::fs::create_dir_all(work.join("input"))?;
+    // A folder run in before keeps the link of that run.
+    let _ = std::fs::remove_file(&inside);
+    std::os::unix::fs::symlink(&input, &inside)?;
+    for folder in ["home", "cache", "tmp"] {
+        std::fs::create_dir_all(work.join(folder))?;
+    }
+    let mut command = Command::new("/usr/bin/sandbox-exec");
+    command.arg("-p").arg(PROFILE);
+    for (name, value) in [
+        ("WORK", &work),
+        ("INPUT", &input),
+        ("PROGRAM", &program),
+        ("BUNDLE", &bundle),
+    ] {
+        let mut parameter = OsString::from(format!("{name}="));
+        parameter.push(value);
+        command.arg("-D").arg(parameter);
+    }
+    command
+        .arg(&program)
+        .current_dir(&work)
+        .env("HOME", work.join("home"))
+        .env("XDG_CACHE_HOME", work.join("cache"))
+        .env("TMPDIR", work.join("tmp"));
+    Ok(Untrusted {
+        command,
+        input: inside,
+        work,
+        isolated: true,
+    })
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn isolated(_program: &Path, _input: &Path, _work: &Path) -> anyhow::Result<Untrusted> {
+    Err(needed())
 }
 
 #[cfg(test)]
@@ -244,11 +405,12 @@ mod tests {
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
         let work = tempfile::tempdir().unwrap();
-        let (mut command, inside) = command(&script, &input, work.path()).unwrap();
-        assert_eq!(inside, "/input/document.txt");
-        command.arg(&inside).arg(dir.path().join("escaped"));
+        let mut run = command(&script, &input, work.path()).unwrap();
+        assert_eq!(run.input, Path::new("/input/document.txt"));
+        assert_eq!(run.work, Path::new("/work"));
+        run.command.arg(&run.input).arg(dir.path().join("escaped"));
         crate::process::run(
-            &mut command,
+            &mut run.command,
             &bibli_core::CancelToken::new(),
             std::time::Duration::from_secs(10),
         )

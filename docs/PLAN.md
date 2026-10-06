@@ -48,6 +48,199 @@ old MIME name; shared-mime-info 2.5.1 names them `text/x-shellscript`, so it now
 database for the name (`unalias`). The per-change validation history that used to sit here
 is in `docs/STATUS-LOG.md`.
 
+Phase 5 begins without the machines (2026-10-05, ADR-035): no Mac and
+no Windows machine is available, so the phase is split. 5a, on Linux:
+every system's code, compiled and linted from here (`just
+check-cross`: the GNU Windows target and macOS, Zig compiling their
+C), tested where Linux or Wine can. 5b, later, on the machines: the
+original gate. Measured the same day: for Windows every C dependency
+and gpui's backend build, and only bibli's code fails; for macOS
+gpui's backend needs Apple's SDK, so `bibli-ui` and `bibli` are not
+checked there, and core fails first on its manifest (ordinary
+dependencies listed as Linux-only). The dev shell gained the two
+targets, Zig and cargo-zigbuild; `nix develop .#windows` adds Wine.
+
+Phase 5, step A: it compiles everywhere (2026-10-05). `just
+check-cross` is green and part of `just lint-all`: clippy with warnings
+as errors over the default members and their tests for
+`x86_64-pc-windows-gnu`, and over the workspace but `bibli-ui`, `bibli`
+and the native workers for `aarch64-apple-darwin`. Compiled only:
+nothing of it ran on Windows or macOS. The system is reached through
+seams core owns: `fs::Dir` (a folder held open, listed and stat-ed:
+getdents and statx on Linux as before, readdir and fstatat on macOS),
+`fs::stat::{identity, changed}` for metadata in hand, `fs::xattr` (the
+`xattr` crate is core's alone now; Windows answers as a volume keeping
+none), `op/sys.rs` (rename without replacing, swap, reflink, kernel
+copy, pipes, links, permissions, the trash crate's listing),
+`os_path::{from_bytes, from_bytes_ref}` (four plugins' copies of it
+removed), `EntryKind::from(FileType)`. What has no code for a system
+says so (`system::not_yet`): on Windows listing a folder, a stat, a
+rename without replacing, a swap, Usage; on macOS copying a pipe, the
+trash's listing and restore; off Linux writing through to a drive. A
+few predicates answer "unknown" instead (no drive removable, no space,
+no trashes, no change time on Windows), listed in `docs/PORTING.md`
+with the rest. Off Linux the terminal leaves out the primary
+selection, never types a `cd` (who has the terminal is not known), and
+does not follow the shell's folder; Windows starts ConPTY, never run.
+Tests needing Unix (links, modes, scripts) or Linux (pipes made with
+`mknodat`, the freedesktop trash, Baloo, the type database) are gated
+so. Linux: `just lint-all` and `just test-all` pass; its behaviour
+did not change (one rename fallback reads `ENOTSUP` on macOS only).
+The rule is in AGENTS.md ("Every system").
+
+Phase 5, step B: identity, paths and listing (2026-10-05). Windows
+lists and stats (ADR-036): a folder is a handle shared for every use,
+listed through the IDs its records carry (no file opened per row), its
+entries stat-ed by a handle each; a 128-bit ID is folded into
+`EntryId`'s 64 bits, NTFS's kept exactly. Entries carry the system's
+hidden mark (`Entry::hidden`: Windows' attribute, a Mac's `UF_HIDDEN`
+from a stat). Paths: Windows' name rules in `valid_file_name`,
+`PATHEXT` in `find_program`, `os_path::canonical` without `\\?\` for
+every caller, WTF-8 names exact, the home folder read one way, `~\`,
+`file:///C:/` URIs, a drive as one trail segment. Also done early from
+step C, since every test needed it: a rename without replacing on
+Windows (`MoveFileExW`), and a swap refused there as a conflict.
+`just test-windows` runs the Windows build's tests under Wine (nextest
+through cargo-zigbuild, a Wine prefix of its own, no display): core's
+166 pass; four skip their trash part, which Wine's shell lacks
+(`under_wine`). Wine has no 128-bit directory records, so the fallback
+ran and the 128-bit path did not. Off Linux a folder moved while shown
+is not followed; Usage stays Unix's. SQLite is built in on Windows
+(ADR-022 amended). Nothing of this ran on Windows or macOS themselves.
+
+Phase 5, step C: operations (2026-10-05). A copy is the system's where
+it keeps more than the bytes: Windows' `CopyFileExW` (progress and
+Cancel through its routine, the file's alternate streams kept, the mark
+a download carries among them), macOS's `clonefile` when attributes
+are kept; elsewhere the copy is as it was. macOS keeps every attribute
+a copy should (Finder's tags are no `user.*` there) but the two the
+system sets, and copies a pipe with `mkfifo`. With step B's rename
+without replacing and swap refused, that is the step but write-through
+off Linux, which waits for step F's removable drives. Run under Wine:
+the Windows copy (every copy test of core), not its streams (Wine has
+none; the test skips there). Compiled only: everything macOS.
+
+Phase 5, step D: the trash (2026-10-05), Windows' half. Where a trash
+keeps an item and what it says of it is one module
+(`op::records`): freedesktop's pairs as before, and the Recycle Bin's
+`$R` item and `$I` record (versions 1 and 2), so restoring a part,
+taking a file out of the trash and putting it back work on either;
+records are kept as bytes in plans, a freedesktop one serialized as the
+text it was. `trash:` lists the user's folder (by their SID) in each
+local drive's bin. The record format and the listing ran on Linux from
+fixtures; nothing of the Windows trash ran (Wine's bin is the
+freedesktop trash, and its shell trashes nothing). On macOS an item is
+trashed with `trashItemAtURL`, whose resulting path the undo keeps
+(with the companions'), so an undo moves it back; the Mac's trash keeps
+no record of where a file came from, so `trash:` lists nothing there
+and only an undo restores. Compiled only.
+
+Phase 5, step E: the environment (2026-10-05), in part. bibli's own
+settings and cache go where each system keeps an application's
+(`core::folders`; Linux's XDG folders unchanged). The keyring is the
+Credential Manager on Windows (run under Wine's, in its scratch
+prefix) and the Keychain on macOS (compiled only). A terminal opens on
+Windows (Windows Terminal, else a console of its own; a program to run
+gets a console that ends with it, which is what waiting for it waits
+for) and on macOS (`open -a`, no program run in it yet). The first
+weekday is the system locale's (Windows' run under Wine). Types
+(ADR-037, accepted 2026-10-06 as the user chose): the system's own
+registry first, shared-mime-info behind it. macOS asks Uniform Type
+Identifiers (compiled only), Windows the registry's classes (run under
+Wine, in its scratch prefix); the database only says a system's answer
+more precisely, reads the bytes and holds aliases and hierarchy. Its
+reader, `xdg-mime`, is vendored with its Unix-only gate lifted, and
+reads on Windows (run under Wine, from beside the test programs); the
+macOS and Windows packages carry its compiled files beside bibli,
+with its licence and a note of where the source is, compiled from the
+source vendored in `vendor/shared-mime-info` (2.5.1) by
+`tools/package/mime-database.sh` (run on Linux; the package scripts
+never run on a Mac or Windows). Not
+done: icons from the system, Open With from Launch Services or
+Windows' handlers, owners by SID.
+
+Phase 5, step G: isolation (2026-10-06), in part (ADR-039, as the
+user chose). macOS isolates converters and decoders with
+`sandbox-exec` under bibli's profile, the contract bubblewrap has on
+Linux (compiled, never run). `sandbox::command` returns the paths a
+program is given, which only bubblewrap moves (`/input`, `/work`), so
+no caller assumes them (ImageMagick, LibreOffice). Pandoc runs in its
+own `--sandbox` (2.15 or later) on every system, and alone where the
+system isolates nothing (Windows, a Linux without bubblewrap), writing
+relative to its folder; tested on Linux both inside bubblewrap and
+alone. LibreOffice and ImageMagick stay refused without isolation.
+Windows' AppContainer is decided and left for the machine (5b), as
+are Quick Look's and Windows' own thumbnails.
+
+Phase 5, step F: places and volumes (2026-10-05), in part. Windows
+lists its local drives as devices (label and letter, filesystem,
+removable, free space) and the user's own folders (run under Wine);
+macOS its root and the volumes under `/Volumes` the Finder shows
+(`getmntinfo`, compiled only) and its user folders. Not done: eject
+and mount off Linux, Finder's favorites and Quick Access, hearing a
+drive plugged in on Windows. Windows needs no write-through of bibli's
+(it writes removable drives through itself by default); a Mac's does.
+
+Phase 5, steps G and H (2026-10-05), in part. A running instance's
+cache folders were swept off Linux, where `/proc/<pid>` is not:
+whether a process runs is now asked of each system. Isolation was
+chosen per system the next day (step G above, ADR-039); QuickLook and
+the Windows thumbnail cache are not read. On Windows a helper and what it starts are held in a job
+object, ended together (run under Wine). Where the shell works is read
+on macOS too (`proc_pidinfo`, compiled only); the `cd` typed into a
+shell is written for PowerShell and `cmd` as well (tested on Linux),
+though on Windows nothing types it yet: who has the terminal is not
+known there.
+
+Phase 5, step J: keys and the window (2026-10-05), but the drag. The
+standard shortcuts are written `secondary`, which GPUI reads as Cmd on
+a Mac and Ctrl elsewhere, so Linux's keys did not change; bindings are
+compared as GPUI reads them, not as written (`keymap::normal_keys`:
+`ctrl-c` and `secondary-c` are one key on Linux, for the layers and
+for a scheme's `keys.like`); caps say ⌘ and ⌥ on a Mac; Ctrl+click,
+Ctrl+wheel and a kept band are Cmd there. What a Mac reserves (Cmd+H,
+Cmd+Space, Ctrl+arrows) keeps Ctrl. The fonts tried are each system's
+own after Inter. Not done: an outgoing drag on macOS and Windows (a
+gpui patch each), Option as a Mac's copy modifier in a drag, Option+
+arrows for words. Nothing of it ran on a Mac, where bibli-ui is not
+even compiled here.
+
+Phase 5, step I (2026-10-05), in part: MPRIS is registered on the
+free desktops alone (it is D-Bus's); Spotlight answers a tag search on
+a Mac (`mdfind` over Finder's tags, compiled only). Not written: a
+Mac's Now Playing, Windows' media controls, Windows Search.
+
+Phase 5, steps K and L (2026-10-05). Written: a Nix package of bibli
+and its helpers (`packages.default`, `just package-nix`), which
+evaluates and is not built yet (a flake builds from git's tracked
+files, and Phase 5's new files are not tracked until committed); an
+AppImage of it (`just package-appimage`, nix-appimage), not built
+either; the macOS `.app` and `.dmg` (`tools/package/macos.sh`) and the
+Windows `.msi` (`tools/package/windows/bibli.wxs`,
+`tools/package/windows.ps1`), never run, unsigned, without the native
+workers' libraries; a CI matrix for macOS and Windows (`ci.yml`'s
+`native` job, natively built, not blocking until 5b), never run (no
+remote). ADR-038 says what the budgets measure on macOS
+(`phys_footprint`) and Windows (the private working set), 100 MiB each
+until 5b measures; `just idle-pss` says it measures nothing off Linux.
+
+Phase 5a's checks on Linux (2026-10-06): `just lint-all` green (the
+workspace, then Windows and macOS); `just test-all` 1161 passed.
+Under Wine (`just test-windows`, all but bibli-ui, bibli and the
+native workers, whose gpui imports Windows' own ICU, which Wine lacks):
+755 passed, 15 ignored, those needing what Wine lacks passing with a
+word on why. The tests that run Pandoc, ImageMagick and LibreOffice
+(ignored by default) pass on Linux, but for the last's PDF reader
+step, which needs the native workers built.
+`just bench-check` read three of the listing stream's timings over
+budget (`flat100k` complete, `images10k` first batch and complete) on a
+machine loaded by other programs (load average 10 to 15); the last
+commit's bench, built in a worktree and run back to back with this
+one, read the same budgets over by as much, and five paired rounds on
+`images10k` showed no consistent difference (3.7 to 13.9 ms either
+way). To run again on a quiet machine before committing; `just
+idle-pss` was not run (it opens a window in the session).
+
 Calendar periods, one reading (2026-10-05): the deviation "the query language's date
 parser and the timeline's calendar math are duplicated" is closed. Weeks, months and years
 are `bibli_platform::calendar::Period` (the first day of the one holding a day, the next,
@@ -1764,7 +1957,91 @@ Goal: macOS and Windows builds that feel native in the ways that matter.
 - CI on all three OSes; budgets measured on each.
 - Packaging: Nix flake and AppImage/Flatpak, dmg, msi.
 
-**Done when:** the Phase 2 dogfood week is repeated on each OS, and the budgets pass on all three.
+Built on Linux first, run on each system later (ADR-035): 5a below is
+done without a Mac or a Windows machine, 5b is the gate on them.
+`docs/PORTING.md` lists what is Linux's (surveyed 2026-10-05); each
+step removes its items and ends with `just check-cross` green for
+what it touched.
+
+- **A. It compiles everywhere.** Done 2026-10-05 (status above). The targets and Zig in the dev shell,
+  `just check-cross` (Windows: the default members; macOS: all but
+  `bibli-ui` and `bibli`, whose gpui backend needs Apple's SDK). Core's
+  manifest lists its ordinary dependencies for every system (only
+  `inotify` is Linux's); `xattr`, rustix's `fs` and `std::os::unix`
+  move behind `cfg(unix)`; what has no implementation yet on a system
+  errors with its name. Tests compile too. Then `check-cross` joins
+  `lint-all`, so Linux work cannot add new Linux-only code unnoticed.
+- **B. Identity, paths and listing.** Done 2026-10-05 (status above), but Usage. `EntryId` per system: macOS
+  device and inode (stat, `st_birthtime`), Windows the volume serial
+  and the file ID, read with the listing
+  (`GetFileInformationByHandleEx`, `FileIdExtdDirectoryInfo`: no open
+  per file), a 128-bit ReFS ID folded into the 64 bits (an ADR).
+  Listing and stat behind one interface core owns (statx and getdents
+  stay Linux's). Hidden by attribute (Windows `HIDDEN`, macOS
+  `UF_HIDDEN`) beside the leading dot. Paths: no `\\?\` from
+  canonicalization, `valid_file_name` per system, `PATHEXT` in
+  `find_program`, Windows file names as WTF-8 bytes in `os_path`, the
+  home folder from `os_path::home` everywhere, drive letters in the
+  trail and in `file_uri`.
+- **C. Operations.** Done 2026-10-05 (status above), but write-through off Linux (with F). No-replace rename and swap (macOS `renamex_np`
+  `RENAME_EXCL`/`RENAME_SWAP`; Windows `MoveFileExW` without replace,
+  no swap: refused with words), copy (macOS `clonefile`/`fcopyfile`,
+  Windows `CopyFileExW`; ReFS block clone later), write-through
+  (`F_FULLFSYNC`, `FlushFileBuffers`), attributes (macOS keeps every
+  attribute a copy should, not only `user.*`; Windows has none),
+  permissions (mode on Unix, read-only on Windows), special files.
+  The property tests run on each system's code where Wine can.
+- **D. Trash.** Done 2026-10-05 (status above), but listing a Mac's trash. A backend per system behind what core does now:
+  freedesktop as it is; the Windows Recycle Bin by its `$I`/`$R` pairs
+  (a documented record, parsed and written as `.trashinfo` is, tested
+  on fixtures); macOS `~/.Trash` and each volume's `.Trashes/<uid>`
+  through `trashItemAtURL` (the resulting path kept for undo), where
+  the place a file came from is known only for what bibli trashed.
+- **E. The environment.** In part 2026-10-05 (status above): types done 2026-10-06 (ADR-037); icons, Open With and owners not done. Folders (macOS `~/Library/…`, Windows
+  `%APPDATA%`/`%LOCALAPPDATA%`) behind `bibli_core::xdg`'s callers; the
+  MIME database off Linux (an ADR: shared-mime-info is GPL data and
+  bibli is MIT/Apache, so it is installed beside bibli or replaced by
+  the system's types, UTType and the registry); icons, opening and
+  Open With (NSWorkspace and Launch Services; `ShellExecuteExW` and the
+  association handlers); the terminal to open (Terminal or iTerm,
+  Windows Terminal); the keyring (Keychain, Credential Manager); the
+  first weekday (the system's locale); owners (Directory Services,
+  SIDs).
+- **F. Places and volumes.** In part 2026-10-05 (status above): devices and user folders, not eject, favorites or plug events. macOS: `getmntinfo`, DiskArbitration
+  (mount, unmount, eject, removable), Finder's favorites read. Windows:
+  drives and their kinds, removable media, eject, Quick Access read.
+  Bookmarks stay `BookmarkEdit`s with inverses wherever they are
+  written.
+- **G. Thumbnails and isolation.** In part 2026-10-06 (status above): isolation chosen per system (ADR-039), macOS's built, Windows' AppContainer for the machine; thumbnails not done. QuickLook (`QLThumbnailGenerator`),
+  the Windows thumbnail cache (`IThumbnailCache`); the converters that
+  need isolation (LibreOffice, Pandoc, ImageMagick) stay off where no
+  sandbox exists, until one is chosen per system (an ADR).
+- **H. Processes and the terminal.** In part 2026-10-05 (status above): job objects, quoting, macOS's shell folder; not ConPTY run nor Windows' shell folder. Job objects for a helper's tree
+  on Windows; ConPTY through `alacritty_terminal`; following the
+  shell's folder (macOS `proc_pidinfo`, Windows through the shell's
+  own report); PowerShell and `cmd` quoting beside POSIX and fish.
+- **I. Media keys and search hints.** In part 2026-10-05 (status above): Spotlight's tag hints. Now Playing
+  (`MPNowPlayingInfoCenter`) and the system media controls (SMTC) as
+  plugins beside MPRIS, each registered only on its system; Spotlight
+  and Windows Search as hint providers beside Baloo and plocate.
+- **J. Keys and the window.** Done 2026-10-05 (status above), but the outgoing drag. Cmd for the standard shortcuts on macOS
+  (`secondary`, which core already parses); the font family per
+  system; an outgoing drag on macOS and Windows (patch 0001 is
+  Wayland's).
+- **K. Packages and CI.** Written 2026-10-05 (status above); the Linux packages not built yet. On Linux, built and tried here: the Nix
+  package and an AppImage or Flatpak. Written, not run: the `.app` and
+  `.dmg`, the `.msi`, the native workers' libraries per system, a CI
+  matrix (`macos-latest`, `windows-latest`) waiting for a remote.
+- **L. Budgets per system.** Decided 2026-10-05 (ADR-038); measured in 5b. What "own share" and "first frame" mean
+  on macOS (`phys_footprint`) and Windows (private working set), and
+  how each is measured (an ADR); measured in 5b.
+
+**Done when (5a, on Linux):** `just check-cross` is part of
+`lint-all` and green; every step above has its code or is recorded as
+not done, with what ran under Wine and what no machine ran; the Linux
+packages build and start; Linux's tests and budgets are unchanged.
+
+**Done when (5b, the original gate):** the Phase 2 dogfood week is repeated on each OS, and the budgets pass on all three.
 
 ---
 

@@ -302,6 +302,7 @@ impl Shell {
             }
             // Selecting is copying to the desktop's primary selection, as
             // in every terminal on Linux; the middle button pastes it.
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             if screen.selected_text != self.terminal.screen.selected_text
                 && let Some(text) = &screen.selected_text
             {

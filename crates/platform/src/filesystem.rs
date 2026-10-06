@@ -12,15 +12,23 @@ use std::path::Path;
 
 /// Filesystem magic numbers (`statfs`'s `f_type`, from `linux/magic.h`
 /// and the drivers).
+#[cfg(target_os = "linux")]
 const MSDOS: u32 = 0x4d44;
+#[cfg(target_os = "linux")]
 const EXFAT: u32 = 0x2011_bab0;
 /// The kernel's `ntfs3`.
+#[cfg(target_os = "linux")]
 const NTFS: u32 = 0x7366_746e;
 /// Any FUSE filesystem: `ntfs-3g`, `exfat-fuse`, `sshfs`.
+#[cfg(target_os = "linux")]
 const FUSE: u32 = 0x6573_5546;
+#[cfg(target_os = "linux")]
 const SMB: u32 = 0x517b;
+#[cfg(target_os = "linux")]
 const SMB2: u32 = 0xfe53_4d42;
+#[cfg(target_os = "linux")]
 const CIFS: u32 = 0xff53_4d42;
+#[cfg(target_os = "linux")]
 const NFS: u32 = 0x6969;
 
 /// Whether a Mac keeps the attributes of files in `dir` in `._` files, as
@@ -49,12 +57,19 @@ pub fn apple_double(dir: &Path) -> bool {
 
 /// Filesystems that change a file's change time (`ctime`) whenever an
 /// attribute is set on it, as Linux's local ones do.
+#[cfg(target_os = "linux")]
 const EXT: u32 = 0xef53;
+#[cfg(target_os = "linux")]
 const BTRFS: u32 = 0x9123_683e;
+#[cfg(target_os = "linux")]
 const XFS: u32 = 0x5846_5342;
+#[cfg(target_os = "linux")]
 const F2FS: u32 = 0xf2f5_2010;
+#[cfg(target_os = "linux")]
 const TMPFS: u32 = 0x0102_1994;
+#[cfg(target_os = "linux")]
 const ZFS: u32 = 0x2fc1_2fc1;
+#[cfg(target_os = "linux")]
 const BCACHEFS: u32 = 0xca45_1a4e;
 
 /// Whether the change times of files in `dir` tell when their notes
@@ -86,6 +101,7 @@ pub fn change_times_tell(dir: &Path) -> bool {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_home_folders_change_times_tell() {
         // The tests run on the developer's or CI's disk (ext4, btrfs).

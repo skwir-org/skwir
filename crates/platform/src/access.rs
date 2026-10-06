@@ -16,15 +16,18 @@ const SELINUX: &str = "security.selinux";
 /// The facts of `path` beyond its mode, each with its label, in the
 /// order Details shows them; nothing for a file that has none.
 pub fn facts(path: &Path) -> Vec<(&'static str, String)> {
-    let Ok(names) = xattr::list_deref(path) else {
+    let Ok(names) = bibli_core::fs::xattr::list_deref(path) else {
         return Vec::new();
     };
-    let names: Vec<String> = names.filter_map(|n| n.into_string().ok()).collect();
+    let names: Vec<String> = names
+        .into_iter()
+        .filter_map(|n| n.into_string().ok())
+        .collect();
     let read = |name: &str| {
         names
             .iter()
             .any(|n| n == name)
-            .then(|| xattr::get_deref(path, name).ok().flatten())
+            .then(|| bibli_core::fs::xattr::get_deref(path, name).ok().flatten())
             .flatten()
     };
     let mut out = Vec::new();
@@ -287,7 +290,7 @@ mod tests {
             (0x10, 4, NONE),
             (0x20, 4, NONE),
         ]);
-        if xattr::set(&file, ACL_ACCESS, &list).is_err() {
+        if bibli_core::fs::xattr::set(&file, ACL_ACCESS, &list).is_err() {
             eprintln!("skipped: no POSIX ACLs here");
             return;
         }

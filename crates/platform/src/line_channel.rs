@@ -41,8 +41,8 @@ impl<Reply: DeserializeOwned + Send + 'static> LineChannel<Reply> {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
         }
-        let mut child = ChildGuard(command.spawn().with_context(|| format!("start {name}"))?);
-        let input = child.0.stdin.take().context("worker stdin")?;
+        let mut child = ChildGuard::new(command.spawn().with_context(|| format!("start {name}"))?);
+        let input = child.child.stdin.take().context("worker stdin")?;
         #[cfg(unix)]
         {
             // A wedged worker must not trap its manager in a full request
@@ -50,7 +50,7 @@ impl<Reply: DeserializeOwned + Send + 'static> LineChannel<Reply> {
             let flags = rustix::fs::fcntl_getfl(&input)?;
             rustix::fs::fcntl_setfl(&input, flags | rustix::fs::OFlags::NONBLOCK)?;
         }
-        let output = child.0.stdout.take().context("worker stdout")?;
+        let output = child.child.stdout.take().context("worker stdout")?;
         let (tx, replies) = crossbeam_channel::bounded(2);
         std::thread::Builder::new()
             .name(format!("{name}-replies"))
@@ -92,7 +92,7 @@ impl<Reply: DeserializeOwned + Send + 'static> LineChannel<Reply> {
     pub(crate) fn missing_runtime(&mut self) -> bool {
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
         loop {
-            match self.child.0.try_wait() {
+            match self.child.child.try_wait() {
                 Ok(Some(status)) => return status.code() == Some(127),
                 Ok(None) if std::time::Instant::now() < deadline => {
                     std::thread::sleep(std::time::Duration::from_millis(5));

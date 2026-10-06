@@ -231,7 +231,7 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
     // Where files from many folders are listed, the folder one is in, as
     // Nautilus's Open Item Location.
     (
-        "ctrl-alt-o",
+        "secondary-alt-o",
         "show_in_folder",
         Some("pane single !folder !place !restores"),
     ),
@@ -243,31 +243,31 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
     // Deleting for good from anywhere: the shell asks first, as for any
     // plan Undo cannot take back (`Shell::apply_user_plan`).
     ("shift-delete", "delete", Some("pane selection !place")),
-    ("ctrl-c", "clipboard_copy", Some("pane selection")),
+    ("secondary-c", "clipboard_copy", Some("pane selection")),
     // In the trash too: pasted, a file of the trash leaves it as a
     // restore does, to where it is pasted (`op::Move`).
-    ("ctrl-x", "clipboard_cut", Some("pane selection")),
+    ("secondary-x", "clipboard_cut", Some("pane selection")),
     // Into the folder shown, or a place that takes files (a tag gives
     // them itself): a search has neither.
-    ("ctrl-v", "clipboard_paste", Some("pane folder|drops")),
-    ("ctrl-z", "undo", None),
-    ("ctrl-shift-z", "redo", None),
+    ("secondary-v", "clipboard_paste", Some("pane folder|drops")),
+    ("secondary-z", "undo", None),
+    ("secondary-shift-z", "redo", None),
     ("ctrl-y", "redo", None),
-    ("ctrl-a", "select_all", Some("pane")),
-    ("ctrl-shift-i", "select_invert", Some("pane")),
+    ("secondary-a", "select_all", Some("pane")),
+    ("secondary-shift-i", "select_invert", Some("pane")),
     ("escape", "select_none", Some("pane")),
     // With nothing selected Escape has one thing left to cancel: a pending
     // cut or copy. Later bindings win, and `empty` holds only then.
     ("escape", "clipboard_clear", Some("pane empty")),
     ("f5", "refresh", None),
-    ("ctrl-r", "refresh", None),
+    ("secondary-r", "refresh", None),
     // The folder or search being looked at, as in Nautilus and browsers.
-    ("ctrl-d", "keep", None),
+    ("secondary-d", "keep", None),
     // Dolphin's key for it: Ctrl+T opens a tab, as everywhere.
     ("shift-f4", "open_terminal", None),
-    ("ctrl-t", "tab.new", None),
-    ("ctrl-w", "tab.close", None),
-    ("ctrl-shift-t", "tab.reopen", None),
+    ("secondary-t", "tab.new", None),
+    ("secondary-w", "tab.close", None),
+    ("secondary-shift-t", "tab.reopen", None),
 ];
 
 // Keys for core commands that take arguments: moving between tabs, and
@@ -505,7 +505,7 @@ mod tests {
                 .keymap
                 .all()
                 .iter()
-                .any(|b| b.keys == "ctrl-z" && &*b.command.name == "undo")
+                .any(|b| b.keys == "secondary-z" && &*b.command.name == "undo")
         );
         assert!(
             app.registry

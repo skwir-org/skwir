@@ -166,6 +166,8 @@ fn is_page(member: &archive::Member) -> bool {
             .is_some_and(|mime| thumb_providers::decodes(mime.as_str()))
 }
 #[cfg(test)]
+// Helpers of the tests that run on Linux alone (ADR-035).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
 mod tests {
     use super::*;
 
@@ -180,6 +182,8 @@ mod tests {
         }
     }
 
+    // Types from the free desktops' database (step E, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn pages_sort_numerically_without_what_tools_left_beside_them() {
         let mut pages: Vec<_> = [

@@ -1,0 +1,27 @@
+[package]
+name = "xdg-mime"
+description = "A library for loading and querying the XDG shared MIME database"
+version = "0.4.0" # Keep in sync with html_root_url in src/lib.rs
+authors = ["Emmanuele Bassi <ebassi@gnome.org>"]
+edition = "2021"
+repository = "https://github.com/ebassi/xdg-mime-rs"
+documentation = "https://docs.rs/xdg_mime"
+readme = "README.md"
+keywords = ["linux", "mime", "xdg", "configuration"]
+license = "Apache-2.0"
+exclude = [".github/*", ".gitignore"]
+
+[lib]
+name = "xdg_mime"
+path = "src/lib.rs"
+
+[dependencies]
+dirs-next = "2.0"
+glob = "0.3.0"
+mime = "0.3"
+nom = "^7"
+unicase = "2.3.0"
+
+[package.metadata.docs.rs]
+default-target = "x86_64-unknown-linux-gnu"
+targets = ["x86_64-unknown-linux-gnu", "i686-unknown-linux-gnu"]

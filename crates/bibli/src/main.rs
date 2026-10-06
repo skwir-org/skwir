@@ -50,7 +50,7 @@ fn main() -> anyhow::Result<()> {
             Some(saved) if app.restore_tabs(&saved) => None,
             _ => {
                 let home =
-                    std::env::var_os("HOME").map_or_else(|| "/".into(), std::path::PathBuf::from);
+                    bibli_core::os_path::home().unwrap_or_else(|| std::path::PathBuf::from("/"));
                 Some(folder(bibli_core::settings::startup_folder(
                     &app.settings,
                     &home,

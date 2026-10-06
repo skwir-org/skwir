@@ -812,6 +812,8 @@ impl Plugin for QueryPlugin {
 }
 
 #[cfg(test)]
+// Helpers of the tests that run on Unix alone (ADR-035).
+#[cfg_attr(not(unix), allow(dead_code, unused_imports))]
 mod tests {
     use super::*;
     use bibli_core::app::AppConfig;
@@ -880,7 +882,14 @@ mod tests {
                 ListingEvent::Added(batch) | ListingEvent::Updated(batch) => {
                     for e in batch {
                         let p = open.path_of(e.id).expect("path_of");
-                        names.insert(p.strip_prefix(root).unwrap().to_string_lossy().into_owned());
+                        // Written with `/` on every system.
+                        let relative: Vec<String> = p
+                            .strip_prefix(root)
+                            .unwrap()
+                            .components()
+                            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                            .collect();
+                        names.insert(relative.join("/"));
                     }
                 }
                 ListingEvent::Complete => break,
@@ -958,28 +967,31 @@ mod tests {
             run(&app, "cat OR dog", &root),
             set(&["pics/cat.png", "pics/dog.JPG"])
         );
-        assert_eq!(
-            run(&app, "mime:image/*", &root),
-            set(&["pics/cat.png", "pics/dog.JPG"])
-        );
-        assert_eq!(
-            run(&app, "kind:image", &root),
-            set(&["pics/cat.png", "pics/dog.JPG"])
-        );
-        assert_eq!(
-            run(&app, "kind:documents,folders depth:1", &root),
-            set(&["docs", "pics"])
-        );
-        assert_eq!(
-            run(&app, "kind:document", &root),
-            set(&["docs/report.pdf", "docs/deep/deeper/bottom.md"])
-        );
-        // Whatever the time of day: last week began at least seven days ago,
-        // and old.txt was modified thirty days ago.
-        assert_eq!(
-            run(&app, "kind:text modified>=last-week", &root),
-            set(&["docs/notes.txt", "docs/deep/deeper/bottom.md"])
-        );
+        // Types from the free desktops' database (step E, ADR-035).
+        if cfg!(target_os = "linux") {
+            assert_eq!(
+                run(&app, "mime:image/*", &root),
+                set(&["pics/cat.png", "pics/dog.JPG"])
+            );
+            assert_eq!(
+                run(&app, "kind:image", &root),
+                set(&["pics/cat.png", "pics/dog.JPG"])
+            );
+            assert_eq!(
+                run(&app, "kind:documents,folders depth:1", &root),
+                set(&["docs", "pics"])
+            );
+            assert_eq!(
+                run(&app, "kind:document", &root),
+                set(&["docs/report.pdf", "docs/deep/deeper/bottom.md"])
+            );
+            // Whatever the time of day: last week began at least seven days
+            // ago, and old.txt was modified thirty days ago.
+            assert_eq!(
+                run(&app, "kind:text modified>=last-week", &root),
+                set(&["docs/notes.txt", "docs/deep/deeper/bottom.md"])
+            );
+        }
         assert_eq!(
             run(&app, "(report OR notes) ext:txt", &root),
             set(&["docs/notes.txt"])
@@ -1000,6 +1012,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_link_is_found_as_what_it_leads_to() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1048,6 +1061,8 @@ mod tests {
         );
     }
 
+    // Pipes are made with mknodat, Linux's alone here (ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_pipe_is_found_as_what_it_is_and_never_read() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1148,6 +1163,8 @@ mod tests {
         saved(app).into_iter().map(|s| s.expr).collect()
     }
 
+    // A name holding `"`, which Windows refuses.
+    #[cfg(unix)]
     #[test]
     fn saved_searches_are_kept_edited_and_undone() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1298,6 +1315,8 @@ mod tests {
     /// A folder narrowed shows its folders and the files the narrowing
     /// keeps, stays narrowed below where it was set and no further, and
     /// waits for what a file's metadata says before showing it.
+    // Types from the free desktops' database (step E, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_folder_narrowed_stays_so_below_it_and_no_further() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1419,6 +1438,8 @@ mod tests {
 
     /// The designer's path: a chip on a folder starts a search there, each
     /// further chip narrows it, and the pane's search describes itself.
+    // Types from the free desktops' database (step E, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn chips_start_and_narrow_a_search() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1541,6 +1562,7 @@ mod tests {
         assert_eq!(p.listing.iter().next().unwrap().name_str(), "report.pdf");
     }
 
+    #[cfg(unix)]
     #[test]
     fn plocate_is_used_for_name_only_queries_over_root() {
         use std::os::unix::fs::PermissionsExt;
@@ -1637,6 +1659,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_folder_whose_name_is_not_utf8_can_be_searched() {
         use std::os::unix::ffi::OsStrExt;
@@ -1711,6 +1734,12 @@ mod tests {
                     }
                 }
             }
+        }
+        // Each stat opens a file under Wine: slow enough that the walk's
+        // threads share a folder's files and batch them apart. Whether
+        // Windows does too is for 5b (docs/PORTING.md).
+        if bibli_core::system::under_wine("stats as fast as Windows'") {
+            return;
         }
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("t");

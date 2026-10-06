@@ -344,10 +344,6 @@ fn pane_view(app: &App, pane: PaneId) -> anyhow::Result<(PathBuf, bool, CancelTo
     Ok((dir, p.sort.show_hidden, p.location_lifetime()))
 }
 
-fn is_hidden(name: &std::ffi::OsStr) -> bool {
-    name.as_encoded_bytes().starts_with(b".")
-}
-
 /// Every entry below `root` (not `root` itself), folded by day. `None` when
 /// cancelled.
 fn walk_days(root: &Path, hidden: bool, cancel: &CancelToken) -> Option<Days> {
@@ -360,7 +356,7 @@ fn walk_days(root: &Path, hidden: bool, cancel: &CancelToken) -> Option<Days> {
         }
         if let Ok(rd) = std::fs::read_dir(dir) {
             for e in rd.flatten() {
-                if !hidden && is_hidden(&e.file_name()) {
+                if !hidden && bibli_core::fs::is_hidden(&e) {
                     continue;
                 }
                 // `DirEntry::metadata` does not follow links: a link is
@@ -702,7 +698,8 @@ mod tests {
         assert_eq!((h.bucket, h.bars.len()), (Bucket::Year, 10));
         // A bogus far-future date does not flatten everything else.
         let mut samples: Vec<_> = (1..=28).map(|d| (at(2026, 2, d), 1)).collect();
-        samples.push((UNIX_EPOCH + Duration::from_secs(u64::MAX / 2), 1));
+        // The year 9892: far, and still a time Windows can hold.
+        samples.push((UNIX_EPOCH + Duration::from_secs(250_000_000_000), 1));
         let h = histogram(samples, Bucket::Day, 0);
         assert_eq!(h.bucket, Bucket::Year);
         assert!(h.bars.len() <= MAX_BARS);

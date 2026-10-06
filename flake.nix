@@ -23,9 +23,13 @@
       };
       inherit (pkgs) lib stdenv;
 
-      # Stable toolchain with the components the editor and CI need.
+      # Stable toolchain with the components the editor and CI need. The
+      # Windows and macOS targets let `just check-cross` compile and lint
+      # those builds from Linux (Phase 5): Zig is their C compiler, so the
+      # C in ring, mimalloc or psm needs neither Apple's nor Microsoft's SDK.
       rustToolchain = pkgs.rust-bin.stable.latest.default.override {
         extensions = ["rust-src" "rust-analyzer" "clippy" "rustfmt" "llvm-tools"];
+        targets = ["x86_64-pc-windows-gnu" "aarch64-apple-darwin"];
       };
 
       # Native libraries needed to build and run wgpu / GPUI / Floem on Linux.
@@ -99,6 +103,14 @@
           jq
           vulkan-tools # vulkaninfo for the toolkit spike
           pandoc # Office documents read as text, without LibreOffice
+          zig # the C compiler of the Windows and macOS checks
+          cargo-zigbuild
+          # The type database the macOS and Windows packages carry,
+          # compiled from vendor/shared-mime-info (ADR-037): the program
+          # alone, so the shell's data folders keep the desktop's database.
+          (writeShellScriptBin "update-mime-database" ''
+            exec ${shared-mime-info}/bin/update-mime-database "$@"
+          '')
         ]
         ++ lib.optionals stdenv.hostPlatform.isLinux [
           bubblewrap # isolated Office document previews
@@ -134,6 +146,56 @@
       # footprint. PDFium is dynamically loaded only by bibli-pdf-worker.
       devShells.pdf = self.devShells.${system}.default.overrideAttrs (_: {
         BIBLI_PDFIUM_LIBRARY = "${pkgs.pdfium}/lib/libpdfium${stdenv.hostPlatform.extensions.sharedLibrary}";
+      });
+      # bibli and its helpers as `just dist` builds them, for Linux
+      # (Phase 5, step K): the helpers beside bibli, where it finds them,
+      # and what wgpu and GStreamer load at run time on its path. Built
+      # from the git tree: only tracked files are its source. The tests
+      # need a session and fixtures of their own (`just test-all`), not run
+      # here.
+      packages.default = let
+        rustPlatform = pkgs.makeRustPlatform {
+          cargo = rustToolchain;
+          rustc = rustToolchain;
+        };
+      in
+        rustPlatform.buildRustPackage {
+          pname = "bibli";
+          version = "0.0.1";
+          src = self;
+          cargoLock.lockFile = ./Cargo.lock;
+          cargoBuildFlags = map (p: "--package=${p}") [
+            "bibli"
+            "bibli-pdf-worker"
+            "bibli-poppler-worker"
+            "bibli-mupdf-worker"
+            "bibli-media-worker"
+            "bibli-archive-worker"
+            "bibli-mermaid-worker"
+            "bibli-model-worker"
+          ];
+          doCheck = false;
+          inherit buildInputs;
+          nativeBuildInputs = [pkgs.pkg-config pkgs.cmake pkgs.clang pkgs.makeWrapper];
+          LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+          postFixup = lib.optionalString stdenv.hostPlatform.isLinux ''
+            wrapProgram $out/bin/bibli \
+              --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath linuxRuntimeLibs} \
+              --set-default GST_PLUGIN_SYSTEM_PATH_1_0 ${lib.makeSearchPath "lib/gstreamer-1.0" mediaPlugins}
+          '';
+          meta = {
+            description = "An experimental file manager, GPU-drawn, for humans, scripts and agents";
+            license = with lib.licenses; [mit asl20];
+            mainProgram = "bibli";
+          };
+        };
+
+      # For running the Windows build's tests under Wine (Phase 5). Wine
+      # is not Windows: it answers for the logic (paths, identity, records),
+      # never for the shell's behaviour. Kept out of the default shell, whose
+      # closure it would grow by about 1.5 GB.
+      devShells.windows = self.devShells.${system}.default.overrideAttrs (old: {
+        nativeBuildInputs = old.nativeBuildInputs ++ lib.optionals stdenv.hostPlatform.isLinux [pkgs.wine64Packages.stable];
       });
     });
 }

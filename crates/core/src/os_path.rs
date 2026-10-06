@@ -50,16 +50,114 @@ fn os_bytes(s: &OsStr) -> &[u8] {
 #[cfg(unix)]
 // Infallible here; the non-Unix twin can fail and callers see one signature.
 #[allow(clippy::unnecessary_wraps)]
-fn from_bytes(bytes: Vec<u8>) -> Result<OsString, String> {
+fn decode_bytes(bytes: Vec<u8>) -> Result<OsString, String> {
     use std::os::unix::ffi::OsStringExt;
     Ok(OsString::from_vec(bytes))
 }
 
 #[cfg(not(unix))]
-fn from_bytes(bytes: Vec<u8>) -> Result<OsString, String> {
+fn decode_bytes(bytes: Vec<u8>) -> Result<OsString, String> {
+    #[cfg(windows)]
+    if let Some(units) = wtf8_units(&bytes) {
+        return Ok(std::os::windows::ffi::OsStringExt::from_wide(&units));
+    }
     String::from_utf8(bytes)
         .map(OsString::from)
         .map_err(|e| e.to_string())
+}
+
+/// A name or a path from bytes: those `OsStr::as_encoded_bytes` gave, or
+/// those another program wrote (a `.trashinfo`, mountinfo, an index).
+/// Exact on Unix, where a name is bytes, and on Windows, where it is
+/// WTF-8 (UTF-8 that may hold the lone surrogates a Windows name can);
+/// what is neither is read with what is not UTF-8 replaced.
+pub fn from_bytes(bytes: Vec<u8>) -> OsString {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        OsString::from_vec(bytes)
+    }
+    #[cfg(not(unix))]
+    {
+        #[cfg(windows)]
+        if let Some(units) = wtf8_units(&bytes) {
+            return std::os::windows::ffi::OsStringExt::from_wide(&units);
+        }
+        match String::from_utf8(bytes) {
+            Ok(text) => OsString::from(text),
+            Err(e) => OsString::from(String::from_utf8_lossy(e.as_bytes()).into_owned()),
+        }
+    }
+}
+
+/// [`from_bytes`] without a copy where it can: borrowed on Unix, and
+/// elsewhere when the bytes are UTF-8.
+pub fn from_bytes_ref(bytes: &[u8]) -> Cow<'_, OsStr> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        Cow::Borrowed(OsStr::from_bytes(bytes))
+    }
+    #[cfg(not(unix))]
+    match std::str::from_utf8(bytes) {
+        Ok(text) => Cow::Borrowed(OsStr::new(text)),
+        Err(_) => Cow::Owned(from_bytes(bytes.to_vec())),
+    }
+}
+
+/// The UTF-16 units WTF-8 `bytes` stand for: UTF-8 in which a lone
+/// surrogate (`U+D800` to `U+DFFF`, unpaired) may stand too, as Windows
+/// names hold them. `None` for bytes that are not WTF-8: not UTF-8 so
+/// extended, overlong, or a pair of surrogates written apart. Tested
+/// everywhere.
+#[cfg(any(windows, test))]
+fn wtf8_units(bytes: &[u8]) -> Option<Vec<u16>> {
+    let continued = |b: Option<&u8>| {
+        b.filter(|b| (0x80..0xC0).contains(*b))
+            .map(|b| u32::from(b & 0x3F))
+    };
+    let mut units: Vec<u16> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while let Some(&lead) = bytes.get(i) {
+        let (point, len) = match lead {
+            0x00..0x80 => (u32::from(lead), 1),
+            0xC2..0xE0 => (
+                (u32::from(lead & 0x1F) << 6) | continued(bytes.get(i + 1))?,
+                2,
+            ),
+            0xE0..0xF0 => {
+                let point = (u32::from(lead & 0x0F) << 12)
+                    | (continued(bytes.get(i + 1))? << 6)
+                    | continued(bytes.get(i + 2))?;
+                (point >= 0x800).then_some((point, 3))?
+            }
+            0xF0..0xF5 => {
+                let point = (u32::from(lead & 0x07) << 18)
+                    | (continued(bytes.get(i + 1))? << 12)
+                    | (continued(bytes.get(i + 2))? << 6)
+                    | continued(bytes.get(i + 3))?;
+                ((0x1_0000..0x11_0000).contains(&point)).then_some((point, 4))?
+            }
+            _ => return None,
+        };
+        // A high surrogate then a low one is a character, written in four
+        // bytes: written apart, they are not WTF-8. (A high surrogate last
+        // came alone: a character's pair ends with its low one.)
+        if (0xDC00..0xE000).contains(&point)
+            && units.last().is_some_and(|u| (0xD800..0xDC00).contains(u))
+        {
+            return None;
+        }
+        if let Ok(unit) = u16::try_from(point) {
+            units.push(unit);
+        } else {
+            let point = point - 0x1_0000;
+            units.push(0xD800 | u16::try_from(point >> 10).ok()?);
+            units.push(0xDC00 | u16::try_from(point & 0x3FF).ok()?);
+        }
+        i += len;
+    }
+    Some(units)
 }
 
 /// Serialize any `AsRef<OsStr>` (a `Path`, `PathBuf`, `OsString`) losslessly.
@@ -71,9 +169,61 @@ pub fn serialize<P: AsRef<OsStr>, S: Serializer>(path: &P, s: S) -> Result<S::Ok
 pub fn deserialize<'de, P: From<OsString>, D: Deserializer<'de>>(d: D) -> Result<P, D::Error> {
     let os = match Repr::deserialize(d)? {
         Repr::Text(text) => OsString::from(text.into_owned()),
-        Repr::Bytes { bytes } => from_bytes(bytes.into_owned()).map_err(D::Error::custom)?,
+        Repr::Bytes { bytes } => decode_bytes(bytes.into_owned()).map_err(D::Error::custom)?,
     };
     Ok(P::from(os))
+}
+
+/// `#[serde(with = "crate::os_path::bytes")]` on a `Vec<u8>` that is
+/// mostly text (what a trash says of an item): a string when it is UTF-8,
+/// `{"bytes": [..]}` otherwise, as a path is written.
+pub mod bytes {
+    use super::{Cow, Deserialize, Deserializer, Repr, Serialize, Serializer};
+
+    /// # Errors
+    /// The serializer's.
+    #[allow(clippy::ptr_arg)]
+    pub fn serialize<S: Serializer>(bytes: &Vec<u8>, s: S) -> Result<S::Ok, S::Error> {
+        match std::str::from_utf8(bytes) {
+            Ok(text) => Repr::Text(Cow::Borrowed(text)),
+            Err(_) => Repr::Bytes {
+                bytes: Cow::Borrowed(bytes),
+            },
+        }
+        .serialize(s)
+    }
+
+    /// # Errors
+    /// The deserializer's.
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
+        Ok(match Repr::deserialize(d)? {
+            Repr::Text(text) => text.into_owned().into_bytes(),
+            Repr::Bytes { bytes } => bytes.into_owned(),
+        })
+    }
+}
+
+/// [`bytes`] for an `Option<Vec<u8>>`.
+pub mod bytes_opt {
+    use super::{Deserialize, Deserializer, Serializer};
+
+    /// # Errors
+    /// The serializer's.
+    #[allow(clippy::ref_option)]
+    pub fn serialize<S: Serializer>(bytes: &Option<Vec<u8>>, s: S) -> Result<S::Ok, S::Error> {
+        match bytes {
+            Some(bytes) => super::bytes::serialize(bytes, s),
+            None => s.serialize_none(),
+        }
+    }
+
+    /// # Errors
+    /// The deserializer's.
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<u8>>, D::Error> {
+        #[derive(Deserialize)]
+        struct Wrapped(#[serde(with = "super::bytes")] Vec<u8>);
+        Ok(Option::<Wrapped>::deserialize(d)?.map(|Wrapped(bytes)| bytes))
+    }
 }
 
 /// A path as a command argument or result: lossless in JSON, see the module docs.
@@ -162,21 +312,115 @@ pub fn home() -> Option<PathBuf> {
     dirs::home_dir()
 }
 
-/// The executable `program` would run as: a path containing `/` is taken as
-/// is, anything else is searched on `PATH`. Only regular files with an
-/// execute bit count.
+/// `std::fs::canonicalize`, the one way a path is made absolute and freed
+/// of its links: on Windows without the `\\?\` the system puts before
+/// it where the path reads the same without (`C:\…`, `\\server\share\…`),
+/// so it compares, joins and shows as every other path does.
+///
+/// # Errors
+/// As `std::fs::canonicalize`: nothing there, or a link that leads
+/// nowhere.
+pub fn canonical(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
+    std::fs::canonicalize(path).map(plain)
+}
+
+/// `path` without the `\\?\` Windows puts before a path it resolved
+/// (`canonical`, a handle's final path), where it reads the same
+/// without; `path` itself elsewhere.
+pub fn plain(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    if let Some(plain) = path.to_str().and_then(without_verbatim) {
+        return PathBuf::from(plain);
+    }
+    path
+}
+
+/// A Windows path written `\\?\C:\…` or `\\?\UNC\server\…` as it
+/// reads without the prefix, when it reads the same: shorter than
+/// `MAX_PATH`, and no name the prefix let through that Windows would
+/// read otherwise (`CON`, a trailing dot). Tested everywhere.
+#[cfg(any(windows, test))]
+fn without_verbatim(path: &str) -> Option<String> {
+    let (plain, names) = if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+        (format!(r"\\{rest}"), rest)
+    } else {
+        let rest = path.strip_prefix(r"\\?\")?;
+        let drive = rest.as_bytes();
+        if !(drive.len() >= 3 && drive[0].is_ascii_alphabetic() && drive[1..3] == *b":\\") {
+            return None;
+        }
+        (rest.to_owned(), &rest[3..])
+    };
+    let reads_the_same = plain.len() < 260
+        && names
+            .split('\\')
+            .filter(|name| !name.is_empty())
+            .all(|name| crate::op::windows_name_problem(name).is_none());
+    reads_the_same.then_some(plain)
+}
+
+/// The executable `program` would run as: a path containing a separator
+/// is taken as is, anything else is searched on `PATH`. On Unix only
+/// regular files with an execute bit count; on Windows a file counts by
+/// its extension, `PATHEXT`'s (`zoxide` runs as `zoxide.exe`).
 pub fn find_program(program: impl AsRef<OsStr>) -> Option<PathBuf> {
     let program = Path::new(program.as_ref());
     if program.as_os_str().is_empty() {
         return None;
     }
     if program.components().count() > 1 || program.is_absolute() {
-        return is_executable(program).then(|| program.to_path_buf());
+        return names_of(program).into_iter().find(|p| is_executable(p));
     }
     let paths = std::env::var_os("PATH")?;
-    std::env::split_paths(&paths)
-        .map(|dir| dir.join(program))
-        .find(|candidate| is_executable(candidate))
+    std::env::split_paths(&paths).find_map(|dir| {
+        names_of(&dir.join(program))
+            .into_iter()
+            .find(|candidate| is_executable(candidate))
+    })
+}
+
+/// The files `program` may be: itself on Unix; on Windows itself when its
+/// extension is an executable's, then with each of `PATHEXT`'s.
+fn names_of(program: &Path) -> Vec<PathBuf> {
+    #[cfg(windows)]
+    {
+        let pathext = std::env::var("PATHEXT").unwrap_or_default();
+        windows_names(program, &pathext)
+    }
+    #[cfg(not(windows))]
+    {
+        vec![program.to_path_buf()]
+    }
+}
+
+/// [`names_of`] on Windows, with `pathext` as `PATHEXT` says it
+/// (`.COM;.EXE;.BAT;.CMD` when it says nothing). Tested everywhere.
+#[cfg(any(windows, test))]
+fn windows_names(program: &Path, pathext: &str) -> Vec<PathBuf> {
+    let pathext = if pathext.trim().is_empty() {
+        ".COM;.EXE;.BAT;.CMD"
+    } else {
+        pathext
+    };
+    let extensions: Vec<&str> = pathext
+        .split(';')
+        .map(str::trim)
+        .filter(|e| e.starts_with('.') && e.len() > 1)
+        .collect();
+    let mut names = Vec::new();
+    let own = program
+        .extension()
+        .and_then(OsStr::to_str)
+        .map(|e| format!(".{e}"));
+    if own.is_some_and(|own| extensions.iter().any(|e| e.eq_ignore_ascii_case(&own))) {
+        names.push(program.to_path_buf());
+    }
+    for extension in extensions {
+        let mut name = program.as_os_str().to_owned();
+        name.push(extension.to_ascii_lowercase());
+        names.push(PathBuf::from(name));
+    }
+    names
 }
 
 fn is_executable(path: &Path) -> bool {
@@ -226,5 +470,66 @@ mod tests {
         assert!(find_program("").is_none());
         assert!(find_program("/").is_none());
         assert!(find_program("definitely-not-a-bibli-program").is_none());
+    }
+
+    #[test]
+    fn windows_runs_a_program_by_its_extensions() {
+        let names = |program: &str, pathext: &str| -> Vec<String> {
+            windows_names(Path::new(program), pathext)
+                .into_iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect()
+        };
+        assert_eq!(
+            names("zoxide", ""),
+            ["zoxide.com", "zoxide.exe", "zoxide.bat", "zoxide.cmd"]
+        );
+        assert_eq!(
+            names("tool.EXE", ".COM;.EXE"),
+            ["tool.EXE", "tool.EXE.com", "tool.EXE.exe"],
+            "an executable's name is itself first"
+        );
+        assert_eq!(
+            names("python3.11", ".EXE;;bad;.PY "),
+            ["python3.11.exe", "python3.11.py"],
+            "a dot that is no executable's extension is part of the name"
+        );
+    }
+
+    #[test]
+    fn a_windows_path_loses_its_prefix_where_it_reads_the_same() {
+        assert_eq!(
+            without_verbatim(r"\\?\C:\Users\it's me\notes.txt").as_deref(),
+            Some(r"C:\Users\it's me\notes.txt")
+        );
+        assert_eq!(without_verbatim(r"\\?\D:\").as_deref(), Some(r"D:\"));
+        assert_eq!(
+            without_verbatim(r"\\?\UNC\server\share\a b").as_deref(),
+            Some(r"\\server\share\a b")
+        );
+        assert_eq!(without_verbatim(r"C:\already"), None, "no prefix");
+        assert_eq!(without_verbatim(r"\\?\Volume{0-1}\x"), None, "no drive");
+        assert_eq!(without_verbatim(r"\\?\C:\a\CON"), None, "a device");
+        assert_eq!(without_verbatim(r"\\?\C:\a\dot."), None, "a trailing dot");
+        let long = format!(r"\\?\C:\{}", "x".repeat(300));
+        assert_eq!(without_verbatim(&long), None, "past MAX_PATH");
+    }
+
+    #[test]
+    fn windows_names_are_read_from_wtf8_exactly() {
+        let units = |bytes: &[u8]| wtf8_units(bytes);
+        assert_eq!(units(b"a b"), Some(vec![0x61, 0x20, 0x62]));
+        assert_eq!(units("été".as_bytes()), Some(vec![0xE9, 0x74, 0xE9]));
+        assert_eq!(units("😀".as_bytes()), Some(vec![0xD83D, 0xDE00]));
+        // A lone surrogate, as a Windows name may hold one.
+        assert_eq!(units(b"x\xED\xA0\x80y"), Some(vec![0x78, 0xD800, 0x79]));
+        assert_eq!(units(b"\xED\xB0\x80"), Some(vec![0xDC00]));
+        // Paired surrogates written apart, overlong, truncated, past U+10FFFF.
+        assert_eq!(units(b"\xED\xA0\x80\xED\xB0\x80"), None);
+        assert_eq!(units(b"\xC0\x80"), None);
+        assert_eq!(units(b"\xE0\x80\x80"), None);
+        assert_eq!(units(b"\xE2\x82"), None);
+        assert_eq!(units(b"\xF4\x90\x80\x80"), None);
+        assert_eq!(units(b"\xFF"), None);
     }
 }

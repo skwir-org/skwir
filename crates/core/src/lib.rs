@@ -17,6 +17,8 @@
 //! - [`terminal`]: the screen a terminal shows and what it is sent (ADR-019).
 //! - [`thumbs`]: the thumbnail service: providers, LRU of decoded images, viewport priority.
 //! - [`workspace`]: panes, selection, focus; [`tabs`]: the tabs that group panes.
+//! - [`system`]: the system's name, and what is not written for it yet (ADR-035);
+//!   [`folders`]: bibli's own folders, where each system keeps them.
 //! - [`collate`] and [`lru`]: the natural name order and the byte-budgeted LRU every cache shares.
 //! - [`app`]: the object that ties them together and hosts the built-in commands.
 //!
@@ -32,6 +34,7 @@ pub mod companions;
 pub mod document;
 pub mod entry;
 pub mod fields;
+pub mod folders;
 pub mod fs;
 pub mod geo;
 pub mod hints;
@@ -51,6 +54,7 @@ pub mod preview;
 pub mod registry;
 pub mod scheduler;
 pub mod settings;
+pub mod system;
 pub mod tabs;
 pub mod tally;
 pub mod terminal;

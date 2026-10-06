@@ -93,7 +93,7 @@ mod tests {
         assert!(open_regular(dir.path()).is_err());
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_fifo_without_a_writer_is_refused_without_blocking() {
         let dir = tempfile::tempdir().unwrap();

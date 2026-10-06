@@ -234,9 +234,13 @@ impl Plugin for ShellPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use bibli_core::app::AppConfig;
+    #[cfg(unix)]
     use bibli_core::location::Location;
+    #[cfg(unix)]
     use std::sync::Arc;
+    #[cfg(unix)]
     use std::time::Duration;
 
     #[test]
@@ -272,6 +276,7 @@ mod tests {
 
     /// Runs the argv without a terminal, with a `$SHELL` that exits at once,
     /// and returns what the command printed.
+    #[cfg(unix)]
     fn output_of(program: &str, paths: &[PathBuf]) -> String {
         let argv = run_argv(program, "printf '<%s>'", paths);
         let out = std::process::Command::new(&argv[0])
@@ -283,6 +288,7 @@ mod tests {
         String::from_utf8(out.stdout).unwrap()
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_command_sees_each_path_as_one_argument() {
         let paths = [PathBuf::from("/x/a b"), PathBuf::from("/x/it's $HOME")];
@@ -304,6 +310,7 @@ mod tests {
         assert_eq!(argv.last().unwrap(), raw.as_os_str());
     }
 
+    #[cfg(unix)]
     #[test]
     fn run_launches_the_terminal_with_the_selection() {
         use std::os::unix::fs::PermissionsExt;

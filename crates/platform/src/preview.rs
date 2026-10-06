@@ -782,22 +782,29 @@ fn convert_office(
 <item oor:path="/org.openoffice.Office.Calc/Content/Update"><prop oor:name="Link" oor:op="fuse"><value>2</value></prop></item>
 </oor:items>"#,
     )?;
-    let (mut command, source) = crate::sandbox::command(office, input, work)?;
+    let mut run = crate::sandbox::command(office, input, work)?;
     // The sandbox passes its environment on: no display, `LibreOffice`'s
-    // headless backend.
-    command.env("SAL_USE_VCLPLUGIN", "svp").args([
-        "-env:UserInstallation=file:///work/profile",
-        "--headless",
-        "--nologo",
-        "--nodefault",
-        "--norestore",
-        "--convert-to",
-        output_format,
-        "--outdir",
-        "/work",
-    ]);
-    command.arg(source);
-    process::run(&mut command, cancel, CONVERT_TIMEOUT)?;
+    // headless backend (Linux's; elsewhere `--headless` alone).
+    if cfg!(target_os = "linux") {
+        run.command.env("SAL_USE_VCLPLUGIN", "svp");
+    }
+    run.command
+        .arg(format!(
+            "-env:UserInstallation={}",
+            crate::uri::file_uri(&run.work.join("profile"))
+        ))
+        .args([
+            "--headless",
+            "--nologo",
+            "--nodefault",
+            "--norestore",
+            "--convert-to",
+            output_format,
+            "--outdir",
+        ])
+        .arg(&run.work)
+        .arg(&run.input);
+    process::run(&mut run.command, cancel, CONVERT_TIMEOUT)?;
     Ok(())
 }
 
@@ -819,6 +826,8 @@ mod tests {
         }
     }
 
+    // Types from the free desktops' database (step E, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn asf_containers_are_media_even_with_application_mime() {
         let tmp = tempfile::tempdir().unwrap();
@@ -847,6 +856,8 @@ mod tests {
         assert!(video.accepts(&req));
     }
 
+    // Types from the free desktops' database (step E, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn office_documents_are_known_by_type() {
         let office = |name: &str| super::is_office(Path::new(name), None);
@@ -863,6 +874,8 @@ mod tests {
         assert!(!super::is_office(Path::new("a.docx"), Some("text/plain")));
     }
 
+    // Types from the free desktops' database (step E, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn pdf_pages_is_a_fallback_for_pdfs_only() {
         use crate::thumb_providers::PdfPages;

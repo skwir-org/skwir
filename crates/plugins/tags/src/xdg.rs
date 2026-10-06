@@ -38,27 +38,27 @@ pub fn parse_rating(s: &str) -> Option<u64> {
 /// One attribute of `path` as text. Missing, unsupported or unreadable is
 /// nothing: none of these attributes is worth an error when read.
 pub fn get(path: &Path, name: &str) -> Option<String> {
-    let value = xattr::get_deref(path, name).ok().flatten()?;
+    let value = bibli_core::fs::xattr::get_deref(path, name)
+        .ok()
+        .flatten()?;
     let text = String::from_utf8_lossy(&value).trim().to_owned();
     (!text.is_empty()).then_some(text)
 }
 
 fn refused(e: &std::io::Error) -> bool {
-    e.kind() == std::io::ErrorKind::Unsupported
-        || rustix::io::Errno::from_io_error(e) == Some(rustix::io::Errno::NOTSUP)
+    bibli_core::fs::xattr::refused(e)
 }
 
 fn missing(e: &std::io::Error) -> bool {
-    e.kind() == std::io::ErrorKind::NotFound
-        || rustix::io::Errno::from_io_error(e) == Some(rustix::io::Errno::NODATA)
+    e.kind() == std::io::ErrorKind::NotFound || bibli_core::fs::xattr::missing(e)
 }
 
 /// Write `value` to attribute `name` of `path`; `None` removes it, and
 /// removing one that is not there succeeds.
 pub fn write(path: &Path, name: &str, value: Option<&str>) -> std::io::Result<()> {
     match value {
-        Some(value) => xattr::set_deref(path, name, value.as_bytes()),
-        None => match xattr::remove_deref(path, name) {
+        Some(value) => bibli_core::fs::xattr::set_deref(path, name, value.as_bytes()),
+        None => match bibli_core::fs::xattr::remove_deref(path, name) {
             Err(e) if missing(&e) => Ok(()),
             r => r,
         },

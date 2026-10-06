@@ -71,12 +71,26 @@ impl EntryRef {
     /// `d_ino` differs from the stat inode only on a mount point, which
     /// cannot be renamed in place anyway.
     fn find_in_parent(&self) -> Option<PathBuf> {
-        use std::os::unix::fs::DirEntryExt;
         let parent: &Path = self.path.parent()?;
         let rd = std::fs::read_dir(parent).ok()?;
         rd.flatten()
-            .filter(|e| e.ino() == self.id.ino)
+            .filter(|e| self.may_be(e))
             .map(|e| e.path())
             .find(|p| id_of(p) == Some(self.id))
+    }
+
+    /// Whether the folder's entry `e` may be this one, by what the listing
+    /// says of it: its inode on Unix; elsewhere every entry may.
+    #[cfg_attr(not(unix), allow(clippy::unused_self))]
+    fn may_be(&self, e: &std::fs::DirEntry) -> bool {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::DirEntryExt::ino(e) == self.id.ino
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = e;
+            true
+        }
     }
 }

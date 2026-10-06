@@ -409,7 +409,9 @@ pub fn everywhere(root: Option<&std::path::Path>) -> Option<PathBuf> {
     match root {
         None => Some(home),
         Some(r)
-            if r == home || std::fs::canonicalize(r).ok() == std::fs::canonicalize(&home).ok() =>
+            if r == home
+                || bibli_core::os_path::canonical(r).ok()
+                    == bibli_core::os_path::canonical(&home).ok() =>
         {
             Some(home)
         }

@@ -48,6 +48,8 @@ pub mod thumbnails;
 pub mod trash;
 pub mod uri;
 pub mod users;
+#[cfg(windows)]
+pub mod windows;
 pub use bibli_core::xdg;
 
 pub mod inspection;

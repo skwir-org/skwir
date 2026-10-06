@@ -120,7 +120,7 @@ impl Location {
             return Some(raw.to_path_buf());
         }
         let r = &self.rest;
-        if r == "~" || r.starts_with("~/") {
+        if r == "~" || r.starts_with("~/") || (cfg!(windows) && r.starts_with("~\\")) {
             let home = crate::os_path::home()?;
             return Some(if r == "~" { home } else { home.join(&r[2..]) });
         }
@@ -1100,7 +1100,7 @@ impl Listing {
         if with_file {
             return spec.show_hidden && companions;
         }
-        spec.show_hidden || !slot.entry.name.as_encoded_bytes().starts_with(b".")
+        spec.show_hidden || !slot.entry.is_hidden()
     }
 
     /// The names listed, when companions may hide: their files among them.
@@ -1273,6 +1273,7 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_location_argument_reads_back_as_the_location() {
         use std::os::unix::ffi::OsStrExt;

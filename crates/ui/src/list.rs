@@ -567,10 +567,10 @@ impl Shell {
                 if ev.click_count >= 2 {
                     self.select_ids(vec![id], "replace", window, cx);
                     self.open_selection(window, cx);
-                } else if ev.modifiers.control && ev.modifiers.shift {
+                } else if ev.modifiers.secondary() && ev.modifiers.shift {
                     // A range added to what is selected, not in its place.
                     self.select_ids(vec![id], "add_range", window, cx);
-                } else if ev.modifiers.control {
+                } else if ev.modifiers.secondary() {
                     self.select_ids(vec![id], "toggle", window, cx);
                 } else if ev.modifiers.shift {
                     self.select_ids(vec![id], "range_to", window, cx);

@@ -89,11 +89,10 @@ fn baloo_query(tag: &str) -> Option<String> {
 /// The paths in `baloosearch`'s output: one per line, then a line of
 /// timing in the user's language, which is not a path.
 fn baloo_paths(stdout: &[u8]) -> Vec<PathBuf> {
-    use std::os::unix::ffi::OsStrExt;
     stdout
         .split(|b| *b == b'\n')
         .filter(|line| line.starts_with(b"/"))
-        .map(|line| PathBuf::from(std::ffi::OsStr::from_bytes(line)))
+        .map(|line| PathBuf::from(bibli_core::os_path::from_bytes(line.to_vec())))
         .collect()
 }
 
@@ -128,6 +127,54 @@ impl HintProvider for Baloo {
     }
 }
 
+/// Spotlight, a Mac's file index, which indexes Finder's tags: asked with
+/// `mdfind`, which every Mac has. Registered on macOS (compiled, never
+/// run there); its query is read on every system.
+#[cfg(target_os = "macos")]
+pub struct Spotlight;
+
+/// How long Spotlight may take: it answers from its index.
+#[cfg(target_os = "macos")]
+const SPOTLIGHT_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Spotlight's query for files tagged `tag` (Finder's tags, any case);
+/// `None` for a tag its query language would read otherwise (a quote, a
+/// backslash, a wildcard).
+#[cfg(any(target_os = "macos", test))]
+fn spotlight_query(tag: &str) -> Option<String> {
+    (!tag.contains(['"', '\\', '*', '?'])).then(|| format!("kMDItemUserTags == \"{tag}\"c"))
+}
+
+#[cfg(target_os = "macos")]
+impl HintProvider for Spotlight {
+    fn id(&self) -> &'static str {
+        "tags.spotlight"
+    }
+    fn candidates(
+        &self,
+        key: &str,
+        value: &str,
+        root: &Path,
+        cancel: &CancelToken,
+    ) -> Option<Vec<PathBuf>> {
+        if key != keys::TAGS {
+            return None;
+        }
+        let program = bibli_core::os_path::find_program("mdfind")?;
+        let query = spotlight_query(value)?;
+        let mut command = std::process::Command::new(program);
+        command.arg("-onlyin").arg(root).arg(query);
+        match bibli_platform::process::run(&mut command, cancel, SPOTLIGHT_TIMEOUT) {
+            // One absolute path a line, as Baloo's.
+            Ok(stdout) => Some(baloo_paths(&stdout)),
+            Err(error) => {
+                tracing::debug!(%error, "tags: Spotlight did not answer");
+                None
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,6 +183,7 @@ mod tests {
     /// and index in a temporary directory, indexing only the fixture.
     /// Needs `baloo_file`, `baloosearch6` and `dbus-run-session`:
     /// `cargo nextest run -p bibli-plugin-tags --run-ignored only baloo`.
+    #[cfg(target_os = "linux")]
     #[test]
     #[ignore = "starts a private Baloo"]
     fn a_private_baloo_names_the_tagged_files() {
@@ -172,7 +220,7 @@ mod tests {
         ] {
             std::fs::write(&path, b"x").unwrap();
             if let Some(tags) = tags {
-                xattr::set(&path, "user.xdg.tags", tags.as_bytes()).unwrap();
+                bibli_core::fs::xattr::set(&path, "user.xdg.tags", tags.as_bytes()).unwrap();
             }
         }
         let (config, data, cache, run) = (
@@ -251,5 +299,15 @@ mod tests {
             baloo_paths(b"/r/it's a.txt\n/r/b\nTemps \xc3\xa9coul\xc3\xa9 : 0,1 ms\n"),
             [PathBuf::from("/r/it's a.txt"), PathBuf::from("/r/b")]
         );
+    }
+
+    #[test]
+    fn spotlight_is_asked_for_finders_tags() {
+        assert_eq!(
+            spotlight_query("to do").as_deref(),
+            Some("kMDItemUserTags == \"to do\"c")
+        );
+        assert_eq!(spotlight_query("a*"), None);
+        assert_eq!(spotlight_query("say \"x\""), None);
     }
 }

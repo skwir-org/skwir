@@ -1,14 +1,14 @@
 //! Raw filesystem measurements: the numbers the core's streaming listing
 //! must approach. All timings are warm-cache (dropping caches needs root).
+//! The raw listing and stat are the system's own: getdents and statx on
+//! Linux, readdir and fstatat on other Unix systems, `std::fs` elsewhere.
 
 use std::collections::BTreeMap;
-use std::ffi::OsStr;
-use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use bibli_core::os_path::from_bytes_ref;
 use rayon::prelude::*;
-use rustix::fs::{AtFlags, Dir, Mode, OFlags, StatxFlags};
 use serde::{Deserialize, Serialize};
 
 use crate::profiles::Profile;
@@ -107,7 +107,9 @@ fn timed<T>(runs: usize, mut f: impl FnMut() -> T) -> Stat {
     )
 }
 
+#[cfg(unix)]
 fn open_dir(path: &Path) -> rustix::io::Result<rustix::fd::OwnedFd> {
+    use rustix::fs::{Mode, OFlags};
     rustix::fs::open(
         path,
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
@@ -115,21 +117,36 @@ fn open_dir(path: &Path) -> rustix::io::Result<rustix::fd::OwnedFd> {
     )
 }
 
+#[cfg(unix)]
 fn getdents_first_batch(path: &Path) -> usize {
     let fd = open_dir(path).expect("open dir");
-    let dir = Dir::read_from(&fd).expect("getdents");
+    let dir = rustix::fs::Dir::read_from(&fd).expect("getdents");
     dir.take(1024).count()
 }
 
+#[cfg(not(unix))]
+fn getdents_first_batch(path: &Path) -> usize {
+    std::fs::read_dir(path)
+        .expect("read_dir")
+        .take(1024)
+        .count()
+}
+
+#[cfg(unix)]
 fn getdents_full(path: &Path) -> usize {
     let fd = open_dir(path).expect("open dir");
-    let dir = Dir::read_from(&fd).expect("getdents");
+    let dir = rustix::fs::Dir::read_from(&fd).expect("getdents");
     dir.filter_map(Result::ok)
         .map(|e| (e.file_type(), e.file_name().to_bytes().len()))
         .fold(0, |n, e| {
             std::hint::black_box(e);
             n + 1
         })
+}
+
+#[cfg(not(unix))]
+fn getdents_full(path: &Path) -> usize {
+    std_full(path)
 }
 
 fn std_full(path: &Path) -> usize {
@@ -143,24 +160,25 @@ fn std_full(path: &Path) -> usize {
         })
 }
 
+/// The names in `path`, as `OsStr::as_encoded_bytes` gives them.
 fn names(path: &Path) -> Vec<Vec<u8>> {
-    let fd = open_dir(path).expect("open dir");
-    Dir::read_from(&fd)
-        .expect("getdents")
+    std::fs::read_dir(path)
+        .expect("read_dir")
         .filter_map(Result::ok)
-        .map(|e| e.file_name().to_bytes().to_vec())
-        .filter(|n| n != b"." && n != b"..")
+        .map(|e| e.file_name().as_encoded_bytes().to_vec())
         .collect()
 }
 
+#[cfg(target_os = "linux")]
 fn statx_all(path: &Path, names: &[Vec<u8>]) -> u64 {
+    use rustix::fs::{AtFlags, StatxFlags};
     let fd = open_dir(path).expect("open dir");
     names
         .iter()
         .filter_map(|n| {
             rustix::fs::statx(
                 &fd,
-                OsStr::from_bytes(n),
+                &*from_bytes_ref(n),
                 AtFlags::SYMLINK_NOFOLLOW,
                 StatxFlags::BASIC_STATS,
             )
@@ -170,10 +188,36 @@ fn statx_all(path: &Path, names: &[Vec<u8>]) -> u64 {
         .sum()
 }
 
+#[cfg(all(unix, not(target_os = "linux")))]
+fn statx_all(path: &Path, names: &[Vec<u8>]) -> u64 {
+    let fd = open_dir(path).expect("open dir");
+    names
+        .iter()
+        .filter_map(|n| {
+            rustix::fs::statat(
+                &fd,
+                &*from_bytes_ref(n),
+                rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
+            )
+            .ok()
+        })
+        .map(|s| u64::try_from(s.st_size).unwrap_or(0))
+        .sum()
+}
+
+#[cfg(not(unix))]
+fn statx_all(path: &Path, names: &[Vec<u8>]) -> u64 {
+    names
+        .iter()
+        .filter_map(|n| std::fs::symlink_metadata(path.join(&*from_bytes_ref(n))).ok())
+        .map(|m| m.len())
+        .sum()
+}
+
 fn stat_parallel(path: &Path, names: &[Vec<u8>]) -> u64 {
     names
         .par_iter()
-        .filter_map(|n| std::fs::symlink_metadata(path.join(OsStr::from_bytes(n))).ok())
+        .filter_map(|n| std::fs::symlink_metadata(path.join(&*from_bytes_ref(n))).ok())
         .map(|m| m.len())
         .sum()
 }
@@ -299,7 +343,7 @@ fn thumbs(root: &Path, dir: &Path, runs: usize) -> (Stat, Stat) {
     paths.truncate(200);
     let paths: Vec<_> = paths
         .into_iter()
-        .map(|p| std::fs::canonicalize(p).expect("canonical"))
+        .map(|p| bibli_core::os_path::canonical(p).expect("canonical"))
         .collect();
     let mut cold = Vec::new();
     let mut warm = Vec::new();
@@ -416,7 +460,7 @@ pub fn tag_search(root: &Path, profile: Profile, runs: usize) -> Stat {
         return Stat::NONE;
     }
     let tags = tags_app();
-    let root = std::fs::canonicalize(&dir).expect("tree");
+    let root = bibli_core::os_path::canonical(&dir).expect("tree");
     let expr = format!("tag:{}", crate::generate::TAG);
     Stat::of(
         (0..runs)
@@ -439,7 +483,7 @@ pub fn tags_check(root: &Path, profile: Profile, runs: usize) -> Stat {
         return Stat::NONE;
     }
     let app = tags_app();
-    let root = std::fs::canonicalize(&dir).expect("tree");
+    let root = bibli_core::os_path::canonical(&dir).expect("tree");
     let pane = app.workspace.read().active_id();
     let call = |name: &str, args: serde_json::Value| {
         app.dispatch(&Invocation::with_args(name, &args))

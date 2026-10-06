@@ -55,7 +55,7 @@ fn the_tag_chip_offers_the_tags_found_and_find_similar_shares_them() {
         let path = root.join(name);
         std::fs::write(&path, name).unwrap();
         if let Some(tags) = tags
-            && xattr::set(&path, "user.xdg.tags", tags.as_bytes()).is_err()
+            && bibli_core::fs::xattr::set(&path, "user.xdg.tags", tags.as_bytes()).is_err()
         {
             eprintln!("skipped: no user extended attributes here");
             return;

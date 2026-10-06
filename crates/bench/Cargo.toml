@@ -33,7 +33,6 @@ toml.workspace = true
 rustix.workspace = true
 rayon.workspace = true
 image.workspace = true
-xattr.workspace = true
 
 [lints]
 workspace = true

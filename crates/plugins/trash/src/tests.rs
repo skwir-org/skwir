@@ -1,3 +1,5 @@
+// Helpers of the tests that run on Linux alone (ADR-035).
+#![cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -55,6 +57,8 @@ fn plan(app: &App, name: &str, args: &serde_json::Value) -> Plan {
 
 /// A file put in the trash is listed there under the name it had, from
 /// the folder it had, and restored there; undone, it goes back.
+// The freedesktop trash.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_file_in_the_trash_is_listed_as_it_was_and_restored_where_it_was() {
     let tmp = base();
@@ -225,6 +229,8 @@ fn emptying_the_trash_deletes_its_files_and_what_it_said_of_them() {
 /// A trashed folder opens in the trash, `Trash › folder`, where a file is
 /// restored alone, its folders made again, and undone goes back; the rest
 /// of the folder, restored after, merges into them.
+// The freedesktop trash.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_trashed_folder_is_browsed_in_the_trash_and_restored_a_file_at_a_time() {
     let tmp = base();

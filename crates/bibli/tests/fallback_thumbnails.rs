@@ -144,7 +144,7 @@ fn middle(image: &Image) -> [u8; 4] {
 fn an_office_document_has_a_thumbnail_once_previewed() {
     let tmp = tempfile::tempdir().unwrap();
     let app = app(tmp.path());
-    let path = std::fs::canonicalize(tmp.path())
+    let path = bibli_core::os_path::canonical(tmp.path())
         .unwrap()
         .join("Synthetic minutes \u{2019}24.fodt");
     std::fs::write(
@@ -185,7 +185,7 @@ fn an_office_document_has_a_thumbnail_once_previewed() {
 fn a_recording_shows_its_cover() {
     let tmp = tempfile::tempdir().unwrap();
     let app = app(tmp.path());
-    let dir = std::fs::canonicalize(tmp.path()).unwrap();
+    let dir = bibli_core::os_path::canonical(tmp.path()).unwrap();
     let path = dir.join("Synthetic track n\u{b0} 1.flac");
     let bare = dir.join("Synthetic track n\u{b0} 2.flac");
     let ffmpeg = |args: &[&str], out: &Path| {
@@ -234,7 +234,7 @@ fn a_new_pdf_gets_a_thumbnail_that_other_applications_reuse() {
     let app = app(tmp.path());
     let dir = tmp.path().join("Papers \u{2019}24");
     std::fs::create_dir(&dir).unwrap();
-    let path = std::fs::canonicalize(&dir)
+    let path = bibli_core::os_path::canonical(&dir)
         .unwrap()
         .join("Synthetic \u{201c}report\u{201d}.pdf");
     red_page_pdf(&path);

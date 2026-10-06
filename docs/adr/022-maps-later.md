@@ -4,7 +4,9 @@ Status: parts 1 to 3 accepted and built, 2026-09-27 (their decisions are
 the "Decided" paragraphs below); of part 4, archives previewed, 2026-10-05,
 and backgrounds from them proposed and deferred. Each part is decided when
 its work starts, by amending this ADR or by an ADR of its own where it
-says so.
+says so. Amended 2026-10-05 (Phase 5, ADR-035): on Windows SQLite is
+built in (`rusqlite`'s `bundled-windows`), there being no system
+`libsqlite3` to link; Linux and macOS keep the system's.
 
 ## Context
 

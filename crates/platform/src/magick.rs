@@ -94,9 +94,6 @@ pub const RUNNING: usize = 2;
 /// How long one may take, decoding a large raw file included.
 const TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Where each run's policy is, inside the sandbox.
-const POLICY: &str = "/work/policy";
-
 /// What a run writes, inside the sandbox.
 const OUTPUT: &str = "picture.pam";
 
@@ -184,11 +181,13 @@ impl Magick {
         };
         let work = tempfile::tempdir()?;
         prepare(work.path(), &format)?;
-        let (mut command, inside) = sandbox::command(&self.path, path, work.path())?;
-        command
-            .envs(environment())
-            .args(arguments(&format, &inside, pixels));
-        let result = process::run(&mut command, cancel, TIMEOUT);
+        let mut run = sandbox::command(&self.path, path, work.path())?;
+        let (Some(input), Some(folder)) = (run.input.to_str(), run.work.to_str()) else {
+            anyhow::bail!("the picture's path inside the sandbox is not text");
+        };
+        let arguments = arguments(&format, input, folder, pixels);
+        run.command.envs(environment(&run.work)).args(arguments);
+        let result = process::run(&mut run.command, cancel, TIMEOUT);
         if cancel.is_cancelled() {
             return Ok(None);
         }
@@ -202,13 +201,16 @@ impl Magick {
         let check = || -> anyhow::Result<bool> {
             let work = tempfile::tempdir()?;
             let policy = prepare(work.path(), "PAM")?;
-            let (mut command, _) = sandbox::command(&self.path, &policy, work.path())?;
+            let mut run = sandbox::command(&self.path, &policy, work.path())?;
+            let expected = run.work.join("policy").join("policy.xml");
             let listed = process::run(
-                command.envs(environment()).args(["-list", "policy"]),
+                run.command
+                    .envs(environment(&run.work))
+                    .args(["-list", "policy"]),
                 &CancelToken::new(),
                 limits::HELPER_TIMEOUT,
             )?;
-            Ok(String::from_utf8_lossy(&listed).contains(&format!("{POLICY}/policy.xml")))
+            Ok(String::from_utf8_lossy(&listed).contains(&*expected.to_string_lossy()))
         };
         check().unwrap_or_else(|error| {
             tracing::debug!("ImageMagick's policy check failed: {error:#}");
@@ -275,18 +277,19 @@ fn policy_for(format: &str) -> String {
 }
 
 /// Where `ImageMagick` finds the policy, and keeps what does not fit in
-/// memory: in the private folder.
-fn environment() -> [(&'static str, &'static str); 2] {
+/// memory: in the private folder, `work` as the run sees it.
+fn environment(work: &Path) -> [(&'static str, PathBuf); 2] {
     [
-        ("MAGICK_CONFIGURE_PATH", POLICY),
-        ("MAGICK_TEMPORARY_PATH", "/work/tmp"),
+        ("MAGICK_CONFIGURE_PATH", work.join("policy")),
+        ("MAGICK_TEMPORARY_PATH", work.join("tmp")),
     ]
 }
 
 /// The arguments that draw `inside`, read as `format`: its first frame
 /// (a GIMP image's layers flattened, as they are its frames), upright, in
-/// sRGB, shrunk by averaging to at most `pixels`, as 8-bit PAM.
-fn arguments(format: &str, inside: &str, pixels: u32) -> Vec<String> {
+/// sRGB, shrunk by averaging to at most `pixels`, as 8-bit PAM, written
+/// in `work` as the run sees it.
+fn arguments(format: &str, inside: &str, work: &str, pixels: u32) -> Vec<String> {
     let mut arguments = if format == "XCF" {
         let flattened = ["-background", "none", "-layers", "flatten"].map(String::from);
         std::iter::once(format!("{format}:{inside}"))
@@ -298,7 +301,7 @@ fn arguments(format: &str, inside: &str, pixels: u32) -> Vec<String> {
     arguments.extend(["-auto-orient", "-colorspace", "sRGB", "-scale"].map(String::from));
     arguments.push(format!("{pixels}x{pixels}>"));
     arguments.extend(["-depth", "8"].map(String::from));
-    arguments.push(format!("PAM:/work/{OUTPUT}"));
+    arguments.push(format!("PAM:{work}/{OUTPUT}"));
     arguments
 }
 
@@ -400,7 +403,7 @@ mod tests {
         assert!(policy.contains(r#"<policy domain="delegate" rights="none" pattern="*"/>"#));
         assert!(policy.contains(r#"name="thread" value="1""#));
         assert_eq!(
-            arguments("AVIF", "/input/document.avif", 256),
+            arguments("AVIF", "/input/document.avif", "/work", 256),
             [
                 "AVIF:/input/document.avif[0]",
                 "-auto-orient",
@@ -414,7 +417,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            arguments("XCF", "/input/document.xcf", 64)[..4],
+            arguments("XCF", "/input/document.xcf", "/work", 64)[..4],
             ["XCF:/input/document.xcf", "-background", "none", "-layers"]
         );
     }

@@ -33,10 +33,8 @@ pub struct Raw {
 
 fn missing(e: &std::io::Error) -> bool {
     e.kind() == std::io::ErrorKind::NotFound
-        || matches!(
-            rustix::io::Errno::from_io_error(e),
-            Some(rustix::io::Errno::NODATA | rustix::io::Errno::NOTSUP)
-        )
+        || crate::fs::xattr::missing(e)
+        || crate::fs::xattr::refused(e)
 }
 
 /// Where `key` is for the file at `path`.
@@ -50,7 +48,7 @@ fn beside(path: &Path, relative: &Path) -> PathBuf {
 /// When they are there and cannot be read.
 pub fn read(path: &Path, key: &RawKey) -> std::io::Result<Raw> {
     let value = match key {
-        RawKey::Attribute { name } => match xattr::get_deref(path, name) {
+        RawKey::Attribute { name } => match crate::fs::xattr::get_deref(path, name) {
             Ok(value) => value,
             Err(e) if missing(&e) => None,
             Err(e) => return Err(e),
@@ -78,8 +76,8 @@ pub fn read(path: &Path, key: &RawKey) -> std::io::Result<Raw> {
 /// When it cannot be written or removed.
 pub fn write(path: &Path, raw: &Raw) -> std::io::Result<()> {
     match (&raw.key, &raw.value) {
-        (RawKey::Attribute { name }, Some(value)) => xattr::set_deref(path, name, value),
-        (RawKey::Attribute { name }, None) => match xattr::remove_deref(path, name) {
+        (RawKey::Attribute { name }, Some(value)) => crate::fs::xattr::set_deref(path, name, value),
+        (RawKey::Attribute { name }, None) => match crate::fs::xattr::remove_deref(path, name) {
             Err(e) if missing(&e) => Ok(()),
             r => r,
         },
@@ -152,7 +150,8 @@ pub fn restore(path: &Path, raws: &[Raw]) -> std::io::Result<()> {
     first.map_or(Ok(()), Err)
 }
 
-#[cfg(test)]
+// Extended attributes: Unix's.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
@@ -165,6 +164,9 @@ mod tests {
             .unwrap()
     }
 
+    // Extended attributes: Unix's.
+
+    #[cfg(unix)]
     #[test]
     fn what_a_store_kept_is_put_back_byte_for_byte() {
         let tmp = home_tempdir();
@@ -181,13 +183,13 @@ mod tests {
                 path: ".ts/it's a.txt.json".into(),
             },
         ];
-        xattr::set(&file, "user.xdg.tags", b"a,b").unwrap();
+        crate::fs::xattr::set(&file, "user.xdg.tags", b"a,b").unwrap();
         std::fs::write(tmp.path().join("._it's a.txt"), [0, 5, 22, 7]).unwrap();
         let before = snapshot(&file, &keys).unwrap();
         assert_eq!(before[0].value.as_deref(), Some(b"a,b".as_slice()));
         assert_eq!(before[2].value, None, "nothing there");
 
-        xattr::remove(&file, "user.xdg.tags").unwrap();
+        crate::fs::xattr::remove(&file, "user.xdg.tags").unwrap();
         std::fs::write(tmp.path().join("._it's a.txt"), b"changed").unwrap();
         replace(&tmp.path().join(".ts/it's a.txt.json"), b"{}").unwrap();
         restore(&file, &before).unwrap();

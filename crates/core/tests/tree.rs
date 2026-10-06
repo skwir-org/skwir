@@ -188,7 +188,8 @@ fn a_folder_opens_in_place_only_under_the_one_shown() {
 }
 
 /// What the process holds open under `dir`: what makes the kernel refuse
-/// to unmount a volume.
+/// to unmount a volume. Read in `/proc`: Linux's.
+#[cfg(target_os = "linux")]
 fn held_under(dir: &Path) -> Vec<std::path::PathBuf> {
     std::fs::read_dir("/proc/self/fd")
         .unwrap()
@@ -200,6 +201,7 @@ fn held_under(dir: &Path) -> Vec<std::path::PathBuf> {
 /// Before a volume is unmounted, bibli lets go of it: a pane showing a
 /// folder there goes elsewhere, and the folders it opened in place or kept
 /// there close, until nothing of the process holds the volume.
+#[cfg(target_os = "linux")]
 #[test]
 fn released_folders_hold_nothing_open() {
     let tmp = tempfile::tempdir().unwrap();

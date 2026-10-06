@@ -103,3 +103,8 @@ pub fn snapshot(root: &Path) -> Vec<(PathBuf, String)> {
     walk(root, root, &mut out);
     out
 }
+
+/// Whether the tests run under Wine: `bibli_core::system::under_wine`.
+pub fn under_wine(what: &str) -> bool {
+    bibli_core::system::under_wine(what)
+}

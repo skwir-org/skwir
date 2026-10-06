@@ -257,29 +257,50 @@ pub fn week_start() -> Weekday {
     WEEK_START.get().copied().unwrap_or(Weekday::Monday)
 }
 
-/// Ask the locale for its first day of the week and keep the answer. Runs
-/// `locale`: blocks for as long as it takes, so call it from a worker.
+/// Ask the locale for its first day of the week and keep the answer. On
+/// Linux runs `locale`: blocks for as long as it takes, so call it from a
+/// worker.
 pub fn prewarm() {
     if WEEK_START.get().is_some() {
         return;
     }
+    let _ = WEEK_START.set(system_week_start().unwrap_or(Weekday::Monday));
+}
+
+/// The locale's first weekday, as the system says it: glibc's `locale`
+/// on Linux and the free desktops, the user's locale on Windows, the
+/// current calendar on macOS (compiled, never run there).
+#[cfg(all(unix, not(target_os = "macos")))]
+fn system_week_start() -> Option<Weekday> {
     let mut locale = std::process::Command::new("locale");
     locale
         .args(["week-1stday", "first_weekday"])
         .stdin(std::process::Stdio::null());
-    let first = crate::process::run(
+    let out = crate::process::run(
         &mut locale,
         &bibli_core::CancelToken::new(),
         Duration::from_secs(2),
     )
-    .ok()
-    .and_then(|out| first_weekday(&String::from_utf8_lossy(&out)));
-    let _ = WEEK_START.set(first.unwrap_or(Weekday::Monday));
+    .ok()?;
+    first_weekday(&String::from_utf8_lossy(&out))
+}
+
+#[cfg(windows)]
+fn system_week_start() -> Option<Weekday> {
+    Weekday::from_monday_zero_offset(crate::windows::first_weekday()?).ok()
+}
+
+#[cfg(target_os = "macos")]
+fn system_week_start() -> Option<Weekday> {
+    // 1 for Sunday to 7 for Saturday.
+    let first = objc2_foundation::NSCalendar::currentCalendar().firstWeekday();
+    Weekday::from_sunday_one_offset(i8::try_from(first).ok()?).ok()
 }
 
 /// The first weekday from `locale week-1stday first_weekday`: a date the
 /// locale's weeks are counted from (`19971130`, a Sunday) and which day of
 /// that week comes first (`2`: the day after it, Monday).
+#[cfg(any(all(unix, not(target_os = "macos")), test))]
 fn first_weekday(output: &str) -> Option<Weekday> {
     let mut lines = output.lines().map(str::trim);
     let origin = lines.next()?;

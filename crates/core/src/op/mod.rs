@@ -11,6 +11,8 @@ mod context;
 mod entry_ref;
 mod executor;
 mod order;
+pub mod records;
+mod sys;
 
 use std::ffi::OsStr;
 use std::fmt;
@@ -22,8 +24,8 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 pub use builtin::{
-    Copy, Delete, InTrash, Mkdir, Move, NewFile, RemoveEmptyFile, Rename, Restore, RestorePart,
-    ReturnPart, Rmdir, Swap, Trash, Unmerge, Untrashed, in_trash, parse_trash_info,
+    Copy, Delete, InTrash, Landed, Mkdir, Move, NewFile, RemoveEmptyFile, Rename, Restore,
+    RestorePart, ReturnPart, Rmdir, Swap, Trash, Unmerge, Untrashed, in_trash, parse_trash_info,
     register_builtin, trash_info_of,
 };
 pub use context::{Cancelled, StepContext};
@@ -34,8 +36,9 @@ pub use executor::{
 pub use order::{RenameOrderError, RenameRequest, order_renames};
 
 /// Whether `name` can name an entry inside a directory: not empty, not `.`
-/// or `..`, and free of `/` and NUL. Every operation that takes a name from
-/// a command (rename, copy under a new name, a new folder) checks it here,
+/// or `..`, and free of `/` and NUL; on Windows also what Windows refuses
+/// (`windows_name_problem`). Every operation that takes a name from a
+/// command (rename, copy under a new name, a new folder) checks it here,
 /// so no surface can reach outside the directory it meant.
 ///
 /// # Errors
@@ -54,7 +57,45 @@ pub fn valid_file_name(name: &OsStr) -> anyhow::Result<()> {
     if bytes.contains(&0) {
         anyhow::bail!("a name cannot contain a NUL character");
     }
+    #[cfg(windows)]
+    if let Some(problem) = windows_name_problem(&name.to_string_lossy()) {
+        anyhow::bail!(problem);
+    }
     Ok(())
+}
+
+/// What Windows refuses in a name, in the user's words: `\ : * ? " < >
+/// |` and control characters, a name ending in a dot or a space, and the
+/// names of devices (`CON`, `NUL`, `COM1`, `LPT¹`…), with an extension
+/// or without. `None` for a name Windows takes. Tested everywhere, asked
+/// on Windows.
+#[cfg(any(windows, test))]
+pub(crate) fn windows_name_problem(name: &str) -> Option<String> {
+    if let Some(c) = name
+        .chars()
+        .find(|c| matches!(c, '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+    {
+        return Some(format!("a name cannot contain “{c}”"));
+    }
+    if name.chars().any(char::is_control) {
+        return Some("a name cannot contain a control character".into());
+    }
+    if name.ends_with(['.', ' ']) {
+        return Some("a name cannot end with a dot or a space".into());
+    }
+    // A device is its name before the first dot, spaces at its end aside.
+    let stem = name.split('.').next().unwrap_or(name).trim_end_matches(' ');
+    let device = ["CON", "PRN", "AUX", "NUL"]
+        .iter()
+        .any(|d| stem.eq_ignore_ascii_case(d))
+        || ["COM", "LPT"].iter().any(|d| {
+            stem.get(..3).is_some_and(|s| s.eq_ignore_ascii_case(d))
+                && matches!(
+                    stem.get(3..),
+                    Some("1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³")
+                )
+        });
+    device.then(|| format!("“{stem}” is a device's name on Windows"))
 }
 
 /// What a step will do, for the diff shown before apply.
@@ -527,5 +568,45 @@ mod tests {
             to: p("/b"),
         };
         assert_eq!(copy.follow(Path::new("/a")), Followed::Same);
+    }
+
+    #[test]
+    fn windows_refuses_its_characters_its_endings_and_its_devices() {
+        use super::windows_name_problem as problem;
+        for fine in [
+            "notes.txt",
+            "it's here",
+            "CONSOLE",
+            "con-fig",
+            "COM10",
+            "COM0",
+            "lpt",
+            "été",
+            ".hidden",
+            "a.b.c",
+        ] {
+            assert_eq!(problem(fine), None, "{fine}");
+        }
+        for (name, says) in [
+            ("a:b", "“:”"),
+            ("what?", "“?”"),
+            ("back\\slash", "“\\”"),
+            ("\"quoted\"", "“\"”"),
+            ("a|b", "“|”"),
+            ("tab\there", "control"),
+            ("ends.", "end with"),
+            ("ends ", "end with"),
+            ("CON", "device"),
+            ("con.txt", "device"),
+            ("Nul.tar.gz", "device"),
+            ("aux ", "end with"),
+            ("PRN .txt", "device"),
+            ("COM1", "device"),
+            ("lpt9.log", "device"),
+            ("COM¹", "device"),
+        ] {
+            let said = problem(name).unwrap_or_else(|| panic!("{name} taken"));
+            assert!(said.contains(says), "{name}: {said}");
+        }
     }
 }

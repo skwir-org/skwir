@@ -35,7 +35,7 @@ pub fn rewrite<T>(
     change: impl FnOnce(&str) -> Option<(String, T)>,
 ) -> anyhow::Result<Option<T>> {
     use std::io::Write as _;
-    let file = match std::fs::canonicalize(link) {
+    let file = match bibli_core::os_path::canonical(link) {
         Ok(target) => target,
         Err(error) if error.kind() == io::ErrorKind::NotFound => link.to_path_buf(),
         Err(error) => return Err(error.into()),

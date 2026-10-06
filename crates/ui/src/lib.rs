@@ -101,21 +101,33 @@ use gpui::{
 use crate::shell::Shell;
 
 /// Font families tried in order; the first the text system resolves wins.
-/// GPUI's `.SystemUIFont` falls back per frame at a large cost when unresolved.
-const FONT_CANDIDATES: [&str; 5] = [
+/// GPUI's `.SystemUIFont` falls back per frame at a large cost when
+/// unresolved. Each system's own come after Inter, which a user may have
+/// installed anywhere: macOS's and Windows' compiled, never run (ADR-035).
+#[cfg(not(any(target_os = "macos", windows)))]
+const FONT_CANDIDATES: &[&str] = &[
     "Inter",
     "DejaVu Sans",
     "Noto Sans",
     "Liberation Sans",
     "Cantarell",
 ];
+#[cfg(target_os = "macos")]
+const FONT_CANDIDATES: &[&str] = &["Inter", "Helvetica Neue", "Helvetica"];
+#[cfg(windows)]
+const FONT_CANDIDATES: &[&str] = &["Inter", "Segoe UI", "Tahoma"];
 
-const MONO_CANDIDATES: [&str; 4] = [
+#[cfg(not(any(target_os = "macos", windows)))]
+const MONO_CANDIDATES: &[&str] = &[
     "JetBrains Mono",
     "DejaVu Sans Mono",
     "Noto Sans Mono",
     "Liberation Mono",
 ];
+#[cfg(target_os = "macos")]
+const MONO_CANDIDATES: &[&str] = &["JetBrains Mono", "SF Mono", "Menlo"];
+#[cfg(windows)]
+const MONO_CANDIDATES: &[&str] = &["JetBrains Mono", "Cascadia Mono", "Consolas"];
 
 fn pick_font(cx: &gpui::App, candidates: &[&'static str], label: &str) -> SharedString {
     let ts = cx.text_system();
@@ -204,8 +216,8 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
                 ms = started.elapsed().as_millis() as u64,
                 "gpui run callback"
             );
-            let font = pick_font(cx, &FONT_CANDIDATES, "ui");
-            let mono_font = pick_font(cx, &MONO_CANDIDATES, "mono");
+            let font = pick_font(cx, FONT_CANDIDATES, "ui");
+            let mono_font = pick_font(cx, MONO_CANDIDATES, "mono");
             tracing::debug!(ms = started.elapsed().as_millis() as u64, "font picked");
             let keymap =
                 keymap::install(&app, bibli_core::keymap::user_bindings(&app.settings), cx);

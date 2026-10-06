@@ -208,6 +208,8 @@ fn notebook(path: &std::path::Path, cancel: &CancelToken) -> anyhow::Result<Insp
 mod tests {
     use super::*;
 
+    // Types from the free desktops' database (step E, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn formats_are_known_by_type() {
         let format = |name: &str| {

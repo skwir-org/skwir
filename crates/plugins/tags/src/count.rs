@@ -17,7 +17,6 @@
 
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -53,13 +52,9 @@ fn folder_key(dev: u64, ino: u64, path: &Path) -> u64 {
     ])
 }
 
-fn changed_since(meta: &std::fs::Metadata, since: Option<SystemTime>) -> bool {
+fn changed_since(path: &Path, meta: &std::fs::Metadata, since: Option<SystemTime>) -> bool {
     let Some(since) = since else { return true };
-    let Ok(ctime) = u64::try_from(meta.ctime()) else {
-        return true;
-    };
-    let nanos = u32::try_from(meta.ctime_nsec()).unwrap_or(0);
-    UNIX_EPOCH + Duration::new(ctime, nanos) >= since
+    bibli_core::fs::stat::changed(path, meta).is_none_or(|changed| changed >= since)
 }
 
 fn hidden(name: &OsStr) -> bool {
@@ -132,12 +127,13 @@ pub fn run_with(
             continue;
         };
         counted.folders += 1;
-        let key = folder_key(meta.dev(), meta.ino(), &dir);
+        // Off Unix a folder is known by its path alone (ADR-035).
+        let id = bibli_core::fs::stat::identity(&dir, &meta).unwrap_or(EntryId { dev: 0, ino: 0 });
+        let key = folder_key(id.dev, id.ino, &dir);
         seen_dirs.push(key);
         // Read whole: on a first count, a folder not seen here before, or
         // one whose times do not tell.
-        let mut whole =
-            covered.is_none() || !known_dirs.contains(&key) || !trusted(meta.dev(), &dir);
+        let mut whole = covered.is_none() || !known_dirs.contains(&key) || !trusted(id.dev, &dir);
         let mut present: HashSet<OsString> = HashSet::new();
         let mut candidates: Vec<(OsString, std::fs::Metadata)> = Vec::new();
         let mut owners: HashSet<OsString> = HashSet::new();
@@ -149,14 +145,15 @@ pub fn run_with(
                 if meta.is_dir() && app.companions.is_folder(&name) {
                     // A folder of companions for the whole folder: anything
                     // in it changed, the folder is read whole.
-                    whole |= changed_since(&meta, covered)
+                    whole |= changed_since(&entry.path(), &meta, covered)
                         || std::fs::read_dir(entry.path()).is_ok_and(|inside| {
-                            inside
-                                .flatten()
-                                .any(|e| e.metadata().is_ok_and(|m| changed_since(&m, covered)))
+                            inside.flatten().any(|e| {
+                                e.metadata()
+                                    .is_ok_and(|m| changed_since(&e.path(), &m, covered))
+                            })
                         });
                 } else if let Some(owner) = app.companions.owner(&name)
-                    && changed_since(&meta, covered)
+                    && changed_since(&entry.path(), &meta, covered)
                 {
                     owners.insert(owner);
                 }
@@ -173,7 +170,7 @@ pub fn run_with(
             if let Some(owner) = app.companions.owner(&name)
                 && owner != name
             {
-                if changed_since(&meta, covered) {
+                if changed_since(&entry.path(), &meta, covered) {
                     owners.insert(owner);
                 }
                 continue;
@@ -182,7 +179,9 @@ pub fn run_with(
         }
         let read: Vec<(OsString, std::fs::Metadata)> = candidates
             .into_iter()
-            .filter(|(name, meta)| whole || owners.contains(name) || changed_since(meta, covered))
+            .filter(|(name, meta)| {
+                whole || owners.contains(name) || changed_since(&dir.join(name), meta, covered)
+            })
             .collect();
         // The tagged files known here that are gone.
         if let Some(here) = known.remove(&dir) {
@@ -198,10 +197,7 @@ pub fn run_with(
                 .map(|(name, meta)| {
                     (
                         name.as_os_str(),
-                        Some(EntryId {
-                            dev: meta.dev(),
-                            ino: meta.ino(),
-                        }),
+                        bibli_core::fs::stat::identity(&dir.join(name), meta),
                         meta.is_dir(),
                     )
                 })
@@ -233,6 +229,8 @@ pub fn run_with(
 }
 
 #[cfg(test)]
+// Helpers of the tests that run on Unix alone (ADR-035).
+#[cfg_attr(not(unix), allow(dead_code, unused_imports))]
 mod tests {
     use super::{hidden, run};
     use bibli_core::app::{App, AppConfig};
@@ -254,14 +252,17 @@ mod tests {
             .unwrap()
     }
 
+    // Extended attributes: Unix's.
+    #[cfg(unix)]
     #[test]
     fn a_check_reads_what_changed_and_what_came_in_whole() {
         let tmp = home_tempdir();
         let root = tmp.path().join("it's root");
         std::fs::create_dir_all(root.join("sub")).unwrap();
         std::fs::create_dir_all(tmp.path().join("outside/deep")).unwrap();
-        let tag =
-            |p: &std::path::Path, v: &str| xattr::set(p, "user.xdg.tags", v.as_bytes()).unwrap();
+        let tag = |p: &std::path::Path, v: &str| {
+            bibli_core::fs::xattr::set(p, "user.xdg.tags", v.as_bytes()).unwrap();
+        };
         for name in ["a", "b", "sub/c"] {
             std::fs::write(root.join(name), b"x").unwrap();
         }

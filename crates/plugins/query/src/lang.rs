@@ -70,7 +70,7 @@
 
 use std::borrow::Cow;
 use std::cell::OnceCell;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::fmt::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -511,9 +511,8 @@ pub fn parse_in(text: &str, now: SystemTime, cal: &Calendar) -> Result<Query, Pa
         return Err(ParseError("unexpected `)`".into()));
     }
     let root_given = root.is_some();
-    let root = root.unwrap_or_else(|| {
-        std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from)
-    });
+    let root =
+        root.unwrap_or_else(|| bibli_core::os_path::home().unwrap_or_else(|| PathBuf::from("/")));
     Ok(Query {
         expr,
         root,
@@ -524,32 +523,21 @@ pub fn parse_in(text: &str, now: SystemTime, cal: &Calendar) -> Result<Query, Pa
     })
 }
 
-#[cfg(unix)]
-fn os_from_bytes(bytes: Vec<u8>) -> OsString {
-    use std::os::unix::ffi::OsStringExt;
-    OsString::from_vec(bytes)
-}
-
-#[cfg(not(unix))]
-fn os_from_bytes(bytes: Vec<u8>) -> OsString {
-    OsString::from(String::from_utf8_lossy(&bytes).into_owned())
-}
-
-/// The `in:` folder; an unquoted `~` is the home folder.
+/// The `in:` folder; an unquoted `~` is the home folder (`~/`, and on
+/// Windows `~\\` too, starts a path in it).
 fn expand_root(w: &Word) -> PathBuf {
     let v = &w.value[..];
     if !w.quoted
-        && (v == b"~" || v.starts_with(b"~/"))
-        && let Some(home) = std::env::var_os("HOME")
+        && (v == b"~" || v.starts_with(b"~/") || (cfg!(windows) && v.starts_with(b"~\\")))
+        && let Some(home) = bibli_core::os_path::home()
     {
-        let home = PathBuf::from(home);
         return if v == b"~" {
             home
         } else {
-            home.join(os_from_bytes(v[2..].to_vec()))
+            home.join(bibli_core::os_path::from_bytes(v[2..].to_vec()))
         };
     }
-    PathBuf::from(os_from_bytes(v.to_vec()))
+    PathBuf::from(bibli_core::os_path::from_bytes(v.to_vec()))
 }
 
 fn parse_bool(v: &str) -> Result<bool, ParseError> {
@@ -1199,19 +1187,8 @@ pub fn quote(s: &str) -> String {
 pub fn quote_os(s: &OsStr) -> String {
     match s.to_str() {
         Some(text) => quote(text),
-        None => quoted(os_bytes(s)),
+        None => quoted(s.as_encoded_bytes()),
     }
-}
-
-#[cfg(unix)]
-fn os_bytes(s: &OsStr) -> &[u8] {
-    use std::os::unix::ffi::OsStrExt;
-    s.as_bytes()
-}
-
-#[cfg(not(unix))]
-fn os_bytes(s: &OsStr) -> &[u8] {
-    s.as_encoded_bytes()
 }
 
 impl fmt::Display for Expr {
@@ -2030,7 +2007,7 @@ mod tests {
     fn options_are_extracted() {
         let p = q("foo in:~ depth:3 hidden:yes case:sensitive");
         assert!(p.root_given);
-        assert_eq!(p.root, PathBuf::from(std::env::var("HOME").unwrap()));
+        assert_eq!(Some(p.root), bibli_core::os_path::home());
         assert_eq!(p.depth, Some(3));
         assert!(p.hidden && p.case_sensitive);
         let p = q("foo");
@@ -2094,6 +2071,8 @@ mod tests {
         }
     }
 
+    // Types from the free desktops' database (step E, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn name_ext_type_mime_match() {
         let f = cand("Report-Final.PDF", EntryKind::File, None);
@@ -2468,6 +2447,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn non_utf8_roots_round_trip() {
         use std::os::unix::ffi::OsStrExt;

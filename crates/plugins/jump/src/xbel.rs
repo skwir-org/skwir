@@ -64,6 +64,8 @@ pub fn existing(items: Vec<Recent>) -> Vec<Recent> {
 }
 
 #[cfg(test)]
+// Helpers of the tests that run on Linux alone (ADR-035).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
 mod tests {
     use super::*;
 
@@ -78,6 +80,8 @@ mod tests {
   <bookmark href="https://example.com/x" added="2026-03-02T08:00:00Z"/>
 </xbel>"#;
 
+    // The free desktops' recent files (step E, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn parses_paths_mimes_and_orders_by_recency() {
         let r = parse(FIXTURE);
@@ -89,6 +93,8 @@ mod tests {
         assert!(r[0].visited > r[1].visited);
     }
 
+    // The free desktops' recent files (step E, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn reads_local_hosts_and_raw_bytes() {
         let r = parse(

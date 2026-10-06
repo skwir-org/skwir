@@ -370,7 +370,7 @@ impl Shell {
             })
             .collect();
         self.app.registry.set_place_titles(titles);
-        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+        let home = bibli_core::os_path::home();
         self.roots = Roots {
             roots: roots(
                 self.app.registry.places.all(),

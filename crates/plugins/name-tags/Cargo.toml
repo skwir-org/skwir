@@ -16,7 +16,6 @@ schemars.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 dirs.workspace = true
-xattr.workspace = true
 
 [lints]
 workspace = true

@@ -760,6 +760,8 @@ impl Plugin for TagsPlugin {
         }
         // What a `tag:` search asks first (ADR-026).
         app.hints.register(ID, Arc::new(hints::Baloo::default()));
+        #[cfg(target_os = "macos")]
+        app.hints.register(ID, Arc::new(hints::Spotlight));
         app.hints.register(ID, Arc::new(hints::Learned(index)));
         app.settings.declare(SettingSpec::data(
             TAG_COLOR_SETTING,
@@ -1146,6 +1148,8 @@ impl Plugin for TagsPlugin {
 }
 
 #[cfg(test)]
+// Helpers of the tests that run on Unix alone (ADR-035).
+#[cfg_attr(not(unix), allow(dead_code, unused_imports))]
 mod tests {
     use super::*;
     use bibli_core::Value;
@@ -1229,11 +1233,13 @@ mod tests {
                 color: *color,
             })
             .collect();
-        xattr::set(f, name, &finder::encode(&tags, framing)).unwrap();
+        bibli_core::fs::xattr::set(f, name, &finder::encode(&tags, framing)).unwrap();
     }
 
     fn finder_of(f: &Path, name: &str, framing: finder::Framing) -> Vec<(String, u8)> {
-        let bytes = xattr::get(f, name).unwrap().expect("the Finder attribute");
+        let bytes = bibli_core::fs::xattr::get(f, name)
+            .unwrap()
+            .expect("the Finder attribute");
         finder::parse(&bytes, framing)
             .unwrap()
             .into_iter()
@@ -1241,6 +1247,8 @@ mod tests {
             .collect()
     }
 
+    // Extended attributes: Unix's.
+    #[cfg(unix)]
     #[test]
     fn finder_tags_are_read_with_ours_and_edited_with_them() {
         const PLAIN: &str = "user.com.apple.metadata:_kMDItemUserTags";
@@ -1329,7 +1337,7 @@ mod tests {
             ]
         );
         assert_eq!(read_tags(&shared), ["new"]);
-        let raw = xattr::get(&shared, SAMBA).unwrap().unwrap();
+        let raw = bibli_core::fs::xattr::get(&shared, SAMBA).unwrap().unwrap();
         assert_eq!(raw.last(), Some(&0), "Samba's NUL stays");
         assert_eq!(
             finder_of(&shared, SAMBA, finder::Framing::Stream),
@@ -1353,8 +1361,16 @@ mod tests {
         let clear = plan(&app, "tags.set", &serde_json::json!({ "tags": [] }));
         app.executor.execute_blocking(&clear, app.lifetime());
         assert!(read_tags(&copied).is_empty() && read_tags(&shared).is_empty());
-        assert!(xattr::get(&copied, PLAIN).unwrap().is_none());
-        assert!(xattr::get(&shared, SAMBA).unwrap().is_none());
+        assert!(
+            bibli_core::fs::xattr::get(&copied, PLAIN)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            bibli_core::fs::xattr::get(&shared, SAMBA)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -1497,6 +1513,8 @@ mod tests {
         assert!(leftovers.is_empty(), "{leftovers:?}");
     }
 
+    // Extended attributes: Unix's.
+    #[cfg(unix)]
     #[test]
     fn a_plan_written_before_the_stores_is_read_as_the_edit_it_was() {
         let tmp = home_tempdir();
@@ -1539,6 +1557,8 @@ mod tests {
         );
     }
 
+    // Extended attributes: Unix's.
+    #[cfg(unix)]
     #[test]
     fn a_macs_edit_after_bibli_wrote_wins_and_the_stores_are_made_to_agree() {
         const FINDER: &str = "user.com.apple.metadata:_kMDItemUserTags";
@@ -1601,7 +1621,9 @@ mod tests {
                 .is_none()
         );
         assert_eq!(
-            xattr::get(&f, xdg::TAGS).unwrap().as_deref(),
+            bibli_core::fs::xattr::get(&f, xdg::TAGS)
+                .unwrap()
+                .as_deref(),
             Some(b"a,mac".as_slice())
         );
         assert!(read().differ.is_empty());
@@ -1612,11 +1634,15 @@ mod tests {
         );
         app.executor.undo_blocking(app.lifetime()).unwrap();
         assert_eq!(
-            xattr::get(&f, xdg::TAGS).unwrap().as_deref(),
+            bibli_core::fs::xattr::get(&f, xdg::TAGS)
+                .unwrap()
+                .as_deref(),
             Some(b"a,b,x".as_slice())
         );
     }
 
+    // Extended attributes: Unix's.
+    #[cfg(unix)]
     #[test]
     fn a_macs_file_keeps_its_notes_renamed_and_copied_to_a_disk() {
         use crate::appledouble;
@@ -1665,7 +1691,7 @@ mod tests {
         let copy = disk.join("b.pdf");
         assert!(!disk.join("._b.pdf").exists());
         assert!(
-            xattr::get(&copy, "user.com.apple.metadata:_kMDItemUserTags")
+            bibli_core::fs::xattr::get(&copy, "user.com.apple.metadata:_kMDItemUserTags")
                 .unwrap()
                 .is_some()
         );
@@ -1693,11 +1719,11 @@ mod tests {
         let file = home.join("it's tagged.txt");
         std::fs::write(&file, b"x").unwrap();
         write_tags(&file, &["work".into(), "Été".into()]).unwrap();
-        xattr::set(&file, xdg::RATING, b"8").unwrap();
+        bibli_core::fs::xattr::set(&file, xdg::RATING, b"8").unwrap();
         let stick = refusing.join(format!("bibli-refusing-{}", std::process::id()));
         std::fs::create_dir(&stick).unwrap();
         assert!(
-            xattr::set(&stick, "user.test", b"x").is_err(),
+            bibli_core::fs::xattr::set(&stick, "user.test", b"x").is_err(),
             "attributes are refused"
         );
         let (app, _) = app_in(tmp.path(), &home, &["it's tagged.txt"]);
@@ -1731,7 +1757,7 @@ mod tests {
         }));
         assert!(!back.join("._it's tagged.txt").exists());
         assert_eq!(
-            xattr::get(back.join("it's tagged.txt"), xdg::TAGS)
+            bibli_core::fs::xattr::get(back.join("it's tagged.txt"), xdg::TAGS)
                 .unwrap()
                 .as_deref(),
             Some("work,Été".as_bytes())
@@ -1751,6 +1777,8 @@ mod tests {
         std::fs::remove_dir_all(&stick).unwrap();
     }
 
+    // Extended attributes: Unix's.
+    #[cfg(unix)]
     #[test]
     fn the_notes_page_says_which_stores_are_read_and_written() {
         const FINDER: &str = "user.com.apple.metadata:_kMDItemUserTags";
@@ -1792,7 +1820,9 @@ mod tests {
                 .is_none()
         );
         assert_eq!(
-            xattr::get(&f, xdg::TAGS).unwrap().as_deref(),
+            bibli_core::fs::xattr::get(&f, xdg::TAGS)
+                .unwrap()
+                .as_deref(),
             Some(b"ours".as_slice())
         );
         assert_eq!(
@@ -1809,7 +1839,9 @@ mod tests {
                 .is_none()
         );
         assert_eq!(
-            xattr::get(&f, xdg::TAGS).unwrap().as_deref(),
+            bibli_core::fs::xattr::get(&f, xdg::TAGS)
+                .unwrap()
+                .as_deref(),
             Some(b"ours,mac,new,more".as_slice())
         );
         // Off with the plugin: no Notes page.
@@ -1822,6 +1854,8 @@ mod tests {
         );
     }
 
+    // Extended attributes: Unix's.
+    #[cfg(unix)]
     #[test]
     fn a_toggle_gives_a_tag_to_all_or_takes_it_from_all() {
         let tmp = home_tempdir();
@@ -1854,6 +1888,8 @@ mod tests {
         );
     }
 
+    // Extended attributes: Unix's.
+    #[cfg(unix)]
     #[test]
     fn write_read_and_clear() {
         let tmp = home_tempdir();
@@ -1867,6 +1903,8 @@ mod tests {
         write_tags(&f, &[]).unwrap();
     }
 
+    // Extended attributes: Unix's.
+    #[cfg(unix)]
     #[test]
     fn provider_fills_tags_and_plans_apply_and_undo() {
         let tmp = home_tempdir();
@@ -1973,6 +2011,8 @@ mod tests {
 
     /// The tag editor's edit: two files with different tags keep what the
     /// other has to themselves; a tag on some of them stays on those.
+    // Extended attributes: Unix's.
+    #[cfg(unix)]
     #[test]
     fn an_edit_adds_and_removes_without_spreading_the_others() {
         let tmp = home_tempdir();
@@ -2038,6 +2078,8 @@ mod tests {
         );
     }
 
+    // Extended attributes: Unix's.
+    #[cfg(unix)]
     #[test]
     fn ratings_and_comments_are_set_undone_and_read() {
         let tmp = home_tempdir();
@@ -2045,7 +2087,7 @@ mod tests {
         std::fs::create_dir(&dir).unwrap();
         let f = dir.join("pic.jpg");
         std::fs::write(&f, b"x").unwrap();
-        xattr::set(&f, xdg::ORIGIN, b"https://example.org/pic.jpg").unwrap();
+        bibli_core::fs::xattr::set(&f, xdg::ORIGIN, b"https://example.org/pic.jpg").unwrap();
         let (app, pane) = app_in(tmp.path(), &dir, &["pic.jpg"]);
 
         let rate = plan(&app, "notes.rate", &serde_json::json!({ "stars": 4 }));
@@ -2058,7 +2100,9 @@ mod tests {
         app.executor.execute_blocking(&rate, app.lifetime());
         assert_eq!(read_rating(&f), Some(8));
         assert_eq!(
-            xattr::get(&f, xdg::RATING).unwrap().unwrap(),
+            bibli_core::fs::xattr::get(&f, xdg::RATING)
+                .unwrap()
+                .unwrap(),
             b"8",
             "as Dolphin writes it"
         );
@@ -2116,7 +2160,11 @@ mod tests {
         assert_eq!(read_comment(&f), None);
         app.executor.undo_blocking(app.lifetime()).unwrap();
         assert_eq!(read_rating(&f), None);
-        assert!(xattr::get(&f, xdg::RATING).unwrap().is_none());
+        assert!(
+            bibli_core::fs::xattr::get(&f, xdg::RATING)
+                .unwrap()
+                .is_none()
+        );
         assert!(
             app.dispatch(&Invocation::with_args(
                 "notes.rate",
@@ -2127,6 +2175,7 @@ mod tests {
     }
 
     /// A link carries what it leads to: the target's tags.
+    #[cfg(unix)]
     #[test]
     fn a_link_is_tagged_through_to_what_it_leads_to() {
         let tmp = home_tempdir();

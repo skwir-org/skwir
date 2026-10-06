@@ -644,6 +644,8 @@ mod tests {
 
     const SAMPLE: &str = "[Thumbnailer Entry]\nTryExec=totem-video-thumbnailer\nExec=totem-video-thumbnailer -s %s %u %o\nMimeType=video/mp4;video/x-matroska;\n";
 
+    // The freedesktop thumbnailers and cache (step G, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_thumbnailer_that_claims_an_alias_claims_the_type() {
         let t = Thumbnailers::new(vec![ThumbnailerEntry {
@@ -668,6 +670,8 @@ mod tests {
         );
     }
 
+    // The freedesktop thumbnailers and cache (step G, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn substitutes_exec_placeholders_per_word() {
         let argv = substitute_exec(
@@ -702,6 +706,8 @@ mod tests {
         assert_eq!(argv[2], "/t/o.png");
     }
 
+    // Types from the free desktops' database (step E, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn image_decoder_accepts_by_mime_or_extension_only_for_rasters() {
         let r = |p: &str, mime: Option<&str>| ThumbRequest {
@@ -719,6 +725,8 @@ mod tests {
         assert!(!ImageDecoder.accepts(&r("/x/a.txt", None)));
     }
 
+    // The freedesktop thumbnailers and cache (step G, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_fake_thumbnailer_script_produces_a_thumbnail() {
         // A script that "renders" a 4x4 red picture, with nothing but the

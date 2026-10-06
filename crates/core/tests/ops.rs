@@ -6,9 +6,10 @@ mod common;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+#[cfg(target_os = "linux")]
+use bibli_core::op::Restore;
 use bibli_core::op::{
-    Copy, EntryRef, Mkdir, Move, Operation, Plan, Rename, Restore, StepContext, StepStatus, Swap,
-    Trash,
+    Copy, EntryRef, Mkdir, Move, Operation, Plan, Rename, StepContext, StepStatus, Swap, Trash,
 };
 use common::*;
 use proptest::prelude::*;
@@ -48,6 +49,8 @@ impl Scratch {
 }
 
 impl Drop for Scratch {
+    // macOS's trash is not listed by the trash crate (ADR-035).
+    #[cfg(not(target_os = "macos"))]
     fn drop(&mut self) {
         if let Ok(items) = trash::os_limited::list() {
             let ours = items
@@ -56,6 +59,8 @@ impl Drop for Scratch {
             let _ = trash::os_limited::purge_all(ours);
         }
     }
+    #[cfg(target_os = "macos")]
+    fn drop(&mut self) {}
 }
 
 /// A random small tree: files f0..fN in root and in sub dirs d0..dM.
@@ -198,6 +203,9 @@ proptest! {
 
     #[test]
     fn apply_then_undo_restores_the_tree(t in (0usize..3, 1usize..4).prop_map(|(dirs, files)| Tree { dirs, files }), steps in (0usize..3, 1usize..4).prop_flat_map(|(dirs, files)| steps(&Tree { dirs, files }))) {
+        if under_wine("trashing through the shell") {
+            return Ok(());
+        }
         let tmp = Scratch::new();
         let root: PathBuf = tmp.path().join("tree");
         std::fs::create_dir(&root).unwrap();
@@ -435,6 +443,9 @@ fn undos_run_in_journal_order_after_the_plans_before_them() {
 
 #[test]
 fn undo_of_a_copy_puts_it_in_the_trash_and_redo_brings_it_back() {
+    if under_wine("trashing through the shell") {
+        return;
+    }
     let tmp = Scratch::new();
     let root = tmp.path();
     std::fs::create_dir(root.join("dest")).unwrap();
@@ -463,6 +474,9 @@ fn undo_of_a_copy_puts_it_in_the_trash_and_redo_brings_it_back() {
 
 #[test]
 fn trashing_many_and_undoing_restores_each() {
+    if under_wine("trashing through the shell") {
+        return;
+    }
     let tmp = Scratch::new();
     let root = tmp.path();
     let app = app(root);
@@ -509,6 +523,8 @@ fn copying_onto_an_unrelated_folder_of_the_same_name_conflicts() {
     assert_eq!((again.applied, again.skipped), (0, 1));
 }
 
+// Pipes are made with mknodat, Linux's alone here (ADR-035).
+#[cfg(target_os = "linux")]
 #[test]
 fn a_named_pipe_is_copied_as_a_pipe_without_blocking() {
     use std::os::unix::fs::FileTypeExt;
@@ -597,6 +613,7 @@ fn names_that_leave_the_directory_are_rejected() {
     assert!(!root.join("x").exists());
 }
 
+#[cfg(unix)]
 #[test]
 fn a_name_that_is_not_utf8_survives_rename_undo_and_json() {
     use std::os::unix::ffi::OsStringExt;
@@ -626,6 +643,8 @@ fn a_name_that_is_not_utf8_survives_rename_undo_and_json() {
     assert_eq!(parsed, back);
 }
 
+// Windows cannot swap two names in one step, and refuses.
+#[cfg(unix)]
 #[test]
 fn an_applied_swap_is_already_done() {
     let tmp = Scratch::new();
@@ -664,11 +683,10 @@ fn renaming_onto_a_hard_link_of_itself_conflicts() {
 
 /// A directory on another device than `reference`, if the machine has one.
 fn other_device(reference: &Path) -> Option<tempfile::TempDir> {
-    use std::os::unix::fs::MetadataExt;
-    let here = std::fs::metadata(reference).ok()?.dev();
+    let here = bibli_core::fs::stat::id_of(reference)?.dev;
     ["/dev/shm", "/tmp"].into_iter().find_map(|candidate| {
-        let meta = std::fs::metadata(candidate).ok()?;
-        (meta.dev() != here)
+        let there = bibli_core::fs::stat::id_of(Path::new(candidate))?.dev;
+        (there != here)
             .then(|| tempfile::tempdir_in(candidate).ok())
             .flatten()
     })
@@ -821,6 +839,10 @@ fn a_new_file_never_replaces_what_is_there() {
     );
 }
 
+// Extended attributes: Unix's.
+
+// Extended attributes: Unix's.
+#[cfg(unix)]
 #[test]
 fn a_file_goes_with_its_companion_and_a_copy_takes_its_attributes_in() {
     let tmp = Scratch::new();
@@ -847,7 +869,9 @@ fn a_file_goes_with_its_companion_and_a_copy_takes_its_attributes_in() {
     assert!(r.error.is_none(), "{:?}", r.error);
     let copy = root.join("into/it's a.txt");
     assert_eq!(
-        xattr::get(&copy, "user.xdg.tags").unwrap().as_deref(),
+        bibli_core::fs::xattr::get(&copy, "user.xdg.tags")
+            .unwrap()
+            .as_deref(),
         Some(b"from the mac".as_slice())
     );
     assert!(!root.join("into/._it's a.txt").exists());
@@ -917,6 +941,7 @@ fn a_file_goes_with_its_companion_and_a_copy_takes_its_attributes_in() {
 
 /// The `.trashinfo` of the item the trash holds from `original`, and where
 /// the item is.
+#[cfg(target_os = "linux")]
 fn trashed(original: &Path) -> Option<(PathBuf, PathBuf)> {
     let info = trash::os_limited::list()
         .ok()?
@@ -934,6 +959,8 @@ fn trashed(original: &Path) -> Option<(PathBuf, PathBuf)> {
 /// What leaves the trash takes the companions trashed with it, and undone
 /// puts them back as the trash had them: an item moved elsewhere, a
 /// folder restored into one there again.
+// The freedesktop trash's records (ADR-035: the others' are step D).
+#[cfg(target_os = "linux")]
 #[test]
 fn companions_trashed_with_a_file_leave_the_trash_with_it() {
     let tmp = Scratch::new();
@@ -998,6 +1025,7 @@ fn companions_trashed_with_a_file_leave_the_trash_with_it() {
     let restore = Restore {
         path: root.join("old"),
         item: Some(info.as_path().into()),
+        landed: Vec::new(),
     };
     apply(&app, &Plan::with_steps("restore", vec![Box::new(restore)]));
     assert!(root.join("old/b.txt").exists() && root.join("._old").exists());
@@ -1008,4 +1036,34 @@ fn companions_trashed_with_a_file_leave_the_trash_with_it() {
     redo();
     assert!(root.join("old/b.txt").exists() && root.join("._old").exists());
     assert!(!aside_info.exists(), "found again by when it was trashed");
+}
+
+/// Copied on Windows by the system (`CopyFileExW`), a file keeps what a
+/// copy of its bytes would lose there: its alternate streams, the mark a
+/// downloaded file carries among them.
+#[cfg(windows)]
+#[test]
+fn a_copy_keeps_the_mark_a_download_carries() {
+    // Wine takes `name:stream` for a name of its own: it keeps no streams.
+    if under_wine("alternate data streams") {
+        return;
+    }
+    let tmp = Scratch::new();
+    let root = tmp.path();
+    std::fs::create_dir(root.join("into")).unwrap();
+    let file = root.join("it's downloaded.zip");
+    std::fs::write(&file, b"the bytes").unwrap();
+    let mark = "[ZoneTransfer]\r\nZoneId=3\r\n";
+    let stream = |path: &Path| PathBuf::from(format!("{}:Zone.Identifier", path.display()));
+    std::fs::write(stream(&file), mark).unwrap();
+    let copy = Copy {
+        entry: EntryRef::from_path(&file).unwrap(),
+        dest_dir: root.join("into"),
+        new_name: None,
+        preserve_attributes: true,
+    };
+    copy.apply(&StepContext::detached()).unwrap();
+    let copied = root.join("into/it's downloaded.zip");
+    assert_eq!(std::fs::read(&copied).unwrap(), b"the bytes");
+    assert_eq!(std::fs::read_to_string(stream(&copied)).unwrap(), mark);
 }

@@ -340,18 +340,7 @@ pub fn write(path: &Path, ad: &AppleDouble) -> io::Result<()> {
 /// folder's names (`FolderNames`) for the files that have one.
 fn aside_of(name: &OsStr) -> Option<OsString> {
     let file = name.as_encoded_bytes().strip_prefix(PREFIX.as_bytes())?;
-    Some(os_from_bytes(file))
-}
-
-#[cfg(unix)]
-fn os_from_bytes(bytes: &[u8]) -> OsString {
-    use std::os::unix::ffi::OsStrExt;
-    OsStr::from_bytes(bytes).to_owned()
-}
-
-#[cfg(not(unix))]
-fn os_from_bytes(bytes: &[u8]) -> OsString {
-    OsString::from(String::from_utf8_lossy(bytes).into_owned())
+    Some(bibli_core::os_path::from_bytes(file.to_vec()))
 }
 
 /// The attributes a Mac keeps outside its attribute list, named as
@@ -419,7 +408,7 @@ impl bibli_core::companions::Companion for AsideCompanion {
     }
     fn owner(&self, name: &OsStr) -> Option<OsString> {
         let file = name.as_encoded_bytes().strip_prefix(PREFIX.as_bytes())?;
-        (!file.is_empty()).then(|| os_from_bytes(file))
+        (!file.is_empty()).then(|| bibli_core::os_path::from_bytes(file.to_vec()))
     }
     fn holds_attributes(&self) -> bool {
         true

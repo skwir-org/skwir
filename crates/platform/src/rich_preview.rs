@@ -815,8 +815,8 @@ fn local_path(base: &std::path::Path, href: &str) -> Option<std::path::PathBuf> 
     let href = percent_encoding::percent_decode_str(href)
         .decode_utf8()
         .ok()?;
-    let base = base.canonicalize().ok()?;
-    let path = base.join(href.as_ref()).canonicalize().ok()?;
+    let base = bibli_core::os_path::canonical(base).ok()?;
+    let path = bibli_core::os_path::canonical(base.join(href.as_ref())).ok()?;
     path.starts_with(&base).then_some(path)
 }
 /// Resolve only local descendants of the document directory, including symlinks.
@@ -1317,6 +1317,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     fn png(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
         let path = dir.join(name);
         image::RgbaImage::from_pixel(1, 1, image::Rgba([9, 9, 9, 255]))
