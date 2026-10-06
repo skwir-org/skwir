@@ -7,7 +7,8 @@
 # carries). An optional one is absent, or there and working; installed
 # `minimal` (without what the packages only recommend), it may be there
 # with its libraries absent, which its probe says, as bibli's settings
-# do. And the libraries bibli opens at run time are there.
+# do. bibli's licence and PDFium's notices are installed, and the
+# libraries bibli opens at run time are there.
 #
 #     tools/package/linux/check.sh [minimal]
 set -eu
@@ -51,6 +52,17 @@ while read -r program; do
     fi
 done < "$here/programs"
 rm -f "$said"
+# bibli's licence and PDFium's notices (ADR-041, ADR-042): Debian's in
+# its copyright file and the package's documents, the others' in the
+# licences' folder.
+if [ -f /usr/share/doc/bibli/copyright ] && [ -f /usr/share/doc/bibli/pdfium/LICENSE ]; then
+    echo "ok: the licences, in /usr/share/doc/bibli"
+elif [ -f /usr/share/licenses/bibli/LICENSE ] && [ -f /usr/share/licenses/bibli/pdfium/LICENSE ]; then
+    echo "ok: the licences, in /usr/share/licenses/bibli"
+else
+    echo "missing: bibli's licence or PDFium's notices"
+    failed=1
+fi
 for library in libvulkan.so.1 libfontconfig.so.1; do
     if ldconfig -p | grep -q "$library"; then
         echo "ok: $library"

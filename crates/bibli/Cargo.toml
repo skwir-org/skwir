@@ -158,7 +158,12 @@ assets = [
 # loader and fontconfig.
 [package.metadata.generate-rpm]
 # bibli's own, and PDFium's (its parts' notices in
-# /usr/share/licenses/bibli/pdfium).
+# /usr/share/licenses/bibli/pdfium). The licences are plain files, not
+# documents, so a system installed without documents (`tsflags=nodocs`,
+# as container images are) keeps them: cargo-generate-rpm cannot mark a
+# file %license. Fedora keeps no common licence texts, so each package
+# holds its own: bibli's, and the GPL's or the AGPL's for the readers
+# that link Poppler or MuPDF (the FSF's texts, tools/package/licenses).
 license = "Apache-2.0 AND BSD-3-Clause"
 url = "https://github.com/venator/bibli"
 auto-req = "auto"
@@ -168,10 +173,10 @@ assets = [
     { source = "target/release/bibli-archive-worker", dest = "/usr/libexec/bibli/bibli-archive-worker", mode = "755" },
     { source = "target/release/bibli-model-worker", dest = "/usr/libexec/bibli/bibli-model-worker", mode = "755" },
     { source = "../../target/pdfium/libpdfium.so", dest = "/usr/libexec/bibli/libpdfium.so", mode = "755" },
-    { source = "../../target/pdfium/licenses/pdfium/*", dest = "/usr/share/licenses/bibli/pdfium/", mode = "644", doc = true },
+    { source = "../../target/pdfium/licenses/pdfium/*", dest = "/usr/share/licenses/bibli/pdfium/", mode = "644" },
     { source = "../../tools/package/linux/bibli.desktop", dest = "/usr/share/applications/bibli.desktop", mode = "644" },
     { source = "../../tools/package/linux/io.github.venator.bibli.metainfo.xml", dest = "/usr/share/metainfo/io.github.venator.bibli.metainfo.xml", mode = "644" },
-    { source = "../../LICENSE", dest = "/usr/share/licenses/bibli/LICENSE", mode = "644", doc = true },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/bibli/LICENSE", mode = "644" },
     { source = "../../README.md", dest = "/usr/share/doc/bibli/README.md", mode = "644", doc = true },
 ]
 
@@ -205,6 +210,7 @@ license = "Apache-2.0"
 summary = "bibli's audio and video player, through GStreamer"
 assets = [
     { source = "target/release/bibli-media-worker", dest = "/usr/libexec/bibli/bibli-media-worker", mode = "755" },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/bibli-media/LICENSE", mode = "644" },
 ]
 requires = { bibli = "*" }
 recommends = { gstreamer1-plugins-base = "*", gstreamer1-plugins-good = "*" }
@@ -216,6 +222,8 @@ summary = "bibli's PDF reader through Poppler"
 license = "GPL-3.0-only"
 assets = [
     { source = "target/release/bibli-poppler-worker", dest = "/usr/libexec/bibli/bibli-poppler-worker", mode = "755" },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/bibli-poppler/LICENSE", mode = "644" },
+    { source = "../../tools/package/licenses/GPL-3.0", dest = "/usr/share/licenses/bibli-poppler/GPL-3.0", mode = "644" },
 ]
 requires = { bibli = "*" }
 recommends = {}
@@ -227,6 +235,7 @@ license = "Apache-2.0"
 summary = "Mermaid diagrams drawn in bibli's Markdown previews"
 assets = [
     { source = "target/release/bibli-mermaid-worker", dest = "/usr/libexec/bibli/bibli-mermaid-worker", mode = "755" },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/bibli-mermaid/LICENSE", mode = "644" },
 ]
 requires = { bibli = "*" }
 recommends = {}
@@ -238,6 +247,8 @@ summary = "bibli's MuPDF engine: PDFs, and books laid out into pages"
 license = "AGPL-3.0-or-later"
 assets = [
     { source = "target/release/bibli-mupdf-worker", dest = "/usr/libexec/bibli/bibli-mupdf-worker", mode = "755" },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/bibli-mupdf/LICENSE", mode = "644" },
+    { source = "../../tools/package/licenses/AGPL-3.0", dest = "/usr/share/licenses/bibli-mupdf/AGPL-3.0", mode = "644" },
 ]
 requires = { bibli = "*" }
 recommends = {}

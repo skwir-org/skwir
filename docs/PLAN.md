@@ -2073,7 +2073,7 @@ what it touched.
   drives and their kinds, removable media, eject, Quick Access read.
   Bookmarks stay `BookmarkEdit`s with inverses wherever they are
   written.
-- **G. Thumbnails and isolation.** In part 2026-10-06 (status above): isolation chosen per system (ADR-039), macOS's built, Windows' AppContainer for the machine; thumbnails not done. QuickLook (`QLThumbnailGenerator`),
+- **G. Thumbnails and isolation.** In part 2026-10-06 (status above): isolation chosen per system (ADR-039), macOS's built, Windows' AppContainer for the machine; the system's thumbnails written 2026-10-06 (ADR-041: Quick Look's compiled only, the Windows shell's run under Wine). QuickLook (`QLThumbnailGenerator`),
   the Windows thumbnail cache (`IThumbnailCache`); the converters that
   need isolation (LibreOffice, Pandoc, ImageMagick) stay off where no
   sandbox exists, until one is chosen per system (an ADR).
@@ -2081,7 +2081,7 @@ what it touched.
   on Windows; ConPTY through `alacritty_terminal`; following the
   shell's folder (macOS `proc_pidinfo`, Windows through the shell's
   own report); PowerShell and `cmd` quoting beside POSIX and fish.
-- **I. Media keys and search hints.** In part 2026-10-05 (status above): Spotlight's tag hints. Now Playing
+- **I. Media keys and search hints.** In part 2026-10-05 (status above): Spotlight's tag hints; Now Playing, the system media controls and Windows Search not written. Now Playing
   (`MPNowPlayingInfoCenter`) and the system media controls (SMTC) as
   plugins beside MPRIS, each registered only on its system; Spotlight
   and Windows Search as hint providers beside Baloo and plocate.
@@ -2089,7 +2089,7 @@ what it touched.
   (`secondary`, which core already parses); the font family per
   system; an outgoing drag on macOS and Windows (patch 0001 is
   Wayland's).
-- **K. Packages and CI.** Written 2026-10-05 (status above); the Linux packages not built yet. On Linux, built and tried here: the Nix
+- **K. Packages and CI.** Linux's built and tried 2026-10-06 (ADR-040, ADR-041: Debian's, RPMs and the AUR, as the user chose, no Flatpak nor AppImage); the `.app`, the `.dmg` and the `.msi` written, never run; CI written, waiting for a remote. On Linux, built and tried here: the Nix
   package and an AppImage or Flatpak. Written, not run: the `.app` and
   `.dmg`, the `.msi`, the native workers' libraries per system, a CI
   matrix (`macos-latest`, `windows-latest`) waiting for a remote.
