@@ -426,6 +426,9 @@ pub struct Plan {
     /// repeat it.
     pub note: Option<String>,
     pub steps: Vec<Box<dyn Operation>>,
+    /// Who proposes it when the user did not make it: "An agent", a
+    /// plugin from outside by its title. The review says so.
+    pub by: Option<String>,
 }
 
 /// Serialized plan.
@@ -453,7 +456,15 @@ impl Plan {
             title: title.into(),
             note: None,
             steps: Vec::new(),
+            by: None,
         }
+    }
+
+    /// The same plan, proposed by `who` ("An agent").
+    #[must_use]
+    pub fn proposed_by(mut self, who: impl Into<String>) -> Self {
+        self.by = Some(who.into());
+        self
     }
 
     /// The same plan, with what the review says under its title.

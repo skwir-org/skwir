@@ -885,20 +885,31 @@ current source before assuming a planned crate, command, or API exists.
   with `--apply` as the user's own action. No command applies a plan it
   makes or is given (`apply_plan` hands it back): the caller decides.
   What an agent needs to see is a command answering a value (`entries`,
-  `tab.list`), never a protocol of its own. A command that acts on
+  `tab.list`), never a protocol of its own; `entries` with a `location`
+  lists a folder without showing it, so reading never moves the user's
+  view, and one asked off the window's thread waits a moment for a
+  listing still arriving. A command that acts on
   entries takes them in `entries` (`op::EntryArg`: an absolute path, or
   identity and path as the window names what it shows) and reads them
   through `App::targets`, the pane's selection when none is named: a
   script or an agent names files, never selects them, since the
-  selection is the user's and changes between two calls. A path given
+  selection is the user's and changes between two calls. A command that
+  makes something somewhere takes the folder too (`mkdir`'s `in`). A path given
   from outside the window is absolute (`os_path::absolute`), never read
   against the window's working folder. An agent's call goes through the
   permission layer (ADR-044, `permissions::for_agent`, enforced in the
   control plugin's `run`): nothing it names may be private, a command
   that acts runs once the user allows it in the review's queue
   (`App::ask`, a `Review::Question`), a user-only one is refused and not
-  listed, and what it is answered loses every private path
-  (`Checker::redact`). A script (`bibli cmd`) is the user's own.
+  listed, its plans say "An agent proposes" (`Plan::by`), and what it is
+  answered loses every private path (`Checker::redact`). Redaction takes
+  out what an answer names, not what it counted: the call runs as an
+  agent's (`permissions::as_agent`), where the selection a command is
+  handed (`App::targets`, `selected_refs`) has no private file, and a
+  command that answers what it counted or gathered of a pane's entries
+  (how many, their tags, their dates, their places) leaves out
+  `App::withheld(pane)`, asked before taking the workspace's lock. A
+  script (`bibli cmd`) is the user's own.
 - **What leaves this machine** (ADR-044). Every plugin says what it may
   do (`Plugin::capabilities`: read what files hold, write, network,
   programs), truthfully for a built-in one, which the Plugins page shows;

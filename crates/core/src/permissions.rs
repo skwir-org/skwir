@@ -416,6 +416,33 @@ pub fn for_agent(spec: &CommandSpec) -> AgentGate {
     }
 }
 
+thread_local! {
+    /// The private folders while an agent's call runs on this thread.
+    static AGENT: std::cell::RefCell<Option<Privacy>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Run `f` as an agent's call: what a command counts of a pane's entries
+/// for it leaves the private ones out (`App::withheld`), so no number it
+/// answers tells of them, where redacting the answer could only take out
+/// what it names. The control plugin runs every agent's call so; a
+/// command that hands its work to another thread counts there as anyone's.
+pub fn as_agent<T>(privacy: Privacy, f: impl FnOnce() -> T) -> T {
+    struct Restore(Option<Privacy>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            AGENT.with(|agent| *agent.borrow_mut() = previous);
+        }
+    }
+    let _restore = Restore(AGENT.with(|agent| agent.borrow_mut().replace(privacy)));
+    f()
+}
+
+/// The private folders, while an agent's call runs on this thread.
+pub fn agent_call() -> Option<Privacy> {
+    AGENT.with(|agent| agent.borrow().clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

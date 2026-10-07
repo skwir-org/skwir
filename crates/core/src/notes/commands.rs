@@ -58,7 +58,7 @@ pub(crate) fn register(app: &App) {
         "core",
         "notes.rate",
         "Rate",
-        "Rate the selection from 1 to 5 stars, or remove its rating with 0 (plan)",
+        "Rate the entries given, or the selection, from 1 to 5 stars, or remove their rating with 0 (plan)",
         |a, app| {
             anyhow::ensure!(a.stars <= 5, "a rating is from 1 to 5 stars");
             let rating = (a.stars > 0).then_some(u64::from(a.stars) * 2);
@@ -76,7 +76,7 @@ pub(crate) fn register(app: &App) {
         "core",
         "notes.comment",
         "Comment",
-        "Set the selection's comment, or remove it with an empty text (plan)",
+        "Set the comment of the entries given, or the selection's, or remove it with an empty text (plan)",
         |a, app| {
             let text = a.text.trim();
             let comment = (!text.is_empty()).then(|| text.to_owned());
@@ -96,7 +96,7 @@ pub(crate) fn register(app: &App) {
         "core",
         "notes.agree",
         "Make notes agree",
-        "Write the selection's notes, as read from every store, to each store that keeps them, so the stores that differ agree again (plan)",
+        "Write the notes of the entries given, or the selection's, as read from every store, to each store that keeps them, so the stores that differ agree again (plan)",
         |a, app| {
             per_entry(app, a, "make the notes agree".to_owned(), |r| {
                 let read = app.notes.read_one(&r.path, &app.notes.policy());

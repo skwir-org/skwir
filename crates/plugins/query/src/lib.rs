@@ -521,7 +521,7 @@ impl Plugin for QueryPlugin {
             ID,
             "query.search",
             "Search",
-            "Open a query as the pane's location (`*.pdf modified<7d size>10M`; `in:` picks the root)",
+            "Search, shown in the pane (then `entries` lists what it found): words match names; `name:`, `ext:pdf,md`, `kind:image,video` (document, text, audio, archive…), `type:dir`, `tag:x`, `content:words` or `content:/regex/`, `comment:`, `size>10M`, `modified<7d` (also `today`, `this-week`, `2026-05`), `rating>=4`, `near:lat,lon~5km`; `OR`, `NOT` or `-`, parentheses; `hidden:yes` looks in hidden folders, `depth:2` bounds it. `root` (or `in:`) is where it looks",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 lang::parse(&a.expr).map_err(|e| anyhow::anyhow!("query: {e}"))?;
@@ -666,7 +666,7 @@ impl Plugin for QueryPlugin {
             ID,
             "query.tag_choices",
             "Tags to refine by",
-            "The Tag chip's picker: the tags on the pane's files, read from them (blocks: `ui.choose` runs it on a worker), each refining the search",
+            "The Tag chip's picker: the tags on the pane's files, read from them, each refining the search",
             |a, app| {
                 // The tags plugin reads tags; without it, only a tag to type.
                 let counts = app

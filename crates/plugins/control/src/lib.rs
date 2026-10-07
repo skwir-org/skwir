@@ -302,7 +302,7 @@ impl ServerHandler for Tools {
         let mut info = ServerConfig::new(ServerCapabilities::builder().enable_tools().build());
         info.server_info = Implementation::new("bibli", env!("CARGO_PKG_VERSION"));
         info.instructions = Some(
-            "bibli, a file manager. Each tool is one of its commands, its dots written as two underscores. Name the files a command acts on in its `entries`, by absolute path: the selection is the user's, and can change between two calls (the `entries` tool lists what a pane shows). A command that would change files proposes a plan the user reviews in bibli's window; its answer says whether the user applied it, and how, or dismissed it."
+            "bibli, a file manager. Each tool is one of its commands, its dots written as two underscores. Name the files a command acts on in its `entries`, by absolute path: the selection is the user's, and can change between two calls (the `entries` tool lists what a pane shows, or with `location` a folder, without changing what the user sees). A command that would change files proposes a plan the user reviews in bibli's window; its answer says whether the user applied it, and how, or dismissed it. One that acts otherwise asks the user first. Private folders are never shown to you."
                 .into(),
         );
         info
@@ -392,7 +392,8 @@ fn failed(message: &str) -> CallToolResult {
 /// A call that proposes is an agent's, which goes through the permission
 /// layer (ADR-044): what it names must not be private, a command that
 /// acts without a plan waits for the user to allow it, one that answers
-/// the user's own dialogs is refused, and what it answers names nothing
+/// the user's own dialogs is refused, what it counts leaves private files
+/// out (`permissions::as_agent`), and what it answers names nothing
 /// private. A call that prints or applies is the user's own (`bibli cmd`).
 pub fn run(
     app: &App,
@@ -406,8 +407,12 @@ pub fn run(
     }
     let privacy = app.privacy();
     let mut check = privacy.checker();
-    let answer = admit(app, invocation, &mut check, cancelled)
-        .and_then(|()| dispatched(app, invocation, mode, cancelled));
+    // What it counts of a pane's entries leaves the private ones out.
+    let answer = admit(app, invocation, &mut check, cancelled).and_then(|()| {
+        permissions::as_agent(privacy.clone(), || {
+            dispatched(app, invocation, mode, cancelled)
+        })
+    });
     match answer {
         Ok(answer) => Ok(Answer {
             value: check.redact(answer.value),
@@ -527,7 +532,7 @@ fn planned(app: &App, plan: Plan, mode: PlanMode, cancelled: &dyn Fn() -> bool) 
             app.apply_whole(plan);
             verdict
         }
-        PlanMode::Propose => app.propose_awaiting(plan),
+        PlanMode::Propose => app.propose_awaiting(plan.proposed_by("An agent")),
     };
     let deadline = std::time::Instant::now() + PATIENCE;
     loop {

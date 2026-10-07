@@ -176,7 +176,8 @@ impl Plugin for GeoPlugin {
             "Where the files are",
             "The pictures and tracks of what a pane lists that were placed on the map, after the first `since`",
             move |args, app| {
-                let found = points.points(app.pane_or_active(args.pane), args.since);
+                let pane = app.pane_or_active(args.pane);
+                let found = points.points(pane, args.since, &app.withheld(pane));
                 Ok(Outcome::Value(serde_json::to_value(found)?))
             },
         )

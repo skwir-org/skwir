@@ -135,3 +135,132 @@ fn an_entry_is_named_by_its_path_or_as_the_window_names_it() {
     let elsewhere = EntryRef::new(known.id, tmp.path().join("moved.txt"));
     assert_eq!(named(serde_json::to_value(&elsewhere).unwrap()), elsewhere);
 }
+
+#[test]
+fn a_folder_or_a_file_is_made_in_the_folder_named() {
+    let tmp = home_tempdir();
+    let dir = tmp.path().join("work it's");
+    std::fs::create_dir_all(&dir).unwrap();
+    let app = app(tmp.path());
+    // No pane shows the folder: where they are made is named.
+    apply(
+        &app,
+        &plan(&app, "mkdir", json!({ "name": "new folder", "in": dir })),
+    );
+    assert!(dir.join("new folder").is_dir());
+    apply(
+        &app,
+        &plan(&app, "new_file", json!({ "name": "café.txt", "in": dir })),
+    );
+    assert!(dir.join("café.txt").is_file());
+    apply(
+        &app,
+        &plan(&app, "new_file", json!({ "name": "made/", "in": dir })),
+    );
+    assert!(dir.join("made").is_dir());
+    // A folder is named whole, and a name is one name.
+    assert!(
+        refused(&app, "mkdir", &json!({ "name": "x", "in": "relative" }))
+            .to_string()
+            .contains("absolute")
+    );
+    refused(
+        &app,
+        "mkdir",
+        &json!({ "name": dir.join("elsewhere"), "in": dir }),
+    );
+}
+
+#[test]
+fn an_undo_asked_from_outside_the_window_says_what_it_took_back() {
+    let tmp = home_tempdir();
+    let dir = tmp.path().join("work");
+    std::fs::create_dir_all(&dir).unwrap();
+    let app = app(tmp.path());
+    apply(
+        &app,
+        &plan(&app, "mkdir", json!({ "name": "kept", "in": dir })),
+    );
+    let undone = match app.dispatch(&Invocation::new("undo")).unwrap() {
+        bibli_core::command::Outcome::Value(value) => value,
+        other => panic!("expected what it undid, got {other:?}"),
+    };
+    assert_eq!(undone["undone"], "new folder kept");
+    assert_eq!(undone["applied"], 1);
+    assert!(!dir.join("kept").exists());
+    let redone = match app.dispatch(&Invocation::new("redo")).unwrap() {
+        bibli_core::command::Outcome::Value(value) => value,
+        other => panic!("expected what it redid, got {other:?}"),
+    };
+    assert_eq!(redone["redone"], "new folder kept");
+    assert!(dir.join("kept").is_dir());
+    assert!(
+        app.dispatch(&Invocation::new("redo"))
+            .unwrap_err()
+            .to_string()
+            .contains("nothing to redo")
+    );
+}
+
+#[test]
+fn a_location_is_listed_without_showing_it() {
+    let tmp = home_tempdir();
+    let dir = tmp.path().join("listed");
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::write(dir.join("b.txt"), "bb").unwrap();
+    std::fs::write(dir.join("a it's.txt"), "a").unwrap();
+    std::fs::write(dir.join(".hidden"), "").unwrap();
+    let app = app(tmp.path());
+    let shown = app
+        .workspace
+        .read()
+        .pane(active(&app))
+        .unwrap()
+        .shown()
+        .cloned();
+    let listed = match app
+        .dispatch(&Invocation::with_args(
+            "entries",
+            &json!({ "location": dir }),
+        ))
+        .unwrap()
+    {
+        bibli_core::command::Outcome::Value(value) => value,
+        other => panic!("expected a listing, got {other:?}"),
+    };
+    assert_eq!(listed["complete"], true);
+    assert_eq!(listed["total"], 3);
+    let entries = listed["entries"].as_array().unwrap();
+    let names: Vec<&str> = entries
+        .iter()
+        .map(|e| e["name"].as_str().unwrap())
+        .collect();
+    assert!(
+        names.contains(&"a it's.txt") && names.contains(&"sub"),
+        "{names:?}"
+    );
+    assert!(!names.contains(&".hidden"));
+    let b = entries.iter().find(|e| e["name"] == "b.txt").unwrap();
+    assert_eq!(b["size"], 2, "sizes are read for the page: {b}");
+    assert!(b["modified"].is_u64());
+    // Hidden ones when asked; the pane shows what it showed.
+    let all = app
+        .dispatch(&Invocation::with_args(
+            "entries",
+            &json!({ "location": dir, "hidden": true }),
+        ))
+        .unwrap();
+    let bibli_core::command::Outcome::Value(all) = all else {
+        panic!("expected a listing")
+    };
+    assert_eq!(all["total"], 4);
+    assert_eq!(
+        app.workspace
+            .read()
+            .pane(active(&app))
+            .unwrap()
+            .shown()
+            .cloned(),
+        shown
+    );
+}

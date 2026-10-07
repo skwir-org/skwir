@@ -456,3 +456,79 @@ fn a_socket_left_by_a_crash_is_replaced_and_one_in_use_is_not_taken() {
     assert_eq!(answer.value, json!(42));
     drop(first);
 }
+
+#[test]
+fn what_an_agent_counts_leaves_private_files_out() {
+    use bibli_core::Location;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("home");
+    std::fs::create_dir_all(root.join("keys")).unwrap();
+    std::fs::create_dir_all(root.join("diary")).unwrap();
+    std::fs::write(root.join("diary").join(".private"), "").unwrap();
+    std::fs::write(root.join("notes.txt"), "notes").unwrap();
+    let app = app(tmp.path());
+    keys_private(&app, &root);
+    app.commands
+        .register::<NoArgs, _>(
+            "test",
+            "test.targets",
+            "Targets",
+            "The names of what a command is handed",
+            |_, app| {
+                let names: Vec<String> = app
+                    .targets(None, Vec::new())?
+                    .iter()
+                    .map(|r| r.path.file_name().unwrap().to_string_lossy().into_owned())
+                    .collect();
+                Ok(Outcome::Value(json!(names)))
+            },
+        )
+        .reads();
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &Location::from_path(&root)).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+    {
+        let mut ws = app.workspace.write();
+        let p = ws.pane_mut(pane).unwrap();
+        let all: Vec<_> = p.order().to_vec();
+        p.selection.set(all);
+    }
+    let (_server, address) = listening(&app, tmp.path());
+    let call = |name: &str, args: Value, mode| {
+        client::call(&address, name, arguments(args), mode)
+            .unwrap()
+            .value
+    };
+    let names = |listed: &Value| -> Vec<String> {
+        listed["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["name"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    // What the pane shows: no number tells of the private folders.
+    let shown = call("entries", json!({}), PlanMode::Propose);
+    assert_eq!(names(&shown), ["notes.txt"]);
+    assert_eq!(shown["total"], 1);
+    assert_eq!(shown["selected"], 1);
+    // A folder listed without showing it: the same.
+    let listed = call("entries", json!({ "location": root }), PlanMode::Propose);
+    assert_eq!(names(&listed), ["notes.txt"]);
+    assert_eq!(listed["total"], 1);
+    // What the selection hands a command for an agent.
+    assert_eq!(
+        call("test.targets", json!({}), PlanMode::Propose),
+        json!(["notes.txt"])
+    );
+    // A script is the user's own: it counts what the user sees.
+    let script = call("entries", json!({}), PlanMode::Print);
+    assert_eq!(script["total"], 3);
+    assert_eq!(names(&script), ["diary", "keys", "notes.txt"]);
+    assert_eq!(
+        call("test.targets", json!({}), PlanMode::Print)
+            .as_array()
+            .map(Vec::len),
+        Some(3)
+    );
+}

@@ -2293,6 +2293,25 @@ is compiled only. Control stays off by default: turning it on is the
 user's choice, now with the permission layer between an agent and
 their files.
 
+Then (2026-10-07) an agent driven by a model ran it: Claude Code, given
+`bibli mcp` as a server, against a bibli of its own on Xvfb with
+synthetic files, from the tools' descriptions alone. Claude Code took
+every tool and schema; plans and questions waited for the window's
+Enter or Escape; private folders were refused by name, in a query's
+text and to a plugin from outside. It found what scripted agents had
+not, now fixed: a listing's `total` still counted the private files
+redaction had taken out of its entries, so a content search told an
+agent whether a private file held a word (ADR-044's fifth point: an
+agent's call counts and is handed no private file, `App::withheld`);
+`navigate` answered before the folder was listed (`entries` waits, a
+moment, off the window's thread); reading a folder meant moving the
+user's view (`entries` takes a `location`); `mkdir` made only in the
+folder shown (`in`); a review did not say an agent proposed it ("An
+agent proposes", `Plan::by`); `undo` did not say what it took back;
+search's syntax and some descriptions were written for bibli's
+developers. Checked again by a scripted agent on Xvfb with the release
+build.
+
 - **Permission layer.** Capabilities per plugin (read contents, write, network, spawn processes) and
   per-directory policies ("never leaves this machine" for `~/.ssh`, anything under a `.private` marker).
   Required before any model provider exists.

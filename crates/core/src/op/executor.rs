@@ -391,6 +391,11 @@ impl Executor {
         self.journal.lock().undo.last().map(|e| e.title.clone())
     }
 
+    /// The title of what Redo would apply again.
+    pub fn last_redo_title(&self) -> Option<String> {
+        self.journal.lock().redo.last().map(|e| e.title.clone())
+    }
+
     /// Titles of the undo stack, most recent last.
     pub fn undo_titles(&self) -> Vec<String> {
         self.journal

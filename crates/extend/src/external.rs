@@ -77,6 +77,7 @@ impl External {
             description: crate::intern(&manifest.description),
             runner: Arc::new(Runner {
                 id,
+                title: manifest.title.clone(),
                 kind,
                 folder: folder.clone(),
                 granted: capabilities,
@@ -154,6 +155,8 @@ pub(crate) enum Kind {
 /// plugin is turned off.
 pub(crate) struct Runner {
     pub id: &'static str,
+    /// What the user knows it as: what a review says proposed a plan.
+    pub title: String,
     pub kind: Kind,
     folder: PathBuf,
     pub granted: Capabilities,

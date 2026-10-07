@@ -590,6 +590,111 @@ impl App {
         self.workspace.write().pump_report()
     }
 
+    /// Wait until `pane`'s listing is complete or failed, at most
+    /// [`LISTED_WITHIN`], off the window's thread: what a script or an
+    /// agent reads right after showing a location is what it holds.
+    /// Without a window nothing else applies what the listing sends, so
+    /// this does.
+    fn await_listing(&self, pane: PaneId) {
+        if crate::scheduler::on_window_thread() {
+            return;
+        }
+        let deadline = std::time::Instant::now() + LISTED_WITHIN;
+        loop {
+            if !crate::scheduler::has_window() {
+                self.pump();
+            }
+            {
+                let ws = self.workspace.read();
+                match ws.pane(pane) {
+                    Some(p)
+                        if !p.is_dormant()
+                            && !p.listing.is_complete()
+                            && p.listing.error().is_none() => {}
+                    _ => return,
+                }
+            }
+            if std::time::Instant::now() > deadline {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    /// What `location` lists, read without showing it (`entries` with a
+    /// `location`): a script's or an agent's look at a folder, which
+    /// leaves the window as the user left it. Its entries by name, the
+    /// sizes and times of the page answered, without the private ones
+    /// for an agent's call. It waits: never on the window's thread.
+    fn listed_elsewhere(
+        &self,
+        location: &Location,
+        hidden: bool,
+        offset: usize,
+        limit: usize,
+        info: impl Fn(EntryId, &crate::entry::Entry, Option<PathBuf>, bool) -> EntryInfo,
+    ) -> anyhow::Result<Outcome> {
+        use crate::location::{Listing, SortKey, SortSpec};
+        anyhow::ensure!(
+            !crate::scheduler::on_window_thread(),
+            "a location is listed without showing it for a script or an agent, never in the window"
+        );
+        let open = self.open_location(location)?;
+        let deadline = std::time::Instant::now() + 3 * LISTED_WITHIN;
+        let mut listing = Listing::default();
+        while !listing.is_complete() && listing.error().is_none() {
+            let Ok(event) = open.events().recv_deadline(deadline) else {
+                break;
+            };
+            listing.apply(event);
+        }
+        if let Some(error) = listing.error() {
+            let error = error.to_owned();
+            open.close();
+            anyhow::bail!("{error}");
+        }
+        let privacy = crate::permissions::agent_call();
+        let mut check = privacy.as_ref().map(crate::permissions::Privacy::checker);
+        let order: Vec<EntryId> = listing
+            .sorted(SortSpec {
+                key: SortKey::Name,
+                ascending: true,
+                show_hidden: hidden,
+            })
+            .iter()
+            .copied()
+            .filter(|&id| match &mut check {
+                Some(check) => !open.path_of(id).is_some_and(|path| check.holds(&path)),
+                None => true,
+            })
+            .collect();
+        let page: Vec<EntryId> = order.iter().skip(offset).take(limit).copied().collect();
+        // Sizes and times are read when asked for: those of the page.
+        open.hydrate(&page, Priority::Normal);
+        let hydrated_by = std::time::Instant::now() + LISTED_WITHIN;
+        while page
+            .iter()
+            .any(|&id| listing.get(id).is_some_and(|e| !e.metadata.is_hydrated()))
+        {
+            let Ok(event) = open.events().recv_deadline(hydrated_by) else {
+                break;
+            };
+            listing.apply(event);
+        }
+        let entries: Vec<EntryInfo> = page
+            .iter()
+            .filter_map(|&id| Some(info(id, listing.get(id)?, open.path_of(id), false)))
+            .collect();
+        let complete = listing.is_complete();
+        open.close();
+        Ok(Outcome::Value(serde_json::json!({
+            "location": location,
+            "complete": complete,
+            "total": order.len(),
+            "entries": entries,
+        })))
+    }
+
     /// Block until the active pane's listing is complete (tests and CLI only).
     pub fn pump_until_complete(&self, pane: PaneId, timeout: std::time::Duration) -> bool {
         let deadline = std::time::Instant::now() + timeout;
@@ -710,6 +815,40 @@ impl App {
     /// say now (`permissions::Privacy`).
     pub fn privacy(&self) -> crate::permissions::Privacy {
         crate::permissions::Privacy::of(&self.settings)
+    }
+
+    /// The entries of `pane` an agent's call must not count (ADR-044):
+    /// while one runs on this thread (`permissions::as_agent`), those the
+    /// pane lists, shows or holds selected that are in a private folder; none
+    /// otherwise, at no cost. A command that answers what it counted or
+    /// gathered of a pane's entries (how many, their tags, their dates)
+    /// leaves these out. It reads markers from the disk, outside the
+    /// workspace's lock: ask before taking it.
+    pub fn withheld(&self, pane: PaneId) -> std::collections::HashSet<EntryId> {
+        let Some(privacy) = crate::permissions::agent_call() else {
+            return std::collections::HashSet::new();
+        };
+        let paths: Vec<(EntryId, PathBuf)> = {
+            let ws = self.workspace.read();
+            let Some(p) = ws.pane(pane) else {
+                return std::collections::HashSet::new();
+            };
+            p.order()
+                .iter()
+                .copied()
+                .chain(p.listing.ids())
+                .chain(p.selection.iter())
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .filter_map(|id| Some((id, p.path_of(id)?)))
+                .collect()
+        };
+        let mut check = privacy.checker();
+        paths
+            .into_iter()
+            .filter(|(_, path)| check.holds(path))
+            .map(|(id, _)| id)
+            .collect()
     }
 
     /// Plans proposed since the last call, oldest first.
@@ -864,14 +1003,29 @@ impl App {
 
     /// Entry references for the current selection of a pane, in selection order.
     pub fn selected_refs(&self, pane: PaneId) -> Vec<EntryRef> {
-        let ws = self.workspace.read();
-        let Some(p) = ws.pane(pane) else {
-            return Vec::new();
+        let refs = {
+            let ws = self.workspace.read();
+            let Some(p) = ws.pane(pane) else {
+                return Vec::new();
+            };
+            p.selection
+                .iter()
+                .filter_map(|id| Some(EntryRef::new(id, p.path_of(id)?)))
+                .collect()
         };
-        p.selection
-            .iter()
-            .filter_map(|id| Some(EntryRef::new(id, p.path_of(id)?)))
-            .collect()
+        Self::unwithheld(refs, |r| &r.path)
+    }
+
+    /// `items` without those in a private folder while an agent's call
+    /// runs on this thread (`permissions::as_agent`): what the selection
+    /// hands a command is what an agent may name. As is, at no cost,
+    /// otherwise. Reads markers: never under the workspace's lock.
+    fn unwithheld<T>(mut items: Vec<T>, path: impl Fn(&T) -> &Path) -> Vec<T> {
+        if let Some(privacy) = crate::permissions::agent_call() {
+            let mut check = privacy.checker();
+            items.retain(|item| !check.holds(path(item)));
+        }
+        items
     }
 
     /// `selected_refs`, each with the name that says its type
@@ -881,21 +1035,24 @@ impl App {
     /// link that leads nowhere). A worker holding only a path asks
     /// `fs::content_path`.
     pub fn selected_typed(&self, pane: PaneId) -> Vec<(EntryRef, Option<std::ffi::OsString>)> {
-        let ws = self.workspace.read();
-        let Some(p) = ws.pane(pane) else {
-            return Vec::new();
+        let typed = {
+            let ws = self.workspace.read();
+            let Some(p) = ws.pane(pane) else {
+                return Vec::new();
+            };
+            p.selection
+                .iter()
+                .filter_map(|id| {
+                    let path = p.path_of(id)?;
+                    let type_name = match p.entry(id) {
+                        Some(e) => e.inode_type().is_none().then(|| e.type_name().to_owned()),
+                        None => path.file_name().map(std::ffi::OsStr::to_os_string),
+                    };
+                    Some((EntryRef::new(id, path), type_name))
+                })
+                .collect()
         };
-        p.selection
-            .iter()
-            .filter_map(|id| {
-                let path = p.path_of(id)?;
-                let type_name = match p.entry(id) {
-                    Some(e) => e.inode_type().is_none().then(|| e.type_name().to_owned()),
-                    None => path.file_name().map(std::ffi::OsStr::to_os_string),
-                };
-                Some((EntryRef::new(id, path), type_name))
-            })
-            .collect()
+        Self::unwithheld(typed, |(r, _)| &r.path)
     }
 
     /// Open the listings of the folders `pane` opened in place that are not
@@ -1126,6 +1283,29 @@ pub struct EntriesArgs {
     pub limit: Option<usize>,
     #[serde(default)]
     pub pane: Option<PaneId>,
+    /// A folder or a location to list without showing it: an absolute
+    /// path or `scheme:rest`. The window stays as it is.
+    #[serde(default)]
+    pub location: Option<PathArg>,
+    /// With `location`: list hidden entries too (names starting with a dot).
+    #[serde(default)]
+    pub hidden: bool,
+}
+
+/// How long a listing is waited for: a script or an agent reading what a
+/// pane shows right after showing it reads what it holds, not its first
+/// batch; one that takes longer answers `complete: false`.
+const LISTED_WITHIN: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// What an undo or a redo did, for a script or an agent: the plan's
+/// title under `what`, and how its steps went.
+fn replayed(what: &str, title: Option<&str>, result: &op::ExecResult) -> Outcome {
+    Outcome::Value(serde_json::json!({
+        what: title,
+        "applied": result.applied,
+        "skipped": result.skipped,
+        "error": result.error,
+    }))
 }
 
 /// One entry as `entries` answers it.
@@ -1232,8 +1412,22 @@ pub struct TargetsArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MkdirArgs {
     pub name: PathArg,
+    /// The folder to make it in, an absolute path; the folder the pane
+    /// shows when omitted.
+    #[serde(default, rename = "in")]
+    pub folder: Option<PathArg>,
     #[serde(default)]
     pub pane: Option<PaneId>,
+}
+
+impl MkdirArgs {
+    /// The folder it is made in: the one named, else the pane's.
+    fn folder(&self, app: &App) -> anyhow::Result<PathBuf> {
+        match &self.folder {
+            Some(folder) => Ok(crate::os_path::absolute(folder)?.to_owned()),
+            None => app.pane_dir(app.pane_or_active(self.pane)),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -1741,36 +1935,48 @@ mod builtin {
             "core",
             "entries",
             "List entries",
-            "What a pane shows, in its order (sorted, filtered, with the folders opened in place): each entry's id, name, path, kind, size and modification time (seconds since 1970), and whether it is selected; from `offset`, at most `limit`",
+            "What a pane shows, in its order (sorted, filtered, with the folders opened in place), or with `location` what a folder holds, listed without showing it: each entry's id, name, path, kind, size and modification time (seconds since 1970), and whether it is selected; from `offset`, at most `limit`. `complete: false`: the listing was still arriving, ask again",
             |a, app| {
                 use crate::entry::keys;
+                let info = |id: EntryId, e: &crate::entry::Entry, path: Option<PathBuf>, selected: bool| EntryInfo {
+                    id,
+                    name: PathArg(e.name.clone().into()),
+                    path: path.map(PathArg),
+                    kind: e.kind,
+                    folder: e.is_dir() || id.is_place(),
+                    size: e.metadata.value(keys::SIZE).and_then(crate::Value::as_u64),
+                    modified: e
+                        .metadata
+                        .value(keys::MODIFIED)
+                        .and_then(crate::Value::as_time)
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs()),
+                    selected,
+                };
+                let limit = a.limit.unwrap_or(200);
+                if let Some(location) = &a.location {
+                    let location = Location::parse_os(location.as_os_str());
+                    return app.listed_elsewhere(&location, a.hidden, a.offset, limit, info);
+                }
                 let pane = app.pane_or_active(a.pane);
+                app.await_listing(pane);
+                let withheld = app.withheld(pane);
                 let ws = app.workspace.read();
                 let p = ws
                     .pane(pane)
                     .ok_or_else(|| anyhow::anyhow!("no pane {pane:?}"))?;
-                let order = p.order();
+                let order: Vec<EntryId> = p
+                    .order()
+                    .iter()
+                    .copied()
+                    .filter(|id| !withheld.contains(id))
+                    .collect();
                 let entries: Vec<EntryInfo> = order
                     .iter()
                     .skip(a.offset)
-                    .take(a.limit.unwrap_or(200))
+                    .take(limit)
                     .filter_map(|&id| {
-                        let e = p.entry(id)?;
-                        Some(EntryInfo {
-                            id,
-                            name: PathArg(e.name.clone().into()),
-                            path: p.path_of(id).map(PathArg),
-                            kind: e.kind,
-                            folder: e.is_dir() || id.is_place(),
-                            size: e.metadata.value(keys::SIZE).and_then(crate::Value::as_u64),
-                            modified: e
-                                .metadata
-                                .value(keys::MODIFIED)
-                                .and_then(crate::Value::as_time)
-                                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                                .map(|d| d.as_secs()),
-                            selected: p.selection.contains(id),
-                        })
+                        Some(info(id, p.entry(id)?, p.path_of(id), p.selection.contains(id)))
                     })
                     .collect();
                 Ok(Outcome::Value(serde_json::json!({
@@ -1778,7 +1984,7 @@ mod builtin {
                     "location": p.shown(),
                     "complete": p.listing.is_complete(),
                     "total": order.len(),
-                    "selected": p.selection.len(),
+                    "selected": p.selection.iter().filter(|id| !withheld.contains(id)).count(),
                     "entries": entries,
                 })))
             },
@@ -1879,10 +2085,9 @@ mod builtin {
             "core",
             "mkdir",
             "New folder",
-            "Create a folder in the current directory (plan)",
+            "Create a folder in the folder given in `in`, or the one the pane shows (plan)",
             |a, app| {
-                let pane = app.pane_or_active(a.pane);
-                let dir = app.pane_dir(pane)?;
+                let dir = a.folder(app)?;
                 let name = a.name.into_inner().into_os_string();
                 op::valid_file_name(&name)?;
                 Ok(Outcome::Plan(Plan::with_steps(
@@ -1899,10 +2104,9 @@ mod builtin {
             "core",
             "new_file",
             "New file",
-            "Create an empty file in the current directory (plan); a name ending in / makes a folder",
+            "Create an empty file in the folder given in `in`, or the one the pane shows (plan); a name ending in / makes a folder",
             |a, app| {
-                let pane = app.pane_or_active(a.pane);
-                let dir = app.pane_dir(pane)?;
+                let dir = a.folder(app)?;
                 let name = a.name.into_inner().into_os_string();
                 // A name ending in `/` is a folder, as yazi makes one.
                 if let Some(folder) = name.to_str().and_then(|n| n.strip_suffix('/')) {
@@ -1950,12 +2154,22 @@ mod builtin {
             "core",
             "undo",
             "Undo",
-            "Undo the most recent plan",
+            "Undo the most recent plan; asked from outside the window, says what it took back",
             |_, app| {
-                if !app.executor.undo(app.lifetime().child()) {
-                    anyhow::bail!("nothing to undo");
+                if crate::scheduler::on_window_thread() {
+                    anyhow::ensure!(app.executor.undo(app.lifetime().child()), "nothing to undo");
+                    return Ok(Outcome::Done);
                 }
-                Ok(Outcome::Done)
+                // A script or an agent waits, and is told what it took back.
+                let result = app
+                    .executor
+                    .undo_blocking(&app.lifetime().child())
+                    .ok_or_else(|| anyhow::anyhow!("nothing to undo"))?;
+                Ok(replayed(
+                    "undone",
+                    app.executor.last_redo_title().as_deref(),
+                    &result,
+                ))
             },
         );
 
@@ -1963,12 +2177,17 @@ mod builtin {
             "core",
             "redo",
             "Redo",
-            "Redo the most recently undone plan",
+            "Redo the most recently undone plan; asked from outside the window, says what it applied again",
             |_, app| {
-                if !app.executor.redo(app.lifetime().child()) {
-                    anyhow::bail!("nothing to redo");
+                if crate::scheduler::on_window_thread() {
+                    anyhow::ensure!(app.executor.redo(app.lifetime().child()), "nothing to redo");
+                    return Ok(Outcome::Done);
                 }
-                Ok(Outcome::Done)
+                let result = app
+                    .executor
+                    .redo_blocking(&app.lifetime().child())
+                    .ok_or_else(|| anyhow::anyhow!("nothing to redo"))?;
+                Ok(replayed("redone", app.executor.last_undo_title().as_deref(), &result))
             },
         );
 

@@ -577,7 +577,7 @@ pub(crate) fn register(app: &crate::App) {
         "core",
         "settings.apply",
         "Save settings",
-        "Validate and atomically save preferences, then notify their owning plugins",
+        "Change preferences, each key with the text its row in Settings takes; all of them are saved, or none",
         |args, app| {
             app.settings.validate(&args.changes)?;
             let mut status = app.settings.status.lock();

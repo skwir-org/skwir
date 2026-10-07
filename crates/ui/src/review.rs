@@ -208,7 +208,10 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         Review::Plan { plan, diff } => {
             let steps = plan.steps.len();
             (
-                format!("Proposed: {}", plan.title),
+                match &plan.by {
+                    Some(who) => format!("{who} proposes: {}", plan.title),
+                    None => format!("Proposed: {}", plan.title),
+                },
                 format!("{}{more}", crate::format::count(steps, "step")),
                 plan.note.clone(),
                 plan_lines(shell, list, diff.as_ref(), steps, &theme),

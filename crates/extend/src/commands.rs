@@ -177,7 +177,8 @@ fn ask(
                 runner.granted.has(Capability::Write),
                 "this plugin may not change files"
             );
-            let mut plan = Plan::with_steps(title, plan_steps(app, &steps, refs)?);
+            let mut plan = Plan::with_steps(title, plan_steps(app, &steps, refs)?)
+                .proposed_by(runner.title.clone());
             if let Some(note) = note {
                 plan = plan.with_note(note);
             }

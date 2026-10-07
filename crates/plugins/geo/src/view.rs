@@ -590,21 +590,35 @@ impl Scanner {
     }
 
     /// What the scan of `pane` found after its first `since` points.
-    pub fn points(&self, pane: PaneId, since: usize) -> Option<Batch> {
+    ///
+    /// Without the files `withheld` (an agent's call, `App::withheld`), as
+    /// if the pane did not list them: their places and their counts.
+    pub fn points(&self, pane: PaneId, since: usize, withheld: &HashSet<EntryId>) -> Option<Batch> {
         let scans = self.scans.lock();
         let scans = scans.get(&pane)?;
         let scan = &scans.shown;
+        let placed: Vec<&Placed> = scan
+            .placed
+            .iter()
+            .filter(|p| !withheld.contains(&p.id))
+            .collect();
+        let looked = scan
+            .looked
+            .iter()
+            .filter(|id| withheld.contains(id))
+            .count();
         Some(Batch {
             generation: scan.generation,
-            points: scan
-                .placed
+            points: placed
                 .get(since..)
-                .map(<[Placed]>::to_vec)
-                .unwrap_or_default(),
-            placed: scan.placed.len(),
-            looked: scan.looked.len(),
-            candidates: scan.candidates,
-            listed: scan.listed,
+                .unwrap_or_default()
+                .iter()
+                .map(|p| (*p).clone())
+                .collect(),
+            placed: placed.len(),
+            looked: scan.looked.len() - looked,
+            candidates: scan.candidates.saturating_sub(looked),
+            listed: scan.listed.saturating_sub(withheld.len()),
             complete: scan.complete,
             rechecking: scans.next.is_some(),
         })

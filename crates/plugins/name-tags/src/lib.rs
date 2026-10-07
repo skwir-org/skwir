@@ -356,7 +356,7 @@ impl Plugin for NameTagsPlugin {
             ID,
             "names.tag",
             "Tags into name",
-            "Rename the selection to hold its tags in its names (`convention`: `tagspaces`, name[a b].ext, or `filetags`, name -- a b.ext) (plan)",
+            "Rename the entries given, or the selection, to hold their tags in their names (`convention`: `tagspaces`, name[a b].ext, or `filetags`, name -- a b.ext) (plan)",
             |a, app| tag_names(app, a),
         )
         .plans();
@@ -364,7 +364,7 @@ impl Plugin for NameTagsPlugin {
             ID,
             "names.untag",
             "Tags out of name",
-            "Rename the selection without the tags in its names, the other stores keeping them first (plan)",
+            "Rename the entries given, or the selection, without the tags in their names, the other stores keeping them first (plan)",
             |a, app| untag_names(app, a),
         )
         .plans();

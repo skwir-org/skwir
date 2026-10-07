@@ -791,7 +791,7 @@ impl Plugin for TagsPlugin {
                 ID,
                 "tags.set",
                 "Set tags",
-                "Replace the selection's tags (plan)",
+                "Replace the tags of the entries given, or the selection's (plan)",
                 move |a, app| {
                     let tags = parse_tags(&a.tags.join(","));
                     v.used(&tags);
@@ -813,7 +813,7 @@ impl Plugin for TagsPlugin {
                 ID,
                 "tags.add",
                 "Add tags",
-                "Add tags to the selection (plan)",
+                "Add tags to the entries given, or the selection (plan)",
                 move |a, app| {
                     edit_plan(
                         app,
@@ -834,7 +834,7 @@ impl Plugin for TagsPlugin {
                 ID,
                 "tags.remove",
                 "Remove tags",
-                "Remove tags from the selection (plan)",
+                "Remove tags from the entries given, or the selection (plan)",
                 move |a, app| {
                     edit_plan(
                         app,
@@ -854,7 +854,7 @@ impl Plugin for TagsPlugin {
             ID,
             "tags.edit",
             "Edit tags",
-            "Add some tags to the selection and remove others, as one plan: each entry keeps its other tags",
+            "Add some tags to the entries given, or the selection, and remove others, as one plan: each entry keeps its other tags",
             move |a, app| edit_plan(app, &v, a),
         )
         .plans();
@@ -863,7 +863,7 @@ impl Plugin for TagsPlugin {
             ID,
             "tags.toggle",
             "Toggle a tag",
-            "Give the selection a tag, or take it from every entry when all of them have it: a command to bind to a key (plan)",
+            "Give the entries given, or the selection, a tag, or take it from every entry when all of them have it: a command to bind to a key (plan)",
             move |a, app| {
                 let Some(tag) = parse_tags(&a.tag).pop() else {
                     anyhow::bail!("which tag?");
@@ -895,7 +895,7 @@ impl Plugin for TagsPlugin {
             ID,
             "tags.selected",
             "Tags of the selection",
-            "`{ items, tags: [{ name, count, color? }], known }`: the selection's tags, read from its files, with how many carry each and the color a file gives one (a Finder tag's), and the tags known, those pinned first, then the most recently used (blocks: dispatch from a worker)",
+            "`{ items, tags: [{ name, count, color? }], known }`: the selection's tags, read from its files, with how many carry each and the color a file gives one (a Finder tag's), and the tags known, those pinned first, then the most recently used",
             move |a, app| Ok(Outcome::Value(selected(app, &v, a)?)),
         )
         .reads();
@@ -1089,7 +1089,7 @@ impl Plugin for TagsPlugin {
             ID,
             "tags.list",
             "List tags",
-            "Tags used in the pane's listing, with counts (tags that differ only in case count as one); with `read`, read from the files whose tags the listing has not read yet (blocks: dispatch from a worker)",
+            "Tags used in the pane's listing, with counts (tags that differ only in case count as one); with `read`, read from the files whose tags the listing has not read yet too",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 // Keyed by the lowercase form, shown as first spelled.
@@ -1102,12 +1102,13 @@ impl Plugin for TagsPlugin {
                 // What the listing read, and the files it has not, taken
                 // under the lock and read after it.
                 let mut unread = Vec::new();
+                let withheld = app.withheld(pane);
                 let open = {
                     let ws = app.workspace.read();
                     let Some(p) = ws.pane(pane) else {
                         anyhow::bail!("no such pane");
                     };
-                    for e in p.listing.iter() {
+                    for e in p.listing.iter().filter(|e| !withheld.contains(&e.id)) {
                         match tags_of(&e.metadata) {
                             Some(tags) => count(tags),
                             None if a.read && unread.len() < READ_AT_MOST => unread.push(e.id),

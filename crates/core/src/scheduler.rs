@@ -176,10 +176,21 @@ thread_local! {
     static WINDOW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// Whether a window marked its thread: else bibli runs without one (a
+/// script's `bibli cmd`, a test), and nothing applies what listings send
+/// unless the caller does.
+static HAS_WINDOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Mark the calling thread as the window's: the one thread nothing may
 /// keep waiting (ADR-000). The window marks its own at startup.
 pub fn mark_window_thread() {
     WINDOW.with(|window| window.set(true));
+    HAS_WINDOW.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether bibli has a window, whose thread applies what listings send.
+pub fn has_window() -> bool {
+    HAS_WINDOW.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Whether the calling thread is the window's: a command that may wait

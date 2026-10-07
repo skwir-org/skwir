@@ -1,7 +1,7 @@
 # ADR-044: The permission layer: what a plugin may do, what an agent may run, what never leaves
 
-Status: accepted, 2026-10-07 (Phase 6, its second step). Amends ADR-043:
-an agent's call goes through it.
+Status: accepted, 2026-10-07 (Phase 6, its second step); amended the same
+day by its fifth point. Amends ADR-043: an agent's call goes through it.
 
 ## Context
 
@@ -64,6 +64,19 @@ of them to a different degree:
    among its tools. A script (`bibli cmd`) is the user's own: it is held
    to none of this.
 
+5. **What an agent counts** (amended 2026-10-07, after an agent's first
+   trial over MCP). Redaction takes out what an answer names, never what
+   it counted: a listing of a search by content answered `total: 1` with
+   the private match taken out of its entries, so an agent could ask
+   word after word whether a private file holds it. An agent's call runs
+   as one (`permissions::as_agent`, a scope of the thread that runs it):
+   the selection it is handed holds no private file (`App::targets`,
+   `selected_refs`), and a command that counts or gathers a pane's
+   entries for its answer (`entries`, `tags.list`, the timeline's
+   histogram of a listing, the map's points, a bulk rename's preview)
+   leaves out `App::withheld(pane)`, so the numbers are those of a
+   window without them.
+
 ## Consequences
 
 - An agent cannot apply its own proposal, answer a question it caused,
@@ -72,9 +85,16 @@ of them to a different degree:
   Allow. The tool list says which tools ask first, and marks those that
   change nothing as read-only.
 - Redaction is by what an answer names, at one place (the channel), so
-  a new command needs nothing to keep private folders from agents. A
-  title that names a folder found private only by its marker is not
-  recognised (the marker is checked for paths, not inside text).
+  a new command needs nothing to keep private folders' names from
+  agents. A title that names a folder found private only by its marker
+  is not recognised (the marker is checked for paths, not inside text).
+  A new command that answers what it counted of a pane's entries asks
+  `App::withheld`; one that forgets tells how many private files there
+  are, not what they are named.
+- What a walk in the background gathered over a folder (the timeline's
+  histogram of a subtree, Usage's sizes) is shared by the window and
+  whoever asks, private folders included: an agent can learn how much
+  they hold and when it changed, never their names nor what they hold.
 - A new command that forgets to say what it does asks the user first: a
   bother, never a leak. A new window command that forgets is refused to
   agents.

@@ -401,6 +401,7 @@ impl TimelinePlugin {
     ) -> anyhow::Result<Histogram> {
         let mut unknown = 0;
         let mut days = Days::default();
+        let withheld = app.withheld(pane);
         {
             let ws = app.workspace.read();
             let p = ws
@@ -408,7 +409,12 @@ impl TimelinePlugin {
                 .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
             // What the pane shows (`Pane::order`): hidden files and
             // companions as it shows them, filtered by name, narrowed.
-            for e in p.order().iter().filter_map(|id| p.entry(*id)) {
+            for e in p
+                .order()
+                .iter()
+                .filter(|id| !withheld.contains(id))
+                .filter_map(|id| p.entry(*id))
+            {
                 match e.metadata.value(keys::MODIFIED).and_then(Value::as_time) {
                     Some(t) => days.add(
                         t,

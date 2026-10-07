@@ -420,6 +420,8 @@ fn plan_selection(
     spec: &RenameSpec,
 ) -> anyhow::Result<BulkRename> {
     let pane = app.pane_or_active(pane);
+    // An agent's call leaves out the private files the user selected.
+    let withheld = app.withheld(pane);
     let ws = app.workspace.read();
     let p = ws
         .pane(pane)
@@ -429,7 +431,7 @@ fn plan_selection(
     let mut items = Vec::new();
     // In the order shown, folders opened in place included.
     for id in p.order().iter().copied() {
-        if !p.selection.contains(id) {
+        if !p.selection.contains(id) || withheld.contains(&id) {
             continue;
         }
         let Some(e) = p.entry(id) else { continue };
