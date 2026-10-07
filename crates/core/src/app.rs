@@ -722,25 +722,76 @@ impl App {
     }
 
     /// What a command acts on: the entries it names (a surface acting on
-    /// what it showed: Details, the tag editor), else the selection of
-    /// `pane`, the active one when `None`. None at all is
+    /// what it showed: Details, the tag editor; a script or an agent, which
+    /// names files rather than select them, ADR-043), else the selection
+    /// of `pane`, the active one when `None`. Every command that acts on
+    /// entries asks this, so each can be given them. None at all is
     /// [`NothingSelected`](crate::command::NothingSelected), which a
     /// surface answers as the hint it is.
+    ///
+    /// # Errors
+    /// Nothing named or selected, or an entry named by a relative path or
+    /// one that leads nowhere (`EntryArg::into_ref`).
     pub fn targets(
         &self,
         pane: Option<PaneId>,
-        entries: Vec<EntryRef>,
-    ) -> Result<Vec<EntryRef>, crate::command::NothingSelected> {
+        entries: Vec<op::EntryArg>,
+    ) -> anyhow::Result<Vec<EntryRef>> {
         let entries = if entries.is_empty() {
             self.selected_refs(self.pane_or_active(pane))
         } else {
-            entries
+            op::EntryArg::refs(entries)?
         };
         if entries.is_empty() {
-            Err(crate::command::NothingSelected)
+            Err(crate::command::NothingSelected.into())
         } else {
             Ok(entries)
         }
+    }
+
+    /// [`App::targets`], each with the name that says its type, as
+    /// [`App::selected_typed`] gives the selection's: an entry the pane
+    /// lists is typed from memory, any other by what it leads to
+    /// (`fs::content_path`, which reads: one named by a script or an
+    /// agent, on its thread).
+    ///
+    /// # Errors
+    /// As [`App::targets`].
+    pub fn targets_typed(
+        &self,
+        pane: Option<PaneId>,
+        entries: Vec<op::EntryArg>,
+    ) -> anyhow::Result<Vec<(EntryRef, Option<std::ffi::OsString>)>> {
+        let pane = self.pane_or_active(pane);
+        if entries.is_empty() {
+            let typed = self.selected_typed(pane);
+            if typed.is_empty() {
+                return Err(crate::command::NothingSelected.into());
+            }
+            return Ok(typed);
+        }
+        let refs = op::EntryArg::refs(entries)?;
+        let listed: Vec<Option<Option<std::ffi::OsString>>> = {
+            let ws = self.workspace.read();
+            let p = ws.pane(pane);
+            refs.iter()
+                .map(|r| {
+                    let e = p?.entry(r.id)?;
+                    Some(e.inode_type().is_none().then(|| e.type_name().to_owned()))
+                })
+                .collect()
+        };
+        Ok(refs
+            .into_iter()
+            .zip(listed)
+            .map(|(r, listed)| {
+                let name = listed.unwrap_or_else(|| {
+                    crate::fs::content_path(&r.path)
+                        .and_then(|c| c.file_name().map(std::ffi::OsStr::to_os_string))
+                });
+                (r, name)
+            })
+            .collect())
     }
 
     /// Entry references for the current selection of a pane, in selection order.
@@ -1077,14 +1128,35 @@ pub struct SweepArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RenameArgs {
     pub new_name: PathArg,
+    /// The entry to rename, by absolute path; the pane's selection when
+    /// omitted.
+    #[serde(default)]
+    pub entries: Vec<op::EntryArg>,
     #[serde(default)]
     pub pane: Option<PaneId>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct DestArgs {
-    /// Destination directory.
+    /// Destination directory, an absolute path.
     pub dest: PathArg,
+    /// The entries to act on, by absolute path; the pane's selection when
+    /// omitted.
+    #[serde(default)]
+    pub entries: Vec<op::EntryArg>,
+    #[serde(default)]
+    pub pane: Option<PaneId>,
+}
+
+/// What a command acts on: entries it is given, else a pane's selection
+/// (`App::targets`).
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct TargetsArgs {
+    /// The entries to act on, by absolute path; the pane's selection when
+    /// omitted.
+    #[serde(default)]
+    pub entries: Vec<op::EntryArg>,
+    /// The pane whose selection, the active pane's when omitted.
     #[serde(default)]
     pub pane: Option<PaneId>,
 }
@@ -1116,20 +1188,29 @@ pub struct PlanDiffArgs {
 mod builtin {
     use super::*;
 
-    fn selection_plan(
+    /// A plan of one step per entry the command acts on (`App::targets`).
+    fn targets_plan(
         app: &App,
-        pane: PaneId,
+        pane: Option<PaneId>,
+        entries: Vec<op::EntryArg>,
         title: &str,
         f: impl Fn(EntryRef) -> Box<dyn op::Operation>,
     ) -> anyhow::Result<Outcome> {
-        let refs = app.selected_refs(pane);
-        if refs.is_empty() {
-            return Err(crate::command::NothingSelected.into());
-        }
+        let refs = app.targets(pane, entries)?;
         Ok(Outcome::Plan(Plan::with_steps(
             title,
             refs.into_iter().map(f).collect(),
         )))
+    }
+
+    /// The folder a move or a copy goes to: a path, whole (it may come
+    /// from another process than the window, ADR-043).
+    fn destination(dest: &Path) -> anyhow::Result<PathBuf> {
+        let dest = Location::parse_os(dest.as_os_str())
+            .path()
+            .ok_or_else(|| anyhow::anyhow!("destination must be a path"))?;
+        crate::os_path::absolute(&dest)?;
+        Ok(dest)
     }
 
     pub fn register(app: &App) {
@@ -1239,14 +1320,14 @@ mod builtin {
             },
         );
 
-        c.register::<PaneArg, _>(
+        c.register::<TargetsArgs, _>(
             "core",
             "show_in_folder",
             "Show in folder",
             "Open the folder the selected file is in, the file selected: from a search, a tag, the shelf, where files from many folders are listed",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
-                let refs = app.selected_refs(pane);
+                let refs = app.targets(Some(pane), a.entries)?;
                 let [one] = refs.as_slice() else {
                     anyhow::bail!("select one file to show in its folder");
                 };
@@ -1623,12 +1704,11 @@ mod builtin {
             "core",
             "rename",
             "Rename",
-            "Rename the selected entry (plan)",
+            "Rename the selected entry, or the one given (plan)",
             |a, app| {
-                let pane = app.pane_or_active(a.pane);
-                let refs = app.selected_refs(pane);
+                let refs = app.targets(a.pane, a.entries)?;
                 let [r] = refs.as_slice() else {
-                    anyhow::bail!("rename needs exactly one selected entry")
+                    anyhow::bail!("rename needs exactly one entry")
                 };
                 let new_name = a.new_name.into_inner().into_os_string();
                 op::valid_file_name(&new_name)?;
@@ -1646,18 +1726,21 @@ mod builtin {
             "core",
             "move",
             "Move",
-            "Move the selection to a directory (plan)",
+            "Move the selection, or the entries given, to a directory (plan)",
             |a, app| {
-                let pane = app.pane_or_active(a.pane);
-                let dest = Location::parse_os(a.dest.as_os_str())
-                    .path()
-                    .ok_or_else(|| anyhow::anyhow!("destination must be a path"))?;
-                selection_plan(app, pane, &format!("move to {}", dest.display()), |e| {
-                    Box::new(op::Move {
-                        entry: e,
-                        dest_dir: dest.clone(),
-                    })
-                })
+                let dest = destination(&a.dest)?;
+                targets_plan(
+                    app,
+                    a.pane,
+                    a.entries,
+                    &format!("move to {}", dest.display()),
+                    |e| {
+                        Box::new(op::Move {
+                            entry: e,
+                            dest_dir: dest.clone(),
+                        })
+                    },
+                )
             },
         );
 
@@ -1665,39 +1748,38 @@ mod builtin {
             "core",
             "copy",
             "Copy",
-            "Copy the selection to a directory (plan)",
+            "Copy the selection, or the entries given, to a directory (plan)",
             |a, app| {
-                let pane = app.pane_or_active(a.pane);
-                let dest = Location::parse_os(a.dest.as_os_str())
-                    .path()
-                    .ok_or_else(|| anyhow::anyhow!("destination must be a path"))?;
-                selection_plan(app, pane, &format!("copy to {}", dest.display()), |e| {
-                    Box::new(op::Copy::from_settings(e, dest.clone(), &app.settings))
-                })
+                let dest = destination(&a.dest)?;
+                targets_plan(
+                    app,
+                    a.pane,
+                    a.entries,
+                    &format!("copy to {}", dest.display()),
+                    |e| Box::new(op::Copy::from_settings(e, dest.clone(), &app.settings)),
+                )
             },
         );
 
-        c.register::<PaneArg, _>(
+        c.register::<TargetsArgs, _>(
             "core",
             "trash",
             "Move to trash",
-            "Trash the selection (plan)",
+            "Trash the selection, or the entries given (plan)",
             |a, app| {
-                let pane = app.pane_or_active(a.pane);
-                selection_plan(app, pane, "move to trash", |e| {
+                targets_plan(app, a.pane, a.entries, "move to trash", |e| {
                     Box::new(op::Trash { entry: e })
                 })
             },
         );
 
-        c.register::<PaneArg, _>(
+        c.register::<TargetsArgs, _>(
             "core",
             "delete",
             "Delete permanently",
-            "Delete the selection without trash (plan, irreversible)",
+            "Delete the selection, or the entries given, without trash (plan, irreversible)",
             |a, app| {
-                let pane = app.pane_or_active(a.pane);
-                selection_plan(app, pane, "delete permanently", |e| {
+                targets_plan(app, a.pane, a.entries, "delete permanently", |e| {
                     Box::new(op::Delete { entry: e })
                 })
             },

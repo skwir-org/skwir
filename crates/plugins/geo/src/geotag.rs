@@ -55,14 +55,14 @@ pub(crate) fn register(app: &App) {
         "geo.geotag",
         "Geotag pictures from a track",
         "Place the selected pictures along the one selected track (GPX, FIT, any track read): each picture taken while it was recorded gets its position at that moment; proposed for review. Works on a worker: the result arrives as a proposal or a notification",
-        |args, app| geotag(app, &args),
+        |args, app| geotag(app, args),
     );
     app.commands.register::<RemoveArgs, _>(
         ID,
         "geo.remove_location",
         "Remove pictures' locations",
         "Take the location out of the selected pictures (plan); those without one are left as they are",
-        |args, app| remove_location(app, &args),
+        |args, app| remove_location(app, args),
     );
     // Offered only where they apply: pictures beside a file of a track
     // format (which one is a track is read when the command runs), and
@@ -1019,6 +1019,10 @@ impl bibli_core::op::Effect for SetPosition {
 
 #[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
 struct GeotagArgs {
+    /// The track and the pictures, by absolute path; the pane's selection
+    /// when omitted.
+    #[serde(default)]
+    entries: Vec<bibli_core::op::EntryArg>,
     /// The pane; the active one when left out.
     #[serde(default)]
     pane: Option<PaneId>,
@@ -1030,14 +1034,29 @@ struct GeotagArgs {
 
 #[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
 struct RemoveArgs {
+    /// The pictures, by absolute path; the pane's selection when omitted.
+    #[serde(default)]
+    entries: Vec<bibli_core::op::EntryArg>,
     /// The pane; the active one when left out.
     #[serde(default)]
     pane: Option<PaneId>,
 }
 
-fn geotag(app: &App, args: &GeotagArgs) -> anyhow::Result<Outcome> {
-    let pane = app.pane_or_active(args.pane);
-    let typed = app.selected_typed(pane);
+/// What a geotag command acts on, typed: nothing selected is nothing, for
+/// the command to say what to select.
+fn typed(
+    app: &App,
+    pane: Option<PaneId>,
+    entries: Vec<bibli_core::op::EntryArg>,
+) -> anyhow::Result<Vec<(EntryRef, Option<std::ffi::OsString>)>> {
+    match app.targets_typed(pane, entries) {
+        Err(error) if bibli_core::command::is_nothing_selected(&error) => Ok(Vec::new()),
+        typed => typed,
+    }
+}
+
+fn geotag(app: &App, args: GeotagArgs) -> anyhow::Result<Outcome> {
+    let typed = typed(app, args.pane, args.entries)?;
     // By name only here (a link's target's): which one is a track is read
     // on the worker.
     anyhow::ensure!(
@@ -1292,10 +1311,10 @@ fn plan(title: String, notes: &[String], steps: Vec<SetPosition>) -> Plan {
 /// apply (a single action, undoable). Nothing is read here, on what may
 /// be the UI thread: a picture without a location is already done when
 /// the plan runs.
-fn remove_location(app: &App, args: &RemoveArgs) -> anyhow::Result<Outcome> {
-    let pane = app.pane_or_active(args.pane);
-    // Typed by the listings (a link as what it leads to): nothing is read.
-    let typed = app.selected_typed(pane);
+fn remove_location(app: &App, args: RemoveArgs) -> anyhow::Result<Outcome> {
+    // Typed by the listings (a link as what it leads to): nothing is read
+    // for the selection.
+    let typed = typed(app, args.pane, args.entries)?;
     anyhow::ensure!(
         !typed.is_empty(),
         "Select the pictures whose location to remove"

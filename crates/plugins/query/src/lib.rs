@@ -136,6 +136,10 @@ struct NarrowArgs {
 struct SimilarArgs {
     /// What the files found share with the selected one.
     by: similar::By,
+    /// The file to find others like, by absolute path; the pane's
+    /// selection when omitted.
+    #[serde(default)]
+    entries: Vec<bibli_core::op::EntryArg>,
     #[serde(default)]
     pane: Option<PaneId>,
 }
@@ -681,7 +685,7 @@ impl Plugin for QueryPlugin {
             "Find similar",
             "Search for files like the selected one: of the same kind, modified the same day, of a similar size, or sharing a tag, in the folder searched or shown",
             move |a, app| {
-                similar::start(app, a.pane, a.by, &similar_lifetime)?;
+                similar::start(app, a.pane, a.entries, a.by, &similar_lifetime)?;
                 Ok(Outcome::Done)
             },
         );

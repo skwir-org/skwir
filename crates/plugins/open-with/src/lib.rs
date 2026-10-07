@@ -97,12 +97,16 @@ struct OpenArgs {
     /// Entries to open; the selection when omitted.
     #[serde(default)]
     ids: Vec<EntryId>,
+    /// Files to open, by absolute path, instead of a pane's entries.
+    #[serde(default)]
+    entries: Vec<bibli_core::op::EntryArg>,
 }
 
 fn open(args: OpenArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
     let pane = app.pane_or_active(args.pane);
-    // Resolve the targets while holding the read lock, then release it.
-    let (targets, places, lifetime): (Vec<Target>, Vec<Location>, _) = {
+    // Resolve the targets while holding the read lock, then release it;
+    // files named by path are read without it.
+    let (targets, places, lifetime): (Vec<Target>, Vec<Location>, _) = if args.entries.is_empty() {
         let ws = app.workspace.read();
         let p = ws
             .pane(pane)
@@ -130,6 +134,12 @@ fn open(args: OpenArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
             })
             .collect();
         (targets, places, p.location_lifetime())
+    } else {
+        (
+            named_targets(args.entries)?,
+            Vec::new(),
+            app.lifetime().child(),
+        )
     };
     if targets.is_empty() {
         let [place] = places.as_slice() else {
@@ -379,6 +389,9 @@ struct TargetArgs {
     /// Entries to open; the selection when omitted.
     #[serde(default)]
     ids: Vec<EntryId>,
+    /// Files to open, by absolute path, instead of a pane's entries.
+    #[serde(default)]
+    entries: Vec<bibli_core::op::EntryArg>,
     /// The pane's folder itself, not entries in it.
     #[serde(default)]
     here: bool,
@@ -443,6 +456,9 @@ fn targets(args: TargetArgs, app: &App) -> anyhow::Result<(PaneId, Vec<EntryId>,
         };
         return Ok((pane, Vec::new(), vec![target]));
     }
+    if !args.entries.is_empty() {
+        return Ok((pane, Vec::new(), named_targets(args.entries)?));
+    }
     let ws = app.workspace.read();
     let p = ws
         .pane(pane)
@@ -469,6 +485,23 @@ fn targets(args: TargetArgs, app: &App) -> anyhow::Result<(PaneId, Vec<EntryId>,
     drop(ws);
     anyhow::ensure!(!targets.is_empty(), "nothing to open");
     Ok((pane, named, targets))
+}
+
+/// Files named by path (a script's, an agent's), as a listing would show
+/// them: read now, on the thread of whoever named them.
+fn named_targets(entries: Vec<bibli_core::op::EntryArg>) -> anyhow::Result<Vec<Target>> {
+    bibli_core::op::EntryArg::refs(entries)?
+        .into_iter()
+        .map(|r| {
+            let entry = bibli_core::fs::stat_path(&r.path)
+                .ok_or_else(|| anyhow::anyhow!("{} does not exist", r.path.display()))?;
+            Ok(Target {
+                path: r.path,
+                kind: entry.kind,
+                entry: Some(entry),
+            })
+        })
+        .collect()
 }
 
 impl Target {
@@ -568,6 +601,8 @@ fn rank<'a>(catalog: &'a Catalog, types: &[Mime]) -> Vec<(&'a Application, Optio
 
 fn choices(args: TargetArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
     let here = args.here;
+    // A choice opens what was asked about, as it was named.
+    let named = args.entries.clone();
     let (pane, ids, targets) = targets(args, app)?;
     let mut types: Vec<Mime> = Vec::new();
     for t in &targets {
@@ -593,6 +628,8 @@ fn choices(args: TargetArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcom
             let mut args = serde_json::json!({ "app": application.id, "pane": pane });
             if here {
                 args["here"] = true.into();
+            } else if !named.is_empty() {
+                args["entries"] = serde_json::to_value(&named).unwrap_or_default();
             } else {
                 args["ids"] = serde_json::to_value(&ids).unwrap_or_default();
             }
@@ -993,10 +1030,20 @@ mod tests {
         let args = TargetArgs {
             pane: Some(pane),
             ids: vec![id],
+            entries: Vec::new(),
             here: false,
         };
-        let (_, _, targets) = targets(args, &app).unwrap();
-        assert_eq!(targets[0].mime(), Mime("inode/socket".into()));
+        let (_, _, listed) = targets(args, &app).unwrap();
+        assert_eq!(listed[0].mime(), Mime("inode/socket".into()));
+        // Named by its path, as a script names it: the same.
+        let args = TargetArgs {
+            pane: None,
+            ids: Vec::new(),
+            entries: vec![bibli_core::op::EntryArg::Path(root.join("x.png").into())],
+            here: false,
+        };
+        let (_, _, named) = targets(args, &app).unwrap();
+        assert_eq!(named[0].mime(), Mime("inode/socket".into()));
     }
 
     #[test]

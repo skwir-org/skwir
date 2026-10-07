@@ -116,9 +116,10 @@ struct AddArgs {
     #[serde(default)]
     ids: Vec<EntryId>,
     /// Files to add by where they are (another application's, dropped,
-    /// or the clipboard's, pasted), instead of a pane's.
+    /// or the clipboard's, pasted; a script's or an agent's, by absolute
+    /// path), instead of a pane's.
     #[serde(default)]
-    entries: Vec<EntryRef>,
+    entries: Vec<bibli_core::op::EntryArg>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -566,7 +567,10 @@ impl Plugin for ShelfPlugin {
                 let items = if a.entries.is_empty() {
                     selection_items(app, app.pane_or_active(a.pane), &a.ids)?
                 } else {
-                    a.entries.iter().filter_map(dropped_item).collect()
+                    bibli_core::op::EntryArg::refs(a.entries)?
+                        .iter()
+                        .filter_map(dropped_item)
+                        .collect()
                 };
                 let n = ShelfPlugin::add(&st, items);
                 Ok(Outcome::Value(serde_json::json!({ "added": n })))

@@ -879,7 +879,14 @@ current source before assuming a planned crate, command, or API exists.
   with `--apply` as the user's own action. No command applies a plan it
   makes or is given (`apply_plan` hands it back): the caller decides.
   What an agent needs to see is a command answering a value (`entries`,
-  `tab.list`), never a protocol of its own.
+  `tab.list`), never a protocol of its own. A command that acts on
+  entries takes them in `entries` (`op::EntryArg`: an absolute path, or
+  identity and path as the window names what it shows) and reads them
+  through `App::targets`, the pane's selection when none is named: a
+  script or an agent names files, never selects them, since the
+  selection is the user's and changes between two calls. A path given
+  from outside the window is absolute (`os_path::absolute`), never read
+  against the window's working folder.
 - **Operations have inverses**, a dry-run `check`, and idempotent semantics.
   A step that changes metadata states its words (`op::Words`: what it will
   do, for the review, and what it did, for the toast); what a plan left out

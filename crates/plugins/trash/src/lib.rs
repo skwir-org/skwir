@@ -659,10 +659,11 @@ struct PutArgs {
     /// The pane whose selection goes in the trash: one dragged from.
     #[serde(default)]
     pane: Option<PaneId>,
-    /// Files by where they are (another application's, dropped), instead
-    /// of a pane's selection.
+    /// Files by where they are (another application's, dropped; a
+    /// script's or an agent's, by absolute path), instead of a pane's
+    /// selection.
     #[serde(default)]
-    entries: Vec<EntryRef>,
+    entries: Vec<bibli_core::op::EntryArg>,
 }
 
 #[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
@@ -674,6 +675,10 @@ struct RestoreArgs {
     /// The entries of that pane to restore, instead of its selection.
     #[serde(default)]
     ids: Vec<EntryId>,
+    /// Files of the trash to restore, by absolute path (in a trash's
+    /// `files`, or inside a folder there), instead of a pane's.
+    #[serde(default)]
+    entries: Vec<bibli_core::op::EntryArg>,
 }
 
 /// What `trash.list` says of a file in the trash.
@@ -708,21 +713,41 @@ fn chosen(app: &App, pane: Option<PaneId>, ids: Vec<EntryId>) -> Vec<EntryRef> {
 /// The step that puts `entry`, a file of the trash, back where it was: a
 /// whole item by what the trash says of it, a file inside a trashed folder
 /// alone, where that folder was.
-fn restore_step(state: &State, entry: EntryRef) -> Option<Box<dyn Operation>> {
+/// `trashed` is what the trash says of the item `entry` is in: what the
+/// plugin read (`State::item_at`), or for an entry named by path, what
+/// its trash says now (`read_item`).
+fn restore_step(
+    entry: EntryRef,
+    trashed: impl FnOnce(&Path) -> Option<Trashed>,
+) -> Option<Box<dyn Operation>> {
     let inside = in_trash(&entry.path)?;
-    let item = state.item_at(&inside.item)?;
+    let trashed = trashed(&inside.item)?;
     Some(if inside.inner.as_os_str().is_empty() {
         Box::new(Restore {
-            path: item.trashed.original.clone(),
-            item: Some(PathArg(item.trashed.info.clone())),
+            path: trashed.original,
+            item: Some(PathArg(trashed.info)),
             landed: Vec::new(),
         })
     } else {
         Box::new(RestorePart {
-            path: item.trashed.original.join(&inside.inner),
+            path: trashed.original.join(&inside.inner),
             entry,
         })
     })
+}
+
+/// What its trash says of the item `file` (in the trash's `files`, or a
+/// Recycle Bin's own item), read from that trash. Reads it whole.
+fn read_item(file: &Path) -> Option<Trashed> {
+    let parent = file.parent()?;
+    let trash = if parent.file_name() == Some("files".as_ref()) {
+        parent.parent()?
+    } else {
+        parent
+    };
+    bibli_platform::trash::list(trash, &Calendar::system())
+        .into_iter()
+        .find(|trashed| trashed.file == file)
 }
 
 fn register_commands(app: &App, trashes: &Trashes) {
@@ -732,11 +757,7 @@ fn register_commands(app: &App, trashes: &Trashes) {
         "Put in the trash",
         "Move files to the trash (plan): a pane's selection, or the entries given (files dropped on the Trash)",
         |a, app| {
-            let refs = if a.entries.is_empty() {
-                app.selected_refs(app.pane_or_active(a.pane))
-            } else {
-                a.entries
-            };
+            let refs = app.targets(a.pane, a.entries)?;
             let steps: Vec<Box<dyn Operation>> = refs
                 .into_iter()
                 .filter(|r| in_trash(&r.path).is_none())
@@ -753,14 +774,26 @@ fn register_commands(app: &App, trashes: &Trashes) {
         "Restore from the trash",
         "Put files of the trash back where they came from (plan): the trash pane's selection, or the entries given",
         move |a, app| {
-            let refs = chosen(app, a.pane, a.ids);
-            let steps: Vec<Box<dyn Operation>> = {
+            let named = !a.entries.is_empty();
+            let steps: Vec<Box<dyn Operation>> = if named {
+                // Named by whoever asked, on their thread: the trash is
+                // read, which the plugin may not have done yet (`bibli
+                // cmd` runs a bibli just started).
+                bibli_core::op::EntryArg::refs(a.entries)?
+                    .into_iter()
+                    .filter_map(|entry| restore_step(entry, read_item))
+                    .collect()
+            } else {
+                let refs = chosen(app, a.pane, a.ids);
                 let s = t.state.lock();
                 refs.into_iter()
-                    .filter_map(|entry| restore_step(&s, entry))
+                    .filter_map(|entry| {
+                        restore_step(entry, |item| Some(s.item_at(item)?.trashed.clone()))
+                    })
                     .collect()
             };
             if steps.is_empty() {
+                anyhow::ensure!(!named, "These are not in the trash");
                 return Err(bibli_core::command::NothingSelected.into());
             }
             Ok(Outcome::Plan(Plan::with_steps("restore from the trash", steps)))

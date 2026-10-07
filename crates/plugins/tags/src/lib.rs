@@ -128,9 +128,10 @@ struct ListArgs {
 struct TagsArgs {
     #[serde(default)]
     tags: Vec<String>,
-    /// The entries to act on; the pane's selection when omitted.
+    /// The entries to act on, by absolute path; the pane's selection when
+    /// omitted.
     #[serde(default)]
-    entries: Vec<EntryRef>,
+    entries: Vec<bibli_core::op::EntryArg>,
     #[serde(default)]
     pane: Option<PaneId>,
 }
@@ -150,9 +151,10 @@ struct ExclusiveArgs {
 struct ToggleArgs {
     /// The tag to give or take.
     tag: String,
-    /// The entries to act on; the pane's selection when omitted.
+    /// The entries to act on, by absolute path; the pane's selection when
+    /// omitted.
     #[serde(default)]
-    entries: Vec<EntryRef>,
+    entries: Vec<bibli_core::op::EntryArg>,
     #[serde(default)]
     pane: Option<PaneId>,
 }
@@ -165,18 +167,20 @@ struct EditArgs {
     /// Tags to take from every selected entry that has them.
     #[serde(default)]
     remove: Vec<String>,
-    /// The entries to act on; the pane's selection when omitted.
+    /// The entries to act on, by absolute path; the pane's selection when
+    /// omitted.
     #[serde(default)]
-    entries: Vec<EntryRef>,
+    entries: Vec<bibli_core::op::EntryArg>,
     #[serde(default)]
     pane: Option<PaneId>,
 }
 
 #[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
 struct PaneArgs {
-    /// The entries to act on; the pane's selection when omitted.
+    /// The entries to act on, by absolute path; the pane's selection when
+    /// omitted.
     #[serde(default)]
-    entries: Vec<EntryRef>,
+    entries: Vec<bibli_core::op::EntryArg>,
     #[serde(default)]
     pane: Option<PaneId>,
 }
@@ -309,7 +313,7 @@ fn edit_plan(app: &App, vocabulary: &Arc<Vocabulary>, a: EditArgs) -> anyhow::Re
     let exclusive = fields::exclusive(app);
     vocabulary.used(&add);
     per_entry(
-        app.targets(a.pane, a.entries).unwrap_or_default(),
+        app.targets(a.pane, a.entries)?,
         edit_title(&add, &remove),
         |r| {
             let current = notes_of(app, &r.path).tag_names();
@@ -320,8 +324,12 @@ fn edit_plan(app: &App, vocabulary: &Arc<Vocabulary>, a: EditArgs) -> anyhow::Re
 }
 
 /// `tags.selected`: what the tag editor starts from.
-fn selected(app: &App, vocabulary: &Vocabulary, a: PaneArgs) -> serde_json::Value {
-    let refs = app.targets(a.pane, a.entries).unwrap_or_default();
+fn selected(app: &App, vocabulary: &Vocabulary, a: PaneArgs) -> anyhow::Result<serde_json::Value> {
+    // Nothing selected is no tags; an entry named that is not, an error.
+    let refs = match app.targets(a.pane, a.entries) {
+        Err(error) if bibli_core::command::is_nothing_selected(&error) => Vec::new(),
+        refs => refs?,
+    };
     // Keyed by the lowercase form, in the order first met, with the color
     // a file gives the tag (a Finder tag's), if one does.
     let mut counts: Vec<(String, usize, Option<String>)> = Vec::new();
@@ -348,11 +356,11 @@ fn selected(app: &App, vocabulary: &Vocabulary, a: PaneArgs) -> serde_json::Valu
             tag
         })
         .collect();
-    serde_json::json!({
+    Ok(serde_json::json!({
         "items": refs.len(),
         "tags": tags,
         "known": known(sidebar::pinned(app), vocabulary.known()),
-    })
+    }))
 }
 
 /// The tags to offer: those pinned first, in their order, then the rest
@@ -783,14 +791,10 @@ impl Plugin for TagsPlugin {
                 } else {
                     format!("set tags {}", tags.join(", "))
                 };
-                per_entry(
-                    app.targets(a.pane, a.entries).unwrap_or_default(),
-                    title,
-                    |r| {
-                        let current = notes_of(app, &r.path).tag_names();
-                        (current != tags).then(|| app.notes.edit(r).tags(tags.clone()))
-                    },
-                )
+                per_entry(app.targets(a.pane, a.entries)?, title, |r| {
+                    let current = notes_of(app, &r.path).tag_names();
+                    (current != tags).then(|| app.notes.edit(r).tags(tags.clone()))
+                })
             },
         );
         let v = Arc::clone(&vocabulary);
@@ -849,9 +853,8 @@ impl Plugin for TagsPlugin {
                 let Some(tag) = parse_tags(&a.tag).pop() else {
                     anyhow::bail!("which tag?");
                 };
-                let refs = app.targets(a.pane, a.entries).unwrap_or_default();
-                let all = !refs.is_empty()
-                    && refs
+                let refs = app.targets(a.pane, a.entries)?;
+                let all = refs
                         .iter()
                         .all(|r| notes_of(app, &r.path).tag(&tag).is_some());
                 let (add, remove) = if all {
@@ -865,7 +868,7 @@ impl Plugin for TagsPlugin {
                     EditArgs {
                         add,
                         remove,
-                        entries: refs,
+                        entries: refs.into_iter().map(Into::into).collect(),
                         pane: a.pane,
                     },
                 )
@@ -877,7 +880,7 @@ impl Plugin for TagsPlugin {
             "tags.selected",
             "Tags of the selection",
             "`{ items, tags: [{ name, count, color? }], known }`: the selection's tags, read from its files, with how many carry each and the color a file gives one (a Finder tag's), and the tags known, those pinned first, then the most recently used (blocks: dispatch from a worker)",
-            move |a, app| Ok(Outcome::Value(selected(app, &v, a))),
+            move |a, app| Ok(Outcome::Value(selected(app, &v, a)?)),
         );
         // A tag's pin and color follow it renamed on every file.
         let follows = follow::Ctx::new(app, sidebar.clone());

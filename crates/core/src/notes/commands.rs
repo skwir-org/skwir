@@ -9,18 +9,9 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::app::App;
+use crate::app::TargetsArgs as Targets;
 use crate::command::Outcome;
 use crate::op::{EntryRef, Plan};
-use crate::workspace::PaneId;
-
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-struct Targets {
-    /// The entries to act on; the pane's selection when omitted.
-    #[serde(default)]
-    entries: Vec<EntryRef>,
-    #[serde(default)]
-    pane: Option<PaneId>,
-}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct RateArgs {

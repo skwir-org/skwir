@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::entry::EntryId;
 use crate::fs::stat::id_of;
+use crate::os_path::PathArg;
 
 /// A stable reference: the entry's identity plus where we last saw it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
@@ -92,5 +93,60 @@ impl EntryRef {
             let _ = e;
             true
         }
+    }
+}
+
+/// An entry a command's arguments name: by its absolute path, as a script
+/// or an agent names a file (ADR-043), or by its identity and path, as the
+/// window's surfaces name what they show (an `EntryRef`). A path alone is
+/// read when the command runs (`App::targets`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum EntryArg {
+    /// Its absolute path.
+    Path(PathArg),
+    /// Its identity and absolute path; the identity may be left out.
+    Named {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<EntryId>,
+        path: PathArg,
+    },
+}
+
+impl From<EntryRef> for EntryArg {
+    fn from(r: EntryRef) -> Self {
+        EntryArg::Named {
+            id: Some(r.id),
+            path: r.path.into(),
+        }
+    }
+}
+
+impl EntryArg {
+    /// The entry named. One named by its path alone is read now (its
+    /// identity, as a listing has it: a link is named, not what it leads
+    /// to), on the thread of whoever named it so: a script's, an agent's.
+    ///
+    /// # Errors
+    /// A relative path, or one that leads nowhere.
+    pub fn into_ref(self) -> anyhow::Result<EntryRef> {
+        let (id, path) = match self {
+            EntryArg::Path(path) => (None, path.into_inner()),
+            EntryArg::Named { id, path } => (id, path.into_inner()),
+        };
+        crate::os_path::absolute(&path)?;
+        match id {
+            Some(id) => Ok(EntryRef { id, path }),
+            None => EntryRef::from_path(&path)
+                .ok_or_else(|| anyhow::anyhow!("{} does not exist", path.display())),
+        }
+    }
+
+    /// Every entry named, or why one is not.
+    ///
+    /// # Errors
+    /// As [`EntryArg::into_ref`].
+    pub fn refs(entries: Vec<EntryArg>) -> anyhow::Result<Vec<EntryRef>> {
+        entries.into_iter().map(EntryArg::into_ref).collect()
     }
 }

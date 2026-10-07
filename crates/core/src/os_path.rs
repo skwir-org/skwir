@@ -305,6 +305,21 @@ impl schemars::JsonSchema for PathArg {
     }
 }
 
+/// `path`, refused unless absolute: a path a command is given may come
+/// from another process (`bibli cmd`, an agent, ADR-043), whose working
+/// folder is not the window's.
+///
+/// # Errors
+/// When `path` is relative.
+pub fn absolute(path: &Path) -> anyhow::Result<&Path> {
+    anyhow::ensure!(
+        path.is_absolute(),
+        "{} is not an absolute path",
+        path.display()
+    );
+    Ok(path)
+}
+
 /// The user's home folder: `$HOME`, else the system's account record.
 /// The one reading of it, for `~`, Home in the sidebar and the trail, the
 /// search's root, the terminal's start.

@@ -29,7 +29,7 @@ pub use builtin::{
     register_builtin, trash_info_of,
 };
 pub use context::{Cancelled, StepContext};
-pub use entry_ref::{EntryRef, ResolveError};
+pub use entry_ref::{EntryArg, EntryRef, ResolveError};
 pub use executor::{
     ChangeObserver, ExecEvent, ExecResult, Executor, JournalEntry, Progress, RunKind, Transfer,
     Verdict,

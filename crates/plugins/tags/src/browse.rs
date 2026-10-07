@@ -32,10 +32,10 @@ pub struct DropArgs {
     /// The pane they come from: its selection, and where it is.
     #[serde(default)]
     pub pane: Option<PaneId>,
-    /// Files by where they are (another application's, the clipboard's),
-    /// instead of a pane's.
+    /// Files by where they are (another application's, the clipboard's;
+    /// a script's or an agent's, by absolute path), instead of a pane's.
     #[serde(default)]
-    pub entries: Vec<EntryRef>,
+    pub entries: Vec<bibli_core::op::EntryArg>,
     /// They move: out of the tag they came from.
     #[serde(default, rename = "move")]
     pub moved: bool,
@@ -53,6 +53,10 @@ pub struct UntagArgs {
     /// The tag location they are taken out of; the pane's when omitted.
     #[serde(default)]
     pub location: Option<String>,
+    /// The files to take out, by absolute path; the pane's selection
+    /// (its files, and its tags, taken off every file) when omitted.
+    #[serde(default)]
+    pub entries: Vec<bibli_core::op::EntryArg>,
     #[serde(default)]
     pub pane: Option<PaneId>,
 }
@@ -207,7 +211,8 @@ pub fn drop(
             .or_else(|| app.pane_location(pane));
         (app.selected_refs(pane), selected_places(app, pane), from)
     } else {
-        (a.entries, pasted, a.from.as_deref().map(Location::parse))
+        let from = a.from.as_deref().map(Location::parse);
+        (bibli_core::op::EntryArg::refs(a.entries)?, pasted, from)
     };
     // Tags dragged onto it go into it, on every file: a plan to review.
     let places: Vec<String> = places
@@ -280,11 +285,15 @@ pub fn untag(
 ) -> anyhow::Result<Outcome> {
     let pane = app.pane_or_active(a.pane);
     let address = shown(app, pane, a.location.as_deref())?;
-    let places = selected_places(app, pane);
-    if !places.is_empty() {
-        crate::everywhere::start(app, lifetime, follows, places, None, address.root())?;
-    }
-    let files = app.selected_refs(pane);
+    let files = if a.entries.is_empty() {
+        let places = selected_places(app, pane);
+        if !places.is_empty() {
+            crate::everywhere::start(app, lifetime, follows, places, None, address.root())?;
+        }
+        app.selected_refs(pane)
+    } else {
+        bibli_core::op::EntryArg::refs(a.entries.clone())?
+    };
     if files.is_empty() {
         return Ok(Outcome::Done);
     }

@@ -26,7 +26,7 @@
 
 use std::sync::Arc;
 
-use bibli_core::app::{App, PaneArg};
+use bibli_core::app::{App, PaneArg, TargetsArgs};
 use bibli_core::command::{Invocation, Outcome};
 use bibli_core::op::{Change, Copy, EntryRef, Followed, Move, Operation, Plan};
 use bibli_core::plugin::Plugin;
@@ -55,11 +55,15 @@ pub struct OpsBasicPlugin {
 }
 
 /// The selection's files, and its places (a tag's), what a copy or a cut
-/// remembers.
+/// remembers; or the entries given, from where they are.
 fn take_selection(
     app: &App,
     pane: Option<PaneId>,
+    entries: Vec<bibli_core::op::EntryArg>,
 ) -> anyhow::Result<(Vec<EntryRef>, Vec<bibli_core::Location>)> {
+    if !entries.is_empty() {
+        return Ok((bibli_core::op::EntryArg::refs(entries)?, Vec::new()));
+    }
     let pane = app.pane_or_active(pane);
     let refs = app.selected_refs(pane);
     let places: Vec<bibli_core::Location> = {
@@ -77,6 +81,16 @@ fn take_selection(
         return Err(bibli_core::command::NothingSelected.into());
     }
     Ok((refs, places))
+}
+
+/// Where a copy or a cut takes its files from: the pane's location for
+/// its selection (a cut from a tag moves the files out of it), nowhere
+/// in particular for entries named by path.
+fn taken_from(app: &App, a: &TargetsArgs) -> Option<bibli_core::Location> {
+    a.entries
+        .is_empty()
+        .then(|| app.pane_location(app.pane_or_active(a.pane)))
+        .flatten()
 }
 
 /// Let every view show what is waiting for a paste.
@@ -379,36 +393,38 @@ impl Plugin for OpsBasicPlugin {
 
     fn register(&self, app: &App) {
         let cb = Arc::clone(&self.clipboard);
-        app.commands.register::<PaneArg, _>(
+        app.commands.register::<TargetsArgs, _>(
             ID,
             "clipboard_copy",
             "Copy",
-            "Remember the selection for a later paste (copy)",
+            "Remember the selection, or the entries given, for a later paste (copy)",
             move |a, app| {
-                let (entries, places) = take_selection(app, a.pane)?;
+                let from = taken_from(app, &a);
+                let (entries, places) = take_selection(app, a.pane, a.entries)?;
                 publish(app, &entries, false);
                 *cb.lock() = Clipboard {
                     entries,
                     cut: false,
-                    from: app.pane_location(app.pane_or_active(a.pane)),
+                    from,
                     places,
                 };
                 Ok(Outcome::Done)
             },
         );
         let cb = Arc::clone(&self.clipboard);
-        app.commands.register::<PaneArg, _>(
+        app.commands.register::<TargetsArgs, _>(
             ID,
             "clipboard_cut",
             "Cut",
-            "Remember the selection for a later paste (move)",
+            "Remember the selection, or the entries given, for a later paste (move)",
             move |a, app| {
-                let (entries, places) = take_selection(app, a.pane)?;
+                let from = taken_from(app, &a);
+                let (entries, places) = take_selection(app, a.pane, a.entries)?;
                 publish(app, &entries, true);
                 *cb.lock() = Clipboard {
                     entries,
                     cut: true,
-                    from: app.pane_location(app.pane_or_active(a.pane)),
+                    from,
                     places,
                 };
                 Ok(Outcome::Done)

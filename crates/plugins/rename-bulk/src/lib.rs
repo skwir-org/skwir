@@ -367,8 +367,46 @@ pub fn plan_bulk_rename(items: &[Item], spec: &RenameSpec) -> Result<BulkRename,
 struct Args {
     #[serde(default)]
     pane: Option<PaneId>,
+    /// The files to rename, by absolute path, in this order; the pane's
+    /// selection, in its order, when omitted.
+    #[serde(default)]
+    entries: Vec<bibli_core::op::EntryArg>,
     #[serde(flatten)]
     spec: RenameSpec,
+}
+
+/// Plan a bulk rename of `a`'s entries, or of the pane's selection.
+fn plan_bulk(app: &App, a: Args) -> anyhow::Result<BulkRename> {
+    if a.entries.is_empty() {
+        plan_selection(app, a.pane, &a.spec)
+    } else {
+        plan_named(a.entries, &a.spec)
+    }
+}
+
+/// Plan a bulk rename of files named by path (a script's, an agent's), in
+/// the order given, read on the thread of whoever named them: their times
+/// as a listing shows them (a link's, what it leads to), and a target
+/// taken when a file not among them is there.
+fn plan_named(
+    entries: Vec<bibli_core::op::EntryArg>,
+    spec: &RenameSpec,
+) -> anyhow::Result<BulkRename> {
+    let items: Vec<Item> = bibli_core::op::EntryArg::refs(entries)?
+        .into_iter()
+        .map(|r| {
+            let name = r.path.file_name().unwrap_or_default().to_owned();
+            let mtime = std::fs::metadata(&r.path)
+                .or_else(|_| std::fs::symlink_metadata(&r.path))
+                .and_then(|m| m.modified())
+                .ok();
+            (r, name, mtime)
+        })
+        .collect();
+    let renamed: std::collections::HashSet<&Path> =
+        items.iter().map(|(r, _, _)| r.path.as_path()).collect();
+    let exists = |path: &Path| !renamed.contains(path) && std::fs::symlink_metadata(path).is_ok();
+    Ok(plan_bulk_rename_in(&items, exists, spec)?)
 }
 
 /// Plan a bulk rename of the pane's selection, in its sorted order. What
@@ -440,11 +478,11 @@ impl Plugin for RenameBulkPlugin {
             ID,
             "rename_bulk",
             "Rename several…",
-            "Rename the selection from a template, regex, and case rule (plan)",
-            |a, app| Ok(Outcome::Plan(plan_selection(app, a.pane, &a.spec)?.plan)),
+            "Rename the selection, or the entries given, from a template, regex, and case rule (plan)",
+            |a, app| Ok(Outcome::Plan(plan_bulk(app, a)?.plan)),
         );
         app.commands.register::<Args, _>(ID, "rename_bulk.preview", "Preview bulk rename", "Return the old → new names a bulk rename would produce", |a, app| {
-            let r = plan_selection(app, a.pane, &a.spec)?;
+            let r = plan_bulk(app, a)?;
             // Display names for the dialog; the plan itself is lossless.
             let list: Vec<serde_json::Value> = r
                 .preview

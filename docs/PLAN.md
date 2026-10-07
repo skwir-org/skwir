@@ -2222,7 +2222,11 @@ window (`tab.list`, `entries`), proposed a rename and then a move of
 two files, each applied with Enter in the review, and a trash
 discarded with Escape, each answered as the user did; `bibli cmd`
 printed a plan, applied one with `--apply`, opened Settings in the
-window and turned Control off through itself. Not done: an agent
+window and turned Control off through itself. Then every command that
+acted on the selection alone takes `entries` (`App::targets`): files
+named by absolute path, so a script runs them with no window and an
+agent's call cannot act on what the user selected meanwhile; a
+relative path, an entry's or a destination's, is refused. Not done: an agent
 driven by a model (Claude Code over `bibli mcp`) has not run it; the
 Windows pipe is tried under Wine only and keeps the system's default
 security (`docs/PORTING.md`); a command answering a value does

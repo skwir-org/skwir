@@ -284,7 +284,7 @@ impl ServerHandler for Tools {
         let mut info = ServerConfig::new(ServerCapabilities::builder().enable_tools().build());
         info.server_info = Implementation::new("bibli", env!("CARGO_PKG_VERSION"));
         info.instructions = Some(
-            "bibli, a file manager. Each tool is one of its commands, its dots written as two underscores. A command that would change files proposes a plan the user reviews in bibli's window; its answer says whether the user applied it, and how, or dismissed it."
+            "bibli, a file manager. Each tool is one of its commands, its dots written as two underscores. Name the files a command acts on in its `entries`, by absolute path: the selection is the user's, and can change between two calls (the `entries` tool lists what a pane shows). A command that would change files proposes a plan the user reviews in bibli's window; its answer says whether the user applied it, and how, or dismissed it."
                 .into(),
         );
         info
@@ -377,7 +377,13 @@ pub fn run(
     cancelled: &dyn Fn() -> bool,
 ) -> anyhow::Result<Answer> {
     app.commands.check(invocation)?;
-    let outcome = app.dispatch(invocation)?;
+    let outcome = match app.dispatch(invocation) {
+        // The selection is the window's: a script or an agent names files.
+        Err(error) if bibli_core::command::is_nothing_selected(&error) => {
+            anyhow::bail!("nothing is selected: name the files in `entries`, by absolute path")
+        }
+        outcome => outcome?,
+    };
     let value = match outcome {
         Outcome::Done => json!({ "done": true }),
         Outcome::Value(value) => value,

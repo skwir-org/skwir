@@ -5,7 +5,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use bibli_core::app::{App, PaneArg};
+use bibli_core::app::{App, TargetsArgs};
 use bibli_core::command::{Invocation, Outcome};
 use bibli_core::plugin::Plugin;
 use bibli_core::registry::{KeyBinding, MenuItem};
@@ -92,34 +92,49 @@ struct RunArgs {
     /// Shell command; the selected paths are its arguments (`"$@"`, or
     /// `$argv` in fish).
     command: String,
+    /// The entries whose paths are its arguments, by absolute path; the
+    /// pane's selection when omitted. It runs in the folder holding them.
+    #[serde(default)]
+    entries: Vec<bibli_core::op::EntryArg>,
     #[serde(default)]
     pane: Option<PaneId>,
 }
 
-fn selected_paths(app: &App, pane: PaneId) -> Vec<PathBuf> {
-    app.selected_refs(pane)
-        .into_iter()
-        .map(|r| r.path)
-        .collect()
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct HereArgs {
+    /// Shell command.
+    command: String,
+    #[serde(default)]
+    pane: Option<PaneId>,
 }
 
+/// Run `command` in a terminal: on `on`'s entries (`App::targets`), in
+/// the folder holding them, or with none in the folder the pane shows.
 fn run(
     app: &App,
     command: &str,
     pane: Option<PaneId>,
-    with_selection: bool,
+    on: Option<Vec<bibli_core::op::EntryArg>>,
 ) -> anyhow::Result<Outcome> {
-    let pane = app.pane_or_active(pane);
-    // The folder shown, or the one holding the selection in a search.
-    let dir = if with_selection {
-        app.work_dir(pane)?
-    } else {
-        app.pane_dir(pane)?
-    };
-    let paths = if with_selection {
-        selected_paths(app, pane)
-    } else {
-        Vec::new()
+    let (dir, paths) = match on {
+        Some(entries) => {
+            let named = !entries.is_empty();
+            let paths: Vec<PathBuf> = app
+                .targets(pane, entries)?
+                .into_iter()
+                .map(|r| r.path)
+                .collect();
+            // Where the entries named are; for the selection, the folder
+            // shown, or the one holding it in a search.
+            let dir = if named {
+                bibli_core::app::common_parent(paths.iter().map(PathBuf::as_path))
+                    .ok_or_else(|| anyhow::anyhow!("the entries are in no folder"))?
+            } else {
+                app.work_dir(app.pane_or_active(pane))?
+            };
+            (dir, paths)
+        }
+        None => (app.pane_dir(app.pane_or_active(pane))?, Vec::new()),
     };
     let program: String = app
         .settings
@@ -155,17 +170,17 @@ impl Plugin for ShellPlugin {
             "Program that runs commands on the selection: a POSIX shell or fish. Defaults to $SHELL.",
             &default_program(),
         ));
-        app.commands.register::<PaneArg, _>(
+        app.commands.register::<TargetsArgs, _>(
             ID,
             "shell.copy_paths",
             "Copy paths",
-            "The selected paths, shell-quoted, for the clipboard",
+            "The selected paths, or the entries', shell-quoted, for the clipboard",
             |a, app| {
-                let pane = app.pane_or_active(a.pane);
-                let paths = selected_paths(app, pane);
-                if paths.is_empty() {
-                    return Err(bibli_core::command::NothingSelected.into());
-                }
+                let paths: Vec<PathBuf> = app
+                    .targets(a.pane, a.entries)?
+                    .into_iter()
+                    .map(|r| r.path)
+                    .collect();
                 let n = paths.len();
                 Ok(Outcome::Clipboard {
                     text: quote_paths(&paths),
@@ -177,15 +192,15 @@ impl Plugin for ShellPlugin {
             ID,
             "shell.run",
             "Run command on selection…",
-            "Run a shell command in a terminal with the selected paths as its arguments",
-            |a, app| run(app, &a.command, a.pane, true),
+            "Run a shell command in a terminal with the selected paths, or the entries', as its arguments",
+            |a, app| run(app, &a.command, a.pane, Some(a.entries)),
         );
-        app.commands.register::<RunArgs, _>(
+        app.commands.register::<HereArgs, _>(
             ID,
             "shell.run_here",
             "Run command here…",
             "Run a shell command in a terminal in the current directory",
-            |a, app| run(app, &a.command, a.pane, false),
+            |a, app| run(app, &a.command, a.pane, None),
         );
         app.registry.keymap.add(
             ID,

@@ -71,9 +71,12 @@ any program running as you can then use it.
 - **Scripts:** `bibli cmd <command> [<arguments as a JSON object>]` runs
   one command in the window and prints its result as JSON, such as
   `bibli cmd entries` for what the active pane shows. A command that
-  would change files prints its plan; `--apply` applies it, as your own
-  action, undoable in the window. With no window open, the command runs
-  in a bibli of its own without one.
+  acts on files is given them by absolute path, else acts on the
+  selection: `bibli cmd trash '{"entries": ["/path/to/file"]}'`. A
+  command that would change files prints its plan; `--apply` applies
+  it, as your own action, undoable in the window. With no window open,
+  the command runs in a bibli of its own without one (no selection
+  there, and no Undo after).
 - **Agents:** an MCP client starts `bibli mcp` (for Claude Code:
   `claude mcp add bibli -- bibli mcp`). Every command is a tool, its dots
   written `__`. What an agent would change is proposed in the window for

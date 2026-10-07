@@ -131,19 +131,21 @@ fn root_of(app: &App, pane: PaneId) -> anyhow::Result<PathBuf> {
     app.pane_dir(pane)
 }
 
-/// Build the search for the pane's selected file on a worker and show it
-/// in the pane; say why when the file gives nothing to search by.
+/// Build the search for the pane's selected file, or the one given, on a
+/// worker and show it in the pane; say why when the file gives nothing to
+/// search by.
 pub fn start(
     app: &App,
     pane: Option<PaneId>,
+    entries: Vec<bibli_core::op::EntryArg>,
     by: By,
     lifetime: &CancelToken,
 ) -> anyhow::Result<()> {
-    let pane = app.pane_or_active(pane);
     let [selected] = app
-        .selected_refs(pane)
+        .targets(pane, entries)?
         .try_into()
         .map_err(|_| anyhow::anyhow!("select one file to find others like it"))?;
+    let pane = app.pane_or_active(pane);
     let root = root_of(app, pane)?;
     let known = {
         let ws = app.workspace.read();

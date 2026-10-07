@@ -4,6 +4,7 @@ use super::*;
 use bibli_core::app::AppConfig;
 use bibli_core::command::Invocation;
 use bibli_core::location::Location;
+use bibli_core::op::EntryRef;
 use std::time::Duration;
 
 fn home_tempdir() -> tempfile::TempDir {

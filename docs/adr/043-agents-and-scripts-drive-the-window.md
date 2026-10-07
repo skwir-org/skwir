@@ -71,6 +71,12 @@ writes of its own beside the window's.
 - The window answers a proposal it is given: a plan proposed with a
   reply (`App::propose_awaiting`) learns that it was dismissed, or how
   it applied, from the executor when its run finishes.
+- A script or an agent names the files a command acts on, in its
+  `entries`, by absolute path; the window's surfaces name what they
+  show by identity and path. The pane's selection is what is acted on
+  only when nothing is named: it is the user's, and can change between
+  an agent's two calls. A relative path is refused, from any surface:
+  the window's working folder is not the caller's.
 - No command applies a plan of its own: `apply_plan` gives the plan it
   is handed back to its caller, as every command that changes files
   does, so an agent's goes to review like any other.

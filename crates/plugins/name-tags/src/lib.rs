@@ -20,7 +20,7 @@ use bibli_core::command::Outcome;
 use bibli_core::metadata::{Listed, same_tag};
 use bibli_core::notes::raw::RawKey;
 use bibli_core::notes::{Holds, Kept, Notes, NotesStore, Probe, Tag, Write, Wrote};
-use bibli_core::op::{EntryRef, Plan, Rename, RenameOrderError, RenameRequest, order_renames};
+use bibli_core::op::{Plan, Rename, RenameOrderError, RenameRequest, order_renames};
 use bibli_core::plugin::{Category, Plugin};
 use bibli_core::registry::MenuItem;
 use bibli_core::workspace::PaneId;
@@ -194,9 +194,10 @@ impl NotesStore for NameStore {
 
 #[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
 struct NameArgs {
-    /// The entries to rename; the pane's selection when omitted.
+    /// The entries to rename, by absolute path; the pane's selection when
+    /// omitted.
     #[serde(default)]
-    entries: Vec<EntryRef>,
+    entries: Vec<bibli_core::op::EntryArg>,
     #[serde(default)]
     pane: Option<PaneId>,
     /// `tagspaces` (`name[a b].ext`, the default) or `filetags`
