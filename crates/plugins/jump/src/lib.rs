@@ -2,6 +2,8 @@
 //! tracks: zoxide's directory ranking and the desktop's recently used files.
 //! Also provides the `recent:` location listing those files.
 
+#[cfg(test)]
+mod any_input;
 pub mod xbel;
 pub mod zoxide;
 
@@ -547,6 +549,8 @@ mod tests {
             f1.display()
         );
         std::fs::write(data.join("recently-used.xbel"), xbel).unwrap();
+        // SAFETY: nextest runs each test in a process of its own, and no
+        // thread has started yet that reads the environment.
         #[allow(unsafe_code)]
         unsafe {
             std::env::set_var("XDG_DATA_HOME", &data);

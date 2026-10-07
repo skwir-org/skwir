@@ -37,7 +37,7 @@ pub const PLAN_META: &str = "bibli/plan";
 
 /// How long a tool waits for the user to review its plan before saying
 /// it still waits: the plan stays in the window.
-const PATIENCE: Duration = Duration::from_secs(10 * 60);
+const PATIENCE: Duration = Duration::from_mins(10);
 
 /// A command's tool: its dots written `__`, which MCP clients accept.
 pub fn tool_name(command: &str) -> String {

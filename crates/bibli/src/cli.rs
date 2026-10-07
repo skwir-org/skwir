@@ -12,12 +12,32 @@ use serde_json::{Map, Value};
 
 const USAGE: &str = "usage: bibli cmd [--apply] <command> [<arguments, a JSON object>]";
 
+const HELP: &str = "\
+bibli, a file manager
+
+usage: bibli [<folder>]        open a window on the folder (the last one, or home)
+       bibli cmd [--apply] <command> [<arguments, a JSON object>]
+                               run a command in the open window, print its result
+       bibli mcp               serve an agent's MCP to the open window
+       bibli --version         say which version this is
+
+Agents and scripts reach the window once Settings › Plugins › Agents and
+scripts is on. The palette (Ctrl+Shift+P) lists every command.";
+
 /// Run the command line's subcommand, if `args` (after the program's name)
 /// name one: its exit code. `None`: the window opens as before.
 pub fn run(args: &[OsString]) -> Option<i32> {
     match args.first()?.to_str()? {
         "mcp" => Some(mcp()),
         "cmd" => Some(cmd(&args[1..])),
+        "--version" | "-V" => {
+            println!("bibli {}", env!("CARGO_PKG_VERSION"));
+            Some(0)
+        }
+        "--help" | "-h" => {
+            println!("{HELP}");
+            Some(0)
+        }
         _ => None,
     }
 }

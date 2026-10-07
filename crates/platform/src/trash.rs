@@ -279,6 +279,10 @@ mod tests {
     /// What a Windows volume's Recycle Bin holds, read from its records
     /// (laid out here as Windows lays them out).
     #[test]
+    #[allow(
+        clippy::duration_suboptimal_units,
+        reason = "a time since 1970 is written as the seconds or days it is"
+    )]
     fn a_recycle_bin_lists_what_its_records_speak_of() {
         let tmp = tempfile::tempdir().unwrap();
         let bin = tmp.path().join("$Recycle.Bin").join("S-1-5-21-1-2-3-1001");

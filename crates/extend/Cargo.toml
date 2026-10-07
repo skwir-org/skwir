@@ -2,6 +2,7 @@
 name = "bibli-extend"
 description = "bibli: plugins from outside bibli, as programs (ADR-045) and WebAssembly modules (ADR-046)"
 version.workspace = true
+publish.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

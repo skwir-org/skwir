@@ -59,6 +59,8 @@ pub mod system;
 pub mod tabs;
 pub mod tally;
 pub mod terminal;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 pub mod thumbs;
 pub mod tiles;
 pub mod workspace;

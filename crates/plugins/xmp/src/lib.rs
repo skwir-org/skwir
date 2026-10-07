@@ -12,6 +12,8 @@
 //! is read for a file only when it does not say it is another's
 //! (`photoshop:SidecarForExtension`).
 
+#[cfg(test)]
+mod any_input;
 pub mod packet;
 
 use std::ffi::{OsStr, OsString};

@@ -24,7 +24,7 @@ pub const CLIMB_THRESHOLD: f32 = 3.;
 pub const MOVING_SPEED: f64 = 1. / 3.6;
 /// A longer gap between two points is a pause, whatever was covered: the
 /// device slept or lost its signal.
-pub const LONGEST_STEP: Duration = Duration::from_secs(5 * 60);
+pub const LONGEST_STEP: Duration = Duration::from_mins(5);
 
 /// What a flight plan or a drone mission says about itself beside its
 /// route (step D′). Altitudes are in metres, whatever unit the file uses.
@@ -413,7 +413,7 @@ mod tests {
                 .unwrap()
                 .duration_since(c.tracks.first.unwrap())
                 .ok(),
-            Some(Duration::from_secs(720))
+            Some(Duration::from_mins(12))
         );
     }
 

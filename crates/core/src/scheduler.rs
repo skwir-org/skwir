@@ -256,11 +256,7 @@ fn worker(inner: &Inner) {
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(task.job));
         let took = t.elapsed();
         if let Err(payload) = outcome {
-            let message = payload
-                .downcast_ref::<&str>()
-                .map(|s| (*s).to_owned())
-                .or_else(|| payload.downcast_ref::<String>().cloned())
-                .unwrap_or_else(|| "non-string panic payload".into());
+            let message = panic_message(&*payload);
             tracing::error!(label = task.label, "job panicked: {message}");
             inner.stats.lock().entry(task.label).or_default().panics += 1;
         }
@@ -273,6 +269,15 @@ fn worker(inner: &Inner) {
             tracing::warn!(label = task.label, ms = took.as_millis(), "slow task");
         }
     }
+}
+
+/// What a caught panic said, for the log.
+pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "non-string panic payload".into())
 }
 
 #[cfg(test)]

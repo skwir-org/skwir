@@ -1731,7 +1731,7 @@ mod tests {
 
     fn now() -> SystemTime {
         // 2026-09-18T12:00:00Z
-        civil_to_time(2026, 9, 18) + Duration::from_secs(12 * 3600)
+        civil_to_time(2026, 9, 18) + Duration::from_hours(12)
     }
 
     fn q(s: &str) -> Query {
@@ -2200,7 +2200,7 @@ mod tests {
                 .unwrap()
                 .eval(&cand("f", EntryKind::File, Some(&m)), false)
         };
-        let monday_noon = at(2026, 9, 21) + Duration::from_secs(12 * 3600);
+        let monday_noon = at(2026, 9, 21) + Duration::from_hours(12);
         assert_eq!(t("modified:this-week", monday_noon), Verdict::Yes);
         assert_eq!(t("modified<this-week", monday_noon), Verdict::No);
         assert_eq!(t("modified<today", monday_noon), Verdict::Yes);
@@ -2231,7 +2231,7 @@ mod tests {
             other => panic!("{expr}: {other:?}"),
         };
         // 23:30 UTC on the 25th: 01:30 on the 26th in Paris.
-        let late = hour(2026, 9, 25, 23) + Duration::from_secs(1800);
+        let late = hour(2026, 9, 25, 23) + Duration::from_mins(30);
         assert_eq!(
             span("modified:today", late),
             (hour(2026, 9, 25, 22), hour(2026, 9, 26, 22))

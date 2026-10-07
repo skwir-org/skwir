@@ -4,6 +4,7 @@ name = "bibli"
 # plugins and the UI shell.
 description = "An experimental file manager, GPU-drawn, for people, scripts and agents"
 version.workspace = true
+publish.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -69,6 +70,8 @@ workspace = true
 
 [dev-dependencies]
 toml.workspace = true
+bibli-core = { workspace = true, features = ["testing"] }
+proptest.workspace = true
 bibli-platform.workspace = true
 tempfile.workspace = true
 dirs.workspace = true
@@ -115,6 +118,7 @@ assets = [
     ["../../tools/package/linux/bibli.desktop", "usr/share/applications/", "644"],
     ["../../tools/package/linux/io.github.venator.bibli.metainfo.xml", "usr/share/metainfo/", "644"],
     ["../../tools/package/linux/copyright", "usr/share/doc/bibli/copyright", "644"],
+    ["../../target/notices/bibli/THIRD-PARTY-NOTICES", "usr/share/doc/bibli/", "644"],
     ["../../README.md", "usr/share/doc/bibli/", "644"],
 ]
 
@@ -124,7 +128,10 @@ extended-description = "bibli's audio and video player, through GStreamer."
 depends = "$auto, bibli"
 recommends = "gstreamer1.0-plugins-base, gstreamer1.0-plugins-good"
 suggests = "gstreamer1.0-plugins-bad, gstreamer1.0-plugins-ugly, gstreamer1.0-libav"
-assets = [["target/release/bibli-media-worker", "usr/lib/bibli/", "755"]]
+assets = [
+    ["target/release/bibli-media-worker", "usr/lib/bibli/", "755"],
+    ["../../target/notices/bibli-media/THIRD-PARTY-NOTICES", "usr/share/doc/bibli-media/", "644"],
+]
 
 [package.metadata.deb.variants.poppler]
 name = "bibli-poppler"
@@ -135,6 +142,7 @@ suggests = ""
 assets = [
     ["target/release/bibli-poppler-worker", "usr/lib/bibli/", "755"],
     ["../../tools/package/linux/copyright-poppler", "usr/share/doc/bibli-poppler/copyright", "644"],
+    ["../../target/notices/bibli-poppler/THIRD-PARTY-NOTICES", "usr/share/doc/bibli-poppler/", "644"],
 ]
 
 [package.metadata.deb.variants.mermaid]
@@ -143,7 +151,10 @@ extended-description = "Mermaid diagrams drawn in bibli's Markdown previews."
 depends = "$auto, bibli"
 recommends = ""
 suggests = ""
-assets = [["target/release/bibli-mermaid-worker", "usr/lib/bibli/", "755"]]
+assets = [
+    ["target/release/bibli-mermaid-worker", "usr/lib/bibli/", "755"],
+    ["../../target/notices/bibli-mermaid/THIRD-PARTY-NOTICES", "usr/share/doc/bibli-mermaid/", "644"],
+]
 
 [package.metadata.deb.variants.mupdf]
 name = "bibli-mupdf"
@@ -154,6 +165,7 @@ suggests = ""
 assets = [
     ["target/release/bibli-mupdf-worker", "usr/lib/bibli/", "755"],
     ["../../tools/package/linux/copyright-mupdf", "usr/share/doc/bibli-mupdf/copyright", "644"],
+    ["../../target/notices/bibli-mupdf/THIRD-PARTY-NOTICES", "usr/share/doc/bibli-mupdf/", "644"],
 ]
 
 # Fedora, openSUSE and the others that install RPMs (cargo-generate-rpm):
@@ -182,6 +194,7 @@ assets = [
     { source = "../../tools/package/linux/bibli.desktop", dest = "/usr/share/applications/bibli.desktop", mode = "644" },
     { source = "../../tools/package/linux/io.github.venator.bibli.metainfo.xml", dest = "/usr/share/metainfo/io.github.venator.bibli.metainfo.xml", mode = "644" },
     { source = "../../LICENSE", dest = "/usr/share/licenses/bibli/LICENSE", mode = "644" },
+    { source = "../../target/notices/bibli/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/bibli/THIRD-PARTY-NOTICES", mode = "644" },
     { source = "../../README.md", dest = "/usr/share/doc/bibli/README.md", mode = "644", doc = true },
 ]
 
@@ -216,6 +229,7 @@ summary = "bibli's audio and video player, through GStreamer"
 assets = [
     { source = "target/release/bibli-media-worker", dest = "/usr/libexec/bibli/bibli-media-worker", mode = "755" },
     { source = "../../LICENSE", dest = "/usr/share/licenses/bibli-media/LICENSE", mode = "644" },
+    { source = "../../target/notices/bibli-media/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/bibli-media/THIRD-PARTY-NOTICES", mode = "644" },
 ]
 requires = { bibli = "*" }
 recommends = { gstreamer1-plugins-base = "*", gstreamer1-plugins-good = "*" }
@@ -228,6 +242,7 @@ license = "GPL-3.0-only"
 assets = [
     { source = "target/release/bibli-poppler-worker", dest = "/usr/libexec/bibli/bibli-poppler-worker", mode = "755" },
     { source = "../../LICENSE", dest = "/usr/share/licenses/bibli-poppler/LICENSE", mode = "644" },
+    { source = "../../target/notices/bibli-poppler/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/bibli-poppler/THIRD-PARTY-NOTICES", mode = "644" },
     { source = "../../tools/package/licenses/GPL-3.0", dest = "/usr/share/licenses/bibli-poppler/GPL-3.0", mode = "644" },
 ]
 requires = { bibli = "*" }
@@ -241,6 +256,7 @@ summary = "Mermaid diagrams drawn in bibli's Markdown previews"
 assets = [
     { source = "target/release/bibli-mermaid-worker", dest = "/usr/libexec/bibli/bibli-mermaid-worker", mode = "755" },
     { source = "../../LICENSE", dest = "/usr/share/licenses/bibli-mermaid/LICENSE", mode = "644" },
+    { source = "../../target/notices/bibli-mermaid/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/bibli-mermaid/THIRD-PARTY-NOTICES", mode = "644" },
 ]
 requires = { bibli = "*" }
 recommends = {}
@@ -253,6 +269,7 @@ license = "AGPL-3.0-or-later"
 assets = [
     { source = "target/release/bibli-mupdf-worker", dest = "/usr/libexec/bibli/bibli-mupdf-worker", mode = "755" },
     { source = "../../LICENSE", dest = "/usr/share/licenses/bibli-mupdf/LICENSE", mode = "644" },
+    { source = "../../target/notices/bibli-mupdf/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/bibli-mupdf/THIRD-PARTY-NOTICES", mode = "644" },
     { source = "../../tools/package/licenses/AGPL-3.0", dest = "/usr/share/licenses/bibli-mupdf/AGPL-3.0", mode = "644" },
 ]
 requires = { bibli = "*" }

@@ -371,7 +371,7 @@ pub fn sniff(head: &[u8]) -> bool {
 // The values compared are sums and products of small integers and
 // halves, exact in binary floating point.
 #[allow(clippy::float_cmp)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A FIT file, built message by message.
@@ -451,7 +451,7 @@ mod tests {
         bytes
     }
 
-    fn ride() -> Vec<u8> {
+    pub(crate) fn ride() -> Vec<u8> {
         let mut b = Builder::default();
         // file_id: type, manufacturer, time created; skipped.
         b.define(

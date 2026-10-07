@@ -653,7 +653,10 @@ impl Executor {
                         cancelled = true;
                         break;
                     }
-                    Err(e) => err = Some(format!("{e:#}")),
+                    Err(e) => {
+                        tracing::warn!(plan = %plan.title, "a step failed: {e:#}");
+                        err = Some(super::said(&e));
+                    }
                 },
             }
             if holds {
@@ -708,8 +711,7 @@ impl Executor {
 /// The reason the first conflicting step gives, after a dry run of every
 /// step with one shared context.
 fn first_conflict(plan: &Plan) -> Option<String> {
-    let ctx = StepContext::detached();
-    plan.steps.iter().find_map(|step| match step.check(&ctx) {
+    super::dry_run(&plan.steps).find_map(|(_, status)| match status {
         StepStatus::Conflict { reason } => Some(reason),
         _ => None,
     })

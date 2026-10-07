@@ -8,6 +8,8 @@
 //! put in order with Undo (`saved`). The plan's `search` item (walker,
 //! content search, plocate) lives here too.
 
+#[cfg(test)]
+mod any_input;
 pub mod facets;
 pub mod lang;
 pub mod narrow;
@@ -862,6 +864,10 @@ mod tests {
     }
 
     /// A tree with varied names, sizes, mtimes, contents, and a hidden dir.
+    #[allow(
+        clippy::duration_suboptimal_units,
+        reason = "thirty days, as a Duration has no days"
+    )]
     fn tree(root: &Path) {
         std::fs::create_dir_all(root.join("docs/deep/deeper")).unwrap();
         std::fs::create_dir_all(root.join(".hidden")).unwrap();
@@ -1335,6 +1341,10 @@ mod tests {
     // Types from the free desktops' database (step E, ADR-035).
     #[cfg(target_os = "linux")]
     #[test]
+    #[allow(
+        clippy::duration_suboptimal_units,
+        reason = "a time since 1970 is written as the seconds or days it is"
+    )]
     fn a_folder_narrowed_stays_so_below_it_and_no_further() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("it's here");

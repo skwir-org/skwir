@@ -310,7 +310,10 @@ impl Operation for SetNotes {
                 }
             }
             Err(ResolveError::Gone(p)) => StepStatus::Conflict {
-                reason: format!("{} no longer exists", p.display()),
+                reason: format!(
+                    "“{}” is not there any more",
+                    p.file_name().unwrap_or(p.as_os_str()).display()
+                ),
             },
             Err(e) => StepStatus::Conflict {
                 reason: e.to_string(),
@@ -508,7 +511,10 @@ impl Operation for RestoreNotes {
             Ok(p) => p,
             Err(ResolveError::Gone(p)) => {
                 return StepStatus::Conflict {
-                    reason: format!("{} no longer exists", p.display()),
+                    reason: format!(
+                        "“{}” is not there any more",
+                        p.file_name().unwrap_or(p.as_os_str()).display()
+                    ),
                 };
             }
             Err(e) => {

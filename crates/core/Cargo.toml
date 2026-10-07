@@ -2,6 +2,7 @@
 name = "bibli-core"
 description = "bibli core: entries, locations, commands, operations, plans, registries"
 version.workspace = true
+publish.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -23,6 +24,12 @@ blake3.workspace = true
 trash.workspace = true
 tracing.workspace = true
 indexmap.workspace = true
+# Only for `testing`, which plugins ask for in their dev-dependencies.
+proptest = { workspace = true, optional = true }
+
+[features]
+# Inputs no file should hold, for tests of what reads files (`testing`).
+testing = ["dep:proptest"]
 
 [target.'cfg(unix)'.dependencies]
 xattr.workspace = true

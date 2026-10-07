@@ -169,12 +169,12 @@ fn interest(fields: &[&str], columns: &Columns) -> Option<Waypoint> {
 // The values compared are written in the missions, or products exact
 // enough to compare with a margin.
 #[allow(clippy::float_cmp)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use bibli_core::geo::LineKind;
 
     /// A header as Litchi writes it, fifteen actions and all.
-    fn litchi_header(unit: &str) -> String {
+    pub(crate) fn litchi_header(unit: &str) -> String {
         let actions: Vec<String> = (1..=15)
             .map(|i| format!("actiontype{i},actionparam{i}"))
             .collect();
@@ -186,7 +186,13 @@ mod tests {
         )
     }
 
-    fn row(lat: &str, lon: &str, altitude: f32, mode: u8, poi: (f64, f64, f32)) -> String {
+    pub(crate) fn row(
+        lat: &str,
+        lon: &str,
+        altitude: f32,
+        mode: u8,
+        poi: (f64, f64, f32),
+    ) -> String {
         let actions = vec!["-1,0"; 15].join(",");
         format!(
             "{lat},{lon},{altitude},0,0.2,0,2,-90,{actions},{mode},5,{},{},{},0,-1,-1",

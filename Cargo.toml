@@ -48,8 +48,11 @@ exclude = ["spikes"]
 version = "0.0.1"
 edition = "2024"
 license = "Apache-2.0"
-rust-version = "1.88"
+rust-version = "1.96"
 repository = "https://github.com/venator/bibli"
+# None of them is published to crates.io; a crate meant for others (the
+# plugin API, once stable) says so itself.
+publish = false
 
 [workspace.dependencies]
 bibli-core = { path = "crates/core" }

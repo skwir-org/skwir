@@ -21,6 +21,8 @@
 //! - [`process`]: bounded tool runs, and children started without waiting on them.
 
 pub mod access;
+#[cfg(test)]
+mod any_input;
 pub mod calendar;
 pub mod diagram;
 pub mod document;

@@ -338,7 +338,7 @@ fn collect_entries(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) {
 /// The user's language, as desktop entries localize keys: `Name[fr_FR]`,
 /// then `Name[fr]`.
 #[derive(Clone, Debug, Default)]
-struct Locale {
+pub(crate) struct Locale {
     /// Most specific first.
     keys: Vec<String>,
 }
@@ -382,7 +382,7 @@ impl Locale {
 /// The `[Desktop Entry]` group of an application. `None` for another type,
 /// a `Hidden` entry, one without `Exec`, or one whose `TryExec` is not
 /// installed.
-fn parse_entry(
+pub(crate) fn parse_entry(
     id: &str,
     path: &Path,
     text: &str,

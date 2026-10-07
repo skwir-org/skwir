@@ -1364,6 +1364,9 @@ just package-nix    Linux's package, by Nix, from the git tree
 just package-deb    Debian's and Ubuntu's (on Debian or Ubuntu); package-rpm, package-aur
 just package-try d  a Linux package built and installed in debian|fedora|arch's root (bubblewrap)
 just bench-check    generate bench-data/ on demand and enforce budgets
+just smoke          the release window on an X display of its own, driven by a script (CI)
+just deny           the dependencies' licences, advisories and sources (deny.toml)
+just notices        each package's third-party notices (cargo-about), into target/notices
 just plugins        build the plugins from outside as WebAssembly modules (target/plugins)
 just run [dir]      run the release binary
 just dist           build bibli and every helper without debug info (target/dist)
@@ -1379,8 +1382,9 @@ PKGBUILD) and the macOS and Windows scripts where it ships, and answers
 Without an active dev shell, use `nix develop --command just <recipe>`, as CI
 does. `spikes/` is a separate workspace and is not covered by the root checks.
 
-CI runs lint-all, test-all, poppler-check, mupdf-check and bench-check; all must pass before
-a commit is considered done. The native workers are outside `default-members`
+CI runs lint-all, deny, test-all, smoke, poppler-check, mupdf-check and bench-check; all must pass
+before a commit is considered done. A dependency added or updated passes `just deny`: an
+advisory is fixed by an update, or ignored in deny.toml with its reason. The native workers are outside `default-members`
 so the default build and tests need no Poppler, MuPDF, GStreamer or libarchive;
 run the `-all` recipes (inside `nix develop`) before committing worker changes. Clippy runs pedantic with the allowances listed in the root
 `Cargo.toml`; do not add allowances in code without a reason in a comment.

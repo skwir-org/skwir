@@ -379,4 +379,6 @@ impl Plugin for NameTagsPlugin {
 }
 
 #[cfg(test)]
+mod any_input;
+#[cfg(test)]
 mod tests;

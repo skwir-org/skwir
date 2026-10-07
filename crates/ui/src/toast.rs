@@ -48,6 +48,8 @@ pub struct Running {
     pub total: usize,
     /// First change that was applied, to name a single item in the result.
     first: Option<Change>,
+    /// The change whose step failed, to say what could not be done.
+    failed: Option<Change>,
     cancelling: bool,
 }
 
@@ -126,6 +128,48 @@ pub fn describe(title: &str, run: RunKind, first: Option<&Change>, applied: usiz
     }
 }
 
+/// What a plan that did nothing could not do, in a sentence: the step that
+/// failed, by name, then why. An error that begins by naming that step
+/// ("“a.txt” could not be renamed …") gives its reason alone after it.
+pub fn failure(title: &str, failed: Option<&Change>, error: &str) -> String {
+    let quoted = |path: &Path| format!("“{}”", name_of(path));
+    let tried = match failed {
+        Some(Change::Copy { from, to }) => {
+            format!("Couldn't copy {} to {}", quoted(from), folder_of(to))
+        }
+        Some(Change::Move { from, to }) => {
+            format!("Couldn't move {} to {}", quoted(from), folder_of(to))
+        }
+        Some(Change::Trash { path }) => format!("Couldn't move {} to Trash", quoted(path)),
+        Some(Change::Restore { path }) => format!("Couldn't restore {}", quoted(path)),
+        Some(Change::Delete { path }) => format!("Couldn't delete {}", quoted(path)),
+        Some(Change::Rename { from, to }) => {
+            format!("Couldn't rename {} to {}", quoted(from), quoted(to))
+        }
+        Some(Change::Create {
+            path,
+            directory: true,
+        }) => format!("Couldn't create folder {}", quoted(path)),
+        Some(Change::Create { path, .. }) => format!("Couldn't create {}", quoted(path)),
+        _ => return format!("{}: {error}", capitalized(title)),
+    };
+    let named = failed.and_then(|change| match change {
+        Change::Copy { from: path, .. }
+        | Change::Move { from: path, .. }
+        | Change::Rename { from: path, .. }
+        | Change::Trash { path }
+        | Change::Restore { path }
+        | Change::Delete { path }
+        | Change::Create { path, .. } => Some(quoted(path)),
+        _ => None,
+    });
+    let reason = named
+        .and_then(|name| error.strip_prefix(&format!("{name} could not be ")))
+        .and_then(|rest| rest.split_once(": "))
+        .map_or(error, |(_, reason)| reason);
+    format!("{tried}: {reason}")
+}
+
 impl Shell {
     /// Show `toast`, replacing the current one, for a time that fits its
     /// weight: errors and anything with a button stay longer.
@@ -181,6 +225,7 @@ impl Shell {
                         step: 0,
                         total,
                         first: None,
+                        failed: None,
                         cancelling: false,
                     });
                 }
@@ -193,7 +238,9 @@ impl Shell {
                     {
                         running.step = progress.step + 1;
                         running.total = progress.total;
-                        if running.first.is_none() && progress.error.is_none() {
+                        if progress.error.is_some() {
+                            running.failed = Some(progress.change);
+                        } else if running.first.is_none() {
                             running.first = Some(progress.change);
                         }
                     }
@@ -217,9 +264,10 @@ impl Shell {
                         (Some(error), _) if applied > 0 => {
                             (format!("{done}, then stopped: {error}"), Tone::Error)
                         }
-                        (Some(error), _) => {
-                            (format!("{}: {error}", capitalized(&title)), Tone::Error)
-                        }
+                        (Some(error), _) => (
+                            failure(&title, running.failed.as_ref(), &error),
+                            Tone::Error,
+                        ),
                         (None, true) => (format!("Cancelled. {done}"), Tone::Info),
                         (None, false) => (done, Tone::Success),
                     };
@@ -408,9 +456,38 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
 
 #[cfg(test)]
 mod tests {
-    use super::describe;
+    use super::{describe, failure};
     use bibli_core::op::{Change, RunKind};
     use std::path::PathBuf;
+
+    #[test]
+    fn a_failure_says_what_could_not_be_done_and_why() {
+        let copy = Change::Copy {
+            from: PathBuf::from("/a/notes/it's a draft.txt"),
+            to: PathBuf::from("/a/locked/it's a draft.txt"),
+        };
+        assert_eq!(
+            failure("copy to /a/locked", Some(&copy), "permission denied"),
+            "Couldn't copy “it's a draft.txt” to locked: permission denied"
+        );
+        let rename = Change::Rename {
+            from: PathBuf::from("/a/a.txt"),
+            to: PathBuf::from("/a/b.txt"),
+        };
+        assert_eq!(
+            failure(
+                "rename",
+                Some(&rename),
+                "“a.txt” could not be renamed “b.txt”: the name is too long, or not allowed there"
+            ),
+            "Couldn't rename “a.txt” to “b.txt”: the name is too long, or not allowed there",
+            "the reason alone, not the step twice"
+        );
+        assert_eq!(
+            failure("tag 2 files", None, "the drive is full"),
+            "Tag 2 files: the drive is full"
+        );
+    }
 
     #[test]
     fn results_name_one_item_and_count_several() {

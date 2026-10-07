@@ -29,7 +29,7 @@ pub enum RenameOrderError {
     InvalidName { item: usize, reason: String },
     #[error("several items would be named {}", target.display())]
     Duplicate { items: Vec<usize>, target: PathBuf },
-    #[error("{} already exists", target.display())]
+    #[error("“{}” is already there", target.file_name().unwrap_or(target.as_os_str()).display())]
     Conflict { item: usize, target: PathBuf },
 }
 

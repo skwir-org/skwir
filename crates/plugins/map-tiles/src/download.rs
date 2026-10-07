@@ -28,7 +28,7 @@ use crate::server::{Server, redact};
 const IN_FLIGHT: usize = 6;
 /// How long a tile is kept when its server says nothing (the policy's
 /// minimum).
-const KEEP: Duration = Duration::from_secs(7 * 24 * 3600);
+const KEEP: Duration = Duration::from_hours(168);
 /// The downloaded tiles kept, across sources.
 pub const CACHE_BUDGET: u64 = 128 * 1024 * 1024;
 /// Stores between two trims of the cache: a trim walks the directory.

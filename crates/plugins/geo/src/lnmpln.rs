@@ -185,12 +185,12 @@ pub fn sniff(head: &[u8]) -> bool {
 // The values compared are read from short decimals and compared with the
 // same decimals.
 #[allow(clippy::float_cmp)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::collect::{Plan, PlanKind};
     use bibli_core::geo::LineKind;
 
-    const PLAN: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+    pub(crate) const PLAN: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <LittleNavmap xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://www.littlenavmap.org/schema/lnmpln.xsd">
   <Flightplan>
     <Header>

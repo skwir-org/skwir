@@ -228,6 +228,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::duration_suboptimal_units,
+        reason = "a time since 1970 is written as the seconds or days it is"
+    )]
     fn a_file_says_what_to_search_by() {
         let cal = Calendar::utc();
         let t = |s: &Sample<'_>, by| terms(s, by, &cal);

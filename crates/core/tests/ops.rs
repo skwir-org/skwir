@@ -1067,3 +1067,41 @@ fn a_copy_keeps_the_mark_a_download_carries() {
     assert_eq!(std::fs::read(&copied).unwrap(), b"the bytes");
     assert_eq!(std::fs::read_to_string(stream(&copied)).unwrap(), mark);
 }
+
+/// A plan that makes a folder and copies into it (a tag exported as a
+/// folder of its files) is checked as applying it will meet it: the folder
+/// its first step makes is there for the steps after.
+#[test]
+fn a_plan_that_makes_a_folder_and_fills_it_is_no_conflict() {
+    let tmp = Scratch::new();
+    let root = tmp.path();
+    let a = file(&root.join("a"), "a");
+    let app = app(root);
+    let made = root.join("made");
+    let plan = Plan::with_steps(
+        "export",
+        vec![
+            Box::new(Mkdir { path: made.clone() }),
+            Box::new(Mkdir {
+                path: made.join("inner"),
+            }),
+            Box::new(Copy {
+                entry: a,
+                dest_dir: made.clone(),
+                new_name: None,
+                preserve_attributes: true,
+            }),
+        ],
+    );
+    let diff = plan.diff();
+    assert!(
+        diff.steps
+            .iter()
+            .all(|(_, status)| !matches!(status, StepStatus::Conflict { .. })),
+        "{:?}",
+        diff.steps
+    );
+    assert!(plan.is_applicable());
+    apply(&app, &plan);
+    assert!(made.join("inner").is_dir() && made.join("a").is_file());
+}

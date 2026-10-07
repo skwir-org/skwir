@@ -1,5 +1,19 @@
 use super::*;
 
+/// The index's folders as the cache keeps them, for `any_input`.
+pub(crate) fn encoded_folders(folders: &BTreeMap<PathBuf, usize>) -> Vec<u8> {
+    encode_folders(folders)
+}
+
+pub(crate) fn decoded_folders(bytes: &[u8]) -> BTreeMap<PathBuf, usize> {
+    decode_folders(bytes)
+}
+
+/// How many folders a piece read held.
+pub(crate) fn decoded_piece(bytes: &[u8], parents: &[Option<u32>]) -> Option<usize> {
+    decode_piece(bytes, parents).map(|folders| folders.len())
+}
+
 fn home_tempdir() -> tempfile::TempDir {
     let base = dirs::home_dir().unwrap().join(".cache").join("bibli-tests");
     std::fs::create_dir_all(&base).unwrap();

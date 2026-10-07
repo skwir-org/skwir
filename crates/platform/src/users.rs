@@ -13,7 +13,7 @@ fn table(path: &str) -> HashMap<u64, String> {
 }
 
 /// `name:password:id:...` lines; the first name of an id wins.
-fn parse(text: &str) -> HashMap<u64, String> {
+pub(crate) fn parse(text: &str) -> HashMap<u64, String> {
     let mut names = HashMap::new();
     for line in text.lines() {
         let mut fields = line.split(':');

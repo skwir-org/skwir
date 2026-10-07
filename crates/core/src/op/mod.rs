@@ -36,6 +36,68 @@ pub use executor::{
 };
 pub use order::{RenameOrderError, RenameRequest, order_renames};
 
+/// Every step checked as applying the plan would meet it: in order, in one
+/// context, a folder an earlier step makes counted there by the steps after
+/// it (a plan that makes a folder and copies into it is no conflict).
+pub(crate) fn dry_run(
+    steps: &[Box<dyn Operation>],
+) -> impl Iterator<Item = (Change, StepStatus)> + '_ {
+    let ctx = StepContext::detached();
+    steps.iter().map(move |step| {
+        let change = step.describe();
+        let status = step.check(&ctx);
+        if matches!(status, StepStatus::Pending { .. }) {
+            ctx.foresee(&change);
+        }
+        (change, status)
+    })
+}
+
+/// What a step's failure says to the user: its contexts, outermost first,
+/// each written in the user's words where it is raised, then the system's
+/// reason in words (`io::ErrorKind`), or its message without the error's
+/// number. The whole chain goes to the log.
+pub fn said(error: &anyhow::Error) -> String {
+    error
+        .chain()
+        .map(|cause| match cause.downcast_ref::<std::io::Error>() {
+            Some(io) => io_words(io),
+            None => cause.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(": ")
+}
+
+/// A system's error in words: by its kind where the kind says it (the
+/// same words on every system), else its own message, its number left out.
+pub fn io_words(error: &std::io::Error) -> String {
+    use std::io::ErrorKind as K;
+    let words = match error.kind() {
+        K::PermissionDenied => "permission denied",
+        K::NotFound => "it is not there any more",
+        K::AlreadyExists => "something of that name is already there",
+        K::StorageFull => "the drive is full",
+        K::QuotaExceeded => "the disk quota is used up",
+        K::FileTooLarge => "the file is too large for that drive",
+        K::ReadOnlyFilesystem => "the drive is read-only",
+        K::InvalidFilename => "the name is too long, or not allowed there",
+        K::DirectoryNotEmpty => "the folder is not empty",
+        K::ResourceBusy | K::ExecutableFileBusy => "it is in use",
+        K::NotADirectory => "a part of its path is not a folder",
+        K::IsADirectory => "it is a folder",
+        K::StaleNetworkFileHandle => "the network share went away",
+        K::TimedOut => "the drive did not answer in time",
+        _ => {
+            let text = error.to_string();
+            return match text.rfind(" (os error ") {
+                Some(at) if text.ends_with(')') => text[..at].to_owned(),
+                _ => text,
+            };
+        }
+    };
+    words.to_owned()
+}
+
 /// Whether `name` can name an entry inside a directory: not empty, not `.`
 /// or `..`, and free of `/` and NUL; on Windows also what Windows refuses
 /// (`windows_name_problem`). Every operation that takes a name from a
@@ -501,24 +563,16 @@ impl Plan {
 
     /// Dry run every step.
     pub fn diff(&self) -> PlanDiff {
-        let ctx = StepContext::detached();
         PlanDiff {
             title: self.title.clone(),
             note: self.note.clone(),
-            steps: self
-                .steps
-                .iter()
-                .map(|s| (s.describe(), s.check(&ctx)))
-                .collect(),
+            steps: dry_run(&self.steps).collect(),
         }
     }
 
     /// Whether every step is pending or already done (no conflicts).
     pub fn is_applicable(&self) -> bool {
-        let ctx = StepContext::detached();
-        self.steps
-            .iter()
-            .all(|s| !matches!(s.check(&ctx), StepStatus::Conflict { .. }))
+        dry_run(&self.steps).all(|(_, status)| !matches!(status, StepStatus::Conflict { .. }))
     }
 
     pub fn to_data(&self) -> PlanData {
@@ -550,8 +604,28 @@ impl Plan {
 
 #[cfg(test)]
 mod tests {
-    use super::{Change, Followed};
+    use super::{Change, Followed, io_words, said};
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn a_failure_is_said_in_words_after_its_contexts() {
+        let denied = anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+            .context("“b.txt” could not be moved to “locked”");
+        assert_eq!(
+            said(&denied),
+            "“b.txt” could not be moved to “locked”: permission denied"
+        );
+        let full = std::io::Error::from(std::io::ErrorKind::StorageFull);
+        assert_eq!(io_words(&full), "the drive is full");
+        let other = std::io::Error::other("the helper stopped");
+        assert_eq!(io_words(&other), "the helper stopped");
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            io_words(&std::io::Error::from_raw_os_error(71)),
+            "Protocol error",
+            "its number left out"
+        );
+    }
 
     #[test]
     fn a_path_follows_changes_to_itself_and_its_folders() {

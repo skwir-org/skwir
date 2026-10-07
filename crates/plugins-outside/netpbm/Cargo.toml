@@ -9,7 +9,6 @@ publish = false
 
 [dependencies]
 bibli-plugin-api.workspace = true
-serde_json.workspace = true
 
 [lints]
 workspace = true

@@ -1,0 +1,37 @@
+name: Something went wrong
+description: bibli did not do what you expected, or crashed.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before you write: **rename anything personal.** Paths, file names and
+        screenshots say a lot about you; a folder called `taxes 2026` can be
+        `folder a` here. A security problem goes to SECURITY.md's address, not
+        to an issue.
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: The distribution and its version, Wayland or X11, the GPU.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: bibli's version
+      description: "`bibli --version`, and how it was installed (package, AUR, source)."
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what bibli did instead.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: "Run `RUST_LOG=bibli=debug bibli` from a terminal and paste what it printed around the problem, with personal paths renamed."
+      render: text

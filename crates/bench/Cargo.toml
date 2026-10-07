@@ -2,6 +2,7 @@
 name = "bibli-bench"
 description = "bibli: synthetic-tree generator and performance regression checks"
 version.workspace = true
+publish.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

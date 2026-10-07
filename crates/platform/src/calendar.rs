@@ -342,7 +342,7 @@ mod tests {
     fn a_day_is_the_zones_day_daylight_saving_time_included() {
         let cal = paris();
         // 23:30 UTC on 2026-09-25 is already the 26th in Paris (UTC+2).
-        let late = utc(2026, 9, 25, 23) + Duration::from_secs(1800);
+        let late = utc(2026, 9, 25, 23) + Duration::from_mins(30);
         assert_eq!(cal.day_of(late), days_from_civil(2026, 9, 26));
         assert_eq!(Calendar::utc().day_of(late), days_from_civil(2026, 9, 25));
         // Paris midnight is 22:00 UTC the day before in summer, 23:00 in winter.
@@ -502,7 +502,7 @@ mod tests {
         assert_eq!(then, utc(2026, 10, 21, 10));
         assert_eq!(now.duration_since(then).unwrap().as_secs(), 169 * 3600);
         assert_eq!(cal.ago(now, "3w"), Some(utc(2026, 10, 7, 10)));
-        assert_eq!(cal.ago(now, "2h30m"), Some(now - Duration::from_secs(9000)));
+        assert_eq!(cal.ago(now, "2h30m"), Some(now - Duration::from_mins(150)));
         assert_eq!(cal.ago(now, "1mo"), Some(utc(2026, 9, 28, 10)));
         assert_eq!(cal.ago(now, "1y"), Some(utc(2025, 10, 28, 11)));
         assert_eq!(cal.ago(now, "today"), None);

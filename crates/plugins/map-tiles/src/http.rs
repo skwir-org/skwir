@@ -174,12 +174,11 @@ mod tests {
     /// certificate: each answer after `delay`, counting connections and the
     /// requests that came in HTTP/2.
     async fn server(delay: Duration) -> (String, Arc<AtomicUsize>, Arc<AtomicUsize>) {
-        let certs: Vec<_> = rustls_pemfile::certs(&mut &include_bytes!("testdata/server.pem")[..])
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
+        let certs: Vec<_> = CertificateDer::pem_slice_iter(include_bytes!("testdata/server.pem"))
             .collect::<Result<_, _>>()
             .unwrap();
-        let key = rustls_pemfile::private_key(&mut &include_bytes!("testdata/server.key")[..])
-            .unwrap()
-            .unwrap();
+        let key = PrivateKeyDer::from_pem_slice(include_bytes!("testdata/server.key")).unwrap();
         let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(
             rustls::crypto::ring::default_provider(),
         ))
@@ -233,8 +232,9 @@ mod tests {
 
     /// A client trusting the test's certificate authority, and only it.
     fn client() -> Http {
+        use rustls::pki_types::{CertificateDer, pem::PemObject};
         let mut roots = rustls::RootCertStore::empty();
-        for cert in rustls_pemfile::certs(&mut &include_bytes!("testdata/ca.pem")[..]) {
+        for cert in CertificateDer::pem_slice_iter(include_bytes!("testdata/ca.pem")) {
             roots.add(cert.unwrap()).unwrap();
         }
         let tls = rustls::ClientConfig::builder_with_provider(Arc::new(

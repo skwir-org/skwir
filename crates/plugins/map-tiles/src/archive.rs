@@ -363,4 +363,26 @@ mod tests {
         );
         assert!(inflate(b"raw".to_vec(), Compression::Brotli, 3).is_err());
     }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(128))]
+        /// A tile archive as no tool writes it, the user's choice of
+        /// background: opened and read, or refused; never a panic.
+        #[test]
+        fn any_tile_archive_is_read_without_a_panic(bytes in proptest::prop_oneof![
+            bibli_core::testing::mutated(&include_bytes!("testdata/hills.pmtiles")[..]),
+            bibli_core::testing::mutated(&include_bytes!("testdata/roads.pmtiles")[..]),
+            bibli_core::testing::bytes(1024),
+        ]) {
+            let file = tempfile::Builder::new().suffix(".pmtiles").tempfile().unwrap();
+            std::fs::write(file.path(), &bytes).unwrap();
+            let cancel = CancelToken::new();
+            if let Ok(archive) = open(file.path(), &cancel) {
+                let _ = archive.about();
+                for (z, x, y) in [(0, 0, 0), (1, 1, 0), (2, 1, 2), (14, 8000, 5000)] {
+                    let _ = archive.tile(z, x, y, &cancel);
+                }
+            }
+        }
+    }
 }

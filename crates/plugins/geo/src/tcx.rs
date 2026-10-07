@@ -151,11 +151,11 @@ pub fn sniff(head: &[u8]) -> bool {
 // The values compared are sums and products of small integers and
 // halves, exact in binary floating point.
 #[allow(clippy::float_cmp)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::time::{Duration, SystemTime};
 
-    const RIDE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+    pub(crate) const RIDE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
   <Activities>
     <Activity Sport="Biking">
@@ -226,6 +226,10 @@ mod tests {
 </TrainingCenterDatabase>"#;
 
     #[test]
+    #[allow(
+        clippy::duration_suboptimal_units,
+        reason = "a time since 1970 is written as the seconds or days it is"
+    )]
     fn an_activity_is_a_track_with_a_segment_per_track() {
         let mut c = Collector::new();
         assert!(

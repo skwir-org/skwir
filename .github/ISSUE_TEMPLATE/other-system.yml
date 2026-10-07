@@ -1,0 +1,37 @@
+name: macOS or Windows
+description: You tried a step of docs/HELP-WANTED.md on a Mac or on Windows.
+labels: ["macos-windows"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for trying bibli where it has never run. Rename anything
+        personal in paths and screenshots before you share them.
+  - type: dropdown
+    id: system
+    attributes:
+      label: System
+      options: [macOS, Windows]
+    validations:
+      required: true
+  - type: input
+    id: details
+    attributes:
+      label: Version and machine
+      description: The system's version, the processor (Intel, Apple, ARM), the GPU.
+    validations:
+      required: true
+  - type: input
+    id: step
+    attributes:
+      label: Step
+      description: Which step of docs/HELP-WANTED.md (for example "macOS 3, Files").
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, and what bibli did. A test that failed, with what it printed.
+    validations:
+      required: true

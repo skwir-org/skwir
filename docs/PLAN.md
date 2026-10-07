@@ -2409,44 +2409,174 @@ Steps, each with what was found and what is left:
 2. **Panics.** Production code, by clippy's restriction lints with
    tests left out (2026-10-07): 4 `unwrap`, 77 `expect`, 5
    `unreachable!`, 748 indexing or slicing, 150 string slices. Most
-   `expect`s state what the code above made true. To do: the string
-   slices, where an offset may fall inside a character of a name;
-   the `expect`s on what a file says (a rich preview's HTML, a Gerber
-   region) made errors; a command that panics on the window's thread
-   contained (the scheduler's jobs are, a command run there is not).
+   `expect`s state what the code above made true; the string slices
+   read so far cut where a search found an ASCII character or after a
+   check of their bytes, and step 3's tests over any input stand for
+   the rest. A command that panics no longer takes its caller (the
+   window, the control channel, a script) with it: the registry
+   catches it as the scheduler does a job's, logs it, and the call
+   fails (2026-10-07). The `expect`s where a file is read (a rich
+   preview's HTML, a Gerber region) hold by construction: each follows
+   a match on the node's type or a list made with one item and only
+   ever pushed to.
 3. **Fuzzing** what reads files bibli did not write: the query
    language, XMP, AppleDouble, Finder's plists, `.trashinfo`, the
    tracks and plans of the geo plugin, the 3D and circuit formats,
    EPUB, mail, ODF, Netpbm, mountinfo, desktop entries. A crash found
-   is a test kept.
+   is a test kept. Done 2026-10-07, as property tests over any input
+   (proptest; not coverage-guided fuzzing, which needs a nightly
+   compiler): each reader is given its own test's sample mutated
+   (bytes changed, characters of several bytes put where ASCII is
+   expected, cut short; `bibli_core::testing`, a feature tests ask
+   for) and bytes or text at random, and must not panic. In each
+   crate's `any_input` (geo's thirteen formats, the tags plugin's `._`
+   files, Finder attributes and its own index, XMP, the query
+   language, names, jump's lists, the platform's links, volumes,
+   entries, users, XHTML, encodings and packages, EXIF and MP4, the
+   trash's records, an edited buffer, tile archives), and
+   `crates/bibli/tests/any_file.rs`: thirty-three samples of thirty-two
+   types, mutated, shown every way bibli shows a file in its own
+   process (render, inspect, its source, a search, a document's page,
+   a thumbnail), with no job of the scheduler panicking. Each ran
+   20,000 cases once, but those that write a file a case (MP4,
+   packages, tile archives: 64 to 128) and the preview test (4,000);
+   the tests keep 256 (the preview test 128). Nothing panicked: the readers check before they
+   cut. Not covered: what runs in a helper of its own (PDF, media,
+   archives, 3D models, Mermaid), where a crash ends the helper, not
+   bibli.
 4. **Files under failure.** A plan interrupted (bibli killed between
    steps), a full disk, a read-only folder, a permission refused, a
    name too long, a drive pulled during a copy: what is on disk after,
-   and whether Undo still takes it back.
+   and whether Undo still takes it back. Done 2026-10-07
+   (`crates/core/tests/failures.rs`): a copy into a folder that refuses
+   writes changes nothing; a plan stopped by a failure keeps what it
+   did undoable; a folder copy that fails partway (a file it cannot
+   read, as a full disk would stop it) leaves no part of itself; a name
+   too long is refused with nothing changed. Found: a move to another
+   filesystem that copied whole but could not remove all of its source,
+   and a permanent delete that stopped partway, said only "Permission
+   denied", so that files looked lost; they now say that the copy is
+   whole and what is left ("“project/notes.txt” and 1 more are left").
+   And every failure was said as the code's log line ("rename /home/…
+   -> /home/…: File name too long (os error 36)"): a step's failure is
+   now said in the user's words (`op::said`: the system's reason by its
+   kind, "the drive is full", "the file is too large for that drive",
+   its number left out; every context and conflict names entries by
+   their names), its whole chain in the log. Left: bibli killed during
+   a copy leaves the hidden `.bibli-copy-…` folder it was copying into
+   in the destination (never a part copy under the file's name; the
+   user guide says so); the journal is memory, so Undo does not outlive
+   bibli (by design: no database).
 5. **What users keep from 0.1 on**: settings keys and values, the
    window's session, saved searches, pins, the cache's layout (versioned,
-   or thrown away whole), so that later versions read them.
+   or thrown away whole), so that later versions read them. Done
+   2026-10-07. What the user keeps is in the settings file, read with
+   defaults for what is missing and nothing refused for what is
+   unknown (the session included); a key renamed follows with
+   `Settings::rename`. Found: a settings file that is no TOML (edited
+   by hand) or no text stopped bibli from starting at all; it is now
+   set aside under a name of its own (`settings.toml.unreadable-…`),
+   never written over, bibli starts with its defaults and says so, and
+   one it cannot set aside leaves the settings unsaved rather than
+   overwritten. The cache is kept in a folder its layout names
+   (`<cache>/1`, `cache::LAYOUT`): a release that would misread what an
+   older one cached raises it, and what older layouts left, today's
+   unnamed one included, is deleted on a thread when bibli starts.
 6. **In the window**: the "Not checked in a window" items of the phases
    above; a scripted smoke test through `bibli mcp` on Xvfb (navigate,
    search, tag, rename, move, trash, undo); a run of hours (memory
    flat, idle CPU back to ~0); `just idle-pss`, `just bench-check` and
-   the first frame on a quiet machine.
+   the first frame on a quiet machine. In part 2026-10-07. `just smoke`
+   (`tools/test/smoke.py`): the release window on an X display of its
+   own (Xvfb and Mesa's software Vulkan from the flake's nixpkgs, from
+   :90 up, never one the desktop may use), a home of synthetic files,
+   driven by `bibli cmd` (a folder listed, a search, a tag, a rename
+   carrying it, a folder made, a move, the Trash, five undos bringing
+   the folder back as it was), each checked on disk; it passed four
+   runs in a row. In the window on Xvfb with the release build: the
+   board's keys (Down, Right, Shift+Down), vim's (`j`, `k`, `G`, `g g`,
+   `d` to the Trash with its toast, `u`), the middle button on a tag's
+   pill (its tab behind the one shown), the Narrow by bar over ten
+   thousand pictures (every file's tags counted, the list usable
+   meanwhile, CPU back to 0 to 1 % within ten seconds), a PDF's mail
+   link (handed to the desktop's opener, a stub recording it), the
+   notice of a settings file that cannot be read, a failure's toast.
+   Found and fixed: a tag dragged into a folder proposed a plan that
+   could never be applied (its review checked the copies into the
+   folder the plan makes against the disk as it was: `op::dry_run` now
+   counts what earlier steps make; applied, the folder held the files
+   with their tags); a failure's toast led with the plan's title and
+   its full paths ("Couldn't copy “a.txt” to locked: permission denied"
+   now); a PDFium library the settings name where there is none was
+   said as a helper to install. `just bench-check` meets all its
+   budgets. A run of 109 minutes (the release window on Xvfb moved every
+   ten seconds between a folder of 100,000 files, a grid of 10,000
+   pictures and a deep tree, with a search now and then, through
+   `bibli cmd`): no command failed, PSS flat (157 MiB on average over
+   the first ten minutes, 140 over the last ten, software Vulkan's
+   share included), CPU under 2 % a minute while moved, 0.0 % over the
+   last minute left alone. `just idle-pss`: own share 91.1 MiB (median
+   of three, budget 100), idle CPU 0.4 to 0.6 %, first frame 151 to
+   156 ms, still over ADR-002's 150 as on 2026-10-07 (153 to 172) on a
+   machine not quiet: to measure on a quiet one. Not checked in a window: a drop on a trashed folder (in
+   tests), Empty Trash and a move out of the trash across volumes (the
+   test window lists the machine's own volumes' trashes), a drive's
+   trail, plocate (not installed here), a drop from another
+   application.
 7. **Clean**: every `#[allow]` given its reason or removed (18 of
    `dead_code`), unused dependencies, `proc-macro-error2` (which a
    future Rust refuses), the largest files split where it helps the
-   next change.
+   next change. Done 2026-10-07 but the last two: every `dead_code`
+   allowance holds helpers of tests that run on one system alone
+   (ADR-035), shared test modules or arguments read through serde
+   alone, and every `unsafe_code` one states its safety (one test's did
+   not); twenty-two dependencies their crates never named, found by
+   cargo-machete and checked in each crate's code, are gone; every
+   crate says `publish = false`. Left: `proc-macro-error2` comes with
+   gpui's `stacksafe` 0.1 (1.0 drops it, a vendored patch or gpui's
+   next update); no file was split, none of the next changes needing
+   it.
 8. **Licences.** The dependencies' licences (listed 2026-10-07) are
    permissive, MPL-2.0 for ten crates, and the AGPL for MuPDF's worker
    alone (ADR-014). The packages carry bibli's licence and PDFium's
    notices, not those of the thousand crates linked in, which MIT,
    BSD, ISC and Zlib ask for in a binary: a notices file in every
    package. A `deny.toml` (licences, advisories, sources), run by CI.
-   Where the toolbar's icons come from, recorded.
+   Where the toolbar's icons come from, recorded. Done 2026-10-07:
+   every package carries `THIRD-PARTY-NOTICES`, the crates its programs
+   link with each one's licence and text (copyright lines included),
+   made by `tools/package/notices.py` with cargo-about, offline, from
+   what the build fetched, which `linux/check.sh` now checks is installed
+   (not yet run in the distributions' roots: step 10);
+   `deny.toml` holds the dependencies to the licences shipped, RustSec's
+   advisories and crates.io (`just deny`, a CI step). Found by it:
+   Wasmtime 38.0.4, which runs plugins' modules, had seventeen
+   advisories (an out-of-bounds write in the component model's string
+   transcoding, a guest's heap access miscompiled into a sandbox escape
+   on aarch64, loads outside the sandbox on x86-64): now 49.0.2, which
+   needs Rust 1.96 (the workspace's minimum, 1.88 before; the dev shell
+   has 1.98), and counts the fuel a module's instantiation takes, which
+   the helper gave none (every module trapped until it did: the host's
+   module tests found it); a yanked crate (`yoke-derive`) updated; `rustls-pemfile`,
+   unmaintained, replaced in the tests by rustls' own PEM reading.
+   `ttf-parser` is unmaintained, used by gpui's text stack and by the
+   font preview and books' fonts: ignored with its reason, ours to move
+   to `skrifa`. The toolbar's icons were made for bibli
+   (`crates/ui/assets/toolbar/README.md`). Left for the macOS and
+   Windows packages: their notices.
 9. **Documents**: the README (Linux, the packages, what works), a user
    guide, CONTRIBUTING (building, testing, the rules in short), help
    wanted for macOS and Windows (from `docs/PORTING.md`: each task and
    how to check it), SECURITY (how to report), issue templates that warn
-   of personal data in paths and screenshots, a changelog.
+   of personal data in paths and screenshots, a changelog. Done
+   2026-10-07: the README is a front page (what bibli is, installing,
+   first keys, agents, plugins, the documents), what it said of
+   previews, tags and Usage, much of it no longer true, now in
+   `docs/guide.md`; `CONTRIBUTING.md`, `SECURITY.md`,
+   `docs/HELP-WANTED.md` (macOS and Windows, step by step, marked
+   **try** where running bibli and saying what happened is enough),
+   `.github/ISSUE_TEMPLATE/`, `CHANGELOG.md`; `bibli --version` and
+   `--help`, which a report asks for.
 10. **The release**: the name, which the user is reconsidering
     (2026-10-07), settled before anything is published, and with it the
     repository's address and the application id (now

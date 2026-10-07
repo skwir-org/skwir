@@ -2,6 +2,7 @@
 name = "bibli-model-worker"
 description = "bibli helper: 3D meshes read and drawn as a picture, in a process of its own"
 version.workspace = true
+publish.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

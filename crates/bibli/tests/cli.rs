@@ -93,3 +93,26 @@ fn a_script_is_told_to_name_what_it_acts_on() {
     let missing = said(&bibli_cmd(runtime.path(), &["trash", &gone]));
     assert!(missing.contains("does not exist"), "{missing}");
 }
+
+#[test]
+fn bibli_says_its_version_and_how_to_use_it_without_opening_a_window() {
+    let version = Command::new(env!("CARGO_BIN_EXE_bibli"))
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert!(version.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&version.stdout).trim(),
+        format!("bibli {}", env!("CARGO_PKG_VERSION"))
+    );
+    let help = Command::new(env!("CARGO_BIN_EXE_bibli"))
+        .arg("--help")
+        .output()
+        .unwrap();
+    assert!(help.status.success());
+    let help = String::from_utf8_lossy(&help.stdout);
+    assert!(
+        help.contains("bibli cmd") && help.contains("bibli mcp"),
+        "{help}"
+    );
+}

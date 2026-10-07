@@ -710,6 +710,36 @@ pub struct Settings {
     /// Advances when the schema or a live value changes, so editors compare
     /// one atomic instead of re-reading the schema on every frame.
     revision: std::sync::atomic::AtomicU64,
+    /// Why the file could not be read, until the app says it
+    /// (`take_problem`).
+    problem: Mutex<Option<String>>,
+}
+
+/// A TOML error in a few words, with its line: "expected `=` on line 3".
+fn toml_problem(text: &str, error: &toml::de::Error) -> String {
+    let message = error.message().trim_end_matches('.');
+    match error.span() {
+        Some(span) => {
+            let line = text
+                .get(..span.start)
+                .map_or(1, |before| before.matches('\n').count() + 1);
+            format!("{message} on line {line}")
+        }
+        None => message.to_owned(),
+    }
+}
+
+/// Move an unreadable settings file out of the way, beside itself, under
+/// a name no other one has: `settings.toml.unreadable-<seconds>`.
+fn set_aside(path: &Path) -> std::io::Result<PathBuf> {
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".unreadable-{seconds}"));
+    let aside = path.with_file_name(name);
+    std::fs::rename(path, &aside)?;
+    Ok(aside)
 }
 
 impl Settings {
@@ -731,25 +761,75 @@ impl Settings {
             writer: Mutex::new(()),
             status: Mutex::new((0, SaveState::Idle)),
             revision: std::sync::atomic::AtomicU64::new(0),
+            problem: Mutex::new(None),
         }
     }
 
-    /// Load from `path`; a missing file yields empty settings.
-    pub fn load(path: impl Into<PathBuf>) -> anyhow::Result<Self> {
+    /// Load from `path`; a missing file yields empty settings. bibli always
+    /// starts: a file that is no TOML (edited by hand, say) is set aside
+    /// under a name of its own, never written over, and the defaults are
+    /// used; one that cannot be read or set aside leaves the settings in
+    /// memory, saved nowhere. `take_problem` says which.
+    pub fn load(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
-        let values = match std::fs::read_to_string(&path) {
-            Ok(s) => s.parse::<toml::Table>()?,
+        let mut problem = None;
+        let mut saved_to = Some(path.clone());
+        let values = match std::fs::read(&path) {
+            Ok(bytes) => match std::str::from_utf8(&bytes)
+                .map_err(|_| "it is not text".to_owned())
+                .and_then(|text| {
+                    text.parse::<toml::Table>()
+                        .map_err(|e| toml_problem(text, &e))
+                }) {
+                Ok(values) => values,
+                Err(why) => {
+                    tracing::warn!(path = %path.display(), "settings unreadable: {why}");
+                    match set_aside(&path) {
+                        Ok(aside) => {
+                            problem = Some(format!(
+                                "Your settings could not be read ({why}), so bibli started with its \
+                                 defaults. The file was kept beside them as “{}”.",
+                                aside.file_name().unwrap_or_default().display()
+                            ));
+                        }
+                        Err(error) => {
+                            saved_to = None;
+                            problem = Some(format!(
+                                "Your settings could not be read ({why}), so bibli started with its \
+                                 defaults, and saves nothing until “{}” is fixed or removed ({}).",
+                                path.display(),
+                                crate::op::io_words(&error)
+                            ));
+                        }
+                    }
+                    toml::Table::new()
+                }
+            },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => toml::Table::new(),
-            Err(e) => return Err(e.into()),
+            Err(error) => {
+                saved_to = None;
+                problem = Some(format!(
+                    "Your settings could not be read ({}), so bibli started with its defaults, \
+                     and saves nothing this time.",
+                    crate::op::io_words(&error)
+                ));
+                toml::Table::new()
+            }
         };
-        Ok(Settings {
-            path: Some(path),
+        Settings {
+            path: saved_to,
             values: RwLock::new(values),
             schema: RwLock::new(BTreeMap::new()),
             writer: Mutex::new(()),
             status: Mutex::new((0, SaveState::Idle)),
             revision: std::sync::atomic::AtomicU64::new(0),
-        })
+            problem: Mutex::new(problem),
+        }
+    }
+
+    /// Why the file was not read, once: the app says it to the user.
+    pub fn take_problem(&self) -> Option<String> {
+        self.problem.lock().take()
     }
 
     pub fn path(&self) -> Option<&Path> {

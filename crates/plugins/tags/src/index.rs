@@ -1173,4 +1173,4 @@ impl TagIndex {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

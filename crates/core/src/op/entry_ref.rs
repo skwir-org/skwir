@@ -19,14 +19,20 @@ pub struct EntryRef {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResolveError {
-    #[error("{0} no longer exists")]
+    #[error("“{}” is not there any more", name_of(.0))]
     Gone(PathBuf),
-    #[error("{path} is now a different file (expected {expected:?}, found {found:?})")]
+    #[error("“{}” is now another file", name_of(path))]
     Replaced {
         path: PathBuf,
         expected: EntryId,
         found: EntryId,
     },
+}
+
+/// An entry's own name, for a message.
+fn name_of(path: &Path) -> std::path::Display<'_> {
+    path.file_name()
+        .map_or(path.display(), |name| Path::new(name).display())
 }
 
 impl EntryRef {

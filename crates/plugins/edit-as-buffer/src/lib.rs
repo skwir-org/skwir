@@ -1026,4 +1026,25 @@ mod tests {
         app.plugins.set_enabled(ID, true, &app);
         assert!(app.commands.get("edit_as_buffer").is_some());
     }
+
+    proptest::proptest! {
+        /// Whatever the user leaves in the buffer, it is read as a plan or
+        /// refused in words: never a panic.
+        #[test]
+        fn any_buffer_the_user_leaves_is_read_without_a_panic(text in proptest::prop_oneof![
+            bibli_core::testing::mutated_text(
+                "# a comment\n1  café.txt\n2  sub/\n3  \"a b\\\"c\".md\n  new folder/\n4  ../x\n"
+            ),
+            proptest::prelude::any::<String>(),
+        ]) {
+            thread_local!(static HERE: (tempfile::TempDir, Original) = {
+                let dir = scratch();
+                let original = refs(dir.path(), &[("café.txt", false), ("sub", true), ("a b", false)]);
+                (dir, original)
+            });
+            HERE.with(|(dir, original)| {
+                let _ = diff_buffer(original, &text, dir.path());
+            });
+        }
+    }
 }

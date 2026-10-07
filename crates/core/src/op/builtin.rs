@@ -62,9 +62,24 @@ fn parking_name(dir: &Path, purpose: &str) -> PathBuf {
     }
 }
 
+/// Rename `from` to `to`, never over what is there. A failure says, in the
+/// user's words, what could not be done: a rename within a folder, or a
+/// move to another.
 fn rename_noreplace(from: &Path, to: &Path) -> anyhow::Result<()> {
-    sys::rename_noreplace(from, to)
-        .with_context(|| format!("rename {} -> {}", from.display(), to.display()))
+    sys::rename_noreplace(from, to).with_context(|| {
+        let name = display_name(from);
+        let folder = to.parent().map(display_name).unwrap_or_default();
+        if from.parent() == to.parent() {
+            format!("“{name}” could not be renamed “{}”", display_name(to))
+        } else if from.file_name() == to.file_name() {
+            format!("“{name}” could not be moved to “{folder}”")
+        } else {
+            format!(
+                "“{name}” could not be moved to “{folder}” as “{}”",
+                display_name(to)
+            )
+        }
+    })
 }
 
 // ------------------------------------------------------------------ companions
@@ -101,7 +116,7 @@ fn along_conflict(along: &[Along]) -> Option<StepStatus> {
     along
         .iter()
         .find(|a| exists(&a.to))
-        .map(|a| conflict(format!("{} already exists", a.to.display())))
+        .map(|a| conflict(format!("“{}” is already there", display_name(&a.to))))
 }
 
 /// Rename each companion to its place (making a companions' folder, `.ts`,
@@ -219,7 +234,9 @@ impl super::Effect for Rename {
                     along_conflict(&along(ctx, &src, &target)).unwrap_or(pending(true))
                 }
                 RenameTarget::Spelled => StepStatus::AlreadyDone,
-                RenameTarget::Taken => conflict(format!("{} already exists", target.display())),
+                RenameTarget::Taken => {
+                    conflict(format!("“{}” is already there", display_name(&target)))
+                }
             },
             Err(_) if id_of(&target) == Some(self.entry.id) => StepStatus::AlreadyDone,
             Err(e) => conflict(e.to_string()),
@@ -235,10 +252,23 @@ impl super::Effect for Rename {
             // case-insensitive filesystem: go through a parked name.
             RenameTarget::Respelled => {
                 let parked = parking_name(target.parent().unwrap_or(Path::new("/")), "rename");
-                rename_noreplace(&src, &parked)?;
-                if let Err(e) = rename_noreplace(&parked, &target) {
-                    rename_noreplace(&parked, &src).context("put the entry back")?;
-                    return Err(e);
+                let respelled = || {
+                    format!(
+                        "“{}” could not be renamed “{}”",
+                        display_name(&src),
+                        display_name(&target)
+                    )
+                };
+                sys::rename_noreplace(&src, &parked).with_context(respelled)?;
+                if let Err(e) = sys::rename_noreplace(&parked, &target) {
+                    sys::rename_noreplace(&parked, &src).with_context(|| {
+                        format!(
+                            "“{}” was left named “{}”",
+                            display_name(&src),
+                            display_name(&parked)
+                        )
+                    })?;
+                    return Err(anyhow::Error::new(e).context(respelled()));
                 }
             }
             RenameTarget::Spelled => {}
@@ -287,8 +317,11 @@ impl super::Effect for Move {
         }
     }
     fn check(&self, ctx: &StepContext) -> StepStatus {
-        if !self.dest_dir.is_dir() {
-            return conflict(format!("{} is not a directory", self.dest_dir.display()));
+        if !ctx.is_folder(&self.dest_dir) {
+            return conflict(format!(
+                "“{}” is not a folder",
+                display_name(&self.dest_dir)
+            ));
         }
         // A file of the trash leaves it as a restore does; within the
         // trash, only a trashed folder's files move.
@@ -302,11 +335,12 @@ impl super::Effect for Move {
         }
         match self.entry.resolve() {
             Ok(src) if src.parent() == Some(self.dest_dir.as_path()) => StepStatus::AlreadyDone,
-            Ok(src) if exists(&self.target(&src)) => {
-                conflict(format!("{} already exists", self.target(&src).display()))
-            }
+            Ok(src) if exists(&self.target(&src)) => conflict(format!(
+                "“{}” is already there",
+                display_name(&self.target(&src))
+            )),
             Ok(src) if src.is_dir() && self.dest_dir.starts_with(&src) => {
-                conflict("cannot move a directory into itself")
+                conflict("a folder cannot be moved into itself")
             }
             Ok(src) => {
                 along_conflict(&along(ctx, &src, &self.target(&src))).unwrap_or(pending(true))
@@ -372,7 +406,15 @@ fn move_entry(ctx: &StepContext, src: &Path, target: &Path, along: &[Along]) -> 
         Err(e) if is_cross_device(&e) => {
             let dest_dir = target.parent().unwrap_or(Path::new("/"));
             copy_entry(src, target, dest_dir, true, along, ctx)?;
-            remove_recursive(src)?;
+            // Part of the source may be gone: say that the copy is whole,
+            // so that nothing looks lost.
+            remove_recursive(src).with_context(|| {
+                format!(
+                    "“{}” was copied whole to “{}”, but its original could not all be removed",
+                    display_name(src),
+                    dest_dir.display()
+                )
+            })?;
             for a in along {
                 let _ = remove_recursive(&a.from);
             }
@@ -465,8 +507,11 @@ impl super::Effect for Copy {
         if let Some(invalid) = self.new_name.as_deref().and_then(invalid_name) {
             return invalid;
         }
-        if !self.dest_dir.is_dir() {
-            return conflict(format!("{} is not a directory", self.dest_dir.display()));
+        if !ctx.is_folder(&self.dest_dir) {
+            return conflict(format!(
+                "“{}” is not a folder",
+                display_name(&self.dest_dir)
+            ));
         }
         let src = match self.entry.resolve() {
             Ok(s) => s,
@@ -474,19 +519,19 @@ impl super::Effect for Copy {
         };
         let target = self.target(&src);
         if target == src {
-            return conflict("source and destination are the same");
+            return conflict("it would be copied onto itself");
         }
         if exists(&target) {
             // Only a finished copy of this very source is "already done": an
             // unrelated folder that happens to share the name is a conflict.
             return match same_tree(&src, &target, ctx) {
                 Ok(true) => StepStatus::AlreadyDone,
-                Ok(false) => conflict(format!("{} already exists", target.display())),
+                Ok(false) => conflict(format!("“{}” is already there", display_name(&target))),
                 Err(e) => conflict(format!("{e:#}")),
             };
         }
         if src.is_dir() && target.starts_with(&src) {
-            return conflict("cannot copy a directory into itself");
+            return conflict("a folder cannot be copied into itself");
         }
         along_conflict(&along(ctx, &src, &target)).unwrap_or(pending(true))
     }
@@ -505,8 +550,12 @@ impl super::Effect for Copy {
             &along,
             ctx,
         )?;
-        let r = EntryRef::from_path(&target)
-            .ok_or_else(|| anyhow::anyhow!("copy vanished: {}", target.display()))?;
+        let r = EntryRef::from_path(&target).ok_or_else(|| {
+            anyhow::anyhow!(
+                "the copy “{}” went missing as it was made",
+                display_name(&target)
+            )
+        })?;
         // Undo puts the copy in the trash rather than deleting it: it may
         // have been edited since, and redo then restores it as it was.
         Ok(Some(Box::new(Trash { entry: r })))
@@ -602,14 +651,24 @@ fn copy_staged(
     let result = copy_recursive_with_attributes(src, &staged, preserve_attributes, pace, ctx)
         .and_then(|()| {
             let beside = along(ctx, &staged, target);
-            rename_noreplace(&staged, target)?;
+            sys::rename_noreplace(&staged, target).with_context(|| {
+                format!(
+                    "“{}” could not be placed in “{}”",
+                    display_name(target),
+                    display_name(dest_dir)
+                )
+            })?;
             rename_along(&beside)
         });
     if let Err(error) = result {
         // Completed subdirectories may already have read-only permissions.
         // Only relax permissions inside our private, newly-created staging tree.
         if let Err(cleanup) = remove_staged_copy(staging.path()) {
-            return Err(error).context(format!("copy staging cleanup failed: {cleanup}"));
+            return Err(error.context(format!(
+                "a part of the copy is left in “{}” ({})",
+                staging.path().display(),
+                super::io_words(&cleanup)
+            )));
         }
         return Err(error);
     }
@@ -717,7 +776,9 @@ impl Pace {
         let Some(drive) = &self.drive else {
             return Ok(());
         };
-        drive.sync_volume().context("write the copy to the drive")?;
+        drive
+            .sync_volume()
+            .context("the copy could not be written out to the drive")?;
         let n = self.unsaid.take();
         ctx.advance(n);
         if n > 0 {
@@ -762,7 +823,7 @@ fn copy_file(
         if let Some(error) = failed {
             return Err(error);
         }
-        copied.with_context(|| format!("copy {} -> {}", src.display(), dst.display()))?;
+        copied.with_context(|| format!("“{}” could not be copied", display_name(src)))?;
         if preserve_attributes {
             transfer_attributes(src, dst, ctx)?;
         }
@@ -771,7 +832,7 @@ fn copy_file(
     // Non-blocking, then checked: a file swapped for a FIFO since it was
     // listed must not block the executor in open(2).
     let mut sf = crate::fs::file::open_regular(src)
-        .with_context(|| format!("{} is no longer a regular file", src.display()))?;
+        .with_context(|| format!("“{}” is no longer a file", display_name(src)))?;
     let mut df = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -781,7 +842,7 @@ fn copy_file(
         ctx.advance(m.len());
     } else {
         copy_contents(&mut sf, &mut df, pace, ctx)
-            .with_context(|| format!("copy {} -> {}", src.display(), dst.display()))?;
+            .with_context(|| format!("“{}” could not be copied", display_name(src)))?;
     }
     // Set attributes before restoring a read-only source's permissions.
     if preserve_attributes {
@@ -869,14 +930,15 @@ fn copy_recursive_with_attributes(
     } else if sys::is_fifo(kind) {
         // A named pipe has no content to copy; reading one would wait for a
         // writer forever. Make a new pipe, as `cp -R` does.
-        sys::make_fifo(dst, &m).with_context(|| format!("create pipe {}", dst.display()))?;
+        sys::make_fifo(dst, &m)
+            .with_context(|| format!("the pipe “{}” could not be made", display_name(dst)))?;
     } else {
         let what = if sys::is_socket(kind) {
             "a socket"
         } else {
             "a device"
         };
-        anyhow::bail!("{} is {what}, which cannot be copied", src.display());
+        anyhow::bail!("“{}” is {what}, which cannot be copied", display_name(src));
     }
     Ok(())
 }
@@ -956,13 +1018,24 @@ fn user_attributes(path: &Path) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
     let names = match crate::fs::xattr::list(path) {
         Ok(names) => names,
         Err(error) if crate::fs::xattr::refused(&error) => return Ok(Vec::new()),
-        Err(error) => return Err(error).context("read source attributes while copying"),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "the tags and attributes of “{}” could not be read",
+                    display_name(path)
+                )
+            });
+        }
     };
     let mut out = Vec::new();
     for name in names.into_iter().filter(|n| kept_attribute(n)) {
         // One removed since it was listed is not there to keep.
-        let Some(value) =
-            crate::fs::xattr::get(path, &name).context("read a source attribute while copying")?
+        let Some(value) = crate::fs::xattr::get(path, &name).with_context(|| {
+            format!(
+                "the tags and attributes of “{}” could not be read",
+                display_name(path)
+            )
+        })?
         else {
             continue;
         };
@@ -983,14 +1056,71 @@ fn kept_attribute(name: &OsStr) -> bool {
     }
 }
 
+/// Remove `p`, a folder with all it holds. A folder removed in part says
+/// what is left: the first entry found still there, and how many more.
 fn remove_recursive(p: &Path) -> anyhow::Result<()> {
     let m = std::fs::symlink_metadata(p)?;
     if m.is_dir() {
-        std::fs::remove_dir_all(p)?;
+        std::fs::remove_dir_all(p).map_err(|e| {
+            let error = anyhow::Error::new(e);
+            let Some((first, count)) = left_in(p) else {
+                return error;
+            };
+            let shown = first
+                .strip_prefix(p.parent().unwrap_or(Path::new("")))
+                .unwrap_or(&first)
+                .display();
+            error.context(match count {
+                1 => format!("“{shown}” is left"),
+                n => format!("“{shown}” and {} more are left", n - 1),
+            })
+        })?;
     } else {
         std::fs::remove_file(p)?;
     }
     Ok(())
+}
+
+/// What a removal of `dir` that stopped left behind, links not followed:
+/// the first entry found that is no folder, or a folder that holds
+/// nothing, and how many there are. A walk of bounded length; `None`
+/// past it, or when `dir` cannot be read.
+fn left_in(dir: &Path) -> Option<(PathBuf, usize)> {
+    const BOUND: usize = 100_000;
+    let mut stack = vec![dir.to_path_buf()];
+    let mut first = None;
+    let mut count = 0usize;
+    let mut seen = 0usize;
+    while let Some(folder) = stack.pop() {
+        let mut held = false;
+        for entry in std::fs::read_dir(&folder).ok()?.flatten() {
+            seen += 1;
+            if seen > BOUND {
+                return None;
+            }
+            held = true;
+            let path = entry.path();
+            if std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir()) {
+                stack.push(path);
+            } else {
+                count += 1;
+                first.get_or_insert(path);
+            }
+        }
+        if !held && folder != dir {
+            count += 1;
+            first.get_or_insert(folder);
+        }
+    }
+    first.map(|first| (first, count))
+}
+
+/// An entry's own name, for a message.
+fn display_name(path: &Path) -> String {
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    )
 }
 
 // ------------------------------------------------------------------ swap
@@ -1041,12 +1171,22 @@ impl super::Effect for Swap {
                 pairs.push((a.from, a.to));
             }
         }
-        sys::exchange(&pa, &pb)
-            .with_context(|| format!("swap {} <-> {}", pa.display(), pb.display()))?;
+        sys::exchange(&pa, &pb).with_context(|| {
+            format!(
+                "“{}” and “{}” could not swap names",
+                display_name(&pa),
+                display_name(&pb)
+            )
+        })?;
         for (from, to) in pairs {
             if exists(&to) {
-                sys::exchange(&from, &to)
-                    .with_context(|| format!("swap {} <-> {}", from.display(), to.display()))?;
+                sys::exchange(&from, &to).with_context(|| {
+                    format!(
+                        "“{}” and “{}” could not swap names",
+                        display_name(&from),
+                        display_name(&to)
+                    )
+                })?;
             } else {
                 rename_noreplace(&from, &to)?;
             }
@@ -1079,8 +1219,8 @@ impl super::Effect for Trash {
     fn check(&self, _ctx: &StepContext) -> StepStatus {
         if in_trash(&self.entry.path).is_some() {
             return conflict(format!(
-                "{} is in the trash already",
-                self.entry.path.display()
+                "“{}” is in the trash already",
+                display_name(&self.entry.path)
             ));
         }
         match self.entry.resolve() {
@@ -1093,8 +1233,8 @@ impl super::Effect for Trash {
         let src = self.entry.resolve()?;
         anyhow::ensure!(
             in_trash(&src).is_none(),
-            "{} is in the trash already",
-            src.display()
+            "“{}” is in the trash already",
+            display_name(&src)
         );
         ctx.forget_trash();
         let companions: Vec<PathBuf> = ctx
@@ -1103,7 +1243,8 @@ impl super::Effect for Trash {
             .into_iter()
             .map(|f| f.path)
             .collect();
-        let at = sys::trash_item(&src).with_context(|| format!("trash {}", src.display()))?;
+        let at = sys::trash_item(&src)
+            .with_context(|| format!("“{}” could not be moved to the trash", display_name(&src)))?;
         // Each an item of the trash of its own, restored with the file.
         let mut landed = Vec::new();
         for companion in companions {
@@ -1282,8 +1423,13 @@ impl Untrashed {
     /// trash said of it with it.
     fn take(ctx: &StepContext, info: &Path, to: &Path) -> anyhow::Result<Self> {
         let item = item_of_info(info)
-            .ok_or_else(|| anyhow::anyhow!("{} is no trash's", info.display()))?;
-        let info_text = read_record(info).with_context(|| format!("read {}", info.display()))?;
+            .ok_or_else(|| anyhow::anyhow!("“{}” is no trash's record", display_name(info)))?;
+        let info_text = read_record(info).with_context(|| {
+            format!(
+                "the trash's record “{}” could not be read",
+                display_name(info)
+            )
+        })?;
         if let Some(dir) = to.parent() {
             std::fs::create_dir_all(dir)?;
         }
@@ -1303,14 +1449,19 @@ impl Untrashed {
 
     /// Back in the trash where it was, as the trash said.
     fn put_back(&self, ctx: &StepContext) -> anyhow::Result<()> {
-        let item = item_of_info(&self.info)
-            .ok_or_else(|| anyhow::anyhow!("{} is no trash's", self.info.display()))?;
+        let item = item_of_info(&self.info).ok_or_else(|| {
+            anyhow::anyhow!("“{}” is no trash's record", display_name(&self.info))
+        })?;
         if !exists(&item) {
             move_entry(ctx, &self.path, &item, &[])?;
         }
         if !self.info.exists() {
-            std::fs::write(&self.info, &self.info_text)
-                .with_context(|| format!("write {}", self.info.display()))?;
+            std::fs::write(&self.info, &self.info_text).with_context(|| {
+                format!(
+                    "the trash's record “{}” could not be written",
+                    display_name(&self.info)
+                )
+            })?;
         }
         Ok(())
     }
@@ -1423,8 +1574,8 @@ fn merge(from: &Path, into: &Path, rel: &Path, merged: &mut Merged) -> anyhow::R
         if exists(&dest) {
             anyhow::ensure!(
                 entry.file_type()?.is_dir() && dest.is_dir(),
-                "{} is there again: rename or move it first",
-                dest.display()
+                "“{}” is there again: rename or move it first",
+                display_name(&dest)
             );
             merge(&entry.path(), &dest, &inner, merged)?;
         } else {
@@ -1451,11 +1602,14 @@ impl super::Effect for Restore {
             return match (exists(&self.path), exists(item)) {
                 (true, false) => StepStatus::AlreadyDone,
                 (true, true) => conflict(format!(
-                    "{} is there again: rename or move it first",
-                    self.path.display()
+                    "“{}” is there again: rename or move it first",
+                    display_name(&self.path)
                 )),
                 (false, true) => pending(true),
-                (false, false) => conflict(format!("{} is not in the trash", self.path.display())),
+                (false, false) => conflict(format!(
+                    "“{}” is not in the trash",
+                    display_name(&self.path)
+                )),
             };
         }
         if exists(&self.path) {
@@ -1465,39 +1619,46 @@ impl super::Effect for Restore {
                 return match clash(&item, &self.path) {
                     Ok(None) => pending(true),
                     Ok(Some(taken)) => conflict(format!(
-                        "{} is there again: rename or move it first",
-                        taken.display()
+                        "“{}” is there again: rename or move it first",
+                        display_name(&taken)
                     )),
-                    Err(e) => conflict(format!("read {}: {e}", item.display())),
+                    Err(e) => conflict(format!("“{}” could not be read: {e}", display_name(&item))),
                 };
             }
             // The item named still in the trash: another file took its
             // place since, which restoring it would not overwrite.
             if self.item.as_deref().is_some_and(Path::exists) {
                 return conflict(format!(
-                    "{} is there again: rename or move it first",
-                    self.path.display()
+                    "“{}” is there again: rename or move it first",
+                    display_name(&self.path)
                 ));
             }
             return StepStatus::AlreadyDone;
         }
         match ctx.with_trash(|items| self.find(items)) {
             Ok(Some(_)) => pending(true),
-            Ok(None) => conflict(format!("{} is not in the trash", self.path.display())),
-            Err(e) => conflict(format!("list trash: {e}")),
+            Ok(None) => conflict(format!(
+                "“{}” is not in the trash",
+                display_name(&self.path)
+            )),
+            Err(e) => conflict(format!("the trash could not be read: {e}")),
         }
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         if let Some(item) = self.landed_item() {
             rename_noreplace(item, &self.path)
-                .with_context(|| format!("restore {}", self.path.display()))?;
+                .with_context(|| format!("“{}” could not be restored", display_name(&self.path)))?;
             for companion in &self.landed {
                 if !exists(&companion.from) {
                     let _ = rename_noreplace(&companion.at, &companion.from);
                 }
             }
-            let r = EntryRef::from_path(&self.path)
-                .ok_or_else(|| anyhow::anyhow!("restored file missing: {}", self.path.display()))?;
+            let r = EntryRef::from_path(&self.path).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "“{}” went missing as it was restored",
+                    display_name(&self.path)
+                )
+            })?;
             return Ok(Some(Box::new(Trash { entry: r })));
         }
         if let (Some(item), Some(info)) = (self.merging(), self.item.as_deref()) {
@@ -1524,11 +1685,11 @@ impl super::Effect for Restore {
         // Taken out of the listing: once restored it is no longer there.
         let item = ctx
             .with_trash(|items| self.find(items).map(|n| items.swap_remove(n)))
-            .context("list trash")?
-            .ok_or_else(|| anyhow::anyhow!("{} is not in the trash", self.path.display()))?;
+            .context("the trash could not be read")?
+            .ok_or_else(|| anyhow::anyhow!("“{}” is not in the trash", display_name(&self.path)))?;
         let when = item.time_deleted;
         sys::trash_restore(vec![item])
-            .with_context(|| format!("restore {}", self.path.display()))?;
+            .with_context(|| format!("“{}” could not be restored", display_name(&self.path)))?;
         // The companions trashed with it, where their places are free.
         let places = companion_places(ctx, &self.path);
         let found: Vec<trash::TrashItem> =
@@ -1539,8 +1700,12 @@ impl super::Effect for Restore {
         if !found.is_empty() {
             let _ = sys::trash_restore(found);
         }
-        let r = EntryRef::from_path(&self.path)
-            .ok_or_else(|| anyhow::anyhow!("restored file missing: {}", self.path.display()))?;
+        let r = EntryRef::from_path(&self.path).ok_or_else(|| {
+            anyhow::anyhow!(
+                "“{}” went missing as it was restored",
+                display_name(&self.path)
+            )
+        })?;
         Ok(Some(Box::new(Trash { entry: r })))
     }
 }
@@ -1557,7 +1722,7 @@ fn merge_restore(item: &Path, info: &Path, path: &Path) -> anyhow::Result<Unmerg
         for inner in merged.moved.iter().rev() {
             let _ = rename_noreplace(&path.join(inner), &item.join(inner));
         }
-        return Err(e.context(format!("restore {}", path.display())));
+        return Err(e.context(format!("“{}” could not be restored", display_name(path))));
     }
     let info_text = read_record(info).unwrap_or_default();
     let mut folders = Vec::new();
@@ -1617,7 +1782,7 @@ impl super::Effect for Unmerge {
     }
     fn check(&self, _ctx: &StepContext) -> StepStatus {
         let Some(item) = item_of_info(&self.info) else {
-            return conflict(format!("{} is no trash's", self.info.display()));
+            return conflict(format!("“{}” is no trash's", display_name(&self.info)));
         };
         let back = |inner: &PathArg| exists(&item.join(inner));
         if self.info.exists()
@@ -1632,19 +1797,24 @@ impl super::Effect for Unmerge {
             .find(|inner| !back(inner) && !exists(&self.path.join(inner)))
         {
             return conflict(format!(
-                "{} is no longer there",
-                self.path.join(gone).display()
+                "“{}” is no longer there",
+                display_name(&self.path.join(gone))
             ));
         }
         pending(true)
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
-        let item = item_of_info(&self.info)
-            .ok_or_else(|| anyhow::anyhow!("{} is no trash's", self.info.display()))?;
+        let item = item_of_info(&self.info).ok_or_else(|| {
+            anyhow::anyhow!("“{}” is no trash's record", display_name(&self.info))
+        })?;
         ctx.forget_trash();
         for inner in self.folders.iter().rev() {
-            std::fs::create_dir_all(item.join(inner))
-                .with_context(|| format!("mkdir {}", item.join(inner).display()))?;
+            std::fs::create_dir_all(item.join(inner)).with_context(|| {
+                format!(
+                    "the folder “{}” could not be made",
+                    item.join(inner).display()
+                )
+            })?;
         }
         for inner in &self.moved {
             let (now, back) = (self.path.join(inner), item.join(inner));
@@ -1656,8 +1826,12 @@ impl super::Effect for Unmerge {
             }
         }
         if !self.info.exists() {
-            std::fs::write(&self.info, &self.info_text)
-                .with_context(|| format!("write {}", self.info.display()))?;
+            std::fs::write(&self.info, &self.info_text).with_context(|| {
+                format!(
+                    "the trash's record “{}” could not be written",
+                    display_name(&self.info)
+                )
+            })?;
         }
         for companion in &self.companions {
             companion.put_back(ctx)?;
@@ -1757,22 +1931,25 @@ impl super::Effect for RestorePart {
             Err(ResolveError::Gone(_)) if exists(&self.path) => return StepStatus::AlreadyDone,
             Err(ResolveError::Gone(_)) => {
                 return conflict(format!(
-                    "{} is no longer in the trash",
-                    self.entry.path.display()
+                    "“{}” is no longer in the trash",
+                    display_name(&self.entry.path)
                 ));
             }
             Err(e) => return conflict(e.to_string()),
         };
         let Some(inside) = in_trash(&src) else {
-            return conflict(format!("{} is not in the trash", src.display()));
+            return conflict(format!("“{}” is not in the trash", display_name(&src)));
         };
         if self.path.starts_with(&inside.item) {
-            return conflict(format!("{} would stay in the trash", self.path.display()));
+            return conflict(format!(
+                "“{}” would stay in the trash",
+                display_name(&self.path)
+            ));
         }
         if exists(&self.path) {
             return conflict(format!(
-                "{} is there again: rename or move it first",
-                self.path.display()
+                "“{}” is there again: rename or move it first",
+                display_name(&self.path)
             ));
         }
         // An item's companions are items of their own, which go only where
@@ -1786,14 +1963,14 @@ impl super::Effect for RestorePart {
         if let Some(there) = self.path.ancestors().skip(1).find(|dir| exists(dir))
             && !there.is_dir()
         {
-            return conflict(format!("{} is not a folder", there.display()));
+            return conflict(format!("“{}” is not a folder", display_name(there)));
         }
         pending(true)
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let src = self.entry.resolve()?;
         let inside = in_trash(&src)
-            .ok_or_else(|| anyhow::anyhow!("{} is not in the trash", src.display()))?;
+            .ok_or_else(|| anyhow::anyhow!("“{}” is not in the trash", display_name(&src)))?;
         let item = inside.inner.as_os_str().is_empty();
         // An item of the trash: the companions trashed with it, found
         // while the trash still says where it came from and when.
@@ -1808,10 +1985,12 @@ impl super::Effect for RestorePart {
             Vec::new()
         };
         let info_text = if item {
-            Some(
-                read_record(&inside.info)
-                    .with_context(|| format!("read {}", inside.info.display()))?,
-            )
+            Some(read_record(&inside.info).with_context(|| {
+                format!(
+                    "the trash's record “{}” could not be read",
+                    display_name(&inside.info)
+                )
+            })?)
         } else {
             None
         };
@@ -1824,7 +2003,8 @@ impl super::Effect for RestorePart {
         for (n, (dir, _)) in folders.iter().enumerate() {
             if let Err(e) = std::fs::create_dir(dir) {
                 undo_folders(&folders[..n]);
-                return Err(e).with_context(|| format!("mkdir {}", dir.display()));
+                return Err(e)
+                    .with_context(|| format!("the folder “{}” could not be made", dir.display()));
             }
         }
         let companions = if item {
@@ -1834,7 +2014,10 @@ impl super::Effect for RestorePart {
         };
         if let Err(e) = move_entry(ctx, &src, &self.path, &companions) {
             undo_folders(&folders);
-            return Err(e.context(format!("restore {}", self.path.display())));
+            return Err(e.context(format!(
+                "“{}” could not be restored",
+                display_name(&self.path)
+            )));
         }
         ctx.forget_trash();
         if item {
@@ -1926,7 +2109,12 @@ impl ReturnPart {
         if let (Some(text), Some(info)) = (&self.info_text, trash_info_of(&self.to))
             && !exists(&info)
         {
-            std::fs::write(&info, text).with_context(|| format!("write {}", info.display()))?;
+            std::fs::write(&info, text).with_context(|| {
+                format!(
+                    "the trash's record “{}” could not be written",
+                    display_name(&info)
+                )
+            })?;
         }
         for companion in &self.companions {
             companion.put_back(ctx)?;
@@ -1946,19 +2134,19 @@ impl super::Effect for ReturnPart {
             return if exists(&self.to) {
                 StepStatus::AlreadyDone
             } else {
-                conflict(format!("{} is no longer there", self.path.display()))
+                conflict(format!("“{}” is no longer there", display_name(&self.path)))
             };
         }
         if exists(&self.to) {
             return conflict(format!(
-                "{} is in its place in the trash",
-                self.to.display()
+                "“{}” is in its place in the trash",
+                display_name(&self.to)
             ));
         }
         if !self.to.parent().is_some_and(Path::is_dir) {
             return conflict(format!(
-                "the folder of the trash {} was in is gone",
-                self.path.display()
+                "the folder of the trash “{}” was in is gone",
+                display_name(&self.path)
             ));
         }
         if self.info_text.is_some() {
@@ -1982,7 +2170,7 @@ impl super::Effect for ReturnPart {
         }
         result?;
         let entry = EntryRef::from_path(&self.to)
-            .ok_or_else(|| anyhow::anyhow!("{} is not in the trash", self.to.display()))?;
+            .ok_or_else(|| anyhow::anyhow!("“{}” is not in the trash", display_name(&self.to)))?;
         Ok(Some(Box::new(RestorePart {
             entry,
             path: self.path.clone(),
@@ -2018,7 +2206,8 @@ impl super::Effect for Delete {
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let src = self.entry.resolve()?;
         let companions = ctx.companions().existing(&src);
-        remove_recursive(&src)?;
+        remove_recursive(&src)
+            .with_context(|| format!("“{}” could not all be deleted", display_name(&src)))?;
         forget_trashed(&src);
         for companion in companions {
             if remove_recursive(&companion.path).is_ok() {
@@ -2072,10 +2261,10 @@ impl super::Kind for Mkdir {
 /// a name climbing out of its folder, none, or one not valid.
 fn refuse_new(path: &Path) -> Option<StepStatus> {
     if path.components().any(|c| c == Component::ParentDir) {
-        return Some(conflict(format!("{} contains “..”", path.display())));
+        return Some(conflict(format!("“{}” contains “..”", path.display())));
     }
     match path.file_name().map(invalid_name) {
-        None => Some(conflict(format!("{} has no name", path.display()))),
+        None => Some(conflict(format!("“{}” has no name", path.display()))),
         Some(invalid) => invalid,
     }
 }
@@ -2087,23 +2276,27 @@ impl super::Effect for Mkdir {
             directory: true,
         }
     }
-    fn check(&self, _ctx: &StepContext) -> StepStatus {
+    fn check(&self, ctx: &StepContext) -> StepStatus {
         if let Some(refused) = refuse_new(&self.path) {
             return refused;
         }
         match std::fs::symlink_metadata(&self.path) {
             Ok(m) if m.is_dir() => StepStatus::AlreadyDone,
             Ok(_) => conflict(format!(
-                "{} exists and is not a directory",
-                self.path.display()
+                "“{}” is there, and is not a folder",
+                display_name(&self.path)
             )),
-            Err(_) if self.path.parent().is_some_and(Path::is_dir) => pending(true),
-            Err(_) => conflict("parent directory does not exist"),
+            Err(_) if self.path.parent().is_some_and(|p| ctx.is_folder(p)) => pending(true),
+            Err(_) => conflict("the folder it goes in is not there"),
         }
     }
     fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
-        std::fs::create_dir(&self.path)
-            .with_context(|| format!("mkdir {}", self.path.display()))?;
+        std::fs::create_dir(&self.path).with_context(|| {
+            format!(
+                "the folder “{}” could not be made",
+                display_name(&self.path)
+            )
+        })?;
         Ok(Some(Box::new(Rmdir {
             path: self.path.clone(),
         })))
@@ -2134,7 +2327,7 @@ impl super::Effect for Rmdir {
                 if rd.next().is_none() {
                     pending(true)
                 } else {
-                    conflict(format!("{} is not empty", self.path.display()))
+                    conflict(format!("“{}” is not empty", display_name(&self.path)))
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => StepStatus::AlreadyDone,
@@ -2142,8 +2335,12 @@ impl super::Effect for Rmdir {
         }
     }
     fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
-        std::fs::remove_dir(&self.path)
-            .with_context(|| format!("rmdir {}", self.path.display()))?;
+        std::fs::remove_dir(&self.path).with_context(|| {
+            format!(
+                "the folder “{}” could not be removed",
+                display_name(&self.path)
+            )
+        })?;
         Ok(Some(Box::new(Mkdir {
             path: self.path.clone(),
         })))
@@ -2171,16 +2368,16 @@ impl super::Effect for NewFile {
             directory: false,
         }
     }
-    fn check(&self, _ctx: &StepContext) -> StepStatus {
+    fn check(&self, ctx: &StepContext) -> StepStatus {
         if let Some(refused) = refuse_new(&self.path) {
             return refused;
         }
         match std::fs::symlink_metadata(&self.path) {
             // What this step makes: applied already.
             Ok(m) if m.is_file() && m.len() == 0 => StepStatus::AlreadyDone,
-            Ok(_) => conflict(format!("{} already exists", self.path.display())),
-            Err(_) if self.path.parent().is_some_and(Path::is_dir) => pending(true),
-            Err(_) => conflict("parent directory does not exist"),
+            Ok(_) => conflict(format!("“{}” is already there", display_name(&self.path))),
+            Err(_) if self.path.parent().is_some_and(|p| ctx.is_folder(p)) => pending(true),
+            Err(_) => conflict("the folder it goes in is not there"),
         }
     }
     fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
@@ -2188,7 +2385,7 @@ impl super::Effect for NewFile {
             .write(true)
             .create_new(true)
             .open(&self.path)
-            .with_context(|| format!("create {}", self.path.display()))?;
+            .with_context(|| format!("“{}” could not be made", display_name(&self.path)))?;
         Ok(Some(Box::new(RemoveEmptyFile {
             path: self.path.clone(),
         })))
@@ -2217,15 +2414,17 @@ impl super::Effect for RemoveEmptyFile {
     fn check(&self, _ctx: &StepContext) -> StepStatus {
         match std::fs::symlink_metadata(&self.path) {
             Ok(m) if m.is_file() && m.len() == 0 => pending(true),
-            Ok(m) if m.is_file() => conflict(format!("{} is no longer empty", self.path.display())),
-            Ok(_) => conflict(format!("{} is not a file", self.path.display())),
+            Ok(m) if m.is_file() => {
+                conflict(format!("“{}” is no longer empty", display_name(&self.path)))
+            }
+            Ok(_) => conflict(format!("“{}” is not a file", display_name(&self.path))),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => StepStatus::AlreadyDone,
             Err(e) => conflict(e.to_string()),
         }
     }
     fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         std::fs::remove_file(&self.path)
-            .with_context(|| format!("remove {}", self.path.display()))?;
+            .with_context(|| format!("“{}” could not be removed", display_name(&self.path)))?;
         Ok(Some(Box::new(NewFile {
             path: self.path.clone(),
         })))

@@ -1,270 +1,115 @@
 # bibli
 
-An experimental file manager. Fast no matter what, light on the machine,
-stateless, and built to be driven by people, scripts, and AI agents alike.
+A file manager that stays fast whatever the folder, light on the machine,
+keeps no database of its own, and is driven the same way by people,
+scripts and AI agents.
 
-bibli is written in Rust on a GPU-accelerated UI (gpui, the toolkit behind
-Zed). It runs on Linux today; macOS and Windows are planned. It is early: the
-plan is in `docs/PLAN.md`, and the status paragraph there says exactly what
-works and what was left out.
+bibli is written in Rust on a GPU-accelerated toolkit (gpui, Zed's).
+Version 0.1 is for Linux (Wayland or X11, with Vulkan). Its code for macOS
+and Windows is written and compiles, but has not run on either yet: see
+[how to help](docs/HELP-WANTED.md).
 
 ## What it is like
 
-- **A query is a place.** Type `*.pdf modified<7d size>10M` and the results
-  are a location you can navigate to, come back to, and keep in the sidebar
-  like a bookmark.
-- **Everything is a command.** Every action is a named command with a JSON
-  schema, reachable from the keyboard, the palette, the command line
-  (`bibli cmd`) and AI agents over MCP (`bibli mcp`). An agent uses the
-  same surface you do.
-- **Changes are plans.** Batch operations, the external-editor flow, and
-  anything an agent proposes appear as a reviewable list of steps before they
-  run. Every operation has an inverse; undo works across the board.
-- **Nothing is indexed behind your back.** No daemon, no database. bibli
-  reuses the thumbnails, icons, MIME database, bookmarks, recent files, and
-  tools already on your system, and keeps one cache you can delete at any
-  time.
-- **Views over one model.** List, grid gallery, Miller columns, dual pane,
-  a disk-usage treemap, and a modification-time timeline are all views of the
-  same listing.
+- **A search is a place.** Type `*.pdf modified<7d size>10M` and the
+  results are a location you go to, come back to, and keep in the sidebar.
+  Tags are places too: `tags:/Places/France` lists what is tagged so.
+- **Changes are plans.** A batch rename, an edit of the listing as text, or
+  anything an agent proposes is shown as steps to review before it runs.
+  Every operation has an inverse: Undo and Redo reach everything.
+- **Nothing runs behind your back.** No daemon, no index of its own. bibli
+  reuses what the desktop already has (thumbnails, icons, the type
+  database, bookmarks, recent files, installed tools) and keeps one cache
+  you can delete at any time.
+- **Notes live on the files.** Tags, ratings and comments are kept where
+  other applications keep them (extended attributes, XMP sidecars, a
+  Mac's files, TagSpaces), and copies keep them.
+- **Views over one listing.** List, grid, columns, a tree, a board, two
+  panes, tabs, disk usage, a timeline and a map are ways of showing the
+  same folder.
+- **Everything is a command**, with a JSON schema: the keyboard, the
+  palette, the command line and agents (over MCP) all use the same ones.
 
-Features today: streaming directory listings that stay responsive on 100k
-entries; lazy metadata; thumbnails from the freedesktop cache with visible-first
-generation; preview panel and spacebar peek; drag and drop in and out, on
-Wayland; search with content matching; fuzzy jump from zoxide and recent
-files; a shelf to collect items from anywhere; bulk rename with live preview;
-edit the listing as text in your editor; tags stored as xattrs; run a shell
-command on the selection; disk usage; timeline; two panes.
+## Installing
 
-## Running it
+**Packages** for Debian and Ubuntu (`.deb`) and Fedora (`.rpm`) come with
+each release, and Arch's are in the AUR. `bibli` is the program with its
+PDF, archive and 3D-model helpers; the others are optional:
 
-You need a Rust toolchain and, on Linux, Wayland or X11 with Vulkan. The
-repository ships a Nix flake with everything:
+- `bibli-media`: audio and video, through GStreamer.
+- `bibli-poppler`: PDFs through Poppler (under the GPL), beside PDFium.
+- `bibli-mermaid`: Mermaid diagrams in Markdown.
+- `bibli-mupdf`: PDFs and books laid out in pages through MuPDF (under
+  the AGPL).
+
+**From source**, with Rust 1.96 or later and the libraries `flake.nix`
+lists (the Nix flake has everything):
 
 ```
-direnv allow        # or: nix develop
-just run ~/Documents
+direnv allow                # or: nix develop
+just run ~/Documents        # or: cargo run --release -p bibli -- ~/Documents
 ```
 
-Without Nix: `cargo run --release -p bibli -- <dir>`. The native libraries
-needed are listed in `flake.nix`.
+## First steps
 
-Useful keys: `ctrl-shift-p` command palette, `ctrl-l` address bar, `ctrl-f`
-search, `ctrl-j` jump, `ctrl-1/2/3` list, grid, columns, `F3` preview, space
-peek, `ctrl-shift-d` split, `ctrl-shift-u` disk usage, `ctrl-shift-l`
-timeline, `ctrl-shift-b` add to shelf, `ctrl-f2` bulk rename, `ctrl-e` edit
-as text, `ctrl-z` undo, `ctrl-,` settings. Every command and its key is in the palette.
+| Keys | What they do |
+| --- | --- |
+| `Ctrl+Shift+P` | The command palette: every command, with its keys |
+| `F1` | The keys that work where you are |
+| `Ctrl+L`, `Ctrl+F` | Type a path, or search |
+| `Ctrl+1`, `2`, `3` | List, grid, columns |
+| `Space`, `Ctrl+Shift+Space` | Peek at a file; the preview panel |
+| `F3`, `Tab` | Two panes; go to the other one |
+| `Ctrl+T`, `Ctrl+W` | A new tab; close it |
+| `F2`, `Ctrl+Shift+N` | Rename; a new folder |
+| `Delete`, `Shift+Delete` | Move to the Trash; delete for good |
+| `Ctrl+Z`, `Ctrl+Shift+Z` | Undo, redo |
+| `Ctrl+D` | Keep this place in the sidebar |
+| `Ctrl+,` | Settings |
 
-Open **Settings** in the toolbar (or press `ctrl-,`) to edit preferences for
-currently enabled plugins. Tab/Shift+Tab move between fields; Space cycles a
-focused switch or choice. **Default** resets a field in the draft, **Save**
-(`ctrl-s`) persists and applies changes, and **Cancel** (`Esc`) discards unsaved
-edits. PDF engine, thumbnail and shell preferences apply without a restart.
-Plugin enable/disable flags and saved-query collections are not edited here.
+The [user guide](docs/guide.md) goes through the rest.
 
 ## Scripts and agents
 
-Turn on **Agents and scripts** in Settings, Plugins, and the open window
-listens on a channel only your account reaches. It stays off by default:
-any program running as you can then use it.
+Turn on **Agents and scripts** in Settings › Plugins and the open window
+listens on a channel only your account reaches. It is off by default,
+since any program running as you can then use it.
 
-- **Scripts:** `bibli cmd <command> [<arguments as a JSON object>]` runs
-  one command in the window and prints its result as JSON, such as
-  `bibli cmd entries` for what the active pane shows. A command that
-  acts on files is given them by absolute path, else acts on the
-  selection: `bibli cmd trash '{"entries": ["/path/to/file"]}'`. A
-  command that would change files prints its plan; `--apply` applies
-  it, as your own action, undoable in the window. With no window open,
-  the command runs in a bibli of its own without one (no selection
-  there, and no Undo after).
-- **Agents:** an MCP client starts `bibli mcp` (for Claude Code:
-  `claude mcp add bibli -- bibli mcp`). Every command is a tool, its dots
-  written `__`. What an agent would change is proposed in the window for
-  your review, and the agent learns whether you applied it or discarded
-  it. A command that acts without a plan (undo, a setting, starting a
-  program) waits for you to allow it; the window's own dialogs are
-  yours alone.
+- **Scripts:** `bibli cmd <command> [<arguments as JSON>]` runs one
+  command and prints its result as JSON (`bibli cmd entries` lists what
+  the active pane shows). A command that changes files prints its plan;
+  `--apply` applies it as your own action, undoable in the window.
+- **Agents:** an MCP client starts `bibli mcp` (for Claude Code: `claude
+  mcp add bibli -- bibli mcp`). Every command is a tool. What an agent
+  would change is proposed in the window for your review; a command that
+  acts without a plan waits for you to allow it.
 
-**Private folders** (Settings, Privacy) never leave this machine: an
+**Private folders** (Settings › Privacy) never leave this machine: an
 agent never sees their names nor what they hold, and a plugin from
-outside bibli is never handed them. `~/.ssh`, `~/.gnupg` and the like
-are private from the start, and so is any folder holding a file named
+outside bibli is never handed them. `~/.ssh`, `~/.gnupg` and the like are
+private from the start, and so is any folder holding a file named
 `.private`.
 
 ## Plugins from outside bibli
 
-A plugin can be a folder of its own, outside bibli's code: a
-`plugin.toml` and a WebAssembly module, or a program that speaks a small
-protocol of JSON lines. It provides fields shown in Details, thumbnails,
-previews and commands; a preview can be any file bibli shows (a PDF, a
-picture, a video…), made of the file and shown by bibli's own viewer.
-Settings › Plugins lists each with what it may do
-(read what files hold, change files, use the network, start programs)
-and where it is; it stays off until you turn it on, and gets nothing it
-did not declare: a module reaches nothing but the files it is asked
-about, and a program runs isolated. `docs/plugins/README.md` says how to
-write one, from `crates/plugins-outside/template`; `just plugins` builds
-those of this repository into `target/plugins`.
+A plugin can live outside bibli's code: a folder with a `plugin.toml` and
+a WebAssembly module, or a program speaking a small protocol of JSON
+lines. It provides fields, thumbnails, previews and commands. It stays
+off until you turn it on in Settings › Plugins, which says what it may
+do, and it gets nothing it did not declare. The protocol is experimental
+in 0.1: [writing a plugin](docs/plugins/README.md).
 
-## Usage view
+## Documentation
 
-Choose **Usage** beside List, Grid and Columns, or press `ctrl-shift-u`.
-Click a block to select it; double-click or press Enter to open it. Folders,
-Back/Up and address navigation keep the Usage view, independently in each pane.
-Selection supports preview, context menus and normal file operations.
-
-Sizes are cached in memory and updated when files change. Unchanged cached
-folders need no new scan; **Ctrl+R** or the refresh button forces recalculation.
-The previous chart remains visible until fresh results arrive. If live monitoring is
-unavailable, a warning appears and active folders are rechecked periodically.
-During the first scan, files appear first and folder totals grow as they are
-counted. Striped blocks are incomplete; the header shows the amount counted so
-far. Block proportions settle when the scan finishes. Later background updates
-keep that chart visible and replace it only when fresh totals are ready.
-
-The chart shows the largest 64 children; the smaller-items block opens List on
-a double-click. Totals include hidden files, while `ctrl-h` controls their
-individual blocks. Cache entries may be evicted and are discarded on restart
-or when the Usage plugin is disabled. Enabling/disabling a view plugin adds or
-removes its views from the selector and palette.
-
-## Tags and copying
-
-Tags live in the `user.xdg.tags` extended attribute on each file or folder.
-They require writable user extended attributes: ext4, Btrfs and XFS support
-them; support on network mounts depends on the server and mount options.
-See [Linux xattr documentation](https://man7.org/linux/man-pages/man7/xattr.7.html).
-FAT32 and exFAT do not provide extended attributes
-([filesystem comparison](https://learn.microsoft.com/en-us/windows/win32/fileio/filesystem-functionality-comparison)).
-
-**Settings → core → preserve tags on copy** is enabled by default
-(`core.preserve_tags_on_copy = true`). It applies to the copy command,
-clipboard paste, shelf copies and drag-and-drop, including nested folders.
-Disable it to copy without tags. The preference is captured in the copy plan,
-so pending plans and redo retain their original choice.
-
-If existing tags cannot be read or written, a preserving copy fails with an
-error instead of publishing a copy without tags. Untagged sources need no
-destination xattr support. Copies are staged before publication; symbolic
-links are copied as links, without following their targets. This option
-preserves tags only, not comments, ACLs or other extended attributes, and
-does not change move behavior.
-
-## File previews
-
-F3 opens the preview panel; Space opens peek. PDF pages and Office documents
-have a single top toolbar: previous/next (`alt-pageup` / `alt-pagedown`),
-an editable page number, zoom presets, Fit page/width, document search,
-contents, copy and open externally. Narrow panels move secondary controls
-into the overflow menu. Search opens below the toolbar; contents opens in
-a collapsible drawer. Native reader features work with either PDF engine.
-Search and zoom popovers open beneath their toolbar button and stay within
-the window; compact toolbars anchor hidden controls to More.
-Images and video frames use the same top toolbar, zoom presets, Fit image/width
-and overflow menus. Video previews include five-second seek controls; in peek,
-`ctrl-left` / `ctrl-right` seek while plain arrows select another file.
-Text, folders and unsupported files share the preview header and Open externally
-action. Every preview has a Close button; closing peek returns to the side panel
-if it was open. Loading feedback stays beneath the toolbar.
-All controls are also available in the command palette.
-
-The application toolbar groups views, pane controls and analysis tools, with
-Search and Settings on the right. Each pane has its own Back/Up buttons beside
-the address. Icons have tooltips; Tab/Shift+Tab navigate toolbar buttons and
-Enter/Space activate them (Tab in split panes still switches panes).
-
-Install optional tools on `PATH` to enable these formats:
-
-- Poppler reader: `bibli-poppler-worker` plus `poppler-glib`, GLib and Cairo.
-  The default Nix shell provides these libraries. `just build` and `just run`
-  build both workers; building only `bibli` does not require Poppler headers.
-- PDFium reader: `bibli-pdf-worker` plus the PDFium shared library, which
-  bibli's packages carry beside the helper (ADR-041). The default shell
-  does not provide it. To opt in, create a git-ignored
-  `.envrc.local` containing `use flake .#pdf` (direnv then enters the `pdf`
-  shell, which exports `BIBLI_PDFIUM_LIBRARY`), or set `BIBLI_PDFIUM_LIBRARY`
-  to your installed library.
-- PDF image preview fallback: Poppler utilities (`pdfinfo`, `pdftoppm`).
-- Video stills: `ffmpeg` and `ffprobe`.
-- DOC/DOCX, XLS/XLSX, PPT/PPTX, ODT/ODS/ODP (and related formats): LibreOffice,
-  either PDF engine, and `bubblewrap` (`bwrap`) on Linux. Both Nix development
-  shells include Bubblewrap on Linux. Documents convert in isolation to cached
-  PDF pages; spreadsheets show their print layout.
-
-The `preview-media` and `preview-documents` plugins can be disabled independently
-using `plugins.<id>.enabled` in settings. Missing tools are reported in the
-panel. With either reader engine, drag to select text, use Copy or `ctrl-c`, Find or
-`ctrl-f`, and Contents to navigate the outline. Click the page first to focus
-reader shortcuts: `ctrl-a` selects page text, Page Up/Down turn pages, and
-F3/Shift-F3 step through search matches. Search runs on Enter. Internal links
-navigate within the document; HTTP(S) links open in the default browser.
-Page and zoom state last while that file remains selected.
-
-The default backend is `auto`: prefer PDFium when available, otherwise use
-the Poppler reader. If neither worker is installed, `auto` retains the basic
-Poppler utilities image preview. Explicit engine choices require their reader
-worker and report an error if unavailable. In **Settings → Preview: documents → backend**, choose `pdfium` or
-`poppler` and Save to switch immediately. You can also set this in
-`bibli/settings.toml` under your platform's config directory, then restart bibli:
-
-```toml
-[preview-documents]
-backend = "pdfium" # "auto" or "poppler"
-# pdfium_library = "/opt/pdfium/lib/libpdfium.so"
-```
-
-An explicit library setting takes precedence over `BIBLI_PDFIUM_LIBRARY`.
-Distributors should install workers beside bibli, in `lib/bibli` or
-`libexec/bibli` beside the folder bibli is in (`/usr/bin/bibli` and
-`/usr/lib/bibli/`, as the Debian, RPM and AUR packages do: ADR-040), or
-on `PATH`;
-`BIBLI_PDF_WORKER` and `BIBLI_POPPLER_WORKER` select alternate executables
-for development. Native PDF libraries are loaded only in workers while a
-document is open. PDFium uses the
-upstream BSD-style/Apache-2.0 terms plus third-party notices; the Rust binding
-is MIT/Apache-2.0. See [ADR-004](docs/adr/004-pdfium-reader.md). The Poppler worker links GPL
-Poppler; its distribution must respect that license. See
-[ADR-005](docs/adr/005-poppler-reader.md).
-
-Text selection is currently limited to one page; scanned images need an
-existing text layer for search/selection. Password entry, editing, annotations,
-continuous page scrolling, full video playback, and spreadsheet cell navigation
-remain future work.
-
-To exercise installed renderers with generated fixtures:
-
-```
-cargo build --release -p bibli-pdf-worker -p bibli-poppler-worker
-BIBLI_PDF_WORKER="$PWD/target/release/bibli-pdf-worker" BIBLI_POPPLER_WORKER="$PWD/target/release/bibli-poppler-worker" cargo nextest run --release -p bibli-platform --run-ignored only -E 'test(preview::tests::real_)'
-python3 tools/pdf/check.py --library "$BIBLI_PDFIUM_LIBRARY"
-python3 tools/pdf/check.py --engine poppler --worker target/release/bibli-poppler-worker
-python3 tools/pdf/compare.py --library "$BIBLI_PDFIUM_LIBRARY"
-```
-
-The comparison reports rendering time, CPU, and worker PSS for synthetic text,
-vector, and scanned documents. Its scope and recorded results are in
-[the PDF comparison](docs/pdf-comparison.md).
-
-## Design in one paragraph
-
-A small core (`crates/core`) owns what two plugins must agree on: entries
-with stable identity and provenance-tagged metadata, locations and streaming
-listings, commands, operations and plans with an undo journal, registries,
-and a priority scheduler. Everything else is a plugin (`crates/plugins/*`)
-that can be switched off at runtime. Platform adapters (`crates/platform`)
-harness the OS. The UI (`crates/ui`) is a thin shell over the core and the
-only crate that knows the toolkit. Performance budgets are measured by
-`crates/bench` and enforced in CI.
-
-## Contributing
-
-Read `AGENTS.md` first: it holds the principles, the engineering rules, the
-build and verification workflow, and the conventions, for humans and agents.
-Decisions that closed a door are recorded in `docs/adr/`.
-
-```
-just lint && just test && just bench-check
-```
+- [User guide](docs/guide.md): views, searching, tags, previews, files,
+  settings.
+- [Writing a plugin](docs/plugins/README.md) and [its
+  protocol](docs/plugins/protocol.md).
+- [Contributing](CONTRIBUTING.md), and [`AGENTS.md`](AGENTS.md), the
+  rules the code follows, for people and agents.
+- [The plan](docs/PLAN.md), its status and what is left;
+  [decisions](docs/adr/) that closed a door.
+- [Helping with macOS and Windows](docs/HELP-WANTED.md).
 
 ## License
 
@@ -272,5 +117,6 @@ bibli is under the Apache License 2.0 ([`LICENSE`](LICENSE)), and so is
 what is contributed to it (the licence's section 5). The Poppler and
 MuPDF readers are programs of their own that link libraries under the GPL
 and the AGPL: distributed, they are under the GPL version 3 and the AGPL
-version 3. bibli itself links neither. See
-[ADR-042](docs/adr/042-apache-2.0.md).
+version 3; bibli itself links neither ([ADR-042](docs/adr/042-apache-2.0.md)).
+Each package carries the notices of the crates its programs are built
+from (`THIRD-PARTY-NOTICES`).

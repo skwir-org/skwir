@@ -11,6 +11,8 @@
 //! cache (`vocabulary`), and the color a user chose for a tag is a setting
 //! (`tags.colors`); every other tag wears the color its name gives it.
 
+#[cfg(test)]
+mod any_input;
 mod appledouble;
 mod attrs;
 mod browse;

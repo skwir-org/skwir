@@ -163,10 +163,10 @@ impl App {
         let scheduler = Scheduler::new(config.workers);
         let lifetime = CancelToken::new();
         let settings = match config.settings_path {
-            Some(p) => Settings::load(p)?,
+            Some(p) => Settings::load(p),
             None => Settings::in_memory(),
         };
-        let cache = Cache::new(config.cache_root);
+        let cache = Cache::open(config.cache_root);
         let fields = Arc::new(crate::fields::Fields::new(cache.namespace("fields")));
         // One gate for every store a plugin publishes in: a disabled
         // plugin's worker publishing late is refused everywhere.
@@ -235,6 +235,9 @@ impl App {
         crate::permissions::declare(&app.settings);
         crate::plugin::register(&app);
         crate::playing::register(&app);
+        if let Some(problem) = app.settings.take_problem() {
+            app.notify(NotifyLevel::Warning, problem);
+        }
         Ok(app)
     }
 

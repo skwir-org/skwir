@@ -256,7 +256,7 @@ fn end(name: &str, parent: &str, text: &str, mission: &mut Mission, into: &mut C
 // The values compared are written in the missions and exact in binary
 // floating point.
 #[allow(clippy::float_cmp)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use bibli_core::geo::LineKind;
 
@@ -265,7 +265,7 @@ mod tests {
     }
 
     /// Waylines as DJI Pilot writes them, the waypoints out of order.
-    const WAYLINES: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+    pub(crate) const WAYLINES: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2" xmlns:wpml="http://www.dji.com/wpmz/1.0.6">
 <Document>
   <wpml:author>Example Pilot</wpml:author>

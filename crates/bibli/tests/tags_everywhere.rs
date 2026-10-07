@@ -487,7 +487,7 @@ fn a_folder_counted_is_checked_after_a_restart_for_what_others_changed() {
         let (app, pane) = start();
         assert_eq!(tags_at_top(&app, pane), owned(&[("work", 2), ("x", 1)]));
         // The index, covering the folder, is written for the next run.
-        let slot = bibli_core::cache::Cache::new(tmp.path().join("state/cache")).namespace("tags");
+        let slot = app.cache.namespace("tags");
         until(&app, "the index written", || {
             slot.get(b"index.4")
                 .filter(|b| String::from_utf8_lossy(b).contains("it's home"))

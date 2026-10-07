@@ -252,6 +252,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::duration_suboptimal_units,
+        reason = "a time since 1970 is written as the seconds or days it is"
+    )]
     fn a_windows_record_says_where_its_item_came_from_and_when() {
         // 2026-10-05T12:00:00Z.
         let at = 116_444_736_000_000_000 + 1_791_201_600 * 10_000_000;
@@ -320,5 +324,38 @@ mod tests {
             said.deleted,
             Some(Deleted::Local("2026-10-05T12:00:00".into()))
         );
+    }
+
+    proptest::proptest! {
+        /// A trash's records as no trash writes them: never a panic.
+        #[test]
+        fn any_record_is_read_without_a_panic(
+            text in proptest::prop_oneof![
+                crate::testing::mutated_text(
+                    "[Trash Info]\nPath=/home/a/caf%C3%A9%20notes.txt\nDeletionDate=2026-03-12T08:00:00\n"
+                ),
+                proptest::prelude::any::<String>(),
+            ],
+            bytes in proptest::prop_oneof![
+                crate::testing::mutated(record_v2(r"C:\Users\a\café notes.txt", 133_000_000_000_000_000)),
+                crate::testing::bytes(256),
+            ],
+        ) {
+            let _ = parse_trash_info(&text, None);
+            let _ = parse_trash_info(&text, Some(std::path::Path::new("/run/media/a/stick")));
+            let _ = parse_recycle_record(&bytes);
+        }
+
+        /// What one types where a location is read: never a panic.
+        #[test]
+        fn any_location_and_tags_typed_are_read_without_a_panic(text in proptest::prop_oneof![
+            crate::testing::mutated_text("tags:/Places/France?in=%2Fhome%2Fa&deep=1"),
+            crate::testing::mutated_text("~/My Files/café, draft, Places/Paris"),
+            proptest::prelude::any::<String>(),
+        ]) {
+            let _ = crate::location::Location::parse(&text);
+            let _ = crate::notes::parse_tags(&text);
+            let _ = crate::fs::volume::mountinfo(&text);
+        }
     }
 }

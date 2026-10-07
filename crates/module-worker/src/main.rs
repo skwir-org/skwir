@@ -192,13 +192,16 @@ fn serve(path: &std::path::Path, keep: Option<&std::path::Path>) -> anyhow::Resu
                     },
                 );
                 store.limiter(|state| &mut state.limits);
+                // Instantiating runs the module's own code too, and takes
+                // fuel (Wasmtime 49 counts it; 38 did not): a budget of its
+                // own, the call's given after.
+                store.set_fuel(FUEL)?;
                 answer = Some(instantiate(&linker, &component, &mut store)?);
             }
             let call = answer.as_ref().expect("instantiated");
             store.set_fuel(FUEL)?;
             match call.call(&mut store, (name.clone(), params.to_string())) {
                 Ok((reply,)) => {
-                    call.post_return(&mut store)?;
                     reply.and_then(|text| serde_json::from_str(&text).map_err(|e| e.to_string()))
                 }
                 Err(trap) => {
@@ -233,7 +236,7 @@ fn instantiate(
     let call = instance
         .get_export_index(&mut *store, Some(&guest), "call")
         .ok_or_else(|| anyhow::anyhow!("the module exports no `call`"))?;
-    instance.get_typed_func(&mut *store, call)
+    Ok(instance.get_typed_func(&mut *store, call)?)
 }
 
 /// Whether `bytes` are a component rather than a core module: the
@@ -243,7 +246,7 @@ fn engine() -> anyhow::Result<Engine> {
     let mut config = Config::new();
     config.consume_fuel(true);
     config.wasm_component_model(true);
-    Engine::new(&config)
+    Ok(Engine::new(&config)?)
 }
 
 /// The module at `path` as a component compiled for `engine`: loaded from
@@ -265,7 +268,9 @@ fn load(
             .context("a module built with the plugin world's bindings")?
     };
     let Some(keep) = keep else {
-        return Component::new(engine, &bytes).context("compiling the module");
+        return Component::new(engine, &bytes)
+            .map_err(anyhow::Error::from)
+            .context("compiling the module");
     };
     let kept = keep.join(format!("{}.cwasm", compiled_name(engine, &bytes)));
     if kept.is_file() {
@@ -284,7 +289,9 @@ fn load(
             Err(error) => eprintln!("compiled module not loaded, compiling it again: {error:#}"),
         }
     }
-    let component = Component::new(engine, &bytes).context("compiling the module")?;
+    let component = Component::new(engine, &bytes)
+        .map_err(anyhow::Error::from)
+        .context("compiling the module")?;
     if let Err(error) = save(&component, keep, &kept) {
         eprintln!("compiled module not kept: {error:#}");
     }

@@ -2,6 +2,7 @@
 name = "bibli-module-worker"
 description = "bibli helper: a plugin's WebAssembly module, run in a process of its own (ADR-046)"
 version.workspace = true
+publish.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -11,7 +12,7 @@ bibli-plugin-api.workspace = true
 serde_json.workspace = true
 # The modules' runtime, compiling them with Cranelift; its component
 # model is the plugin world's (`crates/plugin-api/wit`).
-wasmtime = { version = "38", default-features = false, features = ["runtime", "cranelift", "component-model", "std"] }
+wasmtime = { version = "49", default-features = false, features = ["runtime", "cranelift", "component-model", "std", "anyhow"] }
 # A module built with the world's bindings becomes a component.
 wit-component = "0.239"
 # Names a compiled module by what it was compiled from.

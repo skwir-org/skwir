@@ -6,6 +6,31 @@ use bibli_core::command::{Invocation, NoArgs, Outcome};
 use common::*;
 
 #[test]
+fn a_command_that_panics_fails_without_taking_its_caller() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    app.commands
+        .register::<NoArgs, _>("faulty", "faulty.run", "Run", "", |_, _| {
+            panic!("a fault of its own")
+        });
+    let error = app
+        .dispatch(&Invocation::new("faulty.run"))
+        .expect_err("it failed");
+    assert_eq!(
+        error.to_string(),
+        "“faulty.run” stopped on a fault of its own (the log says where)"
+    );
+    app.commands
+        .register::<NoArgs, _>("faulty", "faulty.fine", "Fine", "", |_, _| {
+            Ok(Outcome::Value(1.into()))
+        });
+    assert!(
+        app.dispatch(&Invocation::new("faulty.fine")).is_ok(),
+        "the registry still answers"
+    );
+}
+
+#[test]
 fn a_shadowed_command_returns_when_its_shadow_is_withdrawn() {
     let tmp = tempfile::tempdir().unwrap();
     let app = app(tmp.path());

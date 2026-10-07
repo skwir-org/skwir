@@ -14,7 +14,7 @@
 //! to link to. Every `id` is a link target of the block it lands in.
 mod page;
 mod style;
-mod xml;
+pub(crate) mod xml;
 
 pub use page::{Drawing, page, stated_size};
 

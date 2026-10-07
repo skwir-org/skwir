@@ -274,7 +274,7 @@ fn geofence(fence: &Value, into: &mut Collector) {
 // The values compared are written in the plans and exact in binary
 // floating point.
 #[allow(clippy::float_cmp)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use bibli_core::geo::LineKind;
 
@@ -282,7 +282,7 @@ mod tests {
         LatLon::new(lat, lon).unwrap()
     }
 
-    const PLAN: &str = r#"{
+    pub(crate) const PLAN: &str = r#"{
       "fileType": "Plan",
       "geoFence": {
         "circles": [

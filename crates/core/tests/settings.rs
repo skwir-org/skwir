@@ -96,7 +96,7 @@ fn command_saves_typed_values_preserves_unrelated_data_and_notifies_once() {
     app.settings.set("query.saved", toml::Value::Array(vec![]));
     let changes = serde_json::json!({ "sample.engine": "second", "sample.enabled": "false", "sample.budget": "128", "sample.path": "/example/reader's library.so" });
     assert_eq!(apply(&app, &changes), SaveState::Saved);
-    let loaded = Settings::load(&path).unwrap();
+    let loaded = Settings::load(&path);
     assert_eq!(
         loaded.get::<String>("sample.path").unwrap(),
         "/example/reader's library.so"
@@ -344,7 +344,7 @@ fn plugins_toggle_through_the_command_and_the_choice_is_persisted() {
         app.settings.spec("sample.engine").is_none(),
         "a disabled plugin withdraws its settings"
     );
-    let loaded = Settings::load(&path).unwrap();
+    let loaded = Settings::load(&path);
     assert_eq!(loaded.get::<bool>("plugins.sample.enabled"), Some(false));
     let Outcome::Value(list) = app
         .dispatch(&Invocation::with_args(
@@ -427,7 +427,7 @@ fn startup_opens_the_chosen_folder_or_the_last_one_and_falls_back_to_home() {
         startup_folder(&app.settings, home),
         std::path::Path::new("/example/work")
     );
-    let reloaded = Settings::load(dir.path().join("settings.toml")).unwrap();
+    let reloaded = Settings::load(dir.path().join("settings.toml"));
     assert_eq!(
         reloaded.get::<String>(LAST_LOCATION).as_deref(),
         Some("/example/work")
@@ -443,7 +443,7 @@ fn a_renamed_preference_keeps_its_value_and_the_file_forgets_the_old_name() {
         "[old]\nwidth = \"wide\"\n\n[kept]\nchoice = \"a\"\nother = 1\n\n[new]\nchoice = \"b\"\n",
     )
     .unwrap();
-    let settings = Settings::load(&path).unwrap();
+    let settings = Settings::load(&path);
     settings.rename("old.width", "new.width");
     // A value already stored under the new name is not overwritten.
     settings.rename("kept.choice", "new.choice");
@@ -458,7 +458,7 @@ fn a_renamed_preference_keeps_its_value_and_the_file_forgets_the_old_name() {
     assert_eq!(saved["kept"]["choice"].as_str(), Some("a"));
     assert_eq!(saved["new"]["width"].as_str(), Some("wide"));
     // Again at the next start: already moved, nothing changes.
-    let settings = Settings::load(&path).unwrap();
+    let settings = Settings::load(&path);
     settings.rename("old.width", "new.width");
     assert_eq!(settings.get::<String>("new.width").as_deref(), Some("wide"));
 }
@@ -515,4 +515,47 @@ fn an_owner_check_runs_after_the_kind() {
     });
     assert!(spec.parse("https://example.org").is_ok());
     assert!(spec.parse("ftp://example.org").is_err());
+}
+
+#[test]
+fn a_settings_file_that_cannot_be_read_is_kept_aside_and_bibli_starts() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.toml");
+    std::fs::write(&path, "[ui]\nview = \"grid\"\nzoom = = 2\n").unwrap();
+    let settings = Settings::load(&path);
+    let problem = settings.take_problem().expect("said");
+    assert!(problem.contains("on line 3"), "{problem}");
+    assert!(problem.contains("started with its defaults"), "{problem}");
+    assert!(settings.take_problem().is_none(), "said once");
+    assert!(!path.exists(), "set aside, not written over");
+    let aside: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(aside.len(), 1);
+    assert!(
+        aside[0].starts_with("settings.toml.unreadable-"),
+        "{aside:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join(&aside[0])).unwrap(),
+        "[ui]\nview = \"grid\"\nzoom = = 2\n",
+        "kept as it was"
+    );
+    assert_eq!(settings.path(), Some(path.as_path()), "a new file is saved");
+}
+
+#[test]
+fn a_settings_file_that_is_no_text_is_kept_aside_too() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.toml");
+    std::fs::write(&path, b"[ui]\nname = \"\xff\xfe\"\n").unwrap();
+    let settings = Settings::load(&path);
+    assert!(
+        settings
+            .take_problem()
+            .is_some_and(|p| p.contains("it is not text"))
+    );
+    assert!(!path.exists());
 }

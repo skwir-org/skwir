@@ -33,6 +33,15 @@ test:
 test-all:
     cargo nextest run --workspace --no-tests=pass
 
+# The real window on an X display of its own, driven by a script and checked
+# on disk (tools/test/smoke.py): Xvfb and Mesa's software Vulkan come from
+# the flake's nixpkgs, so no display or GPU is needed.
+smoke:
+    cargo build --release -p bibli
+    tools/test/smoke.py \
+        --xvfb "$(nix build --no-link --print-out-paths --inputs-from 'git+file://{{justfile_directory()}}' nixpkgs#xorg.xorgserver)/bin/Xvfb" \
+        --icd "$(nix build --no-link --print-out-paths --inputs-from 'git+file://{{justfile_directory()}}' nixpkgs#mesa)/share/vulkan/icd.d/lvp_icd.x86_64.json"
+
 # Exercise real Poppler with synthetic text, geometry and navigation fixtures.
 poppler-check:
     cargo build -p bibli-poppler-worker
@@ -66,6 +75,11 @@ lint:
     cargo fmt --all -- --check
     cargo clippy --all-targets -- -D warnings
 
+# The dependencies against deny.toml: their licences, known advisories
+# (read from RustSec's database, fetched), and where they come from (CI).
+deny:
+    cargo deny check
+
 # Lint everything, native workers and the Windows and macOS builds included (CI).
 lint-all: && check-cross
     cargo fmt --all -- --check
@@ -95,6 +109,11 @@ test-windows *args:
 # Linux's package (Phase 5, step K): bibli and its helpers, by Nix, from the git tree.
 package-nix:
     nix build "git+file://{{justfile_directory()}}#default"
+
+# The notices of the crates each package's programs link, into
+# target/notices (the package scripts make them; cargo-about, offline).
+notices:
+    tools/package/notices.py
 
 # Debian's and Ubuntu's package, made on the distribution it is for
 # (ADR-040), into target/debian.

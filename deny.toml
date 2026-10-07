@@ -1,0 +1,66 @@
+# What `cargo deny check` holds the dependencies to (`just deny`, run by
+# CI): licences bibli can ship under its own, no crate with a known
+# vulnerability or withdrawn, and crates from crates.io alone.
+
+[graph]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-pc-windows-gnu",
+    "aarch64-apple-darwin",
+]
+
+[advisories]
+version = 2
+unmaintained = "workspace"
+yanked = "deny"
+ignore = [
+    # ttf-parser is unmaintained, not known vulnerable. gpui's text stack
+    # (cosmic-text, fontdb, rustybuzz) uses it; bibli's own uses (the font
+    # preview, fonts embedded in a book) are to move to skrifa, which the
+    # advisory names (docs/PLAN.md, Release 0.1).
+    { id = "RUSTSEC-2026-0192", reason = "unmaintained, used by gpui's text stack; ours to move to skrifa" },
+]
+
+[licenses]
+version = 2
+# The same as tools/package/about.toml accepts for the notices.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "Unlicense",
+    "BSL-1.0",
+    "MPL-2.0",
+    "0BSD",
+    "MIT-0",
+]
+confidence-threshold = 0.9
+
+# MuPDF's helper alone links MuPDF, and is a package of its own under the
+# AGPL (ADR-014).
+[[licenses.exceptions]]
+crate = "mupdf"
+allow = ["AGPL-3.0"]
+
+[[licenses.exceptions]]
+crate = "mupdf-sys"
+allow = ["AGPL-3.0"]
+
+[bans]
+# Two versions of one crate cost build time and size, not correctness.
+multiple-versions = "allow"
+# No dependency on crates.io taken at any version (`*`); the workspace's
+# own, joined by path, are unpublished (`publish = false`).
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

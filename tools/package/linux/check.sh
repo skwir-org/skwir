@@ -52,15 +52,17 @@ while read -r program; do
     fi
 done < "$here/programs"
 rm -f "$said"
-# bibli's licence and PDFium's notices (ADR-041, ADR-042): Debian's in
-# its copyright file and the package's documents, the others' in the
-# licences' folder.
-if [ -f /usr/share/doc/bibli/copyright ] && [ -f /usr/share/doc/bibli/pdfium/LICENSE ]; then
+# bibli's licence, PDFium's notices (ADR-041, ADR-042) and those of the
+# crates its programs link: Debian's in its copyright file and the
+# package's documents, the others' in the licences' folder.
+if [ -f /usr/share/doc/bibli/copyright ] && [ -f /usr/share/doc/bibli/pdfium/LICENSE ] &&
+    [ -s /usr/share/doc/bibli/THIRD-PARTY-NOTICES ]; then
     echo "ok: the licences, in /usr/share/doc/bibli"
-elif [ -f /usr/share/licenses/bibli/LICENSE ] && [ -f /usr/share/licenses/bibli/pdfium/LICENSE ]; then
+elif [ -f /usr/share/licenses/bibli/LICENSE ] && [ -f /usr/share/licenses/bibli/pdfium/LICENSE ] &&
+    [ -s /usr/share/licenses/bibli/THIRD-PARTY-NOTICES ]; then
     echo "ok: the licences, in /usr/share/licenses/bibli"
 else
-    echo "missing: bibli's licence or PDFium's notices"
+    echo "missing: bibli's licence, PDFium's notices or the crates' notices"
     failed=1
 fi
 for library in libvulkan.so.1 libfontconfig.so.1; do

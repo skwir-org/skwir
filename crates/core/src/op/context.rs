@@ -3,6 +3,8 @@
 //! steps share instead of repeating.
 
 use std::cell::RefCell;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -65,6 +67,10 @@ pub struct StepContext {
     trash: RefCell<Option<Vec<trash::TrashItem>>>,
     /// The files beside a file that go where it goes (ADR-028).
     companions: Arc<crate::companions::Companions>,
+    /// The folders a dry run's earlier steps make (`super::dry_run`): a
+    /// later step finds them, as it does when the plan is applied step by
+    /// step.
+    foreseen: RefCell<HashSet<PathBuf>>,
 }
 
 impl StepContext {
@@ -74,6 +80,7 @@ impl StepContext {
             meter,
             trash: RefCell::new(None),
             companions: Arc::default(),
+            foreseen: RefCell::default(),
         }
     }
 
@@ -140,5 +147,23 @@ impl StepContext {
     /// The trash changed under the cached listing (an item was trashed).
     pub(super) fn forget_trash(&self) {
         self.trash.borrow_mut().take();
+    }
+
+    /// A dry run's step checked as pending will make what `change` says:
+    /// the steps after it count a folder it makes as there.
+    pub(super) fn foresee(&self, change: &super::Change) {
+        if let super::Change::Create {
+            path,
+            directory: true,
+        } = change
+        {
+            self.foreseen.borrow_mut().insert(path.clone());
+        }
+    }
+
+    /// Whether `path` is a folder, or one an earlier step of this dry run
+    /// makes.
+    pub(super) fn is_folder(&self, path: &Path) -> bool {
+        path.is_dir() || self.foreseen.borrow().contains(path)
     }
 }

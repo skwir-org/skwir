@@ -663,8 +663,8 @@ mod tests {
     fn bars_are_the_users_days() {
         use bibli_platform::calendar::Weekday;
         let paris = Calendar::named("Europe/Paris", Weekday::Monday).unwrap();
-        let late = Calendar::utc().day_start(days_from_civil(2026, 9, 25))
-            + Duration::from_secs(23 * 3600 + 1800);
+        let late =
+            Calendar::utc().day_start(days_from_civil(2026, 9, 25)) + Duration::from_mins(1410);
         let h = super::histogram([(late, 1)], Bucket::Day, 0, &paris);
         assert_eq!(h.bars.len(), 1);
         let bar = &h.bars[0];
@@ -678,7 +678,7 @@ mod tests {
         );
         // The day the clocks go back is a 25-hour bar.
         let back =
-            Calendar::utc().day_start(days_from_civil(2026, 10, 25)) + Duration::from_secs(43_200);
+            Calendar::utc().day_start(days_from_civil(2026, 10, 25)) + Duration::from_hours(12);
         let h = super::histogram([(back, 1)], Bucket::Day, 0, &paris);
         assert_eq!(h.bars[0].end - h.bars[0].start, 25 * 3600);
     }

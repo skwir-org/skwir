@@ -9,12 +9,17 @@
 #     tools/package/deb.sh        # into target/debian/
 #
 # Needs rustup's Rust (a distribution's may be older than bibli needs),
-# cargo-deb (`cargo install cargo-deb`) and what
+# cargo-deb (`cargo install cargo-deb`), cargo-about (`cargo install
+# --locked cargo-about`, for each package's notices) and what
 # tools/package/linux/build-deps.debian lists.
 set -eu
 cd "$(dirname "$0")/../.."
 if ! command -v cargo-deb >/dev/null; then
     echo "cargo-deb is needed: cargo install cargo-deb" >&2
+    exit 1
+fi
+if ! command -v cargo-about >/dev/null; then
+    echo "cargo-about is needed: cargo install --locked cargo-about" >&2
     exit 1
 fi
 case "$(uname -m)" in
@@ -24,6 +29,7 @@ aarch64) platform=linux-arm64 ;;
 esac
 # shellcheck disable=SC2046 # one `-p name` per program
 cargo build --locked --profile dist $(sed 's/^/-p /' tools/package/programs)
+tools/package/notices.py
 tools/package/pdfium.sh "$platform" target/pdfium
 cargo deb --locked -p bibli --no-build
 for variant in media poppler mermaid mupdf; do

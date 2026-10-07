@@ -2,6 +2,7 @@
 name = "bibli-plugin-shelf"
 description = "bibli plugin: shelf, collect entries from anywhere and act on them together"
 version.workspace = true
+publish.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

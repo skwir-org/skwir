@@ -200,10 +200,10 @@ fn flush(p: Placemark, into: &mut Collector) {
 // The values compared are sums and products of small integers and
 // halves, exact in binary floating point.
 #[allow(clippy::float_cmp)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    const TRIP: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+    pub(crate) const TRIP: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
 <Document>
   <name>Trip</name>

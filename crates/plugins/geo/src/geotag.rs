@@ -112,10 +112,10 @@ pub(crate) fn requirement() -> Requirement {
 
 /// Before a track's first point or after its last, or beside a gap, a
 /// picture this close to a point is taken where that point is.
-pub(crate) const EDGE: Duration = Duration::from_secs(2 * 60);
+pub(crate) const EDGE: Duration = Duration::from_mins(2);
 /// Two points further apart in time than this are a gap: a picture taken
 /// between them is not placed by interpolation.
-pub(crate) const GAP: Duration = Duration::from_secs(5 * 60);
+pub(crate) const GAP: Duration = Duration::from_mins(5);
 
 /// A position to write: degrees, and metres above sea level.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -276,7 +276,7 @@ pub(crate) fn parse_clock(text: &str) -> Option<Clock> {
 }
 
 /// `+02:00` or `-05:30`.
-fn parse_offset(text: &str) -> Option<Offset> {
+pub(crate) fn parse_offset(text: &str) -> Option<Offset> {
     let text = text.trim();
     let (sign, rest) = match text.as_bytes().first()? {
         b'+' => (1, &text[1..]),

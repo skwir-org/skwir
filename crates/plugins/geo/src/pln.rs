@@ -217,12 +217,12 @@ pub fn sniff(head: &[u8]) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::collect::{Plan, PlanKind};
     use bibli_core::geo::{Datum, LineKind};
 
-    const PLAN_FILE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+    pub(crate) const PLAN_FILE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <SimBase.Document Type="AceXML" version="1,0">
     <Descr>AceXML Document</Descr>
     <FlightPlan.FlightPlan>

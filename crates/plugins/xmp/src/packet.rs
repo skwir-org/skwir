@@ -447,12 +447,12 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A sidecar as darktable writes one: attributes, a keyword bag, and a
     /// history bibli knows nothing of.
-    const DARKTABLE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+    pub(crate) const DARKTABLE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 4.4.0-Exiv2">
  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
   <rdf:Description rdf:about=""

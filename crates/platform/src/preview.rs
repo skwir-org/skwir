@@ -582,7 +582,18 @@ impl PreviewProvider for DocumentPreviews {
             }
         }
         // The engine chosen is missing, or would not start: what it needs,
-        // in the words every worker's absence is said in.
+        // in the words every worker's absence is said in. A library the
+        // settings name that is not there is said so: installing would
+        // not help.
+        if let ([crate::document::Engine::Pdfium], Some(library)) = (engines, &self.library)
+            && !library.is_file()
+        {
+            anyhow::bail!(
+                "PDFium's library is not at “{}”, where the settings say it is \
+                 (Settings › Preview: documents › PDFium library)",
+                library.display()
+            );
+        }
         if let [engine] = engines {
             anyhow::bail!(
                 "Install {} and its library to read documents with {}",

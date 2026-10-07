@@ -310,4 +310,23 @@ mod tests {
         assert!(details(&path).is_empty());
         assert!(details(&dir.path().join("missing.jpg")).is_empty());
     }
+
+    proptest::proptest! {
+        /// A picture's metadata as no camera writes it: never a panic.
+        #[test]
+        fn any_metadata_is_read_without_a_panic(raw in proptest::prop_oneof![
+            bibli_core::testing::mutated(tiff()),
+            bibli_core::testing::mutated(gps([45, 30, 0], true, [6, 15, 0], false, Some(b'A'))),
+            bibli_core::testing::bytes(512),
+        ]) {
+            if let Ok(exif) = exif::Reader::new().read_raw(raw) {
+                let _ = read(&exif);
+                let _ = located(&exif);
+                if let Some(taken) = text(&exif, exif::Tag::DateTimeOriginal) {
+                    let _ = clock(&taken);
+                    let _ = date(&taken);
+                }
+            }
+        }
+    }
 }

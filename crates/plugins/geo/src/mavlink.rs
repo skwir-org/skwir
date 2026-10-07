@@ -214,7 +214,7 @@ pub fn read<R: BufRead>(
 // The values compared are written in the missions and exact in binary
 // floating point.
 #[allow(clippy::float_cmp)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::mission::CIRCLE_POINTS;
     use bibli_core::geo::LineKind;
@@ -227,7 +227,7 @@ mod tests {
         lines.iter().map(|line| [*line, end].concat()).collect()
     }
 
-    const SURVEY: &[&str] = &[
+    pub(crate) const SURVEY: &[&str] = &[
         "QGC WPL 110",
         // Home, as ArduPilot keeps it.
         "0\t1\t0\t16\t0\t0\t0\t0\t10.000000\t20.000000\t488.000000\t1",

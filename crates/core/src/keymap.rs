@@ -127,7 +127,8 @@ fn check(value: &toml::Value, app: Option<&crate::App>) -> anyhow::Result<()> {
                 "{} runs {name}, which no command is called (is its plugin on?)",
                 binding.keys
             ),
-            error @ crate::command::CommandError::InvalidArgs { .. } => {
+            error @ (crate::command::CommandError::InvalidArgs { .. }
+            | crate::command::CommandError::Panicked(_)) => {
                 anyhow::anyhow!("{}: {error}", binding.keys)
             }
         })

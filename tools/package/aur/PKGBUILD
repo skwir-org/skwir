@@ -20,7 +20,7 @@ license=('Apache-2.0')
 # The libraries every helper links, to build them all, and what the
 # packages depend on (a split PKGBUILD names it here too).
 makedepends=(
-  'cargo' 'clang' 'cmake'
+  'cargo' 'clang' 'cmake' 'cargo-about' 'python'
   'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'sqlite' 'libarchive'
   'cairo' 'glib2' 'poppler-glib' 'gstreamer' 'gst-plugins-base-libs'
   'fontconfig' 'vulkan-icd-loader' 'vulkan-driver'
@@ -50,6 +50,9 @@ build() {
   export CARGO_TARGET_DIR=target
   # shellcheck disable=SC2046 # one `-p name` per program
   cargo build --frozen --profile dist $(sed 's/^/-p /' tools/package/programs)
+  # What each package's programs link, and their notices: Mermaid's and
+  # MuPDF's helpers apart, the others bibli's.
+  tools/package/notices.py bibli-mermaid-worker bibli-mupdf-worker
 }
 
 package_bibli() {
@@ -97,6 +100,7 @@ package_bibli() {
   install -Dm644 tools/package/linux/io.github.venator.bibli.metainfo.xml -t "$pkgdir/usr/share/metainfo/"
   install -Dm644 README.md -t "$pkgdir/usr/share/doc/$pkgbase/"
   install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgbase/"
+  install -Dm644 target/notices/bibli/THIRD-PARTY-NOTICES -t "$pkgdir/usr/share/licenses/bibli/"
 }
 
 package_bibli-mermaid() {
@@ -105,6 +109,7 @@ package_bibli-mermaid() {
   cd "$pkgbase-$pkgver"
   install -Dm755 target/dist/bibli-mermaid-worker -t "$pkgdir/usr/lib/bibli/"
   install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/bibli-mermaid/"
+  install -Dm644 target/notices/bibli-mermaid/THIRD-PARTY-NOTICES -t "$pkgdir/usr/share/licenses/bibli-mermaid/"
 }
 
 package_bibli-mupdf() {
@@ -114,4 +119,5 @@ package_bibli-mupdf() {
   license=('AGPL-3.0-or-later')
   cd "$pkgbase-$pkgver"
   install -Dm755 target/dist/bibli-mupdf-worker -t "$pkgdir/usr/lib/bibli/"
+  install -Dm644 target/notices/bibli-mupdf/THIRD-PARTY-NOTICES -t "$pkgdir/usr/share/licenses/bibli-mupdf/"
 }

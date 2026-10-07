@@ -2,6 +2,7 @@
 name = "bibli-plugin-open-with"
 description = "bibli plugin: open-with"
 version.workspace = true
+publish.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

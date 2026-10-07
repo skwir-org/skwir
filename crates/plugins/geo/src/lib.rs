@@ -9,6 +9,8 @@
 //!
 //! It also gives the Map view its places (`view`): the pictures and tracks
 //! of the location a pane shows, found on workers.
+#[cfg(test)]
+mod any_input;
 mod collect;
 mod fit;
 mod flight;

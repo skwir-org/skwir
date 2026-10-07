@@ -233,6 +233,10 @@ pub enum CommandError {
         name: Arc<str>,
         reason: serde_json::Error,
     },
+    /// Its handler panicked: a fault of bibli's or of a plugin's, never the
+    /// caller's. What it said is in the log.
+    #[error("“{0}” stopped on a fault of its own (the log says where)")]
+    Panicked(Arc<str>),
 }
 
 /// The command registry.
@@ -481,6 +485,16 @@ impl CommandRegistry {
             .and_then(|stack| stack.last())
             .map(|(_, h, _)| Arc::clone(h));
         let handler = handler.ok_or_else(|| CommandError::Unknown(inv.name.clone()))?;
-        handler(inv.args.clone(), app)
+        // A handler's panic must not unwind into its caller (the window's
+        // event loop, the control channel, a script): it is logged, and the
+        // call fails, as a scheduler's job does.
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            handler(inv.args.clone(), app)
+        }))
+        .unwrap_or_else(|payload| {
+            let message = crate::scheduler::panic_message(&*payload);
+            tracing::error!(command = %inv.name, "command panicked: {message}");
+            Err(CommandError::Panicked(inv.name.clone()).into())
+        })
     }
 }

@@ -2,6 +2,7 @@
 name = "bibli-plugin-ops-basic"
 description = "bibli plugin: ops-basic"
 version.workspace = true
+publish.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -9,8 +10,6 @@ rust-version.workspace = true
 [dependencies]
 bibli-core.workspace = true
 anyhow.workspace = true
-serde.workspace = true
-schemars.workspace = true
 parking_lot.workspace = true
 serde_json.workspace = true
 

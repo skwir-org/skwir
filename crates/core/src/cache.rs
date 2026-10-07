@@ -3,6 +3,13 @@
 
 use std::path::{Path, PathBuf};
 
+/// How the cache is laid out, which names the folder it is kept in under
+/// bibli's cache folder. Raised by a release that would misread what an
+/// older one cached (a value's encoding changed, not its key): the app
+/// then starts with an empty cache, which is always safe, and the release
+/// notes say so (`Cache::open`).
+pub const LAYOUT: u32 = 1;
+
 /// Root of the cache directory.
 #[derive(Clone, Debug)]
 pub struct Cache {
@@ -29,6 +36,43 @@ impl Cache {
         CacheSlot {
             dir: self.root.join(namespace),
         }
+    }
+
+    /// The cache the app uses in `base`, bibli's cache folder: the folder
+    /// [`LAYOUT`] names in it, made when something is first cached. What
+    /// else `base` holds, an older layout's or a cache from before layouts
+    /// were named, is deleted on a thread of its own, so starting never
+    /// waits for it.
+    pub fn open(base: impl Into<PathBuf>) -> Self {
+        let base = base.into();
+        let layout = LAYOUT.to_string();
+        let stale: Vec<PathBuf> = std::fs::read_dir(&base)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter(|entry| entry.file_name() != *layout)
+                    .map(|entry| entry.path())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !stale.is_empty() {
+            tracing::info!("deleting what older layouts of the cache left");
+            let _ = std::thread::Builder::new()
+                .name("cache-layouts".into())
+                .spawn(move || {
+                    for path in stale {
+                        let gone = if path.is_dir() {
+                            std::fs::remove_dir_all(&path)
+                        } else {
+                            std::fs::remove_file(&path)
+                        };
+                        if let Err(error) = gone {
+                            tracing::warn!("cannot delete an older cache: {error}");
+                        }
+                    }
+                });
+        }
+        Cache::new(base.join(layout))
     }
 
     /// Delete everything. Always safe.
@@ -162,5 +206,30 @@ mod tests {
         assert_eq!(other.get(b"keep").unwrap(), b"keep");
         previews.trim_to_bytes(0).unwrap();
         assert!(previews.get(b"first").is_none() && previews.get(b"second").is_none());
+    }
+
+    #[test]
+    fn what_older_layouts_left_goes_and_this_one_stays() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("bibli");
+        std::fs::create_dir_all(base.join("tags/ab")).unwrap();
+        std::fs::write(base.join("tags/ab/cd"), b"of no layout").unwrap();
+        std::fs::write(base.join("stray"), b"").unwrap();
+        let cache = Cache::open(&base);
+        assert_eq!(cache.root(), base.join(LAYOUT.to_string()));
+        assert!(!cache.root().exists(), "made when something is cached");
+        cache.namespace("tags").put(b"key", b"kept").unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while (base.join("tags").exists() || base.join("stray").exists())
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!base.join("tags").exists() && !base.join("stray").exists());
+        assert_eq!(
+            Cache::open(&base).namespace("tags").get(b"key").as_deref(),
+            Some(&b"kept"[..]),
+            "this layout's cache is kept"
+        );
     }
 }

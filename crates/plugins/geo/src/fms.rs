@@ -202,12 +202,12 @@ pub fn sniff(head: &[u8]) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::collect::{Plan, PlanKind};
     use bibli_core::geo::{Datum, LineKind};
 
-    const ELEVEN: &str = "I
+    pub(crate) const ELEVEN: &str = "I
 1100 Version
 CYCLE 2601
 ADEP XAAA

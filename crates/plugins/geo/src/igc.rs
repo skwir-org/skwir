@@ -232,10 +232,10 @@ pub fn sniff(head: &[u8]) -> bool {
 // The values compared are sums and products of small integers and
 // halves, exact in binary floating point.
 #[allow(clippy::float_cmp)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    const FLIGHT: &str = "AXXXABC Example recorder\r\n\
+    pub(crate) const FLIGHT: &str = "AXXXABC Example recorder\r\n\
 HFDTEDATE:120326,01\r\n\
 HFPLTPILOTINCHARGE:Test Pilot\r\n\
 HFGTYGLIDERTYPE:Example Wing\r\n\

@@ -13,8 +13,14 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@v9
       - name: Lint
         run: nix develop --command just lint-all
+      - name: Dependencies
+        run: nix develop --command just deny
       - name: Test
         run: nix develop --command just test-all
+      - name: The window, driven by a script
+        # On an X display of its own with software Vulkan (Xvfb and Mesa
+        # from the flake's nixpkgs): no GPU or display needed.
+        run: nix develop --command just smoke
       - name: Native Poppler reader
         run: nix develop --command just poppler-check
       - name: Native MuPDF reader

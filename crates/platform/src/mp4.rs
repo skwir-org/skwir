@@ -379,4 +379,47 @@ mod tests {
         assert_eq!(taken(file(&lying).path()), Taken::default());
         assert!(iso6709("+00.0000+000.0000/").is_none());
     }
+
+    fn android_video() -> Vec<u8> {
+        let mut xyz = vec![0, 25, 0x15, 0xc7];
+        xyz.extend_from_slice(b"+10.5000+020.2500+012.000/");
+        let moov = boxed(
+            *b"moov",
+            &[
+                boxed(*b"mvhd", &[0; 100]),
+                boxed(*b"udta", &boxed(*b"\xa9xyz", &xyz)),
+            ]
+            .concat(),
+        );
+        [
+            boxed(*b"ftyp", b"isom0000"),
+            boxed(*b"mdat", &[7; 64]),
+            moov,
+        ]
+        .concat()
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(64))]
+        /// A video's boxes as no camera writes them: never a panic.
+        #[test]
+        fn any_video_is_read_without_a_panic(bytes in proptest::prop_oneof![
+            bibli_core::testing::mutated(android_video()),
+            bibli_core::testing::bytes(512),
+        ]) {
+            let video = file(&bytes);
+            let _ = taken(video.path());
+            let _ = details(video.path());
+        }
+
+        #[test]
+        fn any_position_text_is_read_without_a_panic(text in proptest::prop_oneof![
+            bibli_core::testing::mutated_text("+10.5000+020.2500+012.000/"),
+            bibli_core::testing::mutated_text("2026-03-12T08:00:00+0100"),
+            proptest::prelude::any::<String>(),
+        ]) {
+            let _ = iso6709(&text);
+            let _ = clock(&text);
+        }
+    }
 }

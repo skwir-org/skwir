@@ -96,6 +96,7 @@
           bacon
           cargo-flamegraph
           cargo-deny
+          cargo-about
           cargo-edit
           cargo-outdated
           hyperfine

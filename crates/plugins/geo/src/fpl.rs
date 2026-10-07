@@ -252,13 +252,13 @@ pub fn sniff(head: &[u8]) -> bool {
 // The values compared are read from short decimals and compared with the
 // same decimals, or are products checked with a tolerance.
 #[allow(clippy::float_cmp)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::collect::{Plan, PlanKind};
     use crate::flight::feet;
     use bibli_core::geo::LineKind;
 
-    const PLAN: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+    pub(crate) const PLAN: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <flight-plan xmlns="http://www8.garmin.com/xmlschemas/FlightPlan/v1">
   <file-description>An invented trip</file-description>
   <created>20260301T10:00:00Z</created>
