@@ -264,6 +264,29 @@ fn the_template_counts_words_as_a_module_a_field_and_a_command() {
         app.commands.get("word-count.count").unwrap().effect,
         bibli_core::command::Effect::Reads
     );
+    // Its helper kept the module compiled in the plugin's folder of the
+    // cache; started again, it loads it rather than compiling it.
+    let compiled = app.cache.namespace("word-count").folder("module");
+    let kept = || -> Vec<(std::path::PathBuf, std::time::SystemTime)> {
+        std::fs::read_dir(&compiled)
+            .unwrap()
+            .map(|e| {
+                let path = e.unwrap().path();
+                let written = std::fs::metadata(&path).unwrap().modified().unwrap();
+                (path, written)
+            })
+            .collect()
+    };
+    let first = kept();
+    assert_eq!(first.len(), 1, "{first:?}");
+    assert!(app.plugins.set_enabled("word-count", false, &app));
+    assert!(app.plugins.set_enabled("word-count", true, &app));
+    assert_eq!(
+        app.fields
+            .get("word-count.words", &other, &CancelToken::new()),
+        Some(bibli_core::Value::UInt(2))
+    );
+    assert_eq!(kept(), first);
     // Turned off, it leaves nothing.
     assert!(app.plugins.set_enabled("word-count", false, &app));
     assert!(app.commands.get("word-count.count").is_none());
@@ -327,3 +350,4 @@ fn a_thumbnailer_from_outside_draws_through_the_thumbnail_service() {
     assert_eq!(pixel(10, 10), [255, 0, 0, 255]);
     assert_eq!(pixel(120, 20), [0, 0, 255, 255]);
 }
+

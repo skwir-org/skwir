@@ -1,6 +1,7 @@
 # ADR-046: Plugins that run as WebAssembly modules
 
-Status: accepted, 2026-10-07 (Phase 6, "Level 1, WASM plugins").
+Status: accepted, 2026-10-07 (Phase 6, "Level 1, WASM plugins"); compiled
+modules kept in the cache the same day.
 
 ## Context
 
@@ -34,10 +35,18 @@ its imports do not give it, on every system, without a sandbox.
    process: linked into the binary, they cost 1.6 MiB of idle memory
    (`just idle-pss` back to back, own share 94.8 against 93.2 MiB, the
    binary's 41.0 against 39.4) for code that runs only when a module is
-   asked. Cranelift compiles the module when
-   the helper starts. A call has bounded work (fuel, about twenty
-   billion instructions) and memory (256 MiB); a module that traps is
-   instantiated again for its next call. Calls are one at a time.
+   asked. Cranelift compiles the module the first time its helper
+   starts, and the helper keeps it compiled in the plugin's folder of
+   bibli's cache (`<cache>/<id>/module`, its working folder, the only
+   one it may write): named by the hash of the component and of
+   Wasmtime's version and settings, written under another name and then
+   renamed, it is loaded (mapped, not compiled) on every later start,
+   and anything else in the folder goes. Loading compiled code trusts
+   it as native code, so only the helper of that plugin writes there:
+   not the module, not another plugin. A call has bounded work (fuel,
+   about twenty billion instructions) and memory (256 MiB); a module
+   that traps is instantiated again for its next call. Calls are one at
+   a time.
 4. **The gate's plugin** is the hexadecimal preview
    (`crates/plugins-outside/preview-hex`, id `hex-view`): its own code,
    its bytes read through bibli. A test (`crates/extend/tests/modules.rs`)
@@ -60,9 +69,11 @@ its imports do not give it, on every system, without a sandbox.
   toolchain's WebAssembly target.
 - A module is isolated twice: by Wasmtime, and with its helper, by the
   system's sandbox where there is one.
-- A module is compiled each time its helper starts, which is when it is
-  first asked after 30 seconds unasked: a fraction of a second, which a
-  cache of compiled modules would save.
+- A module is compiled once per version of it and of bibli's Wasmtime;
+  its helper starts again, after 30 seconds unasked, in milliseconds.
+  Deleting the cache costs one compilation. Wasmtime's own cache was
+  not used: a folder, settings and a cleaning thread of its own, where
+  bibli has one cache.
 - The component model's typed interfaces are used for the envelope
   only; the payloads are JSON, the protocol's, so a program and a module
   never drift apart. A typed world is a later version of the API.

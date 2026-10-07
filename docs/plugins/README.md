@@ -120,7 +120,10 @@ A **module** (`[run] module`) is the safest and the simplest to ship:
 built for `wasm32-unknown-unknown` with `bibli_plugin_api::export!`, it
 reaches nothing but `read` and `log`, on every system. bibli runs it in
 a helper of its own (`bibli-module-worker`, installed with bibli), and
-each call has a bound on its work and memory.
+each call has a bound on its work and memory. The helper compiles the
+module the first time and keeps it compiled in bibli's cache
+(`~/.cache/bibli/<id>/module`), so a new version of the module is
+compiled again on its own.
 
 A **program** (`[run] program`) can be written in any language that
 reads and writes lines of JSON on its standard input and output: the

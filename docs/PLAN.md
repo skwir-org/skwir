@@ -2312,6 +2312,13 @@ search's syntax and some descriptions were written for bibli's
 developers. Checked again by a scripted agent on Xvfb with the release
 build.
 
+A module is compiled once: its helper keeps it compiled in the
+plugin's folder of the cache (ADR-046) and loads it after: the
+hexadecimal module's helper answers in 4.0 ms against 188 ms
+compiling (release, outside the sandbox, median of 7); a call that
+restarts the word count's helper, sandboxed, took 23 ms in the window
+against 231 ms the first time.
+
 - **Permission layer.** Capabilities per plugin (read contents, write, network, spawn processes) and
   per-directory policies ("never leaves this machine" for `~/.ssh`, anything under a `.private` marker).
   Required before any model provider exists.

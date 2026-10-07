@@ -926,7 +926,9 @@ current source before assuming a planned crate, command, or API exists.
   (off until turned on), and runs it as a program (isolated,
   `sandbox::plugin`) or a module, which the helper `bibli-module-worker`
   runs and serves as such a program (Wasmtime, no WASI, bibli's two
-  imports alone): Wasmtime never enters bibli's own process. A plugin reads only the files of the call it answers, by
+  imports alone): Wasmtime never enters bibli's own process. The helper
+  works in the plugin's folder of the cache and keeps the module
+  compiled there (`--keep`), the one folder it writes. A plugin reads only the files of the call it answers, by
   handle (`call::Call`), and only with `read`; its plan needs `write` and
   is reviewed when run from the window. What a plugin from outside can
   provide is the protocol's (fields, thumbnails, previews, commands); a

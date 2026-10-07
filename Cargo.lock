@@ -719,7 +719,9 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "bibli-plugin-api",
+ "blake3",
  "serde_json",
+ "tempfile",
  "wasmtime",
  "wit-component 0.239.0",
 ]

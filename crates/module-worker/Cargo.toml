@@ -14,7 +14,12 @@ serde_json.workspace = true
 wasmtime = { version = "38", default-features = false, features = ["runtime", "cranelift", "component-model", "std"] }
 # A module built with the world's bindings becomes a component.
 wit-component = "0.239"
+# Names a compiled module by what it was compiled from.
+blake3.workspace = true
 anyhow.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

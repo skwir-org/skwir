@@ -11,7 +11,14 @@
 //! again for the next. Wasmtime and Cranelift live here, never in
 //! bibli's own process.
 //!
-//! `bibli-module-worker <module>`; `--probe` answers whether it runs.
+//! The module is compiled when the helper starts. With `--keep <folder>`
+//! (the plugin's folder of bibli's cache, its working folder), it keeps
+//! the module compiled there and loads it on the next start instead
+//! ([`load`]): starting takes a few milliseconds where compiling took a
+//! good part of a second.
+//!
+//! `bibli-module-worker <module> [--keep <folder>]`; `--probe` answers
+//! whether it runs.
 
 use std::io::{BufRead, BufReader, Write};
 
@@ -39,11 +46,19 @@ fn main() {
     if args.first().is_some_and(|arg| arg == "--probe") {
         return;
     }
-    let Some(module) = args.first() else {
-        eprintln!("usage: bibli-module-worker <module>");
+    let (Some(module), keep) = (args.first(), args.get(1..)) else {
+        eprintln!("usage: bibli-module-worker <module> [--keep <folder>]");
         std::process::exit(2);
     };
-    if let Err(error) = serve(std::path::Path::new(module)) {
+    let keep = match keep {
+        Some([]) | None => None,
+        Some([flag, folder]) if flag == "--keep" => Some(std::path::Path::new(folder)),
+        Some(_) => {
+            eprintln!("usage: bibli-module-worker <module> [--keep <folder>]");
+            std::process::exit(2);
+        }
+    };
+    if let Err(error) = serve(std::path::Path::new(module), keep) {
         eprintln!("{error:#}");
         std::process::exit(1);
     }
@@ -116,23 +131,11 @@ struct State {
 
 type Answer = TypedFunc<(String, String), (Result<String, String>,)>;
 
-/// Compile `path`, then answer bibli's calls until it closes standard input.
-fn serve(path: &std::path::Path) -> anyhow::Result<()> {
-    use anyhow::Context as _;
-    let mut config = Config::new();
-    config.consume_fuel(true);
-    config.wasm_component_model(true);
-    let engine = Engine::new(&config)?;
-    let bytes = std::fs::read(path).with_context(|| format!("{}", path.display()))?;
-    let bytes = if is_component(&bytes) {
-        bytes
-    } else {
-        wit_component::ComponentEncoder::default()
-            .module(&bytes)
-            .and_then(|encoder| encoder.validate(true).encode())
-            .context("a module built with the plugin world's bindings")?
-    };
-    let component = Component::new(&engine, &bytes).context("compiling the module")?;
+/// Compile `path` (or load it compiled from `keep`), then answer bibli's
+/// calls until it closes standard input.
+fn serve(path: &std::path::Path, keep: Option<&std::path::Path>) -> anyhow::Result<()> {
+    let engine = engine()?;
+    let component = load(&engine, path, keep)?;
     let mut linker: Linker<State> = Linker::new(&engine);
     let mut host = linker.instance(HOST)?;
     host.func_wrap(
@@ -235,12 +238,152 @@ fn instantiate(
 
 /// Whether `bytes` are a component rather than a core module: the
 /// binary's layer, after its magic and version.
+/// The engine every module runs in: fuel counted, components.
+fn engine() -> anyhow::Result<Engine> {
+    let mut config = Config::new();
+    config.consume_fuel(true);
+    config.wasm_component_model(true);
+    Engine::new(&config)
+}
+
+/// The module at `path` as a component compiled for `engine`: loaded from
+/// `keep` when it holds this very component compiled by this Wasmtime with
+/// these settings, else compiled, and kept there for the next start.
+fn load(
+    engine: &Engine,
+    path: &std::path::Path,
+    keep: Option<&std::path::Path>,
+) -> anyhow::Result<Component> {
+    use anyhow::Context as _;
+    let bytes = std::fs::read(path).with_context(|| format!("{}", path.display()))?;
+    let bytes = if is_component(&bytes) {
+        bytes
+    } else {
+        wit_component::ComponentEncoder::default()
+            .module(&bytes)
+            .and_then(|encoder| encoder.validate(true).encode())
+            .context("a module built with the plugin world's bindings")?
+    };
+    let Some(keep) = keep else {
+        return Component::new(engine, &bytes).context("compiling the module");
+    };
+    let kept = keep.join(format!("{}.cwasm", compiled_name(engine, &bytes)));
+    if kept.is_file() {
+        // SAFETY: the file is native code Wasmtime runs as it finds it, so
+        // it must be what `Component::serialize` wrote for this component.
+        // It is: its name is the hash of the component's bytes and of the
+        // engine's version and settings, it lies in the plugin's own folder
+        // of the user's cache, which no module and no other plugin can
+        // write (this helper is the only writer, `keep` below), and it is
+        // written whole under another name before it takes this one, so it
+        // never changes while mapped. Wasmtime refuses a file compiled by
+        // another version or for other settings.
+        #[allow(unsafe_code)]
+        match unsafe { Component::deserialize_file(engine, &kept) } {
+            Ok(component) => return Ok(component),
+            Err(error) => eprintln!("compiled module not loaded, compiling it again: {error:#}"),
+        }
+    }
+    let component = Component::new(engine, &bytes).context("compiling the module")?;
+    if let Err(error) = save(&component, keep, &kept) {
+        eprintln!("compiled module not kept: {error:#}");
+    }
+    Ok(component)
+}
+
+/// The name a compiled component is kept under: what it was compiled from
+/// and by what, so another module, another Wasmtime or other settings is
+/// another name.
+fn compiled_name(engine: &Engine, component: &[u8]) -> String {
+    use std::hash::Hash as _;
+    /// Feeds what Wasmtime hashes into BLAKE3.
+    struct Blake3(blake3::Hasher);
+    impl std::hash::Hasher for Blake3 {
+        fn write(&mut self, bytes: &[u8]) {
+            self.0.update(bytes);
+        }
+        fn finish(&self) -> u64 {
+            0
+        }
+    }
+    let mut hasher = Blake3(blake3::Hasher::new());
+    hasher.0.update(component);
+    engine.precompile_compatibility_hash().hash(&mut hasher);
+    hasher.0.finalize().to_hex().to_string()
+}
+
+/// Keep `component` compiled at `kept`, in `keep`, written under another
+/// name first; everything else there goes: the module it replaces (an
+/// older version of the plugin's, or one compiled by another Wasmtime),
+/// and what a helper stopped while writing left.
+fn save(
+    component: &Component,
+    keep: &std::path::Path,
+    kept: &std::path::Path,
+) -> anyhow::Result<()> {
+    std::fs::create_dir_all(keep)?;
+    let compiled = component.serialize()?;
+    let writing = keep.join(format!(".writing-{}", std::process::id()));
+    std::fs::write(&writing, compiled)?;
+    std::fs::rename(&writing, kept)?;
+    for old in std::fs::read_dir(keep)?.flatten() {
+        if old.path() != kept {
+            let _ = std::fs::remove_file(old.path());
+        }
+    }
+    Ok(())
+}
+
 fn is_component(bytes: &[u8]) -> bool {
     bytes.len() >= 8 && bytes[..4] == *b"\0asm" && bytes[6..8] == [1, 0]
 }
 
 #[cfg(test)]
 mod tests {
+    /// The files `keep` holds.
+    fn kept(keep: &std::path::Path) -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(keep)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect()
+    }
+
+    #[test]
+    fn a_module_compiled_once_is_loaded_the_next_time() {
+        let tmp = tempfile::tempdir().unwrap();
+        let module = tmp.path().join("plugin.wasm");
+        // The smallest component there is: its header.
+        std::fs::write(&module, b"\0asm\x0d\x00\x01\x00").unwrap();
+        let keep = tmp.path().join("kept");
+        let engine = super::engine().unwrap();
+        super::load(&engine, &module, Some(&keep)).unwrap();
+        let first = kept(&keep);
+        assert_eq!(first.len(), 1, "{first:?}");
+        assert!(first[0].extension().is_some_and(|e| e == "cwasm"));
+        let written = std::fs::metadata(&first[0]).unwrap().modified().unwrap();
+        // Started again: loaded, not compiled and written again.
+        super::load(&engine, &module, Some(&keep)).unwrap();
+        assert_eq!(kept(&keep), first);
+        assert_eq!(
+            std::fs::metadata(&first[0]).unwrap().modified().unwrap(),
+            written
+        );
+        // A file that is not compiled code is compiled again, never run.
+        std::fs::write(&first[0], b"not compiled code").unwrap();
+        super::load(&engine, &module, Some(&keep)).unwrap();
+        assert!(std::fs::metadata(&first[0]).unwrap().len() > 100);
+        // The plugin's module changed: its compiled form replaces the
+        // old one, and what a stopped write left goes too.
+        std::fs::write(keep.join(".writing-1"), b"half").unwrap();
+        let mut changed = b"\0asm\x0d\x00\x01\x00".to_vec();
+        changed.extend([0, 5, 4, b'n', b'o', b't', b'e']); // a custom section
+        std::fs::write(&module, changed).unwrap();
+        super::load(&engine, &module, Some(&keep)).unwrap();
+        let second = kept(&keep);
+        assert_eq!(second.len(), 1, "{second:?}");
+        assert_ne!(second, first);
+    }
+
     #[test]
     fn a_component_is_told_from_a_core_module() {
         assert!(super::is_component(b"\0asm\x0d\x00\x01\x00"));

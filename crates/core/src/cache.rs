@@ -97,6 +97,13 @@ impl CacheSlot {
         self.dir.join(&h[..2]).join(&h[2..])
     }
 
+    /// A folder of the slot's own, beside its values, for files a program
+    /// keeps under names of its choosing (a plugin's compiled module):
+    /// deleted with the cache, like the rest.
+    pub fn folder(&self, name: &str) -> PathBuf {
+        self.dir.join(name)
+    }
+
     pub fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
         std::fs::read(self.path_for(key)).ok()
     }

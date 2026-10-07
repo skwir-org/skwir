@@ -6,7 +6,7 @@
 //! next call, not before [`AGAIN`] after one that could not start.
 
 use std::io::{BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Stdio};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
@@ -49,6 +49,10 @@ pub(crate) struct Program {
     folder: PathBuf,
     granted: Capabilities,
     isolation: Isolation,
+    /// A folder it works in from one start to the next, in place of a
+    /// fresh one each time: a module's helper keeps the module compiled
+    /// there.
+    kept: Option<PathBuf>,
     running: Arc<Mutex<Option<Running>>>,
     failed: Mutex<Option<Instant>>,
 }
@@ -61,7 +65,24 @@ struct Running {
     next: u64,
     /// Each call says it was asked here, for the watch that ends it idle.
     used: Sender<()>,
-    _work: tempfile::TempDir,
+    _work: Work,
+}
+
+/// The folder a program works in.
+enum Work {
+    /// Made for this start, deleted when it ends.
+    Fresh(tempfile::TempDir),
+    /// Kept from one start to the next (`Program::kept`).
+    Kept(PathBuf),
+}
+
+impl Work {
+    fn path(&self) -> &Path {
+        match self {
+            Work::Fresh(folder) => folder.path(),
+            Work::Kept(folder) => folder,
+        }
+    }
 }
 
 impl Program {
@@ -72,6 +93,7 @@ impl Program {
         folder: PathBuf,
         granted: Capabilities,
         isolation: Isolation,
+        kept: Option<PathBuf>,
     ) -> Program {
         Program {
             id,
@@ -80,13 +102,20 @@ impl Program {
             folder,
             granted,
             isolation,
+            kept,
             running: Arc::default(),
             failed: Mutex::new(None),
         }
     }
 
     fn start(&self) -> anyhow::Result<Running> {
-        let work = tempfile::Builder::new().prefix("bibli-plugin-").tempdir()?;
+        let work = match &self.kept {
+            Some(folder) => {
+                std::fs::create_dir_all(folder)?;
+                Work::Kept(folder.clone())
+            }
+            None => Work::Fresh(tempfile::Builder::new().prefix("bibli-plugin-").tempdir()?),
+        };
         let isolated = bibli_platform::sandbox::plugin(
             &self.path,
             &self.folder,

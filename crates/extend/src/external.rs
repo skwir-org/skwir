@@ -81,6 +81,7 @@ impl External {
                 kind,
                 folder: folder.clone(),
                 granted: capabilities,
+                compiled: Mutex::new(None),
                 live: Mutex::new(None),
             }),
             manifest,
@@ -127,6 +128,7 @@ impl Plugin for External {
         Some(self.folder.display().to_string())
     }
     fn register(&self, app: &App) {
+        *self.runner.compiled.lock() = Some(app.cache.namespace(self.id).folder("module"));
         crate::providers::register(app, self);
         crate::commands::register(app, self);
     }
@@ -160,6 +162,9 @@ pub(crate) struct Runner {
     pub kind: Kind,
     folder: PathBuf,
     pub granted: Capabilities,
+    /// Where a module is kept compiled: the plugin's folder of bibli's
+    /// cache, known once the plugin is registered.
+    compiled: Mutex<Option<PathBuf>>,
     live: Mutex<Option<Arc<dyn Transport>>>,
 }
 
@@ -184,14 +189,25 @@ impl Runner {
         Ok(match &self.kind {
             // Its helper, a program confined by the module's own walls:
             // isolated where the system can, run plainly where not.
-            Kind::Module(module) => Arc::new(Program::new(
-                self.id,
-                crate::MODULE_WORKER.require("run plugins that are WebAssembly modules")?,
-                vec![module.display().to_string()],
-                self.folder.clone(),
-                self.granted,
-                Isolation::WhereAvailable,
-            )),
+            // It works in the plugin's folder of the cache, where it
+            // keeps the module compiled (`--keep`): the next start loads
+            // it instead of compiling it again.
+            Kind::Module(module) => {
+                let compiled = self.compiled.lock().clone();
+                let mut args = vec![module.display().to_string()];
+                if compiled.is_some() {
+                    args.extend(["--keep".to_owned(), ".".to_owned()]);
+                }
+                Arc::new(Program::new(
+                    self.id,
+                    crate::MODULE_WORKER.require("run plugins that are WebAssembly modules")?,
+                    args,
+                    self.folder.clone(),
+                    self.granted,
+                    Isolation::WhereAvailable,
+                    compiled,
+                ))
+            }
             Kind::Program { program, args } => Arc::new(Program::new(
                 self.id,
                 program.clone(),
@@ -199,6 +215,7 @@ impl Runner {
                 self.folder.clone(),
                 self.granted,
                 Isolation::Required,
+                None,
             )),
         })
     }
