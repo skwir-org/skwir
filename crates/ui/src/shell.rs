@@ -2036,6 +2036,10 @@ impl Shell {
         if !proposals.is_empty() {
             self.add_reviews(proposals, window, cx);
         }
+        let questions = self.app.take_questions();
+        if !questions.is_empty() {
+            self.add_questions(questions, cx);
+        }
         self.sync_review_focus(window, cx);
         self.sync_map_tiles(window, cx);
         // Follow the workspace's tabs and active pane (commands change them).

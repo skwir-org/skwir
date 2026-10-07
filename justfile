@@ -20,6 +20,11 @@ build-all:
 dist:
     cargo build --profile dist $(sed 's/^/-p /' tools/package/programs)
 
+# Build the plugins from outside bibli this workspace holds as WebAssembly
+# modules, into target/plugins (ADR-046): BIBLI_PLUGIN_PATH=$PWD/target/plugins.
+plugins:
+    tools/plugins/build.sh
+
 # Run the tests of the default members.
 test:
     cargo nextest run --no-tests=pass
@@ -146,12 +151,12 @@ spike toolkit gpu="intel" rows="100000":
 
 # Run the app (release) on a directory, default: the current one.
 run dir=".":
-    cargo build --release -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-mupdf-worker -p bibli-media-worker -p bibli-archive-worker -p bibli-mermaid-worker -p bibli-model-worker
+    cargo build --release -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-mupdf-worker -p bibli-media-worker -p bibli-archive-worker -p bibli-mermaid-worker -p bibli-model-worker -p bibli-module-worker
     ./target/release/bibli {{dir}}
 
 # Profile the app with samply (opens the Firefox Profiler UI when done).
 flame dir=".":
-    cargo build --release -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-mupdf-worker -p bibli-media-worker -p bibli-archive-worker -p bibli-mermaid-worker -p bibli-model-worker
+    cargo build --release -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-mupdf-worker -p bibli-media-worker -p bibli-archive-worker -p bibli-mermaid-worker -p bibli-model-worker -p bibli-module-worker
     samply record ./target/release/bibli {{dir}}
 
 # Profile a bench profile's listing with a flamegraph SVG.

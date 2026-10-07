@@ -188,6 +188,8 @@ pub fn run(app: Arc<App>, initial: Option<Location>) -> anyhow::Result<()> {
 
 /// Like [`run`], with the instant the process started, for first-frame timing.
 pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> anyhow::Result<()> {
+    // Commands that may wait move their waiting off this thread.
+    bibli_core::scheduler::mark_window_thread();
     let (wake_tx, wake_rx) = flume::bounded::<()>(1);
     app.set_waker(Some(Arc::new(move || {
         let _ = wake_tx.try_send(());

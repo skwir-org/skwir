@@ -868,7 +868,13 @@ current source before assuming a planned crate, command, or API exists.
   Commands that mutate the filesystem return a `Plan`; the caller decides to
   apply it. User-initiated single actions apply immediately and are undoable;
   batch results and anything from a background task or an agent go through
-  `App::propose` for review.
+  `App::propose` for review. A command says what it does when it is
+  registered (`command::Effect`: `register(..).reads()`, `.shows()`,
+  `.plans()`, `.user_only()`), which decides what an agent may run
+  (ADR-044); one that says nothing acts, and an agent's call of it asks
+  the user first. A window command (`ui.*`) is the user's alone unless
+  `commands.rs` lists it among those that show or act: one that answers a
+  dialog or presses for the user's hand must never be an agent's.
 - **Agents and scripts drive the window** (ADR-043). The `control`
   plugin, off by default, listens on a channel only the user reaches
   (`channel::address`); `bibli mcp` carries an agent's MCP there and
@@ -886,7 +892,37 @@ current source before assuming a planned crate, command, or API exists.
   script or an agent names files, never selects them, since the
   selection is the user's and changes between two calls. A path given
   from outside the window is absolute (`os_path::absolute`), never read
-  against the window's working folder.
+  against the window's working folder. An agent's call goes through the
+  permission layer (ADR-044, `permissions::for_agent`, enforced in the
+  control plugin's `run`): nothing it names may be private, a command
+  that acts runs once the user allows it in the review's queue
+  (`App::ask`, a `Review::Question`), a user-only one is refused and not
+  listed, and what it is answered loses every private path
+  (`Checker::redact`). A script (`bibli cmd`) is the user's own.
+- **What leaves this machine** (ADR-044). Every plugin says what it may
+  do (`Plugin::capabilities`: read what files hold, write, network,
+  programs), truthfully for a built-in one, which the Plugins page shows;
+  a new plugin declares its own. Private folders (`permissions::Privacy`,
+  the Privacy page: `~/.ssh` and its like, and any folder holding a
+  `.private` file) never reach an agent nor a plugin from outside: check
+  with `App::privacy()` (it reads markers: off the window's thread)
+  wherever such code is handed a file.
+- **Plugins from outside** (ADR-045, ADR-046). `bibli-plugin-api` is the
+  contract (the manifest, the protocol, the WIT world, the guest's
+  `Plugin` trait); it depends on nothing of bibli's and builds for
+  WebAssembly. `bibli-extend` is the host: it finds plugin folders
+  (`folders()`, `BIBLI_PLUGIN_PATH`), makes each an `External` plugin
+  (off until turned on), and runs it as a program (isolated,
+  `sandbox::plugin`) or a module, which the helper `bibli-module-worker`
+  runs and serves as such a program (Wasmtime, no WASI, bibli's two
+  imports alone): Wasmtime never enters bibli's own process. A plugin reads only the files of the call it answers, by
+  handle (`call::Call`), and only with `read`; its plan needs `write` and
+  is reviewed when run from the window. What a plugin from outside can
+  provide is the protocol's (fields, thumbnails, previews, commands); a
+  new kind is a new method and version of the protocol, both transports
+  at once, and `docs/plugins/protocol.md` says it. `just plugins` builds
+  the workspace's modules (`crates/plugins-outside/*`) into
+  `target/plugins`.
 - **Operations have inverses**, a dry-run `check`, and idempotent semantics.
   A step that changes metadata states its words (`op::Words`: what it will
   do, for the review, and what it did, for the toast); what a plan left out
@@ -992,14 +1028,19 @@ crates/media-worker optional audio/video player process (linked GStreamer)
 crates/archive-worker optional archive reader process (linked libarchive)
 crates/mermaid-worker optional Mermaid diagram layout process (pure Rust, merman)
 crates/model-worker optional 3D mesh reader and renderer process (pure Rust)
+crates/module-worker a plugin's WebAssembly module, run in a process of its own (Wasmtime)
 crates/plugins/*   one crate per plugin (see docs/PLAN.md Phase 2 and 4)
+crates/plugin-api  what a plugin from outside bibli is and speaks (ADR-045, ADR-046)
+crates/extend      the host of plugins from outside: programs and WebAssembly modules
+crates/plugins-outside/*  plugins from outside built here: the template, the hex view as a
+                   module, a Netpbm thumbnailer
 crates/bench       synthetic trees and the performance regression check
 vendor/gpui        patched gpui 0.2.2 (see vendor/gpui/README.bibli.md)
 vendor/xdg-mime    xdg-mime 0.4.0, built on every system (ADR-037; its README.bibli.md)
 vendor/shared-mime-info  the type database's source the macOS and Windows packages compile
 spikes/            the Phase 0 toolkit spikes, kept runnable
 docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
-                   invariants/ (binding area rules)
+                   invariants/ (binding area rules), plugins/ (writing one)
 ```
 
 ## Implementation entry points
@@ -1030,7 +1071,11 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
 ## Background work and streamed state
 
 - `CommandRegistry::dispatch` executes on the caller's thread; dispatching a
-  command does not move it to a worker. Likewise, `LocationProvider::open` and
+  command does not move it to a worker. A command that may wait (a
+  plugin from outside answering) asks `scheduler::on_window_thread` and,
+  there, waits on a worker and answers through a proposal or a
+  notification; elsewhere (an agent's call, a script's) it waits where it
+  is and answers as any command does. Likewise, `LocationProvider::open` and
   `OpenLocation::hydrate` are synchronous entry points: enqueue expensive work
   and return promptly. `pump_until_complete` and executor blocking methods are
   for headless tests/tools, never UI callbacks.
@@ -1295,6 +1340,7 @@ just package-nix    Linux's package, by Nix, from the git tree
 just package-deb    Debian's and Ubuntu's (on Debian or Ubuntu); package-rpm, package-aur
 just package-try d  a Linux package built and installed in debian|fedora|arch's root (bubblewrap)
 just bench-check    generate bench-data/ on demand and enforce budgets
+just plugins        build the plugins from outside as WebAssembly modules (target/plugins)
 just run [dir]      run the release binary
 just dist           build bibli and every helper without debug info (target/dist)
 just flame [dir]    profile with samply

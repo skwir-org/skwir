@@ -172,6 +172,24 @@ impl Scheduler {
     }
 }
 
+thread_local! {
+    static WINDOW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Mark the calling thread as the window's: the one thread nothing may
+/// keep waiting (ADR-000). The window marks its own at startup.
+pub fn mark_window_thread() {
+    WINDOW.with(|window| window.set(true));
+}
+
+/// Whether the calling thread is the window's: a command that may wait
+/// (a plugin from outside bibli answering, ADR-045) moves its waiting to
+/// a worker there, and waits where it is anywhere else (an agent's call,
+/// a script's, a worker's).
+pub fn on_window_thread() -> bool {
+    WINDOW.with(std::cell::Cell::get)
+}
+
 /// What a worker calls once idle for [`RELEASE_AFTER`] after a job: the
 /// allocator's way to give back what the jobs freed, set by the binary.
 static RELEASE: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();

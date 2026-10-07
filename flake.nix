@@ -27,9 +27,10 @@
       # Windows and macOS targets let `just check-cross` compile and lint
       # those builds from Linux (Phase 5): Zig is their C compiler, so the
       # C in ring, mimalloc or psm needs neither Apple's nor Microsoft's SDK.
+      # WebAssembly builds the plugins that run as modules (ADR-046).
       rustToolchain = pkgs.rust-bin.stable.latest.default.override {
         extensions = ["rust-src" "rust-analyzer" "clippy" "rustfmt" "llvm-tools"];
-        targets = ["x86_64-pc-windows-gnu" "aarch64-apple-darwin"];
+        targets = ["x86_64-pc-windows-gnu" "aarch64-apple-darwin" "wasm32-unknown-unknown"];
       };
 
       # Native libraries needed to build and run wgpu / GPUI / Floem on Linux.

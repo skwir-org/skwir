@@ -46,6 +46,10 @@ impl Plugin for PreviewPlugin {
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Previews
     }
+    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
+        use bibli_core::permissions::Capability;
+        bibli_core::permissions::Capabilities::of(&[Capability::Read])
+    }
     fn register(&self, app: &App) {
         app.previews.register(ID, Arc::new(Provider));
         app.thumbnails.register(ID, Arc::new(Pictures));

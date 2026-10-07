@@ -48,6 +48,7 @@ pub mod notes;
 pub mod op;
 pub mod os_path;
 pub mod pending;
+pub mod permissions;
 pub mod playing;
 pub mod plugin;
 pub mod preview;

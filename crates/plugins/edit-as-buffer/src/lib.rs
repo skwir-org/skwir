@@ -636,6 +636,14 @@ impl Plugin for EditAsBufferPlugin {
         bibli_core::plugin::Category::Files
     }
 
+    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
+        use bibli_core::permissions::Capability;
+        bibli_core::permissions::Capabilities::of(&[
+            Capability::Read,
+            Capability::Write,
+            Capability::Programs,
+        ])
+    }
     fn register(&self, app: &App) {
         let lifetime = app.lifetime().child();
         *self.lifetime.lock() = lifetime.clone();

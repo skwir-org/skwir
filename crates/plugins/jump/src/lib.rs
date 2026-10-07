@@ -231,6 +231,10 @@ impl Plugin for JumpPlugin {
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Browsing
     }
+    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
+        use bibli_core::permissions::Capability;
+        bibli_core::permissions::Capabilities::of(&[Capability::Programs])
+    }
     fn register(&self, app: &App) {
         let lifetime = app.lifetime().child();
         *self.lifetime.lock() = lifetime.clone();
@@ -249,14 +253,17 @@ impl Plugin for JumpPlugin {
                 refresh(&index, &lifetime, app);
                 Ok(Outcome::Value(serde_json::to_value(ranked)?))
             },
-        );
-        app.commands.register::<ToArgs, _>(
-            ID,
-            "jump.to",
-            "Jump to",
-            "Go to a directory, or to a file's directory selecting it",
-            |a, app| jump_to(a.path.into_inner(), a.pane, app),
-        );
+        )
+        .reads();
+        app.commands
+            .register::<ToArgs, _>(
+                ID,
+                "jump.to",
+                "Jump to",
+                "Go to a directory, or to a file's directory selecting it",
+                |a, app| jump_to(a.path.into_inner(), a.pane, app),
+            )
+            .shows();
         app.register_provider(ID, Arc::new(RecentProvider));
         app.registry.places.add(
             ID,

@@ -1,0 +1,14 @@
+# A thumbnailer from outside bibli (ADR-045, ADR-046): binary Netpbm
+# pictures drawn small, as a WebAssembly module that reads them through
+# bibli and answers a PNG.
+id = "netpbm"
+title = "Thumbnails: Netpbm pictures"
+description = "Thumbnails of PPM and PGM pictures, from a WebAssembly module"
+category = "previews"
+capabilities = ["read"]
+
+[run]
+module = "netpbm.wasm"
+
+[[thumbnails]]
+types = ["image/x-portable-pixmap", "image/x-portable-graymap"]

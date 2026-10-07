@@ -266,25 +266,28 @@ impl Plugin for UsagePlugin {
                 t.start(app, pane, path, a.force)?;
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .shows();
         let t = Arc::clone(&this);
-        app.commands.register::<PaneArg, _>(
-            ID,
-            "usage.status",
-            "Disk usage status",
-            "The selected pane's latest size breakdown",
-            move |a, app| {
-                let pane = app.pane_or_active(a.pane);
-                let status = t
-                    .runtime
-                    .lock()
-                    .as_ref()
-                    .filter(|r| !r.requests.get(&pane).is_some_and(CancelToken::is_cancelled))
-                    .and_then(|r| r.shared.statuses.lock().get(&pane).cloned())
-                    .unwrap_or_default();
-                Ok(Outcome::Value(serde_json::to_value(status)?))
-            },
-        );
+        app.commands
+            .register::<PaneArg, _>(
+                ID,
+                "usage.status",
+                "Disk usage status",
+                "The selected pane's latest size breakdown",
+                move |a, app| {
+                    let pane = app.pane_or_active(a.pane);
+                    let status = t
+                        .runtime
+                        .lock()
+                        .as_ref()
+                        .filter(|r| !r.requests.get(&pane).is_some_and(CancelToken::is_cancelled))
+                        .and_then(|r| r.shared.statuses.lock().get(&pane).cloned())
+                        .unwrap_or_default();
+                    Ok(Outcome::Value(serde_json::to_value(status)?))
+                },
+            )
+            .reads();
         for (name, title, release) in [
             ("usage.cancel", "Cancel disk usage scan", false),
             ("usage.release", "Release disk usage view", true),
@@ -316,7 +319,8 @@ impl Plugin for UsagePlugin {
                         shared.changed();
                     }
                     Ok(Outcome::Done)
-                });
+                })
+                .shows();
         }
         app.registry.keymap.add(
             ID,

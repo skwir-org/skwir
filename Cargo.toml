@@ -5,6 +5,9 @@ members = [
     "crates/platform",
     "crates/ui",
     "crates/plugins/*",
+    "crates/plugin-api",
+    "crates/extend",
+    "crates/plugins-outside/*",
     "crates/bench",
     "crates/bibli",
     "crates/alloc",
@@ -15,6 +18,7 @@ members = [
     "crates/archive-worker",
     "crates/mermaid-worker",
     "crates/model-worker",
+    "crates/module-worker",
 ]
 # The native workers link Poppler, MuPDF, GStreamer and libarchive. They are optional
 # at runtime and stay out of the default build so the application, plugins and
@@ -25,12 +29,16 @@ default-members = [
     "crates/platform",
     "crates/ui",
     "crates/plugins/*",
+    "crates/plugin-api",
+    "crates/extend",
+    "crates/plugins-outside/*",
     "crates/bench",
     "crates/bibli",
     "crates/alloc",
     "crates/pdf-worker",
     "crates/mermaid-worker",
     "crates/model-worker",
+    "crates/module-worker",
 ]
 # Toolkit spikes live in their own workspace so their heavy dependency
 # trees never touch the main build.
@@ -74,6 +82,8 @@ bibli-plugin-preview-tables = { path = "crates/plugins/preview-tables" }
 bibli-plugin-preview-playlists = { path = "crates/plugins/preview-playlists" }
 bibli-plugin-mpris = { path = "crates/plugins/mpris" }
 bibli-plugin-control = { path = "crates/plugins/control" }
+bibli-plugin-api = { path = "crates/plugin-api" }
+bibli-extend = { path = "crates/extend" }
 bibli-plugin-preview-structured = { path = "crates/plugins/preview-structured" }
 bibli-plugin-preview-fonts = { path = "crates/plugins/preview-fonts" }
 bibli-plugin-preview-models = { path = "crates/plugins/preview-models" }
@@ -169,6 +179,25 @@ codegen-units = 4
 
 [profile.bench]
 inherits = "release"
+
+# The module helper (`bibli-module-worker`, ADR-046) compiles a plugin's
+# module with Cranelift when it starts: unoptimized, that takes seconds
+# where it takes a fraction of one, longer than bibli waits for a helper
+# to start (a test starts it unoptimized). Only the helper uses these.
+[profile.dev.package.cranelift-codegen]
+opt-level = 2
+[profile.dev.package.cranelift-frontend]
+opt-level = 2
+[profile.dev.package.regalloc2]
+opt-level = 2
+[profile.dev.package.wasmtime-internal-cranelift]
+opt-level = 2
+[profile.dev.package.wasmtime-environ]
+opt-level = 2
+[profile.dev.package.wasmparser]
+opt-level = 2
+[profile.dev.package.wit-component]
+opt-level = 2
 
 # What is shipped (`just dist`): release without the symbols it keeps for
 # flamegraphs, std's included. Function names stay, so a panic's backtrace

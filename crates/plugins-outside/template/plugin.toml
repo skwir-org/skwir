@@ -1,0 +1,23 @@
+# A plugin from outside bibli (docs/plugins/README.md): copy this folder,
+# give it your own id, and build it with `just plugins`.
+id = "word-count"
+title = "Word count"
+description = "How many words a text holds, in Details, and for the selection"
+category = "files"
+capabilities = ["read"]
+
+[run]
+# The module `just plugins` builds; a program would say
+# program = "bin/word-count" instead.
+module = "word_count.wasm"
+
+[[fields]]
+key = "word-count.words"
+label = "Words"
+types = ["text/plain", "text/markdown"]
+
+[[commands]]
+name = "word-count.count"
+title = "Count words"
+description = "How many words the files hold, each and in all: the selection, or the entries given"
+effect = "reads"

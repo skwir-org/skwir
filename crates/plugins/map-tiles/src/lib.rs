@@ -157,6 +157,10 @@ impl Plugin for MapTilesPlugin {
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Previews
     }
+    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
+        use bibli_core::permissions::Capability;
+        bibli_core::permissions::Capabilities::of(&[Capability::Network])
+    }
     fn register(&self, app: &App) {
         app.settings.declare(
             SettingSpec::records(

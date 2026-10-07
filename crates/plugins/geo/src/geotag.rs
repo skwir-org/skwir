@@ -56,14 +56,16 @@ pub(crate) fn register(app: &App) {
         "Geotag pictures from a track",
         "Place the selected pictures along the one selected track (GPX, FIT, any track read): each picture taken while it was recorded gets its position at that moment; proposed for review. Works on a worker: the result arrives as a proposal or a notification",
         |args, app| geotag(app, args),
-    );
+    )
+        .plans();
     app.commands.register::<RemoveArgs, _>(
         ID,
         "geo.remove_location",
         "Remove pictures' locations",
         "Take the location out of the selected pictures (plan); those without one are left as they are",
         |args, app| remove_location(app, args),
-    );
+    )
+        .plans();
     // Offered only where they apply: pictures beside a file of a track
     // format (which one is a track is read when the command runs), and
     // pictures only.

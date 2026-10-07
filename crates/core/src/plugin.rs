@@ -32,6 +32,18 @@ pub trait Plugin: Send + Sync {
     fn on_settings_changed(&self, _app: &App, _keys: &[String]) {}
     /// Release resources the registries do not know about. Called on disable.
     fn on_disable(&self, _app: &App) {}
+    /// What it may do beyond naming and listing files (ADR-044): read what
+    /// files hold, change them, use the network, start programs. A plugin
+    /// built into bibli says it, for the Plugins page; one from outside
+    /// gets what it declares and nothing more, from its host.
+    fn capabilities(&self) -> crate::permissions::Capabilities {
+        crate::permissions::Capabilities::NONE
+    }
+    /// Where a plugin from outside bibli comes from (its folder), said on
+    /// the Plugins page; `None` for one built in.
+    fn origin(&self) -> Option<String> {
+        None
+    }
     /// External tools and workers this plugin uses. Probes run on a worker
     /// when a settings UI asks; they are never called during registration.
     fn requirements(&self) -> Vec<Requirement> {
@@ -169,17 +181,19 @@ pub(crate) fn register(app: &App) {
             Ok(crate::command::Outcome::Done)
         },
     );
-    app.commands.register::<crate::command::NoArgs, _>(
-        "core",
-        "plugins.list",
-        "List plugins",
-        "Every plugin with its title, description and enabled state",
-        |_, app| {
-            Ok(crate::command::Outcome::Value(serde_json::to_value(
-                app.plugins.list(),
-            )?))
-        },
-    );
+    app.commands
+        .register::<crate::command::NoArgs, _>(
+            "core",
+            "plugins.list",
+            "List plugins",
+            "Every plugin with its title, description and enabled state",
+            |_, app| {
+                Ok(crate::command::Outcome::Value(serde_json::to_value(
+                    app.plugins.list(),
+                )?))
+            },
+        )
+        .reads();
 }
 
 /// Summary of a plugin for settings UIs.
@@ -190,6 +204,10 @@ pub struct PluginInfo {
     pub description: String,
     pub category: Category,
     pub enabled: bool,
+    /// What it may do (`Plugin::capabilities`).
+    pub capabilities: crate::permissions::Capabilities,
+    /// Where it comes from, for one from outside bibli.
+    pub origin: Option<String>,
 }
 
 /// Holds the plugins and their enabled state.
@@ -326,6 +344,8 @@ impl PluginHost {
                 description: p.description().into(),
                 category: p.category(),
                 enabled: *e,
+                capabilities: p.capabilities(),
+                origin: p.origin(),
             })
             .collect()
     }

@@ -39,6 +39,8 @@ pub const UI_OWNER: &str = "ui";
 pub const READING_OWNER: &str = "reading";
 /// The stores notes are kept in (ADR-027), shared by several plugins.
 pub const NOTES_OWNER: &str = bibli_core::notes::SETTINGS;
+/// What leaves bibli (ADR-044): the private folders.
+pub const PRIVACY_OWNER: &str = bibli_core::permissions::SETTINGS;
 
 pub const THEME_KEY: &str = "ui.theme";
 /// The icon theme bibli draws with, by its folder's name; Automatic is the
@@ -328,6 +330,7 @@ pub enum Page {
     Appearance,
     Reading,
     Notes,
+    Privacy,
     Plugins,
     Keyboard,
     Plugin(String),
@@ -349,7 +352,7 @@ pub(crate) struct Builtin {
 }
 
 /// The dialog's own pages, in the sidebar's order; plugins' follow.
-static BUILTIN: [Builtin; 6] = [
+static BUILTIN: [Builtin; 7] = [
     Builtin {
         page: Page::General,
         name: "general",
@@ -386,6 +389,15 @@ static BUILTIN: [Builtin; 6] = [
         intro: "Where tags, ratings and comments are kept, so the desktop, a Mac and other applications see them too. Every place is read and merged; each is written as you choose: never, where the file already has notes there, also where a file's volume keeps no attributes (one place is started there, the one its folder already uses first), or for every file edited.",
         // Only while a plugin keeps notes somewhere.
         when_used: true,
+    },
+    Builtin {
+        page: Page::Privacy,
+        name: "privacy",
+        owner: Some(PRIVACY_OWNER),
+        title: "Privacy",
+        icon: "lock",
+        intro: "What leaves this machine. An agent driving bibli, and a plugin from outside bibli, never see a private folder: not its names, not what its files hold. What each plugin may do is said on its line of the Plugins page.",
+        when_used: false,
     },
     Builtin {
         page: Page::Plugins,

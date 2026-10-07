@@ -853,6 +853,10 @@ impl Plugin for PlacesPlugin {
         }
     }
 
+    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
+        use bibli_core::permissions::Capability;
+        bibli_core::permissions::Capabilities::of(&[Capability::Programs])
+    }
     fn register(&self, app: &App) {
         if let Some(previous) = self
             .places
@@ -865,16 +869,18 @@ impl Plugin for PlacesPlugin {
         }
         self.places.populate(app);
         let places = self.places.clone();
-        app.commands.register::<NoArgs, _>(
-            ID,
-            "places.refresh",
-            "Refresh places",
-            "Re-scan user folders, bookmarks, and mounts",
-            move |_, app| {
-                places.populate(app);
-                Ok(Outcome::Done)
-            },
-        );
+        app.commands
+            .register::<NoArgs, _>(
+                ID,
+                "places.refresh",
+                "Refresh places",
+                "Re-scan user folders, bookmarks, and mounts",
+                move |_, app| {
+                    places.populate(app);
+                    Ok(Outcome::Done)
+                },
+            )
+            .shows();
         let (places, watcher) = (self.places.clone(), self.watcher.clone());
         app.commands.register::<BookmarkArgs, _>(
             ID,

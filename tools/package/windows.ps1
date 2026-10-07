@@ -22,7 +22,7 @@ if (-not (Test-Path "$MimeDatabase\globs2")) {
 # The helpers an installer carries (ADR-041): Mermaid and MuPDF are left
 # out, as Linux's packages only suggest them; those linking native
 # libraries (GStreamer, libarchive) wait for their libraries here.
-cargo build --profile dist -p bibli -p bibli-pdf-worker -p bibli-model-worker
+cargo build --profile dist -p bibli -p bibli-pdf-worker -p bibli-model-worker -p bibli-module-worker
 # PDFium, beside the PDF helper, where it finds it (ADR-041): the release
 # tools\package\pdfium.lock pins, checked against its sum.
 $lock = Get-Content tools\package\pdfium.lock | Where-Object { $_ -notmatch '^#' }

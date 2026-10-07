@@ -124,6 +124,14 @@ impl Plugin for GeoPlugin {
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Previews
     }
+    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
+        use bibli_core::permissions::Capability;
+        bibli_core::permissions::Capabilities::of(&[
+            Capability::Read,
+            Capability::Write,
+            Capability::Programs,
+        ])
+    }
     fn register(&self, app: &App) {
         app.previews.register(ID, Arc::new(Provider));
         app.thumbnails.register(ID, Arc::new(thumb::Lines));
@@ -159,7 +167,8 @@ impl Plugin for GeoPlugin {
                 scan.scan(app, app.pane_or_active(args.pane))?;
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .shows();
         let points = Arc::clone(&scanner);
         app.commands.register::<PointsArgs, _>(
             ID,
@@ -170,18 +179,21 @@ impl Plugin for GeoPlugin {
                 let found = points.points(app.pane_or_active(args.pane), args.since);
                 Ok(Outcome::Value(serde_json::to_value(found)?))
             },
-        );
+        )
+        .reads();
         let release = Arc::clone(&scanner);
-        app.commands.register::<PaneArgs, _>(
-            ID,
-            "geo.release",
-            "Forget where the files are",
-            "Stop finding where a pane's files are: its Map view closed",
-            move |args, app| {
-                release.release(app.pane_or_active(args.pane));
-                Ok(Outcome::Done)
-            },
-        );
+        app.commands
+            .register::<PaneArgs, _>(
+                ID,
+                "geo.release",
+                "Forget where the files are",
+                "Stop finding where a pane's files are: its Map view closed",
+                move |args, app| {
+                    release.release(app.pane_or_active(args.pane));
+                    Ok(Outcome::Done)
+                },
+            )
+            .shows();
         app.commands.register::<LocateArgs, _>(
             ID,
             "geo.locate",
@@ -205,7 +217,8 @@ impl Plugin for GeoPlugin {
                     "credit": places::attribution(),
                 })))
             },
-        );
+        )
+        .reads();
         app.commands.register::<AreaArgs, _>(
             ID,
             "geo.search_area",
@@ -230,22 +243,25 @@ impl Plugin for GeoPlugin {
                     }),
                 ))
             },
-        );
-        app.commands.register::<PaneArgs, _>(
-            ID,
-            "geo.search_subfolders",
-            "Search subfolders for places",
-            "Show the pictures and tracks of the folder and all its subfolders",
-            |args, app| {
-                app.dispatch(&bibli_core::command::Invocation::with_args(
-                    "query.search",
-                    &serde_json::json!({
-                        "expr": placeable_query(),
-                        "pane": app.pane_or_active(args.pane),
-                    }),
-                ))
-            },
-        );
+        )
+        .shows();
+        app.commands
+            .register::<PaneArgs, _>(
+                ID,
+                "geo.search_subfolders",
+                "Search subfolders for places",
+                "Show the pictures and tracks of the folder and all its subfolders",
+                |args, app| {
+                    app.dispatch(&bibli_core::command::Invocation::with_args(
+                        "query.search",
+                        &serde_json::json!({
+                            "expr": placeable_query(),
+                            "pane": app.pane_or_active(args.pane),
+                        }),
+                    ))
+                },
+            )
+            .shows();
     }
     fn on_disable(&self, _app: &App) {
         if let Some(scanner) = self.scanner.lock().take() {

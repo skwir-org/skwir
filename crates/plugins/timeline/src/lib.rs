@@ -524,81 +524,87 @@ impl Plugin for TimelinePlugin {
             state: Arc::clone(&self.state),
         });
         let t = Arc::clone(&this);
-        app.commands.register::<HistogramArgs, _>(
-            ID,
-            "timeline.histogram",
-            "Timeline",
-            "Histogram of modification times for the listing, or the subtree in the background",
-            move |a, app| {
-                let bucket = a.bucket.unwrap_or_default();
-                let pane = app.pane_or_active(a.pane);
-                let value = if a.subtree {
-                    serde_json::to_value(t.subtree(app, pane, bucket)?)?
-                } else {
-                    serde_json::to_value(t.listing_histogram(app, pane, bucket)?)?
-                };
-                Ok(Outcome::Value(value))
-            },
-        );
+        app.commands
+            .register::<HistogramArgs, _>(
+                ID,
+                "timeline.histogram",
+                "Timeline",
+                "Histogram of modification times for the listing, or the subtree in the background",
+                move |a, app| {
+                    let bucket = a.bucket.unwrap_or_default();
+                    let pane = app.pane_or_active(a.pane);
+                    let value = if a.subtree {
+                        serde_json::to_value(t.subtree(app, pane, bucket)?)?
+                    } else {
+                        serde_json::to_value(t.listing_histogram(app, pane, bucket)?)?
+                    };
+                    Ok(Outcome::Value(value))
+                },
+            )
+            .reads();
         let t = Arc::clone(&this);
-        app.commands.register::<StatusArgs, _>(
-            ID,
-            "timeline.status",
-            "Timeline status",
-            "The pane's subtree histogram, once the walk is done",
-            move |a, app| {
-                let pane = app.pane_or_active(a.pane);
-                let status = t
-                    .state
-                    .lock()
-                    .panes
-                    .get(&pane)
-                    .map(PaneState::status)
-                    .unwrap_or_default();
-                Ok(Outcome::Value(serde_json::to_value(status)?))
-            },
-        );
+        app.commands
+            .register::<StatusArgs, _>(
+                ID,
+                "timeline.status",
+                "Timeline status",
+                "The pane's subtree histogram, once the walk is done",
+                move |a, app| {
+                    let pane = app.pane_or_active(a.pane);
+                    let status = t
+                        .state
+                        .lock()
+                        .panes
+                        .get(&pane)
+                        .map(PaneState::status)
+                        .unwrap_or_default();
+                    Ok(Outcome::Value(serde_json::to_value(status)?))
+                },
+            )
+            .reads();
         let t = Arc::clone(&this);
-        app.commands.register::<SelectArgs, _>(
-            ID,
-            "timeline.select",
-            "Show files from a period",
-            "Navigate to a query for files modified in [start, end)",
-            move |a, app| {
-                let pane = app.pane_or_active(a.pane);
-                let (dir, hidden, _) = pane_view(app, pane)?;
-                let subtree = a.subtree.unwrap_or_else(|| {
-                    t.state.lock().panes.get(&pane).is_some_and(|ps| ps.subtree)
-                });
-                // Date ranges include the whole end date in the query language;
-                // histogram buckets instead exclude their end boundary.
-                // A bar starts at the first instant of a day of the user's
-                // calendar, the one the query's dates are read on.
-                let cal = Calendar::system();
-                let day = |secs: u64| cal.day_of(UNIX_EPOCH + Duration::from_secs(secs));
-                let mut expr = format!(
-                    "modified>={} modified<{}",
-                    date_string(day(a.start)),
-                    date_string(day(a.end))
-                );
-                if !subtree {
-                    expr.push_str(" depth:1");
-                }
-                if hidden {
-                    expr.push_str(" hidden:true");
-                }
-                // Pass the root as data; the query command owns query-language
-                // quoting, including apostrophes and whitespace in paths.
-                app.dispatch(&Invocation::try_with_args(
-                    "query.search",
-                    &serde_json::json!({
-                        "expr": expr,
-                        "root": PathArg::from(dir),
-                        "pane": pane,
-                    }),
-                )?)
-            },
-        );
+        app.commands
+            .register::<SelectArgs, _>(
+                ID,
+                "timeline.select",
+                "Show files from a period",
+                "Navigate to a query for files modified in [start, end)",
+                move |a, app| {
+                    let pane = app.pane_or_active(a.pane);
+                    let (dir, hidden, _) = pane_view(app, pane)?;
+                    let subtree = a.subtree.unwrap_or_else(|| {
+                        t.state.lock().panes.get(&pane).is_some_and(|ps| ps.subtree)
+                    });
+                    // Date ranges include the whole end date in the query language;
+                    // histogram buckets instead exclude their end boundary.
+                    // A bar starts at the first instant of a day of the user's
+                    // calendar, the one the query's dates are read on.
+                    let cal = Calendar::system();
+                    let day = |secs: u64| cal.day_of(UNIX_EPOCH + Duration::from_secs(secs));
+                    let mut expr = format!(
+                        "modified>={} modified<{}",
+                        date_string(day(a.start)),
+                        date_string(day(a.end))
+                    );
+                    if !subtree {
+                        expr.push_str(" depth:1");
+                    }
+                    if hidden {
+                        expr.push_str(" hidden:true");
+                    }
+                    // Pass the root as data; the query command owns query-language
+                    // quoting, including apostrophes and whitespace in paths.
+                    app.dispatch(&Invocation::try_with_args(
+                        "query.search",
+                        &serde_json::json!({
+                            "expr": expr,
+                            "root": PathArg::from(dir),
+                            "pane": pane,
+                        }),
+                    )?)
+                },
+            )
+            .shows();
         app.registry.keymap.add(
             ID,
             bibli_core::registry::KeyBinding {

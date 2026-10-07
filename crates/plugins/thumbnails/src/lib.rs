@@ -337,6 +337,10 @@ impl Plugin for ThumbnailsPlugin {
         }
     }
 
+    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
+        use bibli_core::permissions::Capability;
+        bibli_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
+    }
     fn register(&self, app: &App) {
         app.settings.declare(SettingSpec::toggle(
             WRITE_CACHE,

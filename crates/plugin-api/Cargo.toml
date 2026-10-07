@@ -1,0 +1,18 @@
+[package]
+name = "bibli-plugin-api"
+description = "bibli: what a plugin from outside bibli is and speaks, as a program or a WebAssembly module (ADR-045, ADR-046)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+# A plugin built as a WebAssembly module: its bindings to bibli's host.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wit-bindgen = { version = "0.57", default-features = false, features = ["macros", "realloc"] }
+
+[lints]
+workspace = true

@@ -33,6 +33,16 @@ pub enum NotifyLevel {
     Error,
 }
 
+/// A question for the user, Allow or Deny (`App::ask`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Question {
+    pub id: u64,
+    /// What is asked, in a line: "An agent asks to run “Undo”".
+    pub title: String,
+    /// What it would do, in full: the command and its arguments.
+    pub detail: String,
+}
+
 /// A message from background work for the UI.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Notification {
@@ -125,6 +135,10 @@ pub struct App {
     /// Plans proposed for review (by plugins whose work finishes later, or by
     /// agents). The UI drains them with `take_proposals`.
     proposals: parking_lot::Mutex<Vec<Plan>>,
+    /// Questions for the user (`ask`), until the window takes them, and
+    /// who waits for each answer.
+    questions: parking_lot::Mutex<Vec<Question>>,
+    answers: parking_lot::Mutex<HashMap<u64, crossbeam_channel::Sender<bool>>>,
     /// Messages from background work for the UI to show.
     notifications: parking_lot::Mutex<Vec<Notification>>,
     /// Commands the window carries out (`ui.*`), dispatched from elsewhere
@@ -175,6 +189,8 @@ impl App {
             previews: Arc::new(crate::preview::Previews::default()),
             tiles: Arc::new(crate::tiles::Tiles::default()),
             proposals: parking_lot::Mutex::new(Vec::new()),
+            questions: parking_lot::Mutex::new(Vec::new()),
+            answers: parking_lot::Mutex::new(HashMap::new()),
             front: parking_lot::Mutex::new(Vec::new()),
             scheduler,
             commands: CommandRegistry::default(),
@@ -216,6 +232,7 @@ impl App {
         crate::tabs::register(&app);
         crate::keymap::declare(&app.settings, app.weak());
         crate::settings::register(&app);
+        crate::permissions::declare(&app.settings);
         crate::plugin::register(&app);
         crate::playing::register(&app);
         Ok(app)
@@ -642,6 +659,57 @@ impl App {
     /// waiting for it, if any, hears so.
     pub fn dismissed(&self, id: crate::op::PlanId) {
         self.executor.dismiss(id);
+    }
+
+    /// Ask the user something the window shows like a proposal, Allow or
+    /// Deny: an agent's call of a command that acts without a plan
+    /// (ADR-044). The receiver hears the answer; it ends unanswered if
+    /// the window closes, and whoever stops waiting `withdraw`s it.
+    pub fn ask(
+        &self,
+        title: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> (u64, crossbeam_channel::Receiver<bool>) {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let (reply, answer) = crossbeam_channel::bounded(1);
+        self.answers.lock().insert(id, reply);
+        self.questions.lock().push(Question {
+            id,
+            title: title.into(),
+            detail: detail.into(),
+        });
+        self.wake();
+        (id, answer)
+    }
+
+    /// Questions asked since the last call, oldest first.
+    pub fn take_questions(&self) -> Vec<Question> {
+        std::mem::take(&mut *self.questions.lock())
+    }
+
+    /// The user answered the question `id`: whether anyone still waited.
+    pub fn answer(&self, id: u64, allowed: bool) -> bool {
+        let reply = self.answers.lock().remove(&id);
+        reply.is_some_and(|reply| reply.send(allowed).is_ok())
+    }
+
+    /// Whoever asked `id` stopped waiting: an answer goes nowhere, and a
+    /// question the window has not taken yet is not shown.
+    pub fn withdraw(&self, id: u64) {
+        self.answers.lock().remove(&id);
+        self.questions.lock().retain(|q| q.id != id);
+    }
+
+    /// Whether anyone still waits for the answer to `id`.
+    pub fn awaited(&self, id: u64) -> bool {
+        self.answers.lock().contains_key(&id)
+    }
+
+    /// The folders whose files never leave this machine, as the settings
+    /// say now (`permissions::Privacy`).
+    pub fn privacy(&self) -> crate::permissions::Privacy {
+        crate::permissions::Privacy::of(&self.settings)
     }
 
     /// Plans proposed since the last call, oldest first.
@@ -1226,7 +1294,8 @@ mod builtin {
                 app.navigate(pane, &Location::parse_os(a.location.as_os_str()))?;
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .shows();
 
         c.register::<PaneArg, _>(
             "core",
@@ -1270,7 +1339,8 @@ mod builtin {
                 }
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .shows();
 
         for (name, title, description, forward) in [
             ("back", "Back", "Go to the previous location", false),
@@ -1300,7 +1370,8 @@ mod builtin {
                     app.show(pane, &loc, |p| p.history_pos = pos)?;
                 }
                 Ok(Outcome::Done)
-            });
+            })
+            .shows();
         }
 
         c.register::<PaneArg, _>(
@@ -1318,7 +1389,8 @@ mod builtin {
                 }
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .shows();
 
         c.register::<TargetsArgs, _>(
             "core",
@@ -1341,7 +1413,8 @@ mod builtin {
                 app.wake();
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .shows();
 
         c.register::<PaneArg, _>(
             "core",
@@ -1424,7 +1497,8 @@ mod builtin {
                 }
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .shows();
 
         c.register::<SortArgs, _>(
             "core",
@@ -1458,7 +1532,8 @@ mod builtin {
                 }
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .shows();
 
         c.register::<FilterArgs, _>(
             "core",
@@ -1473,7 +1548,8 @@ mod builtin {
                 app.wake();
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .shows();
 
         c.register::<PaneArg, _>(
             "core",
@@ -1487,7 +1563,8 @@ mod builtin {
                 }
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .shows();
 
         c.register::<PaneArg, _>(
             "core",
@@ -1508,7 +1585,8 @@ mod builtin {
                 p.selection.cursor = cursor.or(p.selection.cursor);
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .shows();
 
         c.register::<PaneArg, _>(
             "core",
@@ -1532,7 +1610,8 @@ mod builtin {
                 p.selection.cursor = cursor.or(p.selection.cursor);
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .shows();
 
         c.register::<PaneArg, _>(
             "core",
@@ -1546,7 +1625,8 @@ mod builtin {
                 }
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .shows();
 
         c.register::<SweepArgs, _>(
             "core",
@@ -1563,7 +1643,8 @@ mod builtin {
                 p.selection.sweep_start(a.unset, &order);
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .shows();
 
         c.register::<PaneArg, _>(
             "core",
@@ -1577,7 +1658,8 @@ mod builtin {
                 }
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .shows();
 
         c.register::<ExpandArgs, _>(
             "core",
@@ -1631,7 +1713,8 @@ mod builtin {
                 app.wake();
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .shows();
 
         c.register::<HydrateArgs, _>(
             "core",
@@ -1651,7 +1734,8 @@ mod builtin {
                 }
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .shows();
 
         c.register::<EntriesArgs, _>(
             "core",
@@ -1698,7 +1782,8 @@ mod builtin {
                     "entries": entries,
                 })))
             },
-        );
+        )
+        .reads();
 
         c.register::<RenameArgs, _>(
             "core",
@@ -1720,7 +1805,8 @@ mod builtin {
                     })],
                 )))
             },
-        );
+        )
+        .plans();
 
         c.register::<DestArgs, _>(
             "core",
@@ -1742,7 +1828,8 @@ mod builtin {
                     },
                 )
             },
-        );
+        )
+        .plans();
 
         c.register::<DestArgs, _>(
             "core",
@@ -1759,7 +1846,8 @@ mod builtin {
                     |e| Box::new(op::Copy::from_settings(e, dest.clone(), &app.settings)),
                 )
             },
-        );
+        )
+        .plans();
 
         c.register::<TargetsArgs, _>(
             "core",
@@ -1771,7 +1859,8 @@ mod builtin {
                     Box::new(op::Trash { entry: e })
                 })
             },
-        );
+        )
+        .plans();
 
         c.register::<TargetsArgs, _>(
             "core",
@@ -1783,7 +1872,8 @@ mod builtin {
                     Box::new(op::Delete { entry: e })
                 })
             },
-        );
+        )
+        .plans();
 
         c.register::<MkdirArgs, _>(
             "core",
@@ -1802,7 +1892,8 @@ mod builtin {
                     })],
                 )))
             },
-        );
+        )
+        .plans();
 
         c.register::<MkdirArgs, _>(
             "core",
@@ -1831,7 +1922,8 @@ mod builtin {
                     })],
                 )))
             },
-        );
+        )
+        .plans();
 
         c.register::<PlanDiffArgs, _>(
             "core",
@@ -1842,7 +1934,8 @@ mod builtin {
                 let plan = Plan::from_data(&a.plan, &app.ops)?;
                 Ok(Outcome::Value(serde_json::to_value(plan.diff())?))
             },
-        );
+        )
+        .reads();
 
         c.register::<ApplyPlanArgs, _>(
             "core",
@@ -1850,7 +1943,8 @@ mod builtin {
             "Apply plan",
             "Apply a plan given as data (plan): as any command's, the caller applies it, at once for the user's own gesture, after review for an agent",
             |a, app| Ok(Outcome::Plan(Plan::from_data(&a.plan, &app.ops)?)),
-        );
+        )
+        .plans();
 
         c.register::<NoArgs, _>(
             "core",
@@ -1884,7 +1978,8 @@ mod builtin {
             "List commands",
             "Return every registered command with its argument schema",
             |_, app| Ok(Outcome::Value(serde_json::to_value(app.commands.list())?)),
-        );
+        )
+        .reads();
     }
 }
 

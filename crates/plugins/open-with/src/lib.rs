@@ -825,6 +825,10 @@ impl Plugin for OpenWithPlugin {
         bibli_core::plugin::Category::Desktop
     }
 
+    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
+        use bibli_core::permissions::Capability;
+        bibli_core::permissions::Capabilities::of(&[Capability::Programs])
+    }
     fn register(&self, app: &App) {
         let cache = Arc::clone(&self.catalog);
         app.commands.register::<OpenArgs, _>(
@@ -863,7 +867,8 @@ impl Plugin for OpenWithPlugin {
             "List applications for the selection",
             "List the applications that open the selected entries (or the pane's folder with `here`), recommended first, each with the `open_with` invocation that opens them",
             move |a, app| choices(a, &cache, app),
-        );
+        )
+        .reads();
         let cache = Arc::clone(&self.catalog);
         app.commands.register::<OpenWithArgs, _>(
             ID,
@@ -942,7 +947,8 @@ impl Plugin for OpenWithPlugin {
             "Name the default application in the context menu",
             "The context menu's Open for the selection, naming the default application its files share; no items when the selection's types or the applications are not known yet. Answers from memory",
             move |a, app| menu(a.pane, &cache, app),
-        );
+        )
+        .reads();
         app.registry.menu_sources.add(
             ID,
             MenuSource {

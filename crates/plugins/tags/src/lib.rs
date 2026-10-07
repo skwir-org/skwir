@@ -526,6 +526,14 @@ impl Plugin for TagsPlugin {
         clippy::too_many_lines,
         reason = "one registration, read top to bottom"
     )]
+    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
+        use bibli_core::permissions::Capability;
+        bibli_core::permissions::Capabilities::of(&[
+            Capability::Read,
+            Capability::Write,
+            Capability::Programs,
+        ])
+    }
     fn register(&self, app: &App) {
         let lifetime = app.lifetime().child();
         if let Some(previous) = self.lifetime.lock().replace(lifetime.clone()) {
@@ -778,63 +786,69 @@ impl Plugin for TagsPlugin {
         ));
 
         let v = Arc::clone(&vocabulary);
-        app.commands.register::<TagsArgs, _>(
-            ID,
-            "tags.set",
-            "Set tags",
-            "Replace the selection's tags (plan)",
-            move |a, app| {
-                let tags = parse_tags(&a.tags.join(","));
-                v.used(&tags);
-                let title = if tags.is_empty() {
-                    "remove tags".to_owned()
-                } else {
-                    format!("set tags {}", tags.join(", "))
-                };
-                per_entry(app.targets(a.pane, a.entries)?, title, |r| {
-                    let current = notes_of(app, &r.path).tag_names();
-                    (current != tags).then(|| app.notes.edit(r).tags(tags.clone()))
-                })
-            },
-        );
+        app.commands
+            .register::<TagsArgs, _>(
+                ID,
+                "tags.set",
+                "Set tags",
+                "Replace the selection's tags (plan)",
+                move |a, app| {
+                    let tags = parse_tags(&a.tags.join(","));
+                    v.used(&tags);
+                    let title = if tags.is_empty() {
+                        "remove tags".to_owned()
+                    } else {
+                        format!("set tags {}", tags.join(", "))
+                    };
+                    per_entry(app.targets(a.pane, a.entries)?, title, |r| {
+                        let current = notes_of(app, &r.path).tag_names();
+                        (current != tags).then(|| app.notes.edit(r).tags(tags.clone()))
+                    })
+                },
+            )
+            .plans();
         let v = Arc::clone(&vocabulary);
-        app.commands.register::<TagsArgs, _>(
-            ID,
-            "tags.add",
-            "Add tags",
-            "Add tags to the selection (plan)",
-            move |a, app| {
-                edit_plan(
-                    app,
-                    &v,
-                    EditArgs {
-                        add: a.tags,
-                        remove: Vec::new(),
-                        entries: a.entries,
-                        pane: a.pane,
-                    },
-                )
-            },
-        );
+        app.commands
+            .register::<TagsArgs, _>(
+                ID,
+                "tags.add",
+                "Add tags",
+                "Add tags to the selection (plan)",
+                move |a, app| {
+                    edit_plan(
+                        app,
+                        &v,
+                        EditArgs {
+                            add: a.tags,
+                            remove: Vec::new(),
+                            entries: a.entries,
+                            pane: a.pane,
+                        },
+                    )
+                },
+            )
+            .plans();
         let v = Arc::clone(&vocabulary);
-        app.commands.register::<TagsArgs, _>(
-            ID,
-            "tags.remove",
-            "Remove tags",
-            "Remove tags from the selection (plan)",
-            move |a, app| {
-                edit_plan(
-                    app,
-                    &v,
-                    EditArgs {
-                        add: Vec::new(),
-                        remove: a.tags,
-                        entries: a.entries,
-                        pane: a.pane,
-                    },
-                )
-            },
-        );
+        app.commands
+            .register::<TagsArgs, _>(
+                ID,
+                "tags.remove",
+                "Remove tags",
+                "Remove tags from the selection (plan)",
+                move |a, app| {
+                    edit_plan(
+                        app,
+                        &v,
+                        EditArgs {
+                            add: Vec::new(),
+                            remove: a.tags,
+                            entries: a.entries,
+                            pane: a.pane,
+                        },
+                    )
+                },
+            )
+            .plans();
         let v = Arc::clone(&vocabulary);
         app.commands.register::<EditArgs, _>(
             ID,
@@ -842,7 +856,8 @@ impl Plugin for TagsPlugin {
             "Edit tags",
             "Add some tags to the selection and remove others, as one plan: each entry keeps its other tags",
             move |a, app| edit_plan(app, &v, a),
-        );
+        )
+        .plans();
         let v = Arc::clone(&vocabulary);
         app.commands.register::<ToggleArgs, _>(
             ID,
@@ -873,7 +888,8 @@ impl Plugin for TagsPlugin {
                     },
                 )
             },
-        );
+        )
+        .plans();
         let v = Arc::clone(&vocabulary);
         app.commands.register::<PaneArgs, _>(
             ID,
@@ -881,7 +897,8 @@ impl Plugin for TagsPlugin {
             "Tags of the selection",
             "`{ items, tags: [{ name, count, color? }], known }`: the selection's tags, read from its files, with how many carry each and the color a file gives one (a Finder tag's), and the tags known, those pinned first, then the most recently used (blocks: dispatch from a worker)",
             move |a, app| Ok(Outcome::Value(selected(app, &v, a)?)),
-        );
+        )
+        .reads();
         // A tag's pin and color follow it renamed on every file.
         let follows = follow::Ctx::new(app, sidebar.clone());
         follow::register(app, &follows);
@@ -897,7 +914,8 @@ impl Plugin for TagsPlugin {
                 v.used(&parse_tags(&a.to));
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .plans();
         let (everywhere, f) = (lifetime.clone(), follows.clone());
         app.commands.register::<MoveArgs, _>(
             ID,
@@ -916,7 +934,8 @@ impl Plugin for TagsPlugin {
                 )?;
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .plans();
         let (everywhere, f) = (lifetime.clone(), follows.clone());
         app.commands.register::<DeleteArgs, _>(
             ID,
@@ -928,7 +947,8 @@ impl Plugin for TagsPlugin {
                 everywhere::start(app, &everywhere, &f, from, None, root_of(a.root))?;
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .plans();
         // What gestures do in a tag location (`browse.rs`).
         let (everywhere, f) = (lifetime.clone(), follows.clone());
         app.commands.register::<browse::DropArgs, _>(
@@ -937,7 +957,8 @@ impl Plugin for TagsPlugin {
             "Drop on a tag",
             "Give files dropped or pasted on a tag location (`location`) its tag: a pane's selection (`pane`) or `entries`; with `move`, out of the tag location they come from (the pane's, or `from`). Tags dropped go into it, a plan to review",
             move |a, app| browse::drop(app, &everywhere, &f, a),
-        );
+        )
+        .plans();
         let (everywhere, f) = (lifetime.clone(), follows);
         app.commands.register::<browse::UntagArgs, _>(
             ID,
@@ -945,7 +966,8 @@ impl Plugin for TagsPlugin {
             "Remove from tag",
             "Take the tag a tag location shows (the pane's, or `location`) off the selected files; tags selected there are taken off every file, a plan to review. What Delete does in a tag location",
             move |a, app| browse::untag(app, &everywhere, &f, &a),
-        );
+        )
+        .plans();
         {
             let places = Arc::clone(&places);
             app.commands.register::<browse::NewArgs, _>(
@@ -962,14 +984,16 @@ impl Plugin for TagsPlugin {
             "Narrow a tag location",
             "Show, in the tag location the pane shows, only the files that also have a tag (`facet` `also_tag`), none that have one (`not_tag`), of a `kind`, `modified` a year, or every file within the tag (`deep`); `on` false takes it back, omitted it switches",
             |a, app| browse::narrow(app, &a),
-        );
+        )
+        .shows();
         app.commands.register::<browse::PillArgs, _>(
             ID,
             "tags.pill",
             "A tag, here",
             "A tag of the sidebar clicked with Shift (`how` `also`: the files shown that have it too) or Alt (`here`: its files in the folder shown)",
             |a, app| browse::pill(app, &a),
-        );
+        )
+        .shows();
         app.commands.register::<browse::PaneOnly, _>(
             ID,
             "tags.keep",
@@ -985,7 +1009,8 @@ impl Plugin for TagsPlugin {
                 "Copy a tag into a folder",
                 "Make in `dest` a folder of the files a tag location (`location`) lists, named as its tag, with a folder inside for each tag within it: a plan proposed for review. What a tag dropped or pasted in a folder does",
                 move |a, app| browse::export(app, &places, a),
-            );
+            )
+        .plans();
         }
         {
             let places = Arc::clone(&places);
@@ -1002,7 +1027,8 @@ impl Plugin for TagsPlugin {
                         .ok_or_else(|| anyhow::anyhow!("no home folder"))?;
                     Ok(Outcome::Value(places.counted(&root)))
                 },
-            );
+            )
+        .reads();
         }
         app.commands.register::<browse::TagMenuArgs, _>(
             ID,
@@ -1010,14 +1036,16 @@ impl Plugin for TagsPlugin {
             "A tag's menu",
             "The items of a tag's menu where it is shown: its chip in Details (tags), its pill in the sidebar (location). Answers from memory",
             |a, app| Ok(browse::tag_menu(app, a)),
-        );
+        )
+        .reads();
         app.commands.register::<browse::PaneOnly, _>(
             ID,
             "tags.place_menu",
             "Tags' menu",
             "The context menu's items for the tags selected in a tag location. Answers from memory",
             |a, app| Ok(browse::place_menu(app, a)),
-        );
+        )
+        .reads();
         let (colors, color_sidebar) = (lifetime.clone(), sidebar.clone());
         app.commands.register::<ColorArgs, _>(
             ID,
@@ -1039,22 +1067,24 @@ impl Plugin for TagsPlugin {
                 Ok(Outcome::Done)
             },
         );
-        app.commands.register::<PaneArgs, _>(
-            ID,
-            "tags.menu",
-            "Comment menu",
-            "The context menu's Comment…, holding the selected entry's comment",
-            |a, app| {
-                let pane = app.pane_or_active(a.pane);
-                let items = remembered_comment(app, pane).map(|comment| MenuItem {
-                    submenu: Some("Notes".into()),
-                    ..menu_item("Comment…", ask_comment(Some(&comment)), 160, "comment")
-                });
-                Ok(Outcome::Value(
-                    serde_json::json!({ "items": items.into_iter().collect::<Vec<_>>() }),
-                ))
-            },
-        );
+        app.commands
+            .register::<PaneArgs, _>(
+                ID,
+                "tags.menu",
+                "Comment menu",
+                "The context menu's Comment…, holding the selected entry's comment",
+                |a, app| {
+                    let pane = app.pane_or_active(a.pane);
+                    let items = remembered_comment(app, pane).map(|comment| MenuItem {
+                        submenu: Some("Notes".into()),
+                        ..menu_item("Comment…", ask_comment(Some(&comment)), 160, "comment")
+                    });
+                    Ok(Outcome::Value(
+                        serde_json::json!({ "items": items.into_iter().collect::<Vec<_>>() }),
+                    ))
+                },
+            )
+            .reads();
         app.commands.register::<ListArgs, _>(
             ID,
             "tags.list",
@@ -1096,7 +1126,8 @@ impl Plugin for TagsPlugin {
                 let counts: BTreeMap<String, usize> = counts.into_values().collect();
                 Ok(Outcome::Value(serde_json::to_value(counts)?))
             },
-        );
+        )
+        .reads();
         app.registry.keymap.add(
             ID,
             KeyBinding {

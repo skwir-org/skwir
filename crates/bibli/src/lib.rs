@@ -12,6 +12,17 @@ pub mod cli;
 /// bindings, menus and places, and can be toggled at runtime through
 /// `plugins.<id>.enabled` in settings.
 pub fn plugins() -> Vec<Arc<dyn Plugin>> {
+    let mut plugins = built_in();
+    // Then those from outside bibli its folders of plugins hold, each
+    // off until the user turns it on (ADR-045).
+    let taken: Vec<&str> = plugins.iter().map(|plugin| plugin.id()).collect();
+    let outside = bibli_extend::discover(&bibli_extend::folders(), &taken);
+    plugins.extend(outside.into_iter().map(|plugin| plugin as Arc<dyn Plugin>));
+    plugins
+}
+
+/// The plugins built into bibli, in registration order.
+fn built_in() -> Vec<Arc<dyn Plugin>> {
     vec![
         Arc::new(bibli_plugin_ops_basic::OpsBasicPlugin::default()),
         Arc::new(bibli_plugin_open_with::OpenWithPlugin::default()),

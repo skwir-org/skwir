@@ -145,33 +145,36 @@ pub(crate) fn register(app: &crate::App) {
             app.wake();
             Ok(crate::command::Outcome::Done)
         },
-    );
-    app.commands.register::<crate::command::NoArgs, _>(
-        "core",
-        "player.now",
-        "What is playing",
-        "The track that plays, its state and where it stands, or null",
-        |_, app| {
-            Ok(crate::command::Outcome::Value(app.player.get().map_or(
-                serde_json::Value::Null,
-                |now| {
-                    serde_json::json!({
-                        "path": crate::os_path::PathArg::from(now.path.as_path()),
-                        "title": now.title,
-                        "artist": now.artist,
-                        "album": now.album,
-                        "status": now.status,
-                        "position": now.position_now(),
-                        "duration": now.duration,
-                        "volume": now.volume,
-                        "can_next": now.can_next,
-                        "can_previous": now.can_previous,
-                        "pinned": now.pinned,
-                    })
-                },
-            )))
-        },
-    );
+    )
+        .shows();
+    app.commands
+        .register::<crate::command::NoArgs, _>(
+            "core",
+            "player.now",
+            "What is playing",
+            "The track that plays, its state and where it stands, or null",
+            |_, app| {
+                Ok(crate::command::Outcome::Value(app.player.get().map_or(
+                    serde_json::Value::Null,
+                    |now| {
+                        serde_json::json!({
+                            "path": crate::os_path::PathArg::from(now.path.as_path()),
+                            "title": now.title,
+                            "artist": now.artist,
+                            "album": now.album,
+                            "status": now.status,
+                            "position": now.position_now(),
+                            "duration": now.duration,
+                            "volume": now.volume,
+                            "can_next": now.can_next,
+                            "can_previous": now.can_previous,
+                            "pinned": now.pinned,
+                        })
+                    },
+                )))
+            },
+        )
+        .reads();
 }
 
 #[derive(Default)]

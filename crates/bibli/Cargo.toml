@@ -46,6 +46,7 @@ bibli-plugin-preview-tables.workspace = true
 bibli-plugin-preview-playlists.workspace = true
 bibli-plugin-mpris.workspace = true
 bibli-plugin-control.workspace = true
+bibli-extend.workspace = true
 bibli-plugin-preview-structured.workspace = true
 bibli-plugin-preview-fonts.workspace = true
 bibli-plugin-preview-models.workspace = true
@@ -108,6 +109,7 @@ assets = [
     ["target/release/bibli-pdf-worker", "usr/lib/bibli/", "755"],
     ["target/release/bibli-archive-worker", "usr/lib/bibli/", "755"],
     ["target/release/bibli-model-worker", "usr/lib/bibli/", "755"],
+    ["target/release/bibli-module-worker", "usr/lib/bibli/", "755"],
     ["../../target/pdfium/libpdfium.so", "usr/lib/bibli/", "644"],
     ["../../target/pdfium/licenses/pdfium/*", "usr/share/doc/bibli/pdfium/", "644"],
     ["../../tools/package/linux/bibli.desktop", "usr/share/applications/", "644"],
@@ -174,6 +176,7 @@ assets = [
     { source = "target/release/bibli-pdf-worker", dest = "/usr/libexec/bibli/bibli-pdf-worker", mode = "755" },
     { source = "target/release/bibli-archive-worker", dest = "/usr/libexec/bibli/bibli-archive-worker", mode = "755" },
     { source = "target/release/bibli-model-worker", dest = "/usr/libexec/bibli/bibli-model-worker", mode = "755" },
+    { source = "target/release/bibli-module-worker", dest = "/usr/libexec/bibli/bibli-module-worker", mode = "755" },
     { source = "../../target/pdfium/libpdfium.so", dest = "/usr/libexec/bibli/libpdfium.so", mode = "755" },
     { source = "../../target/pdfium/licenses/pdfium/*", dest = "/usr/share/licenses/bibli/pdfium/", mode = "644" },
     { source = "../../tools/package/linux/bibli.desktop", dest = "/usr/share/applications/bibli.desktop", mode = "644" },

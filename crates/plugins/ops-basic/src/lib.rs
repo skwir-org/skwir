@@ -391,6 +391,10 @@ impl Plugin for OpsBasicPlugin {
         bibli_core::plugin::Category::Files
     }
 
+    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
+        use bibli_core::permissions::Capability;
+        bibli_core::permissions::Capabilities::of(&[Capability::Write, Capability::Programs])
+    }
     fn register(&self, app: &App) {
         let cb = Arc::clone(&self.clipboard);
         app.commands.register::<TargetsArgs, _>(
@@ -444,13 +448,15 @@ impl Plugin for OpsBasicPlugin {
             },
         );
         let cb = Arc::clone(&self.clipboard);
-        app.commands.register::<PaneArg, _>(
-            ID,
-            "clipboard_paste",
-            "Paste",
-            "Copy or move the clipboard into the current directory (plan)",
-            move |a, app| paste(&cb, a.pane, app),
-        );
+        app.commands
+            .register::<PaneArg, _>(
+                ID,
+                "clipboard_paste",
+                "Paste",
+                "Copy or move the clipboard into the current directory (plan)",
+                move |a, app| paste(&cb, a.pane, app),
+            )
+            .plans();
         let cb = Arc::clone(&self.clipboard);
         let weak = app.weak();
         app.executor.observe(

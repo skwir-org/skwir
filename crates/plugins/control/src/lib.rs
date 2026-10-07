@@ -14,14 +14,16 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use bibli_core::app::NotifyLevel;
-use bibli_core::command::{Invocation, NoArgs, Outcome};
+use bibli_core::command::{Effect, Invocation, NoArgs, Outcome};
 use bibli_core::op::Verdict;
+use bibli_core::permissions::{self, AgentGate};
 use bibli_core::plugin::{Category, Plugin};
 use bibli_core::{App, Plan};
 use parking_lot::Mutex;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
     ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
+    ToolAnnotations,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData as McpError, RoleServer, ServerHandler, ServiceExt as _};
@@ -135,7 +137,8 @@ impl Plugin for Control {
                     "script": "bibli cmd [--apply] <command> [<arguments, a JSON object>]",
                 })))
             },
-        );
+        )
+        .reads();
         let Some(address) = address else {
             tracing::warn!("no channel for agents and scripts on this system");
             return;
@@ -256,7 +259,9 @@ struct Tools {
 }
 
 impl Tools {
-    /// Every command, as a tool.
+    /// Every command an agent may run, as a tool (ADR-044): one that
+    /// answers the user's own dialogs is left out; one that acts without a
+    /// plan says it asks the user first; one that changes nothing says so.
     fn tools(&self) -> ListToolsResult {
         let Some(app) = self.app.upgrade() else {
             return ListToolsResult::default();
@@ -265,14 +270,27 @@ impl Tools {
             .commands
             .list()
             .into_iter()
-            .map(|spec| {
+            .filter_map(|spec| {
+                let gate = permissions::for_agent(&spec);
+                if gate == AgentGate::Refused {
+                    return None;
+                }
+                let description = if gate == AgentGate::Asks {
+                    format!(
+                        "{} (asks the user in bibli's window first)",
+                        spec.description
+                    )
+                } else {
+                    spec.description.clone()
+                };
                 let mut tool = Tool::new(
                     tool_name(&spec.name),
-                    spec.description.clone(),
+                    description,
                     input_schema(&spec.args_schema),
                 );
                 tool.title = Some(spec.title.clone());
-                tool
+                let read_only = matches!(spec.effect, Effect::Reads | Effect::Shows);
+                Some(tool.annotate(ToolAnnotations::new().read_only(read_only)))
             })
             .collect();
         ListToolsResult::with_all_items(tools)
@@ -370,6 +388,12 @@ fn failed(message: &str) -> CallToolResult {
 /// the clipboard, or what became of its plan, as `mode` says. Blocks while
 /// the user reviews a plan, until `cancelled` says to stop waiting.
 /// Shared by the window's tools and `bibli cmd` without a window.
+///
+/// A call that proposes is an agent's, which goes through the permission
+/// layer (ADR-044): what it names must not be private, a command that
+/// acts without a plan waits for the user to allow it, one that answers
+/// the user's own dialogs is refused, and what it answers names nothing
+/// private. A call that prints or applies is the user's own (`bibli cmd`).
 pub fn run(
     app: &App,
     invocation: &Invocation,
@@ -377,6 +401,97 @@ pub fn run(
     cancelled: &dyn Fn() -> bool,
 ) -> anyhow::Result<Answer> {
     app.commands.check(invocation)?;
+    if mode != PlanMode::Propose {
+        return dispatched(app, invocation, mode, cancelled);
+    }
+    let privacy = app.privacy();
+    let mut check = privacy.checker();
+    let answer = admit(app, invocation, &mut check, cancelled)
+        .and_then(|()| dispatched(app, invocation, mode, cancelled));
+    match answer {
+        Ok(answer) => Ok(Answer {
+            value: check.redact(answer.value),
+            failed: answer.failed,
+        }),
+        // An error can name what the command touched.
+        Err(error) => match check.redact(Value::String(format!("{error:#}"))) {
+            Value::String(said) => Err(anyhow::anyhow!(said)),
+            _ => Err(error),
+        },
+    }
+}
+
+/// Whether an agent may run `invocation` (ADR-044): nothing it names is
+/// private, and what the command does allows it, the user asked first
+/// for a command that acts without a plan.
+fn admit(
+    app: &App,
+    invocation: &Invocation,
+    check: &mut permissions::Checker<'_>,
+    cancelled: &dyn Fn() -> bool,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        check.named_in(&invocation.args).is_none(),
+        "this names a private folder, which bibli keeps from agents (Settings, Privacy)"
+    );
+    let spec = app
+        .commands
+        .get(&invocation.name)
+        .ok_or_else(|| anyhow::anyhow!("unknown command `{}`", invocation.name))?;
+    match permissions::for_agent(&spec) {
+        AgentGate::Runs => Ok(()),
+        AgentGate::Refused => anyhow::bail!(
+            "`{}` answers the user in bibli's window: only the user runs it",
+            spec.name
+        ),
+        AgentGate::Asks => allowed(app, &spec, invocation, cancelled),
+    }
+}
+
+/// Ask the user, in the window, whether the agent may run `invocation`,
+/// and wait for the answer.
+fn allowed(
+    app: &App,
+    spec: &bibli_core::command::CommandSpec,
+    invocation: &Invocation,
+    cancelled: &dyn Fn() -> bool,
+) -> anyhow::Result<()> {
+    let arguments = match &invocation.args {
+        Value::Object(object) if object.is_empty() => String::new(),
+        args => serde_json::to_string_pretty(args).unwrap_or_default(),
+    };
+    let (id, answer) = app.ask(
+        format!("An agent asks to run “{}”", spec.title),
+        format!("{}: {}\n{arguments}", spec.name, spec.description)
+            .trim_end()
+            .to_owned(),
+    );
+    let deadline = std::time::Instant::now() + PATIENCE;
+    loop {
+        match answer.recv_timeout(Duration::from_millis(200)) {
+            Ok(true) => return Ok(()),
+            Ok(false) => anyhow::bail!("the user did not allow it"),
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                anyhow::bail!("bibli closed before the user answered")
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Timeout)
+                if cancelled() || std::time::Instant::now() > deadline =>
+            {
+                app.withdraw(id);
+                anyhow::bail!("the user did not answer: ask again when they are there")
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+        }
+    }
+}
+
+/// `invocation` run, and what came of it.
+fn dispatched(
+    app: &App,
+    invocation: &Invocation,
+    mode: PlanMode,
+    cancelled: &dyn Fn() -> bool,
+) -> anyhow::Result<Answer> {
     let outcome = match app.dispatch(invocation) {
         // The selection is the window's: a script or an agent names files.
         Err(error) if bibli_core::command::is_nothing_selected(&error) => {

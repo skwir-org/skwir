@@ -54,6 +54,10 @@ impl Plugin for PreviewPlugin {
                 .requirement("3D models without a stored picture drawn and measured"),
         ]
     }
+    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
+        use bibli_core::permissions::Capability;
+        bibli_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
+    }
     fn register(&self, app: &App) {
         app.previews.register(ID, Arc::new(Provider));
         app.thumbnails.register(ID, Arc::new(Pictures));

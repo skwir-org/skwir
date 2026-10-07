@@ -8,7 +8,7 @@
 //! next wakes, on the pane active then.
 
 use bibli_core::app::App;
-use bibli_core::command::{Invocation, NoArgs, Outcome};
+use bibli_core::command::{Effect, Invocation, NoArgs, Outcome};
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 
@@ -366,6 +366,153 @@ use args::{
     Scrub, Settings, Sort, Split, Submit, TagsPrompt, Text, Unlock, Url, View,
 };
 
+/// The window's commands an agent may run (ADR-044): they change only
+/// what the window shows, or open a prompt the user answers.
+const SHOWS: &[&str] = &[
+    "ui.cursor",
+    "ui.cursor_pick",
+    "ui.cursor_toggle",
+    "ui.context_menu",
+    "ui.open_in_tab",
+    "ui.find",
+    "ui.find_next",
+    "ui.sort",
+    "ui.view",
+    "ui.columns",
+    "ui.columns_reset",
+    "ui.zoom",
+    "ui.grid_fill",
+    "ui.narrow_folders",
+    "ui.toggle_hidden",
+    "ui.peek",
+    "ui.peek_close",
+    "ui.usage_refresh",
+    "ui.rename_prompt",
+    "ui.mkdir_prompt",
+    "ui.new_file_prompt",
+    "ui.create_here",
+    "ui.rename_bulk_prompt",
+    "ui.rename_bulk_next",
+    "ui.rename_bulk_prev",
+    "ui.rename_bulk_case",
+    "ui.tags_prompt",
+    "ui.focus_address",
+    "ui.search",
+    "ui.search_chip",
+    "ui.history_menu",
+    "ui.subfolder_menu",
+    "ui.parents_menu",
+    "ui.reveal",
+    "ui.jump",
+    "ui.palette",
+    "ui.list_move",
+    "ui.shortcuts",
+    "ui.settings",
+    "ui.settings_close",
+    "ui.settings_next",
+    "ui.settings_prev",
+    "ui.settings_search",
+    "ui.settings_page",
+    "ui.focus_pane",
+    "ui.focus_other_pane",
+    "ui.focus_sidebar",
+    "ui.toggle_sidebar",
+    "ui.toolbar_menu",
+    "ui.toolbar_close",
+    "ui.toolbar_next",
+    "ui.toolbar_prev",
+    "ui.toolbar_first",
+    "ui.toolbar_last",
+    "ui.split",
+    "ui.layout",
+    "ui.timeline",
+    "ui.timeline_bucket",
+    "ui.timeline_subtree",
+    "ui.terminal",
+    "ui.terminal_page",
+    "ui.terminal_links",
+    "ui.menu_up",
+    "ui.menu_down",
+    "ui.menu_first",
+    "ui.menu_last",
+    "ui.menu_expand",
+    "ui.menu_collapse",
+    "ui.menu_close",
+    "ui.toggle_preview",
+    "ui.preview_close",
+    "ui.preview_details",
+    "ui.preview_menu",
+    "ui.preview_page",
+    "ui.preview_seek",
+    "ui.preview_zoom",
+    "ui.inspect",
+    "ui.printed_pages",
+    "ui.full_width",
+    "ui.note",
+    "ui.reader_continuous",
+    "ui.reader_page",
+    "ui.preview_goto",
+    "ui.reader_page_submit",
+    "ui.reader_page_cancel",
+    "ui.preview_select_all",
+    "ui.preview_contents",
+    "ui.preview_find",
+    "ui.preview_find_close",
+    "ui.preview_match",
+    "ui.reader_search",
+    "ui.media_control",
+    "ui.media_pin",
+    "ui.media_keep_playing",
+    "ui.media_autoplay",
+    "ui.media_continue",
+    "ui.media_step",
+    "ui.media_scrub",
+    "ui.media_fullscreen",
+    "ui.media_controls",
+    "ui.media_escape",
+    "ui.player",
+    "ui.player_volume",
+    "ui.map_pan",
+    "ui.map_view_fit",
+    "ui.map_view_spread",
+    "ui.map_view_search_area",
+];
+
+/// The window's commands an agent's call runs only once the user allows
+/// it: they reach beyond the window (a program, the clipboard, an
+/// address), change how the sidebar is arranged, or prompt the user for
+/// a command the agent named.
+const ACTS: &[&str] = &[
+    "ui.ask",
+    "ui.choose",
+    "ui.unlock_prompt",
+    "ui.open_url",
+    "ui.preview_open_external",
+    "ui.map_open",
+    "ui.copy_text",
+    "ui.preview_copy",
+    "ui.preview_copy_path",
+    "ui.terminal_copy",
+    "ui.reader_link",
+    "ui.sidebar_place",
+    "ui.sidebar_section",
+    "ui.quit",
+];
+
+/// What a window command does for an agent: every one in neither list
+/// answers a dialog or presses for the user's hand (a review's Apply, a
+/// menu's item, the focused button, a key in the sidebar or the
+/// settings), the user's alone.
+fn effect_of(name: &str) -> Effect {
+    if SHOWS.contains(&name) {
+        Effect::Shows
+    } else if ACTS.contains(&name) {
+        Effect::Acts
+    } else {
+        Effect::UserOnly
+    }
+}
+
 /// Declare `name`, carried out by the window.
 fn declare<A: DeserializeOwned + JsonSchema + 'static>(
     app: &App,
@@ -380,7 +527,8 @@ fn declare<A: DeserializeOwned + JsonSchema + 'static>(
                 args,
             });
             Ok(Outcome::Done)
-        });
+        })
+        .effect(effect_of(name));
 }
 
 /// Declare every `ui.*` command in the core's registry.
@@ -1044,7 +1192,35 @@ pub fn declare_all(app: &App) {
 
 #[cfg(test)]
 mod tests {
-    use bibli_core::command::{CommandError, Invocation};
+    use bibli_core::command::{CommandError, Effect, Invocation};
+
+    /// The lists of what an agent may run name only commands declared,
+    /// and what answers the user's own dialogs is never an agent's.
+    #[test]
+    fn what_an_agent_may_run_of_the_window_is_named_and_the_rest_is_the_users() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = bibli_core::App::new(bibli_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        super::declare_all(&app);
+        for name in super::SHOWS.iter().chain(super::ACTS) {
+            assert!(app.commands.get(name).is_some(), "{name} is declared");
+        }
+        let effect = |name: &str| app.commands.get(name).unwrap().effect;
+        for answer in [
+            "ui.review_apply",
+            "ui.review_cancel",
+            "ui.accept",
+            "ui.dismiss",
+            "ui.menu_activate",
+            "ui.toolbar_activate",
+            "ui.copy_other",
+            "ui.move_other",
+            "ui.settings_adjust",
+        ] {
+            assert_eq!(effect(answer), Effect::UserOnly, "{answer}");
+        }
+        assert_eq!(effect("ui.cursor"), Effect::Shows);
+        assert_eq!(effect("ui.open_url"), Effect::Acts);
+    }
 
     /// What the shell's keys run and the palette offers is declared, with
     /// arguments the declaration takes; arguments it does not are refused.

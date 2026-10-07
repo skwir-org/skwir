@@ -766,7 +766,8 @@ fn register_commands(app: &App, trashes: &Trashes) {
             anyhow::ensure!(!steps.is_empty(), "These are in the trash already");
             Ok(Outcome::Plan(Plan::with_steps("move to trash", steps)))
         },
-    );
+    )
+        .plans();
     let t = trashes.clone();
     app.commands.register::<RestoreArgs, _>(
         ID,
@@ -798,32 +799,35 @@ fn register_commands(app: &App, trashes: &Trashes) {
             }
             Ok(Outcome::Plan(Plan::with_steps("restore from the trash", steps)))
         },
-    );
+    )
+        .plans();
     let t = trashes.clone();
-    app.commands.register::<NoArgs, _>(
-        ID,
-        "trash.empty",
-        "Empty the trash",
-        "Delete every file in the trash for good (plan, irreversible)",
-        move |_, _| {
-            let s = t.state.lock();
-            anyhow::ensure!(
-                s.read,
-                "The trash is still being read: try again in a moment"
-            );
-            anyhow::ensure!(!s.items.is_empty(), "The trash is empty");
-            let steps: Vec<Box<dyn Operation>> = s
-                .items
-                .iter()
-                .map(|item| {
-                    Box::new(Delete {
-                        entry: item.entry_ref(),
-                    }) as Box<dyn Operation>
-                })
-                .collect();
-            Ok(Outcome::Plan(Plan::with_steps("empty the trash", steps)))
-        },
-    );
+    app.commands
+        .register::<NoArgs, _>(
+            ID,
+            "trash.empty",
+            "Empty the trash",
+            "Delete every file in the trash for good (plan, irreversible)",
+            move |_, _| {
+                let s = t.state.lock();
+                anyhow::ensure!(
+                    s.read,
+                    "The trash is still being read: try again in a moment"
+                );
+                anyhow::ensure!(!s.items.is_empty(), "The trash is empty");
+                let steps: Vec<Box<dyn Operation>> = s
+                    .items
+                    .iter()
+                    .map(|item| {
+                        Box::new(Delete {
+                            entry: item.entry_ref(),
+                        }) as Box<dyn Operation>
+                    })
+                    .collect();
+                Ok(Outcome::Plan(Plan::with_steps("empty the trash", steps)))
+            },
+        )
+        .plans();
     let t = trashes.clone();
     app.commands.register::<NoArgs, _>(
         ID,
@@ -849,7 +853,8 @@ fn register_commands(app: &App, trashes: &Trashes) {
                 .collect();
             Ok(Outcome::Value(serde_json::to_value(listed)?))
         },
-    );
+    )
+        .reads();
 }
 
 // ------------------------------------------------------------------ plugin
@@ -890,6 +895,10 @@ impl Plugin for TrashPlugin {
         bibli_core::plugin::Category::Files
     }
 
+    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
+        use bibli_core::permissions::Capability;
+        bibli_core::permissions::Capabilities::of(&[Capability::Write])
+    }
     fn register(&self, app: &App) {
         {
             let mut s = self.trashes.state.lock();

@@ -534,6 +534,10 @@ impl Plugin for ShelfPlugin {
         bibli_core::plugin::Category::Files
     }
 
+    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
+        use bibli_core::permissions::Capability;
+        bibli_core::permissions::Capabilities::of(&[Capability::Write])
+    }
     fn register(&self, app: &App) {
         {
             let mut s = self.state.lock();
@@ -607,74 +611,84 @@ impl Plugin for ShelfPlugin {
                 Ok(Outcome::Done)
             },
         );
-        app.commands.register::<PaneArg, _>(
-            ID,
-            "shelf.open",
-            "Open shelf",
-            "Show the shelf in the pane",
-            |a, app| {
-                app.navigate(app.pane_or_active(a.pane), &Location::parse("shelf:"))?;
-                Ok(Outcome::Done)
-            },
-        );
+        app.commands
+            .register::<PaneArg, _>(
+                ID,
+                "shelf.open",
+                "Open shelf",
+                "Show the shelf in the pane",
+                |a, app| {
+                    app.navigate(app.pane_or_active(a.pane), &Location::parse("shelf:"))?;
+                    Ok(Outcome::Done)
+                },
+            )
+            .shows();
         let st = Arc::clone(&self.state);
-        app.commands.register::<NoArgs, _>(
-            ID,
-            "shelf.list",
-            "List shelf",
-            "Return the shelved entries",
-            move |_, _| {
-                let items = st.lock().items.clone();
-                Ok(Outcome::Value(serde_json::to_value(items)?))
-            },
-        );
+        app.commands
+            .register::<NoArgs, _>(
+                ID,
+                "shelf.list",
+                "List shelf",
+                "Return the shelved entries",
+                move |_, _| {
+                    let items = st.lock().items.clone();
+                    Ok(Outcome::Value(serde_json::to_value(items)?))
+                },
+            )
+            .reads();
         let st = Arc::clone(&self.state);
-        app.commands.register::<PaneArg, _>(
-            ID,
-            "shelf.move_here",
-            "Move shelf here",
-            "Move every shelved entry into the current directory (plan)",
-            move |a, app| {
-                let dest = app.pane_dir(app.pane_or_active(a.pane))?;
-                plan_into(&st.lock().items, &dest, false, app)
-            },
-        );
+        app.commands
+            .register::<PaneArg, _>(
+                ID,
+                "shelf.move_here",
+                "Move shelf here",
+                "Move every shelved entry into the current directory (plan)",
+                move |a, app| {
+                    let dest = app.pane_dir(app.pane_or_active(a.pane))?;
+                    plan_into(&st.lock().items, &dest, false, app)
+                },
+            )
+            .plans();
         let st = Arc::clone(&self.state);
-        app.commands.register::<PaneArg, _>(
-            ID,
-            "shelf.copy_here",
-            "Copy shelf here",
-            "Copy every shelved entry into the current directory (plan)",
-            move |a, app| {
-                let dest = app.pane_dir(app.pane_or_active(a.pane))?;
-                plan_into(&st.lock().items, &dest, true, app)
-            },
-        );
+        app.commands
+            .register::<PaneArg, _>(
+                ID,
+                "shelf.copy_here",
+                "Copy shelf here",
+                "Copy every shelved entry into the current directory (plan)",
+                move |a, app| {
+                    let dest = app.pane_dir(app.pane_or_active(a.pane))?;
+                    plan_into(&st.lock().items, &dest, true, app)
+                },
+            )
+            .plans();
         let st = Arc::clone(&self.state);
-        app.commands.register::<NoArgs, _>(
-            ID,
-            "shelf.trash",
-            "Trash shelf",
-            "Move every shelved entry to the trash (plan)",
-            move |_, _| {
-                let items = st.lock().items.clone();
-                if items.is_empty() {
-                    anyhow::bail!("the shelf is empty");
-                }
-                let steps: Vec<Box<dyn Operation>> = items
-                    .iter()
-                    .map(|i| {
-                        Box::new(Trash {
-                            entry: i.entry_ref(),
-                        }) as Box<dyn Operation>
-                    })
-                    .collect();
-                Ok(Outcome::Plan(Plan::with_steps(
-                    format!("trash {} shelved items", steps.len()),
-                    steps,
-                )))
-            },
-        );
+        app.commands
+            .register::<NoArgs, _>(
+                ID,
+                "shelf.trash",
+                "Trash shelf",
+                "Move every shelved entry to the trash (plan)",
+                move |_, _| {
+                    let items = st.lock().items.clone();
+                    if items.is_empty() {
+                        anyhow::bail!("the shelf is empty");
+                    }
+                    let steps: Vec<Box<dyn Operation>> = items
+                        .iter()
+                        .map(|i| {
+                            Box::new(Trash {
+                                entry: i.entry_ref(),
+                            }) as Box<dyn Operation>
+                        })
+                        .collect();
+                    Ok(Outcome::Plan(Plan::with_steps(
+                        format!("trash {} shelved items", steps.len()),
+                        steps,
+                    )))
+                },
+            )
+            .plans();
 
         app.registry.places.add(
             ID,

@@ -27,6 +27,7 @@ rustix = { workspace = true, features = ["process"] }
 schemars.workspace = true
 serde.workspace = true
 tempfile.workspace = true
+toml.workspace = true
 
 [lints]
 workspace = true

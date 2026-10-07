@@ -1,0 +1,19 @@
+[package]
+name = "bibli-outside-template"
+description = "A plugin from outside bibli, to start one from (docs/plugins/README.md): a field and a command, as a WebAssembly module or a program"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+bibli-plugin-api.workspace = true
+serde_json.workspace = true
+
+[[bin]]
+name = "bibli-outside-template"
+path = "src/main.rs"
+
+[lints]
+workspace = true

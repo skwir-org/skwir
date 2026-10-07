@@ -101,6 +101,10 @@ impl Plugin for TerminalPlugin {
     fn category(&self) -> Category {
         Category::Desktop
     }
+    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
+        use bibli_core::permissions::Capability;
+        bibli_core::permissions::Capabilities::of(&[Capability::Programs])
+    }
     fn register(&self, app: &App) {
         app.settings.declare(SettingSpec::command(
             PROGRAM_KEY,

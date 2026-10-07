@@ -308,6 +308,12 @@ Linux). Left:
   pipe needs a DACL of the user alone, and the client a check of the
   server's account (`GetNamedPipeServerProcessId`). On macOS the
   socket is in the user's own `$TMPDIR`, compiled only.
+- Plugins from outside bibli (ADR-045, ADR-046): a module runs the same
+  everywhere (Wasmtime, compiled for Windows and macOS, run on Linux
+  only); a program is isolated by bubblewrap on Linux, by
+  `sandbox-exec` on macOS (`sandbox::plugin`, compiled only), and does
+  not run on Windows, which has no isolation yet (ADR-039): it says
+  so (`system::not_yet`).
 - `bench`: the raw listing is the system's own (readdir and fstatat
   on macOS, `std::fs` on Windows), compiled, never run; its budgets are
   Linux's (step L).

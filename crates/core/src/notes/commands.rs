@@ -70,7 +70,8 @@ pub(crate) fn register(app: &App) {
                 (notes_of(app, &r.path).rating != rating).then(|| app.notes.edit(r).rating(rating))
             })
         },
-    );
+    )
+    .plans();
     c.register::<CommentArgs, _>(
         "core",
         "notes.comment",
@@ -89,7 +90,8 @@ pub(crate) fn register(app: &App) {
                     .then(|| app.notes.edit(r).comment(comment.clone()))
             })
         },
-    );
+    )
+    .plans();
     c.register::<Targets, _>(
         "core",
         "notes.agree",
@@ -108,5 +110,6 @@ pub(crate) fn register(app: &App) {
                 })
             })
         },
-    );
+    )
+        .plans();
 }

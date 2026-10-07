@@ -16,7 +16,8 @@ use crate::elements::popover::PopoverAnchor;
 use crate::input::TextInput;
 use crate::keymap::KeyHint;
 use crate::settings::{
-    CORE_OWNER, NOTES_OWNER, Page, READING_OWNER, Row, SettingsEvent, SettingsView, Stop, UI_OWNER,
+    CORE_OWNER, NOTES_OWNER, PRIVACY_OWNER, Page, READING_OWNER, Row, SettingsEvent, SettingsView,
+    Stop, UI_OWNER,
 };
 use crate::theme::Theme;
 
@@ -720,6 +721,29 @@ impl SettingsView {
             "Enabled".to_owned()
         };
         let mut texts = Self::texts(title, plugin.description.clone(), theme);
+        // What it may do (ADR-044), and where one from outside bibli is.
+        let may = plugin
+            .capabilities
+            .words()
+            .map(|words| format!("May: {words}"));
+        let from = plugin
+            .origin
+            .as_ref()
+            .map(|origin| format!("From {origin}"));
+        for (icon, text) in [("lock", may), ("plugin", from)] {
+            if let Some(text) = text {
+                texts = texts.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .text_xs()
+                        .text_color(theme.text_muted)
+                        .child(controls::glyph(icon, theme.text_muted, 13.))
+                        .child(text),
+                );
+            }
+        }
         if let Some(requirements) = &self.requirements {
             for status in requirements.iter().filter(|status| status.plugin == id) {
                 let (icon, color, text) = if status.found {
@@ -1063,6 +1087,9 @@ impl Render for SettingsView {
                     if self.owner_rows(NOTES_OWNER, &mut items, &theme, window, cx) == 0 {
                         Self::note(&mut items, "No plugin keeps notes now.", &theme);
                     }
+                }
+                Page::Privacy => {
+                    self.owner_rows(PRIVACY_OWNER, &mut items, &theme, window, cx);
                 }
                 Page::Plugins => {
                     for category in Category::ALL {

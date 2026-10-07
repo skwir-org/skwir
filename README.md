@@ -81,7 +81,28 @@ any program running as you can then use it.
   `claude mcp add bibli -- bibli mcp`). Every command is a tool, its dots
   written `__`. What an agent would change is proposed in the window for
   your review, and the agent learns whether you applied it or discarded
-  it.
+  it. A command that acts without a plan (undo, a setting, starting a
+  program) waits for you to allow it; the window's own dialogs are
+  yours alone.
+
+**Private folders** (Settings, Privacy) never leave this machine: an
+agent never sees their names nor what they hold, and a plugin from
+outside bibli is never handed them. `~/.ssh`, `~/.gnupg` and the like
+are private from the start, and so is any folder holding a file named
+`.private`.
+
+## Plugins from outside bibli
+
+A plugin can be a folder of its own, outside bibli's code: a
+`plugin.toml` and a WebAssembly module, or a program that speaks a small
+protocol of JSON lines. It provides fields shown in Details, thumbnails,
+previews and commands. Settings › Plugins lists each with what it may do
+(read what files hold, change files, use the network, start programs)
+and where it is; it stays off until you turn it on, and gets nothing it
+did not declare: a module reaches nothing but the files it is asked
+about, and a program runs isolated. `docs/plugins/README.md` says how to
+write one, from `crates/plugins-outside/template`; `just plugins` builds
+those of this repository into `target/plugins`.
 
 ## Usage view
 

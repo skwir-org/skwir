@@ -473,6 +473,10 @@ impl Plugin for RenameBulkPlugin {
         bibli_core::plugin::Category::Files
     }
 
+    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
+        use bibli_core::permissions::Capability;
+        bibli_core::permissions::Capabilities::of(&[Capability::Write])
+    }
     fn register(&self, app: &App) {
         app.commands.register::<Args, _>(
             ID,
@@ -480,7 +484,8 @@ impl Plugin for RenameBulkPlugin {
             "Rename several…",
             "Rename the selection, or the entries given, from a template, regex, and case rule (plan)",
             |a, app| Ok(Outcome::Plan(plan_bulk(app, a)?.plan)),
-        );
+        )
+        .plans();
         app.commands.register::<Args, _>(ID, "rename_bulk.preview", "Preview bulk rename", "Return the old → new names a bulk rename would produce", |a, app| {
             let r = plan_bulk(app, a)?;
             // Display names for the dialog; the plan itself is lossless.
@@ -493,7 +498,8 @@ impl Plugin for RenameBulkPlugin {
                 })
                 .collect();
             Ok(Outcome::Value(serde_json::Value::Array(list)))
-        });
+        })
+        .reads();
         app.registry.keymap.add(
             ID,
             KeyBinding {

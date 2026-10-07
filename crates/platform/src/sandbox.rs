@@ -426,6 +426,152 @@ fn isolated(
     Err(needed())
 }
 
+/// A plugin from outside bibli that runs as a program (ADR-045), set to
+/// run isolated for as long as it serves: the system's programs and
+/// libraries readable, its own `folder` readable at its own path, its
+/// working folder `work` writable (its home, its cache, its current
+/// folder), nothing of the user's; no network unless `network`. It reads
+/// files only through bibli, which hands it the bytes. An error where the
+/// system cannot isolate: such a plugin never runs otherwise.
+///
+/// # Errors
+/// No sandbox here (`available`), or the paths cannot be read.
+pub fn plugin(
+    program: &Path,
+    folder: &Path,
+    work: &Path,
+    network: bool,
+) -> anyhow::Result<Command> {
+    if !available() {
+        return Err(needed());
+    }
+    plugin_isolated(program, folder, work, network)
+}
+
+/// What a program that uses the network reads to reach it: names, routes
+/// and the certificates that vouch for servers.
+#[cfg(target_os = "linux")]
+const NETWORK: &[&str] = &[
+    "/etc/resolv.conf",
+    "/etc/hosts",
+    "/etc/nsswitch.conf",
+    "/etc/ssl",
+    "/etc/pki",
+    "/etc/ca-certificates",
+    "/etc/static/ssl",
+];
+
+#[cfg(target_os = "linux")]
+fn plugin_isolated(
+    program: &Path,
+    folder: &Path,
+    work: &Path,
+    network: bool,
+) -> anyhow::Result<Command> {
+    let bwrap = crate::process::required("bwrap")?;
+    let mut command = Command::new(bwrap);
+    command.args(["--unshare-all", "--die-with-parent", "--new-session"]);
+    if network {
+        command.arg("--share-net");
+    }
+    let readable = SYSTEM
+        .iter()
+        .chain(if network { NETWORK } else { &[] })
+        .map(Path::new);
+    for path in readable {
+        // A link under /etc (resolv.conf) is bound as what it leads to.
+        if path.exists() {
+            command.arg("--ro-bind").arg(path).arg(path);
+        }
+    }
+    command.args(["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"]);
+    // After the private /tmp, which would hide a plugin kept there.
+    command.arg("--ro-bind").arg(folder).arg(folder);
+    if !program.starts_with(folder) && program.is_absolute() {
+        command.arg("--ro-bind").arg(program).arg(program);
+    }
+    command
+        .arg("--bind")
+        .arg(work)
+        .arg("/work")
+        .args([
+            "--chdir",
+            "/work",
+            "--setenv",
+            "HOME",
+            "/work/home",
+            "--setenv",
+            "XDG_CACHE_HOME",
+            "/work/cache",
+            "--setenv",
+            "TMPDIR",
+            "/tmp",
+            "--unsetenv",
+            "DISPLAY",
+            "--unsetenv",
+            "WAYLAND_DISPLAY",
+            "--unsetenv",
+            "DBUS_SESSION_BUS_ADDRESS",
+            "--",
+        ])
+        .arg(program);
+    Ok(command)
+}
+
+#[cfg(target_os = "macos")]
+fn plugin_isolated(
+    program: &Path,
+    folder: &Path,
+    work: &Path,
+    network: bool,
+) -> anyhow::Result<Command> {
+    use std::ffi::OsString;
+    let work = std::fs::canonicalize(work)?;
+    let folder = std::fs::canonicalize(folder)?;
+    let program = std::fs::canonicalize(program)?;
+    for inside in ["home", "cache", "tmp"] {
+        std::fs::create_dir_all(work.join(inside))?;
+    }
+    // The converters' profile, the plugin's folder in place of an input,
+    // and the network where it may use it.
+    let mut profile = PROFILE.replace("(literal (param \"INPUT\"))", "(subpath (param \"INPUT\"))");
+    if network {
+        profile.push_str("(allow network*)\n");
+    }
+    let mut command = Command::new("/usr/bin/sandbox-exec");
+    command.arg("-p").arg(profile);
+    for (name, value) in [
+        ("WORK", &work),
+        ("INPUT", &folder),
+        ("PROGRAM", &program),
+        ("BUNDLE", &folder),
+    ] {
+        let mut parameter = OsString::from(format!("{name}="));
+        parameter.push(value);
+        command.arg("-D").arg(parameter);
+    }
+    command
+        .arg(&program)
+        .current_dir(&work)
+        .env("HOME", work.join("home"))
+        .env("XDG_CACHE_HOME", work.join("cache"))
+        .env("TMPDIR", work.join("tmp"));
+    Ok(command)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn plugin_isolated(
+    _program: &Path,
+    _folder: &Path,
+    _work: &Path,
+    _network: bool,
+) -> anyhow::Result<Command> {
+    Err(
+        bibli_core::system::not_yet("Running a plugin as a program, isolated from your files")
+            .into(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -437,6 +583,46 @@ mod tests {
         assert_eq!(inside_name(Path::new("/a/README")), "/input/document");
         assert_eq!(inside_name(Path::new("/a/x.%d:@")), "/input/document.d");
         assert_eq!(inside_name(Path::new("/a/x.%:@")), "/input/document");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_plugin_reads_its_folder_writes_its_work_and_sees_nothing_else() {
+        if !available() {
+            eprintln!("bubblewrap cannot isolate here");
+            return;
+        }
+        let home = tempfile::tempdir().unwrap();
+        let folder = home.path().join("plugin");
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(folder.join("data"), "its own").unwrap();
+        std::fs::write(home.path().join("secret"), "the user's").unwrap();
+        let script = folder.join("run");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\ncat {data} > /work/out\ncat {secret} >> /work/out 2>/dev/null || echo hidden >> /work/out\n",
+                data = folder.join("data").display(),
+                secret = home.path().join("secret").display(),
+            ),
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let work = tempfile::tempdir().unwrap();
+        let mut command = plugin(&script, &folder, work.path(), false).unwrap();
+        crate::process::run(
+            &mut command,
+            &bibli_core::CancelToken::new(),
+            std::time::Duration::from_secs(20),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(work.path().join("out")).unwrap(),
+            "its ownhidden\n"
+        );
     }
 
     #[cfg(target_os = "linux")]

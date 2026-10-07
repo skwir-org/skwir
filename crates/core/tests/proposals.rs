@@ -56,3 +56,25 @@ fn a_proposal_dismissed_answers_so_and_changes_nothing() {
     // A plan nobody waits for is dismissed quietly.
     app.dismissed(proposed[0].id);
 }
+
+#[test]
+fn a_question_is_answered_once_or_withdrawn() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    let (id, answer) = app.ask(
+        "An agent asks to run “Undo”",
+        "undo: Undo the most recent plan",
+    );
+    let asked = app.take_questions();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].id, id);
+    assert!(app.awaited(id));
+    assert!(app.answer(id, true));
+    assert_eq!(answer.recv_timeout(Duration::from_secs(1)), Ok(true));
+    assert!(!app.answer(id, false), "answered once");
+    // Withdrawn before the window took it: never shown, never answered.
+    let (gone, _answer) = app.ask("An agent asks to run “Redo”", "redo");
+    app.withdraw(gone);
+    assert!(app.take_questions().is_empty());
+    assert!(!app.answer(gone, true));
+}

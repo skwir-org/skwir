@@ -122,6 +122,31 @@ pub enum Outcome {
     },
 }
 
+/// What a command does, which decides what it may do when an agent runs
+/// it (ADR-044, `permissions::for_agent`). Declared at registration
+/// (`register(..).reads()`); a command that says nothing acts, so an
+/// agent's call asks the user first.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Effect {
+    /// Answers about files and the window; changes nothing.
+    Reads,
+    /// Changes only what the window shows: where a pane is, how it shows
+    /// it, what is selected, its tabs and panels, a prompt for the user.
+    Shows,
+    /// Changes files only through a plan, which its caller applies or
+    /// proposes for review.
+    Plans,
+    /// Anything else: changes a preference, the sidebar, the clipboard,
+    /// starts a program, applies without a plan. An agent asks first.
+    #[default]
+    Acts,
+    /// Answers what the window asked the user, or presses what the
+    /// user's hand presses (a review's Apply, a menu's item): never run
+    /// for an agent.
+    UserOnly,
+}
+
 /// Declared metadata of a command, including the JSON schema of its arguments.
 #[derive(Clone, Debug, Serialize)]
 pub struct CommandSpec {
@@ -131,6 +156,8 @@ pub struct CommandSpec {
     pub args_schema: schemars::Schema,
     /// Plugin id, or `core`.
     pub owner: Arc<str>,
+    /// What it does: what an agent may run without asking.
+    pub effect: Effect,
 }
 
 impl CommandSpec {
@@ -152,6 +179,47 @@ impl CommandSpec {
 type Handler = Arc<dyn Fn(serde_json::Value, &App) -> anyhow::Result<Outcome> + Send + Sync>;
 /// Whether arguments are a command's, without running it.
 type Validator = Arc<dyn Fn(&serde_json::Value) -> Result<(), serde_json::Error> + Send + Sync>;
+
+/// A command just registered, to say what it does
+/// (`register(..).reads()`); left alone, it acts.
+pub struct Declared<'a> {
+    registry: &'a CommandRegistry,
+    name: Arc<str>,
+    owner: Arc<str>,
+}
+
+impl Declared<'_> {
+    /// Say what it does.
+    pub fn effect(self, effect: Effect) {
+        let mut commands = self.registry.commands.write();
+        if let Some((spec, _, _)) = commands
+            .get_mut(&self.name)
+            .and_then(|stack| stack.iter_mut().find(|(s, _, _)| s.owner == self.owner))
+        {
+            spec.effect = effect;
+        }
+    }
+
+    /// It answers, and changes nothing.
+    pub fn reads(self) {
+        self.effect(Effect::Reads);
+    }
+
+    /// It changes only what the window shows.
+    pub fn shows(self) {
+        self.effect(Effect::Shows);
+    }
+
+    /// It changes files only through a plan.
+    pub fn plans(self) {
+        self.effect(Effect::Plans);
+    }
+
+    /// It answers the user's own question or presses for the user's hand.
+    pub fn user_only(self) {
+        self.effect(Effect::UserOnly);
+    }
+}
 
 /// Errors from dispatch.
 #[derive(Debug, thiserror::Error)]
@@ -189,7 +257,8 @@ impl CommandRegistry {
         title: &str,
         description: &str,
         handler: F,
-    ) where
+    ) -> Declared<'_>
+    where
         A: DeserializeOwned + JsonSchema + 'static,
         F: Fn(A, &App) -> anyhow::Result<Outcome> + Send + Sync + 'static,
     {
@@ -202,7 +271,7 @@ impl CommandRegistry {
                 })?;
             handler(typed, app)
         });
-        self.insert::<A>(owner, name, title, description, h);
+        self.insert::<A>(owner, name, title, description, h)
     }
 
     /// Register a command whose handler takes its arguments as they came,
@@ -215,7 +284,8 @@ impl CommandRegistry {
         title: &str,
         description: &str,
         handler: F,
-    ) where
+    ) -> Declared<'_>
+    where
         A: DeserializeOwned + JsonSchema + 'static,
         F: Fn(serde_json::Value, &App) -> anyhow::Result<Outcome> + Send + Sync + 'static,
     {
@@ -229,22 +299,114 @@ impl CommandRegistry {
             })?;
             handler(args, app)
         });
-        self.insert::<A>(owner, name, title, description, h);
+        self.insert::<A>(owner, name, title, description, h)
     }
 
-    fn insert<A>(&self, owner: &str, name: &str, title: &str, description: &str, h: Handler)
+    /// Register a command whose arguments `schema` describes, handled as
+    /// JSON: a plugin's from outside bibli (ADR-045), whose arguments are
+    /// data, not a Rust type. They are an object; a name the schema's
+    /// `properties` do not hold is refused, as is one its `required` lists
+    /// missing.
+    pub fn register_dynamic<F>(
+        &self,
+        owner: &str,
+        name: &str,
+        title: &str,
+        description: &str,
+        schema: serde_json::Value,
+        handler: F,
+    ) -> Declared<'_>
+    where
+        F: Fn(serde_json::Value, &App) -> anyhow::Result<Outcome> + Send + Sync + 'static,
+    {
+        let names = |key: &str| -> Option<Vec<String>> {
+            match schema.get(key)? {
+                serde_json::Value::Object(o) => Some(o.keys().cloned().collect()),
+                serde_json::Value::Array(a) => Some(
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_owned))
+                        .collect(),
+                ),
+                _ => None,
+            }
+        };
+        let (properties, required) = (names("properties"), names("required").unwrap_or_default());
+        let v: Validator = Arc::new(move |args| {
+            use serde::de::Error as _;
+            let object = args
+                .as_object()
+                .ok_or_else(|| serde_json::Error::custom("the arguments are an object"))?;
+            if let Some(properties) = &properties
+                && let Some(unknown) = object.keys().find(|key| !properties.contains(key))
+            {
+                return Err(serde_json::Error::custom(format!(
+                    "unknown field `{unknown}`"
+                )));
+            }
+            match required.iter().find(|key| !object.contains_key(*key)) {
+                Some(missing) => Err(serde_json::Error::custom(format!(
+                    "missing field `{missing}`"
+                ))),
+                None => Ok(()),
+            }
+        });
+        let n: Arc<str> = name.into();
+        let check = Arc::clone(&v);
+        let h: Handler = Arc::new(move |args, app| {
+            check(&args).map_err(|reason| CommandError::InvalidArgs {
+                name: n.clone(),
+                reason,
+            })?;
+            handler(args, app)
+        });
+        let schema = serde_json::from_value(schema)
+            .unwrap_or_else(|_| schemars::json_schema!({ "type": "object" }));
+        self.insert_spec(owner, name, title, description, schema, v, h)
+    }
+
+    fn insert<A>(
+        &self,
+        owner: &str,
+        name: &str,
+        title: &str,
+        description: &str,
+        h: Handler,
+    ) -> Declared<'_>
     where
         A: DeserializeOwned + JsonSchema + 'static,
     {
+        let v: Validator = Arc::new(|args| serde_json::from_value::<A>(args.clone()).map(|_| ()));
+        self.insert_spec(
+            owner,
+            name,
+            title,
+            description,
+            schemars::schema_for!(A),
+            v,
+            h,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)] // A command's declaration, whole.
+    fn insert_spec(
+        &self,
+        owner: &str,
+        name: &str,
+        title: &str,
+        description: &str,
+        args_schema: schemars::Schema,
+        v: Validator,
+        h: Handler,
+    ) -> Declared<'_> {
         let name: Arc<str> = name.into();
         let spec = CommandSpec {
             name: name.clone(),
             title: title.into(),
             description: description.into(),
-            args_schema: schemars::schema_for!(A),
+            args_schema,
             owner: owner.into(),
+            effect: Effect::default(),
         };
-        let v: Validator = Arc::new(|args| serde_json::from_value::<A>(args.clone()).map(|_| ()));
         let mut commands = self.commands.write();
         let stack = commands.entry(name).or_default();
         if let Some(prev) = stack.last()
@@ -253,7 +415,13 @@ impl CommandRegistry {
             tracing::debug!(command = %spec.name, owner = %spec.owner, shadowed = %prev.0.owner, "command shadows another");
         }
         stack.retain(|(s, _, _)| s.owner != spec.owner);
+        let declared = Declared {
+            registry: self,
+            name: spec.name.clone(),
+            owner: spec.owner.clone(),
+        };
         stack.push((spec, h, v));
+        declared
     }
 
     /// Remove every command owned by `owner` (a plugin being disabled);

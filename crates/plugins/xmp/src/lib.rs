@@ -332,6 +332,10 @@ impl Plugin for XmpPlugin {
     fn category(&self) -> Category {
         Category::Files
     }
+    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
+        use bibli_core::permissions::Capability;
+        bibli_core::permissions::Capabilities::of(&[Capability::Read, Capability::Write])
+    }
     fn register(&self, app: &App) {
         app.register_notes_store(ID, Arc::new(XmpStore::default()));
         app.companions.register(ID, Arc::new(XmpCompanion));

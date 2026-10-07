@@ -345,6 +345,10 @@ impl Plugin for NameTagsPlugin {
     fn category(&self) -> Category {
         Category::Files
     }
+    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
+        use bibli_core::permissions::Capability;
+        bibli_core::permissions::Capabilities::of(&[Capability::Write])
+    }
     fn register(&self, app: &App) {
         app.register_notes_store(ID, Arc::new(NameStore(Convention::Tagspaces)));
         app.register_notes_store(ID, Arc::new(NameStore(Convention::Filetags)));
@@ -354,14 +358,16 @@ impl Plugin for NameTagsPlugin {
             "Tags into name",
             "Rename the selection to hold its tags in its names (`convention`: `tagspaces`, name[a b].ext, or `filetags`, name -- a b.ext) (plan)",
             |a, app| tag_names(app, a),
-        );
+        )
+        .plans();
         app.commands.register::<NameArgs, _>(
             ID,
             "names.untag",
             "Tags out of name",
             "Rename the selection without the tags in its names, the other stores keeping them first (plan)",
             |a, app| untag_names(app, a),
-        );
+        )
+        .plans();
         app.registry
             .menus
             .add(ID, menu_item("Tags into Name", "names.tag", 170, "tag"));

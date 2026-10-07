@@ -31,6 +31,10 @@ impl Plugin for PreviewPlugin {
     fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
         vec![bibli_platform::diagram::WORKER.requirement("Mermaid diagrams drawn in Markdown")]
     }
+    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
+        use bibli_core::permissions::Capability;
+        bibli_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
+    }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
     }

@@ -163,6 +163,10 @@ impl Plugin for ShellPlugin {
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Desktop
     }
+    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
+        use bibli_core::permissions::Capability;
+        bibli_core::permissions::Capabilities::of(&[Capability::Programs])
+    }
     fn register(&self, app: &App) {
         app.settings.declare(SettingSpec::command(
             PROGRAM_KEY,
@@ -170,24 +174,26 @@ impl Plugin for ShellPlugin {
             "Program that runs commands on the selection: a POSIX shell or fish. Defaults to $SHELL.",
             &default_program(),
         ));
-        app.commands.register::<TargetsArgs, _>(
-            ID,
-            "shell.copy_paths",
-            "Copy paths",
-            "The selected paths, or the entries', shell-quoted, for the clipboard",
-            |a, app| {
-                let paths: Vec<PathBuf> = app
-                    .targets(a.pane, a.entries)?
-                    .into_iter()
-                    .map(|r| r.path)
-                    .collect();
-                let n = paths.len();
-                Ok(Outcome::Clipboard {
-                    text: quote_paths(&paths),
-                    said: format!("Copied {n} path{}", if n == 1 { "" } else { "s" }),
-                })
-            },
-        );
+        app.commands
+            .register::<TargetsArgs, _>(
+                ID,
+                "shell.copy_paths",
+                "Copy paths",
+                "The selected paths, or the entries', shell-quoted, for the clipboard",
+                |a, app| {
+                    let paths: Vec<PathBuf> = app
+                        .targets(a.pane, a.entries)?
+                        .into_iter()
+                        .map(|r| r.path)
+                        .collect();
+                    let n = paths.len();
+                    Ok(Outcome::Clipboard {
+                        text: quote_paths(&paths),
+                        said: format!("Copied {n} path{}", if n == 1 { "" } else { "s" }),
+                    })
+                },
+            )
+            .reads();
         app.commands.register::<RunArgs, _>(
             ID,
             "shell.run",

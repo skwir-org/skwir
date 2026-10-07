@@ -13,7 +13,7 @@ out="$root/target/package"
 app="$out/bibli.app"
 # The helpers a bundle carries (ADR-041): Mermaid and MuPDF are left out,
 # as Linux's packages only suggest them.
-helpers="bibli-pdf-worker bibli-model-worker"
+helpers="bibli-pdf-worker bibli-model-worker bibli-module-worker"
 
 cd "$root"
 # The helpers that link native libraries (Poppler, MuPDF, GStreamer,

@@ -669,7 +669,8 @@ pub(crate) fn register(app: &App) {
             let (tab, pane) = app.new_tab(a.pane, location, a.show)?;
             Ok(Outcome::Value(serde_json::json!({ "tab": tab, "pane": pane })))
         },
-    );
+    )
+        .shows();
 
     c.register::<OpenTabsArgs, _>(
         "core",
@@ -707,7 +708,8 @@ pub(crate) fn register(app: &App) {
             }
             Ok(Outcome::Value(serde_json::json!({ "tabs": tabs })))
         },
-    );
+    )
+    .shows();
 
     c.register::<TabArg, _>(
         "core",
@@ -728,7 +730,8 @@ pub(crate) fn register(app: &App) {
             }
             Ok(Outcome::Done)
         },
-    );
+    )
+    .shows();
 
     c.register::<ReopenTabArgs, _>(
         "core",
@@ -739,7 +742,8 @@ pub(crate) fn register(app: &App) {
             Some(tab) => Ok(Outcome::Value(serde_json::json!({ "tab": tab }))),
             None => Ok(Outcome::Done),
         },
-    );
+    )
+    .shows();
 
     c.register::<SelectTabArgs, _>(
         "core",
@@ -758,7 +762,8 @@ pub(crate) fn register(app: &App) {
             app.select_tab(tab)?;
             Ok(Outcome::Done)
         },
-    );
+    )
+    .shows();
 
     c.register::<MoveTabArgs, _>(
         "core",
@@ -786,7 +791,8 @@ pub(crate) fn register(app: &App) {
             app.wake();
             Ok(Outcome::Done)
         },
-    );
+    )
+    .shows();
 
     c.register::<crate::command::NoArgs, _>(
         "core",
@@ -794,7 +800,8 @@ pub(crate) fn register(app: &App) {
         "List tabs",
         "The tabs in order: each one's panes, their locations, which pane is active and which tab is shown",
         |_, app| Ok(Outcome::Value(serde_json::to_value(app.tab_list())?)),
-    );
+    )
+        .reads();
 }
 
 #[cfg(test)]

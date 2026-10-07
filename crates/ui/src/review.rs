@@ -1,7 +1,10 @@
 //! Review of proposed plans (from editors, agents, background work): a modal
-//! listing each step's change and status, Apply or Cancel.
+//! listing each step's change and status, Apply or Cancel. A question an
+//! agent asks before a command that acts without a plan (ADR-044) waits
+//! in the same queue and is answered the same way: Allow or Refuse.
 
 use bibli_core::Plan;
+use bibli_core::app::Question;
 use bibli_core::op::{PlanDiff, StepStatus};
 use gpui::{AnyElement, Context, FocusHandle, Window, div, prelude::*, px};
 
@@ -42,21 +45,30 @@ pub fn lines(diff: &PlanDiff) -> Vec<(String, &'static str, LineKind)> {
         .collect()
 }
 
-/// A proposed plan waiting for the user, with its dry run once a worker has
-/// done it (it stats every step's files).
-pub struct Review {
-    pub plan: Plan,
-    pub diff: Option<PlanDiff>,
+/// What waits for the user's answer.
+pub enum Review {
+    /// A proposed plan, with its dry run once a worker has done it (it
+    /// stats every step's files).
+    Plan { plan: Plan, diff: Option<PlanDiff> },
+    /// A question: an agent asks to run a command that acts.
+    Question(Question),
 }
 
 impl Review {
     fn applicable(&self) -> Option<bool> {
-        self.diff.as_ref().map(|diff| {
-            !diff
-                .steps
-                .iter()
-                .any(|(_, status)| matches!(status, StepStatus::Conflict { .. }))
-        })
+        match self {
+            Review::Plan { diff, .. } => diff.as_ref().map(|diff| {
+                !diff
+                    .steps
+                    .iter()
+                    .any(|(_, status)| matches!(status, StepStatus::Conflict { .. }))
+            }),
+            Review::Question(_) => Some(true),
+        }
+    }
+
+    pub fn is_question(&self) -> bool {
+        matches!(self, Review::Question(_))
     }
 }
 
@@ -74,13 +86,17 @@ impl Shell {
         for plan in plans {
             let id = plan.id;
             let dry = plan.clone();
-            self.reviews.push_back(Review { plan, diff: None });
+            self.reviews.push_back(Review::Plan { plan, diff: None });
             self.off_thread(
                 "review-diff",
                 move || dry.diff(),
-                move |this, diff, _, cx| {
-                    if let Some(review) = this.reviews.iter_mut().find(|r| r.plan.id == id) {
-                        review.diff = Some(diff);
+                move |this, done, _, cx| {
+                    let waiting = this.reviews.iter_mut().find_map(|r| match r {
+                        Review::Plan { plan, diff } if plan.id == id => Some(diff),
+                        _ => None,
+                    });
+                    if let Some(diff) = waiting {
+                        *diff = Some(done);
                         cx.notify();
                     }
                 },
@@ -88,6 +104,13 @@ impl Shell {
                 cx,
             );
         }
+        cx.notify();
+    }
+
+    /// Queue questions asked of the user, after what waits already.
+    pub fn add_questions(&mut self, questions: Vec<Question>, cx: &mut Context<Self>) {
+        self.reviews
+            .extend(questions.into_iter().map(Review::Question));
         cx.notify();
     }
 
@@ -122,12 +145,14 @@ impl Shell {
     /// stays in front otherwise, for the user to discard.
     pub fn review_apply(&mut self, cx: &mut Context<Self>) {
         match self.reviews.front().map(Review::applicable) {
-            Some(Some(true)) => {
-                if let Some(review) = self.reviews.pop_front() {
-                    // Checked again when its turn comes: all or nothing.
-                    self.app.apply_whole(review.plan);
+            Some(Some(true)) => match self.reviews.pop_front() {
+                // Checked again when its turn comes: all or nothing.
+                Some(Review::Plan { plan, .. }) => self.app.apply_whole(plan),
+                Some(Review::Question(question)) if !self.app.answer(question.id, true) => {
+                    self.set_status("The agent stopped waiting: nothing was run", false, cx);
                 }
-            }
+                Some(Review::Question(_)) | None => {}
+            },
             Some(Some(false)) => {
                 self.set_status(
                     "This proposal has conflicts; discard it or fix them",
@@ -141,15 +166,18 @@ impl Shell {
     }
 
     pub fn review_cancel(&mut self, cx: &mut Context<Self>) {
-        if let Some(review) = self.reviews.pop_front() {
-            self.app.dismissed(review.plan.id);
-            self.set_status(
-                format!("Discarded proposal: {}", review.plan.title),
-                false,
-                cx,
-            );
-            cx.notify();
+        match self.reviews.pop_front() {
+            Some(Review::Plan { plan, .. }) => {
+                self.app.dismissed(plan.id);
+                self.set_status(format!("Discarded proposal: {}", plan.title), false, cx);
+            }
+            Some(Review::Question(question)) => {
+                self.app.answer(question.id, false);
+                self.set_status("Refused: the agent was told", false, cx);
+            }
+            None => return,
         }
+        cx.notify();
     }
 }
 
@@ -159,9 +187,8 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let focus = handles.focus.clone();
     let (cancel_focus, apply_focus) = (handles.cancel.clone(), handles.apply.clone());
     let theme = cx.global::<Theme>().clone();
-    let plan = &review.plan;
     let applicable = review.applicable();
-    let mut list = div()
+    let list = div()
         .flex()
         .flex_col()
         .gap_1()
@@ -169,8 +196,119 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .overflow_hidden()
         .text_xs()
         .font_family(shell.mono_font.clone());
-    let steps = plan.steps.len();
-    match &review.diff {
+    let pending = shell.reviews.len() - 1;
+    let more = if pending > 0 {
+        format!(" · {pending} more waiting")
+    } else {
+        String::new()
+    };
+    // What is asked, how much there is, what it leaves out, its lines, and
+    // the words of its keys and buttons.
+    let (title, size, note, list, hint, refuse, allow) = match review {
+        Review::Plan { plan, diff } => {
+            let steps = plan.steps.len();
+            (
+                format!("Proposed: {}", plan.title),
+                format!("{}{more}", crate::format::count(steps, "step")),
+                plan.note.clone(),
+                plan_lines(shell, list, diff.as_ref(), steps, &theme),
+                match applicable {
+                    Some(true) => "Enter applies (undoable), Escape discards",
+                    Some(false) => "Cannot apply: fix the conflicts first",
+                    None => "Checking…",
+                },
+                "Discard",
+                "Apply",
+            )
+        }
+        Review::Question(question) => (
+            question.title.clone(),
+            more.trim_start_matches(" · ").to_owned(),
+            Some(
+                "It acts without a plan to review: allow it this once, or refuse and the agent is told."
+                    .to_owned(),
+            ),
+            question
+                .detail
+                .lines()
+                .take(40)
+                .fold(list, |list, line| {
+                    list.child(div().text_color(theme.text).child(line.to_owned()))
+                }),
+            "Enter allows it once, Escape refuses",
+            "Refuse",
+            "Allow",
+        ),
+    };
+    let panel = modal::panel(720., &theme)
+        .p_3()
+        .gap_2()
+        .track_focus(&focus)
+        .key_context(keymap::REVIEW)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .child(div().flex_1().child(title))
+                .child(div().text_xs().text_color(theme.text_muted).child(size)),
+        )
+        // What the plan left out, and why; what a question means.
+        .when_some(note, |d, note| {
+            d.child(div().text_xs().text_color(theme.text_muted).child(note))
+        })
+        .child(list)
+        .child(
+            div()
+                .flex()
+                .gap_2()
+                .justify_end()
+                .items_center()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.text_muted)
+                        .flex_1()
+                        .child(hint),
+                )
+                .child(
+                    controls::button(
+                        "review-cancel",
+                        refuse,
+                        None,
+                        ButtonStyle::Plain,
+                        &cancel_focus,
+                        &theme,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| this.review_cancel(cx))),
+                )
+                .child(
+                    controls::button(
+                        "review-apply",
+                        allow,
+                        Some("check"),
+                        ButtonStyle::Plain,
+                        &apply_focus,
+                        &theme,
+                    )
+                    .when(applicable != Some(true), |d| d.opacity(0.5))
+                    .on_click(cx.listener(|this, _, _, cx| this.review_apply(cx))),
+                ),
+        );
+    // Neither a press outside nor Escape on another dialog discards a
+    // proposal: only its own buttons and keys answer it.
+    Some(modal::modal(panel, 80., 6, |_, _, _| {}, &theme, cx))
+}
+
+/// A plan's lines: each step's change and status once its dry run is
+/// done, the first 60.
+fn plan_lines(
+    shell: &Shell,
+    mut list: gpui::Div,
+    diff: Option<&PlanDiff>,
+    steps: usize,
+    theme: &Theme,
+) -> gpui::Div {
+    match diff {
         Some(diff) => {
             for (i, (text, status, kind)) in lines(diff).into_iter().take(60).enumerate() {
                 let color = match kind {
@@ -207,72 +345,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 .child(format!("… and {} more steps", steps - 60)),
         );
     }
-    let pending = shell.reviews.len() - 1;
-    let panel = modal::panel(720., &theme)
-        .p_3()
-        .gap_2()
-        .track_focus(&focus)
-        .key_context(keymap::REVIEW)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .child(div().flex_1().child(format!("Proposed: {}", plan.title)))
-                .child(div().text_xs().text_color(theme.text_muted).child(format!(
-                    "{}{}",
-                    crate::format::count(steps, "step"),
-                    if pending > 0 {
-                        format!(" · {pending} more waiting")
-                    } else {
-                        String::new()
-                    }
-                ))),
-        )
-        // What the plan left out, and why.
-        .when_some(plan.note.clone(), |d, note| {
-            d.child(div().text_xs().text_color(theme.text_muted).child(note))
-        })
-        .child(list)
-        .child(
-            div()
-                .flex()
-                .gap_2()
-                .justify_end()
-                .items_center()
-                .child(div().text_xs().text_color(theme.text_muted).flex_1().child(
-                    match applicable {
-                        Some(true) => "Enter applies (undoable), Escape discards",
-                        Some(false) => "Cannot apply: fix the conflicts first",
-                        None => "Checking…",
-                    },
-                ))
-                .child(
-                    controls::button(
-                        "review-cancel",
-                        "Discard",
-                        None,
-                        ButtonStyle::Plain,
-                        &cancel_focus,
-                        &theme,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| this.review_cancel(cx))),
-                )
-                .child(
-                    controls::button(
-                        "review-apply",
-                        "Apply",
-                        Some("check"),
-                        ButtonStyle::Plain,
-                        &apply_focus,
-                        &theme,
-                    )
-                    .when(applicable != Some(true), |d| d.opacity(0.5))
-                    .on_click(cx.listener(|this, _, _, cx| this.review_apply(cx))),
-                ),
-        );
-    // Neither a press outside nor Escape on another dialog discards a
-    // proposal: only its own buttons and keys answer it.
-    Some(modal::modal(panel, 80., 6, |_, _, _| {}, &theme, cx))
+    list
 }
 
 #[cfg(test)]

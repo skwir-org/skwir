@@ -17,6 +17,7 @@
             </File>
             <File Source="$(Dist)\bibli-pdf-worker.exe" />
             <File Source="$(Dist)\bibli-model-worker.exe" />
+            <File Source="$(Dist)\bibli-module-worker.exe" />
             <!-- PDFium, beside its helper (ADR-041). -->
             <File Source="$(Dist)\pdfium.dll" />
           </Component>

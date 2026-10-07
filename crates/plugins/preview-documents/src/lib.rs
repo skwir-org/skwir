@@ -115,6 +115,10 @@ impl Plugin for PreviewPlugin {
         .collect()
     }
 
+    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
+        use bibli_core::permissions::Capability;
+        bibli_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
+    }
     fn register(&self, app: &App) {
         use bibli_core::settings::SettingSpec;
         app.settings.declare(SettingSpec::choice(

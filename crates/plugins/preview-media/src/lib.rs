@@ -144,6 +144,10 @@ impl Plugin for PreviewPlugin {
             Requirement::program("ffmpeg", "Still frames when playback is unavailable"),
         ]
     }
+    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
+        use bibli_core::permissions::Capability;
+        bibli_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
+    }
     fn register(&self, app: &App) {
         declare(app);
         self.read_tuning(app);

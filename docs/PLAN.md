@@ -2234,6 +2234,65 @@ nothing from the palette (`entries`, `tab.list`, `control.status`
 alike), and which commands an agent may run waits for the permission
 layer.
 
+The rest of the phase is built (2026-10-07), in three steps.
+
+The permission layer (ADR-044). Every plugin says what it may do
+(`Plugin::capabilities`: read what files hold, write, network,
+programs); the Plugins page says it on its line, and where a plugin
+from outside comes from. Private folders (the Privacy page: `~/.ssh`,
+`~/.gnupg` and their like from the start, and any folder holding a
+`.private` file) never reach an agent nor a plugin from outside. Every
+command says what it does (`command::Effect`: reads, shows, plans,
+acts, user only); an agent's call that acts waits for the user to allow
+it, in the review's queue, one that answers the user's own dialogs is
+refused (an agent could otherwise apply its own proposal), one that
+names a private folder is refused, and what it is answered loses every
+private path. Checked on Xvfb with the release binary and a second
+scripted agent: the tool list leaves out the user's own commands and
+says which ask; `ui.copy_text` asked, was allowed with Enter and ran,
+then asked again and was refused with Escape; a `.ssh` and a folder
+marked `.private` were refused by name; the home folder an agent listed
+had `files` alone where the user saw `.ssh`, `diary` and `files`.
+
+Plugins from outside (ADR-045, `bibli-plugin-api`, `bibli-extend`): a
+folder with a `plugin.toml`, found in the data folders' `bibli/plugins`
+or `BIBLI_PLUGIN_PATH`, listed on the Plugins page, off until turned
+on. It provides fields, thumbnails, previews and commands through one
+protocol of JSON methods; files go to it by handle, read through bibli
+for the call's own files only and with `read` only; a plan it answers
+needs `write` and is reviewed when run from the window. Level 2 runs it
+as a program speaking JSON-RPC lines, isolated by bubblewrap (no
+network unless declared; on Windows it does not run), started when
+first asked, ended idle. Checked by `crates/extend/tests/programs.rs`:
+the template as a program answers a field and a command through bibli,
+is refused its reads without `read`, never gets a private file; and
+the first thumbnailer from outside (`crates/plugins-outside/netpbm`,
+PPM and PGM pictures, its PNG written by the module itself) draws
+through the thumbnail service as the built-in ones do.
+
+Level 1 runs it as a WebAssembly module (ADR-046): Wasmtime 38, no
+WASI, bibli's two imports alone, bounded work and memory, in a helper
+of bibli's (`bibli-module-worker`) that bibli starts and speaks to as
+it does a program plugin, so Wasmtime never enters bibli's process:
+linked in, it cost 1.6 MiB of idle memory (`just idle-pss` back to
+back, own share 94.8 against 93.2 MiB, within the 100 MiB budget). The gate's
+first half: the hexadecimal preview again as a module
+(`crates/plugins-outside/preview-hex`), shown page for page, match for
+match and error for error the same as the built-in one by
+`crates/extend/tests/modules.rs` (nine views of four synthetic files),
+and in the window: the built-in one off and the module on, then the
+other way round, the preview panel of the same file differs by no
+pixel. The template (`crates/plugins-outside/template`, a word count as
+a field and a command) builds as either; `docs/plugins/README.md` and
+`protocol.md` say how to write one; `just plugins` builds the modules
+into `target/plugins`. Not done: the packages carry no module (the
+built-in preview stays theirs); a typed WIT world (payloads are JSON);
+previews from outside draw text, code, hex and tables, not the richer
+kinds; a module cannot use the network; macOS isolation of a program
+is compiled only. Control stays off by default: turning it on is the
+user's choice, now with the permission layer between an agent and
+their files.
+
 - **Permission layer.** Capabilities per plugin (read contents, write, network, spawn processes) and
   per-directory policies ("never leaves this machine" for `~/.ssh`, anything under a `.private` marker).
   Required before any model provider exists.

@@ -480,6 +480,10 @@ impl Plugin for QueryPlugin {
         app.wake();
     }
 
+    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
+        use bibli_core::permissions::Capability;
+        bibli_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
+    }
     fn register(&self, app: &App) {
         let lifetime = app.lifetime().child();
         if let Some(previous) = self.lifetime.lock().replace(lifetime.clone()) {
@@ -533,7 +537,8 @@ impl Plugin for QueryPlugin {
                 app.navigate(pane, &location_for(&a.expr, root.as_deref()))?;
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .shows();
 
         let editor = Editor {
             saving: Arc::clone(&self.saving),
@@ -631,13 +636,15 @@ impl Plugin for QueryPlugin {
             },
         );
 
-        app.commands.register::<NoArgs, _>(
-            ID,
-            "query.list",
-            "List saved searches",
-            "Return the saved searches, in sidebar order",
-            |_, app| Ok(Outcome::Value(serde_json::to_value(saved(app))?)),
-        );
+        app.commands
+            .register::<NoArgs, _>(
+                ID,
+                "query.list",
+                "List saved searches",
+                "Return the saved searches, in sidebar order",
+                |_, app| Ok(Outcome::Value(serde_json::to_value(saved(app))?)),
+            )
+            .reads();
         app.commands.register::<DescribeArgs, _>(
             ID,
             "query.describe",
@@ -653,7 +660,8 @@ impl Plugin for QueryPlugin {
                     .map_err(|e| anyhow::anyhow!("query: {e}"))?;
                 Ok(Outcome::Value(serde_json::to_value(description)?))
             },
-        );
+        )
+        .reads();
         app.commands.register::<PaneOnly, _>(
             ID,
             "query.tag_choices",
@@ -677,7 +685,8 @@ impl Plugin for QueryPlugin {
                     .unwrap_or_default();
                 Ok(Outcome::Value(facets::tag_choices(&counts)))
             },
-        );
+        )
+        .reads();
         let similar_lifetime = lifetime.clone();
         app.commands.register::<SimilarArgs, _>(
             ID,
@@ -688,7 +697,8 @@ impl Plugin for QueryPlugin {
                 similar::start(app, a.pane, a.entries, a.by, &similar_lifetime)?;
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .shows();
         for (title, by, when, order) in [
             // A file's likes: a place (a tag's) has none.
             ("Same Kind", similar::By::Kind, "single !place", 470),
@@ -722,7 +732,8 @@ impl Plugin for QueryPlugin {
                 app.navigate(pane, &Location::new(SCHEME, refined))?;
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .shows();
         app.commands.register::<NarrowArgs, _>(
             ID,
             "query.narrow",
@@ -755,7 +766,8 @@ impl Plugin for QueryPlugin {
                 app.wake();
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .shows();
         app.commands.register::<LocationArgs, _>(
             ID,
             "query.location",
@@ -781,7 +793,8 @@ impl Plugin for QueryPlugin {
                     serde_json::json!({ "location": location.to_string() }),
                 ))
             },
-        );
+        )
+        .reads();
         app.registry.keepers.add(
             ID,
             Keeper {

@@ -45,6 +45,10 @@ impl Plugin for PreviewPlugin {
         use bibli_platform::document::{Engine, worker};
         vec![worker(Engine::Mupdf).requirement("Books laid out into pages by MuPDF")]
     }
+    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
+        use bibli_core::permissions::Capability;
+        bibli_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
+    }
     fn register(&self, app: &App) {
         app.settings.declare(bibli_core::settings::SettingSpec::choice(
             BACKEND,

@@ -222,11 +222,16 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
         );
     }
     if !shell.reviews.is_empty() {
-        bar = bar.child(
-            div()
-                .text_color(theme.accent)
-                .child(format!("{} proposal(s) to review", shell.reviews.len())),
-        );
+        let questions = shell.reviews.iter().filter(|r| r.is_question()).count();
+        let plans = shell.reviews.len() - questions;
+        let words: Vec<String> = [
+            (plans > 0).then(|| format!("{} to review", format::count(plans, "proposal"))),
+            (questions > 0).then(|| format::count(questions, "question")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        bar = bar.child(div().text_color(theme.accent).child(words.join(" · ")));
     }
     // What a plugin counts (the shelf's items) announces itself only
     // when it counts something, in its words; a click opens what it counts.
