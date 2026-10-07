@@ -108,6 +108,10 @@ pub struct Page {
     pub size: Option<(f32, f32)>,
     /// Its text, in reading order, when asked.
     pub text: Vec<crate::protocol::TextRun>,
+    /// Its links, when its text is asked.
+    pub links: Vec<crate::protocol::PageLink>,
+    /// The file's outline, the same whichever page is asked.
+    pub outline: Vec<crate::protocol::OutlineEntry>,
 }
 
 /// Answer `method` with `params` (JSON), as `plugin` does: the answer as
@@ -154,6 +158,8 @@ pub fn answer(
                 width: page.size.map(|(width, _)| width),
                 height: page.size.map(|(_, height)| height),
                 text: page.text,
+                links: page.links,
+                outline: page.outline,
             }))
         }
         method::COMMAND => json(plugin.command(host, parsed(params)?)?),
@@ -411,6 +417,7 @@ mod tests {
         assert!(first.text.is_empty(), "its text not asked");
         let text = page(2, 0, true);
         assert_eq!(text.png, None, "no picture asked");
+        assert_eq!(text.outline[0].page, Some(2));
         assert_eq!(text.text[0].text, "page 2 of quiet");
         let past = page(3, 64, true);
         assert_eq!((past.pages, past.png), (2, None), "past the last: no page");
@@ -467,6 +474,12 @@ mod tests {
                     .collect(),
                 png: page.filter(|_| params.side > 0).map(String::into_bytes),
                 size: None,
+                links: Vec::new(),
+                outline: vec![crate::protocol::OutlineEntry {
+                    title: "Second".into(),
+                    depth: 0,
+                    page: Some(2),
+                }],
             }))
         }
     }

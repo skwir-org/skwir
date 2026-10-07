@@ -937,9 +937,10 @@ current source before assuming a planned crate, command, or API exists.
   the older ones (`OLDEST`). A preview from outside is an inspection
   (text, code, hex, a table), a file bibli shows, made of the file
   (`convert`, ADR-047, `PreviewProvider::converted`, swapped in once in
-  the panel's worker), or pages with their text, drawn as they are
-  read (`page`, a `DocumentSession` in `pages.rs` that bibli's reader
-  reads): never bibli's own preview model on the wire, and
+  the panel's worker), or pages with their text, links and outline,
+  drawn as they are read (`page`, a `DocumentSession` in `pages.rs`
+  that bibli's reader reads): never bibli's own preview model on the
+  wire, and
   the links of what a plugin made close unless it may use the network. `just plugins` builds
   the workspace's modules (`crates/plugins-outside/*`) into
   `target/plugins`.

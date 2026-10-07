@@ -12,9 +12,12 @@ GPU vendor and on how many other GPU clients map it, not on bibli.
 
     tools/measure/idle-pss.py [--binary target/release/bibli] [--runs 3]
 
-Exits 1 when the median own share is over the budget. Another bibli running
-shares the binary's pages and lowers the reading, so it refuses to start
-while one does. Each instance it starts is stopped by its own pid.
+Exits 1 when the median own share is over the budget. Another process
+running the same binary file shares its pages and lowers the reading, so
+it refuses to start while one does; a bibli built before (its file since
+replaced, the one the user keeps open) maps another file, and shares no
+more with the one measured than any program does. Each instance it starts
+is stopped by its own pid.
 """
 import argparse
 import os
@@ -69,15 +72,19 @@ def cpu_ticks(pid):
     return int(fields[11]) + int(fields[12])
 
 
-def others_running():
+def others_running(binary):
+    """The processes running `binary`'s very file (its device and inode,
+    whatever its name now): those share its pages."""
+    measured = os.stat(binary)
     found = []
     for entry in Path("/proc").iterdir():
         if entry.name.isdigit():
             try:
-                if (entry / "comm").read_text().strip() == "bibli":
-                    found.append(int(entry.name))
+                running = os.stat(entry / "exe")
             except OSError:
-                pass
+                continue
+            if (running.st_dev, running.st_ino) == (measured.st_dev, measured.st_ino):
+                found.append(int(entry.name))
     return found
 
 
@@ -120,8 +127,8 @@ def main():
     parser.add_argument("--idle", type=float, default=15.0)
     args = parser.parse_args()
     binary = os.path.realpath(args.binary)
-    if others := others_running():
-        sys.exit(f"another bibli is running (pid {', '.join(map(str, others))}): "
+    if others := others_running(binary):
+        sys.exit(f"another process runs {binary} (pid {', '.join(map(str, others))}): "
                  "it shares the binary's pages; close it first")
 
     base = Path.home() / ".cache/bibli-tests"

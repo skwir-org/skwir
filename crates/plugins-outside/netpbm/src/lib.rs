@@ -86,7 +86,7 @@ impl Plugin for Netpbm {
                 .filter(|_| params.side > 0)
                 .map(|picture| png(&picture.fit(params.side))),
             size,
-            text: Vec::new(),
+            ..Page::default()
         }))
     }
 }

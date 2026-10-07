@@ -2328,9 +2328,12 @@ the plugin may use the network. The Netpbm plugin previews its
 pictures (every Netpbm kind) as the PNG it makes. A long document is
 not converted whole: a plugin may show a file a page at a time
 (protocol version 3, `page`), each page a picture it draws within the
-side asked when the page is shown, with its text where it lies, read
-by bibli's reader as a PDF is (scrolled, zoomed, the text selected,
-copied and searched by bibli), all of it kept in the cache; the Netpbm
+side asked when the page is shown, with its text and links where they
+lie (each character where the plugin says it starts) and the file's
+outline, read by bibli's reader as a PDF is (scrolled, zoomed, the text
+selected, copied and searched by bibli, links followed, an address only
+when the plugin may use the network), all of it kept in the cache; the
+Netpbm
 plugin shows a file of several pictures a picture a page. Checked in
 the window
 on Xvfb with the release build: a PPM shown as the picture Netpbm made,
@@ -2339,8 +2342,7 @@ Python as a program (outside the repository), drawn by bibli's own
 Markdown view, its link refused with the plugin's reason, its source
 the log's own text; a log shown in pages by a plugin in Python, in the
 reader, its lines selected over where they lie and "token" found on
-both pages it is on. Not done: a page's links and outline; a typed WIT
-world.
+both pages it is on. Not done: a typed WIT world.
 
 - **Permission layer.** Capabilities per plugin (read contents, write, network, spawn processes) and
   per-directory policies ("never leaves this machine" for `~/.ssh`, anything under a `.private` marker).

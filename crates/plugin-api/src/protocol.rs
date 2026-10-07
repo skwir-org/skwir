@@ -186,6 +186,43 @@ pub struct PageAnswer {
     /// Its text, in reading order: what is selected, copied and searched.
     #[serde(default)]
     pub text: Vec<TextRun>,
+    /// Its links, when its text is asked: where each lies, and where it
+    /// leads.
+    #[serde(default)]
+    pub links: Vec<PageLink>,
+    /// The file's outline, the same whichever page is asked: bibli reads
+    /// it once, with how many pages there are.
+    #[serde(default)]
+    pub outline: Vec<OutlineEntry>,
+}
+
+/// A link on a page: the box it lies in, as fractions of the page as a
+/// run's is, and where it leads: a page of the file, or an address (a web
+/// page, a mail address), followed only when the plugin may use the
+/// network.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PageLink {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    /// A page of the file, from 1.
+    #[serde(default)]
+    pub page: Option<u32>,
+    /// An address.
+    #[serde(default)]
+    pub uri: Option<String>,
+}
+
+/// A heading of a file's outline: its title, how deep it is (0 at the
+/// top), and the page it starts on.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutlineEntry {
+    pub title: String,
+    #[serde(default)]
+    pub depth: u32,
+    #[serde(default)]
+    pub page: Option<u32>,
 }
 
 /// A run of a page's text (a word, a line) and the box it lies in on the
@@ -199,6 +236,11 @@ pub struct TextRun {
     pub y: f32,
     pub width: f32,
     pub height: f32,
+    /// Where each of its characters starts, as a fraction of the page's
+    /// width, one a character in order: a selection then follows each
+    /// glyph. Without them, each character is an equal part of the run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edges: Vec<f32>,
 }
 
 /// How an inspection is drawn.

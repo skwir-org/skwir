@@ -11,8 +11,9 @@ it on. It provides any of:
 - **previews**: text, code, hexadecimal rows or a table, a page at a
   time; any file bibli shows (a PDF, a picture, Markdown, audio,
   video…), made of the file and shown by bibli's own preview of it; or
-  pages, each a picture drawn when it is shown and its text where it
-  lies, read in bibli's reader (selected, copied, searched);
+  pages, each a picture drawn when it is shown with its text and links
+  where they lie, read in bibli's reader (selected, copied, searched,
+  followed, its outline listed);
 - **commands**, in the palette and for scripts and agents, answering a
   value, a text for the clipboard, or a plan of changes to files.
 

@@ -1825,6 +1825,7 @@ impl Shell {
                 };
                 match reader {
                     Ok(Some(session)) => {
+                        closed_links.replace(session.closed_links().map(str::to_owned));
                         let content = session
                             .render(request.page, page_side, &cancel)
                             .and_then(|page| {

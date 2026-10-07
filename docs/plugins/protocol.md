@@ -111,7 +111,7 @@ a page at a time, each a picture the plugin draws when it is shown, with
 its text where it lies (a document of a format bibli does not read, a
 file of several pictures). bibli reads it in its own reader, as it reads
 a PDF: pages scrolled or turned, zoomed, their text selected, copied
-and searched.
+and searched, their links followed, its outline listed.
 
 ```json
 { "file": { … }, "page": 2, "side": 2048, "text": true }
@@ -120,25 +120,38 @@ and searched.
 `page` counts from 1; `side` is the longest side to draw it at, in
 pixels, and 0 asks no picture: how many pages there are, or a page's
 text alone, which a search reads without drawing a page. `text` asks
-the page's text too. Answer `null` (nothing to show for this file), or:
+the page's text and links too. Answer `null` (nothing to show for this
+file), or:
 
 ```json
 { "pages": 12,
   "png": "<base64>",            // null past the last, or for side 0
   "width": 612, "height": 792,  // its own size, CSS pixels: what 100% shows
-  "text": [ { "text": "Chapter one", "x": 0.1, "y": 0.08, "width": 0.4, "height": 0.03 } ] }
+  "text": [ { "text": "Chapter one", "x": 0.1, "y": 0.08, "width": 0.4, "height": 0.03,
+              "edges": [0.1, 0.13, 0.16, …] } ],
+  "links": [ { "x": 0.1, "y": 0.9, "width": 0.2, "height": 0.03, "page": 3 },
+             { "x": 0.5, "y": 0.9, "width": 0.3, "height": 0.03, "uri": "https://example.com/" } ],
+  "outline": [ { "title": "Chapter one", "depth": 0, "page": 1 } ] }
 ```
 
 The text is runs (a word, a line) in reading order, each with the box it
 lies in as fractions of the page's width and height from its top left:
-bibli gives each character of a run an equal part of its box, puts a
-space between two runs on one line and a line break between lines, and
-searches it whatever the case. Without `width` and `height` the page is
-its picture's size.
+bibli puts a space between two runs on one line and a line break between
+lines, and searches it whatever the case. A run's `edges`, one a
+character, say where each starts across the page, so a selection follows
+each glyph; without them each character is an equal part of its run. A
+link lies in such a box too, and leads to a page of the file or to an
+address, which is followed only when the plugin may use the network
+(`network`): otherwise the panel says why. The outline (headings, how
+deep, the page each starts on) is the file's, the same with any page:
+bibli reads it once, with how many pages there are. Without `width` and
+`height` the page is its picture's size. Every field but `pages` may be
+left out.
 
 bibli keeps what it is answered in the plugin's slot of its cache, under
-the file's version and the plugin's: how many pages, each page's picture
-by the side drawn, its text apart; nothing is asked twice. With
+the file's version and the plugin's: how many pages and the outline,
+each page's picture by the side drawn, its text and links apart; nothing
+is asked twice. With
 `converts` too, bibli asks `convert` first and reads in pages a file it
 answers `null` for: the Netpbm plugin converts one picture to a PNG, and
 shows a file of several a picture a page. A preview that converts or
