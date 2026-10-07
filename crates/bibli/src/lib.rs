@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use bibli_core::plugin::Plugin;
 
+pub mod cli;
+
 /// Every plugin, in registration order. Each registers its commands,
 /// bindings, menus and places, and can be toggled at runtime through
 /// `plugins.<id>.enabled` in settings.
@@ -41,6 +43,7 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
         // whose own are plugins still to write (ADR-035, step I).
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         Arc::new(bibli_plugin_mpris::MprisPlugin::default()),
+        Arc::new(bibli_plugin_control::Control::default()),
         Arc::new(bibli_plugin_preview_structured::PreviewPlugin),
         Arc::new(bibli_plugin_preview_fonts::PreviewPlugin),
         Arc::new(bibli_plugin_preview_models::PreviewPlugin),

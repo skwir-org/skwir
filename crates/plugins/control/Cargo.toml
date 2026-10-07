@@ -1,0 +1,32 @@
+[package]
+name = "bibli-plugin-control"
+description = "bibli: agents and scripts drive the running window, over MCP (ADR-043)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bibli-core.workspace = true
+anyhow.workspace = true
+crossbeam-channel.workspace = true
+parking_lot.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+# The protocol's official SDK (ADR-043): its server for the window, its
+# client for `bibli cmd`, over the channel's byte stream.
+rmcp = { version = "3.5", default-features = false, features = ["server", "client", "transport-async-rw"] }
+# Already linked by gpui's HTTP client and the map tiles: a runtime of
+# this plugin's own, on its thread, while it is on.
+tokio = { version = "1", features = ["rt", "net", "io-util", "io-std", "sync", "time", "macros"] }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["process"] }
+
+[dev-dependencies]
+schemars.workspace = true
+serde.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

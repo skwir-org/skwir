@@ -2201,6 +2201,35 @@ packages build and start; Linux's tests and budgets are unchanged.
 
 Goal: open the plugin system beyond the repo, safely. Only now, because the traits are stable.
 
+Begun 2026-10-07, before Phase 5b's gate, as the user chose: 5b needs a
+Mac and a Windows machine, which are not here, and this phase needs
+neither. Its first step is the command line and the MCP server
+(ADR-043): agents and scripts drive the running window through the
+`control` plugin, off by default until the permission layer.
+
+That step is built (2026-10-07). The window listens, while Control is
+on, on a Unix socket in a folder of the user's alone (a named pipe on
+Windows); `bibli mcp` carries an agent's MCP there through `rmcp`, and
+`bibli cmd` runs one command and prints JSON, in a bibli of its own
+without a window when none listens. An agent's plan is proposed and
+its tool answers once the user has applied or discarded it
+(`App::propose_awaiting`, from the executor's `Finished`). Added on
+the way: `entries`, a pane's entries as an agent reads them;
+`apply_plan` now gives its plan back to its caller instead of applying
+it, so it cannot skip a review. The gate's second half was played on
+Xvfb with the release binary and a scripted MCP client: it read the
+window (`tab.list`, `entries`), proposed a rename and then a move of
+two files, each applied with Enter in the review, and a trash
+discarded with Escape, each answered as the user did; `bibli cmd`
+printed a plan, applied one with `--apply`, opened Settings in the
+window and turned Control off through itself. Not done: an agent
+driven by a model (Claude Code over `bibli mcp`) has not run it; the
+Windows pipe is tried under Wine only and keeps the system's default
+security (`docs/PORTING.md`); a command answering a value does
+nothing from the palette (`entries`, `tab.list`, `control.status`
+alike), and which commands an agent may run waits for the permission
+layer.
+
 - **Permission layer.** Capabilities per plugin (read contents, write, network, spawn processes) and
   per-directory policies ("never leaves this machine" for `~/.ssh`, anything under a `.private` marker).
   Required before any model provider exists.

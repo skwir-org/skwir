@@ -627,6 +627,23 @@ impl App {
         self.wake();
     }
 
+    /// Offer `plan` for review, and learn what the user made of it: how it
+    /// applied, or that it was dismissed (`Verdict`). An agent's plan,
+    /// whose tool answers once the user has (ADR-043). The receiver ends
+    /// unanswered if the window closes first.
+    pub fn propose_awaiting(&self, plan: Plan) -> crossbeam_channel::Receiver<crate::op::Verdict> {
+        let (reply, verdict) = crossbeam_channel::bounded(1);
+        self.executor.watch(plan.id, reply);
+        self.propose(plan);
+        verdict
+    }
+
+    /// The user dismissed the proposal `id` (the review's Cancel): the one
+    /// waiting for it, if any, hears so.
+    pub fn dismissed(&self, id: crate::op::PlanId) {
+        self.executor.dismiss(id);
+    }
+
     /// Plans proposed since the last call, oldest first.
     pub fn take_proposals(&self) -> Vec<Plan> {
         std::mem::take(&mut *self.proposals.lock())
@@ -978,6 +995,37 @@ pub struct SortArgs {
     pub show_hidden: Option<bool>,
     #[serde(default)]
     pub pane: Option<PaneId>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EntriesArgs {
+    /// The first entry to answer, counted in the pane's order.
+    #[serde(default)]
+    pub offset: usize,
+    /// How many entries to answer at most; 200 when not given.
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub pane: Option<PaneId>,
+}
+
+/// One entry as `entries` answers it.
+#[derive(Serialize)]
+struct EntryInfo {
+    id: EntryId,
+    name: PathArg,
+    /// None for a place, which is no file (ADR-032).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<PathArg>,
+    kind: crate::entry::EntryKind,
+    /// Opens as a folder: a folder, a link to one, or a place.
+    folder: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size: Option<u64>,
+    /// Seconds since 1970, UTC.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    modified: Option<u64>,
+    selected: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -1524,6 +1572,53 @@ mod builtin {
             },
         );
 
+        c.register::<EntriesArgs, _>(
+            "core",
+            "entries",
+            "List entries",
+            "What a pane shows, in its order (sorted, filtered, with the folders opened in place): each entry's id, name, path, kind, size and modification time (seconds since 1970), and whether it is selected; from `offset`, at most `limit`",
+            |a, app| {
+                use crate::entry::keys;
+                let pane = app.pane_or_active(a.pane);
+                let ws = app.workspace.read();
+                let p = ws
+                    .pane(pane)
+                    .ok_or_else(|| anyhow::anyhow!("no pane {pane:?}"))?;
+                let order = p.order();
+                let entries: Vec<EntryInfo> = order
+                    .iter()
+                    .skip(a.offset)
+                    .take(a.limit.unwrap_or(200))
+                    .filter_map(|&id| {
+                        let e = p.entry(id)?;
+                        Some(EntryInfo {
+                            id,
+                            name: PathArg(e.name.clone().into()),
+                            path: p.path_of(id).map(PathArg),
+                            kind: e.kind,
+                            folder: e.is_dir() || id.is_place(),
+                            size: e.metadata.value(keys::SIZE).and_then(crate::Value::as_u64),
+                            modified: e
+                                .metadata
+                                .value(keys::MODIFIED)
+                                .and_then(crate::Value::as_time)
+                                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                .map(|d| d.as_secs()),
+                            selected: p.selection.contains(id),
+                        })
+                    })
+                    .collect();
+                Ok(Outcome::Value(serde_json::json!({
+                    "pane": pane,
+                    "location": p.shown(),
+                    "complete": p.listing.is_complete(),
+                    "total": order.len(),
+                    "selected": p.selection.len(),
+                    "entries": entries,
+                })))
+            },
+        );
+
         c.register::<RenameArgs, _>(
             "core",
             "rename",
@@ -1671,12 +1766,8 @@ mod builtin {
             "core",
             "apply_plan",
             "Apply plan",
-            "Execute a plan in the background; progress arrives as executor events",
-            |a, app| {
-                let plan = Plan::from_data(&a.plan, &app.ops)?;
-                app.apply(plan);
-                Ok(Outcome::Done)
-            },
+            "Apply a plan given as data (plan): as any command's, the caller applies it, at once for the user's own gesture, after review for an agent",
+            |a, app| Ok(Outcome::Plan(Plan::from_data(&a.plan, &app.ops)?)),
         );
 
         c.register::<NoArgs, _>(

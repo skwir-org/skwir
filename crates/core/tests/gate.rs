@@ -5,7 +5,7 @@ mod common;
 
 use std::time::Duration;
 
-use bibli_core::command::Invocation;
+use bibli_core::command::{Invocation, Outcome};
 use bibli_core::op::{ExecEvent, StepStatus};
 use common::*;
 
@@ -83,6 +83,42 @@ fn list_select_rename_trash_undo_through_commands_only() {
 
     // select + rename -> a plan, not a mutation.
     select(&app, &["notes.txt"]);
+
+    // entries: what the pane shows, as an agent reads it.
+    let Outcome::Value(shown) = app
+        .dispatch(&Invocation::with_args(
+            "entries",
+            &serde_json::json!({ "limit": 2 }),
+        ))
+        .unwrap()
+    else {
+        panic!("entries answers a value")
+    };
+    assert_eq!(shown["total"], 3);
+    assert_eq!(shown["selected"], 1);
+    assert_eq!(shown["complete"], true);
+    let rows = shown["entries"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "at most the limit");
+    let Outcome::Value(all) = app.dispatch(&Invocation::new("entries")).unwrap() else {
+        panic!("entries answers a value")
+    };
+    let row = |name: &str| {
+        all["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["name"] == name)
+            .unwrap_or_else(|| panic!("{name} listed"))
+            .clone()
+    };
+    assert_eq!(row("notes.txt")["selected"], true);
+    assert_eq!(row("notes.txt")["size"], 5);
+    assert_eq!(
+        row("notes.txt")["path"],
+        serde_json::json!(dir.join("notes.txt"))
+    );
+    assert_eq!(row("sub")["folder"], true);
+    assert_eq!(row("photo.jpg")["selected"], false);
     let rename_plan = plan(
         &app,
         "rename",
@@ -178,8 +214,13 @@ fn list_select_rename_trash_undo_through_commands_only() {
 fn dispatch_and_wait(app: &bibli_core::App, inv: &Invocation) {
     let rx = app.executor.events();
     while rx.try_recv().is_ok() {}
-    app.dispatch(inv)
-        .unwrap_or_else(|e| panic!("{}: {e:#}", inv.name));
+    // A plan is the caller's to apply, as the shell applies the user's.
+    if let Outcome::Plan(plan) = app
+        .dispatch(inv)
+        .unwrap_or_else(|e| panic!("{}: {e:#}", inv.name))
+    {
+        app.apply(plan);
+    }
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while let Ok(ev) = rx.recv_deadline(deadline) {
         if let ExecEvent::Finished { error, .. } = ev {

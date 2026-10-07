@@ -32,6 +32,7 @@ pub use context::{Cancelled, StepContext};
 pub use entry_ref::{EntryRef, ResolveError};
 pub use executor::{
     ChangeObserver, ExecEvent, ExecResult, Executor, JournalEntry, Progress, RunKind, Transfer,
+    Verdict,
 };
 pub use order::{RenameOrderError, RenameRequest, order_renames};
 

@@ -869,6 +869,17 @@ current source before assuming a planned crate, command, or API exists.
   apply it. User-initiated single actions apply immediately and are undoable;
   batch results and anything from a background task or an agent go through
   `App::propose` for review.
+- **Agents and scripts drive the window** (ADR-043). The `control`
+  plugin, off by default, listens on a channel only the user reaches
+  (`channel::address`); `bibli mcp` carries an agent's MCP there and
+  `bibli cmd` one command (`crates/bibli/src/cli.rs`). Every command is
+  a tool, its dots written `__`: a new command is one with nothing more.
+  An agent's plan is proposed and its tool answers with the verdict
+  (`App::propose_awaiting`); `bibli cmd` prints a plan, or applies it
+  with `--apply` as the user's own action. No command applies a plan it
+  makes or is given (`apply_plan` hands it back): the caller decides.
+  What an agent needs to see is a command answering a value (`entries`,
+  `tab.list`), never a protocol of its own.
 - **Operations have inverses**, a dry-run `check`, and idempotent semantics.
   A step that changes metadata states its words (`op::Words`: what it will
   do, for the review, and what it did, for the toast); what a plan left out

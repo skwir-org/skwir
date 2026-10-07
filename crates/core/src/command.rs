@@ -158,10 +158,12 @@ type Validator = Arc<dyn Fn(&serde_json::Value) -> Result<(), serde_json::Error>
 pub enum CommandError {
     #[error("unknown command `{0}`")]
     Unknown(Arc<str>),
-    #[error("invalid arguments for `{name}`: {source}")]
+    /// The reason is in the message, not a source: a chain printed whole
+    /// (`{:#}`) would say it twice.
+    #[error("invalid arguments for `{name}`: {reason}")]
     InvalidArgs {
         name: Arc<str>,
-        source: serde_json::Error,
+        reason: serde_json::Error,
     },
 }
 
@@ -194,9 +196,9 @@ impl CommandRegistry {
         let n: Arc<str> = name.into();
         let h: Handler = Arc::new(move |args, app| {
             let typed: A =
-                serde_json::from_value(args).map_err(|source| CommandError::InvalidArgs {
+                serde_json::from_value(args).map_err(|reason| CommandError::InvalidArgs {
                     name: n.clone(),
-                    source,
+                    reason,
                 })?;
             handler(typed, app)
         });
@@ -219,10 +221,10 @@ impl CommandRegistry {
     {
         let n: Arc<str> = name.into();
         let h: Handler = Arc::new(move |args, app| {
-            serde_json::from_value::<A>(args.clone()).map_err(|source| {
+            serde_json::from_value::<A>(args.clone()).map_err(|reason| {
                 CommandError::InvalidArgs {
                     name: n.clone(),
-                    source,
+                    reason,
                 }
             })?;
             handler(args, app)
@@ -295,9 +297,9 @@ impl CommandRegistry {
             .and_then(|stack| stack.last())
             .map(|(_, _, v)| Arc::clone(v))
             .ok_or_else(|| CommandError::Unknown(inv.name.clone()))?;
-        validator(&inv.args).map_err(|source| CommandError::InvalidArgs {
+        validator(&inv.args).map_err(|reason| CommandError::InvalidArgs {
             name: inv.name.clone(),
-            source,
+            reason,
         })
     }
 

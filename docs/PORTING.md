@@ -298,6 +298,16 @@ Linux). Left:
   Windows), never run.
 - `ui/dnd.rs` outgoing drag is patch 0001, Wayland's; a drag's copy
   modifier is Ctrl, a Mac's is Option (step J, not done).
+- Agents and scripts (ADR-043): on Windows the window listens on a
+  named pipe in the user's name (`plugins/control/src/channel.rs`),
+  tried under Wine (`tests/pipe.rs`), which keeps no accounts apart.
+  Left for Phase 5b's gate: the pipe has Windows' default
+  security, which lets every account open it to read, and a pipe
+  another account made first under that name is taken for bibli's
+  (the window does not listen, and `bibli mcp` would talk to it). The
+  pipe needs a DACL of the user alone, and the client a check of the
+  server's account (`GetNamedPipeServerProcessId`). On macOS the
+  socket is in the user's own `$TMPDIR`, compiled only.
 - `bench`: the raw listing is the system's own (readdir and fstatat
   on macOS, `std::fs` on Windows), compiled, never run; its budgets are
   Linux's (step L).

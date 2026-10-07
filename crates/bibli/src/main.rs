@@ -13,6 +13,12 @@ fn main() -> anyhow::Result<()> {
     // and a worker idle after its jobs gives back what they left.
     bibli_alloc::tune();
     bibli_core::scheduler::release_when_idle(bibli_alloc::collect);
+    // `bibli mcp` and `bibli cmd` (ADR-043), before anything logs: their
+    // standard output is the protocol, or the JSON a script reads.
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    if let Some(code) = bibli::cli::run(&args) {
+        std::process::exit(code);
+    }
     // Before any GPU work: keep the Vulkan loader from mapping drivers for
     // hardware that is not here (ADR-002).
     let restricted = gpu::restrict_vulkan_drivers();

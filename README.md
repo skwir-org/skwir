@@ -14,8 +14,9 @@ works and what was left out.
   are a location you can navigate to, come back to, and keep in the sidebar
   like a bookmark.
 - **Everything is a command.** Every action is a named command with a JSON
-  schema, reachable from the keyboard, the palette, and, later, a CLI and an
-  MCP server. An agent uses the same surface you do.
+  schema, reachable from the keyboard, the palette, the command line
+  (`bibli cmd`) and AI agents over MCP (`bibli mcp`). An agent uses the
+  same surface you do.
 - **Changes are plans.** Batch operations, the external-editor flow, and
   anything an agent proposes appear as a reviewable list of steps before they
   run. Every operation has an inverse; undo works across the board.
@@ -60,6 +61,24 @@ focused switch or choice. **Default** resets a field in the draft, **Save**
 (`ctrl-s`) persists and applies changes, and **Cancel** (`Esc`) discards unsaved
 edits. PDF engine, thumbnail and shell preferences apply without a restart.
 Plugin enable/disable flags and saved-query collections are not edited here.
+
+## Scripts and agents
+
+Turn on **Agents and scripts** in Settings, Plugins, and the open window
+listens on a channel only your account reaches. It stays off by default:
+any program running as you can then use it.
+
+- **Scripts:** `bibli cmd <command> [<arguments as a JSON object>]` runs
+  one command in the window and prints its result as JSON, such as
+  `bibli cmd entries` for what the active pane shows. A command that
+  would change files prints its plan; `--apply` applies it, as your own
+  action, undoable in the window. With no window open, the command runs
+  in a bibli of its own without one.
+- **Agents:** an MCP client starts `bibli mcp` (for Claude Code:
+  `claude mcp add bibli -- bibli mcp`). Every command is a tool, its dots
+  written `__`. What an agent would change is proposed in the window for
+  your review, and the agent learns whether you applied it or discarded
+  it.
 
 ## Usage view
 

@@ -55,6 +55,22 @@ pub enum ExecEvent {
     },
 }
 
+/// What became of a plan proposed for review (`App::propose_awaiting`):
+/// applied when the user said so, with what its run did, or dismissed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "verdict")]
+pub enum Verdict {
+    Applied {
+        /// Steps applied, and steps found already done.
+        applied: usize,
+        skipped: usize,
+        /// What stopped it, or made it apply nothing (a conflict).
+        error: Option<String>,
+        cancelled: bool,
+    },
+    Dismissed,
+}
+
 /// What a run does with the journal, so a surface can word its result
 /// ("Undid …", a Redo button) without reading it from the title.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -169,6 +185,9 @@ pub struct Executor {
     running: Mutex<Vec<(PlanId, CancelToken, Arc<Meter>)>>,
     observers: Contributions<ChangeObserver>,
     companions: Mutex<Arc<crate::companions::Companions>>,
+    /// Plans someone waits for (`watch`): answered when their run
+    /// finishes, or when they are dismissed.
+    watched: Mutex<std::collections::HashMap<PlanId, Sender<Verdict>>>,
 }
 
 /// Removes a plan from `running` however `apply_plan` leaves.
@@ -204,7 +223,21 @@ impl Executor {
             running: Mutex::new(Vec::new()),
             observers: Contributions::default(),
             companions: Mutex::new(Arc::default()),
+            watched: Mutex::new(std::collections::HashMap::new()),
         })
+    }
+
+    /// Answer `reply` once the plan `id` has run: what it did. Its first
+    /// run finished answers, whoever started it.
+    pub fn watch(&self, id: PlanId, reply: Sender<Verdict>) {
+        self.watched.lock().insert(id, reply);
+    }
+
+    /// Answer the one waiting for the plan `id`, if anyone is, that it was
+    /// dismissed. Whether someone was.
+    pub fn dismiss(&self, id: PlanId) -> bool {
+        let reply = self.watched.lock().remove(&id);
+        reply.is_some_and(|reply| reply.send(Verdict::Dismissed).is_ok())
     }
 
     /// The companion rules every step carries files beside a file by
@@ -219,6 +252,23 @@ impl Executor {
     }
 
     fn emit(&self, ev: ExecEvent) {
+        if let ExecEvent::Finished {
+            plan,
+            applied,
+            skipped,
+            error,
+            cancelled,
+            ..
+        } = &ev
+            && let Some(reply) = self.watched.lock().remove(plan)
+        {
+            let _ = reply.send(Verdict::Applied {
+                applied: *applied,
+                skipped: *skipped,
+                error: error.clone(),
+                cancelled: *cancelled,
+            });
+        }
         let _ = self.tx.send(ev);
         if let Some(w) = self.waker.lock().as_ref() {
             w();

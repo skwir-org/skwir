@@ -142,6 +142,7 @@ impl Shell {
 
     pub fn review_cancel(&mut self, cx: &mut Context<Self>) {
         if let Some(review) = self.reviews.pop_front() {
+            self.app.dismissed(review.plan.id);
             self.set_status(
                 format!("Discarded proposal: {}", review.plan.title),
                 false,
