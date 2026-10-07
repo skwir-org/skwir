@@ -5,8 +5,8 @@
 //! its imports, `read` and `log` (`wit/plugin.wit`).
 //!
 //! bibli asks ([`method`]): `initialize` (a program, first), `field`,
-//! `thumbnail`, `inspect`, `convert` (version 2), `command`. A plugin
-//! asks back, while it
+//! `thumbnail`, `inspect`, `convert` (version 2), `page` (version 3),
+//! `command`. A plugin asks back, while it
 //! answers: `read` (a file of the call, by its handle), `log`. bibli
 //! sends a program `$/cancel` when it stops waiting for an answer, and
 //! closes its standard input when it is no longer needed.
@@ -15,8 +15,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// The version of the protocol this crate speaks (`api` in a manifest).
-/// Version 2 added `convert` (a preview that is another file).
-pub const VERSION: u32 = 2;
+/// Version 2 added `convert` (a preview that is another file), version
+/// 3 `page` (a preview a page at a time).
+pub const VERSION: u32 = 3;
 
 /// The oldest version bibli still speaks: a plugin written for it runs
 /// unchanged.
@@ -44,6 +45,9 @@ pub mod method {
     /// bibli → plugin, version 2: [`ConvertParams`](super::ConvertParams)
     /// → a [`ConvertAnswer`](super::ConvertAnswer) or null.
     pub const CONVERT: &str = "convert";
+    /// bibli → plugin, version 3: [`PageParams`](super::PageParams) →
+    /// a [`PageAnswer`](super::PageAnswer) or null.
+    pub const PAGE: &str = "page";
     /// bibli → plugin: [`CommandParams`](super::CommandParams) →
     /// [`CommandAnswer`](super::CommandAnswer).
     pub const COMMAND: &str = "command";
@@ -148,6 +152,53 @@ pub struct ConvertAnswer {
     pub name: String,
     /// Its bytes, in base64: at most what a message holds.
     pub data: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageParams {
+    pub file: File,
+    /// Which page, from 1.
+    pub page: u32,
+    /// The longest side to draw it at, in pixels; 0 asks no picture (how
+    /// many pages there are, a page's text alone).
+    pub side: u32,
+    /// Its text asked too, where it lies on the page.
+    #[serde(default)]
+    pub text: bool,
+}
+
+/// A page of a preview shown a page at a time (version 3): how many
+/// pages the file has, and the one asked: its picture as a PNG, in
+/// base64 (null past the last, or when no picture was asked), its own
+/// size, and its text when asked. Null: the plugin shows nothing for
+/// this file.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PageAnswer {
+    pub pages: u32,
+    #[serde(default)]
+    pub png: Option<String>,
+    /// The page's own size, in CSS pixels (1/96 inch): what 100% shows.
+    /// Its picture's, as drawn, when not said.
+    #[serde(default)]
+    pub width: Option<f32>,
+    #[serde(default)]
+    pub height: Option<f32>,
+    /// Its text, in reading order: what is selected, copied and searched.
+    #[serde(default)]
+    pub text: Vec<TextRun>,
+}
+
+/// A run of a page's text (a word, a line) and the box it lies in on the
+/// page, as fractions of the page's width and height from its top left.
+/// bibli puts a space between two runs on one line, a line break between
+/// lines.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct TextRun {
+    pub text: String,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
 }
 
 /// How an inspection is drawn.

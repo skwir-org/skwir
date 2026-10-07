@@ -147,6 +147,11 @@ pub struct PreviewDecl {
     /// a picture, Markdown…), by bibli's own preview of that type.
     #[serde(default)]
     pub converts: bool,
+    /// It answers `page`: the file is shown a page at a time, each a
+    /// picture it draws when shown (protocol version 3). With
+    /// `converts`, for the files it does not convert.
+    #[serde(default)]
+    pub pages: bool,
 }
 
 /// A command it runs.
@@ -197,8 +202,15 @@ impl Manifest {
         if self.previews.iter().any(|p| p.converts) && self.api < 2 {
             return Err("a preview that converts is version 2 of the protocol: api = 2".into());
         }
-        if self.previews.iter().any(|p| p.converts && p.shows_bytes) {
-            return Err("a preview of any file's bytes shows them: it does not convert".into());
+        if self.previews.iter().any(|p| p.pages) && self.api < 3 {
+            return Err("a preview a page at a time is version 3 of the protocol: api = 3".into());
+        }
+        if self
+            .previews
+            .iter()
+            .any(|p| (p.converts || p.pages) && p.shows_bytes)
+        {
+            return Err("a preview of any file's bytes shows them, as they are".into());
         }
         match (&self.run.module, &self.run.program) {
             (Some(_), None) | (None, Some(_)) => {}
@@ -303,12 +315,13 @@ mod tests {
     }
 
     #[test]
-    fn a_plugin_speaks_a_version_bibli_speaks_and_converts_from_the_second() {
+    fn a_plugin_speaks_a_version_bibli_speaks_and_a_preview_needs_the_one_that_brought_it() {
         let preview = |converts| PreviewDecl {
             types: vec!["image/x-portable-pixmap".into()],
             priority: 0,
             shows_bytes: false,
             converts,
+            pages: false,
         };
         let mut first = manifest("first");
         first.api = OLDEST;
@@ -321,6 +334,13 @@ mod tests {
         first.previews.push(preview(true));
         assert!(first.check().unwrap_err().contains("api = 2"));
         first.api = 2;
+        assert_eq!(first.check(), Ok(()));
+        first.previews.push(PreviewDecl {
+            pages: true,
+            ..preview(false)
+        });
+        assert!(first.check().unwrap_err().contains("api = 3"));
+        first.api = 3;
         assert_eq!(first.check(), Ok(()));
         first.api = VERSION + 1;
         assert!(first.check().unwrap_err().contains("version"));

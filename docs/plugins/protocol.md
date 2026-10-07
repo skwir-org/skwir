@@ -1,13 +1,14 @@
-# The plugin protocol, version 2
+# The plugin protocol, version 3
 
 What bibli and a plugin from outside say to each other (ADR-045,
 ADR-046, ADR-047). The types are `bibli_plugin_api::protocol`'s; a Rust
 plugin uses them, one in another language writes the same JSON.
 
-bibli speaks versions 1 and 2. A manifest says which its plugin speaks
-(`api`, 2 when it says nothing); version 2 added `convert`, a preview
-that is another file. A plugin written for version 1 runs unchanged and
-is never asked what version 1 did not have.
+bibli speaks versions 1 to 3. A manifest says which its plugin speaks
+(`api`, 3 when it says nothing); version 2 added `convert`, a preview
+that is another file, and version 3 `page`, a preview a page at a time.
+A plugin written for an older version runs unchanged and is never asked
+what its version did not have.
 
 ## Transports
 
@@ -32,8 +33,9 @@ answered. While answering, the plugin may ask bibli `read` and say
 { "api": 2, "capabilities": ["read"] }
 ```
 
-`api` is the newest version bibli speaks. Answer `{ "api": 2 }` (or 1),
-the version the plugin speaks; one bibli does not speak is refused.
+`api` is the newest version bibli speaks. Answer `{ "api": 3 }` (or 2,
+or 1), the version the plugin speaks; one bibli does not speak is
+refused.
 
 ### `field`
 
@@ -101,6 +103,46 @@ its own: View as hex shows its bytes, not the converted file's. A link
 in what a plugin made is followed only when the plugin may use the
 network (`network`): otherwise a click could carry what it read away.
 The file must fit one message (about 48 MB once in base64).
+
+### `page` (version 3)
+
+For a preview the manifest declares with `pages = true`: the file shown
+a page at a time, each a picture the plugin draws when it is shown, with
+its text where it lies (a document of a format bibli does not read, a
+file of several pictures). bibli reads it in its own reader, as it reads
+a PDF: pages scrolled or turned, zoomed, their text selected, copied
+and searched.
+
+```json
+{ "file": { … }, "page": 2, "side": 2048, "text": true }
+```
+
+`page` counts from 1; `side` is the longest side to draw it at, in
+pixels, and 0 asks no picture: how many pages there are, or a page's
+text alone, which a search reads without drawing a page. `text` asks
+the page's text too. Answer `null` (nothing to show for this file), or:
+
+```json
+{ "pages": 12,
+  "png": "<base64>",            // null past the last, or for side 0
+  "width": 612, "height": 792,  // its own size, CSS pixels: what 100% shows
+  "text": [ { "text": "Chapter one", "x": 0.1, "y": 0.08, "width": 0.4, "height": 0.03 } ] }
+```
+
+The text is runs (a word, a line) in reading order, each with the box it
+lies in as fractions of the page's width and height from its top left:
+bibli gives each character of a run an equal part of its box, puts a
+space between two runs on one line and a line break between lines, and
+searches it whatever the case. Without `width` and `height` the page is
+its picture's size.
+
+bibli keeps what it is answered in the plugin's slot of its cache, under
+the file's version and the plugin's: how many pages, each page's picture
+by the side drawn, its text apart; nothing is asked twice. With
+`converts` too, bibli asks `convert` first and reads in pages a file it
+answers `null` for: the Netpbm plugin converts one picture to a PNG, and
+shows a file of several a picture a page. A preview that converts or
+shows pages is not asked `inspect`.
 
 ### `command`
 

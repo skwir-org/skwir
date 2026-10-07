@@ -97,6 +97,14 @@ impl CacheSlot {
         self.dir.join(&h[..2]).join(&h[2..])
     }
 
+    /// A slot of its own inside this one, `name` apart from the values'
+    /// buckets: trimmed apart, cleared with the cache.
+    pub fn within(&self, name: &str) -> CacheSlot {
+        CacheSlot {
+            dir: self.dir.join(name),
+        }
+    }
+
     /// A folder of the slot's own, beside its values, for files a program
     /// keeps under names of its choosing (a plugin's compiled module):
     /// deleted with the cache, like the rest.

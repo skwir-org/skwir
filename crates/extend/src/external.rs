@@ -169,6 +169,20 @@ pub(crate) struct Runner {
 }
 
 impl Runner {
+    /// A runner whose plugin is `transport`, already started: for tests.
+    #[cfg(test)]
+    pub(crate) fn answered_by(module: &Path, transport: Arc<dyn Transport>) -> Runner {
+        Runner {
+            id: "test",
+            title: "Test".into(),
+            kind: Kind::Module(module.to_owned()),
+            folder: module.parent().unwrap_or(module).to_owned(),
+            granted: [Capability::Read].into_iter().collect(),
+            compiled: Mutex::new(None),
+            live: Mutex::new(Some(transport)),
+        }
+    }
+
     /// What runs it, the module or the program: a new version of it makes
     /// again what the plugin made (`made_key`).
     pub fn made_by(&self) -> &Path {

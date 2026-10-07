@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::protocol::{
     CommandAnswer, CommandParams, ConvertParams, FieldParams, InspectParams, Inspection,
-    ThumbnailParams, method,
+    PageParams, ThumbnailParams, method,
 };
 
 /// What bibli does for a plugin while it answers a call.
@@ -74,6 +74,18 @@ pub trait Plugin {
         Ok(None)
     }
 
+    /// A page of a preview shown a page at a time (protocol version 3, a
+    /// manifest's `pages`): how many pages the file has, and the one asked
+    /// ([`Page`]): drawn within `side` as a PNG unless `side` is 0, its
+    /// text when `text` asks it. `None` when it shows nothing for this
+    /// file.
+    ///
+    /// # Errors
+    /// Why it could not draw it.
+    fn page(&self, _host: &dyn Host, _params: PageParams) -> Result<Option<Page>, String> {
+        Ok(None)
+    }
+
     /// Run one of its commands.
     ///
     /// # Errors
@@ -81,6 +93,21 @@ pub trait Plugin {
     fn command(&self, _host: &dyn Host, params: CommandParams) -> Result<CommandAnswer, String> {
         Err(format!("no command `{}`", params.command))
     }
+}
+
+/// A page a plugin answers ([`Plugin::page`]).
+#[derive(Clone, Debug, Default)]
+pub struct Page {
+    /// How many pages the file has.
+    pub pages: u32,
+    /// The page asked as a PNG: `None` past the last, or when no picture
+    /// was asked (`side` 0).
+    pub png: Option<Vec<u8>>,
+    /// The page's own size in CSS pixels (1/96 inch), when it has one of
+    /// its own; else its picture's.
+    pub size: Option<(f32, f32)>,
+    /// Its text, in reading order, when asked.
+    pub text: Vec<crate::protocol::TextRun>,
 }
 
 /// Answer `method` with `params` (JSON), as `plugin` does: the answer as
@@ -117,6 +144,16 @@ pub fn answer(
             json(made.map(|(name, bytes)| crate::protocol::ConvertAnswer {
                 name,
                 data: crate::base64::encode(&bytes),
+            }))
+        }
+        method::PAGE => {
+            let page = plugin.page(host, parsed(params)?)?;
+            json(page.map(|page| crate::protocol::PageAnswer {
+                pages: page.pages,
+                png: page.png.map(|png| crate::base64::encode(&png)),
+                width: page.size.map(|(width, _)| width),
+                height: page.size.map(|(_, height)| height),
+                text: page.text,
             }))
         }
         method::COMMAND => json(plugin.command(host, parsed(params)?)?),
@@ -360,6 +397,37 @@ mod tests {
             crate::base64::decode(&shout.data).as_deref(),
             Some(&b"# QUIET"[..])
         );
+        let page = |n: u32, side: u32, text: bool| -> crate::protocol::PageAnswer {
+            let params = json!({ "file": file, "page": n, "side": side, "text": text });
+            let said = answer(&Shout, &Bytes(b"quiet"), method::PAGE, &params.to_string());
+            serde_json::from_str(&said.unwrap()).unwrap()
+        };
+        let first = page(1, 64, false);
+        assert_eq!(first.pages, 2);
+        assert_eq!(
+            crate::base64::decode(first.png.as_deref().unwrap()).as_deref(),
+            Some(&b"page 1 of quiet"[..])
+        );
+        assert!(first.text.is_empty(), "its text not asked");
+        let text = page(2, 0, true);
+        assert_eq!(text.png, None, "no picture asked");
+        assert_eq!(text.text[0].text, "page 2 of quiet");
+        let past = page(3, 64, true);
+        assert_eq!((past.pages, past.png), (2, None), "past the last: no page");
+        // Parameters of version 3 before `text`: no text.
+        assert!(
+            serde_json::from_value::<crate::protocol::PageParams>(
+                json!({ "file": file, "page": 1, "side": 64 })
+            )
+            .is_ok_and(|params| !params.text)
+        );
+        let none = answer(
+            &Words,
+            &Bytes(b""),
+            method::PAGE,
+            &json!({ "file": file, "page": 1, "side": 64 }).to_string(),
+        );
+        assert_eq!(none.as_deref(), Ok("null"), "no pages: null");
     }
 
     /// Shows a text as a Markdown heading of it, louder.
@@ -374,6 +442,32 @@ mod tests {
             let text = host.read(params.file.handle, 0, 1024)?;
             let loud = String::from_utf8_lossy(&text).to_uppercase();
             Ok(Some(("a.md".into(), format!("# {loud}").into_bytes())))
+        }
+
+        /// Two pages, each saying which it is, its text in its top half.
+        fn page(
+            &self,
+            host: &dyn Host,
+            params: crate::protocol::PageParams,
+        ) -> Result<Option<Page>, String> {
+            let text = host.read(params.file.handle, 0, 1024)?;
+            let text = String::from_utf8_lossy(&text);
+            let page = (params.page <= 2).then(|| format!("page {} of {text}", params.page));
+            Ok(Some(Page {
+                pages: 2,
+                text: page
+                    .iter()
+                    .filter(|_| params.text)
+                    .map(|line| crate::protocol::TextRun {
+                        text: line.clone(),
+                        width: 1.0,
+                        height: 0.5,
+                        ..crate::protocol::TextRun::default()
+                    })
+                    .collect(),
+                png: page.filter(|_| params.side > 0).map(String::into_bytes),
+                size: None,
+            }))
         }
     }
 

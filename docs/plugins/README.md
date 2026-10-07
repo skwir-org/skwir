@@ -9,8 +9,10 @@ it on. It provides any of:
 - **fields** shown in Details (a text's word count, a format's version);
 - **thumbnails** of the files of some types;
 - **previews**: text, code, hexadecimal rows or a table, a page at a
-  time; or any file bibli shows (a PDF, a picture, Markdown, audio,
-  video…), made of the file and shown by bibli's own preview of it;
+  time; any file bibli shows (a PDF, a picture, Markdown, audio,
+  video…), made of the file and shown by bibli's own preview of it; or
+  pages, each a picture drawn when it is shown and its text where it
+  lies, read in bibli's reader (selected, copied, searched);
 - **commands**, in the palette and for scripts and agents, answering a
   value, a text for the clipboard, or a plan of changes to files.
 
@@ -41,13 +43,13 @@ bibli_plugin_api::export!(Mine);
 ```
 
 `Plugin` has one method per kind of thing a plugin provides (`field`,
-`thumbnail`, `inspect`, `convert`, `command`), each with a default that has nothing
+`thumbnail`, `inspect`, `convert`, `page`, `command`), each with a default that has nothing
 to say: implement those the manifest declares. A file comes as a
 `protocol::File`: its name, its path (to show), its type and size, and a
 `handle` to read its bytes with, valid while the call is answered.
 
 `crates/plugins-outside/netpbm` draws thumbnails and previews pictures
-as the PNG it makes of them, and `crates/plugins-outside/preview-hex` is
+as the PNG it makes of them (a file of several, a picture a page), and `crates/plugins-outside/preview-hex` is
 a preview (the built-in hexadecimal one, again as a module).
 
 Build the workspace's plugins with `just plugins`: each lands in
@@ -67,7 +69,7 @@ title = "Word count"
 description = "How many words a text holds, in Details"
 category = "files"           # browsing, files, previews or desktop
 capabilities = ["read"]      # read, write, network, programs
-api = 2                      # the protocol's version it speaks (1 or 2; 2 when not said)
+api = 3                      # the protocol's version it speaks (1 to 3; 3 when not said)
 
 [run]
 module = "word_count.wasm"   # or: program = "bin/word-count", args = [...]
@@ -85,6 +87,7 @@ types = ["application/octet-stream"]
 priority = -100              # higher is tried first
 shows_bytes = false          # true: the view every file offers (View as hex)
 converts = false             # true: answers `convert`, a file bibli shows (api = 2)
+pages = false                # true: answers `page`, a picture and its text a page (api = 3)
 
 [[commands]]
 name = "word-count.count"    # under the id

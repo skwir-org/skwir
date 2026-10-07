@@ -6,9 +6,11 @@ use std::ffi::OsStr;
 use std::path::Path;
 use std::sync::{Arc, Weak};
 
+use bibli_core::cache::CacheSlot;
+use bibli_core::document::DocumentSession;
 use bibli_core::fields::FieldProvider;
 use bibli_core::inspection::{self, InspectRequest};
-use bibli_core::preview::{Converted, PreviewProvider, PreviewRequest};
+use bibli_core::preview::{Converted, Preview, PreviewProvider, PreviewRequest};
 use bibli_core::thumbs::{Image, ThumbRequest, ThumbnailProvider};
 use bibli_core::{App, CancelToken, Value};
 use bibli_platform::mime::{self, Types};
@@ -19,6 +21,7 @@ use bibli_plugin_api::protocol::{
 
 use crate::call::Call;
 use crate::external::{External, Runner};
+use crate::pages::Pages;
 
 /// Register what `plugin` provides.
 pub(crate) fn register(app: &App, plugin: &External) {
@@ -70,6 +73,9 @@ pub(crate) fn register(app: &App, plugin: &External) {
                 converted: preview
                     .converts
                     .then(|| app.cache.namespace(owner).folder("converted")),
+                pages: preview
+                    .pages
+                    .then(|| app.cache.namespace(owner).within("pages")),
             }),
         );
     }
@@ -206,11 +212,18 @@ struct Previews {
     /// Where the files it converts to are kept, when it converts: the
     /// plugin's folder of the cache.
     converted: Option<std::path::PathBuf>,
+    /// Where the pages it drew are kept, when it shows files a page at a
+    /// time.
+    pages: Option<CacheSlot>,
 }
 
 /// What the files a plugin converted to may take of the cache: the oldest
 /// go first.
 const CONVERTED_BUDGET: u64 = 256 * 1024 * 1024;
+
+/// What a folder of converted files holds when the plugin made nothing of
+/// that version of the file.
+const NOTHING: &str = ".nothing";
 
 impl PreviewProvider for Previews {
     fn id(&self) -> &'static str {
@@ -230,12 +243,30 @@ impl PreviewProvider for Previews {
     }
     /// Reached when the plugin answered nothing (no page, no file): the
     /// file is its own, which it shows nothing of.
-    fn render(
-        &self,
-        _request: &PreviewRequest,
-        _cancel: &CancelToken,
-    ) -> anyhow::Result<bibli_core::preview::Preview> {
+    fn render(&self, _request: &PreviewRequest, _cancel: &CancelToken) -> anyhow::Result<Preview> {
         anyhow::bail!("“{}” shows nothing of this file", self.runner.title)
+    }
+    /// The file a page at a time, when the plugin shows it so (ADR-047):
+    /// read by bibli's reader, which turns, selects and searches it.
+    fn open_document(
+        &self,
+        request: &PreviewRequest,
+        lifetime: &CancelToken,
+    ) -> anyhow::Result<Option<Arc<dyn DocumentSession>>> {
+        let Some(kept) = &self.pages else {
+            return Ok(None);
+        };
+        let path = request.entry.resolve()?;
+        anyhow::ensure!(!private(&self.app, &path), PRIVATE);
+        let pages = Pages::open(
+            Arc::clone(&self.runner),
+            kept.clone(),
+            path,
+            request.entry.id,
+            request.mime.clone(),
+            lifetime,
+        )?;
+        Ok(pages.map(|pages| Arc::new(pages) as Arc<dyn DocumentSession>))
     }
     fn inspect(
         &self,
@@ -243,6 +274,10 @@ impl PreviewProvider for Previews {
         view: &InspectRequest,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<inspection::Inspection>> {
+        // A preview that converts or shows pages answers those, not this.
+        if self.converted.is_some() || self.pages.is_some() {
+            return Ok(None);
+        }
         let path = request.entry.resolve()?;
         anyhow::ensure!(!private(&self.app, &path), PRIVATE);
         let call = Call::new(vec![path], self.runner.granted, cancel.clone());
@@ -280,6 +315,11 @@ impl PreviewProvider for Previews {
             "converted",
         )?;
         let kept = folder.join(blake3::hash(&key).to_hex().as_str());
+        // It made nothing of this version of the file (it shows it a page
+        // at a time instead): it is not asked again.
+        if kept.join(NOTHING).exists() {
+            return Ok(None);
+        }
         if let Some(made) = only_file(&kept) {
             return Ok(Some(self.shown(made)));
         }
@@ -291,6 +331,9 @@ impl PreviewProvider for Previews {
             .runner
             .call(method::CONVERT, serde_json::to_value(params)?, &call)?;
         let Some(answer): Option<ConvertAnswer> = serde_json::from_value(answer)? else {
+            // Remembered: a page turned asks the plugin nothing.
+            let _ = std::fs::create_dir_all(&kept)
+                .and_then(|()| std::fs::write(kept.join(NOTHING), b""));
             return Ok(None);
         };
         let bytes = bibli_plugin_api::base64::decode(&answer.data)

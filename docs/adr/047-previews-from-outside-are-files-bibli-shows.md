@@ -1,6 +1,7 @@
 # ADR-047: A preview from outside is a file bibli shows
 
-Status: accepted, 2026-10-07 (Phase 6, after its three steps).
+Status: accepted, 2026-10-07 (Phase 6, after its three steps); pages
+(its seventh point) the same day.
 
 ## Context
 
@@ -50,8 +51,24 @@ the wrong one:
    the network** (`network`): otherwise a module, which has no network,
    could write what it read into a link's address and have the user's
    click send it. The panel says why instead (`closed_links`).
-6. **Versions**: bibli speaks versions 1 and 2 (`OLDEST`, `VERSION`). A
-   plugin of version 1 runs unchanged; `converts` needs `api = 2`.
+6. **Versions**: bibli speaks versions 1 to 3 (`OLDEST`, `VERSION`). A
+   plugin of an older version runs unchanged; `converts` needs `api = 2`
+   and `pages` 3.
+7. **A page at a time** (protocol version 3, `page`): a plugin whose
+   manifest says `pages` draws the page asked, within the side asked,
+   as a picture, says how many there are and the page's own size, and,
+   when asked, its text as runs with the boxes they lie in. bibli reads
+   it as a document (`crates/extend/src/pages.rs`, a `DocumentSession`
+   the adapter's `open_document` opens), in its own reader: scrolled or
+   turned, zoomed, its text selected, copied and searched by bibli
+   (side 0 asks a page's text alone, so a search draws nothing). What
+   it is answered is kept in the plugin's slot of the cache
+   (`CacheSlot::within`, 256 MiB) under the file's version and the
+   plugin's: the count, each picture by its side, each page's text
+   apart. A long document is drawn as it is read, never converted
+   whole. With `converts`, a file the plugin answers no file for (an
+   answer remembered for that version of it) is read in pages; a
+   preview that converts or shows pages is not asked `inspect`.
 
 ## Consequences
 
@@ -70,9 +87,12 @@ the wrong one:
 - A converted file goes through bibli's own readers, which face any
   file the user opens anyway: no reader meets bytes it could not meet
   before.
-- A conversion is whole: a long file is converted at once, up to what
-  one message holds (about 48 MB). A paged protocol (a page of a
-  document drawn when shown) is a version to come if a plugin needs it.
+- A conversion is whole, up to what one message holds (about 48 MB); a
+  long document is shown in pages instead. A page's text is placed by
+  runs, each character an equal part of its run's box: a plugin that
+  wants a selection to follow each glyph sends a run a character.
+- A page has no links nor outline yet: a page's links would go through
+  the same rule as a converted file's (the network or nothing).
 - The portable inspection stays for what is naturally text or rows,
   paged by the plugin itself: the hexadecimal view, a log, a table.
 - Thumbnails of a converted file are not drawn from it: a plugin draws

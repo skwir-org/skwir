@@ -19,6 +19,7 @@
 mod call;
 mod commands;
 mod external;
+mod pages;
 mod process;
 mod providers;
 

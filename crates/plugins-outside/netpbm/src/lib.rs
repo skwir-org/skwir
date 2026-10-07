@@ -1,12 +1,13 @@
-//! Netpbm pictures from outside bibli (ADR-045, ADR-046, ADR-047): a
-//! binary one (`P6`, colour; `P5`, grey; at most 255 a channel) read
-//! through bibli, drawn to fit the size asked (nearest pixel) for a
-//! thumbnail, and converted whole for the preview, which bibli shows as
-//! any picture; both a PNG this module writes itself: a module has no
+//! Netpbm pictures from outside bibli (ADR-045, ADR-046, ADR-047): any
+//! of the six kinds (`P1` to `P6`) read through bibli, drawn to fit the
+//! size asked (nearest pixel) for a thumbnail; previewed as the PNG it
+//! makes of the picture, which bibli shows as any picture, or, for a
+//! file of several pictures one after another, a page each, drawn when
+//! shown. Every PNG is one this module writes itself: a module has no
 //! libraries but its own.
 
-use bibli_plugin_api::guest::{Host, Plugin};
-use bibli_plugin_api::protocol::{ConvertParams, ThumbnailParams};
+use bibli_plugin_api::guest::{Host, Page, Plugin};
+use bibli_plugin_api::protocol::{ConvertParams, PageParams, ThumbnailParams};
 
 /// The largest picture read: its header and its pixels.
 const LIMIT: u64 = 64 * 1024 * 1024;
@@ -30,14 +31,23 @@ impl Plugin for Netpbm {
         Ok(Some(png(&picture.fit(params.size))))
     }
 
+    /// One picture: the PNG of it. Several: nothing, they are pages.
     fn convert(
         &self,
         host: &dyn Host,
         params: ConvertParams,
     ) -> Result<Option<(String, Vec<u8>)>, String> {
-        let Some(picture) = Picture::parse(&read(host, params.file.handle)?) else {
+        let bytes = read(host, params.file.handle)?;
+        let mut pictures = Vec::new();
+        // Two tell one from several.
+        Picture::each(&bytes, |picture| {
+            pictures.push(picture);
+            pictures.len() < 2
+        });
+        if pictures.len() != 1 {
             return Ok(None);
-        };
+        }
+        let picture = pictures.remove(0);
         let stem = params
             .file
             .name
@@ -48,6 +58,36 @@ impl Plugin for Netpbm {
             format!("{stem}.png"),
             png(&picture.fit(PREVIEW_SIDE)),
         )))
+    }
+
+    /// A file of several pictures: one a page, drawn within the side
+    /// asked, the others read past one at a time. A picture has no text;
+    /// its own size is its pixels'.
+    fn page(&self, host: &dyn Host, params: PageParams) -> Result<Option<Page>, String> {
+        let bytes = read(host, params.file.handle)?;
+        let (mut at, mut wanted) = (0, None);
+        let pages = Picture::each(&bytes, |picture| {
+            at += 1;
+            if at == params.page as usize {
+                wanted = Some(picture);
+            }
+            true
+        });
+        if pages == 0 {
+            return Ok(None);
+        }
+        #[allow(clippy::cast_precision_loss)] // A picture's sides.
+        let size = wanted
+            .as_ref()
+            .map(|picture| (picture.width as f32, picture.height as f32));
+        Ok(Some(Page {
+            pages: u32::try_from(pages).unwrap_or(u32::MAX),
+            png: wanted
+                .filter(|_| params.side > 0)
+                .map(|picture| png(&picture.fit(params.side))),
+            size,
+            text: Vec::new(),
+        }))
     }
 }
 
@@ -77,8 +117,28 @@ impl Picture {
     /// made 8), its comments skipped; `None` for anything else or a
     /// raster cut short.
     pub fn parse(bytes: &[u8]) -> Option<Picture> {
+        Self::parse_at(bytes, &mut 0)
+    }
+
+    /// The pictures of `bytes`, one after another as a Netpbm file may
+    /// hold several, each read and handed to `each` (which says whether
+    /// to go on) before the next is: one at a time in memory. How many
+    /// were read, up to the first that does not.
+    pub fn each(bytes: &[u8], mut each: impl FnMut(Picture) -> bool) -> usize {
         let mut at = 0;
-        let (text, channels, bitmap) = match field(bytes, &mut at)? {
+        let mut read = 0;
+        while let Some(picture) = Self::parse_at(bytes, &mut at) {
+            read += 1;
+            if !each(picture) {
+                break;
+            }
+        }
+        read
+    }
+
+    /// The picture that starts at `at`, `at` left after it.
+    fn parse_at(bytes: &[u8], at: &mut usize) -> Option<Picture> {
+        let (text, channels, bitmap) = match field(bytes, at)? {
             b"P1" => (true, 1, true),
             b"P2" => (true, 1, false),
             b"P3" => (true, 3, false),
@@ -87,9 +147,9 @@ impl Picture {
             b"P6" => (false, 3, false),
             _ => return None,
         };
-        let width = number(bytes, &mut at)?;
-        let height = number(bytes, &mut at)?;
-        let max = if bitmap { 1 } else { number(bytes, &mut at)? };
+        let width = number(bytes, at)?;
+        let height = number(bytes, at)?;
+        let max = if bitmap { 1 } else { number(bytes, at)? };
         if width == 0 || height == 0 || max == 0 || max > 65_535 {
             return None;
         }
@@ -100,36 +160,38 @@ impl Picture {
         // Grown as the samples are read, never to what a header claims.
         let mut values = Vec::new();
         // One white space after the header, then the raster's bytes.
-        let raster = at + 1;
+        let raster = *at + 1;
         match (text, bitmap) {
             // Digits, white space between them or not; 1 is black.
             (true, true) => {
                 while values.len() < pixels {
-                    match bytes.get(at)? {
+                    match bytes.get(*at)? {
                         b'0' => values.push(255),
                         b'1' => values.push(0),
                         // A comment, to the end of its line.
                         b'#' => {
-                            while *bytes.get(at)? != b'\n' {
-                                at += 1;
+                            while *bytes.get(*at)? != b'\n' {
+                                *at += 1;
                             }
                             continue;
                         }
                         space if space.is_ascii_whitespace() => {}
                         _ => return None,
                     }
-                    at += 1;
+                    *at += 1;
                 }
             }
             (true, false) => {
                 while values.len() < samples {
-                    values.push(eight(number(bytes, &mut at)?));
+                    values.push(eight(number(bytes, at)?));
                 }
             }
             // Rows of bits, each row whole bytes; 1 is black.
             (false, true) => {
                 let row = width.div_ceil(8);
-                let bits = bytes.get(raster..raster + row.checked_mul(height)?)?;
+                let end = raster + row.checked_mul(height)?;
+                let bits = bytes.get(raster..end)?;
+                *at = end;
                 for y in 0..height {
                     for x in 0..width {
                         let bit = (bits[y * row + x / 8] >> (7 - x % 8)) & 1;
@@ -138,11 +200,15 @@ impl Picture {
                 }
             }
             (false, false) if max < 256 => {
-                let raster = bytes.get(raster..raster + samples)?;
+                let end = raster + samples;
+                let raster = bytes.get(raster..end)?;
+                *at = end;
                 values.extend(raster.iter().map(|sample| eight(usize::from(*sample))));
             }
             (false, false) => {
-                let raster = bytes.get(raster..raster + samples.checked_mul(2)?)?;
+                let end = raster + samples.checked_mul(2)?;
+                let raster = bytes.get(raster..end)?;
+                *at = end;
                 values.extend(
                     raster
                         .as_chunks::<2>()
@@ -318,6 +384,23 @@ mod tests {
         let p5 = Picture::parse(b"P5 2 1 65535 \x00\x00\xff\xff").unwrap();
         assert_eq!(colours(p5), [black, white]);
         assert!(Picture::parse(b"P2 2 1 4\n0").is_none(), "a sample missing");
+    }
+
+    #[test]
+    fn the_pictures_of_a_file_are_read_one_after_another() {
+        // A colour picture, then a grey one as text, then one cut short.
+        let mut bytes = b"P6 1 1 255 \xff\x00\x00".to_vec();
+        bytes.extend(b"\nP2 2 1 255\n0 255\n");
+        bytes.extend(b"P5 4 4 255 \x00");
+        let mut seen = Vec::new();
+        let read = Picture::each(&bytes, |picture| {
+            seen.push((picture.width, picture.height, picture.rgb[0]));
+            true
+        });
+        assert_eq!(read, 2, "up to the first that does not read");
+        assert_eq!(seen, [(1, 1, 255), (2, 1, 0)]);
+        // Asked to stop, it reads no further.
+        assert_eq!(Picture::each(&bytes, |_| false), 1);
     }
 
     #[test]

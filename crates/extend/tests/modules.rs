@@ -468,3 +468,94 @@ fn a_picture_from_outside_is_previewed_as_the_png_it_makes() {
     );
     assert!(refused.is_err());
 }
+
+#[test]
+fn a_file_of_several_pictures_is_previewed_a_page_at_a_time() {
+    let module = common::module("bibli-outside-netpbm");
+    let tmp = common::home_tempdir();
+    let plugins = tmp.path().join("plugins");
+    common::install(
+        &plugins,
+        "netpbm",
+        &manifest("crates/plugins-outside/netpbm"),
+        &module,
+        "netpbm.wasm",
+    );
+    let app = common::app_with(&tmp.path().join("state"), &plugins, &[]);
+    // Two pictures one after another: 40 by 10 in red, 20 by 20 in grey.
+    let file = tmp.path().join("two it's.ppm");
+    let mut bytes = b"P6\n40 10\n255\n".to_vec();
+    bytes.extend(std::iter::repeat_n([255u8, 0, 0], 400).flatten());
+    bytes.extend(b"P5\n20 20\n255\n");
+    bytes.extend([128u8; 400]);
+    std::fs::write(&file, bytes).unwrap();
+    let asked = |page| PreviewRequest {
+        mime: Some("image/x-portable-pixmap".into()),
+        page,
+        max_side: 64,
+        ..request(&file)
+    };
+    let cancel = CancelToken::new();
+    // Not one picture: no file to show instead, asked once.
+    assert!(
+        app.previews
+            .converted(&asked(1), &cancel)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        app.previews
+            .converted(&asked(2), &cancel)
+            .unwrap()
+            .is_none()
+    );
+    // Read as a document: a page a picture, its own size the picture's.
+    let open = || {
+        app.previews
+            .open_document(&asked(1), &cancel)
+            .unwrap()
+            .expect("shown a page at a time")
+    };
+    let pages = open();
+    assert_eq!(pages.info().pages, 2);
+    let first = pages.render(1, 64, &cancel).unwrap();
+    assert_eq!((first.width, first.height), (40, 10));
+    assert_eq!((first.content.width, first.content.height), (40., 10.));
+    assert_eq!(&first.rgba[..4], &[255, 0, 0, 255]);
+    assert!(first.content.chars.is_empty(), "a picture has no text");
+    let second = pages.render(2, 64, &cancel).unwrap();
+    assert_eq!((second.width, second.height), (20, 20));
+    assert_eq!(&second.rgba[..4], &[128, 128, 128, 255]);
+    assert!(format!("{:#}", pages.render(3, 64, &cancel).unwrap_err()).contains("no page 3"));
+    assert!(pages.search("anything", &cancel).unwrap().is_empty());
+    // A file of one picture is shown as its PNG, not as pages.
+    let one = tmp.path().join("one.ppm");
+    std::fs::write(&one, b"P5\n1 1\n255\n\x00").unwrap();
+    let single = PreviewRequest {
+        mime: Some("image/x-portable-pixmap".into()),
+        ..request(&one)
+    };
+    assert!(app.previews.converted(&single, &cancel).unwrap().is_some());
+    // Turned to again with its helper ended: the page kept, nothing
+    // started.
+    assert!(app.plugins.set_enabled("netpbm", false, &app));
+    assert!(app.plugins.set_enabled("netpbm", true, &app));
+    #[cfg(target_os = "linux")]
+    {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while children() > 0 {
+            assert!(std::time::Instant::now() < deadline, "the helper ended");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+    assert!(
+        app.previews
+            .converted(&asked(2), &cancel)
+            .unwrap()
+            .is_none()
+    );
+    let again = open().render(2, 64, &cancel).unwrap();
+    assert_eq!((again.width, again.height), (20, 20));
+    #[cfg(target_os = "linux")]
+    assert_eq!(children(), 0, "nothing was started");
+}
