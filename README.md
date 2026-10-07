@@ -96,7 +96,9 @@ are private from the start, and so is any folder holding a file named
 A plugin can be a folder of its own, outside bibli's code: a
 `plugin.toml` and a WebAssembly module, or a program that speaks a small
 protocol of JSON lines. It provides fields shown in Details, thumbnails,
-previews and commands. Settings › Plugins lists each with what it may do
+previews and commands; a preview can be any file bibli shows (a PDF, a
+picture, a video…), made of the file and shown by bibli's own viewer.
+Settings › Plugins lists each with what it may do
 (read what files hold, change files, use the network, start programs)
 and where it is; it stays off until you turn it on, and gets nothing it
 did not declare: a module reaches nothing but the files it is asked

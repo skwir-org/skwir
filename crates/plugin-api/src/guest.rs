@@ -8,7 +8,8 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::protocol::{
-    CommandAnswer, CommandParams, FieldParams, InspectParams, Inspection, ThumbnailParams, method,
+    CommandAnswer, CommandParams, ConvertParams, FieldParams, InspectParams, Inspection,
+    ThumbnailParams, method,
 };
 
 /// What bibli does for a plugin while it answers a call.
@@ -59,6 +60,20 @@ pub trait Plugin {
         Ok(None)
     }
 
+    /// The file a preview shows in this one's place (protocol version 2,
+    /// a manifest's `converts`): its name, whose extension says its type,
+    /// and its bytes. `None` when it shows nothing for this one.
+    ///
+    /// # Errors
+    /// Why it could not make it.
+    fn convert(
+        &self,
+        _host: &dyn Host,
+        _params: ConvertParams,
+    ) -> Result<Option<(String, Vec<u8>)>, String> {
+        Ok(None)
+    }
+
     /// Run one of its commands.
     ///
     /// # Errors
@@ -97,6 +112,13 @@ pub fn answer(
             })
         }
         method::INSPECT => json(plugin.inspect(host, parsed(params)?)?),
+        method::CONVERT => {
+            let made = plugin.convert(host, parsed(params)?)?;
+            json(made.map(|(name, bytes)| crate::protocol::ConvertAnswer {
+                name,
+                data: crate::base64::encode(&bytes),
+            }))
+        }
         method::COMMAND => json(plugin.command(host, parsed(params)?)?),
         other => Err(format!("unknown method `{other}`")),
     }
@@ -318,6 +340,41 @@ mod tests {
             &json!({ "file": file }).to_string(),
         );
         assert_eq!(preview.as_deref(), Ok("null"), "nothing to show: null");
+        let converted = answer(
+            &Words,
+            &Bytes(b""),
+            method::CONVERT,
+            &json!({ "file": file }).to_string(),
+        );
+        assert_eq!(converted.as_deref(), Ok("null"), "no other file: null");
+        let shout = answer(
+            &Shout,
+            &Bytes(b"quiet"),
+            method::CONVERT,
+            &json!({ "file": file }).to_string(),
+        )
+        .unwrap();
+        let shout: crate::protocol::ConvertAnswer = serde_json::from_str(&shout).unwrap();
+        assert_eq!(shout.name, "a.md");
+        assert_eq!(
+            crate::base64::decode(&shout.data).as_deref(),
+            Some(&b"# QUIET"[..])
+        );
+    }
+
+    /// Shows a text as a Markdown heading of it, louder.
+    struct Shout;
+
+    impl Plugin for Shout {
+        fn convert(
+            &self,
+            host: &dyn Host,
+            params: crate::protocol::ConvertParams,
+        ) -> Result<Option<(String, Vec<u8>)>, String> {
+            let text = host.read(params.file.handle, 0, 1024)?;
+            let loud = String::from_utf8_lossy(&text).to_uppercase();
+            Ok(Some(("a.md".into(), format!("# {loud}").into_bytes())))
+        }
     }
 
     fn answer_of(method: &str) -> Result<String, String> {

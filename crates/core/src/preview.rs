@@ -66,6 +66,21 @@ pub struct Member {
     pub own_file: bool,
 }
 
+/// A file shown in another's place: one of a format bibli shows (a PDF,
+/// a picture, Markdown, a table), which a provider made of the file asked
+/// for (ADR-047). The panel previews it as it would that file.
+#[derive(Clone, Debug)]
+pub struct Converted {
+    /// Where it is: kept by the provider for as long as it may be shown.
+    pub path: std::path::PathBuf,
+    /// Its type, read from its name and bytes as any file's is.
+    pub mime: Option<String>,
+    /// Why its links are not followed, when they are not: a plugin from
+    /// outside bibli that may not use the network made it, and a link the
+    /// user clicks would carry what it read where it pleases.
+    pub closed_links: Option<String>,
+}
+
 pub trait PreviewProvider: Send + Sync {
     fn id(&self) -> &'static str;
     /// Fallback providers sort after format-specific providers, including on re-enable.
@@ -131,6 +146,16 @@ pub trait PreviewProvider: Send + Sync {
         _request: &PreviewRequest,
         _lifetime: &CancelToken,
     ) -> anyhow::Result<Option<Arc<dyn crate::document::DocumentSession>>> {
+        Ok(None)
+    }
+    /// The file shown in this one's place (ADR-047), asked before anything
+    /// else: the panel previews it, by whichever provider shows its type,
+    /// once. `None`: the provider shows the file itself.
+    fn converted(
+        &self,
+        _request: &PreviewRequest,
+        _cancel: &CancelToken,
+    ) -> anyhow::Result<Option<Converted>> {
         Ok(None)
     }
 }
@@ -243,6 +268,22 @@ impl Previews {
                 cancel,
                 |p| p.accepts(request),
                 |p, cancel| p.extract(request, target, into, cancel),
+            )?
+            .flatten())
+    }
+
+    /// The file the provider that owns `request` shows in its place
+    /// (`PreviewProvider::converted`), if it shows another.
+    pub fn converted(
+        &self,
+        request: &PreviewRequest,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Option<Converted>> {
+        Ok(self
+            .dispatch(
+                cancel,
+                |p| p.accepts(request),
+                |p, cancel| p.converted(request, cancel),
             )?
             .flatten())
     }

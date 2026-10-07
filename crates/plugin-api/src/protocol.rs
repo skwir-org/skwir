@@ -5,7 +5,8 @@
 //! its imports, `read` and `log` (`wit/plugin.wit`).
 //!
 //! bibli asks ([`method`]): `initialize` (a program, first), `field`,
-//! `thumbnail`, `inspect`, `command`. A plugin asks back, while it
+//! `thumbnail`, `inspect`, `convert` (version 2), `command`. A plugin
+//! asks back, while it
 //! answers: `read` (a file of the call, by its handle), `log`. bibli
 //! sends a program `$/cancel` when it stops waiting for an answer, and
 //! closes its standard input when it is no longer needed.
@@ -14,7 +15,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// The version of the protocol this crate speaks (`api` in a manifest).
-pub const VERSION: u32 = 1;
+/// Version 2 added `convert` (a preview that is another file).
+pub const VERSION: u32 = 2;
+
+/// The oldest version bibli still speaks: a plugin written for it runs
+/// unchanged.
+pub const OLDEST: u32 = 1;
 
 /// The longest message, in bytes with its newline: a thumbnail's PNG or a
 /// page of bytes read, in base64.
@@ -35,6 +41,9 @@ pub mod method {
     /// bibli → plugin: [`InspectParams`](super::InspectParams) → an
     /// [`Inspection`](super::Inspection) or null.
     pub const INSPECT: &str = "inspect";
+    /// bibli → plugin, version 2: [`ConvertParams`](super::ConvertParams)
+    /// → a [`ConvertAnswer`](super::ConvertAnswer) or null.
+    pub const CONVERT: &str = "convert";
     /// bibli → plugin: [`CommandParams`](super::CommandParams) →
     /// [`CommandAnswer`](super::CommandAnswer).
     pub const COMMAND: &str = "command";
@@ -122,6 +131,23 @@ pub struct InspectParams {
     /// A member it listed (a row's `target`), asked for.
     #[serde(default)]
     pub target: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConvertParams {
+    pub file: File,
+}
+
+/// A preview that is another file (version 2): one of a format bibli
+/// shows (a PDF, a PNG, Markdown, CSV, GPX…), which bibli previews as it
+/// would that file, typed by its name and bytes. Null: the plugin shows
+/// nothing for this one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConvertAnswer {
+    /// Its name, whose extension says its type (`page.pdf`).
+    pub name: String,
+    /// Its bytes, in base64: at most what a message holds.
+    pub data: String,
 }
 
 /// How an inspection is drawn.

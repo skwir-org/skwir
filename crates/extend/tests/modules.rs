@@ -351,3 +351,120 @@ fn a_thumbnailer_from_outside_draws_through_the_thumbnail_service() {
     assert_eq!(pixel(120, 20), [0, 0, 255, 255]);
 }
 
+/// How many processes this test started that still run: a plugin's
+/// helper, or the sandbox it runs in.
+#[cfg(target_os = "linux")]
+fn children() -> usize {
+    let me = std::process::id().to_string();
+    std::fs::read_dir("/proc")
+        .unwrap()
+        .flatten()
+        .filter(|process| {
+            let stat = std::fs::read_to_string(process.path().join("stat")).unwrap_or_default();
+            // `pid (name) state parent …`, the name being anything.
+            stat.rsplit_once(") ")
+                .and_then(|(_, rest)| rest.split_whitespace().nth(1))
+                == Some(me.as_str())
+        })
+        .count()
+}
+
+#[test]
+fn a_picture_from_outside_is_previewed_as_the_png_it_makes() {
+    let module = common::module("bibli-outside-netpbm");
+    let tmp = common::home_tempdir();
+    let plugins = tmp.path().join("plugins");
+    let installed = common::install(
+        &plugins,
+        "netpbm",
+        &manifest("crates/plugins-outside/netpbm"),
+        &module,
+        "netpbm.wasm",
+    );
+    let app = common::app_with(&tmp.path().join("state"), &plugins, &[]);
+    // A picture of 40 by 10, its left half red, its right half blue.
+    let picture = tmp.path().join("bands it's.ppm");
+    let mut bytes = b"P6\n40 10\n255\n".to_vec();
+    for _ in 0..10 {
+        for x in 0..40 {
+            bytes.extend(if x < 20 { [255, 0, 0] } else { [0, 0, 255] });
+        }
+    }
+    std::fs::write(&picture, bytes).unwrap();
+    let asked = PreviewRequest {
+        mime: Some("image/x-portable-pixmap".into()),
+        ..request(&picture)
+    };
+    let made = app
+        .previews
+        .converted(&asked, &CancelToken::new())
+        .unwrap()
+        .expect("shown as another file");
+    // A PNG of the whole picture, typed by its name and bytes, kept in the
+    // plugin's folder of the cache.
+    assert_eq!(made.mime.as_deref(), Some("image/png"));
+    assert_eq!(made.path.file_name().unwrap(), "bands it's.png");
+    assert!(
+        made.path
+            .starts_with(app.cache.namespace("netpbm").folder("converted"))
+    );
+    let png = std::fs::read(&made.path).unwrap();
+    assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+    assert_eq!(&png[16..24], &[0, 0, 0, 40, 0, 0, 0, 10], "its size");
+    // A module may not use the network: what it made keeps its links.
+    assert!(made.closed_links.unwrap().contains("network"));
+    // Shown again, even with its helper ended: the file kept, the plugin
+    // not asked, no helper started.
+    assert!(app.plugins.set_enabled("netpbm", false, &app));
+    assert!(app.plugins.set_enabled("netpbm", true, &app));
+    #[cfg(target_os = "linux")]
+    {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while children() > 0 {
+            assert!(std::time::Instant::now() < deadline, "the helper ended");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+    let again = app
+        .previews
+        .converted(&asked, &CancelToken::new())
+        .unwrap()
+        .unwrap();
+    assert_eq!(again.path, made.path);
+    #[cfg(target_os = "linux")]
+    assert_eq!(children(), 0, "nothing was started");
+    // The picture changed: made again.
+    std::fs::write(&picture, b"P5\n2 1\n255\n\x00\xff").unwrap();
+    let changed = app
+        .previews
+        .converted(&asked, &CancelToken::new())
+        .unwrap()
+        .unwrap();
+    assert_ne!(changed.path, made.path);
+    // A new version of the plugin makes it again too.
+    let wasm = installed.join("netpbm.wasm");
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    std::fs::write(&wasm, std::fs::read(&wasm).unwrap()).unwrap();
+    let updated = app
+        .previews
+        .converted(&asked, &CancelToken::new())
+        .unwrap()
+        .unwrap();
+    assert_ne!(updated.path, changed.path);
+    assert_eq!(
+        &std::fs::read(&changed.path).unwrap()[16..24],
+        &[0, 0, 0, 2, 0, 0, 0, 1]
+    );
+    // A private file is never handed to it.
+    std::fs::write(tmp.path().join(".private"), "").unwrap();
+    let private = tmp.path().join("kept.ppm");
+    std::fs::write(&private, b"P5\n1 1\n255\n\x00").unwrap();
+    let refused = app.previews.converted(
+        &PreviewRequest {
+            mime: Some("image/x-portable-pixmap".into()),
+            ..request(&private)
+        },
+        &CancelToken::new(),
+    );
+    assert!(refused.is_err());
+}

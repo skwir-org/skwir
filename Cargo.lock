@@ -670,6 +670,7 @@ dependencies = [
  "bibli-platform",
  "bibli-plugin-api",
  "bibli-plugin-preview-hex",
+ "blake3",
  "crossbeam-channel",
  "parking_lot",
  "serde_json",
@@ -829,6 +830,7 @@ version = "0.0.1"
 dependencies = [
  "serde",
  "serde_json",
+ "toml 0.9.12+spec-1.1.0",
  "wit-bindgen",
 ]
 

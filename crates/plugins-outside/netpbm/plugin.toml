@@ -2,13 +2,20 @@
 # pictures drawn small, as a WebAssembly module that reads them through
 # bibli and answers a PNG.
 id = "netpbm"
-title = "Thumbnails: Netpbm pictures"
-description = "Thumbnails of PPM and PGM pictures, from a WebAssembly module"
+title = "Netpbm pictures"
+description = "Thumbnails and previews of PPM and PGM pictures, from a WebAssembly module"
 category = "previews"
 capabilities = ["read"]
+api = 2
 
 [run]
 module = "netpbm.wasm"
 
 [[thumbnails]]
 types = ["image/x-portable-pixmap", "image/x-portable-graymap"]
+
+# Previewed as the PNG it makes of them, by bibli's own picture view:
+# zoomed, fitted, compared as any picture is (protocol version 2).
+[[previews]]
+types = ["image/x-portable-pixmap", "image/x-portable-graymap"]
+converts = true

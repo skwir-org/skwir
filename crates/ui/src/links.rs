@@ -236,6 +236,12 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A preview a plugin made without the network keeps its links: a
+        // click would carry what the plugin read where the link says.
+        if let Some(why) = self.preview.closed_links.clone() {
+            self.set_status(why, false, cx);
+            return;
+        }
         if is_address(href) {
             self.run(
                 "ui.open_url",

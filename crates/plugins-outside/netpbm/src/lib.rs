@@ -1,14 +1,19 @@
-//! A thumbnailer from outside bibli (ADR-045, ADR-046): a binary Netpbm
-//! picture (`P6`, colour; `P5`, grey; at most 255 a channel) read through
-//! bibli, drawn to fit the size asked (nearest pixel), and answered as a
-//! PNG this module writes itself: a module has no libraries but its own.
+//! Netpbm pictures from outside bibli (ADR-045, ADR-046, ADR-047): a
+//! binary one (`P6`, colour; `P5`, grey; at most 255 a channel) read
+//! through bibli, drawn to fit the size asked (nearest pixel) for a
+//! thumbnail, and converted whole for the preview, which bibli shows as
+//! any picture; both a PNG this module writes itself: a module has no
+//! libraries but its own.
 
 use bibli_plugin_api::guest::{Host, Plugin};
-use bibli_plugin_api::protocol::ThumbnailParams;
+use bibli_plugin_api::protocol::{ConvertParams, ThumbnailParams};
 
 /// The largest picture read: its header and its pixels.
 const LIMIT: u64 = 64 * 1024 * 1024;
 const PAGE: u32 = 1024 * 1024;
+/// The longest side of a picture previewed: its PNG (stored, not
+/// compressed) stays within what a message holds.
+const PREVIEW_SIDE: u32 = 3600;
 
 #[derive(Default)]
 pub struct Netpbm;
@@ -19,19 +24,44 @@ impl Plugin for Netpbm {
         host: &dyn Host,
         params: ThumbnailParams,
     ) -> Result<Option<Vec<u8>>, String> {
-        let mut bytes = Vec::new();
-        while (bytes.len() as u64) < LIMIT {
-            let page = host.read(params.file.handle, bytes.len() as u64, PAGE)?;
-            if page.is_empty() {
-                break;
-            }
-            bytes.extend(page);
-        }
-        let Some(picture) = Picture::parse(&bytes) else {
+        let Some(picture) = Picture::parse(&read(host, params.file.handle)?) else {
             return Ok(None);
         };
         Ok(Some(png(&picture.fit(params.size))))
     }
+
+    fn convert(
+        &self,
+        host: &dyn Host,
+        params: ConvertParams,
+    ) -> Result<Option<(String, Vec<u8>)>, String> {
+        let Some(picture) = Picture::parse(&read(host, params.file.handle)?) else {
+            return Ok(None);
+        };
+        let stem = params
+            .file
+            .name
+            .rsplit_once('.')
+            .map_or(params.file.name.as_str(), |(stem, _)| stem);
+        // Whole, unless its PNG would not fit a message.
+        Ok(Some((
+            format!("{stem}.png"),
+            png(&picture.fit(PREVIEW_SIDE)),
+        )))
+    }
+}
+
+/// A file of the call, whole, up to [`LIMIT`].
+fn read(host: &dyn Host, handle: u32) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    while (bytes.len() as u64) < LIMIT {
+        let page = host.read(handle, bytes.len() as u64, PAGE)?;
+        if page.is_empty() {
+            break;
+        }
+        bytes.extend(page);
+    }
+    Ok(bytes)
 }
 
 /// Pixels in rows, three bytes each.
@@ -42,45 +72,90 @@ pub struct Picture {
 }
 
 impl Picture {
-    /// A `P6` or `P5` picture, its header's comments skipped; `None` for
-    /// anything else.
+    /// A Netpbm picture, whichever of its six kinds (`P1` to `P6`: a
+    /// bitmap, grey or colour, as text or bytes, samples up to 16 bits
+    /// made 8), its comments skipped; `None` for anything else or a
+    /// raster cut short.
     pub fn parse(bytes: &[u8]) -> Option<Picture> {
         let mut at = 0;
-        let mut field = || -> Option<&[u8]> {
-            loop {
-                while bytes.get(at)?.is_ascii_whitespace() {
-                    at += 1;
-                }
-                if bytes.get(at) == Some(&b'#') {
-                    while *bytes.get(at)? != b'\n' {
-                        at += 1;
-                    }
-                    continue;
-                }
-                let start = at;
-                while !bytes.get(at)?.is_ascii_whitespace() {
-                    at += 1;
-                }
-                return Some(&bytes[start..at]);
-            }
-        };
-        let channels = match field()? {
-            b"P6" => 3,
-            b"P5" => 1,
+        let (text, channels, bitmap) = match field(bytes, &mut at)? {
+            b"P1" => (true, 1, true),
+            b"P2" => (true, 1, false),
+            b"P3" => (true, 3, false),
+            b"P4" => (false, 1, true),
+            b"P5" => (false, 1, false),
+            b"P6" => (false, 3, false),
             _ => return None,
         };
-        let mut number = || -> Option<usize> { std::str::from_utf8(field()?).ok()?.parse().ok() };
-        let (width, height, max) = (number()?, number()?, number()?);
-        if width == 0 || height == 0 || max == 0 || max > 255 {
+        let width = number(bytes, &mut at)?;
+        let height = number(bytes, &mut at)?;
+        let max = if bitmap { 1 } else { number(bytes, &mut at)? };
+        if width == 0 || height == 0 || max == 0 || max > 65_535 {
             return None;
         }
-        // One white space after the maximum, then the pixels.
-        let pixels =
-            bytes.get(at + 1..at + 1 + width.checked_mul(height)?.checked_mul(channels)?)?;
+        let pixels = width.checked_mul(height)?;
+        let samples = pixels.checked_mul(channels)?;
+        #[allow(clippy::cast_possible_truncation)] // At most 255.
+        let eight = |sample: usize| (sample.min(max) * 255 / max) as u8;
+        // Grown as the samples are read, never to what a header claims.
+        let mut values = Vec::new();
+        // One white space after the header, then the raster's bytes.
+        let raster = at + 1;
+        match (text, bitmap) {
+            // Digits, white space between them or not; 1 is black.
+            (true, true) => {
+                while values.len() < pixels {
+                    match bytes.get(at)? {
+                        b'0' => values.push(255),
+                        b'1' => values.push(0),
+                        // A comment, to the end of its line.
+                        b'#' => {
+                            while *bytes.get(at)? != b'\n' {
+                                at += 1;
+                            }
+                            continue;
+                        }
+                        space if space.is_ascii_whitespace() => {}
+                        _ => return None,
+                    }
+                    at += 1;
+                }
+            }
+            (true, false) => {
+                while values.len() < samples {
+                    values.push(eight(number(bytes, &mut at)?));
+                }
+            }
+            // Rows of bits, each row whole bytes; 1 is black.
+            (false, true) => {
+                let row = width.div_ceil(8);
+                let bits = bytes.get(raster..raster + row.checked_mul(height)?)?;
+                for y in 0..height {
+                    for x in 0..width {
+                        let bit = (bits[y * row + x / 8] >> (7 - x % 8)) & 1;
+                        values.push(if bit == 1 { 0 } else { 255 });
+                    }
+                }
+            }
+            (false, false) if max < 256 => {
+                let raster = bytes.get(raster..raster + samples)?;
+                values.extend(raster.iter().map(|sample| eight(usize::from(*sample))));
+            }
+            (false, false) => {
+                let raster = bytes.get(raster..raster + samples.checked_mul(2)?)?;
+                values.extend(
+                    raster
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|two| eight(usize::from(u16::from_be_bytes(*two)))),
+                );
+            }
+        }
         let rgb = if channels == 3 {
-            pixels.to_vec()
+            values
         } else {
-            pixels.iter().flat_map(|g| [*g, *g, *g]).collect()
+            values.iter().flat_map(|g| [*g, *g, *g]).collect()
         };
         Some(Picture { width, height, rgb })
     }
@@ -105,6 +180,32 @@ impl Picture {
         }
         Picture { width, height, rgb }
     }
+}
+
+/// The field at `at` (a word of the header, a sample written as text),
+/// white space and comments before it skipped; `at` left after it.
+fn field<'a>(bytes: &'a [u8], at: &mut usize) -> Option<&'a [u8]> {
+    loop {
+        while bytes.get(*at)?.is_ascii_whitespace() {
+            *at += 1;
+        }
+        if bytes.get(*at) == Some(&b'#') {
+            while *bytes.get(*at)? != b'\n' {
+                *at += 1;
+            }
+            continue;
+        }
+        let start = *at;
+        while bytes.get(*at).is_some_and(|b| !b.is_ascii_whitespace()) {
+            *at += 1;
+        }
+        return Some(&bytes[start..*at]);
+    }
+}
+
+/// The number at `at`, written as text.
+fn number(bytes: &[u8], at: &mut usize) -> Option<usize> {
+    std::str::from_utf8(field(bytes, at)?).ok()?.parse().ok()
 }
 
 /// `picture` as a PNG: 8-bit RGB, its rows unfiltered, kept in stored
@@ -193,11 +294,30 @@ mod tests {
         pgm.extend([0, 64, 128, 255]);
         let grey = Picture::parse(&pgm).unwrap();
         assert_eq!(&grey.rgb[9..], &[255, 255, 255]);
-        assert!(
-            Picture::parse(b"P3 1 1 255 0 0 0").is_none(),
-            "text pixels are not read"
-        );
         assert!(Picture::parse(b"P6 2 2 255 ").is_none(), "pixels missing");
+        assert!(Picture::parse(b"P7 1 1 255 x").is_none());
+    }
+
+    #[test]
+    fn every_kind_of_netpbm_picture_is_read() {
+        let colours = |picture: Picture| -> Vec<[u8; 3]> {
+            picture.rgb.chunks(3).map(|c| [c[0], c[1], c[2]]).collect()
+        };
+        let (black, white) = ([0, 0, 0], [255, 255, 255]);
+        // Text: a bitmap whose digits touch, grey, colour of 15 a channel.
+        let p1 = Picture::parse(b"P1\n# a comment\n3 1\n01# and one 1111\n0").unwrap();
+        assert_eq!(colours(p1), [white, black, white]);
+        let p2 = Picture::parse(b"P2 2 1 4\n0 4").unwrap();
+        assert_eq!(colours(p2), [black, white]);
+        let p3 = Picture::parse(b"P3 1 1 15 15 0 5").unwrap();
+        assert_eq!(colours(p3), [[255, 0, 85]]);
+        // Bytes: a bitmap of 10 by 1 (two bytes a row), 16-bit samples.
+        let p4 = Picture::parse(b"P4 10 1 \x80\x40").unwrap();
+        let p4 = colours(p4);
+        assert_eq!((p4[0], p4[1], p4[9]), (black, white, black));
+        let p5 = Picture::parse(b"P5 2 1 65535 \x00\x00\xff\xff").unwrap();
+        assert_eq!(colours(p5), [black, white]);
+        assert!(Picture::parse(b"P2 2 1 4\n0").is_none(), "a sample missing");
     }
 
     #[test]

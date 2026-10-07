@@ -14,5 +14,9 @@ serde_json.workspace = true
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wit-bindgen = { version = "0.57", default-features = false, features = ["macros", "realloc"] }
 
+[dev-dependencies]
+# A manifest as a plugin writes it.
+toml.workspace = true
+
 [lints]
 workspace = true

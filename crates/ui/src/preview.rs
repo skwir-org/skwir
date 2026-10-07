@@ -94,6 +94,9 @@ struct PreviewResult {
     /// The desktop's thumbnail of the file, sent ahead of its preview: kept
     /// aside (`PreviewState::placeholder`), never shown as its content.
     placeholder: bool,
+    /// Why the links of what is shown are not followed: a plugin from
+    /// outside made it, and may not use the network (ADR-047).
+    closed_links: Option<String>,
 }
 
 /// Facts shown in the header, read from the entry's metadata.
@@ -310,6 +313,10 @@ pub struct PreviewState {
     pub autoplay: Option<Autoplay>,
     /// Set while the panel plays a track of a playlist.
     pub queue: Option<Queue>,
+    /// Why the links of what the panel shows are not followed
+    /// (`PreviewResult::closed_links`): `Shell::follow_document_link`
+    /// says it instead.
+    pub closed_links: Option<String>,
     /// The members the panel went down into, outermost first.
     pub nested: Vec<Arc<Nested>>,
     /// A member asked for and not extracted yet: the worker's next job.
@@ -469,6 +476,7 @@ impl Default for PreviewState {
             peek_focus: None,
             neighbours: (None, None),
             queue: None,
+            closed_links: None,
             autoplay: None,
             nested: Vec::new(),
             containers: Vec::new(),
@@ -1350,6 +1358,9 @@ impl Shell {
             cx.notify();
             return;
         }
+        // Whether what is shown may send its links to the desktop: not
+        // what a plugin from outside made without the network.
+        self.preview.closed_links = result.closed_links.take();
         // A file with no picture of its own (a type without a preview, a
         // film until its first frame) keeps its thumbnail as its picture;
         // any other preview replaces it.
@@ -1544,6 +1555,7 @@ impl Shell {
                 media: None,
                 sniffed: None,
                 placeholder: false,
+                closed_links: None,
             });
             self.app.wake();
             return;
@@ -1597,6 +1609,8 @@ impl Shell {
             .spawn(Priority::Visible, "preview", cancel.clone(), move || {
                 // What the bytes said, once they were asked.
                 let sniffed = std::cell::RefCell::new(None::<String>);
+                // Why the links of what is shown are closed, if they are.
+                let closed_links = std::cell::RefCell::new(None::<String>);
                 // Every reply goes this one way: nothing after a cancel, and
                 // the UI woken after each.
                 let send = |content: PreviewContent,
@@ -1612,6 +1626,7 @@ impl Shell {
                             media,
                             sniffed: sniffed.borrow().clone(),
                             placeholder: false,
+                            closed_links: closed_links.borrow().clone(),
                         });
                         wake();
                     }
@@ -1661,6 +1676,25 @@ impl Shell {
                     }
                     .map(|m| m.to_string());
                     sniffed.replace(request.mime.clone());
+                }
+                // A file a plugin from outside shows as another (ADR-047):
+                // that one, previewed from here on by whatever shows its
+                // type (the reader, the player, a picture, an inspection),
+                // once. Its bytes and its source stay the file's own.
+                if !is_dir && inspection.provider.is_none() && !inspection.source {
+                    match previews.converted(&request, &cancel) {
+                        Ok(Some(made)) => {
+                            let Some(entry) = EntryRef::from_path(&made.path) else {
+                                return fail(anyhow::anyhow!("The converted file is gone"));
+                            };
+                            request.entry = entry;
+                            request.mime = made.mime;
+                            path = made.path;
+                            closed_links.replace(made.closed_links);
+                        }
+                        Ok(None) => {}
+                        Err(error) => return fail(error),
+                    }
                 }
                 if !is_dir {
                     let result =
@@ -1738,6 +1772,7 @@ impl Shell {
                                 media: None,
                                 sniffed: None,
                                 placeholder: true,
+                                closed_links: None,
                             });
                             wake();
                         }

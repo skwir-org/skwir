@@ -933,7 +933,12 @@ current source before assuming a planned crate, command, or API exists.
   is reviewed when run from the window. What a plugin from outside can
   provide is the protocol's (fields, thumbnails, previews, commands); a
   new kind is a new method and version of the protocol, both transports
-  at once, and `docs/plugins/protocol.md` says it. `just plugins` builds
+  at once, and `docs/plugins/protocol.md` says it; bibli keeps speaking
+  the older ones (`OLDEST`). A preview from outside is an inspection
+  (text, code, hex, a table) or a file bibli shows, made of the file
+  (`convert`, ADR-047, `PreviewProvider::converted`, swapped in once in
+  the panel's worker): never bibli's own preview model on the wire, and
+  the links of what a plugin made close unless it may use the network. `just plugins` builds
   the workspace's modules (`crates/plugins-outside/*`) into
   `target/plugins`.
 - **Operations have inverses**, a dry-run `check`, and idempotent semantics.

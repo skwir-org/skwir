@@ -1,8 +1,13 @@
-# The plugin protocol, version 1
+# The plugin protocol, version 2
 
 What bibli and a plugin from outside say to each other (ADR-045,
-ADR-046). The types are `bibli_plugin_api::protocol`'s; a Rust plugin
-uses them, one in another language writes the same JSON.
+ADR-046, ADR-047). The types are `bibli_plugin_api::protocol`'s; a Rust
+plugin uses them, one in another language writes the same JSON.
+
+bibli speaks versions 1 and 2. A manifest says which its plugin speaks
+(`api`, 2 when it says nothing); version 2 added `convert`, a preview
+that is another file. A plugin written for version 1 runs unchanged and
+is never asked what version 1 did not have.
 
 ## Transports
 
@@ -24,11 +29,11 @@ answered. While answering, the plugin may ask bibli `read` and say
 ### `initialize` (a program, first)
 
 ```json
-{ "api": 1, "capabilities": ["read"] }
+{ "api": 2, "capabilities": ["read"] }
 ```
 
-Answer `{ "api": 1 }`, the version the plugin speaks. A different one
-is refused.
+`api` is the newest version bibli speaks. Answer `{ "api": 2 }` (or 1),
+the version the plugin speaks; one bibli does not speak is refused.
 
 ### `field`
 
@@ -71,6 +76,31 @@ there, `target` a row's own `target` asked for. Answer `null`, or:
   "notice": "Match at 0x64",
   "details": [ { "label": "Version", "value": "1.2" } ] }
 ```
+
+### `convert` (version 2)
+
+For a preview the manifest declares with `converts = true`:
+
+```json
+{ "file": { "handle": 1, "name": "sunset.ppm", … } }
+```
+
+Answer `null` (nothing to show for this one), or a file of a format
+bibli shows, which it previews as it would that file: a PDF in the
+reader, a picture zoomed and fitted, audio or video in the player,
+Markdown, a table, a track on the map.
+
+```json
+{ "name": "sunset.png", "data": "<base64>" }
+```
+
+bibli types it by its name and bytes, as any file, and keeps it in the
+plugin's folder of its cache under the file's version and the plugin's:
+it is asked again only when either changes. The file's own views stay
+its own: View as hex shows its bytes, not the converted file's. A link
+in what a plugin made is followed only when the plugin may use the
+network (`network`): otherwise a click could carry what it read away.
+The file must fit one message (about 48 MB once in base64).
 
 ### `command`
 

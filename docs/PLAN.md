@@ -2319,6 +2319,21 @@ compiling (release, outside the sandbox, median of 7); a call that
 restarts the word count's helper, sandboxed, took 23 ms in the window
 against 231 ms the first time.
 
+Previews from outside reach every kind bibli shows (ADR-047, protocol
+version 2): a plugin may answer a preview with a file of a format bibli
+shows, which the panel previews by its own viewer (the reader, the
+player, a picture, an inspection); bibli keeps it in the cache under
+the file's version and the plugin's, and follows its links only when
+the plugin may use the network. The Netpbm plugin previews its
+pictures (every Netpbm kind) as the PNG it makes. Checked in the window
+on Xvfb with the release build: a PPM shown as the picture Netpbm made,
+zoomed and fitted as any; a `.log` made Markdown by a plugin written in
+Python as a program (outside the repository), drawn by bibli's own
+Markdown view, its link refused with the plugin's reason, its source
+the log's own text. Not done: a
+paged conversion (a whole file is converted, within one message); a
+typed WIT world.
+
 - **Permission layer.** Capabilities per plugin (read contents, write, network, spawn processes) and
   per-directory policies ("never leaves this machine" for `~/.ssh`, anything under a `.private` marker).
   Required before any model provider exists.

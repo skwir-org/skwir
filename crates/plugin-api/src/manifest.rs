@@ -19,7 +19,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::VERSION;
+use crate::protocol::{OLDEST, VERSION};
 
 /// What a plugin may do (bibli's `permissions::Capability`). A plugin
 /// gets what it declares once the user turns it on, and nothing more.
@@ -130,7 +130,8 @@ pub struct ThumbnailDecl {
     pub types: Vec<String>,
 }
 
-/// The files it previews (an inspection: text, rows and columns).
+/// The files it previews: an inspection (text, code, hex rows, a table),
+/// or with `converts` another file bibli shows (protocol version 2).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PreviewDecl {
@@ -142,6 +143,10 @@ pub struct PreviewDecl {
     /// as hex).
     #[serde(default)]
     pub shows_bytes: bool,
+    /// It answers `convert`: the file is shown as the one it makes (a PDF,
+    /// a picture, Markdown…), by bibli's own preview of that type.
+    #[serde(default)]
+    pub converts: bool,
 }
 
 /// A command it runs.
@@ -183,11 +188,17 @@ impl Manifest {
                 self.id
             ));
         }
-        if self.api != VERSION {
+        if !(OLDEST..=VERSION).contains(&self.api) {
             return Err(format!(
-                "it speaks version {} of the protocol; bibli speaks {VERSION}",
+                "it speaks version {} of the protocol; bibli speaks {OLDEST} to {VERSION}",
                 self.api
             ));
+        }
+        if self.previews.iter().any(|p| p.converts) && self.api < 2 {
+            return Err("a preview that converts is version 2 of the protocol: api = 2".into());
+        }
+        if self.previews.iter().any(|p| p.converts && p.shows_bytes) {
+            return Err("a preview of any file's bytes shows them: it does not convert".into());
         }
         match (&self.run.module, &self.run.program) {
             (Some(_), None) | (None, Some(_)) => {}
@@ -289,5 +300,43 @@ mod tests {
             arguments: None,
         });
         assert!(plans.check().unwrap_err().contains("write"));
+    }
+
+    #[test]
+    fn a_plugin_speaks_a_version_bibli_speaks_and_converts_from_the_second() {
+        let preview = |converts| PreviewDecl {
+            types: vec!["image/x-portable-pixmap".into()],
+            priority: 0,
+            shows_bytes: false,
+            converts,
+        };
+        let mut first = manifest("first");
+        first.api = OLDEST;
+        first.previews.push(preview(false));
+        assert_eq!(
+            first.check(),
+            Ok(()),
+            "a plugin of version 1 runs unchanged"
+        );
+        first.previews.push(preview(true));
+        assert!(first.check().unwrap_err().contains("api = 2"));
+        first.api = 2;
+        assert_eq!(first.check(), Ok(()));
+        first.api = VERSION + 1;
+        assert!(first.check().unwrap_err().contains("version"));
+        let mut bytes = manifest("bytes");
+        bytes.previews.push(PreviewDecl {
+            shows_bytes: true,
+            ..preview(true)
+        });
+        assert!(bytes.check().is_err());
+        // Written in a plugin.toml, as a plugin says it.
+        let said: Manifest = toml::from_str(
+            "id = \"said\"\ntitle = \"Said\"\napi = 2\n[run]\nmodule = \"s.wasm\"\n\
+             [[previews]]\ntypes = [\"text/x-said\"]\nconverts = true\n",
+        )
+        .unwrap();
+        assert!(said.previews[0].converts);
+        assert_eq!(said.check(), Ok(()));
     }
 }

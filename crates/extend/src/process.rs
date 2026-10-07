@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 use bibli_core::permissions::{Capabilities, Capability};
 use bibli_plugin_api::manifest::Capability as Granted;
 use bibli_plugin_api::protocol::{
-    InitializeAnswer, InitializeParams, LogParams, MESSAGE_LIMIT, Message, ReadAnswer, ReadParams,
-    VERSION, method,
+    InitializeAnswer, InitializeParams, LogParams, MESSAGE_LIMIT, Message, OLDEST, ReadAnswer,
+    ReadParams, VERSION, method,
 };
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use parking_lot::Mutex;
@@ -207,10 +207,12 @@ impl Program {
                 return Err(error.context("the plugin did not start"));
             }
         };
-        if answer.api != VERSION {
+        // One written for an older version runs as it was: it is never
+        // asked what that version did not have.
+        if !(OLDEST..=VERSION).contains(&answer.api) {
             running.end();
             anyhow::bail!(
-                "the plugin speaks version {} of the protocol; bibli speaks {VERSION}",
+                "the plugin speaks version {} of the protocol; bibli speaks {OLDEST} to {VERSION}",
                 answer.api
             );
         }

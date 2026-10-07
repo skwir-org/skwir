@@ -169,6 +169,15 @@ pub(crate) struct Runner {
 }
 
 impl Runner {
+    /// What runs it, the module or the program: a new version of it makes
+    /// again what the plugin made (`made_key`).
+    pub fn made_by(&self) -> &Path {
+        match &self.kind {
+            Kind::Module(module) => module,
+            Kind::Program { program, .. } => program,
+        }
+    }
+
     /// Ask the plugin `method`; it reads through `call`.
     pub fn call(&self, method: &str, params: Value, call: &Call) -> anyhow::Result<Value> {
         let transport = {

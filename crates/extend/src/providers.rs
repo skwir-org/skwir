@@ -8,12 +8,13 @@ use std::sync::{Arc, Weak};
 
 use bibli_core::fields::FieldProvider;
 use bibli_core::inspection::{self, InspectRequest};
-use bibli_core::preview::{PreviewProvider, PreviewRequest};
+use bibli_core::preview::{Converted, PreviewProvider, PreviewRequest};
 use bibli_core::thumbs::{Image, ThumbRequest, ThumbnailProvider};
 use bibli_core::{App, CancelToken, Value};
 use bibli_platform::mime::{self, Types};
 use bibli_plugin_api::protocol::{
-    self, FieldAnswer, FieldParams, InspectParams, ThumbnailAnswer, ThumbnailParams, method,
+    self, ConvertAnswer, ConvertParams, FieldAnswer, FieldParams, InspectParams, ThumbnailAnswer,
+    ThumbnailParams, method,
 };
 
 use crate::call::Call;
@@ -66,6 +67,9 @@ pub(crate) fn register(app: &App, plugin: &External) {
                 types: types(&preview.types),
                 priority: preview.priority,
                 shows_bytes: preview.shows_bytes,
+                converted: preview
+                    .converts
+                    .then(|| app.cache.namespace(owner).folder("converted")),
             }),
         );
     }
@@ -199,7 +203,14 @@ struct Previews {
     types: Types,
     priority: i32,
     shows_bytes: bool,
+    /// Where the files it converts to are kept, when it converts: the
+    /// plugin's folder of the cache.
+    converted: Option<std::path::PathBuf>,
 }
+
+/// What the files a plugin converted to may take of the cache: the oldest
+/// go first.
+const CONVERTED_BUDGET: u64 = 256 * 1024 * 1024;
 
 impl PreviewProvider for Previews {
     fn id(&self) -> &'static str {
@@ -216,6 +227,15 @@ impl PreviewProvider for Previews {
             .mime
             .as_deref()
             .is_some_and(|mime| self.types.contains(mime))
+    }
+    /// Reached when the plugin answered nothing (no page, no file): the
+    /// file is its own, which it shows nothing of.
+    fn render(
+        &self,
+        _request: &PreviewRequest,
+        _cancel: &CancelToken,
+    ) -> anyhow::Result<bibli_core::preview::Preview> {
+        anyhow::bail!("“{}” shows nothing of this file", self.runner.title)
     }
     fn inspect(
         &self,
@@ -238,6 +258,138 @@ impl PreviewProvider for Previews {
             .call(method::INSPECT, serde_json::to_value(params)?, &call)?;
         let answer: Option<protocol::Inspection> = serde_json::from_value(answer)?;
         Ok(answer.map(inspection_of))
+    }
+    /// The file it converts this one to (ADR-047): kept in the plugin's
+    /// folder of the cache under the file's version and the plugin's, so
+    /// a page turned, the file shown again or bibli started again asks the
+    /// plugin nothing.
+    fn converted(
+        &self,
+        request: &PreviewRequest,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Option<Converted>> {
+        let Some(folder) = &self.converted else {
+            return Ok(None);
+        };
+        let path = request.entry.resolve()?;
+        anyhow::ensure!(!private(&self.app, &path), PRIVATE);
+        let key = bibli_platform::preview::made_key(
+            request.entry.id,
+            &path,
+            self.runner.made_by(),
+            "converted",
+        )?;
+        let kept = folder.join(blake3::hash(&key).to_hex().as_str());
+        if let Some(made) = only_file(&kept) {
+            return Ok(Some(self.shown(made)));
+        }
+        let call = Call::new(vec![path], self.runner.granted, cancel.clone());
+        let params = ConvertParams {
+            file: call.describe(0, request.mime.clone()),
+        };
+        let answer = self
+            .runner
+            .call(method::CONVERT, serde_json::to_value(params)?, &call)?;
+        let Some(answer): Option<ConvertAnswer> = serde_json::from_value(answer)? else {
+            return Ok(None);
+        };
+        let bytes = bibli_plugin_api::base64::decode(&answer.data)
+            .ok_or_else(|| anyhow::anyhow!("the plugin's file is no base64"))?;
+        // Its name is a name: what it says of folders is dropped.
+        let name = Path::new(&answer.name)
+            .file_name()
+            .filter(|name| !name.is_empty())
+            .map_or_else(|| "converted".into(), std::ffi::OsStr::to_os_string);
+        let made = keep(folder, &kept, &name, &bytes)?;
+        Ok(Some(self.shown(made)))
+    }
+}
+
+impl Previews {
+    /// `made` as the panel shows it: typed by its name and bytes, its
+    /// links closed unless the plugin may use the network anyway.
+    fn shown(&self, made: std::path::PathBuf) -> Converted {
+        let mime = made
+            .file_name()
+            .and_then(|name| mime::identify(name, &made))
+            .map(|mime| mime.to_string());
+        let closed_links = (!self
+            .runner
+            .granted
+            .has(bibli_core::permissions::Capability::Network))
+        .then(|| {
+            format!(
+                "Links are not followed in a preview “{}” made: it may not use the network",
+                self.runner.title
+            )
+        });
+        Converted {
+            path: made,
+            mime,
+            closed_links,
+        }
+    }
+}
+
+/// The one file of `folder`, if it holds one.
+fn only_file(folder: &Path) -> Option<std::path::PathBuf> {
+    let mut files = std::fs::read_dir(folder).ok()?.flatten();
+    let file = files.next()?.path();
+    (files.next().is_none() && file.is_file()).then_some(file)
+}
+
+/// Keep `bytes` as `name` in `kept`, a folder of `folder` written whole
+/// under another name first, so a preview never reads one half written;
+/// then the oldest of `folder` go, beyond [`CONVERTED_BUDGET`].
+fn keep(
+    folder: &Path,
+    kept: &Path,
+    name: &OsStr,
+    bytes: &[u8],
+) -> anyhow::Result<std::path::PathBuf> {
+    std::fs::create_dir_all(folder)?;
+    let writing = tempfile::Builder::new()
+        .prefix(".writing-")
+        .tempdir_in(folder)?;
+    std::fs::write(writing.path().join(name), bytes)?;
+    match std::fs::rename(writing.path(), kept) {
+        Ok(()) => std::mem::forget(writing),
+        // Another preview of the same file kept it first.
+        Err(_) if only_file(kept).is_some() => {}
+        Err(error) => return Err(error.into()),
+    }
+    trim(folder, kept);
+    only_file(kept).ok_or_else(|| anyhow::anyhow!("the converted file is gone"))
+}
+
+/// The oldest folders of `folder` removed until what it holds fits
+/// [`CONVERTED_BUDGET`], never `kept`. A file being shown stays readable
+/// where it is opened; one shown again is made again.
+fn trim(folder: &Path, kept: &Path) {
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return;
+    };
+    let mut made: Vec<(std::time::SystemTime, u64, std::path::PathBuf)> = entries
+        .flatten()
+        .filter(|entry| entry.path() != kept)
+        .filter_map(|entry| {
+            let file = only_file(&entry.path())?;
+            let meta = file.metadata().ok()?;
+            Some((meta.modified().ok()?, meta.len(), entry.path()))
+        })
+        .collect();
+    let kept_size = only_file(kept)
+        .and_then(|file| file.metadata().ok())
+        .map_or(0, |meta| meta.len());
+    let mut total: u64 = kept_size + made.iter().map(|(_, size, _)| size).sum::<u64>();
+    made.sort();
+    for (_, size, path) in made {
+        if total <= CONVERTED_BUDGET {
+            break;
+        }
+        if std::fs::remove_dir_all(&path).is_ok() {
+            total -= size;
+        }
     }
 }
 
