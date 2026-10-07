@@ -933,8 +933,11 @@ current source before assuming a planned crate, command, or API exists.
   is reviewed when run from the window. What a plugin from outside can
   provide is the protocol's (fields, thumbnails, previews, commands); a
   new kind is a new method and version of the protocol, both transports
-  at once, and `docs/plugins/protocol.md` says it; bibli keeps speaking
-  the older ones (`OLDEST`). A preview from outside is an inspection
+  at once, and `docs/plugins/protocol.md` says it. The protocol is
+  experimental (ADR-047): a version may change what an older one said
+  until it is declared stable, `OLDEST` following it, and the release
+  notes say so; once stable, bibli keeps speaking the older ones. A
+  preview from outside is an inspection
   (text, code, hex, a table), a file bibli shows, made of the file
   (`convert`, ADR-047, `PreviewProvider::converted`, swapped in once in
   the panel's worker), or pages with their text, links and outline,

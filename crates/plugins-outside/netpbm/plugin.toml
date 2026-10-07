@@ -6,7 +6,7 @@ title = "Netpbm pictures"
 description = "Thumbnails and previews of PPM and PGM pictures, from a WebAssembly module"
 category = "previews"
 capabilities = ["read"]
-api = 3
+api = 1
 
 [run]
 module = "netpbm.wasm"
@@ -15,8 +15,8 @@ module = "netpbm.wasm"
 types = ["image/x-portable-pixmap", "image/x-portable-graymap"]
 
 # Previewed as the PNG it makes of them, by bibli's own picture view:
-# zoomed, fitted, compared as any picture is (protocol version 2); a
-# file of several pictures one after another, a page each (version 3).
+# zoomed, fitted, compared as any picture is; a file of several
+# pictures one after another, a page each.
 [[previews]]
 types = ["image/x-portable-pixmap", "image/x-portable-graymap"]
 converts = true

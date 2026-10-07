@@ -70,7 +70,7 @@ title = "Word count"
 description = "How many words a text holds, in Details"
 category = "files"           # browsing, files, previews or desktop
 capabilities = ["read"]      # read, write, network, programs
-api = 3                      # the protocol's version it speaks (1 to 3; 3 when not said)
+api = 1                      # the protocol's version it speaks (1 when not said)
 
 [run]
 module = "word_count.wasm"   # or: program = "bin/word-count", args = [...]
@@ -87,8 +87,8 @@ types = ["image/x-portable-anymap"]
 types = ["application/octet-stream"]
 priority = -100              # higher is tried first
 shows_bytes = false          # true: the view every file offers (View as hex)
-converts = false             # true: answers `convert`, a file bibli shows (api = 2)
-pages = false                # true: answers `page`, a picture and its text a page (api = 3)
+converts = false             # true: answers `convert`, a file bibli shows
+pages = false                # true: answers `page`, a picture and its text a page
 
 [[commands]]
 name = "word-count.count"    # under the id

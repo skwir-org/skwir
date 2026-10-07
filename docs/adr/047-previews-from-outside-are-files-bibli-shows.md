@@ -1,7 +1,9 @@
 # ADR-047: A preview from outside is a file bibli shows
 
 Status: accepted, 2026-10-07 (Phase 6, after its three steps); pages
-(its seventh point) the same day.
+(its seventh point) the same day; its sixth point revised the same day,
+before the first release: the protocol is experimental and has one
+version.
 
 ## Context
 
@@ -31,7 +33,7 @@ the wrong one:
 
 ## Decision
 
-1. **A preview may be another file** (protocol version 2, `convert`): a
+1. **A preview may be another file** (`convert`): a
    plugin whose manifest says `converts` answers a file of a format
    bibli shows (a PDF, a PNG, Markdown, CSV, GPX, a 3D model…) by name
    and bytes, and bibli previews it as it would that file, by whichever
@@ -51,10 +53,14 @@ the wrong one:
    the network** (`network`): otherwise a module, which has no network,
    could write what it read into a link's address and have the user's
    click send it. The panel says why instead (`closed_links`).
-6. **Versions**: bibli speaks versions 1 to 3 (`OLDEST`, `VERSION`). A
-   plugin of an older version runs unchanged; `converts` needs `api = 2`
-   and `pages` 3.
-7. **A page at a time** (protocol version 3, `page`): a plugin whose
+6. **Versions**: the protocol is experimental. `convert` and `page`
+   were written as versions 2 and 3, and none was published: bibli 0.1
+   publishes them as one, version 1 (`OLDEST` and `VERSION`). Until the
+   protocol is declared stable, a new version may change what an older
+   one said, and `OLDEST` then follows it, which the release notes say;
+   a new method is still a new version, both transports at once. Once
+   stable, a plugin of an older version runs unchanged.
+7. **A page at a time** (`page`): a plugin whose
    manifest says `pages` draws the page asked, within the side asked,
    as a picture, says how many there are, the page's own size and the
    file's outline, and, when asked, its text as runs with the boxes

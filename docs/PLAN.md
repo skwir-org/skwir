@@ -15,6 +15,14 @@ Principles (non-negotiable, every phase is checked against them):
 Durations are relative sizes for one developer working with an AI assistant, not commitments.
 Each phase has a **Done when** gate. Do not start the next phase before the gate passes.
 
+Status (2026-10-07): Phases 0 to 4 and 6 pass their gates, and so does
+5a; 5b waits for a Mac and a Windows machine. Phase 6's gate passes:
+the hexadecimal preview again as a WebAssembly module, the same to the
+pixel, and an agent driven by a model (Claude Code over `bibli mcp`)
+renaming and moving files through plans reviewed in the window. Phase
+7 waits, as the user chose: release 0.1, for Linux alone, comes first
+("Release 0.1", after Phase 6).
+
 Status (2026-10-04): Phases 0 to 4 are built and their gates pass. Phase 2's gate, one
 week of daily use as the only file manager, passed, followed by two weeks of improvements
 from it. Phase 4's gate holds: every plugin (now 36, 14 of them previews) is proven by
@@ -2356,6 +2364,100 @@ both pages it is on. Not done: a typed WIT world.
 
 **Done when:** one existing internal plugin is re-implemented as WASM with no user-visible difference,
 and an external agent completes a rename-and-move task over MCP that ends in a reviewable plan.
+
+The gate passes (2026-10-07): its first half by the hexadecimal module,
+its second by Claude Code (both above). What it leaves: the packages
+carry no module; a typed WIT world; a module has no network; a
+program plugin's isolation is compiled only on macOS and absent on
+Windows, where none runs; the Windows pipe keeps the system's default
+security; a command answering a value does nothing from the palette.
+
+---
+
+## Release 0.1 — Linux (before Phase 7)
+
+Goal: a first public release people can install and trust with their
+files, and a repository others can help with. Decided by the user
+(2026-10-07):
+
+- **Linux alone.** macOS and Windows need machines that are not here
+  (5b): what each release needs is written as steps others can take,
+  so that users of those systems can be asked to help.
+- **Plugins are on or off by default as they are now.**
+- **The plugin protocol is experimental**, and its three unpublished
+  versions are one, version 1 (ADR-047, its sixth point revised). Done
+  2026-10-07.
+- **The repository is published and CI set up last**, by the user,
+  once everything else is done.
+
+Steps, each with what was found and what is left:
+
+1. **Privacy of the repository.** Every blob and commit message of the
+   history (4,482 blobs, 324 commits) scanned 2026-10-07 for this
+   machine's identifiers (user and host names, volume labels and
+   identifiers, the home folder's names), addresses, home paths,
+   keys, positions and phone numbers; the hits are synthetic or
+   public (the thumbnail specification's own example path, the TLS
+   test fixtures, spec constants) but two: a drive's label in a
+   comment (`address.rs`) and a home folder in `vendor/patches/0001`'s
+   `diff` lines, both fixed in the tree (the patch's recipe now says to
+   drop those lines). Both stay in history until it is rewritten: the
+   user chose (2026-10-07) one rewrite just before the first push,
+   which also gives every commit the author's GitHub address that
+   hides their own (`users.noreply.github.com`); the scan runs again
+   after it.
+2. **Panics.** Production code, by clippy's restriction lints with
+   tests left out (2026-10-07): 4 `unwrap`, 77 `expect`, 5
+   `unreachable!`, 748 indexing or slicing, 150 string slices. Most
+   `expect`s state what the code above made true. To do: the string
+   slices, where an offset may fall inside a character of a name;
+   the `expect`s on what a file says (a rich preview's HTML, a Gerber
+   region) made errors; a command that panics on the window's thread
+   contained (the scheduler's jobs are, a command run there is not).
+3. **Fuzzing** what reads files bibli did not write: the query
+   language, XMP, AppleDouble, Finder's plists, `.trashinfo`, the
+   tracks and plans of the geo plugin, the 3D and circuit formats,
+   EPUB, mail, ODF, Netpbm, mountinfo, desktop entries. A crash found
+   is a test kept.
+4. **Files under failure.** A plan interrupted (bibli killed between
+   steps), a full disk, a read-only folder, a permission refused, a
+   name too long, a drive pulled during a copy: what is on disk after,
+   and whether Undo still takes it back.
+5. **What users keep from 0.1 on**: settings keys and values, the
+   window's session, saved searches, pins, the cache's layout (versioned,
+   or thrown away whole), so that later versions read them.
+6. **In the window**: the "Not checked in a window" items of the phases
+   above; a scripted smoke test through `bibli mcp` on Xvfb (navigate,
+   search, tag, rename, move, trash, undo); a run of hours (memory
+   flat, idle CPU back to ~0); `just idle-pss`, `just bench-check` and
+   the first frame on a quiet machine.
+7. **Clean**: every `#[allow]` given its reason or removed (18 of
+   `dead_code`), unused dependencies, `proc-macro-error2` (which a
+   future Rust refuses), the largest files split where it helps the
+   next change.
+8. **Licences.** The dependencies' licences (listed 2026-10-07) are
+   permissive, MPL-2.0 for ten crates, and the AGPL for MuPDF's worker
+   alone (ADR-014). The packages carry bibli's licence and PDFium's
+   notices, not those of the thousand crates linked in, which MIT,
+   BSD, ISC and Zlib ask for in a binary: a notices file in every
+   package. A `deny.toml` (licences, advisories, sources), run by CI.
+   Where the toolbar's icons come from, recorded.
+9. **Documents**: the README (Linux, the packages, what works), a user
+   guide, CONTRIBUTING (building, testing, the rules in short), help
+   wanted for macOS and Windows (from `docs/PORTING.md`: each task and
+   how to check it), SECURITY (how to report), issue templates that warn
+   of personal data in paths and screenshots, a changelog.
+10. **The release**: the name, which the user is reconsidering
+    (2026-10-07), settled before anything is published, and with it the
+    repository's address and the application id (now
+    `io.github.venator.bibli`, hard to change once installed); version
+    0.1.0 everywhere (the crates, the packages, the AUR's source); a
+    tag, the release notes; then the history rewritten (step 1), the
+    repository published and CI green.
+
+**Done when:** every step above is done or says why not, the packages
+built by CI install and run on Debian, Fedora and Arch, and the
+history scan finds nothing personal.
 
 ---
 

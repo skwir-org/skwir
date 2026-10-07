@@ -131,7 +131,8 @@ pub struct ThumbnailDecl {
 }
 
 /// The files it previews: an inspection (text, code, hex rows, a table),
-/// or with `converts` another file bibli shows (protocol version 2).
+/// with `converts` another file bibli shows, or with `pages` a page at a
+/// time.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PreviewDecl {
@@ -148,8 +149,8 @@ pub struct PreviewDecl {
     #[serde(default)]
     pub converts: bool,
     /// It answers `page`: the file is shown a page at a time, each a
-    /// picture it draws when shown (protocol version 3). With
-    /// `converts`, for the files it does not convert.
+    /// picture it draws when shown. With `converts`, for the files it
+    /// does not convert.
     #[serde(default)]
     pub pages: bool,
 }
@@ -198,12 +199,6 @@ impl Manifest {
                 "it speaks version {} of the protocol; bibli speaks {OLDEST} to {VERSION}",
                 self.api
             ));
-        }
-        if self.previews.iter().any(|p| p.converts) && self.api < 2 {
-            return Err("a preview that converts is version 2 of the protocol: api = 2".into());
-        }
-        if self.previews.iter().any(|p| p.pages) && self.api < 3 {
-            return Err("a preview a page at a time is version 3 of the protocol: api = 3".into());
         }
         if self
             .previews
@@ -315,7 +310,7 @@ mod tests {
     }
 
     #[test]
-    fn a_plugin_speaks_a_version_bibli_speaks_and_a_preview_needs_the_one_that_brought_it() {
+    fn a_plugin_speaks_a_version_bibli_speaks() {
         let preview = |converts| PreviewDecl {
             types: vec!["image/x-portable-pixmap".into()],
             priority: 0,
@@ -325,24 +320,15 @@ mod tests {
         };
         let mut first = manifest("first");
         first.api = OLDEST;
-        first.previews.push(preview(false));
-        assert_eq!(
-            first.check(),
-            Ok(()),
-            "a plugin of version 1 runs unchanged"
-        );
         first.previews.push(preview(true));
-        assert!(first.check().unwrap_err().contains("api = 2"));
-        first.api = 2;
-        assert_eq!(first.check(), Ok(()));
         first.previews.push(PreviewDecl {
             pages: true,
             ..preview(false)
         });
-        assert!(first.check().unwrap_err().contains("api = 3"));
-        first.api = 3;
         assert_eq!(first.check(), Ok(()));
         first.api = VERSION + 1;
+        assert!(first.check().unwrap_err().contains("version"));
+        first.api = OLDEST - 1;
         assert!(first.check().unwrap_err().contains("version"));
         let mut bytes = manifest("bytes");
         bytes.previews.push(PreviewDecl {
@@ -352,7 +338,7 @@ mod tests {
         assert!(bytes.check().is_err());
         // Written in a plugin.toml, as a plugin says it.
         let said: Manifest = toml::from_str(
-            "id = \"said\"\ntitle = \"Said\"\napi = 2\n[run]\nmodule = \"s.wasm\"\n\
+            "id = \"said\"\ntitle = \"Said\"\napi = 1\n[run]\nmodule = \"s.wasm\"\n\
              [[previews]]\ntypes = [\"text/x-said\"]\nconverts = true\n",
         )
         .unwrap();

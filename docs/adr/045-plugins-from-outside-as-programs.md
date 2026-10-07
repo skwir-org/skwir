@@ -65,5 +65,5 @@ two share what a plugin from outside is.
 - A plugin's work is bounded: 30 seconds an answer, bytes read 4 MiB at
   a time, 64 MiB a message.
 - Previews from outside draw text, code, hex and tables (the portable
-  `protocol::Inspection`), or, since version 2 of the protocol, any file
-  bibli shows, made of the file (ADR-047): never a branch of the UI.
+  `protocol::Inspection`), or any file bibli shows, made of the file,
+  whole or a page at a time (ADR-047): never a branch of the UI.

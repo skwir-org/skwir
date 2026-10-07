@@ -60,9 +60,9 @@ pub trait Plugin {
         Ok(None)
     }
 
-    /// The file a preview shows in this one's place (protocol version 2,
-    /// a manifest's `converts`): its name, whose extension says its type,
-    /// and its bytes. `None` when it shows nothing for this one.
+    /// The file a preview shows in this one's place (a manifest's
+    /// `converts`): its name, whose extension says its type, and its
+    /// bytes. `None` when it shows nothing for this one.
     ///
     /// # Errors
     /// Why it could not make it.
@@ -74,8 +74,8 @@ pub trait Plugin {
         Ok(None)
     }
 
-    /// A page of a preview shown a page at a time (protocol version 3, a
-    /// manifest's `pages`): how many pages the file has, and the one asked
+    /// A page of a preview shown a page at a time (a manifest's
+    /// `pages`): how many pages the file has, and the one asked
     /// ([`Page`]): drawn within `side` as a PNG unless `side` is 0, its
     /// text when `text` asks it. `None` when it shows nothing for this
     /// file.
@@ -421,7 +421,7 @@ mod tests {
         assert_eq!(text.text[0].text, "page 2 of quiet");
         let past = page(3, 64, true);
         assert_eq!((past.pages, past.png), (2, None), "past the last: no page");
-        // Parameters of version 3 before `text`: no text.
+        // Parameters that say nothing of `text`: no text.
         assert!(
             serde_json::from_value::<crate::protocol::PageParams>(
                 json!({ "file": file, "page": 1, "side": 64 })

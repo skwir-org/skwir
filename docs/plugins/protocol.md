@@ -1,14 +1,15 @@
-# The plugin protocol, version 3
+# The plugin protocol, version 1
 
 What bibli and a plugin from outside say to each other (ADR-045,
 ADR-046, ADR-047). The types are `bibli_plugin_api::protocol`'s; a Rust
 plugin uses them, one in another language writes the same JSON.
 
-bibli speaks versions 1 to 3. A manifest says which its plugin speaks
-(`api`, 3 when it says nothing); version 2 added `convert`, a preview
-that is another file, and version 3 `page`, a preview a page at a time.
-A plugin written for an older version runs unchanged and is never asked
-what its version did not have.
+The protocol is experimental (ADR-047, its sixth point): until it is
+declared stable, a new version may change what an older one said, and
+bibli then stops speaking the older one; the release notes say so. A
+manifest says which version its plugin speaks (`api`, 1 when it says
+nothing). Once it is stable, a plugin written for an older version
+runs unchanged and is never asked what its version did not have.
 
 ## Transports
 
@@ -30,12 +31,11 @@ answered. While answering, the plugin may ask bibli `read` and say
 ### `initialize` (a program, first)
 
 ```json
-{ "api": 2, "capabilities": ["read"] }
+{ "api": 1, "capabilities": ["read"] }
 ```
 
-`api` is the newest version bibli speaks. Answer `{ "api": 3 }` (or 2,
-or 1), the version the plugin speaks; one bibli does not speak is
-refused.
+`api` is the newest version bibli speaks. Answer `{ "api": 1 }`, the
+version the plugin speaks; one bibli does not speak is refused.
 
 ### `field`
 
@@ -79,7 +79,7 @@ there, `target` a row's own `target` asked for. Answer `null`, or:
   "details": [ { "label": "Version", "value": "1.2" } ] }
 ```
 
-### `convert` (version 2)
+### `convert`
 
 For a preview the manifest declares with `converts = true`:
 
@@ -104,7 +104,7 @@ in what a plugin made is followed only when the plugin may use the
 network (`network`): otherwise a click could carry what it read away.
 The file must fit one message (about 48 MB once in base64).
 
-### `page` (version 3)
+### `page`
 
 For a preview the manifest declares with `pages = true`: the file shown
 a page at a time, each a picture the plugin draws when it is shown, with

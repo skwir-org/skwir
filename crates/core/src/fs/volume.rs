@@ -314,7 +314,7 @@ mod tests {
     #[test]
     fn a_path_is_on_the_deepest_mount_that_holds_it() {
         let mountinfo = "\
-22 1 0:30 /@ / rw - btrfs /dev/mapper/cryptroot rw
+22 1 0:30 /@ / rw - btrfs /dev/mapper/root rw
 40 22 0:52 / /run/media/example/Back\\040up rw,nosuid - btrfs /dev/mapper/luks-example rw
 41 22 0:53 / /run/media/example/net rw - fuse.sshfs host:/share rw
 ";
@@ -325,12 +325,12 @@ mod tests {
         );
         assert_eq!(
             source("/home/example"),
-            Some(PathBuf::from("/dev/mapper/cryptroot"))
+            Some(PathBuf::from("/dev/mapper/root"))
         );
         assert_eq!(source("/run/media/example/net/x"), None, "not a device");
         assert_eq!(
             source("/run/media/example/Back"),
-            Some(PathBuf::from("/dev/mapper/cryptroot")),
+            Some(PathBuf::from("/dev/mapper/root")),
             "a name that only begins like the mount's is not in it"
         );
     }

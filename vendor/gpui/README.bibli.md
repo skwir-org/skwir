@@ -230,7 +230,9 @@ that path.
     (cd / && diff -ruN --exclude=.cargo_vcs_info.json --exclude=Cargo.toml.orig \
         --exclude=.cargo-ok "${G#/}" $PWD/vendor/gpui) > vendor/patches/NNNN-name.patch
 
-then rewrite the path prefixes as above. `0001` excludes `taffy.rs`, which is
+then rewrite the path prefixes as above and delete the `diff -ruN` lines,
+which name the folders it was made in (a home folder among them): `git
+apply` reads the `---` and `+++` lines alone. `0001` excludes `taffy.rs`, which is
 `0002` on its own. A patch over files an earlier one changed (`0006` touches
 the text system `0005` did) is the diff against the committed vendored tree:
 `git diff HEAD -- vendor/gpui`, with the same prefixes rewritten.

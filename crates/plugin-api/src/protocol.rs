@@ -5,8 +5,8 @@
 //! its imports, `read` and `log` (`wit/plugin.wit`).
 //!
 //! bibli asks ([`method`]): `initialize` (a program, first), `field`,
-//! `thumbnail`, `inspect`, `convert` (version 2), `page` (version 3),
-//! `command`. A plugin asks back, while it
+//! `thumbnail`, `inspect`, `convert`, `page`, `command`. A plugin asks
+//! back, while it
 //! answers: `read` (a file of the call, by its handle), `log`. bibli
 //! sends a program `$/cancel` when it stops waiting for an answer, and
 //! closes its standard input when it is no longer needed.
@@ -15,9 +15,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// The version of the protocol this crate speaks (`api` in a manifest).
-/// Version 2 added `convert` (a preview that is another file), version
-/// 3 `page` (a preview a page at a time).
-pub const VERSION: u32 = 3;
+/// The protocol is experimental (ADR-047, its sixth point): until it is
+/// declared stable, a new version may change what an older one said,
+/// and [`OLDEST`] then follows it.
+pub const VERSION: u32 = 1;
 
 /// The oldest version bibli still speaks: a plugin written for it runs
 /// unchanged.
@@ -42,10 +43,10 @@ pub mod method {
     /// bibli → plugin: [`InspectParams`](super::InspectParams) → an
     /// [`Inspection`](super::Inspection) or null.
     pub const INSPECT: &str = "inspect";
-    /// bibli → plugin, version 2: [`ConvertParams`](super::ConvertParams)
+    /// bibli → plugin: [`ConvertParams`](super::ConvertParams)
     /// → a [`ConvertAnswer`](super::ConvertAnswer) or null.
     pub const CONVERT: &str = "convert";
-    /// bibli → plugin, version 3: [`PageParams`](super::PageParams) →
+    /// bibli → plugin: [`PageParams`](super::PageParams) →
     /// a [`PageAnswer`](super::PageAnswer) or null.
     pub const PAGE: &str = "page";
     /// bibli → plugin: [`CommandParams`](super::CommandParams) →
@@ -142,10 +143,10 @@ pub struct ConvertParams {
     pub file: File,
 }
 
-/// A preview that is another file (version 2): one of a format bibli
-/// shows (a PDF, a PNG, Markdown, CSV, GPX…), which bibli previews as it
-/// would that file, typed by its name and bytes. Null: the plugin shows
-/// nothing for this one.
+/// A preview that is another file: one of a format bibli shows (a PDF, a
+/// PNG, Markdown, CSV, GPX…), which bibli previews as it would that file,
+/// typed by its name and bytes. Null: the plugin shows nothing for this
+/// one.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConvertAnswer {
     /// Its name, whose extension says its type (`page.pdf`).
@@ -167,11 +168,10 @@ pub struct PageParams {
     pub text: bool,
 }
 
-/// A page of a preview shown a page at a time (version 3): how many
-/// pages the file has, and the one asked: its picture as a PNG, in
-/// base64 (null past the last, or when no picture was asked), its own
-/// size, and its text when asked. Null: the plugin shows nothing for
-/// this file.
+/// A page of a preview shown a page at a time: how many pages the file
+/// has, and the one asked: its picture as a PNG, in base64 (null past the
+/// last, or when no picture was asked), its own size, and its text when
+/// asked. Null: the plugin shows nothing for this file.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PageAnswer {
     pub pages: u32,
