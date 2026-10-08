@@ -722,6 +722,12 @@ impl Drop for X11Window {
         let mut state = self.0.state.borrow_mut();
         state.renderer.destroy();
 
+        // The X server is gone (`X11Client::connection_lost`), and its
+        // windows with it: there is nothing to destroy there.
+        if self.0.xcb.has_error().is_some() {
+            return;
+        }
+
         let destroy_x_window = maybe!({
             check_reply(
                 || "X11 DestroyWindow failure.",

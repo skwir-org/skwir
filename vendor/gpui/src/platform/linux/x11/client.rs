@@ -216,6 +216,8 @@ pub struct X11ClientState {
     pub(crate) clipboard: Clipboard,
     pub(crate) clipboard_item: Option<ClipboardItem>,
     pub(crate) xdnd_state: Xdnd,
+    /// The X server went away; said once (`X11Client::connection_lost`).
+    connection_lost: bool,
 }
 
 #[derive(Clone)]
@@ -515,7 +517,22 @@ impl X11Client {
             clipboard,
             clipboard_item: None,
             xdnd_state: Xdnd::default(),
+            connection_lost: false,
         }))))
+    }
+
+    /// The X server is gone (it ended, or its socket closed): libxcb never
+    /// recovers a connection in error, so every poll would fail again at
+    /// once, its socket readable forever. Like any X client, the
+    /// application ends: the event loop stops, and the platform runs its
+    /// quit callbacks as when it quits. Said once.
+    fn connection_lost(&self, err: &ConnectionError) {
+        let mut state = self.0.borrow_mut();
+        if !state.connection_lost {
+            state.connection_lost = true;
+            log::error!("the X11 connection is lost, quitting: {err}");
+        }
+        state.common.signal.stop();
     }
 
     pub fn process_x11_events(
@@ -592,6 +609,12 @@ impl X11Client {
                         break;
                     }
                     Err(err) => {
+                        // A connection in error is gone for good; anything
+                        // else (an event that does not parse) is this event's.
+                        if xcb_connection.has_error().is_some() {
+                            self.connection_lost(&err);
+                            return Ok(());
+                        }
                         let err = handle_connection_error(err);
                         log::warn!("error while polling for X11 events: {err:?}");
                         break;

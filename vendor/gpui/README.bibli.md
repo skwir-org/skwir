@@ -234,6 +234,26 @@ that path.
   code is unchanged. In Zed the dependency is declared in the workspace
   `Cargo.toml`; this diff is against the manifest as `0009` left it.
 
+- `0016-x11-ends-when-its-server-is-gone.patch`: when the X server went
+  away (it ended, its socket closed), the X11 client never noticed. libxcb
+  never recovers a connection in error, and its socket stays readable, so
+  calloop called the event source again at once, forever: each poll failed,
+  logged `error while polling for X11 events` (a backtrace with it where
+  one is captured) and returned as if nothing had happened, the refresh
+  timers the same. A bibli left on an Xvfb that was stopped spun a core and
+  wrote 131 GB of log in four hours, until the disk was full; on the
+  reference machine the log grew 27 MB a second. Now a poll that fails
+  on a connection in error (`XCBConnection::has_error`; a single event that
+  does not parse is not one, and still only warns) says so once and stops
+  the event loop (`X11Client::connection_lost`), so the application ends
+  as when it quits: `LinuxPlatform::run` runs the quit callbacks (bibli's
+  winds its plans down). Windows dropped then are not destroyed on a
+  server that is gone, which logged a failure with a backtrace for each.
+  Checked on Xvfb, stopping the server under a window: the app ended
+  within a second, its log two lines longer (the clipboard's worker says
+  it once too). Wayland's client already ends its loop on a lost
+  connection: its source returns the error.
+
 ## Regenerating a patch
 
     G=$(ls -d ~/.cargo/registry/src/*/gpui-0.2.2)
