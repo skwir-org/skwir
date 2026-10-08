@@ -225,6 +225,19 @@ current source before assuming a planned crate, command, or API exists.
   menu opens and replaces the plain items, which stay registered for the
   palette. Rarely used items set `submenu`; the menu expands that group in
   place. Give items an `icon`.
+- **A drop asks.** Files dropped in a folder do what the keys held say
+  (`dnd::held`: Shift moves, Ctrl copies, Ctrl+Shift links); with none
+  held, a menu at the pointer asks (`core.drop_asks`, on by default,
+  `Shell::ask_drop`): Move, Copy and Link Here, each beside its keys,
+  then Cancel, the row of what the drop does unasked highlighted for
+  Enter (`dnd::drop_op`: our own files move within a filesystem and are
+  copied to another, another application's are copied). Each row is the
+  core command (`move`, `copy`, `link`) with what was dropped named in
+  `entries`, so the answer acts on what was dropped, not on the
+  selection by then. A drop on a place keeps its location's meaning
+  (`Verbs::drop`: the trash trashes), a drag carrying places is not
+  asked about (a place gives a folder a plan reviewed already), and
+  Shift+F5 and Shift+F6 say what they do.
 - **Details lead somewhere.** A provider's fact can carry a command
   (`Detail::with_action`, drawn as a link after the value, run through
   `Shell::run`): a position shows the file on the map. The row itself

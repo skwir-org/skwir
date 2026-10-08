@@ -26,9 +26,9 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 pub use builtin::{
-    Copy, Delete, InTrash, Landed, Mkdir, Move, NewFile, RemoveEmptyFile, Rename, Restore,
-    RestorePart, ReturnPart, Rmdir, Swap, Trash, Unmerge, Untrashed, in_trash, parse_trash_info,
-    register_builtin, trash_info_of,
+    Copy, Delete, InTrash, Landed, Link, Mkdir, Move, NewFile, RemoveEmptyFile, Rename, Restore,
+    RestorePart, ReturnPart, Rmdir, Swap, Trash, Unlink, Unmerge, Untrashed, in_trash,
+    parse_trash_info, register_builtin, trash_info_of,
 };
 pub use context::{Cancelled, StepContext};
 pub use entry_ref::{EntryArg, EntryRef, ResolveError};
@@ -191,6 +191,15 @@ pub enum Change {
         #[schemars(with = "crate::os_path::PathArg")]
         to: PathBuf,
     },
+    /// A link made at `to` that leads to `from`.
+    Link {
+        #[serde(with = "crate::os_path")]
+        #[schemars(with = "crate::os_path::PathArg")]
+        from: PathBuf,
+        #[serde(with = "crate::os_path")]
+        #[schemars(with = "crate::os_path::PathArg")]
+        to: PathBuf,
+    },
     Swap {
         #[serde(with = "crate::os_path")]
         #[schemars(with = "crate::os_path::PathArg")]
@@ -255,6 +264,8 @@ impl fmt::Display for Change {
             }
             Change::Move { from, to } => write!(f, "move {} -> {}", from.display(), to.display()),
             Change::Copy { from, to } => write!(f, "copy {} -> {}", from.display(), to.display()),
+            // As `ls -l` shows a link: where it is, then where it leads.
+            Change::Link { from, to } => write!(f, "link {} -> {}", to.display(), from.display()),
             Change::Swap { a, b } => write!(f, "swap {} <-> {}", a.display(), b.display()),
             Change::Trash { path } => write!(f, "trash {}", path.display()),
             Change::Restore { path } => write!(f, "restore {}", path.display()),
@@ -321,6 +332,7 @@ impl Change {
                 }
             }
             Change::Copy { .. }
+            | Change::Link { .. }
             | Change::Restore { .. }
             | Change::Create { .. }
             | Change::Metadata { .. } => Followed::Same,

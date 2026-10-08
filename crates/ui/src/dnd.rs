@@ -1,15 +1,20 @@
 //! Drag and drop: internal moves/copies between rows, cells, columns, and
 //! sidebar places, and external paths dropped from other applications.
 //!
-//! What a drop does is `drop_op`: Ctrl copies, Shift moves, and otherwise
-//! our own files move within a filesystem and are copied to another, so a
-//! drop onto a USB stick leaves the folder it came from as it was. Paths
-//! from another application are copied unless Shift says move.
+//! What a drop in a folder does is what the keys held say (`held`): Shift
+//! moves, Ctrl copies, Ctrl+Shift links. With none held it asks
+//! (`core.drop_asks`, on by default: `Shell::ask_drop`), the row of what
+//! it would do unasked ready for Enter; or, not asking, does that
+//! (`drop_op`): our own files move within a filesystem and are copied to
+//! another, so a drop onto a USB stick leaves the folder it came from as
+//! it was, and paths from another application are copied.
 
 use std::path::{Path, PathBuf};
 
+use bibli_core::command::Invocation;
 use bibli_core::op::{self, EntryRef};
 use bibli_core::os_path::PathArg;
+use bibli_core::registry::MenuItem;
 use bibli_core::workspace::PaneId;
 use bibli_core::{Plan, app::NotifyLevel, fs, scheduler::Priority, settings::Settings};
 use gpui::{
@@ -24,14 +29,57 @@ use crate::theme::Theme;
 pub enum DropOp {
     Copy,
     Move,
+    /// A link to each, made in the folder (`op::Link`).
+    Link,
 }
 
 impl DropOp {
+    /// Every drop, in the order the drop menu lists them.
+    const ALL: [DropOp; 3] = [DropOp::Move, DropOp::Copy, DropOp::Link];
+
     fn command(self) -> &'static str {
         match self {
             DropOp::Copy => "copy",
             DropOp::Move => "move",
+            DropOp::Link => "link",
         }
+    }
+
+    /// The keys held that make a drop this one without asking (`held`),
+    /// as a binding spells them.
+    fn keys(self) -> &'static str {
+        match self {
+            DropOp::Move => "shift",
+            DropOp::Copy => "ctrl",
+            DropOp::Link => "ctrl-shift",
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            DropOp::Move => "Move Here",
+            DropOp::Copy => "Copy Here",
+            DropOp::Link => "Link Here",
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            DropOp::Move => "move",
+            DropOp::Copy => "copy",
+            DropOp::Link => "link",
+        }
+    }
+}
+
+/// What the keys held say a drop does, when they say: Shift moves, Ctrl
+/// copies, both link.
+pub fn held(modifiers: gpui::Modifiers) -> Option<DropOp> {
+    match (modifiers.control, modifiers.shift) {
+        (true, true) => Some(DropOp::Link),
+        (true, false) => Some(DropOp::Copy),
+        (false, true) => Some(DropOp::Move),
+        (false, false) => None,
     }
 }
 
@@ -39,13 +87,11 @@ impl DropOp {
 /// dropped is on the destination's filesystem; `None` when not known,
 /// which copies: nothing is taken from where it was by a guess).
 pub fn drop_op(modifiers: gpui::Modifiers, same_device: Option<bool>) -> DropOp {
-    if modifiers.control {
-        DropOp::Copy
-    } else if modifiers.shift || same_device == Some(true) {
+    held(modifiers).unwrap_or(if same_device == Some(true) {
         DropOp::Move
     } else {
         DropOp::Copy
-    }
+    })
 }
 
 /// The plan for foreign paths dropped into `dest`. Entries are identified
@@ -66,6 +112,7 @@ fn dropped_plan(
                 DropOp::Copy => Box::new(op::Copy::from_settings(entry, dest_dir, settings))
                     as Box<dyn op::Operation>,
                 DropOp::Move => Box::new(op::Move { entry, dest_dir }),
+                DropOp::Link => Box::new(op::Link { entry, dest_dir }),
             })
         })
         .collect();
@@ -124,13 +171,11 @@ impl Render for DragPreview {
         };
         // A key held says what the drop will do wherever it lands; without
         // one it depends on where, and the label does not guess.
-        let modifiers = window.modifiers();
-        let text = if modifiers.control {
-            format!("Copy {text}")
-        } else if modifiers.shift {
-            format!("Move {text}")
-        } else {
-            text
+        let text = match held(window.modifiers()) {
+            Some(DropOp::Copy) => format!("Copy {text}"),
+            Some(DropOp::Move) => format!("Move {text}"),
+            Some(DropOp::Link) => format!("Link {text}"),
+            None => text,
         };
         div()
             .pl(self.position.x + px(12.))
@@ -187,7 +232,8 @@ impl Shell {
 
     /// Paths dropped onto `dest`, from another application or from our own
     /// compositor-level drag: our own selection as `drop_into` says, foreign
-    /// paths copied (moved with Shift).
+    /// paths as the keys held say, else asked (`ask_drop`, Copy ready) or
+    /// copied.
     ///
     /// Only the own-drag check (a path comparison) runs here. Identifying the
     /// dropped entries and checking the plan stat every path, possibly on a
@@ -211,9 +257,33 @@ impl Shell {
         if paths.is_empty() {
             return;
         }
-        let app = self.app.clone();
         let dest = dest.to_path_buf();
-        let how = drop_op(window.modifiers(), None);
+        let modifiers = window.modifiers();
+        if held(modifiers).is_none() && self.drop_asks() {
+            let position = window.mouse_position();
+            self.off_thread(
+                "drop-entries",
+                move || {
+                    paths
+                        .iter()
+                        .filter_map(EntryRef::from_path)
+                        .collect::<Vec<_>>()
+                },
+                move |shell, entries, window, cx| {
+                    if entries.is_empty() {
+                        shell.set_status("The dropped items no longer exist", true, cx);
+                        return;
+                    }
+                    // Unasked, another application's files are copied.
+                    shell.ask_drop(position, &entries, &dest, DropOp::Copy, window, cx);
+                },
+                window,
+                cx,
+            );
+            return;
+        }
+        let app = self.app.clone();
+        let how = drop_op(modifiers, None);
         // The drop belongs to the pane it landed on, whatever is active later.
         let pane = self.pane;
         self.app.scheduler.spawn(
@@ -232,11 +302,12 @@ impl Shell {
         );
     }
 
-    /// Drop `from`'s selection into `dest`, as `drop_op` says. The pane the
-    /// drag started in says what goes, whichever pane is active when it
-    /// lands. Without Ctrl or Shift the destination's filesystem decides:
-    /// asking it can block on a sleeping disk, so a worker does, and the
-    /// keys are read now, when the drop happens.
+    /// Drop `from`'s selection into `dest`, as `how` or the keys held say,
+    /// else asked (`ask_drop`) or as `drop_op` says. The pane the drag
+    /// started in says what goes, whichever pane is active when it lands.
+    /// Without a key the destination's filesystem says what an unasked
+    /// drop does: asking it can block on a sleeping disk, so a worker does,
+    /// and the keys and the pointer are read now, when the drop happens.
     pub fn drop_into(
         &mut self,
         from: PaneId,
@@ -273,6 +344,9 @@ impl Shell {
                 )
             })
         };
+        // What a place gives a folder is a plan reviewed already: a drop
+        // with places in it is not asked about.
+        let ask = places.is_empty() && self.drop_asks();
         for place in places {
             if let Some(export) = self.app.verbs(&place).export {
                 let mut args = export.args.clone();
@@ -289,13 +363,12 @@ impl Shell {
         let modifiers = window.modifiers();
         let args = serde_json::json!({ "dest": PathArg::from(dest), "pane": from });
         // Said (Shift+F5, Shift+F6), or by the keys held.
-        if let Some(how) = how {
+        if let Some(how) = how.or_else(|| held(modifiers)) {
             return self.run(how.command(), args, window, cx);
         }
-        if modifiers.control || modifiers.shift {
-            let how = drop_op(modifiers, None);
-            return self.run(how.command(), args, window, cx);
-        }
+        // Asked about what was dropped, named now: the selection may
+        // change before the answer.
+        let asked = ask.then(|| (self.app.selected_refs(from), window.mouse_position()));
         let devices: std::collections::HashSet<u64> = {
             let ws = self.app.workspace.read();
             ws.pane(from)
@@ -303,17 +376,81 @@ impl Shell {
                 .unwrap_or_default()
         };
         let dest = dest.to_path_buf();
+        let dest_dir = dest.clone();
         self.off_thread(
             "drop-device",
             move || fs::stat::id_of(&dest).map(|id| id.dev),
             move |shell, dev, window, cx| {
                 let same = dev.map(|dev| devices.len() == 1 && devices.contains(&dev));
                 let how = drop_op(modifiers, same);
-                shell.run(how.command(), args, window, cx);
+                match asked {
+                    Some((entries, position)) => {
+                        shell.ask_drop(position, &entries, &dest_dir, how, window, cx);
+                    }
+                    None => shell.run(how.command(), args, window, cx),
+                }
             },
             window,
             cx,
         );
+    }
+
+    /// Whether a drop with no key held asks what it does
+    /// (`core.drop_asks`).
+    fn drop_asks(&self) -> bool {
+        self.app
+            .settings
+            .get(bibli_core::settings::DROP_ASKS)
+            .unwrap_or(true)
+    }
+
+    /// Ask what `entries` dropped in `dest` do: a menu at `position` of
+    /// Move, Copy and Link Here, each beside the keys that do it unasked
+    /// (Dolphin's, which teach them), then Cancel. The row of what the
+    /// drop would do unasked (`usual`) is highlighted, so Enter does what
+    /// it always did. Each row is the command itself with the entries
+    /// named, so what runs is what was dropped.
+    pub fn ask_drop(
+        &mut self,
+        position: Point<Pixels>,
+        entries: &[EntryRef],
+        dest: &Path,
+        usual: DropOp,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if entries.is_empty() {
+            return;
+        }
+        let args = serde_json::json!({ "entries": entries, "dest": PathArg::from(dest) });
+        let mut items: Vec<MenuItem> = DropOp::ALL
+            .iter()
+            .zip(0..)
+            .map(|(how, order)| {
+                MenuItem::new(
+                    "drop",
+                    how.title(),
+                    how.icon(),
+                    order,
+                    Invocation::with_args(how.command(), &args),
+                )
+            })
+            .collect();
+        items.push(MenuItem::new(
+            "drop",
+            "Cancel",
+            "close",
+            100,
+            Invocation::new("ui.menu_close"),
+        ));
+        let mut menu = crate::menu::MenuState::open(position, items, window, cx);
+        menu.keys = DropOp::ALL
+            .iter()
+            .map(|how| Some(crate::keymap::display_keys(how.keys())))
+            .collect();
+        menu.highlighted = DropOp::ALL.iter().position(|how| *how == usual);
+        self.menu = Some(menu);
+        cx.notify();
     }
 
     /// `from`'s selection given to what pane `to` shows, as a drag onto
@@ -620,6 +757,11 @@ mod tests {
             shift: true,
             ..Default::default()
         };
+        let both = gpui::Modifiers {
+            control: true,
+            shift: true,
+            ..Default::default()
+        };
         assert_eq!(drop_op(none, Some(true)), DropOp::Move);
         assert_eq!(drop_op(none, Some(false)), DropOp::Copy);
         // Not known: nothing is taken from where it was by a guess.
@@ -627,6 +769,14 @@ mod tests {
         assert_eq!(drop_op(ctrl, Some(true)), DropOp::Copy);
         assert_eq!(drop_op(shift, Some(false)), DropOp::Move);
         assert_eq!(drop_op(shift, None), DropOp::Move);
+        assert_eq!(drop_op(both, Some(true)), DropOp::Link);
+        // No key held: nothing said, the drop asks or decides.
+        assert_eq!(held(none), None);
+        // What the menu says each row's keys are is what they do.
+        for how in DropOp::ALL {
+            let keys = gpui::Keystroke::parse(&format!("{}-a", how.keys())).unwrap();
+            assert_eq!(held(keys.modifiers), Some(how), "{how:?}");
+        }
     }
 
     /// A scratch tree under the user's cache, never `/tmp` (see AGENTS.md).

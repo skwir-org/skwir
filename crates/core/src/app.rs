@@ -2083,6 +2083,29 @@ mod builtin {
         )
         .plans();
 
+        c.register::<DestArgs, _>(
+            "core",
+            "link",
+            "Link",
+            "Make a link in a directory to each of the selection, or the entries given, under its name (plan)",
+            |a, app| {
+                let dest = destination(&a.dest)?;
+                targets_plan(
+                    app,
+                    a.pane,
+                    a.entries,
+                    &format!("link in {}", dest.display()),
+                    |e| {
+                        Box::new(op::Link {
+                            entry: e,
+                            dest_dir: dest.clone(),
+                        })
+                    },
+                )
+            },
+        )
+        .plans();
+
         c.register::<TargetsArgs, _>(
             "core",
             "trash",

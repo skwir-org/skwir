@@ -310,6 +310,40 @@ pub(super) fn symlink_like(target: &Path, dst: &Path, kind: FileType) -> io::Res
     }
 }
 
+/// Make a new link at `dst` that says `target`, a folder when `folder`:
+/// on Windows a link to a folder is made as one.
+pub(super) fn symlink_to(target: &Path, dst: &Path, folder: bool) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        let _ = folder;
+        std::os::unix::fs::symlink(target, dst)
+    }
+    #[cfg(windows)]
+    {
+        if folder {
+            std::os::windows::fs::symlink_dir(target, dst)
+        } else {
+            std::os::windows::fs::symlink_file(target, dst)
+        }
+    }
+}
+
+/// Remove the link at `link`, never what it leads to: on Windows a link
+/// to a folder is removed as a folder.
+pub(super) fn remove_link(link: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::FileTypeExt;
+        if std::fs::symlink_metadata(link)?
+            .file_type()
+            .is_symlink_dir()
+        {
+            return std::fs::remove_dir(link);
+        }
+    }
+    std::fs::remove_file(link)
+}
+
 /// Open the folder `dir` to set its times: as any file on Unix; on
 /// Windows with the flag a folder needs and the right to write what is
 /// said of it.

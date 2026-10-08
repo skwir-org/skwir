@@ -11,6 +11,8 @@ use serde::de::DeserializeOwned;
 use std::io::Write;
 
 pub const PRESERVE_ATTRIBUTES_ON_COPY: &str = "core.preserve_attributes_on_copy";
+/// Whether files dropped without a key held ask what to do.
+pub const DROP_ASKS: &str = "core.drop_asks";
 /// `last` or `folder`.
 pub const STARTUP: &str = "core.startup";
 pub const STARTUP_FOLDER: &str = "core.startup_folder";
@@ -531,6 +533,15 @@ pub(crate) fn register(app: &crate::App) {
             PRESERVE_ATTRIBUTES_ON_COPY,
             "Keep tags and attributes when copying",
             "Copies carry their source's tags, rating, comment and where it was downloaded from. Where the destination keeps no attributes they are kept beside the copy, as a Mac does; the copy fails only when nothing can keep them. Turn this off to copy without them.",
+            true,
+        )
+        .section("Files"),
+    );
+    app.settings.declare(
+        SettingSpec::toggle(
+            DROP_ASKS,
+            "Ask what dropped files do",
+            "Files dropped in a folder with no key held open a menu: move, copy or link them there. Turn this off to move them within a drive and copy them to another. Shift moves, Ctrl copies and Ctrl+Shift links, either way.",
             true,
         )
         .section("Files"),

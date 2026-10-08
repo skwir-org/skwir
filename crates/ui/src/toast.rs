@@ -118,6 +118,14 @@ pub fn describe(title: &str, run: RunKind, first: Option<&Change>, applied: usiz
             format!("Copied {} to {}", quoted(from), folder_of(to))
         }
         Some(Change::Copy { to, .. }) => format!("Copied {many} to {}", folder_of(to)),
+        Some(Change::Link { from, to }) if one => {
+            format!("Made a link to {} in {}", quoted(from), folder_of(to))
+        }
+        Some(Change::Link { to, .. }) => format!(
+            "Made {} in {}",
+            format::count(applied, "link"),
+            folder_of(to)
+        ),
         Some(Change::Create {
             path,
             directory: true,
@@ -144,6 +152,13 @@ pub fn failure(title: &str, failed: Option<&Change>, error: &str) -> String {
         Some(Change::Move { from, to }) => {
             format!("Couldn't move {} to {}", quoted(from), folder_of(to))
         }
+        Some(Change::Link { from, to }) => {
+            format!(
+                "Couldn't make a link to {} in {}",
+                quoted(from),
+                folder_of(to)
+            )
+        }
         Some(Change::Trash { path }) => format!("Couldn't move {} to Trash", quoted(path)),
         Some(Change::Restore { path }) => format!("Couldn't restore {}", quoted(path)),
         Some(Change::Delete { path }) => format!("Couldn't delete {}", quoted(path)),
@@ -160,6 +175,7 @@ pub fn failure(title: &str, failed: Option<&Change>, error: &str) -> String {
     let named = failed.and_then(|change| match change {
         Change::Copy { from: path, .. }
         | Change::Move { from: path, .. }
+        | Change::Link { from: path, .. }
         | Change::Rename { from: path, .. }
         | Change::Trash { path }
         | Change::Restore { path }
@@ -628,6 +644,18 @@ mod tests {
             "Couldn't rename “a.txt” to “b.txt”: the name is too long, or not allowed there",
             "the reason alone, not the step twice"
         );
+        let link = Change::Link {
+            from: PathBuf::from("/a/notes/it's a draft.txt"),
+            to: PathBuf::from("/a/locked/it's a draft.txt"),
+        };
+        assert_eq!(
+            failure(
+                "link in /a/locked",
+                Some(&link),
+                "“it's a draft.txt” could not be linked in “locked”: permission denied"
+            ),
+            "Couldn't make a link to “it's a draft.txt” in locked: permission denied"
+        );
         assert_eq!(
             failure("tag 2 files", None, "the drive is full"),
             "Tag 2 files: the drive is full"
@@ -654,6 +682,18 @@ mod tests {
         assert_eq!(
             describe("copy", RunKind::Apply, Some(&copy), 2),
             "Copied 2 items to Archive 2026"
+        );
+        let link = Change::Link {
+            from: PathBuf::from("/example/a.txt"),
+            to: PathBuf::from("/example/Archive 2026/a.txt"),
+        };
+        assert_eq!(
+            describe("link", RunKind::Apply, Some(&link), 1),
+            "Made a link to “a.txt” in Archive 2026"
+        );
+        assert_eq!(
+            describe("link", RunKind::Apply, Some(&link), 3),
+            "Made 3 links in Archive 2026"
         );
         assert_eq!(
             describe("undo move to trash", RunKind::Undo, Some(&trash), 1),

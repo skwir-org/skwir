@@ -264,3 +264,74 @@ fn a_location_is_listed_without_showing_it() {
         shown
     );
 }
+
+/// `link`, as a drop's Link Here runs it: a link to each entry named, in
+/// the folder named, under its name. Again it does nothing; undone it
+/// takes the links and never what they lead to, nor a link changed since;
+/// a name taken by something else conflicts.
+#[cfg(unix)]
+#[test]
+fn a_link_is_made_to_what_is_named_and_its_undo_takes_only_the_link() {
+    use bibli_core::op::StepStatus;
+
+    let tmp = home_tempdir();
+    let dir = tmp.path().join("work");
+    let into = dir.join("links it's");
+    std::fs::create_dir_all(&into).unwrap();
+    let file = dir.join("l’été « draft ».txt");
+    let folder = dir.join("a folder");
+    std::fs::write(&file, "kept").unwrap();
+    std::fs::create_dir(&folder).unwrap();
+    let app = app(tmp.path());
+    let file_link = into.join("l’été « draft ».txt");
+    let folder_link = into.join("a folder");
+
+    // As the window names what was dropped, and as a script names a path.
+    let shown = EntryRef::from_path(&file).unwrap();
+    let link = plan(
+        &app,
+        "link",
+        json!({ "entries": [shown, folder], "dest": into }),
+    );
+    assert_eq!(link.diff().steps.len(), 2);
+    apply(&app, &link);
+    assert_eq!(std::fs::read_link(&file_link).unwrap(), file);
+    assert_eq!(std::fs::read_link(&folder_link).unwrap(), folder);
+    assert_eq!(std::fs::read_to_string(&file_link).unwrap(), "kept");
+    // Again: what it makes is there.
+    assert_eq!(apply(&app, &link).applied, 0);
+
+    let undone = app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert!(undone.error.is_none(), "{:?}", undone.error);
+    assert!(std::fs::symlink_metadata(&file_link).is_err());
+    assert!(std::fs::symlink_metadata(&folder_link).is_err());
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "kept");
+    assert!(folder.is_dir());
+    let redone = app.executor.redo_blocking(app.lifetime()).unwrap();
+    assert!(redone.error.is_none(), "{:?}", redone.error);
+    assert_eq!(std::fs::read_link(&file_link).unwrap(), file);
+
+    // A link that leads elsewhere since is not the one made: kept.
+    std::fs::remove_file(&file_link).unwrap();
+    std::os::unix::fs::symlink(&folder, &file_link).unwrap();
+    let refused = app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert!(
+        refused.error.is_some(),
+        "an undo must not take another link"
+    );
+    assert_eq!(std::fs::read_link(&file_link).unwrap(), folder);
+
+    // Another file under the name: a conflict, never replaced.
+    let other = tmp.path().join("other");
+    std::fs::create_dir(&other).unwrap();
+    std::fs::write(other.join("l’été « draft ».txt"), "different").unwrap();
+    let taken = plan(&app, "link", json!({ "entries": [file], "dest": other }));
+    assert!(matches!(
+        taken.diff().steps[0].1,
+        StepStatus::Conflict { .. }
+    ));
+    assert_eq!(
+        std::fs::read_to_string(other.join("l’été « draft ».txt")).unwrap(),
+        "different"
+    );
+}

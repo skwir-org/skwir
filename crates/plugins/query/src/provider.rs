@@ -648,9 +648,10 @@ impl Shared {
                 Change::Metadata { path, .. }
                 | Change::Create { path, .. }
                 | Change::Restore { path } => vec![path.clone()],
-                Change::Rename { to, .. } | Change::Move { to, .. } | Change::Copy { to, .. } => {
-                    vec![to.clone()]
-                }
+                Change::Rename { to, .. }
+                | Change::Move { to, .. }
+                | Change::Copy { to, .. }
+                | Change::Link { to, .. } => vec![to.clone()],
                 Change::Swap { a, b } => vec![a.clone(), b.clone()],
                 Change::Trash { .. } | Change::Delete { .. } | Change::Remove { .. } => Vec::new(),
             };

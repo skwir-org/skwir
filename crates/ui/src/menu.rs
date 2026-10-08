@@ -238,6 +238,10 @@ pub struct MenuState {
     /// Opened from the keyboard: no pointer says where, so the menu hangs
     /// from the cursor's row of this pane, or from the pane.
     pub keyboard: Option<KeyboardAnchor>,
+    /// What is said beside an item in place of its binding's keys, by its
+    /// index, where it is done another way: the drop menu's keys held
+    /// while dropping.
+    pub keys: Vec<Option<String>>,
 }
 
 /// Where a menu opened with the Menu key or Shift+F10 is drawn: under the
@@ -291,6 +295,7 @@ impl MenuState {
             expanded: None,
             back,
             keyboard: None,
+            keys: Vec::new(),
         }
     }
 }
@@ -883,7 +888,12 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 if !nested {
                     previous = Some(item);
                 }
-                let keys = shell.keys_here(&item.command.name, &item.command.args);
+                let keys = menu
+                    .keys
+                    .get(*index)
+                    .cloned()
+                    .flatten()
+                    .or_else(|| shell.keys_here(&item.command.name, &item.command.args));
                 (
                     item.title.clone(),
                     item.icon.clone(),

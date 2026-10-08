@@ -1,5 +1,5 @@
 //! The built-in operations: rename, move, copy, swap, trash, restore, delete,
-//! mkdir, rmdir, new file and its removal. Each is idempotent (`check` detects an effect already in
+//! mkdir, rmdir, new file and its removal, a link and its removal. Each is idempotent (`check` detects an effect already in
 //! place) and returns its inverse from `apply`.
 //!
 //! Names are `OsString`s and paths `PathBuf`s from end to end, serialized
@@ -2404,6 +2404,118 @@ impl super::Effect for RemoveEmptyFile {
     }
 }
 
+// ------------------------------------------------------------------ link
+
+/// Make a link in `dest_dir` to the entry, under its name: what a drop's
+/// Link Here makes. The link says the entry's whole path, so it leads
+/// there wherever the link itself is moved.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Link {
+    pub entry: EntryRef,
+    #[serde(with = "crate::os_path")]
+    #[schemars(with = "PathArg")]
+    pub dest_dir: PathBuf,
+}
+
+impl Link {
+    fn target(&self, src: &Path) -> PathBuf {
+        self.dest_dir.join(file_name(src))
+    }
+}
+
+impl super::Kind for Link {
+    const KIND: &'static str = "link";
+}
+
+impl super::Effect for Link {
+    fn describe(&self) -> Change {
+        Change::Link {
+            from: self.entry.path.clone(),
+            to: self.target(&self.entry.path),
+        }
+    }
+    fn check(&self, ctx: &StepContext) -> StepStatus {
+        if !ctx.is_folder(&self.dest_dir) {
+            return conflict(format!(
+                "“{}” is not a folder",
+                display_name(&self.dest_dir)
+            ));
+        }
+        let src = match self.entry.resolve() {
+            Ok(s) => s,
+            Err(e) => return conflict(e.to_string()),
+        };
+        let link = self.target(&src);
+        match std::fs::read_link(&link) {
+            // What this step makes: applied already.
+            Ok(says) if says == src => StepStatus::AlreadyDone,
+            _ if exists(&link) => conflict(format!("“{}” is already there", display_name(&link))),
+            _ => pending(true),
+        }
+    }
+    fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+        let src = self.entry.resolve()?;
+        let link = self.target(&src);
+        sys::symlink_to(&src, &link, src.is_dir()).with_context(|| {
+            format!(
+                "“{}” could not be linked in “{}”",
+                display_name(&src),
+                display_name(&self.dest_dir)
+            )
+        })?;
+        Ok(Some(Box::new(Unlink {
+            path: link,
+            entry: EntryRef::new(self.entry.id, src),
+        })))
+    }
+}
+
+/// Take away a link [`Link`] made, while it still says what it was made
+/// to say: the undo of a Link Here, which never takes a link changed
+/// since, nor what it leads to.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Unlink {
+    #[serde(with = "crate::os_path")]
+    #[schemars(with = "PathArg")]
+    pub path: PathBuf,
+    /// What the link leads to, at the path it says.
+    pub entry: EntryRef,
+}
+
+impl super::Kind for Unlink {
+    const KIND: &'static str = "unlink";
+}
+
+impl super::Effect for Unlink {
+    fn describe(&self) -> Change {
+        Change::Remove {
+            path: self.path.clone(),
+        }
+    }
+    fn check(&self, _ctx: &StepContext) -> StepStatus {
+        match std::fs::read_link(&self.path) {
+            Ok(says) if says == self.entry.path => pending(true),
+            Ok(_) => conflict(format!(
+                "“{}” leads elsewhere now",
+                display_name(&self.path)
+            )),
+            Err(_) if !exists(&self.path) => StepStatus::AlreadyDone,
+            Err(_) => conflict(format!(
+                "“{}” is no longer a link",
+                display_name(&self.path)
+            )),
+        }
+    }
+    fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+        sys::remove_link(&self.path)
+            .with_context(|| format!("“{}” could not be removed", display_name(&self.path)))?;
+        Ok(Some(Box::new(Link {
+            entry: self.entry.clone(),
+            dest_dir: self.path.parent().unwrap_or(Path::new("/")).to_path_buf(),
+        })))
+    }
+}
+
 /// Register every built-in operation kind under the `core` owner.
 pub fn register_builtin(reg: &OpRegistry) {
     reg.register::<Rename>("core");
@@ -2420,6 +2532,8 @@ pub fn register_builtin(reg: &OpRegistry) {
     reg.register::<Rmdir>("core");
     reg.register::<NewFile>("core");
     reg.register::<RemoveEmptyFile>("core");
+    reg.register::<Link>("core");
+    reg.register::<Unlink>("core");
 }
 
 #[cfg(test)]
