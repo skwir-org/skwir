@@ -1787,7 +1787,7 @@ Goal: `crates/core` is complete enough that plugins can be written against it, w
   the core. Keymap and palette are consumers of the registry. Nothing in a command captures UI state.
 - **Operations and plans.** `Operation` trait with `apply` and `inverse`. `Plan` = ordered list of
   operations referencing `EntryId`s, with a dry-run `diff()`. Executor runs plans in the background
-  with progress and cancellation and writes an undo journal. Re-applying an applied plan is a no-op.
+  with progress, pause and cancellation and writes an undo journal. Re-applying an applied plan is a no-op.
   Built-in ops: copy (reflink when possible), move, rename (atomic exchange for swaps), trash, delete, mkdir.
 - **Registries.** Views, panels, sidebar contributions, context-menu contributions, settings schema.
 - **Plugin lifecycle.** `Plugin` trait: `register(&mut Registry)`, `enable`, `disable`. Compile-time

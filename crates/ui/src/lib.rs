@@ -90,7 +90,7 @@ pub mod views;
 mod weight;
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bibli_core::{App, Location};
 use gpui::{
@@ -231,6 +231,9 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
                 tracing::trace!(keystroke = %ev.keystroke.unparse(), "keystroke");
             })
             .detach();
+            // Every way out (Quit, the window's close button) closes the
+            // last window first, so nothing is left on screen while the
+            // plans wind down.
             let stats_app = Arc::clone(&app);
             cx.on_window_closed(move |cx| {
                 if cx.windows().is_empty() {
@@ -239,6 +242,12 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
                     tracing::info!(decoded, skipped, cached_bytes = bytes, "thumbnail stats");
                     cx.quit();
                 }
+            })
+            .detach();
+            let quitting = Arc::clone(&app);
+            cx.on_app_quit(move |_| {
+                wind_down(&quitting);
+                async {}
             })
             .detach();
 
@@ -272,6 +281,30 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
                 .ok();
         });
     Ok(())
+}
+
+/// How long the process may stay after its last window closed, for the
+/// plans it cancels to take back their partial work: a copy removes its
+/// staging folder file by file, perhaps tens of thousands of them from a
+/// slow drive. Past it the process ends anyway, what is left staying, so a
+/// step stuck on a drive that stopped answering never keeps it alive
+/// unseen.
+const WIND_DOWN: Duration = Duration::from_secs(30);
+
+/// Stop every plan before the process ends: a copy cut short by Quit
+/// leaves nothing in its destination. A plan is cancelled, never finished
+/// unseen: with no window, nothing would show it or let it be stopped.
+///
+/// Run by GPUI's quit handler, the one place every system passes through
+/// as the application ends (on Linux the event loop stops by itself when
+/// the last window closes, so nothing can wait on it). GPUI gives the
+/// future a handler returns 100 ms; the handler itself it runs to the end,
+/// which is why the waiting is here and not in that future. The windows
+/// are gone by then: Quit closes them first.
+fn wind_down(app: &App) {
+    if !app.executor.wind_down(WIND_DOWN) {
+        tracing::warn!("quitting while a plan still runs: what it left stays");
+    }
 }
 
 /// Note where the window is, for "open the folders and tabs left open".

@@ -1872,12 +1872,9 @@ impl Shell {
             "cursor_toggle" => self.toggle_cursor(window, cx),
             "peek" => self.toggle_peek(window, cx),
             "peek_close" => self.close_peek(window, cx),
-            "quit" => {
-                crate::remember_location(&self.app);
-                let (decoded, skipped, bytes) = self.app.thumbnails.stats();
-                tracing::info!(decoded, skipped, cached_bytes = bytes, "thumbnail stats");
-                cx.quit();
-            }
+            // Closing the last window quits, once the plans running have
+            // stopped (`lib.rs`).
+            "quit" => window.remove_window(),
             // Declared (`commands.rs`) but carried out nowhere: a mistake
             // the test of the declarations catches.
             other => self.set_status(format!("ui.{other} is not carried out here"), true, cx),

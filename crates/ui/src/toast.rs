@@ -1,6 +1,7 @@
 //! Toasts: what just happened, with the way back. One message at a time sits
-//! above the panes' footers; a running operation shows its progress there with a
-//! Cancel button and turns into its result ("Moved 3 items to Trash", Undo).
+//! above the panes' footers; a running operation shows its progress there with
+//! Pause and Cancel buttons and turns into its result ("Moved 3 items to
+//! Trash", Undo).
 //!
 //! The only animation is a short entrance that ends by itself; nothing here
 //! keeps the UI awake.
@@ -8,7 +9,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use bibli_core::op::{Change, ExecEvent, PlanId, RunKind};
+use bibli_core::op::{Change, ExecEvent, PlanId, RunKind, Transfer};
 use gpui::{Animation, AnimationExt, AnyElement, Context, div, prelude::*, px};
 
 use crate::controls::{self, ButtonStyle};
@@ -44,12 +45,13 @@ pub struct Running {
     pub plan: PlanId,
     pub title: String,
     pub run: RunKind,
-    pub step: usize,
     pub total: usize,
     /// First change that was applied, to name a single item in the result.
     first: Option<Change>,
     /// The change whose step failed, to say what could not be done.
     failed: Option<Change>,
+    /// Waiting where it would answer Cancel, until resumed.
+    paused: bool,
     cancelling: bool,
 }
 
@@ -64,6 +66,8 @@ pub struct ToastState {
     close: Option<gpui::FocusHandle>,
     /// Kept across frames, so Tab can reach the toast's button.
     action_focus: Option<gpui::FocusHandle>,
+    /// Pause and Resume, one button: its focus stays as its label changes.
+    pause_focus: Option<gpui::FocusHandle>,
 }
 
 fn name_of(path: &Path) -> String {
@@ -170,6 +174,35 @@ pub fn failure(title: &str, failed: Option<&Change>, error: &str) -> String {
     format!("{tried}: {reason}")
 }
 
+/// What a running plan's bar says: how far it is, from 0 to 1, and in
+/// words. A plan of several items counts them, the bytes of the one under
+/// way moving the bar between two counts: its bytes are known only as each
+/// item starts. A plan of one item counts its bytes, known before it
+/// starts.
+pub fn bar(items: usize, t: &Transfer) -> (f32, String) {
+    if items <= 1 {
+        let words = format!("{} of {}", format::size(t.done), format::size(t.total));
+        return ((t.done as f32 / t.total.max(1) as f32).clamp(0., 1.), words);
+    }
+    let within = if t.step_total > 0 {
+        (t.step_done as f32 / t.step_total as f32).clamp(0., 1.)
+    } else {
+        0.
+    };
+    let count = format!(
+        "{} of {}",
+        format::thousands(t.ended),
+        format::count(items, "item")
+    );
+    let words = if t.done > 0 {
+        format!("{count} · {}", format::size(t.done))
+    } else {
+        count
+    };
+    let fraction = (t.ended as f32 + within) / items as f32;
+    (fraction.clamp(0., 1.), words)
+}
+
 impl Shell {
     /// Show `toast`, replacing the current one, for a time that fits its
     /// weight: errors and anything with a button stay longer.
@@ -222,12 +255,18 @@ impl Shell {
                         plan,
                         title,
                         run,
-                        step: 0,
                         total,
                         first: None,
                         failed: None,
+                        paused: false,
                         cancelling: false,
                     });
+                }
+                ExecEvent::Paused { plan } | ExecEvent::Resumed { plan } => {
+                    let paused = matches!(event, ExecEvent::Paused { .. });
+                    if let Some(running) = self.toasts.running.iter_mut().find(|r| r.plan == plan) {
+                        running.paused = paused;
+                    }
                 }
                 ExecEvent::Step(progress) => {
                     if let Some(running) = self
@@ -236,7 +275,6 @@ impl Shell {
                         .iter_mut()
                         .find(|r| r.plan == progress.plan)
                     {
-                        running.step = progress.step + 1;
                         running.total = progress.total;
                         if progress.error.is_some() {
                             running.failed = Some(progress.change);
@@ -320,6 +358,10 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
             .bg(theme.bg)
             .shadow_lg()
             .occlude()
+            // A click on the toast leaves the keyboard where it was: the
+            // toast stays up while its plan is paused, and the keys must go
+            // on acting on the pane. Tab still reaches its buttons.
+            .capture_any_mouse_down(|_, window, _| window.prevent_default())
     };
     let glyph = |tone: Tone| match tone {
         Tone::Success => controls::glyph("check", theme.success, 15.),
@@ -329,31 +371,26 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
     // A plan with a single step finishes before anyone could read a bar,
     // unless the step moves bytes (one large copy): then the bytes are the bar.
     let progress = shell.toasts.running.iter().find_map(|running| {
-        let transfer = shell
-            .app
-            .executor
-            .transfer(running.plan)
-            .filter(|t| t.total > 0);
-        (running.total > 1 || transfer.is_some()).then_some((running, transfer))
+        let transfer = shell.app.executor.transfer(running.plan)?;
+        (running.total > 1 || transfer.total > 0).then_some((running, transfer))
     });
     let content = if let Some((running, transfer)) = progress {
-        let (fraction, amount) = match transfer {
-            Some(t) => (
-                t.done as f32 / t.total as f32,
-                format!("{} of {}", format::size(t.done), format::size(t.total)),
-            ),
-            None => (
-                running.step as f32 / running.total.max(1) as f32,
-                format!(
-                    "{} of {}",
-                    format::thousands(running.step),
-                    format::thousands(running.total)
-                ),
-            ),
-        };
-        let fraction = fraction.clamp(0., 1.);
+        let (fraction, amount) = bar(running.total, &transfer);
         let plan = running.plan;
+        let paused = running.paused;
         let focus = close.clone();
+        // What the user did meanwhile waits on the lane behind this plan,
+        // and paused, for as long as it stays paused: say so.
+        let waiting = match shell.app.executor.queued() {
+            0 => String::new(),
+            n => format!(" · {} waiting", format::count(n, "action")),
+        };
+        let state = if paused { "paused at " } else { "" };
+        let pause_focus = shell
+            .toasts
+            .pause_focus
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
         card(Tone::Info)
             .py_2()
             .child(
@@ -363,7 +400,10 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .child(format!("{} — {amount}", capitalized(&running.title)))
+                    .child(format!(
+                        "{} — {state}{amount}{waiting}",
+                        capitalized(&running.title)
+                    ))
                     .child(
                         div()
                             .h(px(4.))
@@ -374,11 +414,35 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                                 div()
                                     .h_full()
                                     .rounded_full()
-                                    .bg(theme.accent)
+                                    .bg(if paused {
+                                        theme.text_muted
+                                    } else {
+                                        theme.accent
+                                    })
                                     .w(gpui::relative(fraction)),
                             ),
                     ),
             )
+            .when(!running.cancelling, |card| {
+                card.child(
+                    controls::button(
+                        "toast-pause",
+                        if paused { "Resume" } else { "Pause" },
+                        None,
+                        ButtonStyle::Plain,
+                        &pause_focus,
+                        &theme,
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if paused {
+                            this.app.executor.resume(plan);
+                        } else {
+                            this.app.executor.pause(plan);
+                        }
+                        cx.notify();
+                    })),
+                )
+            })
             .child(
                 controls::button(
                     "toast-cancel",
@@ -456,9 +520,43 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
 
 #[cfg(test)]
 mod tests {
-    use super::{describe, failure};
-    use bibli_core::op::{Change, RunKind};
+    use super::{bar, describe, failure};
+    use bibli_core::op::{Change, RunKind, Transfer};
     use std::path::PathBuf;
+
+    #[test]
+    fn a_bar_counts_items_and_moves_with_the_bytes_of_the_one_under_way() {
+        // Many small files: the count, never a byte total that grows as
+        // fast as the bytes do.
+        let small = Transfer {
+            done: 82_304,
+            total: 82_368,
+            ended: 1286,
+            step_done: 0,
+            step_total: 64,
+        };
+        let (fraction, words) = bar(40_000, &small);
+        assert_eq!(words, "1,286 of 40,000 items · 80.4 KB");
+        assert!((fraction - 1286. / 40_000.).abs() < 1e-6);
+        // Three large folders: halfway through the second is half of a third.
+        let large = Transfer {
+            done: 3 << 30,
+            total: 4 << 30,
+            ended: 1,
+            step_done: 1 << 30,
+            step_total: 2 << 30,
+        };
+        assert!((bar(3, &large).0 - 0.5).abs() < 1e-6);
+        // Nothing moved yet, or nothing to move: the count alone.
+        assert_eq!(bar(2, &Transfer::default()), (0., "0 of 2 items".into()));
+        // One item counts its bytes, known before it starts.
+        let one = Transfer {
+            done: 1 << 30,
+            total: 4 << 30,
+            ..Transfer::default()
+        };
+        assert_eq!(bar(1, &one), (0.25, "1.0 GB of 4.0 GB".into()));
+    }
 
     #[test]
     fn a_failure_says_what_could_not_be_done_and_why() {

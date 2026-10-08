@@ -99,7 +99,16 @@ current source before assuming a planned crate, command, or API exists.
   a sentence built from the applied `Change`s ("Moved “a.txt” to Trash",
   "Copied 3 items to Archive"), with Undo when the journal can take it back
   and Redo after an undo. A plan with more than one step shows a progress bar
-  with Cancel (`Executor::cancel`). `Shell::set_status` is a toast;
+  with Pause and Cancel (`Executor::pause`, `Executor::cancel`): a paused
+  plan waits where it would answer Cancel (`StepContext::check_cancelled`),
+  so a step that works long calls it between its units of work, and what
+  the user does meanwhile waits behind it, which the bar says. The bar
+  counts the plan's items, the bytes of the one under way moving it between
+  two counts; a plan of one item counts its bytes (`toast::bar`). Plans run
+  on a thread of their own, never a worker. Quitting cancels them and waits,
+  out of sight, for them to take back their partial work
+  (`Executor::wind_down`): a copy cut short leaves nothing in its
+  destination. `Shell::set_status` is a toast;
   `set_status_about` adds a link to the setting that fixes the problem.
   Footers hold state, never messages (`status.rs`): each pane's footer
   its counts and selection size, and with nothing selected what its files

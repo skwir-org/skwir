@@ -6,10 +6,12 @@ mod common;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use bibli_core::app::App;
 #[cfg(target_os = "linux")]
 use bibli_core::op::Restore;
 use bibli_core::op::{
-    Copy, EntryRef, Mkdir, Move, Operation, Plan, Rename, StepContext, StepStatus, Swap, Trash,
+    Copy, EntryRef, ExecEvent, Executor, Mkdir, Move, Operation, Plan, Rename, StepContext,
+    StepStatus, Swap, Trash,
 };
 use common::*;
 use proptest::prelude::*;
@@ -319,17 +321,19 @@ fn entry_ref_follows_a_rename_and_rejects_a_replacement() {
     ));
 }
 
-/// A step that cancels its own plan while it runs, so the test needs no timing.
+/// A step that cancels or pauses its own plan while it runs, so the test
+/// needs no timing.
 #[derive(Debug, Clone)]
-struct CancelHere {
-    executor: std::sync::Weak<bibli_core::op::Executor>,
+struct ActHere {
+    executor: std::sync::Weak<Executor>,
     plan: std::sync::Arc<std::sync::OnceLock<bibli_core::op::PlanId>>,
+    act: fn(&Executor, bibli_core::op::PlanId) -> bool,
     dir: PathBuf,
 }
 
-impl Operation for CancelHere {
+impl Operation for ActHere {
     fn kind(&self) -> &'static str {
-        "test.cancel_here"
+        "test.act_here"
     }
     fn args(&self) -> serde_json::Value {
         serde_json::json!({})
@@ -348,7 +352,10 @@ impl Operation for CancelHere {
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let executor = self.executor.upgrade().expect("executor alive");
-        assert!(executor.cancel(*self.plan.get().expect("plan id set")));
+        assert!((self.act)(
+            &executor,
+            *self.plan.get().expect("plan id set")
+        ));
         Mkdir {
             path: self.dir.clone(),
         }
@@ -371,9 +378,10 @@ fn a_running_plan_is_cancelled_by_id_and_its_partial_result_can_be_undone() {
     plan.push(Mkdir {
         path: dirs[0].clone(),
     });
-    plan.push(CancelHere {
+    plan.push(ActHere {
         executor: std::sync::Arc::downgrade(&app.executor),
         plan: std::sync::Arc::clone(&id),
+        act: Executor::cancel,
         dir: dirs[1].clone(),
     });
     plan.push(Mkdir {
@@ -401,6 +409,191 @@ fn a_running_plan_is_cancelled_by_id_and_its_partial_result_can_be_undone() {
     let undone = app.executor.undo_blocking(app.lifetime()).unwrap();
     assert_eq!(undone.applied, 2);
     assert!(!dirs[0].exists() && !dirs[1].exists());
+}
+
+#[test]
+fn winding_down_stops_a_paused_copy_and_leaves_no_staging_folder() {
+    let tmp = Scratch::new();
+    let root = tmp.path();
+    let app = app(root);
+    let album = root.join("album");
+    std::fs::create_dir(&album).unwrap();
+    for i in 0..4 {
+        std::fs::write(album.join(format!("photo {i}.jpg")), vec![7u8; 4096]).unwrap();
+    }
+    let stick = root.join("stick");
+    std::fs::create_dir(&stick).unwrap();
+    let plan = Plan::with_steps(
+        "copy",
+        vec![Box::new(Copy {
+            entry: EntryRef::from_path(&album).unwrap(),
+            dest_dir: stick.clone(),
+            new_name: None,
+            preserve_attributes: true,
+        })],
+    );
+    // Paused once its first bytes are counted: the copy is half made, in
+    // its staging folder, when it waits.
+    let id = plan.id;
+    let executor = std::sync::Arc::downgrade(&app.executor);
+    app.executor.set_waker(Some(std::sync::Arc::new(move || {
+        if let Some(executor) = executor.upgrade()
+            && executor.transfer(id).is_some_and(|t| t.done > 0)
+        {
+            executor.pause(id);
+        }
+    })));
+    app.executor.execute(plan, app.lifetime().child());
+    events_until(&app, |e| matches!(e, ExecEvent::Paused { .. }));
+    let staged = |dir: &Path| {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().starts_with(".bibli-copy-"))
+    };
+    assert!(staged(&stick), "the copy is under way");
+
+    assert!(app.executor.wind_down(std::time::Duration::from_secs(10)));
+    let rest = events_until(&app, |e| matches!(e, ExecEvent::Finished { .. }));
+    assert!(matches!(
+        rest.last(),
+        Some(ExecEvent::Finished {
+            applied: 0,
+            cancelled: true,
+            ..
+        })
+    ));
+    assert_eq!(
+        std::fs::read_dir(&stick).unwrap().count(),
+        0,
+        "nothing left"
+    );
+    assert_eq!(std::fs::read_dir(&album).unwrap().count(), 4);
+
+    // Wound down, it starts nothing more.
+    let late = Plan::with_steps(
+        "make a folder",
+        vec![Box::new(Mkdir {
+            path: stick.join("late"),
+        })],
+    );
+    app.executor.execute(late, app.lifetime().child());
+    let late = events_until(&app, |e| matches!(e, ExecEvent::Finished { .. }));
+    assert!(matches!(
+        late.last(),
+        Some(ExecEvent::Finished {
+            applied: 0,
+            cancelled: true,
+            ..
+        })
+    ));
+    assert!(!stick.join("late").exists());
+}
+
+/// Three folders to create, the first step pausing its own plan.
+fn pausing_plan(app: &std::sync::Arc<App>, root: &Path) -> (Plan, Vec<PathBuf>) {
+    let id = std::sync::Arc::new(std::sync::OnceLock::new());
+    let dirs: Vec<PathBuf> = (0..3).map(|i| root.join(format!("folder {i}"))).collect();
+    let mut plan = Plan::new("create folders");
+    plan.push(ActHere {
+        executor: std::sync::Arc::downgrade(&app.executor),
+        plan: std::sync::Arc::clone(&id),
+        act: Executor::pause,
+        dir: dirs[0].clone(),
+    });
+    for dir in &dirs[1..] {
+        plan.push(Mkdir { path: dir.clone() });
+    }
+    id.set(plan.id).unwrap();
+    (plan, dirs)
+}
+
+/// The executor's events up to the first that `last` accepts.
+fn events_until(app: &App, last: impl Fn(&ExecEvent) -> bool) -> Vec<ExecEvent> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut events = Vec::new();
+    loop {
+        let event = app
+            .executor
+            .events()
+            .recv_deadline(deadline)
+            .expect("the plan goes on");
+        let done = last(&event);
+        events.push(event);
+        if done {
+            return events;
+        }
+    }
+}
+
+#[test]
+fn a_paused_plan_waits_holding_no_worker_until_resumed() {
+    let tmp = Scratch::new();
+    let app = app(tmp.path());
+    let (plan, dirs) = pausing_plan(&app, tmp.path());
+    app.executor.execute(plan.clone(), app.lifetime().child());
+    let first = events_until(&app, |e| matches!(e, ExecEvent::Step(_)));
+    assert!(matches!(
+        first.as_slice(),
+        [
+            ExecEvent::Started { .. },
+            ExecEvent::Paused { .. },
+            ExecEvent::Step(_)
+        ]
+    ));
+    assert!(app.executor.is_paused(plan.id));
+    assert!(
+        app.scheduler.wait_idle(std::time::Duration::from_secs(5)),
+        "a paused plan holds no worker"
+    );
+    // A held plan never goes on; one that did not wait would by then.
+    assert!(
+        app.executor
+            .events()
+            .recv_timeout(std::time::Duration::from_millis(200))
+            .is_err(),
+        "nothing happens while paused"
+    );
+    assert!(dirs[0].is_dir() && !dirs[1].exists());
+
+    assert!(app.executor.resume(plan.id));
+    assert!(!app.executor.is_paused(plan.id));
+    let rest = events_until(&app, |e| matches!(e, ExecEvent::Finished { .. }));
+    assert!(matches!(rest.first(), Some(ExecEvent::Resumed { .. })));
+    assert!(matches!(
+        rest.last(),
+        Some(ExecEvent::Finished {
+            applied: 3,
+            cancelled: false,
+            error: None,
+            ..
+        })
+    ));
+    assert!(dirs[2].is_dir());
+}
+
+#[test]
+fn a_paused_plan_cancelled_stops_where_it_waits() {
+    let tmp = Scratch::new();
+    let app = app(tmp.path());
+    let (plan, dirs) = pausing_plan(&app, tmp.path());
+    app.executor.execute(plan.clone(), app.lifetime().child());
+    events_until(&app, |e| matches!(e, ExecEvent::Step(_)));
+    assert!(app.executor.cancel(plan.id));
+    let rest = events_until(&app, |e| matches!(e, ExecEvent::Finished { .. }));
+    assert!(matches!(
+        rest.as_slice(),
+        [ExecEvent::Finished {
+            applied: 1,
+            cancelled: true,
+            ..
+        }]
+    ));
+    assert!(dirs[0].is_dir() && !dirs[1].exists());
+    assert!(
+        !app.executor.resume(plan.id),
+        "a finished plan is not running"
+    );
 }
 
 fn file(path: &Path, content: &str) -> EntryRef {

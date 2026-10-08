@@ -1,6 +1,6 @@
 //! What a step can use while it is checked and applied: the plan's
-//! cancellation, a meter for work inside one step, and lookups the plan's
-//! steps share instead of repeating.
+//! cancellation and pause, a meter for work inside one step, and lookups
+//! the plan's steps share instead of repeating.
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use crossbeam_channel::{Receiver, Sender};
 use parking_lot::Mutex;
 
 use crate::cancel::CancelToken;
@@ -20,13 +21,70 @@ use crate::location::Waker;
 #[error("cancelled")]
 pub struct Cancelled;
 
-/// Bytes a running plan has moved, read by whoever shows its progress.
+/// Whether a running plan is held. A step waits where it would answer
+/// Cancel ([`StepContext::check_cancelled`]), holding what it has open,
+/// until the plan is resumed or cancelled.
+#[derive(Default)]
+pub(super) struct Pause {
+    /// While paused, a channel nobody sends on: resuming drops its only
+    /// sender, which wakes every step waiting on a receiver.
+    held: Mutex<Option<(Sender<()>, Receiver<()>)>>,
+}
+
+impl Pause {
+    /// Hold the plan. Whether it was running freely.
+    pub(super) fn pause(&self) -> bool {
+        let mut held = self.held.lock();
+        if held.is_some() {
+            return false;
+        }
+        *held = Some(crossbeam_channel::bounded(0));
+        true
+    }
+
+    /// Let the plan go on. Whether it was held.
+    pub(super) fn resume(&self) -> bool {
+        self.held.lock().take().is_some()
+    }
+
+    pub(super) fn is_paused(&self) -> bool {
+        self.held.lock().is_some()
+    }
+
+    /// Return at once unless the plan is held; held, return once it is
+    /// resumed or `cancel` is cancelled.
+    fn wait(&self, cancel: &CancelToken) {
+        let Some(resumed) = self.held.lock().as_ref().map(|(_, rx)| rx.clone()) else {
+            return;
+        };
+        let cancelled = cancel.subscribe();
+        crossbeam_channel::select! {
+            recv(resumed) -> _ => {}
+            recv(cancelled.receiver()) -> _ => {}
+        }
+    }
+}
+
+/// Bytes a running plan has moved, and its steps ended, read by whoever
+/// shows its progress.
 #[derive(Default)]
 pub(super) struct Meter {
     pub(super) done: AtomicU64,
     pub(super) total: AtomicU64,
+    /// Read with `done` and `total`, under one lock, so a count of steps
+    /// and the bytes of the step under way never disagree.
+    pub(super) steps: Mutex<Steps>,
     wake: Option<Waker>,
     last_wake: Mutex<Option<Instant>>,
+}
+
+/// The steps of a plan that ended, and `done` and `total` as the next one
+/// began.
+#[derive(Clone, Copy, Default)]
+pub(super) struct Steps {
+    pub(super) ended: usize,
+    pub(super) done: u64,
+    pub(super) total: u64,
 }
 
 /// How often byte progress may wake the UI: often enough for a bar to move,
@@ -39,6 +97,14 @@ impl Meter {
             wake,
             ..Self::default()
         }
+    }
+
+    /// A step ended: the next one's bytes count from here.
+    pub(super) fn step_ended(&self) {
+        let mut steps = self.steps.lock();
+        steps.ended += 1;
+        steps.done = self.done.load(Ordering::Relaxed);
+        steps.total = self.total.load(Ordering::Relaxed);
     }
 
     fn advance(&self, bytes: u64) {
@@ -61,6 +127,7 @@ impl Meter {
 /// caches is shared by that plan's steps and no longer.
 pub struct StepContext {
     cancel: CancelToken,
+    pause: Arc<Pause>,
     meter: Arc<Meter>,
     /// The trash listing, read once per plan: parsing every `.trashinfo`
     /// per restored item made undoing a large trash quadratic.
@@ -74,9 +141,10 @@ pub struct StepContext {
 }
 
 impl StepContext {
-    pub(super) fn new(cancel: CancelToken, meter: Arc<Meter>) -> Self {
+    pub(super) fn new(cancel: CancelToken, pause: Arc<Pause>, meter: Arc<Meter>) -> Self {
         Self {
             cancel,
+            pause,
             meter,
             trash: RefCell::new(None),
             companions: Arc::default(),
@@ -103,18 +171,21 @@ impl StepContext {
 
     /// A context outside the executor that stops when `cancel` does.
     pub fn with_cancel(cancel: CancelToken) -> Self {
-        Self::new(cancel, Arc::default())
+        Self::new(cancel, Arc::default(), Arc::default())
     }
 
     pub fn cancel_token(&self) -> &CancelToken {
         &self.cancel
     }
 
-    /// `Err(Cancelled)` once the plan is cancelled; call between units of work.
+    /// `Err(Cancelled)` once the plan is cancelled; call between units of
+    /// work. Where a step answers Cancel it answers Pause too: while the
+    /// plan is paused this waits, until it is resumed or cancelled.
     ///
     /// # Errors
     /// [`Cancelled`] when the plan's token is cancelled.
     pub fn check_cancelled(&self) -> Result<(), Cancelled> {
+        self.pause.wait(&self.cancel);
         if self.cancel.is_cancelled() {
             Err(Cancelled)
         } else {

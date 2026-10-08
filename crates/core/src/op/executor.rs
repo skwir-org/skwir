@@ -1,23 +1,25 @@
-//! Runs plans in the background with progress and cancellation, and keeps
-//! the undo/redo journal of inverse plans.
+//! Runs plans in the background with progress, pause and cancellation, and
+//! keeps the undo/redo journal of inverse plans.
 //!
 //! Every plan, undo and redo runs on one first-in-first-out lane, so the
 //! journal's order is the order things happened on disk. An undo pressed
-//! while a copy runs waits for the copy and then takes it back; two quick
-//! undos never race each other. The lane is a queue drained by one
-//! scheduler job at a time, not a thread of its own, so an idle app keeps
-//! no executor thread.
+//! while a copy runs, or waits paused, waits for the copy and then takes it
+//! back; two quick undos never race each other. The lane is a queue drained
+//! by a thread of its own that ends when the queue is empty, so an idle app
+//! keeps no executor thread, and a copy that runs for minutes, or waits
+//! paused for as long as the user likes, never holds a scheduler worker:
+//! those draw what is on screen.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 use serde::Serialize;
 
-use super::context::Meter;
+use super::context::{Meter, Pause};
 use super::{Cancelled, Change, Operation, Plan, PlanId, StepContext, StepStatus};
 use crate::cancel::CancelToken;
 use crate::registry::Contributions;
@@ -45,6 +47,14 @@ pub enum ExecEvent {
         run: RunKind,
     },
     Step(Progress),
+    /// The plan waits where it would answer Cancel, until resumed
+    /// (`Executor::pause`).
+    Paused {
+        plan: PlanId,
+    },
+    Resumed {
+        plan: PlanId,
+    },
     Finished {
         plan: PlanId,
         applied: usize,
@@ -90,12 +100,18 @@ impl From<Direction> for RunKind {
     }
 }
 
-/// Bytes moved so far by a running plan's steps (copies, cross-device
-/// moves). `total` grows as each such step starts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+/// How far a running plan is. Its bytes are those its steps move (copies,
+/// cross-device moves), `total` growing as each such step starts: a plan
+/// of several steps knows its bytes only as it goes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Transfer {
     pub done: u64,
     pub total: u64,
+    /// Steps ended (applied, found done, or failed).
+    pub ended: usize,
+    /// The bytes of the step under way: moved, and announced.
+    pub step_done: u64,
+    pub step_total: u64,
 }
 
 /// Told, once per finished run of a plan (undo and redo runs included),
@@ -168,8 +184,15 @@ struct Job {
 #[derive(Default)]
 struct Lane {
     queue: VecDeque<Job>,
-    /// A drainer is running (on a worker or a blocking caller's thread).
+    /// A drainer is running (on its thread or a blocking caller's).
     busy: bool,
+    /// What stops the job being drained, from the moment it leaves the
+    /// queue: it is in neither the queue nor `running` until its plan
+    /// starts.
+    current: Option<CancelToken>,
+    /// Wound down (`Executor::wind_down`): what is queued now is cancelled
+    /// as it arrives.
+    closed: bool,
 }
 
 /// The executor. One per app.
@@ -177,12 +200,14 @@ pub struct Executor {
     scheduler: Scheduler,
     journal: Mutex<Journal>,
     lane: Mutex<Lane>,
+    /// Told when the lane has drained.
+    idle: Condvar,
     tx: Sender<ExecEvent>,
     rx: Receiver<ExecEvent>,
     waker: Mutex<Option<crate::location::Waker>>,
-    /// Plans being applied, so a surface can cancel one by id and read its
-    /// byte progress.
-    running: Mutex<Vec<(PlanId, CancelToken, Arc<Meter>)>>,
+    /// Plans being applied, so a surface can pause or cancel one by id and
+    /// read its byte progress.
+    running: Mutex<Vec<Active>>,
     observers: Contributions<ChangeObserver>,
     companions: Mutex<Arc<crate::companions::Companions>>,
     /// Plans someone waits for (`watch`): answered when their run
@@ -190,12 +215,20 @@ pub struct Executor {
     watched: Mutex<std::collections::HashMap<PlanId, Sender<Verdict>>>,
 }
 
+/// A plan being applied: what stops it, what holds it, what it moved.
+struct Active {
+    plan: PlanId,
+    cancel: CancelToken,
+    pause: Arc<Pause>,
+    meter: Arc<Meter>,
+}
+
 /// Removes a plan from `running` however `apply_plan` leaves.
 struct Running<'a>(&'a Executor, PlanId);
 
 impl Drop for Running<'_> {
     fn drop(&mut self) {
-        self.0.running.lock().retain(|(id, _, _)| *id != self.1);
+        self.0.running.lock().retain(|active| active.plan != self.1);
     }
 }
 
@@ -205,7 +238,10 @@ struct Draining<'a>(&'a Executor);
 impl Drop for Draining<'_> {
     fn drop(&mut self) {
         if std::thread::panicking() {
-            self.0.lane.lock().busy = false;
+            let mut lane = self.0.lane.lock();
+            lane.busy = false;
+            lane.current = None;
+            self.0.idle.notify_all();
         }
     }
 }
@@ -217,6 +253,7 @@ impl Executor {
             scheduler,
             journal: Mutex::new(Journal::default()),
             lane: Mutex::new(Lane::default()),
+            idle: Condvar::new(),
             tx,
             rx,
             waker: Mutex::new(None),
@@ -270,17 +307,22 @@ impl Executor {
             });
         }
         let _ = self.tx.send(ev);
+        self.wake();
+    }
+
+    fn wake(&self) {
         if let Some(w) = self.waker.lock().as_ref() {
             w();
         }
     }
 
     /// Stop a plan after its current file, or before it starts if it is
-    /// still queued. Steps already applied stay applied and are journaled,
-    /// so the partial result can be undone.
+    /// still queued; a paused one stops where it waits. Steps already
+    /// applied stay applied and are journaled, so the partial result can be
+    /// undone.
     pub fn cancel(&self, plan: PlanId) -> bool {
-        if let Some((_, token, _)) = self.running.lock().iter().find(|(id, _, _)| *id == plan) {
-            token.cancel();
+        if let Some(active) = self.running.lock().iter().find(|a| a.plan == plan) {
+            active.cancel.cancel();
             return true;
         }
         self.lane
@@ -292,16 +334,100 @@ impl Executor {
             .is_some()
     }
 
-    /// Bytes moved so far by a running plan, for a progress bar finer than
-    /// its steps. `None` once the plan finished.
+    /// Hold a running plan where it would next answer Cancel: between its
+    /// steps, or inside one between files and chunks of a file, keeping
+    /// what it has open. Plans queued after it wait too, as they wait for
+    /// it to finish. Whether the plan runs; `Paused` is told when it was
+    /// running freely.
+    pub fn pause(&self, plan: PlanId) -> bool {
+        self.hold(plan, true)
+    }
+
+    /// Let a paused plan go on from where it waits. Whether the plan runs;
+    /// `Resumed` is told when it was paused.
+    pub fn resume(&self, plan: PlanId) -> bool {
+        self.hold(plan, false)
+    }
+
+    fn hold(&self, plan: PlanId, paused: bool) -> bool {
+        let changed = {
+            let running = self.running.lock();
+            let Some(active) = running.iter().find(|a| a.plan == plan) else {
+                return false;
+            };
+            if paused {
+                active.pause.pause()
+            } else {
+                active.pause.resume()
+            }
+        };
+        if changed {
+            self.emit(if paused {
+                ExecEvent::Paused { plan }
+            } else {
+                ExecEvent::Resumed { plan }
+            });
+        }
+        true
+    }
+
+    /// Whether a running plan is paused.
+    pub fn is_paused(&self, plan: PlanId) -> bool {
+        self.running
+            .lock()
+            .iter()
+            .any(|a| a.plan == plan && a.pause.is_paused())
+    }
+
+    /// Plans, undos and redos waiting for their turn on the lane.
+    pub fn queued(&self) -> usize {
+        self.lane.lock().queue.len()
+    }
+
+    /// Cancel every plan, undo and redo, whether it runs, waits paused or
+    /// waits its turn, and take no more; then wait up to `timeout` for the
+    /// lane to drain. A cancelled step takes back its own partial work as
+    /// it stops (a copy removes its staging folder), so a process that
+    /// ends after this leaves no half-made copy behind. Whether the lane
+    /// drained in time. It blocks: call it off the window's thread.
+    pub fn wind_down(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        let mut lane = self.lane.lock();
+        lane.closed = true;
+        for token in lane
+            .queue
+            .iter()
+            .map(|job| &job.cancel)
+            .chain(&lane.current)
+        {
+            token.cancel();
+        }
+        while lane.busy {
+            if self.idle.wait_until(&mut lane, deadline).timed_out() {
+                return !lane.busy;
+            }
+        }
+        true
+    }
+
+    /// How far a running plan is, in steps and bytes, for a progress bar
+    /// finer than its steps. `None` once the plan finished.
     pub fn transfer(&self, plan: PlanId) -> Option<Transfer> {
         self.running
             .lock()
             .iter()
-            .find(|(id, _, _)| *id == plan)
-            .map(|(_, _, meter)| Transfer {
-                done: meter.done.load(Ordering::Relaxed),
-                total: meter.total.load(Ordering::Relaxed),
+            .find(|a| a.plan == plan)
+            .map(|a| {
+                let steps = *a.meter.steps.lock();
+                let done = a.meter.done.load(Ordering::Relaxed);
+                let total = a.meter.total.load(Ordering::Relaxed);
+                Transfer {
+                    done,
+                    total,
+                    ended: steps.ended,
+                    step_done: done.saturating_sub(steps.done),
+                    step_total: total.saturating_sub(steps.total),
+                }
             })
     }
 
@@ -412,14 +538,25 @@ impl Executor {
     }
 
     fn submit(self: &Arc<Self>, work: Work, cancel: CancelToken) {
-        if self.enqueue(Job {
+        if !self.enqueue(Job {
             work,
             cancel,
             reply: None,
         }) {
+            // Behind a plan that runs or waits paused: whoever shows the
+            // lane says it waits.
+            self.wake();
+            return;
+        }
+        // The drainer must run even if the work it drains was cancelled:
+        // each job checks its own token.
+        let this = Arc::clone(self);
+        let thread = std::thread::Builder::new()
+            .name("bibli-plans".into())
+            .spawn(move || this.drain());
+        if let Err(error) = thread {
+            tracing::warn!("no thread for the plans ({error}); a worker applies them");
             let this = Arc::clone(self);
-            // The drainer must run even if the work it drains was cancelled:
-            // each job checks its own token.
             self.scheduler
                 .spawn(Priority::Normal, "op.lane", CancelToken::new(), move || {
                     this.drain();
@@ -444,6 +581,9 @@ impl Executor {
     /// Returns true when the caller must start draining.
     fn enqueue(&self, job: Job) -> bool {
         let mut lane = self.lane.lock();
+        if lane.closed {
+            job.cancel.cancel();
+        }
         lane.queue.push_back(job);
         !std::mem::replace(&mut lane.busy, true)
     }
@@ -455,12 +595,17 @@ impl Executor {
                 let mut lane = self.lane.lock();
                 let Some(job) = lane.queue.pop_front() else {
                     lane.busy = false;
+                    lane.current = None;
+                    self.idle.notify_all();
                     return;
                 };
+                lane.current = Some(job.cancel.clone());
                 job
             };
+            // A cancelled plan is not checked whole: it stops at once.
             let result = match job.work {
                 Work::Execute { plan, whole } => {
+                    let whole = whole && !job.cancel.is_cancelled();
                     Some(match whole.then(|| first_conflict(&plan)).flatten() {
                         Some(reason) => self.refuse(&plan, reason),
                         None => self.run_execute(&plan, &job.cancel),
@@ -602,11 +747,15 @@ impl Executor {
     ) -> (ExecResult, Option<Plan>) {
         let total = plan.steps.len();
         let meter = Arc::new(Meter::new(self.waker.lock().clone()));
-        self.running
-            .lock()
-            .push((plan.id, cancel.clone(), Arc::clone(&meter)));
+        let pause = Arc::new(Pause::default());
+        self.running.lock().push(Active {
+            plan: plan.id,
+            cancel: cancel.clone(),
+            pause: Arc::clone(&pause),
+            meter: Arc::clone(&meter),
+        });
         let _running = Running(self, plan.id);
-        let ctx = StepContext::new(cancel.clone(), meter)
+        let ctx = StepContext::new(cancel.clone(), pause, Arc::clone(&meter))
             .with_companions(Arc::clone(&self.companions.lock()));
         self.emit(ExecEvent::Started {
             plan: plan.id,
@@ -622,7 +771,8 @@ impl Executor {
         let mut error = None;
         let mut cancelled = false;
         for (i, step) in plan.steps.iter().enumerate() {
-            if cancel.is_cancelled() {
+            // Paused, the next step waits here.
+            if ctx.check_cancelled().is_err() {
                 cancelled = true;
                 break;
             }
@@ -662,6 +812,7 @@ impl Executor {
             if holds {
                 held.push(change.clone());
             }
+            meter.step_ended();
             self.emit(ExecEvent::Step(Progress {
                 plan: plan.id,
                 step: i,
