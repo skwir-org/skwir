@@ -5,8 +5,8 @@
 //! they are written, whatever files they belong to, and the copy waits for
 //! a window only while the drive holds the next: the drive never waits for
 //! the copy, and the copy never runs more than two windows (about half a
-//! second of the drive's writing) ahead of it. What progress counts is
-//! what the drive was handed. A plan's copies onto one volume share one
+//! second of the drive's writing; two seconds where a program writes the
+//! volume) ahead of it. What progress counts is what the drive was handed. A plan's copies onto one volume share one
 //! pace (`StepContext::pace_through`), so the drive's queue runs on from
 //! one item to the next.
 //!
@@ -38,6 +38,14 @@ const FIRST: u64 = 4 << 20;
 const LEAST: u64 = 1 << 20;
 const MOST: u64 = 256 << 20;
 const STEP: Duration = Duration::from_millis(250);
+/// The same where the wait is a write-out of the whole volume
+/// ([`Handed::Volume`]), longer: each one also writes the records of the
+/// files written since, a cost by the write-out (seeks to the volume's
+/// records on a hard drive), which a second of writing keeps a small
+/// share of. 200 files of 1 MiB onto ntfs-3g on a USB hard drive went at
+/// 81 MiB/s with a quarter of a second, 86 with a second, 110 written
+/// out once at the end; a run varied by a third.
+const VOLUME_STEP: Duration = Duration::from_secs(1);
 /// Files handed to the drive and not yet known written, at most: each
 /// holds a descriptor open.
 const FILES: usize = 64;
@@ -69,9 +77,9 @@ enum Handed {
     /// A program writes the drive (`sys::written_by_a_program`; FUSE:
     /// ntfs-3g): a file's bytes are its as soon as written, kept in the
     /// device's memory, never the file's, so only a write-out of the whole
-    /// volume reaches them. There it costs only the bytes it writes,
-    /// nothing is committed, and it runs on a thread of its own while the
-    /// copy writes the next window.
+    /// volume reaches them. Nothing is committed there, but each write-out
+    /// writes the records of the files written since (`VOLUME_STEP`); it
+    /// runs on a thread of its own while the copy writes the next window.
     Volume(Volume),
 }
 
@@ -99,9 +107,10 @@ struct Volume {
 }
 
 /// How much the drive is handed at a time, from how fast it wrote what it
-/// was handed last.
+/// was handed last: about `step` of its writing.
 struct Window {
     bytes: u64,
+    step: Duration,
     /// Bytes known on the drive since `since`.
     measured: u64,
     since: Instant,
@@ -145,12 +154,17 @@ impl Pace {
     }
 
     fn handing(drive: Dir, handed: Handed, window: u64) -> Self {
+        let step = match handed {
+            Handed::Ranges(_) => STEP,
+            Handed::Volume(_) => VOLUME_STEP,
+        };
         Self {
             through: Some(RefCell::new(Through {
                 drive: Arc::new(drive),
                 handed,
                 window: Window {
                     bytes: window,
+                    step,
                     measured: 0,
                     since: Instant::now(),
                 },
@@ -185,7 +199,7 @@ impl Pace {
         } = &mut *through;
         let handed = match handed {
             Handed::Ranges(ranges) => ranges.wait(window, true),
-            Handed::Volume(volume) => volume.finish(window),
+            Handed::Volume(volume) => volume.finish(window).map(|()| volume.pending = 0),
         };
         handed
             .and_then(|()| drive.sync_volume())
@@ -218,10 +232,7 @@ impl Writing<'_> {
             Handed::Volume(volume) => {
                 // The program has them.
                 ctx.advance(n);
-                volume.pending += n;
-                if volume.pending >= window.bytes {
-                    volume.write_out(drive, window).context(NOT_WRITTEN_OUT)?;
-                }
+                volume.wrote(n, drive, window).context(NOT_WRITTEN_OUT)?;
             }
         }
         Ok(())
@@ -286,6 +297,16 @@ impl Ranges {
 }
 
 impl Volume {
+    /// `n` more bytes were written: once a window is, its write-out
+    /// starts, and the copy waits for the one before.
+    fn wrote(&mut self, n: u64, drive: &Arc<Dir>, window: &mut Window) -> io::Result<()> {
+        self.pending += n;
+        if self.pending >= window.bytes {
+            self.write_out(drive, window)?;
+        }
+        Ok(())
+    }
+
     /// Wait for the write-out running, then start one of what was written
     /// since, on a thread of its own (on this one where none can be had).
     fn write_out(&mut self, drive: &Arc<Dir>, window: &mut Window) -> io::Result<()> {
@@ -323,18 +344,18 @@ impl Window {
     fn written(&mut self, n: u64) {
         self.measured += n;
         let took = self.since.elapsed();
-        if took >= STEP / 2 {
-            self.bytes = next_window(self.measured, took);
+        if took >= self.step / 2 {
+            self.bytes = next_window(self.measured, took, self.step);
             self.measured = 0;
             self.since = Instant::now();
         }
     }
 }
 
-/// The window that takes about `STEP` on a drive that wrote `n` bytes in
+/// The window that takes about `step` on a drive that wrote `n` bytes in
 /// `took`.
-fn next_window(n: u64, took: Duration) -> u64 {
-    let next = u128::from(n) * STEP.as_micros() / took.as_micros().max(1);
+fn next_window(n: u64, took: Duration, step: Duration) -> u64 {
+    let next = u128::from(n) * step.as_micros() / took.as_micros().max(1);
     u64::try_from(next).unwrap_or(u64::MAX).clamp(LEAST, MOST)
 }
 
@@ -345,10 +366,10 @@ mod tests {
     #[test]
     fn a_window_takes_about_a_step_of_the_drive() {
         // 4 MiB in a second: a quarter of it next.
-        assert_eq!(next_window(4 << 20, Duration::from_secs(1)), 1 << 20);
+        assert_eq!(next_window(4 << 20, Duration::from_secs(1), STEP), 1 << 20);
         // A very slow drive is still handed the least window at a time.
-        assert_eq!(next_window(1 << 20, Duration::from_secs(60)), LEAST);
+        assert_eq!(next_window(1 << 20, Duration::from_secs(60), STEP), LEAST);
         // A fast one, no more than the most.
-        assert_eq!(next_window(1 << 20, Duration::ZERO), MOST);
+        assert_eq!(next_window(1 << 20, Duration::ZERO, STEP), MOST);
     }
 }

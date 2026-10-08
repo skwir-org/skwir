@@ -739,14 +739,15 @@ current source before assuming a planned crate, command, or API exists.
   (`op::pace`): the drive is handed each window of bytes as it is
   written and the copy waits for one only while the drive holds the next
   (`sys::write_range`), so progress is the drive's within half a second
-  and the drive never idles; a plan's copies onto one volume share one
+  (two over FUSE, below) and the drive never idles; a plan's copies onto one volume share one
   pace, so its queue runs on from one item to the next. Names and
   folders are written out once, at the plan's end and before a move
   removes its source (`StepContext::write_out`, `syncfs`): on a hard
   drive a journaled or copy-on-write volume takes a third of a second to
   commit however little changed, so a commit is never a copy's unit of
   progress. Where a program writes the volume (FUSE: ntfs-3g), its
-  write-out is the wait, on a thread of its own. That
+  write-out is the wait, on a thread of its own, a second of writing
+  apart: each one writes the new files' records again. That
   one predicate is also what draws a mounted volume as removable media,
   wherever it is mounted (`lsblk`'s HOTPLUG says the same of one not
   mounted); Eject is offered for what udisks mounted for the user
