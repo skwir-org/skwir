@@ -58,6 +58,9 @@ impl Ord for Task {
 #[derive(Default)]
 struct Queue {
     heap: BinaryHeap<Task>,
+    /// Jobs taken from the heap and not yet ended, counted under the same
+    /// lock, so a job that spawns another is never seen idle in between.
+    running: usize,
     shutdown: bool,
 }
 
@@ -74,6 +77,8 @@ pub struct LabelStats {
 struct Inner {
     queue: Mutex<Queue>,
     cv: Condvar,
+    /// Told when the last job running ends with none queued.
+    idle: Condvar,
     seq: AtomicU64,
     stats: Mutex<std::collections::HashMap<&'static str, LabelStats>>,
     slow_threshold: Duration,
@@ -118,6 +123,7 @@ impl Scheduler {
         let inner = Arc::new(Inner {
             queue: Mutex::new(Queue::default()),
             cv: Condvar::new(),
+            idle: Condvar::new(),
             seq: AtomicU64::new(0),
             stats: Mutex::new(std::collections::HashMap::new()),
             slow_threshold: Duration::from_millis(100),
@@ -159,6 +165,21 @@ impl Scheduler {
     /// Number of tasks waiting to run.
     pub fn pending(&self) -> usize {
         self.inner.queue.lock().heap.len()
+    }
+
+    /// Wait until no job is queued or running, for at most `timeout`;
+    /// whether it was reached. For headless tests and tools that read what
+    /// jobs publish (the volumes a plugin measures on a worker), never the
+    /// window's thread.
+    pub fn wait_idle(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        let mut q = self.inner.queue.lock();
+        while q.running > 0 || !q.heap.is_empty() {
+            if self.inner.idle.wait_until(&mut q, deadline).timed_out() {
+                return q.running == 0 && q.heap.is_empty();
+            }
+        }
+        true
     }
 
     /// Timing per label since start.
@@ -229,6 +250,7 @@ fn worker(inner: &Inner) {
                     return;
                 }
                 if let Some(t) = q.heap.pop() {
+                    q.running += 1;
                     break t;
                 }
                 match RELEASE.get() {
@@ -246,28 +268,41 @@ fn worker(inner: &Inner) {
             }
         };
         if task.cancel.is_cancelled() {
-            continue;
+            // Before the lock: a job can own the last handle, whose drop
+            // takes it.
+            drop(task);
+        } else {
+            ran = true;
+            run(inner, task);
         }
-        ran = true;
-        let t = Instant::now();
-        // A job that panics (a malformed file in a third-party parser, for
-        // instance) must not take the worker thread with it: the pool is
-        // never respawned, and the caller would wait forever for a result.
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(task.job));
-        let took = t.elapsed();
-        if let Err(payload) = outcome {
-            let message = panic_message(&*payload);
-            tracing::error!(label = task.label, "job panicked: {message}");
-            inner.stats.lock().entry(task.label).or_default().panics += 1;
+        let mut q = inner.queue.lock();
+        q.running -= 1;
+        if q.running == 0 && q.heap.is_empty() {
+            inner.idle.notify_all();
         }
-        let mut stats = inner.stats.lock();
-        let s = stats.entry(task.label).or_default();
-        s.runs += 1;
-        s.total += took;
-        s.max = s.max.max(took);
-        if took > inner.slow_threshold {
-            tracing::warn!(label = task.label, ms = took.as_millis(), "slow task");
-        }
+    }
+}
+
+/// Run one job, timed, its panic caught.
+fn run(inner: &Inner, task: Task) {
+    let t = Instant::now();
+    // A job that panics (a malformed file in a third-party parser, for
+    // instance) must not take the worker thread with it: the pool is
+    // never respawned, and the caller would wait forever for a result.
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(task.job));
+    let took = t.elapsed();
+    if let Err(payload) = outcome {
+        let message = panic_message(&*payload);
+        tracing::error!(label = task.label, "job panicked: {message}");
+        inner.stats.lock().entry(task.label).or_default().panics += 1;
+    }
+    let mut stats = inner.stats.lock();
+    let s = stats.entry(task.label).or_default();
+    s.runs += 1;
+    s.total += took;
+    s.max = s.max.max(took);
+    if took > inner.slow_threshold {
+        tracing::warn!(label = task.label, ms = took.as_millis(), "slow task");
     }
 }
 
@@ -299,6 +334,48 @@ mod tests {
             assert!(Instant::now() < deadline, "workers still hold the queue");
             std::thread::sleep(Duration::from_millis(1));
         }
+    }
+
+    #[test]
+    fn idle_waits_for_running_jobs_and_those_they_spawn() {
+        let scheduler = Scheduler::new(2);
+        assert!(scheduler.wait_idle(Duration::ZERO), "nothing was spawned");
+        // A job held until told, which then spawns another.
+        let (go, wait) = crossbeam_channel::bounded::<()>(1);
+        let ended = Arc::new(AtomicU64::new(0));
+        let (count, next) = (Arc::clone(&ended), scheduler.clone());
+        scheduler.spawn(Priority::Normal, "test", CancelToken::new(), move || {
+            wait.recv().unwrap();
+            next.spawn(
+                Priority::Background,
+                "test",
+                CancelToken::new(),
+                move || {
+                    std::thread::sleep(Duration::from_millis(20));
+                    count.fetch_add(1, AtomicOrdering::SeqCst);
+                },
+            );
+        });
+        assert!(
+            !scheduler.wait_idle(Duration::from_millis(50)),
+            "a job runs"
+        );
+        go.send(()).unwrap();
+        assert!(scheduler.wait_idle(Duration::from_secs(5)));
+        assert_eq!(
+            ended.load(AtomicOrdering::SeqCst),
+            1,
+            "and the one it spawned"
+        );
+        // A job cancelled before it starts is skipped, not waited for.
+        let cancelled = CancelToken::new();
+        cancelled.cancel();
+        let count = Arc::clone(&ended);
+        scheduler.spawn(Priority::Normal, "test", cancelled, move || {
+            count.fetch_add(1, AtomicOrdering::SeqCst);
+        });
+        assert!(scheduler.wait_idle(Duration::from_secs(5)));
+        assert_eq!(ended.load(AtomicOrdering::SeqCst), 1);
     }
 
     // The hook is process-wide: this test is the only one in its process

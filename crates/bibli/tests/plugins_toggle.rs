@@ -3,6 +3,7 @@
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::time::Duration;
 
 use bibli_core::app::{App, AppConfig};
 use bibli_core::plugin::Plugin;
@@ -45,7 +46,16 @@ struct Snapshot {
     tiles: Option<String>,
 }
 
+/// What is registered once the jobs the plugins started have ended: the
+/// places plugin publishes what it finds at once and the volumes `lsblk`
+/// lists from a worker, and re-enabled it shows at once those it measured
+/// last, so a snapshot taken while that worker runs depends on when it
+/// ends.
 fn snapshot(app: &App) -> Snapshot {
+    assert!(
+        app.scheduler.wait_idle(Duration::from_secs(10)),
+        "jobs still running after 10 s"
+    );
     Snapshot {
         commands: app
             .commands
