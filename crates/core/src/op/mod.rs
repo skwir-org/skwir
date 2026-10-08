@@ -11,6 +11,7 @@ mod context;
 mod entry_ref;
 mod executor;
 mod order;
+mod pace;
 pub mod records;
 pub mod staging;
 mod sys;

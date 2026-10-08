@@ -13,6 +13,7 @@ use std::path::{Component, Path, PathBuf};
 use anyhow::Context;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use super::pace::Pace;
 use super::{
     Change, EntryRef, OpRegistry, Operation, ResolveError, StepContext, StepStatus, sys,
     valid_file_name,
@@ -406,6 +407,9 @@ fn move_entry(ctx: &StepContext, src: &Path, target: &Path, along: &[Along]) -> 
         Err(e) if is_cross_device(&e) => {
             let dest_dir = target.parent().unwrap_or(Path::new("/"));
             copy_entry(src, target, dest_dir, true, along, ctx)?;
+            // The original goes once its copy is on the drive, names and
+            // all, if written through.
+            ctx.write_out()?;
             // Part of the source may be gone: say that the copy is whole,
             // so that nothing looks lost.
             remove_recursive(src).with_context(|| {
@@ -603,11 +607,11 @@ fn same_tree(src: &Path, copy: &Path, ctx: &StepContext) -> anyhow::Result<bool>
 
 /// Copy `src` to `target`, and its companions (`along`) beside it. On a
 /// drive the user can unplug (`fs::volume::is_removable`) the copy is
-/// written through ([`Pace`]): progress and Cancel follow the drive however
-/// slow it is, and the whole copy, names included, is on it when the step
-/// ends. Written only when unmounted, it could be unplugged, or reset
-/// itself (a device taking its firmware), before the writes end, and lose
-/// them.
+/// written through (`pace::Pace`): progress and Cancel follow the drive
+/// however slow it is, and the plan ends once the drive has everything,
+/// names included (`StepContext::write_out`). Written only when unmounted,
+/// it could be unplugged, or reset itself (a device taking its firmware),
+/// before the writes end, and lose them.
 fn copy_entry(
     src: &Path,
     target: &Path,
@@ -617,13 +621,12 @@ fn copy_entry(
     ctx: &StepContext,
 ) -> anyhow::Result<()> {
     let pace = if crate::fs::volume::is_removable(dest_dir) {
-        Pace::through(dest_dir)?
+        ctx.pace_through(dest_dir)?
     } else {
-        Pace::at_once()
+        std::rc::Rc::new(Pace::at_once())
     };
     copy_staged(src, target, dest_dir, preserve_attributes, &pace, ctx)?;
-    copy_along(along, &pace, ctx)?;
-    pace.settle(ctx)
+    copy_along(along, &pace, ctx)
 }
 
 /// Copy `src` to `target` through a private staging directory inside
@@ -689,97 +692,6 @@ fn tree_size(path: &Path, ctx: &StepContext) -> anyhow::Result<u64> {
 /// second on a slow disk.
 const COPY_CHUNK: usize = 8 << 20;
 
-/// Written through, the first chunk, and the least: a chunk then takes
-/// about `THROUGH_STEP` on the drive, so a slow one still shows progress
-/// and answers Cancel, and a fast one is not stalled by a wait every few
-/// bytes. Measured on the drive as it writes, never assumed of one.
-const THROUGH_FIRST: u64 = 1 << 20;
-const THROUGH_MIN: u64 = 128 << 10;
-const THROUGH_STEP: std::time::Duration = std::time::Duration::from_millis(250);
-
-/// How a step's copy counts what it wrote: at once, or, written through,
-/// once it is on the drive. Through, every chunk's worth of bytes, whatever
-/// files they belong to, waits for the drive to have everything written
-/// (`syncfs`): a folder of small files waits once per chunk, not once per
-/// file.
-struct Pace {
-    /// The destination's filesystem, written through.
-    drive: Option<crate::fs::Dir>,
-    /// Bytes to write before the next wait.
-    chunk: std::cell::Cell<u64>,
-    /// Bytes written since the last wait, not yet counted.
-    unsaid: std::cell::Cell<u64>,
-    since: std::cell::Cell<std::time::Instant>,
-}
-
-impl Pace {
-    fn at_once() -> Self {
-        Self {
-            drive: None,
-            chunk: std::cell::Cell::new(COPY_CHUNK as u64),
-            unsaid: std::cell::Cell::new(0),
-            since: std::cell::Cell::new(std::time::Instant::now()),
-        }
-    }
-
-    fn through(dir: &Path) -> anyhow::Result<Self> {
-        // Opened before anything is written: `syncfs` reports the errors
-        // since.
-        let drive = crate::fs::Dir::open(dir)?;
-        Ok(Self {
-            drive: Some(drive),
-            chunk: std::cell::Cell::new(THROUGH_FIRST),
-            ..Self::at_once()
-        })
-    }
-
-    /// How much to write at once.
-    fn chunk(&self) -> usize {
-        usize::try_from(self.chunk.get()).unwrap_or(COPY_CHUNK)
-    }
-
-    /// `n` more bytes were written.
-    fn wrote(&self, n: u64, ctx: &StepContext) -> anyhow::Result<()> {
-        if self.drive.is_none() {
-            ctx.advance(n);
-            return Ok(());
-        }
-        self.unsaid.set(self.unsaid.get() + n);
-        if self.unsaid.get() >= self.chunk.get() {
-            self.settle(ctx)?;
-        }
-        Ok(())
-    }
-
-    /// Written through, wait until the drive has everything written so far
-    /// (names, folders and allocation tables with the bytes), count it, and
-    /// size the next chunk by how long it took.
-    fn settle(&self, ctx: &StepContext) -> anyhow::Result<()> {
-        let Some(drive) = &self.drive else {
-            return Ok(());
-        };
-        drive
-            .sync_volume()
-            .context("the copy could not be written out to the drive")?;
-        let n = self.unsaid.take();
-        ctx.advance(n);
-        if n > 0 {
-            self.chunk.set(next_chunk(n, self.since.get().elapsed()));
-        }
-        self.since.set(std::time::Instant::now());
-        Ok(())
-    }
-}
-
-/// The chunk that takes about `THROUGH_STEP` on a drive that wrote `n`
-/// bytes in `took`.
-fn next_chunk(n: u64, took: std::time::Duration) -> u64 {
-    let next = u128::from(n) * THROUGH_STEP.as_micros() / took.as_micros().max(1);
-    u64::try_from(next)
-        .unwrap_or(u64::MAX)
-        .clamp(THROUGH_MIN, COPY_CHUNK as u64)
-}
-
 fn copy_file(
     src: &Path,
     dst: &Path,
@@ -790,21 +702,15 @@ fn copy_file(
     // Where the system copies a whole file (Windows), it does: it keeps
     // what a byte copy would lose there.
     let mut written = 0;
-    let mut failed = None;
     let whole = sys::copy_whole(src, dst, preserve_attributes, &mut |total| {
-        let n = total.saturating_sub(written);
+        // Counted as the system says: nothing is written through off
+        // Linux yet (`fs::volume::is_removable`).
+        ctx.advance(total.saturating_sub(written));
         written = total;
-        if let Err(e) = pace.wrote(n, ctx) {
-            failed = Some(e);
-            return false;
-        }
         ctx.check_cancelled().is_ok()
     });
     if let Some(copied) = whole {
         ctx.check_cancelled()?;
-        if let Some(error) = failed {
-            return Err(error);
-        }
         copied.with_context(|| format!("“{}” could not be copied", display_name(src)))?;
         if preserve_attributes {
             transfer_attributes(src, dst, ctx)?;
@@ -813,9 +719,9 @@ fn copy_file(
     }
     // Non-blocking, then checked: a file swapped for a FIFO since it was
     // listed must not block the executor in open(2).
-    let mut sf = crate::fs::file::open_regular(src)
+    let sf = crate::fs::file::open_regular(src)
         .with_context(|| format!("“{}” is no longer a file", display_name(src)))?;
-    let mut df = std::fs::OpenOptions::new()
+    let df = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(dst)?;
@@ -823,7 +729,7 @@ fn copy_file(
     if sys::clone_file(&sf, &df) {
         ctx.advance(m.len());
     } else {
-        copy_contents(&mut sf, &mut df, pace, ctx)
+        copy_contents(&sf, &df, pace, ctx)
             .with_context(|| format!("“{}” could not be copied", display_name(src)))?;
     }
     // Set attributes before restoring a read-only source's permissions.
@@ -839,19 +745,20 @@ fn copy_file(
 /// between them (as `pace` counts it): in the kernel where it can
 /// (`copy_file_range`), through a buffer where it cannot.
 fn copy_contents(
-    sf: &mut std::fs::File,
-    df: &mut std::fs::File,
+    mut sf: &std::fs::File,
+    mut df: &std::fs::File,
     pace: &Pace,
     ctx: &StepContext,
 ) -> anyhow::Result<()> {
+    let mut writing = pace.writing(df);
     let mut copied = 0u64;
     loop {
         ctx.check_cancelled()?;
-        match sys::copy_range(sf, df, pace.chunk())? {
-            Some(0) if copied > 0 => return Ok(()),
+        match sys::copy_range(sf, df, COPY_CHUNK)? {
+            Some(0) if copied > 0 => return writing.close(ctx),
             Some(n @ 1..) => {
                 copied += n as u64;
-                pace.wrote(n as u64, ctx)?;
+                writing.wrote(n as u64, ctx)?;
             }
             // Some filesystems (procfs, a few FUSE) report 0 before the end,
             // so a first 0 is not trusted; others cannot copy in the kernel.
@@ -864,13 +771,13 @@ fn copy_contents(
     loop {
         ctx.check_cancelled()?;
         let n = match sf.read(&mut buf) {
-            Ok(0) => return Ok(()),
+            Ok(0) => return writing.close(ctx),
             Ok(n) => n,
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(e) => return Err(e.into()),
         };
         df.write_all(&buf[..n])?;
-        pace.wrote(n as u64, ctx)?;
+        writing.wrote(n as u64, ctx)?;
     }
 }
 
@@ -979,7 +886,8 @@ fn transfer_attributes(src: &Path, dst: &Path, ctx: &StepContext) -> anyhow::Res
         return Ok(());
     }
     for a in &aside {
-        // Small: the step settles it with the rest (`copy_entry`).
+        // Small: counted at once, and written out with the rest
+        // (`StepContext::write_out`).
         copy_recursive_with_attributes(&a.from, &a.to, false, &Pace::at_once(), ctx)?;
     }
     if (aside.is_empty() || !own.is_empty()) && !rules.keep_attributes(dst, &own)? {
@@ -2435,7 +2343,6 @@ pub fn register_builtin(reg: &OpRegistry) {
 mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
-    use std::time::Duration;
 
     use super::*;
 
@@ -2747,53 +2654,97 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_chunk_written_through_takes_about_a_step() {
-        // 1 MiB in a second: a quarter of it next.
-        assert_eq!(next_chunk(1 << 20, Duration::from_secs(1)), 256 << 10);
-        // A very slow drive still writes the least chunk at a time.
-        assert_eq!(next_chunk(1 << 20, Duration::from_secs(60)), THROUGH_MIN);
-        // A fast one, no more than an unsynced copy would.
-        assert_eq!(next_chunk(1 << 20, Duration::ZERO), COPY_CHUNK as u64);
-    }
-
-    /// The wait written through syncs a whole filesystem: the tests' own
-    /// would make every test writing to it wait. procfs has nothing to
-    /// write; this checks the bytes and what is counted, not the drive.
+    /// The ways a copy is counted: at once, by ranges handed to the drive,
+    /// or by write-outs of the volume (where a program writes it). A
+    /// volume's write-out syncs a whole filesystem: the tests' own would
+    /// make every test writing to it wait. procfs has nothing to write;
+    /// this checks the bytes and what is counted, not the drive.
     #[cfg(target_os = "linux")]
-    const NOTHING_TO_WRITE: &str = "/proc";
+    fn paces() -> [(&'static str, Pace); 3] {
+        let proc = || crate::fs::Dir::open(Path::new("/proc")).unwrap();
+        [
+            ("at once", Pace::at_once()),
+            ("ranges", Pace::testing(proc(), false)),
+            ("volume", Pace::testing(proc(), true)),
+        ]
+    }
 
     // Writing through is Linux's alone so far (ADR-035).
     #[cfg(target_os = "linux")]
     #[test]
-    fn a_copy_written_through_is_whole() {
+    fn a_copy_written_through_is_whole_and_counted() {
         let base = dirs::home_dir().unwrap().join(".cache/bibli-tests");
         std::fs::create_dir_all(&base).unwrap();
         let dir = tempfile::tempdir_in(base).unwrap();
         let (src, dst) = (dir.path().join("firmware.bin"), dir.path().join("copy.bin"));
-        // Several chunks, and an end that is not a whole one.
+        // Several windows, and an end that is not a whole one.
         let bytes: Vec<u8> = (0..(3 << 20) + 12_345u32)
             .map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8)
             .collect();
         std::fs::write(&src, &bytes).unwrap();
-        let ctx = StepContext::detached();
-        for through in [true, false] {
-            let pace = if through {
-                Pace::through(Path::new(NOTHING_TO_WRITE)).unwrap()
-            } else {
-                Pace::at_once()
-            };
+        for (how, pace) in paces() {
+            let ctx = StepContext::detached();
             let _ = std::fs::remove_file(&dst);
             copy_file(&src, &dst, false, &pace, &ctx).unwrap();
-            pace.settle(&ctx).unwrap();
-            assert_eq!(std::fs::read(&dst).unwrap(), bytes, "through: {through}");
-            assert_eq!(pace.unsaid.get(), 0, "everything counted");
+            assert_eq!(ctx.done(), bytes.len() as u64, "{how}: everything counted");
+            pace.write_out().unwrap();
+            assert_eq!(std::fs::read(&dst).unwrap(), bytes, "{how}");
         }
         std::fs::write(&src, b"").unwrap();
-        std::fs::remove_file(&dst).unwrap();
-        let pace = Pace::through(Path::new(NOTHING_TO_WRITE)).unwrap();
-        copy_file(&src, &dst, false, &pace, &ctx).unwrap();
-        pace.settle(&ctx).unwrap();
-        assert!(std::fs::read(&dst).unwrap().is_empty());
+        for (how, pace) in paces() {
+            let ctx = StepContext::detached();
+            std::fs::remove_file(&dst).unwrap();
+            copy_file(&src, &dst, false, &pace, &ctx).unwrap();
+            pace.write_out().unwrap();
+            assert!(std::fs::read(&dst).unwrap().is_empty(), "{how}");
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_folder_of_small_files_written_through_is_whole_and_counted() {
+        let base = dirs::home_dir().unwrap().join(".cache/bibli-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let dir = tempfile::tempdir_in(base).unwrap();
+        let album = dir.path().join("album");
+        std::fs::create_dir(&album).unwrap();
+        // More files than the drive is handed at once.
+        let files = 200;
+        for i in 0..files {
+            std::fs::write(
+                album.join(format!("photo {i}.jpg")),
+                vec![i as u8; 1000 + i],
+            )
+            .unwrap();
+        }
+        let total: usize = (0..files).map(|i| 1000 + i).sum();
+        for (how, pace) in paces() {
+            let ctx = StepContext::detached();
+            let copy = dir.path().join(format!("copy {how}"));
+            copy_recursive_with_attributes(&album, &copy, false, &pace, &ctx).unwrap();
+            assert_eq!(ctx.done(), total as u64, "{how}: everything counted");
+            pace.write_out().unwrap();
+            for i in 0..files {
+                let file = std::fs::read(copy.join(format!("photo {i}.jpg"))).unwrap();
+                assert_eq!(file, vec![i as u8; 1000 + i], "{how}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_plans_copies_onto_one_volume_share_its_pace() {
+        let base = dirs::home_dir().unwrap().join(".cache/bibli-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let dir = tempfile::tempdir_in(base).unwrap();
+        let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+        std::fs::create_dir(&a).unwrap();
+        std::fs::create_dir(&b).unwrap();
+        let ctx = StepContext::detached();
+        let first = ctx.pace_through(&a).unwrap();
+        assert!(std::rc::Rc::ptr_eq(&first, &ctx.pace_through(&b).unwrap()));
+        assert!(!std::rc::Rc::ptr_eq(
+            &first,
+            &StepContext::detached().pace_through(&a).unwrap()
+        ));
     }
 }

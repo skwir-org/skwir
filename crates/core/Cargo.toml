@@ -36,6 +36,8 @@ xattr.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 inotify.workspace = true
+# `sync_file_range`, which rustix lacks (a copy written through, `op::sys`).
+libc = "0.2"
 
 # macOS's own calls rustix lacks there (clonefile, mkfifo), and its trash
 # (`trashItemAtURL`, which says where an item went): ADR-035. The objc2

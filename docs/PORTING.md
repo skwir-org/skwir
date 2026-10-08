@@ -102,10 +102,23 @@ macOS by `mkfifo` (compiled only). Left:
 
 - macOS's rename without replacing and swap (`renameatx_np`) are
   compiled, never run.
-- Write-through (`Pace`, `Dir::sync_volume`): Linux's `syncfs`;
-  **(n)** elsewhere, never reached since nothing is removable there
-  (section 6). `F_FULLFSYNC` per file on macOS, `FlushFileBuffers` on
-  Windows, with step F's removable drives.
+- Write-through (`Pace`, `sys::write_range`, `Dir::sync_volume`):
+  Linux hands the drive each window of bytes and waits for it a window
+  later (`sync_file_range`), and writes the volume out once per plan
+  and before a move removes its source (`syncfs`); **(n)** elsewhere, never reached since nothing is
+  removable there (section 6). A call that commits the volume or
+  flushes the drive's own cache costs about the same however little it
+  writes: on Linux, `syncfs` every few MiB held a copy onto a USB hard
+  drive to 7 MiB/s where the drive takes 80. So neither system's flush
+  (`F_FULLFSYNC`, `FlushFileBuffers`) may be paid per window or per
+  file. Windows: `CopyFileExW` with `COPY_FILE_NO_BUFFERING` writes
+  past the system's cache, its progress counting what the drive took,
+  and `FlushFileBuffers` once per plan on a file it copied (whether that
+  writes the other files' names out on FAT and exFAT is to check).
+  macOS: `fsync` per window, which writes to the drive without
+  flushing its cache, on a thread of its own so the copy goes on, and
+  `F_FULLFSYNC` once per plan. What each costs on a USB hard drive is
+  to measure there before choosing.
 - Links copied (`symlink_like`): Windows makes a folder link as one;
   it needs a privilege, untested.
 - On Windows the staging folder keeps the access it inherits; read-only
@@ -165,8 +178,11 @@ Linux (`dirs`: Windows' known folders, a Mac's), run under Wine. Left:
 - Eject and mount off Linux **(n)**: no command (DiskArbitration,
   `IOCTL_STORAGE_EJECT_MEDIA`); `Mount::udisks` is false there.
 - Write-through off Linux: `fs::volume::is_removable` is false there
-  **(u)**; Windows writes removable drives through itself (its default,
-  quick removal), a Mac's needs `F_FULLFSYNC` (5b).
+  **(u)**. Windows says a USB hard drive is fixed (`GetDriveType`), so
+  removable is to be asked of its bus, as on Linux; its default policy
+  for external drives (quick removal) already keeps their writes out
+  of its cache. A Mac's is DiskArbitration's to say. How either is
+  written through is section 3's note.
 - Bookmarks are GTK's (c): Finder's favorites and Windows' Quick Access
   are not read.
 - `plugins/places` watches `/dev/disk/by-uuid` and `/run/media/$USER`

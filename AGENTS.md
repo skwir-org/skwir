@@ -736,8 +736,17 @@ current source before assuming a planned crate, command, or API exists.
   the volume's device too (`Busy::device`). A copy or a move onto a drive
   the user can unplug (`fs::volume::is_removable`: removable, or on USB,
   FireWire or an SD card, through LUKS or RAID) is written through
-  (`op::builtin::Pace`): every chunk's worth of bytes waits for the drive,
-  so progress is the drive's and the step ends with the copy on it. That
+  (`op::pace`): the drive is handed each window of bytes as it is
+  written and the copy waits for one only while the drive holds the next
+  (`sys::write_range`), so progress is the drive's within half a second
+  and the drive never idles; a plan's copies onto one volume share one
+  pace, so its queue runs on from one item to the next. Names and
+  folders are written out once, at the plan's end and before a move
+  removes its source (`StepContext::write_out`, `syncfs`): on a hard
+  drive a journaled or copy-on-write volume takes a third of a second to
+  commit however little changed, so a commit is never a copy's unit of
+  progress. Where a program writes the volume (FUSE: ntfs-3g), its
+  write-out is the wait, on a thread of its own. That
   one predicate is also what draws a mounted volume as removable media,
   wherever it is mounted (`lsblk`'s HOTPLUG says the same of one not
   mounted); Eject is offered for what udisks mounted for the user

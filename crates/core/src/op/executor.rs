@@ -837,6 +837,12 @@ impl Executor {
                 break;
             }
         }
+        // What the plan wrote through to a drive is on it, names and all,
+        // before it says it ended: cut short too, for what it did.
+        if let Err(e) = ctx.write_out() {
+            tracing::warn!(plan = %plan.title, "{e:#}");
+            error.get_or_insert_with(|| super::said(&e));
+        }
         inverses.reverse();
         let inverse = if inverses.is_empty() {
             None

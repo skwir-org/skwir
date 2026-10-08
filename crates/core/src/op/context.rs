@@ -5,6 +5,7 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -142,6 +143,11 @@ pub struct StepContext {
     /// plan stages in, each swept once and noted while the plan runs.
     under_way: Option<super::staging::UnderWay>,
     staged_in: RefCell<HashMap<PathBuf, Option<super::staging::Mark>>>,
+    /// How this plan's copies are written through to each volume of a
+    /// drive the user can unplug (`pace::Pace`), by its device: one per
+    /// volume, so the drive's queue runs on from one item to the next, and
+    /// [`Self::write_out`] writes each out.
+    paces: RefCell<Vec<(Option<u64>, Rc<super::pace::Pace>)>>,
 }
 
 impl StepContext {
@@ -155,7 +161,42 @@ impl StepContext {
             foreseen: RefCell::default(),
             under_way: None,
             staged_in: RefCell::default(),
+            paces: RefCell::default(),
         }
+    }
+
+    /// How this plan's copies into `dest_dir`, a folder of a drive the user
+    /// can unplug, are written through: the pace of its volume, shared by
+    /// every copy of the plan onto it.
+    ///
+    /// # Errors
+    /// When the folder cannot be opened.
+    pub(super) fn pace_through(&self, dest_dir: &Path) -> std::io::Result<Rc<super::pace::Pace>> {
+        let drive = crate::fs::Dir::open(dest_dir)?;
+        let device = drive.device().ok();
+        let mut paces = self.paces.borrow_mut();
+        if let Some((_, pace)) = paces.iter().find(|(d, _)| d.is_some() && *d == device) {
+            return Ok(Rc::clone(pace));
+        }
+        let pace = Rc::new(super::pace::Pace::through(drive));
+        paces.push((device, Rc::clone(&pace)));
+        Ok(pace)
+    }
+
+    /// Wait until the drives this plan's copies were written through to
+    /// have every byte, then write their volumes out (`syncfs`), names and
+    /// folders included. At the plan's end, and before a move removes what
+    /// it copied: on a journaled or copy-on-write filesystem it commits the
+    /// whole volume, which a hard drive takes a third of a second to do
+    /// however little changed.
+    ///
+    /// # Errors
+    /// When a drive could not write it all.
+    pub(super) fn write_out(&self) -> anyhow::Result<()> {
+        for (_, pace) in self.paces.borrow().iter() {
+            pace.write_out()?;
+        }
+        Ok(())
     }
 
     /// The same context, noting in `under_way` the folders its copies are
@@ -229,6 +270,12 @@ impl StepContext {
     /// Report `bytes` of work done.
     pub fn advance(&self, bytes: u64) {
         self.meter.advance(bytes);
+    }
+
+    /// The bytes reported done.
+    #[cfg(test)]
+    pub(super) fn done(&self) -> u64 {
+        self.meter.done.load(Ordering::Relaxed)
     }
 
     /// Run `f` over the trash listing, reading it on first use in this plan.

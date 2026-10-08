@@ -172,6 +172,63 @@ pub(super) fn copy_range(src: &File, dst: &File, len: usize) -> io::Result<Optio
     }
 }
 
+/// Hand the drive what `file` holds in memory of its `len` bytes from
+/// `from`, without waiting; or, `wait`, wait until the drive has them
+/// all (`sync_file_range`). Their data only: the file's size and name,
+/// and the drive's own cache, are its volume's write-out
+/// (`Dir::sync_volume`). Of a file a program writes
+/// ([`written_by_a_program`]) it reaches nothing.
+pub(super) fn write_range(file: &File, from: u64, len: u64, wait: bool) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+        let flags = if wait {
+            libc::SYNC_FILE_RANGE_WAIT_BEFORE
+                | libc::SYNC_FILE_RANGE_WRITE
+                | libc::SYNC_FILE_RANGE_WAIT_AFTER
+        } else {
+            libc::SYNC_FILE_RANGE_WRITE
+        };
+        let too_far = |_| io::Error::from(io::ErrorKind::InvalidInput);
+        let (from, len) = (
+            from.try_into().map_err(too_far)?,
+            len.try_into().map_err(too_far)?,
+        );
+        // SAFETY: a call on a descriptor `file` holds open; no memory is
+        // passed. rustix has no `sync_file_range`.
+        #[allow(unsafe_code)]
+        let done = unsafe { libc::sync_file_range(file.as_raw_fd(), from, len, flags) };
+        if done == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (file, from, len, wait);
+        Err(crate::system::not_yet("Writing through to a drive"))
+    }
+}
+
+/// Whether a program, not the kernel, writes the volume `dir` is on
+/// (FUSE: ntfs-3g, exfat-fuse). A file's bytes pass to it as they are
+/// written, so none wait in the file's memory for [`write_range`]: what
+/// it wrote only the volume's write-out reaches.
+pub(super) fn written_by_a_program(dir: &crate::fs::Dir) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        const FUSE_SUPER_MAGIC: u64 = 0x6573_5546;
+        rustix::fs::fstatfs(dir.fd())
+            .is_ok_and(|fs| u64::try_from(fs.f_type).is_ok_and(|t| t == FUSE_SUPER_MAGIC))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = dir;
+        false
+    }
+}
+
 /// Whether `kind` is a named pipe.
 pub(super) fn is_fifo(kind: FileType) -> bool {
     #[cfg(unix)]
